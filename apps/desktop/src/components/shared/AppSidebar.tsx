@@ -18,10 +18,11 @@ import {
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
-import { NixusLogo } from "@nixus/shared";
+import { BuyMeACoffeeIcon, BUY_ME_A_COFFEE_URL, NixusLogo } from "@nixus/shared";
 
 const themeOrder = ["light", "dark", "system"] as const;
 const themeIcons = { light: Sun, dark: Moon, system: Monitor } as const;
@@ -227,6 +228,13 @@ export function AppSidebar() {
             expanded={expanded}
             testId="settings-link"
           />
+          <SidebarExternalButton
+            onClick={() => openUrl(BUY_ME_A_COFFEE_URL)}
+            icon={BuyMeACoffeeIcon}
+            label={t("sidebar.buyMeACoffee")}
+            expanded={expanded}
+            testId="buy-me-a-coffee-link"
+          />
           <span
             className={cn(
               "block text-[10px] text-sidebar-foreground/40 pt-2 px-2 transition-opacity duration-200",
@@ -237,6 +245,44 @@ export function AppSidebar() {
           </span>
         </div>
     </aside>
+  );
+}
+
+function SidebarExternalButton({
+  onClick,
+  icon: Icon,
+  label,
+  expanded,
+  testId,
+}: {
+  onClick: () => void;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  expanded: boolean;
+  testId?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center text-xs text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors w-full rounded py-1.5",
+        expanded ? "gap-2 px-2" : "justify-center px-1"
+      )}
+      title={expanded ? undefined : label}
+      data-testid={testId}
+      aria-label={label}
+    >
+      <Icon className="size-4" />
+      <span
+        className={cn(
+          "transition-opacity duration-200 whitespace-nowrap",
+          expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
+        )}
+      >
+        {label}
+      </span>
+    </button>
   );
 }
 

@@ -30,6 +30,7 @@
   "sidebar.invalidBackup": "Invalid backup file",
   "sidebar.restoreFailed": "Failed to restore database",
   "sidebar.settings": "Settings",
+  "sidebar.buyMeACoffee": "Buy me a coffee",
 
   "topbar.searchPlaceholder": "Search anything or ask AI...",
   "topbar.searchAriaLabel": "Search or ask AI",

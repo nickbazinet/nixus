@@ -88,3 +88,4 @@ export {
   TooltipContent,
 } from "./tooltip";
 export { NixusLogo } from "./nixus-logo";
+export { BuyMeACoffeeIcon, BUY_ME_A_COFFEE_URL } from "./buymeacoffee-icon";

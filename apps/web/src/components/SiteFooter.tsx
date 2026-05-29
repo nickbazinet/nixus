@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Separator } from "@nixus/shared";
+import { BuyMeACoffeeIcon, BUY_ME_A_COFFEE_URL, Separator } from "@nixus/shared";
 
 const GITHUB_URL = "https://github.com/nickbazinet/nixus";
 const CONTACT_EMAIL = "support@nixus.nicolasbazinet.net";
@@ -25,6 +25,19 @@ export function SiteFooter() {
                 className="rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 {t("footer.linkGithub")}
+              </a>
+              <Separator
+                orientation="vertical"
+                className="hidden h-4 md:block"
+              />
+              <a
+                href={BUY_ME_A_COFFEE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={t("footer.linkBuyMeACoffee")}
+                className="inline-flex rounded-sm outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <BuyMeACoffeeIcon className="size-4" />
               </a>
               <Separator
                 orientation="vertical"

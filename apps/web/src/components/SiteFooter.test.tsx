@@ -26,6 +26,14 @@ describe("SiteFooter", () => {
     expect(mail).toHaveAttribute("href", `mailto:${SUPPORT_EMAIL}`);
   });
 
+  it("renders a Buy Me a Coffee link with the creator profile URL", () => {
+    renderWithProviders(<SiteFooter />);
+    const link = screen.getByRole("link", { name: /buy me a coffee/i });
+    expect(link).toHaveAttribute("href", "https://buymeacoffee.com/nickbaz");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
   it("renders the Pre-alpha label in the nav row", () => {
     renderWithProviders(<SiteFooter />);
     expect(screen.getByText("Pre-alpha")).toBeInTheDocument();
