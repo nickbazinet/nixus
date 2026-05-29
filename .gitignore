@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Build output
+apps/desktop/dist/
+apps/web/.output/
+apps/web/.nitro/
+apps/web/.tanstack/
+apps/web/.lighthouseci/
+
+# Tauri build/generated
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/.tauri-private-key
+apps/desktop/src-tauri/.tauri-private-key.pub
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+apps/desktop/test-results/
+apps/desktop/playwright-report/
+
+# Logs
+*.log
+.ralph/logs/
+_bmad-output/
+.worktrees/
+
+# Local tooling state
+.claude/projects/
+.playwright-mcp/
+.superpowers/
+
+.claude/worktrees
+
+.DS_Store

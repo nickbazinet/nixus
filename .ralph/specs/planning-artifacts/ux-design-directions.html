@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nkbaz-finance — Design Direction Exploration</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --background: #FFFFFF;
+    --foreground: #0F172A;
+    --card: #FFFFFF;
+    --border: #E2E8F0;
+    --muted: #F1F5F9;
+    --muted-fg: #64748B;
+    --primary: #0D9488;
+    --primary-fg: #FFFFFF;
+    --accent: #F0FDFA;
+    --positive: #059669;
+    --positive-bg: #ECFDF5;
+    --warning: #F59E0B;
+    --warning-bg: #FFFBEB;
+    --destructive: #F43F5E;
+    --destructive-bg: #FFF1F2;
+    --radius: 0.5rem;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: #F8FAFC; color: var(--foreground); }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* Navigation */
+  .showcase-nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: var(--foreground); color: white; padding: 16px 32px;
+    display: flex; align-items: center; gap: 24px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .showcase-nav h1 { font-size: 16px; font-weight: 600; white-space: nowrap; }
+  .showcase-nav .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .showcase-nav .tab {
+    padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 500;
+    cursor: pointer; border: none; background: transparent; color: #94A3B8;
+    transition: all 0.2s;
+  }
+  .showcase-nav .tab:hover { background: rgba(255,255,255,0.1); color: white; }
+  .showcase-nav .tab.active { background: var(--primary); color: white; }
+
+  /* Section */
+  .direction { display: none; padding: 80px 32px 32px; min-height: 100vh; }
+  .direction.active { display: block; }
+  .direction-header { margin-bottom: 32px; }
+  .direction-header h2 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+  .direction-header p { color: var(--muted-fg); font-size: 15px; line-height: 1.6; max-width: 720px; }
+  .direction-header .tags { display: flex; gap: 8px; margin-top: 12px; }
+  .direction-header .tag {
+    font-size: 12px; font-weight: 500; padding: 4px 10px;
+    border-radius: 999px; background: var(--accent); color: var(--primary);
+  }
+
+  /* Mockup container */
+  .mockup {
+    background: var(--muted); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    max-width: 1280px;
+  }
+  .mockup-bar {
+    background: var(--foreground); padding: 10px 16px; display: flex; align-items: center; gap: 8px;
+  }
+  .mockup-dot { width: 12px; height: 12px; border-radius: 50%; }
+  .mockup-dot.r { background: #F43F5E; }
+  .mockup-dot.y { background: #F59E0B; }
+  .mockup-dot.g { background: #22C55E; }
+  .mockup-url {
+    flex: 1; margin-left: 12px; background: rgba(255,255,255,0.1);
+    border-radius: 6px; padding: 4px 12px; font-size: 12px; color: #94A3B8;
+  }
+
+  /* Layout: Sidebar + Main */
+  .app-layout { display: flex; min-height: 600px; background: var(--background); }
+
+  /* Sidebar styles */
+  .sidebar {
+    width: 240px; background: var(--foreground); color: white;
+    padding: 24px 0; flex-shrink: 0; display: flex; flex-direction: column;
+  }
+  .sidebar-brand { padding: 0 20px 24px; font-size: 15px; font-weight: 700; letter-spacing: -0.3px; }
+  .sidebar-brand span { color: var(--primary); }
+  .sidebar-item {
+    padding: 10px 20px; font-size: 14px; font-weight: 400; color: #94A3B8;
+    display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.15s;
+  }
+  .sidebar-item:hover { background: rgba(255,255,255,0.05); color: white; }
+  .sidebar-item.active { background: rgba(13,148,136,0.15); color: var(--primary); font-weight: 500; border-right: 2px solid var(--primary); }
+  .sidebar-icon { width: 18px; text-align: center; font-size: 14px; opacity: 0.7; }
+  .sidebar-item.active .sidebar-icon { opacity: 1; }
+  .sidebar-spacer { flex: 1; }
+
+  /* Sidebar Light */
+  .sidebar-light {
+    width: 240px; background: var(--background); border-right: 1px solid var(--border);
+    padding: 24px 0; flex-shrink: 0; display: flex; flex-direction: column;
+  }
+  .sidebar-light .sidebar-brand { color: var(--foreground); }
+  .sidebar-light .sidebar-item { color: var(--muted-fg); }
+  .sidebar-light .sidebar-item:hover { background: var(--muted); color: var(--foreground); }
+  .sidebar-light .sidebar-item.active {
+    background: var(--accent); color: var(--primary); font-weight: 500;
+    border-right: 2px solid var(--primary);
+  }
+
+  /* Sidebar Compact (icons only) */
+  .sidebar-compact {
+    width: 64px; background: var(--foreground); color: white;
+    padding: 16px 0; flex-shrink: 0; display: flex; flex-direction: column; align-items: center;
+  }
+  .sidebar-compact .sidebar-brand { padding: 0 0 16px; font-size: 18px; font-weight: 700; text-align: center; }
+  .sidebar-compact .sidebar-item {
+    padding: 12px; font-size: 16px; color: #94A3B8; justify-content: center;
+    width: 44px; height: 44px; border-radius: 8px; border-right: none;
+  }
+  .sidebar-compact .sidebar-item:hover { background: rgba(255,255,255,0.1); }
+  .sidebar-compact .sidebar-item.active { background: rgba(13,148,136,0.2); color: var(--primary); }
+  .sidebar-compact .sidebar-item span:last-child { display: none; }
+
+  /* Main content */
+  .main { flex: 1; padding: 32px; background: var(--muted); overflow: auto; }
+  .main-white { background: var(--background); }
+
+  /* Page header */
+  .page-header { margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; }
+  .page-title { font-size: 24px; font-weight: 600; }
+  .page-subtitle { font-size: 14px; color: var(--muted-fg); margin-top: 2px; }
+
+  /* Cards */
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 24px; box-shadow: var(--shadow);
+  }
+  .card-title { font-size: 14px; font-weight: 500; color: var(--muted-fg); margin-bottom: 8px; }
+  .card-value { font-size: 32px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .card-value.positive { color: var(--positive); }
+  .card-value.destructive { color: var(--destructive); }
+  .card-trend { font-size: 13px; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+  .card-trend.up { color: var(--positive); }
+  .card-trend.down { color: var(--destructive); }
+
+  /* Grid layouts */
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-bottom: 24px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-bottom: 24px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-bottom: 24px; }
+  .grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; margin-bottom: 24px; }
+  .grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 24px; margin-bottom: 24px; }
+
+  /* Budget bars */
+  .budget-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .budget-row:last-child { border-bottom: none; }
+  .budget-label { width: 120px; font-size: 14px; font-weight: 500; }
+  .budget-bar-wrap { flex: 1; height: 8px; background: var(--muted); border-radius: 999px; overflow: hidden; }
+  .budget-bar { height: 100%; border-radius: 999px; transition: width 0.3s; }
+  .budget-bar.safe { background: var(--primary); }
+  .budget-bar.warn { background: var(--warning); }
+  .budget-bar.over { background: var(--destructive); }
+  .budget-amounts { font-size: 13px; color: var(--muted-fg); font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+
+  /* Sparkline (CSS fake) */
+  .sparkline {
+    width: 100%; height: 48px; margin-top: 8px;
+    background: linear-gradient(135deg, var(--accent) 0%, transparent 100%);
+    border-radius: 4px; position: relative; overflow: hidden;
+  }
+  .sparkline::after {
+    content: ''; position: absolute; bottom: 0; left: 0; right: 0;
+    height: 2px; background: var(--primary);
+    clip-path: polygon(0% 80%, 10% 70%, 20% 75%, 30% 50%, 40% 55%, 50% 40%, 60% 35%, 70% 30%, 80% 25%, 90% 15%, 100% 10%, 100% 100%, 0% 100%);
+    height: 100%; opacity: 0.15;
+  }
+  .sparkline-line {
+    position: absolute; bottom: 0; left: 0; right: 0; height: 100%;
+    border-bottom: 2px solid var(--primary);
+    clip-path: polygon(0% 80%, 10% 70%, 20% 75%, 30% 50%, 40% 55%, 50% 40%, 60% 35%, 70% 30%, 80% 25%, 90% 15%, 100% 10%);
+  }
+
+  /* Buttons */
+  .btn {
+    padding: 8px 16px; border-radius: var(--radius); font-size: 14px; font-weight: 500;
+    border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+    transition: all 0.15s;
+  }
+  .btn-primary { background: var(--primary); color: var(--primary-fg); }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--foreground); }
+  .btn-outline:hover { background: var(--muted); }
+  .btn-ghost { background: transparent; color: var(--muted-fg); }
+  .btn-ghost:hover { background: var(--muted); color: var(--foreground); }
+
+  /* Table */
+  .table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .table th { text-align: left; padding: 10px 12px; color: var(--muted-fg); font-weight: 500; font-size: 13px; border-bottom: 1px solid var(--border); }
+  .table td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  .table tr:hover { background: var(--accent); }
+  .table .amount { font-family: 'JetBrains Mono', monospace; text-align: right; }
+
+  /* Badge */
+  .badge {
+    display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+    font-size: 12px; font-weight: 500;
+  }
+  .badge-positive { background: var(--positive-bg); color: var(--positive); }
+  .badge-warning { background: var(--warning-bg); color: #B45309; }
+  .badge-destructive { background: var(--destructive-bg); color: var(--destructive); }
+  .badge-muted { background: var(--muted); color: var(--muted-fg); }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 48px; text-align: center; cursor: pointer; transition: all 0.2s;
+  }
+  .upload-zone:hover { border-color: var(--primary); background: var(--accent); }
+  .upload-icon { font-size: 32px; margin-bottom: 12px; color: var(--muted-fg); }
+  .upload-text { font-size: 15px; font-weight: 500; color: var(--foreground); }
+  .upload-hint { font-size: 13px; color: var(--muted-fg); margin-top: 4px; }
+
+  /* Progress steps */
+  .progress-steps { display: flex; gap: 4px; align-items: center; margin: 16px 0; }
+  .progress-step {
+    display: flex; align-items: center; gap: 8px; padding: 8px 16px;
+    border-radius: var(--radius); font-size: 13px; font-weight: 500;
+  }
+  .progress-step.done { background: var(--positive-bg); color: var(--positive); }
+  .progress-step.current { background: var(--accent); color: var(--primary); }
+  .progress-step.pending { color: var(--muted-fg); }
+  .progress-arrow { color: var(--muted-fg); font-size: 12px; }
+
+  /* Chat */
+  .chat-container { display: flex; flex-direction: column; height: 100%; }
+  .chat-messages { flex: 1; padding: 24px; overflow-y: auto; }
+  .chat-bubble { max-width: 70%; padding: 12px 16px; border-radius: 12px; margin-bottom: 12px; font-size: 14px; line-height: 1.5; }
+  .chat-user { background: var(--primary); color: white; margin-left: auto; border-bottom-right-radius: 4px; }
+  .chat-ai { background: var(--muted); color: var(--foreground); border-bottom-left-radius: 4px; }
+  .chat-input-wrap {
+    padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 12px;
+  }
+  .chat-input {
+    flex: 1; padding: 10px 16px; border: 1px solid var(--border); border-radius: var(--radius);
+    font-size: 14px; font-family: inherit; outline: none;
+  }
+  .chat-input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(13,148,136,0.15); }
+
+  /* Floating chat bar */
+  .floating-chat {
+    position: absolute; bottom: 24px; right: 24px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12); padding: 12px 16px;
+    display: flex; align-items: center; gap: 12px; width: 360px;
+  }
+  .floating-chat input {
+    flex: 1; border: none; outline: none; font-size: 14px; font-family: inherit;
+    background: transparent;
+  }
+  .floating-chat .kbd {
+    font-size: 11px; padding: 2px 6px; border-radius: 4px;
+    background: var(--muted); color: var(--muted-fg); font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* Account rows */
+  .account-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 0; border-bottom: 1px solid var(--border);
+  }
+  .account-row:last-child { border-bottom: none; }
+  .account-name { font-size: 14px; font-weight: 500; }
+  .account-type { font-size: 12px; color: var(--muted-fg); }
+  .account-balance { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 500; }
+
+  /* Net worth breakdown */
+  .nw-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; margin: 16px 0; gap: 2px; }
+  .nw-segment { height: 100%; border-radius: 999px; }
+
+  /* Direction comparison note */
+  .diff-note {
+    background: var(--warning-bg); border: 1px solid #FDE68A; border-radius: var(--radius);
+    padding: 12px 16px; font-size: 13px; color: #92400E; margin-bottom: 24px;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  /* Import review */
+  .review-card {
+    border: 1px solid var(--warning); border-left: 3px solid var(--warning);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+    background: var(--warning-bg);
+  }
+  .review-card .merchant { font-weight: 500; font-size: 14px; }
+  .review-card .amount { font-family: 'JetBrains Mono', monospace; font-size: 14px; }
+  .review-card .category-select {
+    margin-top: 8px; padding: 6px 12px; border: 1px solid var(--border);
+    border-radius: var(--radius); font-size: 13px; background: white;
+  }
+
+  .auto-summary {
+    background: var(--positive-bg); border: 1px solid #A7F3D0;
+    border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 14px; color: var(--positive);
+  }
+  .auto-summary .expand { font-size: 13px; color: var(--primary); cursor: pointer; text-decoration: underline; }
+
+  /* Completion screen */
+  .completion {
+    text-align: center; padding: 64px 32px;
+  }
+  .completion-check {
+    width: 64px; height: 64px; border-radius: 50%; background: var(--positive-bg);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; margin: 0 auto 24px; color: var(--positive);
+  }
+  .completion h3 { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+  .completion p { color: var(--muted-fg); font-size: 14px; margin-bottom: 24px; }
+  .completion-stats { display: flex; gap: 32px; justify-content: center; margin-bottom: 32px; }
+  .completion-stat { text-align: center; }
+  .completion-stat .val { font-size: 24px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .completion-stat .label { font-size: 12px; color: var(--muted-fg); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<nav class="showcase-nav">
+  <h1>nkbaz-finance — Design Directions</h1>
+  <div class="tabs">
+    <button class="tab active" onclick="showDirection('d1')">1. Classic Dashboard</button>
+    <button class="tab" onclick="showDirection('d2')">2. Spacious Cards</button>
+    <button class="tab" onclick="showDirection('d3')">3. Light Sidebar</button>
+    <button class="tab" onclick="showDirection('d4')">4. Compact Nav</button>
+    <button class="tab" onclick="showDirection('d5')">5. Import Flow</button>
+    <button class="tab" onclick="showDirection('d6')">6. AI Chat</button>
+    <button class="tab" onclick="showDirection('d7')">7. Budget View</button>
+    <button class="tab" onclick="showDirection('d8')">8. Net Worth</button>
+  </div>
+</nav>
+
+<!-- DIRECTION 1: Classic Dashboard — Dark sidebar, 4-col metric cards, budget bars, accounts -->
+<div id="d1" class="direction active">
+  <div class="direction-header">
+    <h2>Direction 1: Classic Dashboard</h2>
+    <p>Dark sidebar navigation with a 4-column metric summary, budget progress bars, and account overview. The "open, glance, close" view. Everything above the fold.</p>
+    <div class="tags"><span class="tag">Linear-inspired nav</span><span class="tag">Dense but breathable</span><span class="tag">Dashboard-first</span></div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/dashboard</div>
+    </div>
+    <div class="app-layout">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Dashboard</div>
+            <div class="page-subtitle">March 2026</div>
+          </div>
+          <button class="btn btn-primary">📤 Import Statement</button>
+        </div>
+
+        <div class="grid-4">
+          <div class="card">
+            <div class="card-title">Net Worth</div>
+            <div class="card-value">$487,230</div>
+            <div class="card-trend up">↑ +2.3% from last month</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Budget Remaining</div>
+            <div class="card-value positive">$1,847</div>
+            <div class="card-trend up">42% of budget left</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Total Spent</div>
+            <div class="card-value">$2,653</div>
+            <div class="card-trend" style="color:var(--muted-fg)">of $4,500 budget</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Accounts</div>
+            <div class="card-value">$124,560</div>
+            <div class="card-trend" style="color:var(--muted-fg)">across 8 accounts</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title" style="margin-bottom:16px">Budget Status — March 2026</div>
+            <div class="budget-row">
+              <div class="budget-label">Housing</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:65%"></div></div>
+              <div class="budget-amounts">$1,300 / $2,000</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Food</div>
+              <div class="budget-bar-wrap"><div class="budget-bar warn" style="width:82%"></div></div>
+              <div class="budget-amounts">$574 / $700</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Transport</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:40%"></div></div>
+              <div class="budget-amounts">$120 / $300</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Entertainment</div>
+              <div class="budget-bar-wrap"><div class="budget-bar over" style="width:105%"></div></div>
+              <div class="budget-amounts">$210 / $200</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Subscriptions</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:90%"></div></div>
+              <div class="budget-amounts">$89 / $100</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title" style="margin-bottom:16px">Accounts</div>
+            <div class="account-row">
+              <div><div class="account-name">Wealthsimple TFSA</div><div class="account-type">Investment • CAD</div></div>
+              <div class="account-balance">$42,350.00</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Desjardins Chequing</div><div class="account-type">Chequing • CAD</div></div>
+              <div class="account-balance">$8,234.50</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Tangerine Savings</div><div class="account-type">Savings • CAD</div></div>
+              <div class="account-balance">$15,780.00</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Wealthsimple RRSP</div><div class="account-type">Investment • CAD</div></div>
+              <div class="account-balance">$28,195.00</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Wealthsimple Crypto</div><div class="account-type">Crypto • CAD</div></div>
+              <div class="account-balance">$12,430.00</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="position:relative">
+          <div class="card-title" style="margin-bottom:8px">Net Worth Trend</div>
+          <div class="sparkline"><div class="sparkline-line"></div></div>
+          <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--muted-fg)">
+            <span>Oct 2025</span><span>Nov</span><span>Dec</span><span>Jan 2026</span><span>Feb</span><span>Mar</span>
+          </div>
+          <div class="floating-chat">
+            <span style="font-size:16px;color:var(--muted-fg)">💬</span>
+            <input type="text" placeholder="Ask anything about your finances...">
+            <span class="kbd">⌘K</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTION 2: Spacious Cards — Larger cards, more whitespace, Wealthsimple-inspired -->
+<div id="d2" class="direction">
+  <div class="direction-header">
+    <h2>Direction 2: Spacious Cards</h2>
+    <p>Maximum breathing room. Larger cards with generous padding, fewer items visible at once, but each piece of information gets full visual weight. Wealthsimple-inspired calm.</p>
+    <div class="tags"><span class="tag">Wealthsimple-inspired</span><span class="tag">Maximum whitespace</span><span class="tag">Calm & confident</span></div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/dashboard</div>
+    </div>
+    <div class="app-layout">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Dashboard</div>
+            <div class="page-subtitle">March 2026</div>
+          </div>
+          <button class="btn btn-primary">📤 Import Statement</button>
+        </div>
+
+        <div class="grid-2" style="margin-bottom:32px">
+          <div class="card" style="padding:32px">
+            <div class="card-title">Net Worth</div>
+            <div class="card-value" style="font-size:40px">$487,230</div>
+            <div class="card-trend up" style="margin-top:12px">↑ +$10,942 (+2.3%) from last month</div>
+            <div class="sparkline" style="margin-top:20px;height:64px"><div class="sparkline-line"></div></div>
+          </div>
+          <div class="card" style="padding:32px">
+            <div class="card-title">March Budget</div>
+            <div class="card-value positive" style="font-size:40px">$1,847</div>
+            <div class="card-trend" style="margin-top:12px;color:var(--muted-fg)">remaining of $4,500</div>
+            <div style="margin-top:20px">
+              <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px">
+                <span style="color:var(--muted-fg)">$2,653 spent</span>
+                <span style="color:var(--muted-fg)">$4,500 total</span>
+              </div>
+              <div class="budget-bar-wrap" style="height:12px">
+                <div class="budget-bar safe" style="width:59%;height:100%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-3" style="margin-bottom:32px">
+          <div class="card" style="padding:32px;text-align:center">
+            <div class="card-title">Cash</div>
+            <div class="card-value" style="font-size:24px">$24,014</div>
+            <div class="badge badge-muted" style="margin-top:8px">3 accounts</div>
+          </div>
+          <div class="card" style="padding:32px;text-align:center">
+            <div class="card-title">Investments</div>
+            <div class="card-value" style="font-size:24px">$82,975</div>
+            <div class="badge badge-positive" style="margin-top:8px">↑ +4.1%</div>
+          </div>
+          <div class="card" style="padding:32px;text-align:center">
+            <div class="card-title">Assets</div>
+            <div class="card-value" style="font-size:24px">$380,241</div>
+            <div class="badge badge-muted" style="margin-top:8px">property + business</div>
+          </div>
+        </div>
+
+        <div class="card" style="padding:32px">
+          <div class="card-title" style="margin-bottom:20px">Top Budget Categories</div>
+          <div class="budget-row" style="padding:16px 0">
+            <div class="budget-label">Housing</div>
+            <div class="budget-bar-wrap" style="height:10px"><div class="budget-bar safe" style="width:65%"></div></div>
+            <div class="budget-amounts">$1,300 / $2,000</div>
+            <span class="badge badge-positive">on track</span>
+          </div>
+          <div class="budget-row" style="padding:16px 0">
+            <div class="budget-label">Food</div>
+            <div class="budget-bar-wrap" style="height:10px"><div class="budget-bar warn" style="width:82%"></div></div>
+            <div class="budget-amounts">$574 / $700</div>
+            <span class="badge badge-warning">82%</span>
+          </div>
+          <div class="budget-row" style="padding:16px 0">
+            <div class="budget-label">Entertainment</div>
+            <div class="budget-bar-wrap" style="height:10px"><div class="budget-bar over" style="width:100%"></div></div>
+            <div class="budget-amounts">$210 / $200</div>
+            <span class="badge badge-destructive">over</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTION 3: Light Sidebar -->
+<div id="d3" class="direction">
+  <div class="direction-header">
+    <h2>Direction 3: Light Sidebar</h2>
+    <p>White/light sidebar instead of dark. Softer separation between nav and content. The entire app feels like one cohesive surface with subtle dividers. More approachable, less "tool-like."</p>
+    <div class="tags"><span class="tag">Light theme throughout</span><span class="tag">Softer feel</span><span class="tag">Unified surface</span></div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/dashboard</div>
+    </div>
+    <div class="app-layout">
+      <div class="sidebar-light">
+        <div class="sidebar-brand">nkbaz<span style="color:var(--primary)">finance</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main main-white" style="background:#FAFAFA">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Dashboard</div>
+            <div class="page-subtitle">March 2026</div>
+          </div>
+          <button class="btn btn-primary">📤 Import Statement</button>
+        </div>
+
+        <div class="grid-4">
+          <div class="card">
+            <div class="card-title">Net Worth</div>
+            <div class="card-value">$487,230</div>
+            <div class="card-trend up">↑ +2.3%</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Budget Left</div>
+            <div class="card-value positive">$1,847</div>
+            <div class="card-trend" style="color:var(--muted-fg)">of $4,500</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Spent</div>
+            <div class="card-value">$2,653</div>
+            <div class="card-trend" style="color:var(--muted-fg)">this month</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Cash</div>
+            <div class="card-value">$24,014</div>
+            <div class="card-trend" style="color:var(--muted-fg)">8 accounts</div>
+          </div>
+        </div>
+
+        <div class="grid-2-1">
+          <div class="card">
+            <div class="card-title" style="margin-bottom:16px">Budget — March 2026</div>
+            <div class="budget-row">
+              <div class="budget-label">Housing</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:65%"></div></div>
+              <div class="budget-amounts">$1,300 / $2,000</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Food</div>
+              <div class="budget-bar-wrap"><div class="budget-bar warn" style="width:82%"></div></div>
+              <div class="budget-amounts">$574 / $700</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Transport</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:40%"></div></div>
+              <div class="budget-amounts">$120 / $300</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Entertainment</div>
+              <div class="budget-bar-wrap"><div class="budget-bar over" style="width:105%"></div></div>
+              <div class="budget-amounts">$210 / $200</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title" style="margin-bottom:16px">Net Worth</div>
+            <div class="sparkline" style="height:100px"><div class="sparkline-line"></div></div>
+            <div style="text-align:center;margin-top:16px">
+              <div style="font-size:12px;color:var(--muted-fg)">6 month trend</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTION 4: Compact Nav (Icon Only) -->
+<div id="d4" class="direction">
+  <div class="direction-header">
+    <h2>Direction 4: Compact Navigation</h2>
+    <p>Icon-only sidebar gives maximum real estate to the content area. Tooltips on hover reveal labels. Best for power users who learn the nav quickly. More content, less chrome.</p>
+    <div class="tags"><span class="tag">Maximum content area</span><span class="tag">Icon-only nav</span><span class="tag">Power user</span></div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/dashboard</div>
+    </div>
+    <div class="app-layout">
+      <div class="sidebar-compact">
+        <div class="sidebar-brand">N</div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📊</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Dashboard</div>
+            <div class="page-subtitle">March 2026</div>
+          </div>
+          <button class="btn btn-primary">📤 Import Statement</button>
+        </div>
+
+        <div class="grid-4">
+          <div class="card">
+            <div class="card-title">Net Worth</div>
+            <div class="card-value">$487,230</div>
+            <div class="card-trend up">↑ +2.3%</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Budget Left</div>
+            <div class="card-value positive">$1,847</div>
+            <div class="card-trend" style="color:var(--muted-fg)">of $4,500</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Spent</div>
+            <div class="card-value">$2,653</div>
+            <div class="card-trend" style="color:var(--muted-fg)">this month</div>
+          </div>
+          <div class="card">
+            <div class="card-title">Cash</div>
+            <div class="card-value">$24,014</div>
+            <div class="card-trend" style="color:var(--muted-fg)">8 accounts</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title" style="margin-bottom:16px">Budget — March 2026</div>
+            <div class="budget-row">
+              <div class="budget-label">Housing</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:65%"></div></div>
+              <div class="budget-amounts">$1,300 / $2,000</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Food</div>
+              <div class="budget-bar-wrap"><div class="budget-bar warn" style="width:82%"></div></div>
+              <div class="budget-amounts">$574 / $700</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Transport</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:40%"></div></div>
+              <div class="budget-amounts">$120 / $300</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Entertainment</div>
+              <div class="budget-bar-wrap"><div class="budget-bar over" style="width:105%"></div></div>
+              <div class="budget-amounts">$210 / $200</div>
+            </div>
+            <div class="budget-row">
+              <div class="budget-label">Subscriptions</div>
+              <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:90%"></div></div>
+              <div class="budget-amounts">$89 / $100</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title" style="margin-bottom:16px">Accounts</div>
+            <div class="account-row">
+              <div><div class="account-name">Wealthsimple TFSA</div><div class="account-type">Investment</div></div>
+              <div class="account-balance">$42,350</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Desjardins Chequing</div><div class="account-type">Chequing</div></div>
+              <div class="account-balance">$8,234</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Tangerine Savings</div><div class="account-type">Savings</div></div>
+              <div class="account-balance">$15,780</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Wealthsimple RRSP</div><div class="account-type">Investment</div></div>
+              <div class="account-balance">$28,195</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Wealthsimple Crypto</div><div class="account-type">Crypto</div></div>
+              <div class="account-balance">$12,430</div>
+            </div>
+            <div class="account-row">
+              <div><div class="account-name">Tangerine CC</div><div class="account-type">Credit Card</div></div>
+              <div class="account-balance destructive" style="color:var(--destructive)">-$2,653</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="margin-bottom:8px">Net Worth Trend</div>
+          <div class="sparkline" style="height:64px"><div class="sparkline-line"></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTION 5: Import Flow -->
+<div id="d5" class="direction">
+  <div class="direction-header">
+    <h2>Direction 5: CC Import Flow</h2>
+    <p>The defining experience — three states of the import flow: upload zone, review with exceptions, and completion summary. This is the core bi-weekly interaction.</p>
+    <div class="tags"><span class="tag">Core workflow</span><span class="tag">Exception-only review</span><span class="tag">Completion reward</span></div>
+  </div>
+
+  <div class="diff-note">💡 This shows three sequential states of the same page — Upload → Review → Complete</div>
+
+  <!-- State 1: Upload -->
+  <div class="mockup" style="margin-bottom:32px">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/import — Step 1: Upload</div>
+    </div>
+    <div class="app-layout" style="min-height:400px">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="page-header">
+          <div><div class="page-title">Import CC Statement</div></div>
+        </div>
+        <div class="card">
+          <div class="upload-zone">
+            <div class="upload-icon">📄</div>
+            <div class="upload-text">Drop your CC statement here</div>
+            <div class="upload-hint">Screenshot (PNG, JPG) or PDF — up to 10MB</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- State 2: Review -->
+  <div class="mockup" style="margin-bottom:32px">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/import — Step 2: Review</div>
+    </div>
+    <div class="app-layout" style="min-height:500px">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Review Import</div>
+            <div class="page-subtitle">Tangerine Visa — March 2026</div>
+          </div>
+          <button class="btn btn-primary">Import 18 Transactions</button>
+        </div>
+
+        <div class="progress-steps">
+          <div class="progress-step done">✓ Uploaded</div>
+          <span class="progress-arrow">→</span>
+          <div class="progress-step done">✓ Extracted</div>
+          <span class="progress-arrow">→</span>
+          <div class="progress-step done">✓ Categorized</div>
+          <span class="progress-arrow">→</span>
+          <div class="progress-step current">Review</div>
+        </div>
+
+        <div class="auto-summary">
+          <span>✓ 15 transactions auto-categorized</span>
+          <span class="expand">View all ↓</span>
+        </div>
+
+        <div style="margin-bottom:16px;font-size:14px;font-weight:500;color:var(--foreground)">3 need your review</div>
+
+        <div class="review-card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="merchant">UBER *TRIP MONTREAL</div>
+            <div class="amount">$24.50</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
+            <span style="font-size:13px;color:var(--muted-fg)">AI suggests:</span>
+            <select class="category-select">
+              <option>Transport</option>
+              <option>Entertainment</option>
+              <option>Food</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="review-card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="merchant">DOLLARAMA #1247</div>
+            <div class="amount">$18.75</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
+            <span style="font-size:13px;color:var(--muted-fg)">AI suggests:</span>
+            <select class="category-select">
+              <option>Household</option>
+              <option>Food</option>
+              <option>Entertainment</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="review-card">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="merchant">AMZN MKTP CA*2K7X9</div>
+            <div class="amount">$67.32</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:10px">
+            <span style="font-size:13px;color:var(--muted-fg)">AI suggests:</span>
+            <select class="category-select">
+              <option>Shopping</option>
+              <option>Household</option>
+              <option>Entertainment</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- State 3: Complete -->
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/import — Step 3: Complete</div>
+    </div>
+    <div class="app-layout" style="min-height:450px">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="completion">
+          <div class="completion-check">✓</div>
+          <h3>18 transactions imported</h3>
+          <p>Added to March 2026 budget from Tangerine Visa</p>
+          <div class="completion-stats">
+            <div class="completion-stat">
+              <div class="val">$2,847</div>
+              <div class="label">Total imported</div>
+            </div>
+            <div class="completion-stat">
+              <div class="val">6</div>
+              <div class="label">Categories</div>
+            </div>
+            <div class="completion-stat">
+              <div class="val positive" style="color:var(--positive)">$1,653</div>
+              <div class="label">Budget remaining</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;justify-content:center">
+            <button class="btn btn-primary">View Dashboard</button>
+            <button class="btn btn-outline">Import Another</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTION 6: AI Chat -->
+<div id="d6" class="direction">
+  <div class="direction-header">
+    <h2>Direction 6: AI Chat Interface</h2>
+    <p>The dedicated AI chat page — conversational interface for querying financial data and performing actions. Plus the floating bar that's always accessible.</p>
+    <div class="tags"><span class="tag">ChatGPT-inspired</span><span class="tag">Dual modality</span><span class="tag">Natural language</span></div>
+  </div>
+
+  <div class="mockup" style="margin-bottom:32px">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/chat — Full Page Chat</div>
+    </div>
+    <div class="app-layout" style="min-height:500px">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div style="flex:1;display:flex;flex-direction:column;background:white">
+        <div class="chat-messages">
+          <div class="chat-bubble chat-user">How much did I spend on dining out this month vs last month?</div>
+          <div class="chat-bubble chat-ai">
+            <strong>Dining Out — March vs February:</strong><br><br>
+            <span class="mono">March 2026: $287.50</span> (month in progress)<br>
+            <span class="mono">February 2026: $342.00</span><br><br>
+            You're trending <strong style="color:var(--positive)">16% lower</strong> this month. At the current pace, you'd finish around $310 — within your $350 budget.
+          </div>
+          <div class="chat-bubble chat-user">Add a $45 expense at Costco under Groceries for today</div>
+          <div class="chat-bubble chat-ai">
+            I'll add this expense:<br><br>
+            <div class="card" style="margin:8px 0;padding:12px 16px;display:inline-block">
+              <strong>Costco</strong> — <span class="mono">$45.00</span><br>
+              <span style="font-size:13px;color:var(--muted-fg)">Groceries • March 14, 2026</span>
+            </div>
+            <br><br>
+            <button class="btn btn-primary" style="font-size:13px;padding:6px 12px">Confirm</button>
+            <button class="btn btn-ghost" style="font-size:13px;padding:6px 12px">Cancel</button>
+          </div>
+        </div>
+        <div class="chat-input-wrap">
+          <input class="chat-input" type="text" placeholder="Ask about your finances or perform an action...">
+          <button class="btn btn-primary">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="diff-note">💡 Below: The floating chat bar overlaying the dashboard — for quick queries without leaving your view</div>
+
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/dashboard — Floating Chat Bar (⌘K)</div>
+    </div>
+    <div class="app-layout" style="min-height:350px;position:relative">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main" style="position:relative;filter:blur(1px);opacity:0.5">
+        <div class="page-header">
+          <div><div class="page-title">Dashboard</div></div>
+        </div>
+        <div class="grid-4">
+          <div class="card"><div class="card-title">Net Worth</div><div class="card-value">$487,230</div></div>
+          <div class="card"><div class="card-title">Budget Left</div><div class="card-value">$1,847</div></div>
+          <div class="card"><div class="card-title">Spent</div><div class="card-value">$2,653</div></div>
+          <div class="card"><div class="card-title">Cash</div><div class="card-value">$24,014</div></div>
+        </div>
+      </div>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-30%,-50%);width:480px;background:white;border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,0.15);overflow:hidden;z-index:10">
+        <div style="padding:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+          <span style="color:var(--muted-fg)">💬</span>
+          <input type="text" placeholder="Ask anything..." style="flex:1;border:none;outline:none;font-size:15px;font-family:inherit" value="How much on groceries this month?">
+          <span class="kbd" style="font-size:11px;padding:2px 6px;border-radius:4px;background:var(--muted);color:var(--muted-fg);font-family:'JetBrains Mono',monospace">ESC</span>
+        </div>
+        <div style="padding:16px;font-size:14px;line-height:1.6;color:var(--foreground)">
+          <strong>Groceries — March 2026</strong><br>
+          <span class="mono" style="font-size:15px">$423.50</span> of <span class="mono">$700</span> budget<br>
+          <span style="color:var(--positive);font-size:13px">$276.50 remaining (60% used)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTION 7: Budget View -->
+<div id="d7" class="direction">
+  <div class="direction-header">
+    <h2>Direction 7: Budget Management</h2>
+    <p>The budget view — category groups with progress bars, inline editing of targets, and expense drill-down. This is the "set it and tweak it" view.</p>
+    <div class="tags"><span class="tag">Category groups</span><span class="tag">Inline editing</span><span class="tag">Monthly navigation</span></div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/budget</div>
+    </div>
+    <div class="app-layout" style="min-height:550px">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Budget</div>
+            <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+              <button class="btn btn-ghost" style="padding:4px 8px;font-size:13px">← Feb</button>
+              <span style="font-size:14px;font-weight:500">March 2026</span>
+              <button class="btn btn-ghost" style="padding:4px 8px;font-size:13px">Apr →</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-outline">+ Add Category</button>
+            <button class="btn btn-primary">+ Add Expense</button>
+          </div>
+        </div>
+
+        <div class="grid-3" style="margin-bottom:24px">
+          <div class="card" style="text-align:center">
+            <div class="card-title">Total Budget</div>
+            <div class="card-value" style="font-size:24px">$4,500</div>
+          </div>
+          <div class="card" style="text-align:center">
+            <div class="card-title">Spent</div>
+            <div class="card-value" style="font-size:24px">$2,653</div>
+          </div>
+          <div class="card" style="text-align:center">
+            <div class="card-title">Remaining</div>
+            <div class="card-value positive" style="font-size:24px">$1,847</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <div style="font-size:16px;font-weight:600">Essentials</div>
+            <div style="font-size:13px;color:var(--muted-fg)" class="mono">$1,994 / $3,000</div>
+          </div>
+          <div class="budget-row">
+            <div class="budget-label">Housing</div>
+            <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:65%"></div></div>
+            <div class="budget-amounts">$1,300 / $2,000</div>
+            <span class="badge badge-positive">on track</span>
+          </div>
+          <div class="budget-row">
+            <div class="budget-label">Food</div>
+            <div class="budget-bar-wrap"><div class="budget-bar warn" style="width:82%"></div></div>
+            <div class="budget-amounts">$574 / $700</div>
+            <span class="badge badge-warning">82%</span>
+          </div>
+          <div class="budget-row">
+            <div class="budget-label">Transport</div>
+            <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:40%"></div></div>
+            <div class="budget-amounts">$120 / $300</div>
+            <span class="badge badge-positive">on track</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <div style="font-size:16px;font-weight:600">Lifestyle</div>
+            <div style="font-size:13px;color:var(--muted-fg)" class="mono">$659 / $1,500</div>
+          </div>
+          <div class="budget-row">
+            <div class="budget-label">Entertainment</div>
+            <div class="budget-bar-wrap"><div class="budget-bar over" style="width:100%"></div></div>
+            <div class="budget-amounts">$210 / $200</div>
+            <span class="badge badge-destructive">over $10</span>
+          </div>
+          <div class="budget-row">
+            <div class="budget-label">Subscriptions</div>
+            <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:90%"></div></div>
+            <div class="budget-amounts">$89 / $100</div>
+            <span class="badge badge-positive">on track</span>
+          </div>
+          <div class="budget-row">
+            <div class="budget-label">Shopping</div>
+            <div class="budget-bar-wrap"><div class="budget-bar safe" style="width:30%"></div></div>
+            <div class="budget-amounts">$360 / $1,200</div>
+            <span class="badge badge-positive">on track</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTION 8: Net Worth -->
+<div id="d8" class="direction">
+  <div class="direction-header">
+    <h2>Direction 8: Net Worth View</h2>
+    <p>The detailed net worth page — total with trend, breakdown by category, and historical chart. The "monthly check-in" view for tracking financial growth over time.</p>
+    <div class="tags"><span class="tag">Category breakdown</span><span class="tag">Historical trend</span><span class="tag">Stacked visualization</span></div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-bar">
+      <div class="mockup-dot r"></div><div class="mockup-dot y"></div><div class="mockup-dot g"></div>
+      <div class="mockup-url">localhost:3000/net-worth</div>
+    </div>
+    <div class="app-layout" style="min-height:550px">
+      <div class="sidebar">
+        <div class="sidebar-brand">nkbaz<span>finance</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📊</span><span>Dashboard</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💰</span><span>Budget</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏦</span><span>Accounts</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">🏠</span><span>Assets</span></div>
+        <div class="sidebar-item active"><span class="sidebar-icon">📈</span><span>Net Worth</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">📤</span><span>Import</span></div>
+        <div class="sidebar-item"><span class="sidebar-icon">💬</span><span>AI Chat</span></div>
+        <div class="sidebar-spacer"></div>
+      </div>
+      <div class="main">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Net Worth</div>
+            <div class="page-subtitle">as of March 14, 2026</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" style="font-size:13px">6M</button>
+            <button class="btn btn-outline" style="font-size:13px;font-weight:600">1Y</button>
+            <button class="btn btn-ghost" style="font-size:13px">ALL</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px;padding:32px">
+          <div style="display:flex;align-items:baseline;gap:16px">
+            <div class="card-value" style="font-size:40px">$487,230</div>
+            <div class="card-trend up" style="font-size:15px">↑ +$10,942 (+2.3%)</div>
+          </div>
+          <div class="sparkline" style="height:120px;margin-top:24px"><div class="sparkline-line"></div></div>
+          <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:var(--muted-fg)">
+            <span>Mar 2025</span><span>Jun</span><span>Sep</span><span>Dec</span><span>Mar 2026</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:24px">
+          <div class="card-title" style="margin-bottom:16px">Breakdown by Category</div>
+          <div class="nw-bar">
+            <div class="nw-segment" style="width:5%;background:var(--primary)" title="Cash"></div>
+            <div class="nw-segment" style="width:9%;background:#0EA5E9" title="TFSA"></div>
+            <div class="nw-segment" style="width:6%;background:#8B5CF6" title="RRSP"></div>
+            <div class="nw-segment" style="width:3%;background:#F59E0B" title="Crypto"></div>
+            <div class="nw-segment" style="width:62%;background:var(--positive)" title="Property"></div>
+            <div class="nw-segment" style="width:15%;background:#EC4899" title="Business"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+            <div class="account-row" style="padding:8px 0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:12px;height:12px;border-radius:3px;background:var(--primary)"></div>
+                <span style="font-size:14px">Cash</span>
+              </div>
+              <div style="text-align:right">
+                <div class="account-balance">$24,014</div>
+                <div style="font-size:12px;color:var(--muted-fg)">4.9%</div>
+              </div>
+            </div>
+            <div class="account-row" style="padding:8px 0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:12px;height:12px;border-radius:3px;background:#0EA5E9"></div>
+                <span style="font-size:14px">TFSA</span>
+              </div>
+              <div style="text-align:right">
+                <div class="account-balance">$42,350</div>
+                <div style="font-size:12px;color:var(--muted-fg)">8.7%</div>
+              </div>
+            </div>
+            <div class="account-row" style="padding:8px 0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:12px;height:12px;border-radius:3px;background:#8B5CF6"></div>
+                <span style="font-size:14px">RRSP</span>
+              </div>
+              <div style="text-align:right">
+                <div class="account-balance">$28,195</div>
+                <div style="font-size:12px;color:var(--muted-fg)">5.8%</div>
+              </div>
+            </div>
+            <div class="account-row" style="padding:8px 0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:12px;height:12px;border-radius:3px;background:#F59E0B"></div>
+                <span style="font-size:14px">Crypto</span>
+              </div>
+              <div style="text-align:right">
+                <div class="account-balance">$12,430</div>
+                <div style="font-size:12px;color:var(--muted-fg)">2.6%</div>
+              </div>
+            </div>
+            <div class="account-row" style="padding:8px 0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:12px;height:12px;border-radius:3px;background:var(--positive)"></div>
+                <span style="font-size:14px">Property</span>
+              </div>
+              <div style="text-align:right">
+                <div class="account-balance">$305,000</div>
+                <div style="font-size:12px;color:var(--muted-fg)">62.6%</div>
+              </div>
+            </div>
+            <div class="account-row" style="padding:8px 0">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div style="width:12px;height:12px;border-radius:3px;background:#EC4899"></div>
+                <span style="font-size:14px">Business</span>
+              </div>
+              <div style="text-align:right">
+                <div class="account-balance">$75,241</div>
+                <div style="font-size:12px;color:var(--muted-fg)">15.4%</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function showDirection(id) {
+  document.querySelectorAll('.direction').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  event.target.classList.add('active');
+  window.scrollTo(0, 0);
+}
+</script>
+</body>
+</html>

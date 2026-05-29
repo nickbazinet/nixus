@@ -1,0 +1,113 @@
+/*
+ * AIDemo animation (Story 3.2).
+ *
+ * Pure CSS keyframes on real DOM elements. No Lottie, no video, no GIF.
+ * The architecture decision (step 4) calls this out explicitly: smaller
+ * payload, fully styleable, accessible by default, and a clean
+ * `@media (prefers-reduced-motion: reduce)` fallback that flips the
+ * animation off without losing any of the static composition.
+ *
+ * The animation is gated on `.ai-demo--animated` so the figure renders
+ * the static "after" composition immediately on first paint and only
+ * starts moving once the IntersectionObserver in `AIDemo.tsx` flips the
+ * class on. That keeps animation cost off the critical path and stops
+ * the loop from running while the demo is offscreen.
+ *
+ * Total runtime ~3.6s before the loop pause, with a 5s loop window so
+ * the eye gets a beat of stillness between cycles.
+ */
+
+/* The scan line is a thin horizontal bar that travels down the
+ * statement column, "reading" each row. We animate `top` rather than
+ * `transform: translateY` because the parent uses CSS grid for the row
+ * spacing and we want the bar to land exactly on a row's vertical
+ * center regardless of font metrics. */
+@keyframes ai-demo-scan {
+  0% {
+    top: 0;
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  70% {
+    top: calc(100% - 2px);
+    opacity: 1;
+  }
+  85% {
+    opacity: 0;
+  }
+  100% {
+    top: calc(100% - 2px);
+    opacity: 0;
+  }
+}
+
+/* The categorized rows fade in one-by-one as the scan passes. The 5
+ * rows share this single keyframe and stagger via `animation-delay`
+ * inline styles in the JSX so the timing is co-located with the data. */
+@keyframes ai-demo-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The summary banner pops in last, after every transaction has landed.
+ * A slightly slower 0.6s curve so it reads as a "result" rather than
+ * another row. */
+@keyframes ai-demo-summary {
+  0%,
+  60% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Animated state — only applied once the IO flips it on. Each animation
+ * uses a 5s cycle so they all loop in sync. The 1.4s tail of stillness
+ * (5s - 3.6s of motion) is the deliberate "pause" before the loop. */
+.ai-demo--animated .ai-demo__scan-line {
+  animation: ai-demo-scan 5s ease-in-out infinite;
+}
+
+.ai-demo--animated .ai-demo__txn {
+  opacity: 0;
+  animation: ai-demo-fade-in 5s ease-out infinite;
+}
+
+.ai-demo--animated .ai-demo__summary {
+  opacity: 0;
+  animation: ai-demo-summary 5s ease-out infinite;
+}
+
+/* Reduced-motion fallback (NFR-W4).
+ *
+ * Disable every animation and force the "final state" visible. We use
+ * `!important` to override the `animation` shorthand even when the
+ * `--animated` class is present, so the visitor sees the fully
+ * categorized output immediately and statically. The composition still
+ * communicates the value prop without any motion. */
+@media (prefers-reduced-motion: reduce) {
+  .ai-demo--animated .ai-demo__scan-line,
+  .ai-demo .ai-demo__scan-line {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+  .ai-demo--animated .ai-demo__txn,
+  .ai-demo .ai-demo__txn,
+  .ai-demo--animated .ai-demo__summary,
+  .ai-demo .ai-demo__summary {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

@@ -1,0 +1,25 @@
+import { createFileRoute } from "@tanstack/react-router";
+
+import { AIDemo } from "@/components/AIDemo";
+import { DownloadBanner } from "@/components/DownloadBanner";
+import { FAQ } from "@/components/FAQ";
+import { FeatureGrid } from "@/components/FeatureGrid";
+import { Hero } from "@/components/Hero";
+import { buildMeta } from "@/lib/meta";
+
+export const Route = createFileRoute("/")({
+  head: () => buildMeta({ locale: "en" }),
+  component: HomePage,
+});
+
+function HomePage() {
+  return (
+    <>
+      <Hero />
+      <DownloadBanner />
+      <AIDemo />
+      <FeatureGrid />
+      <FAQ />
+    </>
+  );
+}

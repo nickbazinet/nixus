@@ -1,0 +1,5 @@
+# robots.txt for Nixus
+User-agent: *
+Allow: /
+
+Sitemap: https://nixus.app/sitemap.xml

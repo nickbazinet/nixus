@@ -1,0 +1,9 @@
+{
+  "name": "nkbaz-finance",
+  "private": true,
+  "scripts": {
+    "desktop:dev": "pnpm --filter @nkbaz/desktop dev",
+    "desktop:build": "pnpm --filter @nkbaz/desktop build",
+    "desktop:tauri": "pnpm --filter @nkbaz/desktop tauri"
+  }
+}

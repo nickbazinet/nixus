@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nixus Marketing Site — Hero Direction Mockups</title>
+<style>
+  /* ---------- Locked design tokens (inherited from desktop UX spec) ---------- */
+  :root {
+    --background: #ffffff;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --foreground: #0f172a;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+    --primary: #0d9488;
+    --primary-hover: #0f766e;
+    --accent: #f0fdfa;
+    --positive: #059669;
+    --warning: #f59e0b;
+    --destructive: #f43f5e;
+    --slate-50: #f8fafc;
+    --slate-200: #e2e8f0;
+    --slate-300: #cbd5e1;
+    --slate-700: #334155;
+    --slate-900: #0f172a;
+
+    --radius: 0.5rem;
+    --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.05);
+    --shadow-screenshot: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.08);
+    --ring-screenshot: 1px solid var(--slate-200);
+
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    color: var(--foreground);
+    background: var(--background);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.5;
+  }
+
+  a { color: inherit; text-decoration: none; }
+
+  /* ---------- Showcase chrome ---------- */
+  .doc-header {
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    background: var(--slate-50);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(8px);
+    background-color: rgba(248, 250, 252, 0.85);
+  }
+  .doc-header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .doc-header p {
+    margin: 0;
+    color: var(--muted-foreground);
+    font-size: 14px;
+  }
+  .doc-nav {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .doc-nav a {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    padding: 6px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    transition: all 0.15s;
+  }
+  .doc-nav a:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: var(--accent);
+  }
+
+  .variant-label {
+    background: var(--slate-900);
+    color: white;
+    padding: 32px;
+    text-align: center;
+  }
+  .variant-label .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--primary);
+    margin-bottom: 8px;
+  }
+  .variant-label h2 {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0 0 12px;
+    letter-spacing: -0.02em;
+  }
+  .variant-label p {
+    margin: 0 auto;
+    max-width: 640px;
+    color: var(--slate-300);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .variant-trade {
+    margin-top: 20px;
+    padding: 16px 20px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius);
+    text-align: left;
+    max-width: 640px;
+    margin-left: auto;
+    margin-right: auto;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .variant-trade strong { color: white; }
+  .variant-trade .pro { color: #6ee7b7; }
+  .variant-trade .con { color: #fda4af; }
+
+  /* ---------- Common page chrome ---------- */
+  .page {
+    background: var(--background);
+  }
+  .container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+  .header {
+    border-bottom: 1px solid var(--border);
+    padding: 16px 0;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(8px);
+  }
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+  }
+  .logo-mark {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--primary), #14b8a6);
+  }
+  .nav-links {
+    display: flex;
+    gap: 28px;
+    align-items: center;
+  }
+  .nav-link {
+    font-size: 14px;
+    color: var(--muted-foreground);
+    transition: color 0.15s;
+  }
+  .nav-link:hover { color: var(--foreground); }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    border-radius: var(--radius);
+    font-size: 15px;
+    font-weight: 500;
+    transition: all 0.15s;
+    cursor: pointer;
+    border: 1px solid transparent;
+    font-family: inherit;
+    line-height: 1;
+  }
+  .btn-sm { padding: 8px 14px; font-size: 13px; }
+  .btn-lg { padding: 16px 28px; font-size: 16px; }
+  .btn-primary {
+    background: var(--primary);
+    color: white;
+  }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-secondary {
+    background: white;
+    border-color: var(--border);
+    color: var(--foreground);
+  }
+  .btn-secondary:hover {
+    border-color: var(--slate-300);
+    background: var(--slate-50);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted-foreground);
+  }
+  .btn-ghost:hover { color: var(--foreground); }
+  .alt-os {
+    display: block;
+    font-size: 13px;
+    color: var(--muted-foreground);
+    margin-top: 12px;
+  }
+  .alt-os a {
+    color: var(--primary);
+    border-bottom: 1px dotted currentColor;
+  }
+
+  /* ---------- AI Demo component (shared across variants) ---------- */
+  .demo {
+    border: var(--ring-screenshot);
+    border-radius: 12px;
+    background: white;
+    box-shadow: var(--shadow-screenshot);
+    overflow: hidden;
+  }
+  .demo-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--slate-50);
+    border-bottom: 1px solid var(--border);
+  }
+  .demo-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--slate-300);
+  }
+  .demo-dot.r { background: #ff5f57; }
+  .demo-dot.y { background: #ffbd2e; }
+  .demo-dot.g { background: #28c840; }
+  .demo-title {
+    font-size: 12px;
+    color: var(--muted-foreground);
+    margin-left: 8px;
+  }
+  .demo-body {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 0;
+    background: var(--background);
+  }
+  .demo-statement {
+    padding: 18px;
+    background: var(--slate-50);
+    border-right: 1px solid var(--border);
+  }
+  .demo-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  .statement-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--slate-700);
+  }
+  .statement-card .sl-bank { color: var(--slate-900); font-weight: 600; }
+  .statement-card .sl-line { display: flex; justify-content: space-between; }
+  .statement-card .sl-line.scan {
+    background: var(--accent);
+    margin: 0 -14px;
+    padding: 2px 14px;
+    animation: scan 4s infinite;
+  }
+  @keyframes scan {
+    0%, 100% { background: transparent; }
+    50% { background: var(--accent); }
+  }
+
+  .demo-output {
+    padding: 18px;
+  }
+  .txn-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .txn {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    transition: border-color 0.2s;
+  }
+  .txn:hover { border-color: var(--slate-300); }
+  .txn-name { color: var(--slate-900); font-weight: 500; }
+  .txn-amount {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--slate-700);
+    font-weight: 500;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--accent);
+    color: var(--primary);
+    white-space: nowrap;
+  }
+  .badge.gro { background: #dcfce7; color: #15803d; }
+  .badge.din { background: #fef3c7; color: #b45309; }
+  .badge.gas { background: #e0e7ff; color: #3730a3; }
+  .badge.sub { background: #f3e8ff; color: #6b21a8; }
+  .demo-summary {
+    margin-top: 14px;
+    padding: 12px;
+    background: var(--accent);
+    border-radius: 8px;
+    font-size: 13px;
+    color: var(--primary);
+    text-align: center;
+    font-weight: 500;
+  }
+  .demo-summary .strong {
+    color: var(--slate-900);
+    font-family: var(--font-mono);
+    font-weight: 600;
+  }
+
+  /* ---------- VARIANT A: Linear-style split hero ---------- */
+  .va-hero {
+    background: linear-gradient(180deg, var(--slate-50) 0%, white 100%);
+    padding: 96px 0 80px;
+  }
+  .va-hero-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap: 64px;
+    align-items: center;
+  }
+  .va-hero-text { max-width: 520px; }
+  .va-eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .va-headline {
+    font-size: 56px;
+    line-height: 1.05;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    margin: 0 0 20px;
+  }
+  .va-subhead {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+    margin: 0 0 32px;
+  }
+  .va-cta-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .va-demo-wrap {
+    transform: scale(0.95);
+    transform-origin: center right;
+  }
+
+  /* ---------- VARIANT B: Raycast-style centered, demo below ---------- */
+  .vb-hero {
+    background: linear-gradient(180deg, var(--slate-50) 0%, white 100%);
+    padding: 120px 0 0;
+    text-align: center;
+  }
+  .vb-hero-text {
+    max-width: 760px;
+    margin: 0 auto 64px;
+  }
+  .vb-headline {
+    font-size: 64px;
+    line-height: 1.04;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin: 0 0 24px;
+  }
+  .vb-subhead {
+    font-size: 20px;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+    margin: 0 0 40px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .vb-cta-row {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .vb-demo-section {
+    padding: 0 0 80px;
+  }
+  .vb-demo-wrap {
+    max-width: 1024px;
+    margin: 0 auto;
+  }
+
+  /* ---------- VARIANT C: Demo-as-hero ---------- */
+  .vc-hero {
+    background: linear-gradient(180deg, var(--slate-900) 0%, #1e293b 100%);
+    color: white;
+    padding: 80px 0 64px;
+    position: relative;
+    overflow: hidden;
+  }
+  .vc-hero-glow {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80%;
+    height: 80%;
+    background: radial-gradient(ellipse at center, rgba(13, 148, 136, 0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .vc-content {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+  }
+  .vc-headline {
+    font-size: 48px;
+    line-height: 1.05;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    margin: 0 auto 16px;
+    max-width: 720px;
+  }
+  .vc-subhead {
+    font-size: 18px;
+    line-height: 1.55;
+    color: rgba(255, 255, 255, 0.7);
+    margin: 0 auto 32px;
+    max-width: 560px;
+  }
+  .vc-cta-row {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 56px;
+    flex-wrap: wrap;
+  }
+  .vc-cta-row .btn-primary {
+    background: var(--primary);
+  }
+  .vc-cta-row .btn-secondary {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: white;
+  }
+  .vc-cta-row .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .vc-demo-wrap {
+    max-width: 960px;
+    margin: 0 auto;
+    box-shadow: 0 24px 72px rgba(0, 0, 0, 0.4);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .vc-alt-os {
+    color: rgba(255, 255, 255, 0.5);
+  }
+  .vc-alt-os a {
+    color: rgba(255, 255, 255, 0.85);
+    border-bottom-color: rgba(255, 255, 255, 0.4);
+  }
+
+  /* ---------- Below-the-fold canvas (shared, simplified preview) ---------- */
+  .canvas {
+    background: white;
+    border-bottom: 1px solid var(--border);
+  }
+  .canvas-section {
+    padding: 64px 0;
+    border-top: 1px solid var(--border);
+  }
+  .canvas-section.alt { background: var(--slate-50); }
+  .canvas-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--primary);
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .canvas-h {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-align: center;
+    margin: 0 0 12px;
+  }
+  .canvas-sub {
+    text-align: center;
+    color: var(--muted-foreground);
+    font-size: 17px;
+    margin: 0 auto 48px;
+    max-width: 540px;
+  }
+  .features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .feature {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+  .feature-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+    font-weight: 600;
+  }
+  .feature h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 8px;
+  }
+  .feature p {
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--muted-foreground);
+    margin: 0;
+  }
+  .footer {
+    padding: 48px 0 32px;
+    border-top: 1px solid var(--border);
+    background: var(--slate-50);
+    text-align: center;
+    font-size: 13px;
+    color: var(--muted-foreground);
+  }
+</style>
+</head>
+<body>
+
+<header class="doc-header">
+  <h1>Nixus Marketing Site — Hero Direction Mockups</h1>
+  <p>Three hero treatments using the locked design tokens. Same content, same components — only the hero composition varies. Below each hero, a simplified shared canvas (features → footer) shows context.</p>
+  <nav class="doc-nav">
+    <a href="#variant-a">A — Linear-style split</a>
+    <a href="#variant-b">B — Raycast-style centered</a>
+    <a href="#variant-c">C — Demo-as-hero (dark)</a>
+  </nav>
+</header>
+
+<!-- ============================================================
+     VARIANT A: Linear-style split hero
+============================================================ -->
+<section id="variant-a">
+  <div class="variant-label">
+    <div class="eyebrow">Variant A</div>
+    <h2>Linear-style split hero</h2>
+    <p>Headline + subhead + dual CTA on the left, idle preview of the AI demo on the right. Tight, text-forward, animation as supporting element. Closest to Linear's marketing pattern.</p>
+    <div class="variant-trade">
+      <p><strong class="pro">Strengths:</strong> Headline does the heavy lifting; demo is visible above the fold but doesn't dominate. Great for the 5-second scanner. Clear hierarchy.</p>
+      <p><strong class="con">Trade-offs:</strong> Demo is small at this size — the magic moment is somewhat muted until the visitor scrolls into the full demo section below. Bets on copy carrying the pitch.</p>
+    </div>
+  </div>
+
+  <div class="page">
+    <header class="header">
+      <div class="container header-inner">
+        <div class="logo"><div class="logo-mark"></div>Nixus</div>
+        <nav class="nav-links">
+          <a class="nav-link" href="#">Features</a>
+          <a class="nav-link" href="#">FAQ</a>
+          <a class="btn btn-primary btn-sm" href="#">Download for macOS</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="va-hero">
+      <div class="container">
+        <div class="va-hero-grid">
+          <div class="va-hero-text">
+            <div class="va-eyebrow">Personal finance, automated</div>
+            <h1 class="va-headline">Your spreadsheet&rsquo;s replacement, finally.</h1>
+            <p class="va-subhead">Drop in a credit card statement. Watch it categorize itself. See your full financial picture &mdash; budget, accounts, TFSA, RRSP, crypto, real estate &mdash; in one place.</p>
+            <div class="va-cta-row">
+              <a class="btn btn-primary btn-lg" href="#">Download for macOS</a>
+              <a class="btn btn-secondary btn-lg" href="#">See how it works</a>
+            </div>
+            <div class="alt-os">Or download for <a href="#">Windows</a></div>
+          </div>
+          <div class="va-demo-wrap">
+            <div class="demo">
+              <div class="demo-titlebar">
+                <div class="demo-dot r"></div><div class="demo-dot y"></div><div class="demo-dot g"></div>
+                <div class="demo-title">Nixus &mdash; AI Import</div>
+              </div>
+              <div class="demo-body">
+                <div class="demo-statement">
+                  <div class="demo-section-title">Statement</div>
+                  <div class="statement-card">
+                    <div class="sl-bank">Tangerine Money-Back CC</div>
+                    <div style="margin: 8px 0 6px; color: var(--muted-foreground); font-size: 10px;">March 2026</div>
+                    <div class="sl-line"><span>COSTCO #482</span><span>$184.32</span></div>
+                    <div class="sl-line scan"><span>TIM HORTONS</span><span>$6.45</span></div>
+                    <div class="sl-line"><span>PETRO-CANADA</span><span>$72.10</span></div>
+                    <div class="sl-line"><span>NETFLIX.COM</span><span>$18.99</span></div>
+                  </div>
+                </div>
+                <div class="demo-output">
+                  <div class="demo-section-title">Categorized</div>
+                  <div class="txn-list">
+                    <div class="txn"><div class="txn-name">Costco</div><div class="txn-amount">$184.32</div><span class="badge gro">Groceries</span></div>
+                    <div class="txn"><div class="txn-name">Tim Hortons</div><div class="txn-amount">$6.45</div><span class="badge din">Dining</span></div>
+                    <div class="txn"><div class="txn-name">Petro-Canada</div><div class="txn-amount">$72.10</div><span class="badge gas">Gas</span></div>
+                    <div class="txn"><div class="txn-name">Netflix</div><div class="txn-amount">$18.99</div><span class="badge sub">Subs</span></div>
+                  </div>
+                  <div class="demo-summary">
+                    <span class="strong">+$281.86</span> across 4 categories
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- shared canvas below hero -->
+    <section class="canvas-section">
+      <div class="container">
+        <div class="canvas-eyebrow">What&rsquo;s inside</div>
+        <h2 class="canvas-h">Everything tracked. Nothing manual.</h2>
+        <p class="canvas-sub">Built around the data entry you actually hate &mdash; and removes it.</p>
+        <div class="features">
+          <div class="feature">
+            <div class="feature-icon">AI</div>
+            <h3>AI statement import</h3>
+            <p>Upload a CC screenshot or PDF, get categorized expenses in seconds.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">$</div>
+            <h3>Budget builder</h3>
+            <p>Monthly budgets with category groups. See where you stand at a glance.</p>
+          </div>
+          <div class="feature">
+            <div class="feature-icon">&#8721;</div>
+            <h3>Net worth tracking</h3>
+            <p>Cash, TFSA, RRSP, crypto, real estate, business equity &mdash; one view.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <footer class="footer">
+      <div class="container">Built by a real person, in Canada. &middot; <a href="#" style="color: var(--primary);">GitHub</a> &middot; <a href="#" style="color: var(--primary);">hello@nixus.app</a></div>
+    </footer>
+  </div>
+</section>
+
+<!-- ============================================================
+     VARIANT B: Raycast-style centered, demo below
+============================================================ -->
+<section id="variant-b">
+  <div class="variant-label">
+    <div class="eyebrow">Variant B</div>
+    <h2>Raycast-style centered, full demo below</h2>
+    <p>Centered hero with a punchy headline, single primary CTA, and a small alt-OS link. The full AI demo gets its own section directly below the hero &mdash; bigger, full-bleed, the moment it deserves.</p>
+    <div class="variant-trade">
+      <p><strong class="pro">Strengths:</strong> Hero feels confident and composed. Demo gets full real estate when it appears, hitting harder. Single CTA reduces decision friction. Best emotional arc.</p>
+      <p><strong class="con">Trade-offs:</strong> Demo is below the fold &mdash; visitors who don't scroll past the hero never see the magic. Relies more on the headline to earn the scroll.</p>
+    </div>
+  </div>
+
+  <div class="page">
+    <header class="header">
+      <div class="container header-inner">
+        <div class="logo"><div class="logo-mark"></div>Nixus</div>
+        <nav class="nav-links">
+          <a class="nav-link" href="#">Features</a>
+          <a class="nav-link" href="#">FAQ</a>
+          <a class="btn btn-primary btn-sm" href="#">Download for macOS</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="vb-hero">
+      <div class="container">
+        <div class="vb-hero-text">
+          <h1 class="vb-headline">Your spreadsheet&rsquo;s replacement, finally.</h1>
+          <p class="vb-subhead">Drop in a credit card statement. Watch it categorize itself. See your full financial picture in one place &mdash; budget, accounts, assets, net worth.</p>
+          <div class="vb-cta-row">
+            <a class="btn btn-primary btn-lg" href="#">Download for macOS</a>
+          </div>
+          <div class="alt-os">Or download for <a href="#">Windows</a></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="vb-demo-section">
+      <div class="container">
+        <div class="vb-demo-wrap">
+          <div class="demo">
+            <div class="demo-titlebar">
+              <div class="demo-dot r"></div><div class="demo-dot y"></div><div class="demo-dot g"></div>
+              <div class="demo-title">Nixus &mdash; AI Import</div>
+            </div>
+            <div class="demo-body">
+              <div class="demo-statement">
+                <div class="demo-section-title">Statement</div>
+                <div class="statement-card">
+                  <div class="sl-bank">Tangerine Money-Back CC</div>
+                  <div style="margin: 8px 0 6px; color: var(--muted-foreground); font-size: 10px;">March 2026</div>
+                  <div class="sl-line"><span>COSTCO #482</span><span>$184.32</span></div>
+                  <div class="sl-line scan"><span>TIM HORTONS</span><span>$6.45</span></div>
+                  <div class="sl-line"><span>PETRO-CANADA</span><span>$72.10</span></div>
+                  <div class="sl-line"><span>NETFLIX.COM</span><span>$18.99</span></div>
+                  <div class="sl-line"><span>WEALTHSIMPLE</span><span>$50.00</span></div>
+                </div>
+              </div>
+              <div class="demo-output">
+                <div class="demo-section-title">Categorized</div>
+                <div class="txn-list">
+                  <div class="txn"><div class="txn-name">Costco</div><div class="txn-amount">$184.32</div><span class="badge gro">Groceries</span></div>
+                  <div class="txn"><div class="txn-name">Tim Hortons</div><div class="txn-amount">$6.45</div><span class="badge din">Dining Out</span></div>
+                  <div class="txn"><div class="txn-name">Petro-Canada</div><div class="txn-amount">$72.10</div><span class="badge gas">Gas</span></div>
+                  <div class="txn"><div class="txn-name">Netflix</div><div class="txn-amount">$18.99</div><span class="badge sub">Subscriptions</span></div>
+                  <div class="txn"><div class="txn-name">Wealthsimple</div><div class="txn-amount">$50.00</div><span class="badge sub">Investing</span></div>
+                </div>
+                <div class="demo-summary">
+                  <span class="strong">5 transactions</span> categorized in 2.4 seconds
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="canvas-section alt">
+      <div class="container">
+        <div class="canvas-eyebrow">What&rsquo;s inside</div>
+        <h2 class="canvas-h">Everything tracked. Nothing manual.</h2>
+        <p class="canvas-sub">Built around the data entry you actually hate &mdash; and removes it.</p>
+        <div class="features">
+          <div class="feature"><div class="feature-icon">AI</div><h3>AI statement import</h3><p>Upload a CC screenshot or PDF, get categorized expenses in seconds.</p></div>
+          <div class="feature"><div class="feature-icon">$</div><h3>Budget builder</h3><p>Monthly budgets with category groups. See where you stand at a glance.</p></div>
+          <div class="feature"><div class="feature-icon">&#8721;</div><h3>Net worth tracking</h3><p>Cash, TFSA, RRSP, crypto, real estate, business equity &mdash; one view.</p></div>
+        </div>
+      </div>
+    </section>
+    <footer class="footer">
+      <div class="container">Built by a real person, in Canada. &middot; <a href="#" style="color: var(--primary);">GitHub</a> &middot; <a href="#" style="color: var(--primary);">hello@nixus.app</a></div>
+    </footer>
+  </div>
+</section>
+
+<!-- ============================================================
+     VARIANT C: Demo-as-hero (dark)
+============================================================ -->
+<section id="variant-c">
+  <div class="variant-label">
+    <div class="eyebrow">Variant C</div>
+    <h2>Demo-as-hero (dark backdrop)</h2>
+    <p>The demo IS the hero, on a dark slate backdrop that puts maximum focus on the categorization moment. Headline and CTA live above the demo. Most aggressive bet on the demo as the conversion lever.</p>
+    <div class="variant-trade">
+      <p><strong class="pro">Strengths:</strong> Maximum craft signal &mdash; the demo gets premiere placement. Dark backdrop makes the screenshot pop and feels editorial. Strongest first impression.</p>
+      <p><strong class="con">Trade-offs:</strong> Heaviest first paint (large demo above the fold). Dark hero diverges most from the desktop app's calm-white aesthetic &mdash; weakens visual continuity. Risk of over-promising if the actual app feels less polished.</p>
+    </div>
+  </div>
+
+  <div class="page">
+    <header class="header" style="background: rgba(15, 23, 42, 0.85); border-bottom-color: rgba(255,255,255,0.08);">
+      <div class="container header-inner">
+        <div class="logo" style="color: white;"><div class="logo-mark"></div>Nixus</div>
+        <nav class="nav-links">
+          <a class="nav-link" href="#" style="color: rgba(255,255,255,0.7);">Features</a>
+          <a class="nav-link" href="#" style="color: rgba(255,255,255,0.7);">FAQ</a>
+          <a class="btn btn-primary btn-sm" href="#">Download for macOS</a>
+        </nav>
+      </div>
+    </header>
+
+    <section class="vc-hero">
+      <div class="vc-hero-glow"></div>
+      <div class="container vc-content">
+        <h1 class="vc-headline">Watch a credit card statement become a budget.</h1>
+        <p class="vc-subhead">In three seconds, with no setup. The personal finance app that ate your spreadsheet.</p>
+        <div class="vc-cta-row">
+          <a class="btn btn-primary btn-lg" href="#">Download for macOS</a>
+          <a class="btn btn-secondary btn-lg" href="#">How it works</a>
+        </div>
+        <div class="vc-demo-wrap">
+          <div class="demo">
+            <div class="demo-titlebar">
+              <div class="demo-dot r"></div><div class="demo-dot y"></div><div class="demo-dot g"></div>
+              <div class="demo-title">Nixus &mdash; AI Import</div>
+            </div>
+            <div class="demo-body">
+              <div class="demo-statement">
+                <div class="demo-section-title">Statement</div>
+                <div class="statement-card">
+                  <div class="sl-bank">Tangerine Money-Back CC</div>
+                  <div style="margin: 8px 0 6px; color: var(--muted-foreground); font-size: 10px;">March 2026</div>
+                  <div class="sl-line"><span>COSTCO #482</span><span>$184.32</span></div>
+                  <div class="sl-line scan"><span>TIM HORTONS</span><span>$6.45</span></div>
+                  <div class="sl-line"><span>PETRO-CANADA</span><span>$72.10</span></div>
+                  <div class="sl-line"><span>NETFLIX.COM</span><span>$18.99</span></div>
+                  <div class="sl-line"><span>WEALTHSIMPLE</span><span>$50.00</span></div>
+                </div>
+              </div>
+              <div class="demo-output">
+                <div class="demo-section-title">Categorized</div>
+                <div class="txn-list">
+                  <div class="txn"><div class="txn-name">Costco</div><div class="txn-amount">$184.32</div><span class="badge gro">Groceries</span></div>
+                  <div class="txn"><div class="txn-name">Tim Hortons</div><div class="txn-amount">$6.45</div><span class="badge din">Dining Out</span></div>
+                  <div class="txn"><div class="txn-name">Petro-Canada</div><div class="txn-amount">$72.10</div><span class="badge gas">Gas</span></div>
+                  <div class="txn"><div class="txn-name">Netflix</div><div class="txn-amount">$18.99</div><span class="badge sub">Subscriptions</span></div>
+                  <div class="txn"><div class="txn-name">Wealthsimple</div><div class="txn-amount">$50.00</div><span class="badge sub">Investing</span></div>
+                </div>
+                <div class="demo-summary">
+                  <span class="strong">5 transactions</span> categorized in 2.4 seconds
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="alt-os vc-alt-os" style="margin-top: 24px;">Or download for <a href="#">Windows</a></div>
+      </div>
+    </section>
+
+    <section class="canvas-section">
+      <div class="container">
+        <div class="canvas-eyebrow">What&rsquo;s inside</div>
+        <h2 class="canvas-h">Everything tracked. Nothing manual.</h2>
+        <p class="canvas-sub">Built around the data entry you actually hate &mdash; and removes it.</p>
+        <div class="features">
+          <div class="feature"><div class="feature-icon">AI</div><h3>AI statement import</h3><p>Upload a CC screenshot or PDF, get categorized expenses in seconds.</p></div>
+          <div class="feature"><div class="feature-icon">$</div><h3>Budget builder</h3><p>Monthly budgets with category groups. See where you stand at a glance.</p></div>
+          <div class="feature"><div class="feature-icon">&#8721;</div><h3>Net worth tracking</h3><p>Cash, TFSA, RRSP, crypto, real estate, business equity &mdash; one view.</p></div>
+        </div>
+      </div>
+    </section>
+    <footer class="footer">
+      <div class="container">Built by a real person, in Canada. &middot; <a href="#" style="color: var(--primary);">GitHub</a> &middot; <a href="#" style="color: var(--primary);">hello@nixus.app</a></div>
+    </footer>
+  </div>
+</section>
+
+</body>
+</html>

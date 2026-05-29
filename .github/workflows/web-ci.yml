@@ -1,0 +1,129 @@
+# Marketing site CI for apps/web/.
+#
+# - Triggers on PRs and pushes-to-default-branch that touch the web app, the
+#   shared package, this workflow, or the lockfile.
+# - Runs install/typecheck/test/build, then gates on Lighthouse CI scores
+#   (Performance / Accessibility / Best Practices / SEO must each be >= 0.9).
+# - On push-to-default-branch, kicks off a STUB deploy job. Story 1.5 fills
+#   that job in with the real S3 + CloudFront pipeline.
+#
+# Note on LHCI_GITHUB_APP_TOKEN: optional. Lighthouse CI runs fine without it;
+# the token only enables the dedicated GitHub status check that links to the
+# results. Configure the GitHub App later if desired
+# (https://github.com/apps/lighthouse-ci) and add the token as a repo secret.
+
+name: Web CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - "packages/shared/**"
+      - ".github/workflows/web-ci.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches: [master, main]
+    paths:
+      - "apps/web/**"
+      - "packages/shared/**"
+      - ".github/workflows/web-ci.yml"
+      - "pnpm-lock.yaml"
+
+# Cancel in-flight runs when a new commit is pushed to the same PR/branch.
+concurrency:
+  group: web-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (typecheck, test, build, Lighthouse)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint web app
+        run: pnpm --filter @nkbaz/web lint
+
+      - name: Generate route tree
+        run: pnpm --filter @nkbaz/web generate
+
+      - name: Typecheck shared package
+        run: pnpm --filter @nkbaz/shared typecheck
+
+      - name: Typecheck web app
+        run: pnpm --filter @nkbaz/web typecheck
+
+      - name: Unit tests
+        run: pnpm --filter @nkbaz/web test
+
+      - name: Build web app
+        run: pnpm --filter @nkbaz/web build
+
+      - name: Lighthouse CI
+        # Uses staticDistDir from apps/web/lighthouserc.json to serve the built
+        # output locally — no real server required. Gates on the four category
+        # scores being >= 0.9.
+        # Runs from apps/web/ so the relative `./.output/public` resolves.
+        working-directory: apps/web
+        run: pnpm dlx @lhci/cli@0.14.x autorun --config=./lighthouserc.json
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+  deploy:
+    name: Deploy (stub)
+    needs: verify
+    # Only run on push to the default branch, never on PRs.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web app
+        run: pnpm --filter @nkbaz/web build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to S3
+        run: aws s3 sync apps/web/.output/public/ s3://nixus-web-cdn --delete
+
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id E691EEFVS0K6N --paths "/*"

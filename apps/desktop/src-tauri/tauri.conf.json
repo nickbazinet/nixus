@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nixus",
+  "version": "0.1.20",
+  "identifier": "com.nbazinet.nkbaz-finance",
+  "build": {
+    "beforeDevCommand": "pnpm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Nixus",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 680
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4RjlEQTU2MDUxOERCQjAKUldTdzJ4Z0ZWdHI1S0JHMDJMUEgvbEFMaVk0eHB5WitvbGNJYWpVTlE5MGNJUVZNTDdqeE9RMGQK",
+      "endpoints": [
+        "https://github.com/nickbazinet/nixus/releases/latest/download/latest.json"
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

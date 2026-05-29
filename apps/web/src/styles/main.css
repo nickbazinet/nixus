@@ -1,0 +1,56 @@
+@import "tailwindcss";
+@import "@nkbaz/shared/styles/tokens.css";
+
+/* Scan the workspace-linked @nkbaz/shared package so Tailwind generates
+ * the utilities used inside its shadcn primitives (Button, DropdownMenu,
+ * etc.). pnpm symlinks ./node_modules/@nkbaz/shared, but Tailwind v4
+ * ignores node_modules by default — point it at the real source path. */
+@source "../../../../packages/shared/src/**/*.{ts,tsx}";
+
+/* Marketing-site-specific extensions.
+ *
+ * Story 3.1 (Hero composition) introduces the Display XL / Display L /
+ * Lead typography scale used by the centered hero. Tailwind v4's CSS-first
+ * config means defining these as @theme custom properties auto-registers
+ * them as utility classes (`text-display-xl`, `text-display-l`,
+ * `text-lead`). The hero combines them responsively:
+ *
+ *   <h1 className="text-display-l md:text-display-xl ..."> => 48px on
+ *   small viewports, 64px from md upwards.
+ *
+ * The `--text-*--line-height`, `--text-*--letter-spacing`, and
+ * `--text-*--font-weight` companion variables ride along with the
+ * `text-display-xl` utility automatically — that's a Tailwind v4 feature.
+ *
+ * The hero gradient backdrop is composed using Tailwind v4 utilities
+ * directly (`bg-gradient-to-b from-slate-50 to-background`) instead of
+ * extending the theme with a one-off `bg-hero` token; keeps the surface
+ * area smaller and the intent visible at the call site.
+ */
+@theme {
+  --text-display-xl: 4rem;
+  --text-display-xl--line-height: 1.05;
+  --text-display-xl--letter-spacing: -0.02em;
+  --text-display-xl--font-weight: 700;
+
+  --text-display-l: 3rem;
+  --text-display-l--line-height: 1.1;
+  --text-display-l--letter-spacing: -0.02em;
+  --text-display-l--font-weight: 700;
+
+  --text-lead: 1.25rem;
+  --text-lead--line-height: 1.5;
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Hydration-safe pre-alpha banner hiding: the inline pre-hydration script in
+ * `__root.tsx` sets `data-pre-alpha-dismissed="1"` on `<html>` for returning
+ * dismissed visitors, so the banner is hidden before React mounts. */
+html[data-pre-alpha-dismissed="1"] [data-pre-alpha-banner] {
+  display: none;
+}

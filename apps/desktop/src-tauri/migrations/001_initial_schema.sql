@@ -1,0 +1,2 @@
+-- Initial schema migration (schema_version table is created by the migration runner)
+-- This migration is intentionally minimal as the foundation for future migrations.
