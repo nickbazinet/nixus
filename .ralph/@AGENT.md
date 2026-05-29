@@ -2,22 +2,22 @@
 
 ## Project Setup
 ```bash
-cargo build
+npm install
 ```
 
 ## Running Tests
 ```bash
-cargo test
+npm test
 ```
 
 ## Build Commands
 ```bash
-cargo build --release
+npm run build
 ```
 
 ## Development Server
 ```bash
-cargo run
+npm run dev
 ```
 
 ## Key Learnings

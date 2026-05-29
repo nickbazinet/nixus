@@ -18,6 +18,9 @@ date: '2026-03-14'
 
 _This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
 
+**Module addenda:**
+- [Car Maintenance (FR49–FR61)](architecture-car-maintenance.md) — vehicle maintenance schedules, alerts, service logging
+
 ## Project Context Analysis
 
 ### Requirements Overview

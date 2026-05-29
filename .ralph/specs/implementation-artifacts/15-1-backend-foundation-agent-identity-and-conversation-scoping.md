@@ -1,6 +1,6 @@
 # Story 15.1: Backend Foundation — Agent Identity and Conversation Scoping
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -61,45 +61,45 @@ So that every conversation is permanently associated with a specific AI agent an
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Create migration 017 for `agent_id` column and index (AC: #1)
-  - [ ] Create `apps/desktop/src-tauri/migrations/017_chat_agent_id.sql` with the `ALTER TABLE` and `CREATE INDEX` statements
-  - [ ] Register migration (17, ...) in the `MIGRATIONS` const in `db/mod.rs`
+- [x] Task 1: Create migration 017 for `agent_id` column and index (AC: #1)
+  - [x] Create `apps/desktop/src-tauri/migrations/017_chat_agent_id.sql` with the `ALTER TABLE` and `CREATE INDEX` statements
+  - [x] Register migration (17, ...) in the `MIGRATIONS` const in `db/mod.rs`
 
-- [ ] Task 2: Update `ChatConversation` struct and db functions in `db/chat.rs` (AC: #2, #3, #4, #5)
-  - [ ] Add `pub agent_id: String` field to `ChatConversation` struct (derive already includes `Serialize`)
-  - [ ] Update `create_conversation` signature to `create_conversation(conn: &Connection, title: Option<&str>, agent_id: &str) -> Result<ChatConversation, AppError>`
-  - [ ] Update `create_conversation` INSERT SQL to include `agent_id` column
-  - [ ] Update `create_conversation` SELECT query to include `agent_id` in result mapping
-  - [ ] Add new function `list_conversations_by_agent(conn: &Connection, agent_id: &str) -> Result<Vec<ChatConversation>, AppError>` — SQL: `SELECT id, title, agent_id, created_at, updated_at FROM chat_conversations WHERE agent_id = ?1 ORDER BY updated_at DESC`
-  - [ ] Update in-module test `setup_test_db` to include `agent_id` column in the CREATE TABLE DDL
-  - [ ] Write Rust unit test `test_create_conversation_with_agent_id`
-  - [ ] Write Rust unit test `test_list_conversations_by_agent_returns_scoped_results`
-  - [ ] Write Rust unit test `test_list_conversations_by_agent_empty`
+- [x] Task 2: Update `ChatConversation` struct and db functions in `db/chat.rs` (AC: #2, #3, #4, #5)
+  - [x] Add `pub agent_id: String` field to `ChatConversation` struct (derive already includes `Serialize`)
+  - [x] Update `create_conversation` signature to `create_conversation(conn: &Connection, title: Option<&str>, agent_id: &str) -> Result<ChatConversation, AppError>`
+  - [x] Update `create_conversation` INSERT SQL to include `agent_id` column
+  - [x] Update `create_conversation` SELECT query to include `agent_id` in result mapping
+  - [x] Add new function `list_conversations_by_agent(conn: &Connection, agent_id: &str) -> Result<Vec<ChatConversation>, AppError>` — SQL: `SELECT id, title, agent_id, created_at, updated_at FROM chat_conversations WHERE agent_id = ?1 ORDER BY updated_at DESC`
+  - [x] Update in-module test `setup_test_db` to include `agent_id` column in the CREATE TABLE DDL
+  - [x] Write Rust unit test `test_create_conversation_with_agent_id`
+  - [x] Write Rust unit test `test_list_conversations_by_agent_returns_scoped_results`
+  - [x] Write Rust unit test `test_list_conversations_by_agent_empty`
 
-- [ ] Task 3: Update `send_chat_message` command in `commands/chat.rs` to accept and use `agent_id` (AC: #6, #7)
-  - [ ] Add `agent_id: String` parameter to `send_chat_message` function signature
-  - [ ] In the `conversation_id` is `None` branch: pass `agent_id.as_str()` to `chat_db::create_conversation`; set title from first 40 chars of `message` (trimmed): `let title = message.chars().take(40).collect::<String>(); let title = title.trim();`
-  - [ ] In the existing `conversation_id` branch: do NOT use passed `agent_id` — the conversation's stored `agent_id` takes precedence
-  - [ ] Pass the `agent_id` to `chat_ai::build_system_prompt` (after Task 4 updates its signature)
-  - [ ] Write Rust unit test `test_conversation_title_auto_generated_from_first_message` (test via `db/chat.rs` create then inspect title)
-  - [ ] Write Rust unit test `test_existing_conversation_agent_id_unchanged`
+- [x] Task 3: Update `send_chat_message` command in `commands/chat.rs` to accept and use `agent_id` (AC: #6, #7)
+  - [x] Add `agent_id: String` parameter to `send_chat_message` function signature
+  - [x] In the `conversation_id` is `None` branch: pass `agent_id.as_str()` to `chat_db::create_conversation`; set title from first 40 chars of `message` (trimmed): `let title = message.chars().take(40).collect::<String>(); let title = title.trim();`
+  - [x] In the existing `conversation_id` branch: do NOT use passed `agent_id` — the conversation's stored `agent_id` takes precedence
+  - [x] Pass the `agent_id` to `chat_ai::build_system_prompt` (after Task 4 updates its signature)
+  - [x] Write Rust unit test `test_conversation_title_auto_generated_from_first_message` (test via `db/chat.rs` create then inspect title)
+  - [x] Write Rust unit test `test_existing_conversation_agent_id_unchanged`
 
-- [ ] Task 4: Update `build_system_prompt` in `ai/chat.rs` to accept and dispatch on `agent_id` (AC: #8, #9)
-  - [ ] Update signature to `pub fn build_system_prompt(agent_id: &str, today: &str, context: &str) -> String`
-  - [ ] Wrap the function body in a `match agent_id { "budget-helper" => { ...existing prompt... }, _ => { ...same existing prompt as default fallback... } }`
-  - [ ] Update the single call site in `commands/chat.rs` to pass `agent_id` as the first argument
+- [x] Task 4: Update `build_system_prompt` in `ai/chat.rs` to accept and dispatch on `agent_id` (AC: #8, #9)
+  - [x] Update signature to `pub fn build_system_prompt(agent_id: &str, today: &str, context: &str) -> String`
+  - [x] Wrap the function body in a `match agent_id { "budget-helper" => { ...existing prompt... }, _ => { ...same existing prompt as default fallback... } }`
+  - [x] Update the single call site in `commands/chat.rs` to pass `agent_id` as the first argument
 
-- [ ] Task 5: Add `list_conversations` Tauri command in `commands/chat.rs` (AC: #10)
-  - [ ] Add new `#[tauri::command(rename_all = "snake_case")] pub fn list_conversations(state: State<DbState>, agent_id: String) -> Result<Vec<chat_db::ChatConversation>, AppError>` function
-  - [ ] Implementation: lock DB state, call `chat_db::list_conversations_by_agent(&conn, &agent_id)`
+- [x] Task 5: Add `list_conversations` Tauri command in `commands/chat.rs` (AC: #10)
+  - [x] Add new `#[tauri::command(rename_all = "snake_case")] pub fn list_conversations(state: State<DbState>, agent_id: String) -> Result<Vec<chat_db::ChatConversation>, AppError>` function
+  - [x] Implementation: lock DB state, call `chat_db::list_conversations_by_agent(&conn, &agent_id)`
 
-- [ ] Task 6: Register `list_conversations` in `lib.rs` (AC: #10)
-  - [ ] Add `commands::chat::list_conversations` to the `invoke_handler!` macro in `lib.rs`
+- [x] Task 6: Register `list_conversations` in `lib.rs` (AC: #10)
+  - [x] Add `commands::chat::list_conversations` to the `invoke_handler!` macro in `lib.rs`
 
-- [ ] Task 7: Verify compilation — zero warnings, zero errors
-  - [ ] Run `cargo check` in `apps/desktop/src-tauri/`
-  - [ ] Resolve any unused variable warnings from new `agent_id` parameter or changed function signatures
-  - [ ] Run `cargo test` — all existing tests plus new tests must pass
+- [x] Task 7: Verify compilation — zero warnings, zero errors
+  - [x] Run `cargo check` in `apps/desktop/src-tauri/`
+  - [x] Resolve any unused variable warnings from new `agent_id` parameter or changed function signatures
+  - [x] Run `cargo test` — all existing tests plus new tests must pass
 
 ## Dev Notes
 
@@ -390,4 +390,15 @@ claude-sonnet-4-6
 
 ### Completion Notes List
 
+- All 7 tasks implemented and verified. `cargo check` clean (zero warnings, zero errors). `cargo test` 31/31 pass.
+- The story spec had an incorrect test assertion for `test_create_conversation_stores_title`: "This is a very long message that should b" is actually 41 chars; taking first 40 chars of the test string yields a trailing space which is trimmed away, producing "This is a very long message that should". Test updated to reflect correct behavior.
+- `build_system_prompt` refactored by extracting `build_budget_helper_prompt` as a private helper and dispatching via match on `agent_id`.
+
 ### File List
+
+- `apps/desktop/src-tauri/migrations/017_chat_agent_id.sql` (created)
+- `apps/desktop/src-tauri/src/db/mod.rs` (modified — added migration 17)
+- `apps/desktop/src-tauri/src/db/chat.rs` (modified — struct, functions, tests)
+- `apps/desktop/src-tauri/src/commands/chat.rs` (modified — send_chat_message, list_conversations)
+- `apps/desktop/src-tauri/src/ai/chat.rs` (modified — build_system_prompt signature)
+- `apps/desktop/src-tauri/src/lib.rs` (modified — registered list_conversations)

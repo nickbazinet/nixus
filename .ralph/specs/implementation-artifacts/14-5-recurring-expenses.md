@@ -1,6 +1,6 @@
 # Story 14.5: Recurring Expenses
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -20,42 +20,42 @@ so that I stop re-entering the same expenses (rent, subscriptions, gym) manually
 
 ## Tasks / Subtasks
 
-- [ ] Migration 016 (AC: #3, #4)
-  - [ ] Create `apps/desktop/src-tauri/migrations/016_recurring_expenses.sql`
-  - [ ] Register in `apps/desktop/src-tauri/src/db/mod.rs` MIGRATIONS array as entry 16
+- [x] Migration 016 (AC: #3, #4)
+  - [x] Create `apps/desktop/src-tauri/migrations/016_recurring_expenses.sql`
+  - [x] Register in `apps/desktop/src-tauri/src/db/mod.rs` MIGRATIONS array as entry 16
 
-- [ ] Rust models (AC: #1, #2)
-  - [ ] Add `RecurringExpenseTemplate`, `CreateRecurringExpenseTemplateInput`, `UpdateRecurringExpenseTemplateInput` structs to `apps/desktop/src-tauri/src/models/mod.rs`
+- [x] Rust models (AC: #1, #2)
+  - [x] Add `RecurringExpenseTemplate`, `CreateRecurringExpenseTemplateInput`, `UpdateRecurringExpenseTemplateInput` structs to `apps/desktop/src-tauri/src/models/mod.rs`
 
-- [ ] DB layer: `db/recurring.rs` (AC: #1–#5)
-  - [ ] Create `apps/desktop/src-tauri/src/db/recurring.rs`
-  - [ ] Implement: `insert_template`, `get_all_templates`, `update_template`, `delete_template`, `apply_recurring_for_month`
-  - [ ] Register module in `apps/desktop/src-tauri/src/db/mod.rs`
+- [x] DB layer: `db/recurring.rs` (AC: #1–#5)
+  - [x] Create `apps/desktop/src-tauri/src/db/recurring.rs`
+  - [x] Implement: `insert_template`, `get_all_templates`, `update_template`, `delete_template`, `apply_recurring_for_month`
+  - [x] Register module in `apps/desktop/src-tauri/src/db/mod.rs`
 
-- [ ] Commands: `commands/recurring.rs` (AC: #1–#5)
-  - [ ] Create `apps/desktop/src-tauri/src/commands/recurring.rs`
-  - [ ] Implement 5 Tauri commands: `create_recurring_template`, `get_recurring_templates`, `update_recurring_template`, `delete_recurring_template`, `apply_recurring_expenses`
-  - [ ] Register all 5 commands in `apps/desktop/src-tauri/src/lib.rs` invoke_handler
+- [x] Commands: `commands/recurring.rs` (AC: #1–#5)
+  - [x] Create `apps/desktop/src-tauri/src/commands/recurring.rs`
+  - [x] Implement 5 Tauri commands: `create_recurring_template`, `get_recurring_templates`, `update_recurring_template`, `delete_recurring_template`, `apply_recurring_expenses`
+  - [x] Register all 5 commands in `apps/desktop/src-tauri/src/lib.rs` invoke_handler
 
-- [ ] Frontend types and hooks (AC: #1–#3)
-  - [ ] Add `RecurringExpenseTemplate`, `CreateRecurringExpenseTemplateInput`, `UpdateRecurringExpenseTemplateInput` interfaces to `apps/desktop/src/lib/types.ts`
-  - [ ] Add `recurringTemplates` to `queryKeys` in `apps/desktop/src/lib/constants.ts`
-  - [ ] Create `apps/desktop/src/hooks/useRecurringExpenses.ts` with 5 hooks
+- [x] Frontend types and hooks (AC: #1–#3)
+  - [x] Add `RecurringExpenseTemplate`, `CreateRecurringExpenseTemplateInput`, `UpdateRecurringExpenseTemplateInput` interfaces to `apps/desktop/src/lib/types.ts`
+  - [x] Add `recurringTemplates` to `queryKeys` in `apps/desktop/src/lib/constants.ts`
+  - [x] Create `apps/desktop/src/hooks/useRecurringExpenses.ts` with 5 hooks
 
-- [ ] UI components (AC: #1, #2, #6)
-  - [ ] Create `apps/desktop/src/components/expenses/AddRecurringTemplateForm.tsx`
-  - [ ] Create `apps/desktop/src/components/expenses/RecurringTemplateList.tsx`
-  - [ ] Create `apps/desktop/src/routes/recurring-expenses.tsx` (management page)
+- [x] UI components (AC: #1, #2, #6)
+  - [x] Create `apps/desktop/src/components/expenses/AddRecurringTemplateForm.tsx`
+  - [x] Create `apps/desktop/src/components/expenses/RecurringTemplateList.tsx`
+  - [x] Create `apps/desktop/src/routes/recurring-expenses.tsx` (management page)
 
-- [ ] Budget page integration (AC: #3)
-  - [ ] Add "Apply Recurring" button to `apps/desktop/src/routes/budget.tsx`
-  - [ ] Show toast on success: "Applied N recurring expenses" (or "All recurring already applied")
+- [x] Budget page integration (AC: #3)
+  - [x] Add "Apply Recurring" button to `apps/desktop/src/routes/budget.tsx`
+  - [x] Show toast on success: "Applied N recurring expenses" (or "All recurring already applied")
 
-- [ ] Navigation (AC: #6)
-  - [ ] Add `recurring-expenses` to sidebar nav in `apps/desktop/src/routes/__root.tsx` or the nav config file
+- [x] Navigation (AC: #6)
+  - [x] Add `recurring-expenses` to nav in `apps/desktop/src/components/shared/InnerTabNav.tsx`
 
-- [ ] i18n keys
-  - [ ] Add all new UI strings to locale files in `apps/desktop/src/locales/`
+- [x] i18n keys
+  - [x] Add all new UI strings to locale files in `apps/desktop/src/locales/`
 
 ## Dev Notes
 
@@ -358,6 +358,36 @@ claude-sonnet-4-6
 
 ### Debug Log References
 
+None.
+
 ### Completion Notes List
 
+- Added `insert_expense_with_source` to `db/expense.rs` to support setting the `source` field when inserting expenses (used by the recurring apply function)
+- `EditRecurringTemplateForm.tsx` created as a separate component for editing existing templates (used from within `RecurringTemplateList.tsx`)
+- `routeTree.gen.ts` manually updated to include the `/recurring-expenses` route (TanStack Router would normally auto-generate this)
+- Navigation added to `InnerTabNav.tsx` in the budget/income group
+- All 5 Rust commands registered in `lib.rs` invoke_handler
+- Both `cargo build` and `tsc --noEmit` pass with zero errors/warnings
+
 ### File List
+
+- `apps/desktop/src-tauri/migrations/016_recurring_expenses.sql` (new)
+- `apps/desktop/src-tauri/src/db/mod.rs` (modified)
+- `apps/desktop/src-tauri/src/db/expense.rs` (modified — added `insert_expense_with_source`)
+- `apps/desktop/src-tauri/src/db/recurring.rs` (new)
+- `apps/desktop/src-tauri/src/commands/mod.rs` (modified)
+- `apps/desktop/src-tauri/src/commands/recurring.rs` (new)
+- `apps/desktop/src-tauri/src/models/mod.rs` (modified)
+- `apps/desktop/src-tauri/src/lib.rs` (modified)
+- `apps/desktop/src/lib/types.ts` (modified)
+- `apps/desktop/src/lib/constants.ts` (modified)
+- `apps/desktop/src/hooks/useRecurringExpenses.ts` (new)
+- `apps/desktop/src/components/expenses/AddRecurringTemplateForm.tsx` (new)
+- `apps/desktop/src/components/expenses/EditRecurringTemplateForm.tsx` (new)
+- `apps/desktop/src/components/expenses/RecurringTemplateList.tsx` (new)
+- `apps/desktop/src/routes/recurring-expenses.tsx` (new)
+- `apps/desktop/src/routeTree.gen.ts` (modified)
+- `apps/desktop/src/components/shared/InnerTabNav.tsx` (modified)
+- `apps/desktop/src/routes/budget.tsx` (modified)
+- `apps/desktop/src/locales/en.json` (modified)
+- `apps/desktop/src/locales/fr.json` (modified)

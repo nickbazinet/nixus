@@ -1,6 +1,6 @@
 # Story 14.4: AI Import Merchant-Category Memory
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -19,25 +19,25 @@ so that future imports require fewer manual corrections and accuracy improves ov
 
 ## Tasks / Subtasks
 
-- [ ] Create migration 015 (AC: #1–#4)
-  - [ ] Create `apps/desktop/src-tauri/migrations/015_merchant_category_hints.sql`
-  - [ ] Register migration in `apps/desktop/src-tauri/src/db/mod.rs` MIGRATIONS array
+- [x] Create migration 015 (AC: #1–#4)
+  - [x] Create `apps/desktop/src-tauri/migrations/015_merchant_category_hints.sql`
+  - [x] Register migration in `apps/desktop/src-tauri/src/db/mod.rs` MIGRATIONS array
 
-- [ ] Add MerchantHint model (AC: #3, #4)
-  - [ ] Add `MerchantHint` struct to `apps/desktop/src-tauri/src/models/mod.rs`
+- [x] Add MerchantHint model (AC: #3, #4)
+  - [x] Add `MerchantHint` struct to `apps/desktop/src-tauri/src/models/mod.rs`
 
-- [ ] Add db functions (AC: #1, #2, #3, #4, #5)
-  - [ ] In `apps/desktop/src-tauri/src/db/expense.rs`, add `get_merchant_category_hints(conn) -> Result<Vec<MerchantHint>, AppError>`
-  - [ ] In `apps/desktop/src-tauri/src/db/expense.rs`, add `record_merchant_category_hint(conn, merchant: &str, budget_category_id: i64, user_corrected: bool) -> Result<(), AppError>`
+- [x] Add db functions (AC: #1, #2, #3, #4, #5)
+  - [x] In `apps/desktop/src-tauri/src/db/expense.rs`, add `get_merchant_category_hints(conn) -> Result<Vec<MerchantHint>, AppError>`
+  - [x] In `apps/desktop/src-tauri/src/db/expense.rs`, add `record_merchant_category_hint(conn, merchant: &str, budget_category_id: i64, user_corrected: bool) -> Result<(), AppError>`
 
-- [ ] Inject hints into AI prompt (AC: #3)
-  - [ ] In `apps/desktop/src-tauri/src/ai/cc_parser.rs`, update `build_system_prompt()` signature to accept `hints: &[MerchantHint]` and append a known-mappings section to the prompt
-  - [ ] Update `parse_cc_statement()` signature to accept and pass hints through
+- [x] Inject hints into AI prompt (AC: #3)
+  - [x] In `apps/desktop/src-tauri/src/ai/cc_parser.rs`, update `build_system_prompt()` signature to accept `hints: &[MerchantHint]` and append a known-mappings section to the prompt
+  - [x] Update `parse_cc_statement()` signature to accept and pass hints through
 
-- [ ] Fetch hints and record corrections in import command (AC: #1, #2, #5)
-  - [ ] In `apps/desktop/src-tauri/src/commands/import.rs`, after fetching categories (~line 110), fetch hints from DB
-  - [ ] Pass hints to `cc_parser::parse_cc_statement()`
-  - [ ] In `confirm_import()`, after `bulk_insert_imported_expenses()`, loop through confirmed transactions and call `record_merchant_category_hint()` for each that meets the criteria
+- [x] Fetch hints and record corrections in import command (AC: #1, #2, #5)
+  - [x] In `apps/desktop/src-tauri/src/commands/import.rs`, after fetching categories (~line 110), fetch hints from DB
+  - [x] Pass hints to `cc_parser::parse_cc_statement()`
+  - [x] In `confirm_import()`, after `bulk_insert_imported_expenses()`, loop through confirmed transactions and call `record_merchant_category_hint()` for each that meets the criteria
 
 ## Dev Notes
 
@@ -254,4 +254,16 @@ claude-sonnet-4-6
 
 ### Completion Notes List
 
+- Used simpler approach for `confirm_import`: added `original_suggested_category_id: Option<i64>` to `ConfirmTransaction` so the frontend can signal whether the user corrected the AI suggestion; if field is absent/null, `user_corrected` defaults to `false` (confirmation reinforces the mapping).
+- Merchant names normalized to lowercase+trimmed before storing or querying.
+- Hint injection limited to top 30 by `confidence_score * usage_count` to avoid prompt bloat.
+- Hint recording failures use `tracing::warn!` and never block confirmation.
+
 ### File List
+
+- `apps/desktop/src-tauri/migrations/015_merchant_category_hints.sql` — new migration
+- `apps/desktop/src-tauri/src/db/mod.rs` — registered migration 15
+- `apps/desktop/src-tauri/src/models/mod.rs` — added MerchantHint struct
+- `apps/desktop/src-tauri/src/db/expense.rs` — added get_merchant_category_hints and record_merchant_category_hint
+- `apps/desktop/src-tauri/src/ai/cc_parser.rs` — updated build_system_prompt and parse_cc_statement to accept hints
+- `apps/desktop/src-tauri/src/commands/import.rs` — fetch hints, pass to parser, added original_suggested_category_id, record hints in confirm_import

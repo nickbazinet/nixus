@@ -15,6 +15,7 @@ pub mod config;
 pub mod dashboard;
 pub mod expense;
 pub mod income;
+pub mod maintenance;
 pub mod net_worth;
 pub mod projection;
 pub mod recurring;
@@ -41,6 +42,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (15, include_str!("../../migrations/015_merchant_category_hints.sql")),
     (16, include_str!("../../migrations/016_recurring_expenses.sql")),
     (17, include_str!("../../migrations/017_chat_agent_id.sql")),
+    (18, include_str!("../../migrations/018_maintenance_tables.sql")),
 ];
 
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {

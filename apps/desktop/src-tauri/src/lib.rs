@@ -3,6 +3,7 @@ mod commands;
 mod credentials;
 mod db;
 mod error;
+mod maintenance;
 mod models;
 
 use db::{init_db, DbState};

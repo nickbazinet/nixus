@@ -1,6 +1,6 @@
 # Story 14.2: Spending Trends Time Window Selector
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -18,19 +18,19 @@ so that I can see shorter or longer trend windows without being locked into the 
 
 ## Tasks / Subtasks
 
-- [ ] Add time window state and constants (AC: #1, #2, #4)
-  - [ ] In `apps/desktop/src/routes/spending-trends.tsx`, remove `const MONTHS = 6`
-  - [ ] Add `WINDOW_OPTIONS`, `WINDOW_LABEL_KEYS`, `WINDOW_MONTHS` constants (see Dev Notes)
-  - [ ] Add `useState<string>("6m")` for selected window
-  - [ ] Add `useMemo` for translated labels (identical pattern to Projection page)
+- [x] Add time window state and constants (AC: #1, #2, #4)
+  - [x] In `apps/desktop/src/routes/spending-trends.tsx`, remove `const MONTHS = 6`
+  - [x] Add `WINDOW_OPTIONS`, `WINDOW_LABEL_KEYS`, `WINDOW_MONTHS` constants (see Dev Notes)
+  - [x] Add `useState<string>("6m")` for selected window
+  - [x] Add `useMemo` for translated labels (identical pattern to Projection page)
 
-- [ ] Wire PillTabs UI (AC: #1, #3)
-  - [ ] Import `PillTabs` from `@nkbaz/shared`
-  - [ ] Render `<PillTabs>` above the chart, passing `options`, `labels`, `value`, `onChange`
-  - [ ] Pass `WINDOW_MONTHS[selectedWindow]` to `useSpendingTrends()` instead of the removed constant
+- [x] Wire PillTabs UI (AC: #1, #3)
+  - [x] Import `PillTabs` from `@nkbaz/shared`
+  - [x] Render `<PillTabs>` above the chart, passing `options`, `labels`, `value`, `onChange`
+  - [x] Pass `WINDOW_MONTHS[selectedWindow]` to `useSpendingTrends()` instead of the removed constant
 
-- [ ] Add i18n keys (AC: #4)
-  - [ ] Add translation keys for `spending.period3M`, `spending.period6M`, `spending.period12M` to all locale files in `apps/desktop/src/locales/`
+- [x] Add i18n keys (AC: #4)
+  - [x] Add translation keys for `spending.period3M`, `spending.period6M`, `spending.period12M` to all locale files in `apps/desktop/src/locales/`
 
 ## Dev Notes
 
@@ -127,6 +127,16 @@ claude-sonnet-4-6
 
 ### Debug Log References
 
+None.
+
 ### Completion Notes List
 
+- Implemented PillTabs time window selector on Spending Trends page following the Projection page pattern exactly.
+- `tsc --noEmit` passes with zero errors (desktop app has no `typecheck` npm script; tsc was invoked directly).
+- `CategorySpendTable` `monthCount` prop updated to use `WINDOW_MONTHS[selectedWindow]` as fallback instead of removed `MONTHS` constant.
+
 ### File List
+
+- `apps/desktop/src/routes/spending-trends.tsx`
+- `apps/desktop/src/locales/en.json`
+- `apps/desktop/src/locales/fr.json`

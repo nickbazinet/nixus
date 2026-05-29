@@ -1,6 +1,6 @@
 # Story 14.3: Dashboard Month Navigation
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -18,15 +18,15 @@ so that I can review last month's budget status and spending without switching t
 
 ## Tasks / Subtasks
 
-- [ ] Add month state to dashboard route (AC: #2, #3)
-  - [ ] In `apps/desktop/src/routes/index.tsx`, convert hardcoded `year`/`month` constants into `selectedYear`/`selectedMonth` state initialized to `now.getFullYear()` / `now.getMonth() + 1`
-  - [ ] Add `handleMonthChange(year, month)` callback (exact pattern from `budget.tsx`)
-  - [ ] Update all four query calls to use `selectedYear`/`selectedMonth` instead of `year`/`month`
-  - [ ] Update any `monthLabel` derivation to use `selectedYear`/`selectedMonth`
+- [x] Add month state to dashboard route (AC: #2, #3)
+  - [x] In `apps/desktop/src/routes/index.tsx`, convert hardcoded `year`/`month` constants into `selectedYear`/`selectedMonth` state initialized to `now.getFullYear()` / `now.getMonth() + 1`
+  - [x] Add `handleMonthChange(year, month)` callback (exact pattern from `budget.tsx`)
+  - [x] Update all four query calls to use `selectedYear`/`selectedMonth` instead of `year`/`month`
+  - [x] Update any `monthLabel` derivation to use `selectedYear`/`selectedMonth`
 
-- [ ] Add MonthNavigator to dashboard UI (AC: #1, #4)
-  - [ ] Import and render `<MonthNavigator>` from `apps/desktop/src/components/budget/MonthNavigator.tsx` — reuse directly, no new component
-  - [ ] Place it in the dashboard header area (e.g., in `PageHeader` actions slot, or in a strip below the header consistent with Budget page)
+- [x] Add MonthNavigator to dashboard UI (AC: #1, #4)
+  - [x] Import and render `<MonthNavigator>` from `apps/desktop/src/components/budget/MonthNavigator.tsx` — reuse directly, no new component
+  - [x] Place it in the dashboard header area (e.g., in `PageHeader` actions slot, or in a strip below the header consistent with Budget page)
 
 ## Dev Notes
 
@@ -140,4 +140,14 @@ claude-sonnet-4-6
 
 ### Completion Notes List
 
+- Converted hardcoded `year`/`month` constants to `selectedYear`/`selectedMonth` state initialized to current date.
+- Added `handleMonthChange` callback matching the exact pattern from `budget.tsx`.
+- Updated all four query calls (`useBudgetSummary`, `useTopBudgetCategories`, `useSpendingBreakdown`, `useIncomeTotal`) to use state variables.
+- Updated `monthLabel` to derive from `selectedYear`/`selectedMonth` using `new Date(selectedYear, selectedMonth - 1)`.
+- Imported and rendered `MonthNavigator` in the `PageHeader` `actions` slot alongside the existing import button.
+- TypeScript typecheck passes with zero errors.
+- `netWorthCurrent` query left as-is (live snapshot, not month-aware).
+
 ### File List
+
+- `apps/desktop/src/routes/index.tsx`

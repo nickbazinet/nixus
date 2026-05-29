@@ -8,7 +8,7 @@ You follow BMAD-METHOD's developer (Amelia) persona and TDD methodology.
 ## Project Specifications (CRITICAL - READ THIS)
 
 ### Project Goals
-nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts, monitor passive assets, and view net worth history over time — all in a single interface. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock. An AI chat interface provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application.
+nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
 
 The product solves a specific failure mode: financial tracking tools die when they demand effort. Spreadsheets work until the maintenance burden causes people to stop updating them. nkbaz-finance eliminates that friction by automating the most tedious part — data entry and categorization — starting with the highest-impact touchpoint (bi-weekly CC statements).
 
@@ -19,6 +19,8 @@ The product solves a specific failure mode: financial tracking tools die when th
 - **Pragmatic automation path** — screenshot/PDF upload over bank API integration. Easier to build, no third-party dependencies, accessible to any user who can take a photo. Bank APIs come later as an expansion of the automation model.
 - **AI-native interaction** — conversational interface for querying and managing financial data, plus automated CC parsing. AI is woven into the product, not bolted on.
 - **Cash flow visibility** — income tracking alongside expenses gives the AI full financial context for meaningful recommendations, not just spending data in isolation.
+- **Proactive car maintenance** — multi-vehicle maintenance schedules with default industry-baseline templates and in-app alerts before service is due. No separate car app needed.
+- **Financial analytics beyond the dashboard** — spending trends, year-to-date summaries, and forward net worth projection turn tracking data into planning insight.
 - **Built from real pain** — designed from the builder's own failed spreadsheet workflow, not theoretical user research.
 
 ### Success Metrics
@@ -29,6 +31,8 @@ The product solves a specific failure mode: financial tracking tools die when th
 - All account types and passive assets represented in a single view
 - Net worth history accurately tracks changes over time by category
 - All income sources represented with monthly entries reflecting actual amounts received
+- All owned vehicles have active maintenance schedules with accurate due-date tracking
+- Maintenance alerts appear in-app when service is within 500 km or 14 days of due, or overdue
 - Google Sheets is fully replaced — no longer needed for finance tracking
 
 ### Business Success
@@ -50,25 +54,33 @@ N/A — personal project built to solve a personal problem. No commercial, growt
 | Time to update finances | < 5 min per bi-weekly session | From upload to reviewed dashboard |
 | Account coverage | All accounts represented | Every bank/investment/asset reflected |
 | Income tracking completeness | 100% of months have income recorded | No gaps in monthly income data |
+| Vehicle maintenance coverage | 100% of owned vehicles tracked | Every vehicle has an active schedule |
+| Maintenance alert timeliness | Alerts within 500 km or 14 days of due | Compare alert trigger date to due date/mileage |
 | Spreadsheet dependency | Zero | Google Sheets no longer used for finances |
 
 ### Scope
 ### MVP (Phase 1)
 
-**MVP Approach:** Problem-solving MVP — deliver the complete financial tracking replacement for Google Sheets in a single release. All 8 core features ship together because they form an interdependent system.
+**MVP Approach:** Problem-solving MVP — deliver the complete financial tracking replacement for Google Sheets. Core capabilities ship together because they form an interdependent system. Car maintenance tracking (capability #10) is specified but not yet implemented in codebase as of 2026-05-29.
 
 **Resource Requirements:** Solo developer. No external dependencies beyond Strand SDK and AWS Bedrock.
 
 **Must-Have Capabilities:**
 1. **Monthly Budget Builder** — create/manage budgets with customizable category groups and targets
-2. **AI-Powered CC Import** — upload screenshot/PDF, auto-extract and categorize transactions
-3. **Expense Tracking** — view, review, correct auto-categorized expenses; manual entry as fallback
-4. **Multi-Account Tracking** — track balances across multiple banks and account types
+2. **AI-Powered CC Import** — upload screenshot/PDF, auto-extract and categorize transactions, duplicate detection, merchant hint learning
+3. **Expense Tracking** — view, review, correct auto-categorized expenses; manual entry as fallback; recurring expense templates with auto-apply
+4. **Multi-Account Tracking** — track balances across multiple banks and account types (chequing, savings, credit card, TFSA, RRSP, FHSA, non-registered, crypto) in CAD or USD
 5. **Passive Asset Tracking** — track value of business, real estate, vehicles, other assets
-6. **Dashboard** — budget status, spending by category, account balances, net worth
-7. **Net Worth History** — historical tracking split by category (cash, crypto, housing, TFSA, RRSP, etc.)
-8. **AI Chat** — natural language queries and actions across all financial data
-9. **Income Tracking** — set up income sources, record monthly income amounts, view income history and cash flow (income vs. expenses)
+6. **Dashboard** — budget status, spending by category, account balances, net worth sparkline, YTD card, cash flow, maintenance alerts
+7. **Net Worth History** — historical tracking split by category (cash, crypto, housing, TFSA, RRSP, FHSA, etc.)
+8. **Financial Analytics** — spending trends (3/6/12 months), year summary, forward net worth projection
+9. **AI Chat** — natural language queries and actions across all financial data
+10. **Income Tracking** — set up income sources, record monthly income amounts, view income history and cash flow (income vs. expenses)
+11. **Car Maintenance Tracking** — register multiple vehicles (standalone entities), track odometer and service history, pre-populated maintenance task templates with editable intervals, in-app alerts when service is approaching or overdue *(specified, not yet implemented)*
+12. **Onboarding Wizard** — guided first-run setup across budget, accounts, assets, income, and import
+13. **Application Platform** — database backup/restore, values privacy toggle, EN/FR localization, light/dark/system theme, OS keychain AI credentials, auto-update check
+
+**Related Deliverable (separate app):** Marketing website (`apps/web`) — landing page, download CTA, feature showcase, FAQ. Not part of desktop MVP but ships alongside the product.
 
 Single-user only. No authentication required for MVP.
 
@@ -81,16 +93,22 @@ Single-user only. No authentication required for MVP.
 ### Phase 3 (Expansion)
 
 - Smart insights — AI-driven spending trends, anomaly detection, savings recommendations
-- Recurring expense detection and prediction
+- Automatic recurring expense detection from import history (distinct from user-defined recurring templates in MVP)
 - Export/reporting capabilities
+- Additional AI agent personalities beyond Budget Helper
+- OpenAI as full runtime provider for chat and CC import (credentials UI exists; Bedrock required today)
 
 ### Risk Mitigation
 
 **Technical Risks:** AI parsing accuracy is the single highest-risk item. Mitigation: manual entry fallback exists for every transaction. The app is useful even if AI accuracy starts below 95% — it still saves time vs. full manual entry.
 
+**Maintenance Schedule Data Source:** Default task intervals require an architect decision — embedded industry-baseline library (MVP candidate) vs. manufacturer-specific lookup (Phase 2). User overrides per vehicle must work regardless of source. Owner's manual intervals supersede dealership upsell packages.
+
+**Implementation Gaps (PRD vs. Codebase, 2026-05-29):** Car maintenance module (FR49-FR61) is specified but not implemented. Multi-agent AI infrastructure exists with one agent (`budget-helper`) shipped — FR41-FR43 partially met. OpenAI credentials can be stored but chat and import require AWS Bedrock at runtime.
+
 **Market Risks:** N/A — personal project, no market validation needed.
 
-**Resource Risks:** Solo developer. All MVP features are scoped as minimal implementations. Budget builder and account/asset tracking are straightforward CRUD. The AI integration is the only complex piece.
+**Resource Risks:** Solo developer. All MVP features are scoped as minimal implementations. Budget builder, account/asset tracking, and car maintenance are straightforward CRUD. The AI integration is the only complex piece.
 
 ### Non-Functional Requirements
 ### Performance
@@ -105,7 +123,7 @@ Single-user only. No authentication required for MVP.
 
 - NFR6: Financial data is stored encrypted at rest
 - NFR7: All communication with external AI services uses HTTPS
-- NFR8: File uploads are validated for type (image/PDF only) and size before processing
+- NFR8: File uploads are validated for type (image/PDF only) and size (maximum 20 MB) before processing
 
 ### Integration
 
@@ -115,8 +133,22 @@ Single-user only. No authentication required for MVP.
 ### Data Integrity
 
 - NFR11: Financial records (transactions, balances, net worth snapshots) are never silently lost or corrupted
-- NFR12: Database supports backup and restore capability
+- NFR12: Database supports backup and restore capability via user-initiated export/import (FR74, FR75)
 - NFR13: Balance and net worth calculations are accurate to the cent
+
+### Maintenance Alerts
+
+- NFR14: Maintenance alert status evaluates within 1 second of app launch
+- NFR15: Odometer auto-update from service log (FR56) completes within 1 second and displays user notification before the user navigates away
+
+### Localization & Accessibility
+
+- NFR16: All user-facing strings are available in English and French with no missing translation keys in shipped views
+- NFR17: Values privacy toggle (FR76) applies to all monetary displays app-wide within 100ms of toggle
+
+### Application Lifecycle
+
+- NFR18: Auto-update check completes within 5 seconds of app launch without blocking dashboard render
 
 ### Design Guidelines
 Foundation

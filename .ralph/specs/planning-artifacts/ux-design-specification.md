@@ -1,14 +1,17 @@
 ---
 stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 status: complete
-lastEdited: '2026-03-16'
+lastEdited: '2026-05-29'
 editHistory:
+  - date: '2026-05-29'
+    changes: 'Added Car Maintenance Module UX (FR49-FR61): MaintenanceAlertCard on dashboard, /maintenance page layout, VehicleCard and task row components, Journey 7 (Car Maintenance Check-In), InnerTabNav placement, alert status semantics, service logging flow, odometer auto-update toast, empty states, and emotional design for maintenance interactions'
   - date: '2026-03-16'
     changes: 'Added Income Module UX: CashFlowSummaryCard on dashboard, Income page design, IncomeSourceRow and IncomeEntryRow components, Journey 5 (Income Entry), onboarding Step 4 (Income Sources), updated navigation, empty states, and emotional design for income interactions'
 inputDocuments:
   - product-brief-nkbaz-finance-2026-03-14.md
   - prd.md
   - prd-validation-report.md
+  - architecture-car-maintenance.md
 ---
 
 # UX Design Specification nkbaz-finance
@@ -1350,3 +1353,328 @@ Following the app-wide empty state pattern (single-line message + action):
 - `AgentChatPage` reuses the existing `ChatMessageBubble` component unchanged
 - `FloatingChatBar` requires a minor enhancement: read the last-used agent name from app state and render the label; no structural changes to the existing component
 - The InnerTabNav agent tabs use the same `InnerTabNav` component already in the codebase, with a new tab group definition for `/ai/*` routes
+
+---
+
+## Car Maintenance Module (Added 2026-05-29)
+
+This section extends the UX specification for FR49–FR61 (Car Maintenance Management). It resolves PRD and architecture deferrals for alert placement, dashboard visual treatment, navigation, page layout, and interaction patterns. Technical IPC and data model decisions remain in [architecture-car-maintenance.md](architecture-car-maintenance.md).
+
+### Design Intent
+
+Car maintenance is a **check-in, not a chore**. Dev opens the app, sees whether anything needs attention, logs a service in under 30 seconds when he gets work done, and moves on. The module lives inside the finance app but is **not linked to passive assets** — vehicles are operational records (odometer, service history), not net-worth entries.
+
+**Emotional goal:** Calm preparedness. Amber means "plan ahead," rose means "act now," and green/muted means "nothing to worry about." Logging a service should feel like closing a loop — countdown resets, toast confirms, dashboard clears.
+
+### Navigation: InnerTabNav (Not Sidebar)
+
+Add **Maintenance** to the existing accounts/assets group in `InnerTabNav`:
+
+| Property | Value |
+|----------|-------|
+| Route | `/maintenance` |
+| Label key | `nav.maintenance` |
+| Icon | `Wrench` (lucide-react) |
+| Group position | After **Assets**, before **Net Worth** |
+
+The sidebar item count does not change — finance navigation uses InnerTabNav tabs, not sidebar links (consistent with architecture-desktop.md). Do **not** add a sidebar badge; alerts surface on the dashboard card only.
+
+### Dashboard: MaintenanceAlertCard
+
+**Purpose:** Zero-click maintenance status on dashboard load (Journey 3, FR58, FR62). Answers: "Does any vehicle need attention?"
+
+**Placement:** Full-width card in the dashboard stack, **after `YearToDateCard` and before the hero 2-column grid** (Net Worth + Budget Remaining). Maintenance is actionable but secondary to monthly financial snapshot.
+
+**Anatomy:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Maintenance                                    View all → │
+│ 2 items need attention                                      │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ Civic · Engine oil & filter · Due in 11 days      amber │ │
+│ │ RAV4 · Tire rotation · 420 km remaining           amber │ │
+│ └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- Card title: "Maintenance" (muted, 14px)
+- Subtitle line: alert count summary (Body, 14px)
+- Up to **2 vehicle rows** showing nickname, most urgent task (i18n task name), and urgency text
+- Footer link: "View all →" (primary text, 12px) — entire card is clickable → `/maintenance`
+- If more than 2 vehicles have alerts, subtitle reads "2 of 3 vehicles need attention"
+
+**Status visual treatment (resolves architecture D7 deferral):**
+
+| `worst_status` | Card border/ring | Subtitle tone | Row badge |
+|----------------|------------------|---------------|-----------|
+| `ok` | Default (no accent) | Muted positive | — |
+| `upcoming` | `ring-1 ring-amber-500/30` | Amber foreground | Amber badge |
+| `due` | `ring-1 ring-rose-500/40` | Rose foreground | Rose badge |
+| `overdue` | `ring-1 ring-rose-500/60` | Rose foreground, font-medium | Rose badge + "Overdue" label |
+
+**Urgency text rules (display whichever threshold is closer — matches dual-threshold evaluator):**
+
+- Days remaining > 0: "Due in {n} days" (upcoming) or "Due today" (due)
+- Km remaining > 0: "{n} km remaining" (upcoming) or "Due now" (due, km ≤ 0)
+- Overdue: "Overdue by {n} days" or "{n} km overdue"
+- Never show both km and days on dashboard rows — pick the more urgent dimension server-side in `most_urgent_task`
+
+**States:**
+
+| State | Behavior |
+|-------|----------|
+| Loading | Skeleton matching card layout (`data-testid="maintenance-alert-skeleton"`) |
+| No vehicles | Muted empty prompt: "Track service schedules for your vehicles." + inline "Add vehicle →" link styling |
+| All ok (vehicles exist) | "All maintenance up to date" — muted, no accent ring; card still links to `/maintenance` |
+| Has alerts | Accent ring per worst status; list up to 2 urgent rows |
+
+**Accessibility:** `role="link"`, `aria-label` includes alert count and most urgent item ("Maintenance: 2 items need attention. Civic oil change due in 11 days.").
+
+---
+
+### Journey 7: Car Maintenance Check-In
+
+**Trigger:** User registers vehicles (first visit to `/maintenance`) or opens app and sees dashboard alert (Journey 3 crossover).
+
+**Flow:**
+
+```mermaid
+flowchart TD
+    A[Dashboard alert OR click Maintenance tab] --> B[Maintenance page loads]
+    B --> C{Any vehicles?}
+    C -->|No| D[Empty state: Add first vehicle]
+    D --> E[Add Vehicle SlideOver]
+    E --> F[Enter nickname, make, model, year, odometer]
+    F --> G[Save → 15 tasks seeded → VehicleCard appears]
+    C -->|Yes| H[Vehicle cards listed — newest first]
+    H --> I{User action?}
+    I --> J[Expand vehicle → task list + history]
+    I --> K[Log Service on a task]
+    K --> L[LogServiceForm: date, odometer, notes]
+    L --> M{Odometer > stored?}
+    M -->|Yes| N[Toast: Odometer updated to X km]
+    M -->|No| O[Toast: Service logged]
+    N --> P[Task status resets; dashboard alert refreshes]
+    O --> P
+    I --> Q[Edit interval on task]
+    Q --> R[EditIntervalDialog: km + months]
+    I --> S[Update odometer inline]
+    S --> T[OdometerUpdateForm inline on VehicleCard header]
+```
+
+**UX Details:**
+
+- **Vehicle registration:** SlideOver panel (same pattern as Add Asset). Required: nickname, odometer (km). Optional: make, model, year. On save, backend seeds 15 default tasks — show brief toast: "Vehicle added — maintenance schedule created."
+- **Multi-vehicle:** Each vehicle is a collapsible `VehicleCard`. Default: first vehicle expanded if only one; all collapsed headers visible if multiple (user expands the one they care about).
+- **Passive asset separation:** No link or hint to add a passive asset. Optional muted helper on empty state only: "Maintenance tracking is separate from asset values in Net Worth."
+- **Service logging:** Primary action per task row — "Log service" outline button. Opens inline expand below row (not a separate page) with date (defaults today), odometer (defaults vehicle odometer), optional notes. Enter saves; Escape cancels.
+- **Odometer auto-update (FR56, NFR15):** Toast uses info variant (not error): "Odometer updated to 52,300 km based on service log." Toast must appear before user navigates away — mutation `onSuccess` handler shows toast immediately from `LogServiceResult.odometer_updated`.
+- **Interval customization (FR52):** Pencil icon on task row opens `EditIntervalDialog`. Two number inputs: km interval, months interval. Helper text shows industry baseline from defaults. Validation message if both are zero.
+
+---
+
+### Maintenance Page Layout (`/maintenance`)
+
+**Page header:**
+
+- Title: "Maintenance" (H1)
+- Subtitle: "{n} vehicles tracked" or hidden when empty
+- Actions: "Add Vehicle" primary button (Plus icon)
+
+**Content structure:**
+
+```
+PageHeader
+└── Vehicle list (stacked cards, gap-4)
+    └── VehicleCard (each vehicle)
+        ├── Header: nickname, make/model/year, odometer (inline editable)
+        ├── Collapsible body
+        │   ├── Task list (MaintenanceTaskRow × 15)
+        │   └── ServiceHistoryTable (last 10 entries, "View all" if more)
+        └── Footer actions: Edit vehicle · Delete vehicle (destructive, dialog confirm)
+```
+
+**Task list sorting:** Overdue first, then due, then upcoming, then ok. Within same status, alphabetical by task name (i18n).
+
+**Task row anatomy (`MaintenanceTaskRow`):**
+
+| Column | Content |
+|--------|---------|
+| Task name | i18n from `maintenance.tasks.{task_type_key}` |
+| Next due | Monospace secondary line — one of: date, km remaining, or "Not yet serviced" |
+| Status | Badge: Ok (slate), Upcoming (amber), Due (amber outline), Overdue (rose) |
+| Actions | "Log service" button; interval edit icon (hover visible) |
+
+**Status badge semantics:**
+
+| Status | Badge | Next due display |
+|--------|-------|------------------|
+| Ok | Slate/muted "On track" | Next due date or km (whichever comes first) |
+| Upcoming | Amber "Upcoming" | "Due in 11 days" or "480 km remaining" |
+| Due | Amber outline "Due" | "Due today" or "Due now" |
+| Overdue | Rose "Overdue" | "12 days overdue" or "350 km overdue" |
+
+**Never-serviced tasks:** Show "Not yet serviced" as next-due context; countdown anchors from vehicle registration date (evaluator behavior — no special UI logic).
+
+---
+
+### Custom Components (Maintenance)
+
+#### MaintenanceAlertCard
+
+Dashboard summary card — spec above. Composed from shadcn `Card`, `Badge`, `Link`. Data from `useMaintenanceAlerts()` → `get_maintenance_alert_summary`.
+
+#### VehicleCard
+
+**Purpose:** Collapsible container for one vehicle's tasks and history.
+
+**Anatomy:**
+
+- Header row: nickname (H3, 16px), make/model/year (muted, 12px), odometer (monospace, inline-editable via `OdometerUpdateForm`)
+- Chevron toggle for expand/collapse
+- Body: task list + service history table
+
+**States:** Collapsed, expanded, loading skeleton, editing odometer (inline input)
+
+**Accessibility:** Header toggle has `aria-expanded`. Odometer edit follows AccountRow keyboard pattern (Tab → Enter to edit).
+
+#### MaintenanceTaskRow
+
+**Purpose:** Single maintenance task with status, next due, and actions.
+
+**States:** Default, hover (reveals interval edit icon), logging (inline LogServiceForm expanded below row)
+
+#### EditIntervalDialog
+
+**Purpose:** Customize km/months intervals (FR52).
+
+**Anatomy:** Dialog with two `Input` fields (integer), baseline hint text, Save/Cancel. shadcn `Dialog` + `Form`.
+
+#### LogServiceForm
+
+**Purpose:** Record completed service (FR54–FR56).
+
+**Anatomy:** Inline panel below task row — Date picker (`Input type="date"`), odometer (`Input`, km suffix label), notes (`Textarea`, optional), Save (primary) / Cancel (ghost).
+
+**Default values:** `service_date` = today; `odometer_km` = vehicle current odometer.
+
+#### ServiceHistoryTable
+
+**Purpose:** Append-only service log per vehicle (FR59).
+
+**Anatomy:** shadcn `Table` inside vehicle card — columns: Date, Task, Odometer (monospace), Notes. Newest first. Empty: "No service logged yet."
+
+#### OdometerUpdateForm
+
+**Purpose:** Manual odometer update (FR53).
+
+**Anatomy:** Inline edit on VehicleCard header — click odometer → Input → Enter saves, Escape cancels. Toast: "Odometer updated."
+
+#### AddVehicleForm
+
+**Purpose:** Register new vehicle (FR49).
+
+**Anatomy:** SlideOver form — nickname (required), make, model, year (optional number), odometer km (required, min 0). Matches AddAssetForm SlideOver pattern.
+
+---
+
+### Feedback Patterns (Maintenance-Specific)
+
+| Event | Pattern | Copy key |
+|-------|---------|----------|
+| Vehicle created | Success toast | `maintenance.toast.vehicleCreated` |
+| Service logged | Success toast | `maintenance.toast.serviceLogged` |
+| Odometer auto-updated from log | Info toast (NFR15) | `maintenance.toast.odometerUpdated` — includes `{km}` |
+| Odometer manually updated | Success toast | `maintenance.toast.odometerManual` |
+| Interval updated | Success toast | `maintenance.toast.intervalUpdated` |
+| Vehicle deleted | Success toast | `maintenance.toast.vehicleDeleted` |
+| Validation error | Inline field error | Standard form pattern |
+
+Toast duration: 4s for odometer auto-update (user must read the correction); 3s for others.
+
+---
+
+### Empty & Loading States (Maintenance)
+
+| Location | Condition | Message | Action |
+|----------|-----------|---------|--------|
+| `/maintenance` page | No vehicles | "No vehicles tracked yet." | "Add Vehicle" button |
+| `MaintenanceAlertCard` | No vehicles | "Track service schedules for your vehicles." | Card links to `/maintenance` |
+| `MaintenanceAlertCard` | All ok | "All maintenance up to date" | Card links to `/maintenance` |
+| `ServiceHistoryTable` | No logs | "No service logged yet." | — |
+| Vehicle list | Loading | Skeleton cards (3 pulse rows) | — |
+
+Follow assets page empty state pattern: centered icon (`Wrench`, muted), title, description, primary CTA.
+
+---
+
+### Data Display (Maintenance-Specific)
+
+**Odometer:** Always integer km, monospace, formatted with thousands separator ("52,300 km"). Never decimals.
+
+**Dates:** Service dates use short table format ("Mar 14"); next-due uses relative when within 14 days ("Due in 11 days"), absolute otherwise ("Due Jun 3, 2026").
+
+**Intervals:** Display as "8,000 km / 6 mo" in edit dialog helper; store/edit as separate integer fields.
+
+**Task names:** Always i18n — never render raw `task_type_key` in UI.
+
+---
+
+### Dashboard Glance Integration (Journey 3 Update)
+
+Extend Journey 3 dashboard flow to include maintenance alert card:
+
+```mermaid
+flowchart TD
+    A[Open app] --> B[Dashboard loads]
+    B --> C[Cash Flow card]
+    B --> D[Year to Date card]
+    B --> E[Maintenance Alert card]
+    B --> F[Hero: Net Worth + Budget]
+    E --> G{Alerts present?}
+    G -->|Yes| H[User sees urgency without clicking]
+    G -->|No| I[Muted ok state or no-vehicle prompt]
+    H --> J{Act now?}
+    J -->|Yes| K[Click card → /maintenance]
+    J -->|No| L[Continue glance → close tab]
+```
+
+Maintenance appears in the **zero-click view** alongside cash flow and YTD — no extra navigation required to know if service is due.
+
+---
+
+### AI Chat Integration (FR60–FR61)
+
+No new chat UI components. Maintenance queries use existing Budget Helper chat. When AI returns maintenance data:
+
+- Format task names via i18n keys in the prompt/formatter (backend returns `task_type_key`)
+- Use monospace for odometer values and dates in table responses
+- Status words map to same color semantics in markdown-free text ("upcoming", "overdue")
+
+Suggested floating-bar queries: "When is my Civic due for an oil change?", "What maintenance is overdue?"
+
+---
+
+### i18n Keys (Namespace)
+
+All strings under `maintenance.*` in `en.json` / `fr.json`:
+
+- `nav.maintenance`
+- `maintenance.tasks.*` (15 task type keys matching `defaults.rs`)
+- `maintenance.status.*` (ok, upcoming, due, overdue, onTrack)
+- `maintenance.toast.*`
+- `maintenance.empty.*`
+- `maintenance.form.*` (labels, validation)
+- `dashboard.maintenance.*` (alert card copy)
+
+---
+
+### Implementation Notes
+
+- `MaintenanceAlertCard` placement in `routes/index.tsx`: after `YearToDateCard`, before hero grid
+- InnerTabNav: add Wrench item to accounts/assets group in `InnerTabNav.tsx`
+- Reuse SlideOver from `@nixus/shared` for AddVehicleForm (matches assets pattern)
+- Task status colors must match dashboard alert card semantics — use shared Tailwind classes or a `maintenanceStatusVariant()` helper
+- Playwright E2E: register vehicle → verify dashboard alert → log service → verify alert clears
+- Do not add maintenance to onboarding wizard in MVP — module is opt-in after initial setup

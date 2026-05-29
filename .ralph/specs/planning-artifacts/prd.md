@@ -1,11 +1,15 @@
 ---
-stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit']
-lastEdited: '2026-05-18'
+stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit', 'step-e-04-complete']
+lastEdited: '2026-05-29'
 editHistory:
   - date: '2026-03-16'
     changes: 'Added income tracking: new Income Management FRs (FR33-FR39), Journey 6 (Income Entry), updated Executive Summary, Success Criteria, Dashboard Journey, AI Chat Journey, Product Scope MVP, Dashboard FRs, AI Chat FRs'
   - date: '2026-05-18'
     changes: 'Added AI Section & Multi-Agent Chat FRs (FR40-FR48): dedicated AI sidebar section, multi-agent personality support, per-agent conversation history, conversation resume, FloatingChatBar last-used agent persistence; updated Executive Summary to mention multi-agent chat with persistent conversation history'
+  - date: '2026-05-29'
+    changes: 'Added Car Maintenance Tracking module (FR49-FR61): multi-vehicle maintenance schedules, default task templates (fluids, filters, spark plugs, suspension, tires, brakes), in-app alerts at 500 km/14 days before due, service logging with odometer auto-update, Journey 7, MVP scope item #10, dashboard and AI chat integration; standalone vehicle entities (not linked to passive assets); architect dependency for schedule interval data source'
+  - date: '2026-05-29'
+    changes: 'Codebase parity sync: added FR63-FR81 for recurring expenses, spending trends, year summary, net worth projection, onboarding wizard, import duplicate detection and merchant hints, backup/restore, values privacy, i18n, theme, AI credentials keyring, auto-updater, FHSA/multi-currency accounts, YTD dashboard card; updated Product Scope and journeys; noted partial multi-agent and OpenAI runtime gaps'
 inputDocuments: ['product-brief-nkbaz-finance-2026-03-14.md']
 workflowType: 'prd'
 documentCounts:
@@ -27,7 +31,7 @@ classification:
 
 ## Executive Summary
 
-nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts, monitor passive assets, and view net worth history over time — all in a single interface. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application.
+nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
 
 The product solves a specific failure mode: financial tracking tools die when they demand effort. Spreadsheets work until the maintenance burden causes people to stop updating them. nkbaz-finance eliminates that friction by automating the most tedious part — data entry and categorization — starting with the highest-impact touchpoint (bi-weekly CC statements).
 
@@ -38,6 +42,8 @@ The product solves a specific failure mode: financial tracking tools die when th
 - **Pragmatic automation path** — screenshot/PDF upload over bank API integration. Easier to build, no third-party dependencies, accessible to any user who can take a photo. Bank APIs come later as an expansion of the automation model.
 - **AI-native interaction** — conversational interface for querying and managing financial data, plus automated CC parsing. AI is woven into the product, not bolted on.
 - **Cash flow visibility** — income tracking alongside expenses gives the AI full financial context for meaningful recommendations, not just spending data in isolation.
+- **Proactive car maintenance** — multi-vehicle maintenance schedules with default industry-baseline templates and in-app alerts before service is due. No separate car app needed.
+- **Financial analytics beyond the dashboard** — spending trends, year-to-date summaries, and forward net worth projection turn tracking data into planning insight.
 - **Built from real pain** — designed from the builder's own failed spreadsheet workflow, not theoretical user research.
 
 ## Project Classification
@@ -56,6 +62,8 @@ The product solves a specific failure mode: financial tracking tools die when th
 - All account types and passive assets represented in a single view
 - Net worth history accurately tracks changes over time by category
 - All income sources represented with monthly entries reflecting actual amounts received
+- All owned vehicles have active maintenance schedules with accurate due-date tracking
+- Maintenance alerts appear in-app when service is within 500 km or 14 days of due, or overdue
 - Google Sheets is fully replaced — no longer needed for finance tracking
 
 ### Business Success
@@ -77,6 +85,8 @@ N/A — personal project built to solve a personal problem. No commercial, growt
 | Time to update finances | < 5 min per bi-weekly session | From upload to reviewed dashboard |
 | Account coverage | All accounts represented | Every bank/investment/asset reflected |
 | Income tracking completeness | 100% of months have income recorded | No gaps in monthly income data |
+| Vehicle maintenance coverage | 100% of owned vehicles tracked | Every vehicle has an active schedule |
+| Maintenance alert timeliness | Alerts within 500 km or 14 days of due | Compare alert trigger date to due date/mileage |
 | Spreadsheet dependency | Zero | Google Sheets no longer used for finances |
 
 ## User Journeys
@@ -100,28 +110,30 @@ The dashboard updates instantly: budget bars shift, spending-by-category refresh
 
 ### Journey 2: The Setup & Maintenance Flow
 
-Dev is setting up the app for the first time. He creates his budget — housing, food, transport, entertainment, subscriptions, savings — with monthly targets for each group. He adds his accounts: Wealthsimple (TFSA, RRSP, non-registered, crypto), Desjardins (chequing, savings), Tangerine (CC, savings), plus a couple of US-dollar accounts.
+Dev is setting up the app for the first time. The onboarding wizard walks him through five steps: budget groups, accounts, passive assets, income sources, and first CC import. He creates his budget — housing, food, transport, entertainment, subscriptions, savings — with monthly targets for each group. He adds his accounts: Wealthsimple (TFSA, RRSP, FHSA, non-registered, crypto), Desjardins (chequing, savings), Tangerine (CC, savings), plus a couple of US-dollar accounts.
 
 Then the passive assets: his condo, his share of a business, his car. He enters current estimated values.
 
 A month later, he updates his Wealthsimple balances after checking the app — types in the new TFSA and RRSP numbers. Adjusts the condo estimate after a comparable sold on his street.
 
 **What this reveals:**
+- Guided onboarding wizard for first-time setup
 - Budget builder with category groups and monthly targets
-- Account management (add/edit/remove, multiple types)
+- Account management (add/edit/remove, multiple types including FHSA, CAD/USD)
 - Passive asset management (add/edit/remove, various asset classes)
 - Manual balance entry for all non-CC accounts
 - Simple, fast data entry — no friction on updates
 
 ### Journey 3: The Dashboard Glance
 
-Dev opens the app mid-month just to check where things stand. The dashboard shows: budget status across all categories, total balances by account, total net worth, and this month's income versus total expenses — the cash flow snapshot. No clicks needed. He sees the number, closes the tab.
+Dev opens the app mid-month just to check where things stand. The dashboard shows: budget status across all categories, total balances by account, total net worth with sparkline, year-to-date summary card, this month's income versus total expenses — the cash flow snapshot — and a maintenance alert badge showing his Civic is due for an oil change in 12 days. No clicks needed. He sees the number, closes the tab.
 
 **What this reveals:**
 - Dashboard as the landing page
 - Net worth = sum of all account balances + all passive asset values
 - Budget status at a glance (per category, overall)
 - Income vs. expenses cash flow view
+- Maintenance alerts summary visible at a glance (exact placement TBD — UX design workflow)
 - Zero-interaction read — everything visible without drilling in
 
 ### Journey 4: The CC Import Gone Wrong (Edge Case)
@@ -137,11 +149,12 @@ Dev uploads a CC statement screenshot but the image is blurry — taken at an an
 
 Dev wants to know how his restaurant spending this quarter compares to last quarter. Instead of navigating through expense views and doing mental math, he opens the AI chat and types: "How much did I spend on dining out in Q1 vs Q4 last year?"
 
-The AI queries his data and responds with the breakdown. Dev follows up: "Am I spending more than I earn this month?" The AI pulls his recorded income and total expenses and responds: "You've spent 78% of this month's income with 10 days left. Your dining and entertainment categories are running hot — consider holding off on non-essentials." Dev then says: "Add a $45 expense at Costco under Groceries for today." The AI confirms the details and Dev approves the action.
+The AI queries his data and responds with the breakdown. Dev follows up: "Am I spending more than I earn this month?" The AI pulls his recorded income and total expenses and responds: "You've spent 78% of this month's income with 10 days left. Your dining and entertainment categories are running hot — consider holding off on non-essentials." Dev then asks: "When is my Civic due for an oil change?" The AI responds with the due date and remaining mileage. Dev then says: "Add a $45 expense at Costco under Groceries for today." The AI confirms the details and Dev approves the action.
 
 **What this reveals:**
 - Natural language query interface for all financial data
 - AI can answer comparative and analytical questions
+- AI can answer maintenance schedule and due-date queries
 - AI can perform write actions with user confirmation
 - Income-aware spending recommendations
 - Conversational interaction as an alternative to UI navigation
@@ -158,6 +171,43 @@ Next month his pay is lower — back to the base $3,800. He updates accordingly.
 - Income history over time
 - Dashboard integration showing income vs. expenses
 - AI context enrichment for recommendations
+
+### Journey 7: The Car Maintenance Check-In
+
+Dev registers his Honda Civic and Toyota RAV4 in the maintenance module — standalone vehicle records, separate from his passive asset entries. He enters each vehicle's make, model, year, and current odometer reading. The app pre-populates a default maintenance schedule: engine oil & filter, transmission fluid, brake fluid, coolant, tire rotation, air filters, spark plugs, suspension inspection, brake inspection, battery check, and wiper blades — each with industry-baseline km and month intervals.
+
+He adjusts the Civic's oil change interval to match his owner's manual (10,000 km / 12 months instead of the default 8,000 km). A few weeks later, he opens the app and sees an amber alert on the dashboard: Civic oil change due in 11 days. At 495 km remaining, the alert persists until he gets the service done.
+
+After the garage visit, Dev logs "Oil change completed" with today's date and odometer reading of 52,300 km — higher than the stored 51,850 km. The system updates the vehicle odometer to 52,300 km, shows a confirmation toast ("Odometer updated to 52,300 km based on service log"), and resets the oil change countdown.
+
+**What this reveals:**
+- Standalone vehicle registration (not linked to passive assets)
+- Multi-vehicle independent schedules
+- Default maintenance task templates with comprehensive fluid, filter, and inspection items
+- Per-vehicle interval customization
+- Manual odometer updates
+- Service log entry with automatic odometer correction when log exceeds stored value
+- User notification when odometer is auto-updated from a service log
+- Dual-threshold evaluation (km or months, whichever comes first)
+- In-app alerts at 500 km / 14 days before due and when overdue
+- Dashboard surfacing of maintenance status
+
+### Journey 8: Recurring Expenses & Financial Planning
+
+Dev sets up recurring expense templates for his Netflix subscription and gym membership — merchant, amount, category, and day of month. Each time he opens the app, due recurring expenses auto-apply for the current month so his budget stays current without manual entry.
+
+At year-end, he opens Year Summary to review total spending by category across the full year and compare monthly patterns. He checks Spending Trends to see whether restaurant spending climbed over the last 12 months. Curious about the future, he opens Net Worth Projection, sets growth assumptions for his TFSA/RRSP/FHSA, real estate, and vehicles, and views a 10-year forward projection based on his cash flow history.
+
+Before leaving a coffee shop, he toggles "Hide values" in the sidebar so passersby can't read his net worth. He exports a database backup to an external drive for safekeeping.
+
+**What this reveals:**
+- Recurring expense template management
+- Auto-apply recurring expenses on app launch
+- Year-to-date and annual summary views
+- Multi-month spending trend analysis
+- Forward net worth projection with configurable assumptions
+- Values privacy toggle
+- Database backup/restore
 
 ### Journey Requirements Summary
 
@@ -179,25 +229,52 @@ Next month his pay is lower — back to the base $3,800. He updates accordingly.
 | Monthly income entry | Journey 6 |
 | Income vs. expense dashboard view | Journey 3, 6 |
 | Income-aware AI recommendations | Journey 5 |
+| Vehicle registration for maintenance (standalone) | Journey 7 |
+| Default maintenance task templates | Journey 7 |
+| Per-vehicle interval customization | Journey 7 |
+| Odometer tracking (manual + auto-update from service log) | Journey 7 |
+| Service log with schedule reset | Journey 7 |
+| In-app maintenance alerts (approaching + overdue) | Journey 3, 7 |
+| Maintenance status and history per vehicle | Journey 7 |
+| AI chat for maintenance queries | Journey 5, 7 |
+| Dashboard maintenance alerts summary | Journey 3, 7 |
+| Onboarding wizard | Journey 2 |
+| Recurring expense templates | Journey 8 |
+| Auto-apply recurring expenses | Journey 8 |
+| Spending trends (multi-month) | Journey 8 |
+| Year summary / YTD | Journey 3, 8 |
+| Net worth projection | Journey 8 |
+| Values privacy hide/show | Journey 8 |
+| Database backup/restore | Journey 8 |
+| Import duplicate detection | Journey 1, 4 |
+| Merchant category hint learning | Journey 1 |
+| Multi-currency accounts (CAD/USD) | Journey 2 |
+| FHSA account type | Journey 2 |
 
 ## Product Scope
 
 ### MVP (Phase 1)
 
-**MVP Approach:** Problem-solving MVP — deliver the complete financial tracking replacement for Google Sheets in a single release. All 8 core features ship together because they form an interdependent system.
+**MVP Approach:** Problem-solving MVP — deliver the complete financial tracking replacement for Google Sheets. Core capabilities ship together because they form an interdependent system. Car maintenance tracking (capability #10) is specified but not yet implemented in codebase as of 2026-05-29.
 
 **Resource Requirements:** Solo developer. No external dependencies beyond Strand SDK and AWS Bedrock.
 
 **Must-Have Capabilities:**
 1. **Monthly Budget Builder** — create/manage budgets with customizable category groups and targets
-2. **AI-Powered CC Import** — upload screenshot/PDF, auto-extract and categorize transactions
-3. **Expense Tracking** — view, review, correct auto-categorized expenses; manual entry as fallback
-4. **Multi-Account Tracking** — track balances across multiple banks and account types
+2. **AI-Powered CC Import** — upload screenshot/PDF, auto-extract and categorize transactions, duplicate detection, merchant hint learning
+3. **Expense Tracking** — view, review, correct auto-categorized expenses; manual entry as fallback; recurring expense templates with auto-apply
+4. **Multi-Account Tracking** — track balances across multiple banks and account types (chequing, savings, credit card, TFSA, RRSP, FHSA, non-registered, crypto) in CAD or USD
 5. **Passive Asset Tracking** — track value of business, real estate, vehicles, other assets
-6. **Dashboard** — budget status, spending by category, account balances, net worth
-7. **Net Worth History** — historical tracking split by category (cash, crypto, housing, TFSA, RRSP, etc.)
-8. **AI Chat** — natural language queries and actions across all financial data
-9. **Income Tracking** — set up income sources, record monthly income amounts, view income history and cash flow (income vs. expenses)
+6. **Dashboard** — budget status, spending by category, account balances, net worth sparkline, YTD card, cash flow, maintenance alerts
+7. **Net Worth History** — historical tracking split by category (cash, crypto, housing, TFSA, RRSP, FHSA, etc.)
+8. **Financial Analytics** — spending trends (3/6/12 months), year summary, forward net worth projection
+9. **AI Chat** — natural language queries and actions across all financial data
+10. **Income Tracking** — set up income sources, record monthly income amounts, view income history and cash flow (income vs. expenses)
+11. **Car Maintenance Tracking** — register multiple vehicles (standalone entities), track odometer and service history, pre-populated maintenance task templates with editable intervals, in-app alerts when service is approaching or overdue *(specified, not yet implemented)*
+12. **Onboarding Wizard** — guided first-run setup across budget, accounts, assets, income, and import
+13. **Application Platform** — database backup/restore, values privacy toggle, EN/FR localization, light/dark/system theme, OS keychain AI credentials, auto-update check
+
+**Related Deliverable (separate app):** Marketing website (`apps/web`) — landing page, download CTA, feature showcase, FAQ. Not part of desktop MVP but ships alongside the product.
 
 Single-user only. No authentication required for MVP.
 
@@ -210,16 +287,22 @@ Single-user only. No authentication required for MVP.
 ### Phase 3 (Expansion)
 
 - Smart insights — AI-driven spending trends, anomaly detection, savings recommendations
-- Recurring expense detection and prediction
+- Automatic recurring expense detection from import history (distinct from user-defined recurring templates in MVP)
 - Export/reporting capabilities
+- Additional AI agent personalities beyond Budget Helper
+- OpenAI as full runtime provider for chat and CC import (credentials UI exists; Bedrock required today)
 
 ### Risk Mitigation
 
 **Technical Risks:** AI parsing accuracy is the single highest-risk item. Mitigation: manual entry fallback exists for every transaction. The app is useful even if AI accuracy starts below 95% — it still saves time vs. full manual entry.
 
+**Maintenance Schedule Data Source:** Default task intervals require an architect decision — embedded industry-baseline library (MVP candidate) vs. manufacturer-specific lookup (Phase 2). User overrides per vehicle must work regardless of source. Owner's manual intervals supersede dealership upsell packages.
+
+**Implementation Gaps (PRD vs. Codebase, 2026-05-29):** Car maintenance module (FR49-FR61) is specified but not implemented. Multi-agent AI infrastructure exists with one agent (`budget-helper`) shipped — FR41-FR43 partially met. OpenAI credentials can be stored but chat and import require AWS Bedrock at runtime.
+
 **Market Risks:** N/A — personal project, no market validation needed.
 
-**Resource Risks:** Solo developer. All MVP features are scoped as minimal implementations. Budget builder and account/asset tracking are straightforward CRUD. The AI integration is the only complex piece.
+**Resource Risks:** Solo developer. All MVP features are scoped as minimal implementations. Budget builder, account/asset tracking, and car maintenance are straightforward CRUD. The AI integration is the only complex piece.
 
 ## Desktop Application Specific Requirements
 
@@ -268,12 +351,36 @@ Tauri IPC (inter-process communication) between React frontend and Rust backend 
 
 Not required for account/asset balance updates (manual entry, standard request/response).
 
+### Maintenance Alert Evaluation
+
+- Maintenance alert status evaluates on app launch and when a vehicle odometer is updated or a service is logged
+- In-app alerts only for MVP — no OS-level push notifications
+- Alert placement and visual treatment deferred to UX design workflow (dashboard card, sidebar badge, or dedicated Maintenance view)
+
+### Localization & Theming
+
+- Application supports English and French via i18n resource files
+- User can switch theme: light, dark, or system preference
+- Language and theme accessible from application sidebar
+
+### Application Lifecycle
+
+- System checks for application updates on launch (Tauri updater)
+- User can export and import full SQLite database backup via native file dialogs
+- User can hide/show all monetary values app-wide for privacy (sidebar toggle, persisted)
+
+### AI Provider Configuration
+
+- User can store AI provider credentials in OS keychain (AWS Bedrock access key/secret/region, OpenAI API key)
+- Credentials managed via Settings → AI Provider page
+- MVP runtime: CC import and AI chat execute via AWS Bedrock; OpenAI credential storage exists for future use
+
 ### Implementation Considerations
 
 - Native file dialog (Tauri `dialog.open()`) for CC screenshots (image) and PDFs, with drag-and-drop as alternative
 - Async job pattern for AI parsing — Rust backend submits to AI service, streams progress via Tauri events to frontend
 - Client-side state management for budget views, account lists, and dashboard data
-- Client-side routing within the Tauri webview (dashboard, budget, accounts, import, chat)
+- Client-side routing within the Tauri webview (dashboard, budget, income, recurring, accounts, assets, net worth, spending trends, year summary, projection, import, maintenance, settings, chat)
 - Global keyboard shortcut registration via Tauri (Cmd+K for AI chat)
 
 ## Functional Requirements
@@ -293,6 +400,8 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR8: System can flag transactions it is uncertain about for user review
 - FR9: User can review and correct AI-categorized transactions before confirming
 - FR10: System can report real-time progress of the import process (uploading → extracting → categorizing → done)
+- FR72: System can detect potential duplicate transactions during import when merchant, date, and amount match an existing expense
+- FR73: System can learn merchant-to-category mappings from confirmed imports to improve future categorization accuracy
 
 ### Expense Tracking
 
@@ -300,13 +409,18 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR12: User can manually add an expense entry (merchant, amount, category, date)
 - FR13: User can edit or delete an existing expense
 - FR14: User can manually enter transactions that the AI failed to extract
+- FR63: User can create recurring expense templates with merchant, amount, category, and day of month
+- FR64: User can edit, activate, deactivate, or delete recurring expense templates
+- FR65: System auto-applies due recurring expenses on app launch for the current month
+- FR66: User can manually trigger application of due recurring expenses from the Recurring Expenses view
 
 ### Account Management
 
-- FR15: User can add a financial account (bank, investment, crypto, etc.) with a name, institution, type, and currency
+- FR15: User can add a financial account with a name, institution, type (chequing, savings, credit card, TFSA, RRSP, FHSA, non-registered, crypto), and currency (CAD or USD)
 - FR16: User can edit or remove an existing account
 - FR17: User can update the current balance of any account
-- FR18: User can view all accounts and their current balances in a single list
+- FR18: User can view all accounts and their current balances in a single list, grouped by type with liabilities (credit cards) separated from assets
+- FR80: User can hold accounts in CAD or USD; net worth calculations handle mixed-currency portfolios
 
 ### Income Management
 
@@ -329,16 +443,29 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR24: User can view spending breakdown by category on the dashboard
 - FR25: User can view all account balances on the dashboard
 - FR38: User can view income versus total expenses for the current month on the dashboard
+- FR62: User can view a maintenance alerts summary on the dashboard showing the count of approaching and overdue items across all vehicles
+- FR81: User can view a year-to-date summary card on the dashboard linking to the full year summary view
 
 ### Net Worth History
 
 - FR26: System can record a net worth snapshot each time account balances or asset values change
 - FR27: User can view net worth history over time as a trend
-- FR28: User can view net worth breakdown by category (cash, crypto, housing, TFSA, RRSP, etc.)
+- FR28: User can view net worth breakdown by category (cash, crypto, housing, TFSA, RRSP, FHSA, etc.)
+
+### Financial Analytics
+
+- FR67: User can view spending trends over 3, 6, or 12 months with total spending chart and category breakdown table
+- FR68: User can view year summary for a selected year with annual metrics, monthly spending chart, and category totals
+- FR69: User can view forward net worth projection over 6 months to 20 years with configurable growth assumptions per asset category and cash flow history
+
+### Onboarding
+
+- FR70: System guides new users through a multi-step onboarding wizard (budget, accounts, assets, income, import)
+- FR71: System redirects users to onboarding when no budget groups exist
 
 ### AI Chat
 
-- FR29: User can ask natural language questions about any data in the system (budgets, expenses, income, accounts, assets, net worth history)
+- FR29: User can ask natural language questions about any data in the system (budgets, expenses, income, accounts, assets, net worth history, vehicle maintenance schedules)
 - FR30: System can answer data queries with accurate, up-to-date information from the database
 - FR31: User can perform actions through chat (e.g., add expenses, update balances, modify budget categories)
 - FR32: System can confirm actions with the user before executing write operations
@@ -356,6 +483,34 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR47: System permanently associates each conversation with the agent identity it was started under; conversations are never shared across agents
 - FR48: FloatingChatBar (Cmd+K) opens pre-set to the last agent the user interacted with, persisted across sessions via localStorage
 
+### Car Maintenance Management
+
+- FR49: User can register a vehicle for maintenance tracking as a standalone entity (nickname, make, model, year, current odometer) — not linked to passive assets
+- FR50: User can manage multiple vehicles with independent maintenance schedules
+- FR51: System provides default maintenance task templates with industry-baseline intervals (km and months), including: engine oil & filter, transmission fluid, brake fluid, coolant, differential/transfer case fluid, power steering fluid, tire rotation, tire inspection, brake inspection, engine air filter, cabin air filter, spark plugs, suspension/steering inspection, battery check, and wiper blades
+- FR52: User can customize the interval (km and/or months) for any maintenance task on any vehicle
+- FR53: User can manually update the current odometer reading for a vehicle
+- FR54: User can log a completed maintenance event (task, date, odometer at service)
+- FR55: System recalculates next due date and mileage for a task after a service is logged
+- FR56: When a logged service odometer exceeds the vehicle's stored odometer, system updates the vehicle odometer to the higher value and notifies the user
+- FR57: System evaluates maintenance due status using whichever threshold comes first — km or time
+- FR58: System displays in-app alerts when a maintenance task is within 500 km or 14 days of due, or overdue
+- FR59: User can view maintenance status (upcoming, due, overdue) and service history per vehicle
+- FR60: User can query maintenance schedules and due dates via AI chat
+- FR61: System can answer maintenance data queries with accurate, up-to-date information from the database
+
+**Architecture dependency:** FR51 default intervals require architect investigation to determine data source (embedded baseline library vs. external manufacturer lookup). FR52 user overrides must function regardless of the chosen source.
+
+### Application Platform
+
+- FR74: User can export a full database backup to a file via native save dialog
+- FR75: User can import a database backup from a file via native open dialog, replacing current data
+- FR76: User can hide or show all monetary values app-wide via a sidebar toggle (persisted across sessions)
+- FR77: User can switch application language between English and French
+- FR78: User can switch application theme between light, dark, and system preference
+- FR79: User can configure and test AI provider credentials stored in the OS keychain (AWS Bedrock, OpenAI)
+- FR82: System checks for application updates on launch and notifies the user when an update is available
+
 ## Non-Functional Requirements
 
 ### Performance
@@ -370,7 +525,7 @@ Not required for account/asset balance updates (manual entry, standard request/r
 
 - NFR6: Financial data is stored encrypted at rest
 - NFR7: All communication with external AI services uses HTTPS
-- NFR8: File uploads are validated for type (image/PDF only) and size before processing
+- NFR8: File uploads are validated for type (image/PDF only) and size (maximum 20 MB) before processing
 
 ### Integration
 
@@ -380,5 +535,19 @@ Not required for account/asset balance updates (manual entry, standard request/r
 ### Data Integrity
 
 - NFR11: Financial records (transactions, balances, net worth snapshots) are never silently lost or corrupted
-- NFR12: Database supports backup and restore capability
+- NFR12: Database supports backup and restore capability via user-initiated export/import (FR74, FR75)
 - NFR13: Balance and net worth calculations are accurate to the cent
+
+### Maintenance Alerts
+
+- NFR14: Maintenance alert status evaluates within 1 second of app launch
+- NFR15: Odometer auto-update from service log (FR56) completes within 1 second and displays user notification before the user navigates away
+
+### Localization & Accessibility
+
+- NFR16: All user-facing strings are available in English and French with no missing translation keys in shipped views
+- NFR17: Values privacy toggle (FR76) applies to all monetary displays app-wide within 100ms of toggle
+
+### Application Lifecycle
+
+- NFR18: Auto-update check completes within 5 seconds of app launch without blocking dashboard render
