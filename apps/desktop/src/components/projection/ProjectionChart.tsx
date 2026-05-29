@@ -7,7 +7,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { useFormatCurrency, useFormatAxisValue } from "@/hooks/useFormatCurrency";
 import type { ProjectionPoint } from "@/lib/projection";
 

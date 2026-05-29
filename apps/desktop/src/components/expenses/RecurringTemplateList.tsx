@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { SlideOver } from "@nkbaz/shared";
+import { SlideOver } from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import {
   useDeleteRecurringTemplate,

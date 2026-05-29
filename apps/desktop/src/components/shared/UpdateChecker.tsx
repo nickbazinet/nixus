@@ -9,8 +9,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@nkbaz/shared";
-import { Button } from "@nkbaz/shared";
+} from "@nixus/shared";
+import { Button } from "@nixus/shared";
 import { toast } from "sonner";
 
 type Stage = "idle" | "available" | "downloading" | "ready";

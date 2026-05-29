@@ -59,22 +59,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Lint web app
-        run: pnpm --filter @nkbaz/web lint
+        run: pnpm --filter @nixus/web lint
 
       - name: Generate route tree
-        run: pnpm --filter @nkbaz/web generate
+        run: pnpm --filter @nixus/web generate
 
       - name: Typecheck shared package
-        run: pnpm --filter @nkbaz/shared typecheck
+        run: pnpm --filter @nixus/shared typecheck
 
       - name: Typecheck web app
-        run: pnpm --filter @nkbaz/web typecheck
+        run: pnpm --filter @nixus/web typecheck
 
       - name: Unit tests
-        run: pnpm --filter @nkbaz/web test
+        run: pnpm --filter @nixus/web test
 
       - name: Build web app
-        run: pnpm --filter @nkbaz/web build
+        run: pnpm --filter @nixus/web build
 
       - name: Lighthouse CI
         # Uses staticDistDir from apps/web/lighthouserc.json to serve the built
@@ -113,7 +113,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build web app
-        run: pnpm --filter @nkbaz/web build
+        run: pnpm --filter @nixus/web build
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4

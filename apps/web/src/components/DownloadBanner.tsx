@@ -1,6 +1,6 @@
 import { Trans, useTranslation } from "react-i18next";
 
-import { cn } from "@nkbaz/shared";
+import { cn } from "@nixus/shared";
 
 import { useDownloadState } from "@/features/download/DownloadStateContext";
 

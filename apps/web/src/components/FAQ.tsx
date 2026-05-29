@@ -6,7 +6,7 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 
 import { faqEntries } from "@/content/faq";
 import { trackEvent } from "@/lib/analytics";

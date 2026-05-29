@@ -4,7 +4,7 @@ import "@/lib/i18n";
 import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
-import { Toaster } from "@nkbaz/shared";
+import { Toaster } from "@nixus/shared";
 import { routeTree } from "./routeTree.gen";
 import "./index.css";
 

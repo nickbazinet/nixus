@@ -4,7 +4,7 @@
  * Produces `apps/web/public/og-image.png` at 1200×630 — the size every major
  * platform (Twitter, LinkedIn, Slack, Discord, Facebook) crops to. The PNG
  * is committed to git as a versioned static asset; this script exists so the
- * design can be updated by re-running `pnpm --filter @nkbaz/web generate-og-image`
+ * design can be updated by re-running `pnpm --filter @nixus/web generate-og-image`
  * rather than hand-editing the file.
  *
  * Why @resvg/resvg-js?

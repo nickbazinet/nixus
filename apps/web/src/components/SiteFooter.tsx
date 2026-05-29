@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Separator } from "@nkbaz/shared";
+import { Separator } from "@nixus/shared";
 
 const GITHUB_URL = "https://github.com/nickbazinet/nixus";
 const CONTACT_EMAIL = "support@nixus.nicolasbazinet.net";

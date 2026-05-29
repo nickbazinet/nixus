@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Badge } from "@nkbaz/shared";
+import { Badge } from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 interface DashboardBudgetCategoryRowProps {

@@ -5,17 +5,17 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { Check } from "lucide-react";
 import { toast } from "sonner";
-import { DatePicker } from "@nkbaz/shared";
-import { Input } from "@nkbaz/shared";
+import { DatePicker } from "@nixus/shared";
+import { Input } from "@nixus/shared";
 import { MoneyInput } from "../components/shared/MoneyInput";
-import { Label } from "@nkbaz/shared";
+import { Label } from "@nixus/shared";
 import {
   Select,
   SelectTrigger,
   SelectValue,
   SelectContent,
   SelectItem,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { PageHeader } from "../components/shared/PageHeader";
 import { UploadZone } from "../components/import/UploadZone";
 import { ImportProgressStepper } from "../components/import/ImportProgressStepper";

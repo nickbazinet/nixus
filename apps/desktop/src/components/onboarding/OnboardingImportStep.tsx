@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { Button } from "@nkbaz/shared";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { Upload } from "lucide-react";
 
 export function OnboardingImportStep() {

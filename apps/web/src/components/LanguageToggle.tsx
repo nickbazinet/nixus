@@ -8,7 +8,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 
 type Locale = "en" | "fr";
 

@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Button } from "@nkbaz/shared";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { NetWorthTrendChart } from "@/components/net-worth/NetWorthTrendChart";
 import { NetWorthBreakdownBar } from "@/components/net-worth/NetWorthBreakdownBar";
 import {
@@ -14,7 +14,7 @@ import {
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { parseNetWorthBreakdown } from "@/lib/parseNetWorthBreakdown";
 import { cn } from "@/lib/utils";
-import { PillTabs } from "@nkbaz/shared";
+import { PillTabs } from "@nixus/shared";
 
 export const Route = createFileRoute("/net-worth")({
   component: NetWorthPage,

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, X } from "lucide-react";
 
-import { cn } from "@nkbaz/shared";
+import { cn } from "@nixus/shared";
 
 const STORAGE_KEY = "nixus.preAlphaDismissed";
 

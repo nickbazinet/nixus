@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Card, CardContent, PillTabs } from "@nkbaz/shared";
+import { Card, CardContent, PillTabs } from "@nixus/shared";
 import { SpendingTrendChart } from "@/components/spending-trends/SpendingTrendChart";
 import { YearSummaryMetrics } from "@/components/yearly-summary/YearSummaryMetrics";
 import { YearlyCategoryTable } from "@/components/yearly-summary/YearlyCategoryTable";

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
-import { Input, Label, Badge } from "@nkbaz/shared";
+import { Input, Label, Badge } from "@nixus/shared";
 import { ProviderSelector } from "./ProviderSelector";
 import { useAiConfig, useInvalidateAiConfig } from "../../hooks/useAiConfig";
 

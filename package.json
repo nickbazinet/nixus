@@ -1,9 +1,9 @@
 {
-  "name": "nkbaz-finance",
+  "name": "nixus",
   "private": true,
   "scripts": {
-    "desktop:dev": "pnpm --filter @nkbaz/desktop dev",
-    "desktop:build": "pnpm --filter @nkbaz/desktop build",
-    "desktop:tauri": "pnpm --filter @nkbaz/desktop tauri"
+    "desktop:dev": "pnpm --filter @nixus/desktop dev",
+    "desktop:build": "pnpm --filter @nixus/desktop build",
+    "desktop:tauri": "pnpm --filter @nixus/desktop tauri"
   }
 }

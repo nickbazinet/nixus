@@ -2,8 +2,8 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
-import { Button } from "@nkbaz/shared";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { MonthNavigator } from "@/components/budget/MonthNavigator";
 import { IncomeSourceRow } from "@/components/income/IncomeSourceRow";
@@ -16,7 +16,7 @@ import {
   useIncomeEntriesByMonth,
 } from "@/hooks/useIncome";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
-import { SlideOver } from "@nkbaz/shared";
+import { SlideOver } from "@nixus/shared";
 
 export const Route = createFileRoute("/income")({
   component: IncomePage,

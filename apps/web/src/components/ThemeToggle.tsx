@@ -9,7 +9,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 
 type ThemeOption = "light" | "dark" | "system";
 

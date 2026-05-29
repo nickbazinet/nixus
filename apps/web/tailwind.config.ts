@@ -5,5 +5,5 @@
 // plugin in this project.
 //
 // To customize tokens marketing-site-wide, extend them inside
-// `src/styles/main.css` after the `@import '@nkbaz/shared/styles/tokens.css'`.
+// `src/styles/main.css` after the `@import '@nixus/shared/styles/tokens.css'`.
 export default {};

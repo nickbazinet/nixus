@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Card, CardContent, CardHeader, CardTitle } from "@nkbaz/shared";
+import { Card, CardContent, CardHeader, CardTitle } from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import type { MonthlySpendByCategory } from "@/lib/types";
 

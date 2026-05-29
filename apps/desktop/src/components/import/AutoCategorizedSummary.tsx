@@ -2,14 +2,14 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { DatePicker } from "@nkbaz/shared";
+import { DatePicker } from "@nixus/shared";
 import {
   Select,
   SelectTrigger,
   SelectValue,
   SelectContent,
   SelectItem,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import type { ParsedTransaction } from "@/hooks/useImport";
 
 interface BudgetCategory {

@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { AGENTS } from "@/lib/agents";
 
 export const Route = createFileRoute("/ai/")({

@@ -9,13 +9,13 @@ import {
   SelectItem,
   SelectGroup,
   SelectGroupLabel,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { toast } from "sonner";
 import { Pencil, Trash2 } from "lucide-react";
-import { Button } from "@nkbaz/shared";
-import { Input } from "@nkbaz/shared";
-import { Label } from "@nkbaz/shared";
-import { DatePicker } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Input } from "@nixus/shared";
+import { Label } from "@nixus/shared";
+import { DatePicker } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import {
   Dialog,
@@ -24,7 +24,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { useUpdateExpense, useDeleteExpense, useAllBudgetCategories } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";

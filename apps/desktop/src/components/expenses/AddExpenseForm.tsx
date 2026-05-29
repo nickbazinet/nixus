@@ -8,13 +8,13 @@ import {
   SelectItem,
   SelectGroup,
   SelectGroupLabel,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { Button } from "@nkbaz/shared";
-import { Input } from "@nkbaz/shared";
-import { Label } from "@nkbaz/shared";
-import { DatePicker } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Input } from "@nixus/shared";
+import { Label } from "@nixus/shared";
+import { DatePicker } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { useAllBudgetCategories, useCreateExpense } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";

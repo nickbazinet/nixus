@@ -3,10 +3,10 @@ import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@nkbaz/shared";
-import { Button } from "@nkbaz/shared";
-import { Input } from "@nkbaz/shared";
-import { Label } from "@nkbaz/shared";
+import { Card, CardHeader, CardTitle, CardContent } from "@nixus/shared";
+import { Button } from "@nixus/shared";
+import { Input } from "@nixus/shared";
+import { Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { InlineEditText, InlineEditMoney } from "@/components/shared/InlineEdit";
 import {
@@ -16,7 +16,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import {
   useBudgetCategories,
   useCreateBudgetCategory,

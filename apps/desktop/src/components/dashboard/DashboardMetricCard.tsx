@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
 interface TrendInfo {

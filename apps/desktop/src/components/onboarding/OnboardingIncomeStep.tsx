@@ -7,13 +7,13 @@ import {
   SelectValue,
   SelectContent,
   SelectItem,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { toast } from "sonner";
 import { Plus } from "lucide-react";
-import { Button } from "@nkbaz/shared";
-import { Input } from "@nkbaz/shared";
-import { Label } from "@nkbaz/shared";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Input } from "@nixus/shared";
+import { Label } from "@nixus/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { useIncomeSources, useCreateIncomeSource } from "@/hooks/useIncome";
 
 const INCOME_TYPE_OPTIONS = [

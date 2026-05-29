@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { INCOME_GROWTH_RATE, EXPENSE_GROWTH_RATE } from "@/lib/projection";
 

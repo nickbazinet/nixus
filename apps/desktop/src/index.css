@@ -2,11 +2,11 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@nkbaz/shared/styles/tokens.css";
+@import "@nixus/shared/styles/tokens.css";
 
-/* Scan the workspace-linked @nkbaz/shared package so Tailwind generates the
+/* Scan the workspace-linked @nixus/shared package so Tailwind generates the
  * utilities used inside its shadcn primitives (Button, DropdownMenu, etc.).
- * pnpm symlinks ./node_modules/@nkbaz/shared, but Tailwind v4 ignores
+ * pnpm symlinks ./node_modules/@nixus/shared, but Tailwind v4 ignores
  * node_modules by default — point it at the real source. Without this the
  * shared Button loses `inline-flex items-center gap-1.5` and icons stack on
  * top of labels (Plus on top of "Add Group", Chevron on top of month name). */

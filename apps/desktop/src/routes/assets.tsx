@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Plus, Gem } from "lucide-react";
-import { Button } from "@nkbaz/shared";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { AssetRow } from "@/components/assets/AssetRow";
 import { AddAssetForm } from "@/components/assets/AddAssetForm";
@@ -17,7 +17,7 @@ import {
   buildAssetBreakdown,
   groupAssetsByType,
 } from "@/lib/assetUtils";
-import { SlideOver } from "@nkbaz/shared";
+import { SlideOver } from "@nixus/shared";
 import type { PassiveAsset } from "@/lib/types";
 
 export const Route = createFileRoute("/assets")({

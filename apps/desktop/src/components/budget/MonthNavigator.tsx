@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
 
 interface MonthNavigatorProps {
   selectedYear: number;

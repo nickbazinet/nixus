@@ -1,1 +1,1 @@
-export { cn } from "@nkbaz/shared";
+export { cn } from "@nixus/shared";

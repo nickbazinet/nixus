@@ -7,7 +7,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent, CardHeader, CardTitle } from "@nkbaz/shared";
+import { Card, CardContent, CardHeader, CardTitle } from "@nixus/shared";
 import { useFormatCurrency, useFormatAxisValue } from "@/hooks/useFormatCurrency";
 import type { MonthlySpendTotal } from "@/lib/types";
 

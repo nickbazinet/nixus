@@ -34,7 +34,7 @@
 
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, cn } from "@nkbaz/shared";
+import { Button, cn } from "@nixus/shared";
 
 import { trackEvent } from "@/lib/analytics";
 

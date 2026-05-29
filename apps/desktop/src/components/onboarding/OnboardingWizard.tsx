@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { Check } from "lucide-react";
-import { Button } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
 import { OnboardingBudgetStep } from "./OnboardingBudgetStep";
 import { OnboardingAccountsStep } from "./OnboardingAccountsStep";
 import { OnboardingAssetsStep } from "./OnboardingAssetsStep";

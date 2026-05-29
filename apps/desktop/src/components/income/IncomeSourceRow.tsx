@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +10,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { useDeleteIncomeSource } from "@/hooks/useIncome";
 import type { IncomeSourceWithLastEntry } from "@/lib/types";
 import { EditIncomeSourceForm } from "./EditIncomeSourceForm";

@@ -8,11 +8,11 @@ import {
   SelectItem,
   SelectGroup,
   SelectGroupLabel,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { toast } from "sonner";
-import { Button } from "@nkbaz/shared";
-import { Input } from "@nkbaz/shared";
-import { Label } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Input } from "@nixus/shared";
+import { Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { useAllBudgetCategories } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";

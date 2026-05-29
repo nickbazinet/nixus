@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { cn, NixusLogo } from "@nkbaz/shared";
+import { cn, NixusLogo } from "@nixus/shared";
 
 import { DownloadCTA } from "@/features/download/DownloadCTA";
 import { LanguageToggle } from "./LanguageToggle";

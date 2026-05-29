@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { Badge } from "@nkbaz/shared";
+import { Badge } from "@nixus/shared";
 import { ExpenseList } from "@/components/expenses/ExpenseList";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import type { BudgetCategoryStatus, Expense } from "@/lib/types";

@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import type { YearlySummaryData } from "@/lib/types";
 

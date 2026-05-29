@@ -13,8 +13,8 @@ These standards apply to all implementation work on this project. Review them be
 
 Before considering any implementation work complete:
 
-1. Run `pnpm --filter @nkbaz/desktop exec tsc --noEmit` — zero type errors
-2. Run `pnpm --filter @nkbaz/desktop exec playwright test` — all tests pass (163 as of v0.1.6)
+1. Run `pnpm --filter @nixus/desktop exec tsc --noEmit` — zero type errors
+2. Run `pnpm --filter @nixus/desktop exec playwright test` — all tests pass (163 as of v0.1.6)
 3. If your changes affect UI, add or update Playwright tests to cover the new behavior
 4. If your changes break existing tests, fix the tests as part of the same work — do not leave broken tests behind
 

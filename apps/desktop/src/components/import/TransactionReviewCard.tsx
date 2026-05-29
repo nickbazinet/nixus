@@ -6,9 +6,9 @@ import {
   SelectValue,
   SelectContent,
   SelectItem,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
-import { DatePicker } from "@nkbaz/shared";
+import { DatePicker } from "@nixus/shared";
 
 interface BudgetCategory {
   id: number;

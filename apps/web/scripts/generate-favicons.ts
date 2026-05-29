@@ -17,7 +17,7 @@
  * `packages/shared` — build scripts can't import React components, and a
  * standalone SVG string keeps the rendering pipeline simple.
  *
- * Run with: `pnpm --filter @nkbaz/web generate-favicons`
+ * Run with: `pnpm --filter @nixus/web generate-favicons`
  */
 
 import { Resvg } from "@resvg/resvg-js";

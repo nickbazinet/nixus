@@ -1,5 +1,5 @@
 {
-  "name": "@nkbaz/web",
+  "name": "@nixus/web",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -7,6 +7,7 @@
     "dev": "vite dev --port 3000",
     "generate": "tsx scripts/generate-routes.ts",
     "generate-og-image": "tsx scripts/generate-og-image.ts",
+    "generate-buymeacoffee-cover": "tsx scripts/generate-buymeacoffee-cover.ts",
     "generate-favicons": "tsx scripts/generate-favicons.ts",
     "build": "vite build",
     "preview": "vite preview",
@@ -17,7 +18,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@nkbaz/shared": "workspace:*",
+    "@nixus/shared": "workspace:*",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-router": "^1.167.0",
     "@tanstack/react-router-devtools": "^1.166.7",

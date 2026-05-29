@@ -7,7 +7,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@nkbaz/shared";
+} from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import type { NetWorthBreakdownCategory } from "@/lib/types";
 

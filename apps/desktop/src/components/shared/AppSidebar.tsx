@@ -21,7 +21,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
-import { NixusLogo } from "@nkbaz/shared";
+import { NixusLogo } from "@nixus/shared";
 
 const themeOrder = ["light", "dark", "system"] as const;
 const themeIcons = { light: Sun, dark: Moon, system: Monitor } as const;

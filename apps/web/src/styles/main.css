@@ -1,9 +1,9 @@
 @import "tailwindcss";
-@import "@nkbaz/shared/styles/tokens.css";
+@import "@nixus/shared/styles/tokens.css";
 
-/* Scan the workspace-linked @nkbaz/shared package so Tailwind generates
+/* Scan the workspace-linked @nixus/shared package so Tailwind generates
  * the utilities used inside its shadcn primitives (Button, DropdownMenu,
- * etc.). pnpm symlinks ./node_modules/@nkbaz/shared, but Tailwind v4
+ * etc.). pnpm symlinks ./node_modules/@nixus/shared, but Tailwind v4
  * ignores node_modules by default — point it at the real source path. */
 @source "../../../../packages/shared/src/**/*.{ts,tsx}";
 

@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Plus } from "lucide-react";
-import { Button } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
 import { MonthNavigator } from "./MonthNavigator";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 

@@ -1,4 +1,4 @@
-# @nkbaz/web — Nixus Marketing Site
+# @nixus/web — Nixus Marketing Site
 
 Public marketing site for Nixus, the local-first personal finance desktop app.
 
@@ -7,11 +7,11 @@ Built with **TanStack Start v1** + React 19 + Tailwind v4. Statically prerendere
 ## Scripts
 
 ```bash
-pnpm --filter @nkbaz/web dev        # Dev server on http://localhost:3000
-pnpm --filter @nkbaz/web build      # Static prerender to .output/public/
-pnpm --filter @nkbaz/web preview    # Preview the production build
-pnpm --filter @nkbaz/web typecheck  # tsc --noEmit
-pnpm --filter @nkbaz/web test:e2e   # Playwright e2e (added in later stories)
+pnpm --filter @nixus/web dev        # Dev server on http://localhost:3000
+pnpm --filter @nixus/web build      # Static prerender to .output/public/
+pnpm --filter @nixus/web preview    # Preview the production build
+pnpm --filter @nixus/web typecheck  # tsc --noEmit
+pnpm --filter @nixus/web test:e2e   # Playwright e2e (added in later stories)
 ```
 
 ## Output
@@ -46,4 +46,4 @@ apps/web/
 
 ## Shared Package
 
-This app consumes `@nkbaz/shared` (workspace) for UI primitives and design tokens. The token CSS is imported in `src/styles/main.css` to register against Tailwind v4's `@theme`.
+This app consumes `@nixus/shared` (workspace) for UI primitives and design tokens. The token CSS is imported in `src/styles/main.css` to register against Tailwind v4's `@theme`.

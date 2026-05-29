@@ -16,7 +16,7 @@ importers:
       '@fontsource-variable/geist':
         specifier: ^5.2.8
         version: 5.2.8
-      '@nkbaz/shared':
+      '@nixus/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@tailwindcss/vite':
@@ -146,7 +146,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@nkbaz/shared':
+      '@nixus/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       '@tailwindcss/vite':

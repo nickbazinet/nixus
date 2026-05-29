@@ -8,7 +8,7 @@
  *
  * What we explicitly DON'T test here:
  *   - `useOSDetection`'s own behavior — covered by `useOSDetection.test.ts`.
- *   - The shared `Button`'s rendering — covered by the @nkbaz/shared package.
+ *   - The shared `Button`'s rendering — covered by the @nixus/shared package.
  *   - Real network downloads — that's an e2e concern.
  */
 

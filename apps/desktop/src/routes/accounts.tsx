@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Plus, Landmark } from "lucide-react";
-import { Button } from "@nkbaz/shared";
-import { Card, CardContent } from "@nkbaz/shared";
+import { Button } from "@nixus/shared";
+import { Card, CardContent } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { AccountRow } from "@/components/accounts/AccountRow";
 import { AddAccountForm } from "@/components/accounts/AddAccountForm";
@@ -20,7 +20,7 @@ import {
   partitionAccounts,
   sumBalanceCents,
 } from "@/lib/accountUtils";
-import { SlideOver } from "@nkbaz/shared";
+import { SlideOver } from "@nixus/shared";
 import type { Account } from "@/lib/types";
 
 export const Route = createFileRoute("/accounts")({

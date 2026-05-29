@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Input } from "@nkbaz/shared";
+import { Input } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { cn } from "@/lib/utils";
 
