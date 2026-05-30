@@ -309,6 +309,169 @@ export interface ChatConversation {
   updated_at: string;
 }
 
+export interface VehicleCatalogStatus {
+  available: boolean;
+  cached_at?: string;
+  stale: boolean;
+}
+
+export interface VehicleMake {
+  name: string;
+}
+
+export interface VehicleModel {
+  name: string;
+}
+
+export interface Vehicle {
+  id: number;
+  nickname: string;
+  make: string | null;
+  model: string | null;
+  year: number | null;
+  odometer_km: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaintenanceTaskBaseline {
+  task_type_key: string;
+  interval_km: number;
+  interval_months: number;
+}
+
+export interface CreateMaintenanceTaskInput {
+  task_type_key: string;
+  interval_km: number;
+  interval_months: number;
+}
+
+export interface CreateVehicleInput {
+  make?: string | null;
+  model?: string | null;
+  year?: number | null;
+  odometer_km: number;
+  use_default_template?: boolean;
+  custom_tasks?: CreateMaintenanceTaskInput[];
+}
+
+export interface UpdateVehicleInput {
+  id: number;
+  make?: string | null;
+  model?: string | null;
+  year?: number | null;
+}
+
+export type MaintenanceTaskStatus = "ok" | "upcoming" | "due" | "overdue";
+
+export interface MaintenanceTaskWithStatus {
+  id: number;
+  vehicle_id: number;
+  task_type_key: string;
+  interval_km: number;
+  interval_months: number;
+  default_interval_km: number;
+  default_interval_months: number;
+  last_service_date: string | null;
+  last_service_odometer_km: number | null;
+  custom_task_name?: string | null;
+  created_at: string;
+  updated_at: string;
+  status: MaintenanceTaskStatus;
+  km_remaining: number | null;
+  days_remaining: number | null;
+  next_due_date: string | null;
+  next_due_odometer_km: number | null;
+}
+
+export interface AddMaintenanceTaskInput {
+  vehicle_id: number;
+  task_type_key?: string | null;
+  custom_task_name?: string | null;
+  interval_km?: number | null;
+  interval_months?: number | null;
+}
+
+export interface VehicleWithTasks {
+  vehicle: Vehicle;
+  tasks: MaintenanceTaskWithStatus[];
+}
+
+export interface MaintenanceServiceLog {
+  id: number;
+  vehicle_id: number;
+  task_id: number | null;
+  custom_service_name?: string | null;
+  service_date: string;
+  odometer_km: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface MaintenanceServiceLogEntry {
+  id: number;
+  vehicle_id: number;
+  task_id: number | null;
+  task_type_key?: string | null;
+  custom_service_name?: string | null;
+  service_date: string;
+  odometer_km: number;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface LogMaintenanceServiceInput {
+  task_id: number;
+  service_date: string;
+  odometer_km: number;
+  notes?: string | null;
+}
+
+export interface LogCustomServiceInput {
+  vehicle_id: number;
+  custom_service_name: string;
+  service_date: string;
+  odometer_km: number;
+  notes?: string | null;
+}
+
+export interface LogCustomServiceResult {
+  log: MaintenanceServiceLog;
+  odometer_updated: boolean;
+  previous_odometer_km?: number;
+  new_odometer_km?: number;
+}
+
+export interface LogServiceResult {
+  log: MaintenanceServiceLog;
+  task: MaintenanceTaskWithStatus;
+  odometer_updated: boolean;
+  previous_odometer_km?: number;
+  new_odometer_km?: number;
+}
+
+export interface MostUrgentTask {
+  task_type_key: string;
+  status: MaintenanceTaskStatus;
+  days_remaining?: number;
+  km_remaining?: number;
+}
+
+export interface VehicleAlertRow {
+  vehicle_id: number;
+  nickname: string;
+  alert_count: number;
+  most_urgent_task: MostUrgentTask;
+}
+
+export interface MaintenanceAlertSummary {
+  total_alerts: number;
+  total_vehicles: number;
+  vehicles_with_alerts: number;
+  worst_status: MaintenanceTaskStatus;
+  vehicles: VehicleAlertRow[];
+}
+
 export type AiProvider = "bedrock" | "openai";
 
 export interface AiConfig {

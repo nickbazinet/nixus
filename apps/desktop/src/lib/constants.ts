@@ -39,4 +39,14 @@ export const queryKeys = {
   recurringTemplates: ["recurring-templates"] as const,
   chatConversations: (agentId: string) =>
     ["chat-conversations", agentId] as const,
+  maintenance: ["maintenance"] as const,
+  maintenanceVehicle: (vehicleId: number) =>
+    ["maintenance", vehicleId] as const,
+  maintenanceHistory: (vehicleId: number) =>
+    ["maintenance-history", vehicleId] as const,
+  maintenanceTaskBaselines: ["maintenance-task-baselines"] as const,
+  vehicleCatalog: ["vehicle-catalog"] as const,
+  vehicleMakes: ["vehicle-catalog", "makes"] as const,
+  vehicleModels: (make: string, year: number) =>
+    ["vehicle-catalog", "models", make, year] as const,
 };

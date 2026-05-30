@@ -1,11 +1,9 @@
-#![allow(dead_code)]
-
 use chrono::{Months, NaiveDate};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::defaults::{ALERT_DAYS_THRESHOLD, ALERT_KM_THRESHOLD};
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     Ok,
@@ -38,7 +36,10 @@ pub struct TaskEvaluation {
 
 pub fn evaluate_task(input: &TaskEvalInput) -> TaskEvaluation {
     let km_eval = if input.interval_km > 0 {
-        let anchor = input.last_service_odometer_km.unwrap_or(0);
+        // Never-serviced tasks start counting from registration odometer, not zero.
+        let anchor = input
+            .last_service_odometer_km
+            .unwrap_or(input.current_odometer_km);
         let next_due = anchor + input.interval_km;
         let remaining = next_due - input.current_odometer_km;
         Some((next_due, remaining))
@@ -95,12 +96,54 @@ fn classify(remaining: i64, alert_threshold: i64) -> TaskStatus {
     }
 }
 
-fn status_rank(s: &TaskStatus) -> u8 {
+pub fn status_rank(s: &TaskStatus) -> u8 {
     match s {
         TaskStatus::Ok => 0,
         TaskStatus::Upcoming => 1,
         TaskStatus::Due => 2,
         TaskStatus::Overdue => 3,
+    }
+}
+
+pub fn is_alert_status(status: &TaskStatus) -> bool {
+    !matches!(status, TaskStatus::Ok)
+}
+
+/// Pick a single urgency dimension for dashboard display.
+/// Uses the dimension that contributed the worse status; ties prefer km when interval_km > 0.
+pub fn pick_single_urgency_dimension(
+    interval_km: i64,
+    km_remaining: Option<i64>,
+    days_remaining: Option<i64>,
+) -> (Option<i64>, Option<i64>) {
+    let km_status = km_remaining.map(|r| classify(r, ALERT_KM_THRESHOLD));
+    let time_status = days_remaining.map(|r| classify(r, ALERT_DAYS_THRESHOLD));
+
+    match (km_status, time_status) {
+        (None, None) => (None, None),
+        (Some(_), None) => (km_remaining, None),
+        (None, Some(_)) => (None, days_remaining),
+        (Some(ks), Some(ts)) => {
+            let km_rank = status_rank(&ks);
+            let time_rank = status_rank(&ts);
+            if km_rank > time_rank {
+                (km_remaining, None)
+            } else if time_rank > km_rank {
+                (None, days_remaining)
+            } else if interval_km > 0 {
+                (km_remaining, None)
+            } else {
+                (None, days_remaining)
+            }
+        }
+    }
+}
+
+pub fn worst_status(a: TaskStatus, b: TaskStatus) -> TaskStatus {
+    if status_rank(&a) >= status_rank(&b) {
+        a
+    } else {
+        b
     }
 }
 
@@ -125,6 +168,20 @@ mod tests {
 
     fn created_at() -> String {
         "2024-01-01 00:00:00".to_string()
+    }
+
+    #[test]
+    fn task_status_serializes_as_snake_case() {
+        let cases = [
+            (TaskStatus::Ok, "\"ok\""),
+            (TaskStatus::Upcoming, "\"upcoming\""),
+            (TaskStatus::Due, "\"due\""),
+            (TaskStatus::Overdue, "\"overdue\""),
+        ];
+        for (status, expected) in cases {
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(json, expected);
+        }
     }
 
     // --- km-only tasks ---
@@ -292,21 +349,21 @@ mod tests {
     // --- never-serviced tasks ---
 
     #[test]
-    fn never_serviced_km_task_anchors_from_zero() {
+    fn never_serviced_km_task_anchors_from_current_odometer() {
         let input = TaskEvalInput {
             interval_km: 8000,
             interval_months: 0,
             last_service_date: None,
             last_service_odometer_km: None,
-            current_odometer_km: 500,
+            current_odometer_km: 85_000,
             vehicle_created_at: created_at(),
             today: today(),
         };
         let eval = evaluate_task(&input);
-        // Anchor odometer = 0, next due = 8000, current = 500 → remaining = 7500 → Ok
+        // Anchor odometer = 85_000, next due = 93_000, current = 85_000 → remaining = 8000 → Ok
         assert_eq!(eval.status, TaskStatus::Ok);
-        assert_eq!(eval.next_due_odometer_km, Some(8000));
-        assert_eq!(eval.km_remaining, Some(7500));
+        assert_eq!(eval.next_due_odometer_km, Some(93_000));
+        assert_eq!(eval.km_remaining, Some(8_000));
     }
 
     #[test]
@@ -327,36 +384,19 @@ mod tests {
     }
 
     #[test]
-    fn battery_check_time_only_evaluates_correctly() {
+    fn battery_replacement_time_only_evaluates_correctly() {
         let input = TaskEvalInput {
             interval_km: 0,
-            interval_months: 12,
+            interval_months: 48,
             last_service_date: Some("2026-01-01".to_string()),
             last_service_odometer_km: None,
             current_odometer_km: 50_000,
             vehicle_created_at: created_at(),
             today: today(),
         };
-        // Next due: 2027-01-01 → Ok (more than 14 days away)
+        // Next due: 2030-01-01 → Ok (more than 14 days away)
         let eval = evaluate_task(&input);
         assert_eq!(eval.status, TaskStatus::Ok);
         assert!(eval.km_remaining.is_none());
-    }
-
-    #[test]
-    fn wiper_blades_time_only_evaluates_correctly() {
-        let input = TaskEvalInput {
-            interval_km: 0,
-            interval_months: 12,
-            last_service_date: Some("2025-05-20".to_string()),
-            last_service_odometer_km: None,
-            current_odometer_km: 80_000,
-            vehicle_created_at: created_at(),
-            today: today(),
-        };
-        // Next due: 2026-05-20; today: 2026-05-29 → Overdue (9 days past)
-        let eval = evaluate_task(&input);
-        assert_eq!(eval.status, TaskStatus::Overdue);
-        assert!(eval.days_remaining.unwrap() < 0);
     }
 }

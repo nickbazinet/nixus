@@ -20,6 +20,7 @@ export function PillTabs<T extends string>({
       {options.map((option) => (
         <button
           key={option}
+          type="button"
           onClick={() => onChange(option)}
           className={cn(
             "px-3 py-1 text-sm rounded-md font-medium transition-colors",

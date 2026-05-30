@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Wallet,
+  Car,
   Download,
   FolderUp,
   Eye,
@@ -61,8 +62,9 @@ export function AppSidebar() {
 
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isAiSection = pathname.startsWith("/ai");
+  const isCarSection = pathname.startsWith("/car");
   const isSettingsSection = pathname.startsWith("/settings");
-  const isFinanceSection = !isAiSection && !isSettingsSection;
+  const isFinanceSection = !isAiSection && !isCarSection && !isSettingsSection;
 
   const cycleTheme = () => {
     const idx = themeOrder.indexOf(theme as (typeof themeOrder)[number]);
@@ -131,6 +133,30 @@ export function AppSidebar() {
                   )}
                 >
                   {t("sidebar.finance")}
+                </span>
+              </Link>
+            </li>
+            <li>
+              <Link
+                to="/car"
+                className={cn(
+                  "flex items-center text-sm font-medium transition-colors",
+                  expanded ? "gap-3 px-3 py-2.5" : "justify-center px-3 py-2.5",
+                  isCarSection
+                    ? "text-sidebar-primary border-r-[3px] border-sidebar-primary"
+                    : "text-sidebar-foreground/70 hover:text-sidebar-foreground"
+                )}
+                title={expanded ? undefined : t("sidebar.car")}
+                aria-label={t("sidebar.car")}
+              >
+                <Car size={20} />
+                <span
+                  className={cn(
+                    "transition-opacity duration-200",
+                    expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
+                  )}
+                >
+                  {t("sidebar.car")}
                 </span>
               </Link>
             </li>

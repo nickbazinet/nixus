@@ -55,6 +55,9 @@ pub fn run() {
             app.manage(DbState(Mutex::new(conn)));
             app.manage(Mutex::new(ai_state));
 
+            let catalog_data_dir = app_data_dir.clone();
+            maintenance::catalog::spawn_background_catalog_refresh(catalog_data_dir);
+
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<DbState>();
@@ -151,6 +154,22 @@ pub fn run() {
             commands::settings::save_openai_credentials,
             commands::settings::clear_ai_credentials,
             commands::settings::test_ai_connection,
+            commands::maintenance::get_maintenance_task_baselines,
+            commands::maintenance::create_vehicle,
+            commands::maintenance::get_vehicles,
+            commands::maintenance::get_vehicle,
+            commands::maintenance::update_vehicle,
+            commands::maintenance::delete_vehicle,
+            commands::maintenance::update_maintenance_task,
+            commands::maintenance::add_maintenance_task,
+            commands::maintenance::update_vehicle_odometer,
+            commands::maintenance::log_maintenance_service,
+            commands::maintenance::log_custom_service,
+            commands::maintenance::get_service_history,
+            commands::maintenance::get_maintenance_alert_summary,
+            commands::maintenance::get_vehicle_catalog_status,
+            commands::maintenance::get_vehicle_makes,
+            commands::maintenance::get_vehicle_models,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

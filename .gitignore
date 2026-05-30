@@ -36,8 +36,11 @@ apps/desktop/playwright-report/
 
 # Logs
 *.log
-.ralph/logs/
-_bmad-output/
+_bmad-output/*
+!_bmad-output/planning-artifacts/
+!_bmad-output/planning-artifacts/**
+!_bmad-output/implementation-artifacts/
+!_bmad-output/implementation-artifacts/**
 .worktrees/
 
 # Local tooling state

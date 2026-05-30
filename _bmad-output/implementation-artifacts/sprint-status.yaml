@@ -1,0 +1,181 @@
+# generated: 2026-03-14
+# last_updated: 2026-05-30
+# project: nkbaz-finance
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: {project-root}/_bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-03-14
+last_updated: 2026-05-30
+project: nkbaz-finance
+project_key: NOKEY
+tracking_system: file-system
+story_location: "{project-root}/_bmad-output/implementation-artifacts"
+
+development_status:
+  # Epic 1: Project Foundation & App Shell
+  epic-1: done
+  1-1-scaffold-tauri-desktop-application: done
+  1-2-install-frontend-dependencies-and-design-system: done
+  1-3-set-up-rust-backend-with-sqlite-and-error-handling: done
+  1-4-build-app-shell-with-sidebar-navigation-and-routing: done
+  epic-1-retrospective: optional
+
+  # Epic 2: Budget Management
+  epic-2: done
+  2-1-create-budget-with-category-groups-and-targets: done
+  2-2-edit-and-delete-budget-categories-groups-and-targets: done
+  2-3-view-budget-status-with-progress-bars: done
+  2-4-navigate-budget-by-month: done
+  epic-2-retrospective: optional
+
+  # Epic 3: Expense Tracking
+  epic-3: done
+  3-1-manually-add-an-expense: done
+  3-2-view-expenses-by-month-grouped-by-category: done
+  3-3-edit-and-delete-expenses: done
+  epic-3-retrospective: optional
+
+  # Epic 4: Account & Asset Management
+  epic-4: done
+  4-1-add-and-view-financial-accounts: done
+  4-2-edit-remove-update-account-balances: done
+  4-3-add-edit-view-passive-assets: done
+  epic-4-retrospective: optional
+
+  # Epic 5: Dashboard & Net Worth
+  epic-5: done
+  5-1-build-dashboard-with-budget-status-and-account-balances: done
+  5-2-dashboard-net-worth-and-spending-breakdown: done
+  5-3-net-worth-snapshot-recording: done
+  5-4-net-worth-history-page-with-trend-chart: done
+  epic-5-retrospective: optional
+
+  # Epic 6: AI-Powered CC Import
+  epic-6: done
+  6-1-file-upload-and-validation: done
+  6-2-ai-extraction-and-categorization-pipeline: done
+  6-3-transaction-review-and-confirmation: done
+  epic-6-retrospective: optional
+
+  # Epic 7: AI Chat
+  epic-7: done
+  7-1-ai-chat-page-with-data-queries: done
+  7-2-ai-chat-write-actions-with-confirmation: done
+  7-3-floating-chat-bar-cmd-k: done
+  epic-7-retrospective: optional
+
+  # Epic 8: Onboarding & Polish
+  epic-8: done
+  8-1-first-time-onboarding-wizard: done
+  8-2-database-backup-and-restore: done
+  8-3-audit-logging-for-financial-data-changes: done
+  8-4-accessibility-polish: done
+  epic-8-retrospective: optional
+
+  # Epic 9: Income Source & Entry Management
+  epic-9: done
+  9-1-income-source-management: done
+  9-2-monthly-income-entry-recording: done
+  9-3-income-history-view-and-current-month-total: done
+  epic-9-retrospective: optional
+
+  # Epic 10: Dashboard Cash Flow Integration
+  epic-10: done
+  10-1-cash-flow-summary-card-on-dashboard: done
+  epic-10-retrospective: optional
+
+  # Epic 11: Onboarding Income Step
+  epic-11: done
+  11-1-add-income-sources-step-to-onboarding-wizard: done
+  epic-11-retrospective: optional
+
+  # Epic 12: AI Income-Aware Recommendations
+  epic-12: done
+  12-1-income-aware-ai-chat-context: done
+  epic-12-retrospective: optional
+
+  # Epic 13: AI Credential Management
+  epic-13: done
+  13-1-credential-storage-foundation: done
+  13-2-settings-commands-backend: done
+  13-3-settings-ui: done
+  epic-13-retrospective: optional
+
+  # Epic 14: App Improvements & Refinements
+  epic-14: in-progress
+  14-1-chat-search-param-and-missing-conversation-fix: review
+  14-2-spending-trends-time-window-selector: review
+  14-3-dashboard-month-navigation: review
+  14-4-ai-import-merchant-category-memory: review
+  14-5-recurring-expenses: review
+  epic-14-retrospective: optional
+
+  # Epic 15: AI Section with Multi-Agent Chat and Conversation History
+  epic-15: done
+  15-1-backend-foundation-agent-identity-and-conversation-scoping: done
+  15-2-routing-navigation-and-agent-landing-page: done
+  15-3-conversation-history-panel: done
+  15-4-floating-chat-bar-agent-awareness: done
+  epic-15-retrospective: optional
+
+  # Epic 16: Vehicle Registration & Maintenance Schedules (car module)
+  epic-16: in-progress
+  16-1-maintenance-schema-baselines-and-schedule-evaluator: review
+  16-2-vehicle-registration-and-crud-commands: review
+  16-3-maintenance-page-navigation-and-add-vehicle: review
+  16-4-task-status-display-on-vehicle-cards: review
+  epic-16-retrospective: optional
+
+  # Epic 17: Service Logging & Schedule Management (car module)
+  epic-17: in-progress
+  17-1-customize-maintenance-intervals: review
+  17-2-manual-odometer-updates: review
+  17-3-service-logging-with-schedule-recalculation: review
+  17-4-service-history-view: review
+  epic-17-retrospective: optional
+
+  # Epic 18: Dashboard Maintenance Alerts (car module)
+  epic-18: in-progress
+  18-1-maintenance-alert-summary-card-on-dashboard: review
+  18-2-maintenance-end-to-end-verification: review
+  epic-18-retrospective: optional
+
+  # Epic 19: AI Maintenance Queries (car module)
+  epic-19: in-progress
+  19-1-ai-maintenance-query-tools: review
+  epic-19-retrospective: optional
+
+  # Epic 20: Vehicle Make/Model Catalog (car module)
+  epic-20: in-progress
+  20-1-nhtsa-vehicle-catalog-cache-and-form-comboboxes: review
+  epic-20-retrospective: optional

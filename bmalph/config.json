@@ -1,9 +1,0 @@
-{
-  "name": "nkbaz-finance",
-  "description": "Finance Platform for all",
-  "createdAt": "2026-03-16T20:24:00.811Z",
-  "platform": "claude-code",
-  "upstreamVersions": {
-    "bmadCommit": "aa573bdb"
-  }
-}

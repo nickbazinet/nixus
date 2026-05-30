@@ -13,6 +13,7 @@ use crate::db::chat as chat_db;
 use crate::db::dashboard as dashboard_db;
 use crate::db::expense as expense_db;
 use crate::db::income as income_db;
+use crate::db::maintenance as maintenance_db;
 use crate::db::DbState;
 use crate::error::AppError;
 use crate::models::{CreateAccountInput, CreateExpenseInput};
@@ -130,6 +131,36 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
             ));
         }
         ctx.push('\n');
+    }
+
+    if let Ok(vehicles) = maintenance_db::get_all_vehicles(&conn) {
+        if vehicles.is_empty() {
+            ctx.push_str("Maintenance Tracking: No vehicles registered.\n\n");
+        } else {
+            let alert_count = maintenance_db::get_maintenance_alert_summary(&conn)
+                .map(|s| s.total_alerts)
+                .unwrap_or(0);
+
+            ctx.push_str("Maintenance Tracking:\n");
+            ctx.push_str(&format!("  Vehicles: {}\n", vehicles.len()));
+            if alert_count > 0 {
+                ctx.push_str(&format!(
+                    "  Alerts: {} tasks need attention\n",
+                    alert_count
+                ));
+            } else {
+                ctx.push_str("  Alerts: 0 tasks need attention\n");
+            }
+            ctx.push('\n');
+
+            for vehicle in &vehicles {
+                ctx.push_str(&format!(
+                    "  - {} (id={}, odometer={} km)\n",
+                    vehicle.nickname, vehicle.id, vehicle.odometer_km
+                ));
+            }
+            ctx.push('\n');
+        }
     }
 
     Ok(ctx)
@@ -283,6 +314,59 @@ fn execute_tool_call(
             let results = expense_db::search_expenses(&conn, &filters)?;
             info!("Tool query_expenses returned {} results", results.len());
             Ok(chat_ai::format_tool_result(&results))
+        }
+        "query_maintenance_status" => {
+            let filters = maintenance_db::MaintenanceStatusFilters {
+                vehicle_id: tool_call
+                    .params
+                    .get("vehicle_id")
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
+                status_filter: tool_call
+                    .params
+                    .get("status_filter")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            };
+            let conn = db_state.0.lock().map_err(|e| AppError::Database {
+                message: e.to_string(),
+            })?;
+            let results = maintenance_db::query_maintenance_status(&conn, &filters)?;
+            info!(
+                "Tool query_maintenance_status returned {} results",
+                results.len()
+            );
+            Ok(chat_ai::format_maintenance_status_result(&results))
+        }
+        "query_maintenance_history" => {
+            let vehicle_id = tool_call
+                .params
+                .get("vehicle_id")
+                .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .ok_or_else(|| AppError::Validation {
+                    message: "vehicle_id is required for query_maintenance_history".to_string(),
+                    field: Some("vehicle_id".to_string()),
+                })?;
+            let filters = maintenance_db::MaintenanceHistoryFilters {
+                vehicle_id,
+                task_type_key: tool_call
+                    .params
+                    .get("task_type_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                limit: tool_call
+                    .params
+                    .get("limit")
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
+            };
+            let conn = db_state.0.lock().map_err(|e| AppError::Database {
+                message: e.to_string(),
+            })?;
+            let results = maintenance_db::query_maintenance_history(&conn, &filters)?;
+            info!(
+                "Tool query_maintenance_history returned {} results",
+                results.len()
+            );
+            Ok(chat_ai::format_maintenance_history_result(&results))
         }
         _ => Ok(format!("Tool result: Unknown tool '{}'", tool_call.tool)),
     }

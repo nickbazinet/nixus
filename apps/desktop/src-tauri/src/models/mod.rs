@@ -351,3 +351,198 @@ pub struct ProjectionInput {
     pub income_month_count: i64,
     pub expense_month_count: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vehicle {
+    pub id: i64,
+    pub nickname: String,
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub year: Option<i32>,
+    pub odometer_km: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceTask {
+    pub id: i64,
+    pub vehicle_id: i64,
+    pub task_type_key: String,
+    pub interval_km: i64,
+    pub interval_months: i64,
+    pub last_service_date: Option<String>,
+    pub last_service_odometer_km: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_task_name: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceTaskWithStatus {
+    pub id: i64,
+    pub vehicle_id: i64,
+    pub task_type_key: String,
+    pub interval_km: i64,
+    pub interval_months: i64,
+    pub last_service_date: Option<String>,
+    pub last_service_odometer_km: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub status: crate::maintenance::evaluator::TaskStatus,
+    pub km_remaining: Option<i64>,
+    pub days_remaining: Option<i64>,
+    pub next_due_date: Option<String>,
+    pub next_due_odometer_km: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_task_name: Option<String>,
+    pub default_interval_km: i64,
+    pub default_interval_months: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VehicleWithTasks {
+    pub vehicle: Vehicle,
+    pub tasks: Vec<MaintenanceTaskWithStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceTaskBaseline {
+    pub task_type_key: String,
+    pub interval_km: i64,
+    pub interval_months: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AddMaintenanceTaskInput {
+    pub vehicle_id: i64,
+    #[serde(default)]
+    pub task_type_key: Option<String>,
+    #[serde(default)]
+    pub custom_task_name: Option<String>,
+    pub interval_km: Option<i64>,
+    pub interval_months: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateMaintenanceTaskInput {
+    pub task_type_key: String,
+    pub interval_km: i64,
+    pub interval_months: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateVehicleInput {
+    pub odometer_km: i64,
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub year: Option<i32>,
+    #[serde(default = "default_use_default_template")]
+    pub use_default_template: bool,
+    pub custom_tasks: Option<Vec<CreateMaintenanceTaskInput>>,
+}
+
+fn default_use_default_template() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateVehicleInput {
+    pub make: Option<String>,
+    pub model: Option<String>,
+    pub year: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceServiceLog {
+    pub id: i64,
+    pub vehicle_id: i64,
+    pub task_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_service_name: Option<String>,
+    pub service_date: String,
+    pub odometer_km: i64,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceServiceLogEntry {
+    pub id: i64,
+    pub vehicle_id: i64,
+    pub task_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_type_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_service_name: Option<String>,
+    pub service_date: String,
+    pub odometer_km: i64,
+    pub notes: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LogMaintenanceServiceInput {
+    pub task_id: i64,
+    pub service_date: String,
+    pub odometer_km: i64,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LogCustomServiceInput {
+    pub vehicle_id: i64,
+    pub custom_service_name: String,
+    pub service_date: String,
+    pub odometer_km: i64,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogCustomServiceResult {
+    pub log: MaintenanceServiceLog,
+    pub odometer_updated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_odometer_km: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_odometer_km: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogServiceResult {
+    pub log: MaintenanceServiceLog,
+    pub task: MaintenanceTaskWithStatus,
+    pub odometer_updated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_odometer_km: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_odometer_km: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MostUrgentTask {
+    pub task_type_key: String,
+    pub status: crate::maintenance::evaluator::TaskStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days_remaining: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub km_remaining: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VehicleAlertRow {
+    pub vehicle_id: i64,
+    pub nickname: String,
+    pub alert_count: i64,
+    pub most_urgent_task: MostUrgentTask,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceAlertSummary {
+    pub total_alerts: i64,
+    pub total_vehicles: i64,
+    pub vehicles_with_alerts: i64,
+    pub worst_status: crate::maintenance::evaluator::TaskStatus,
+    pub vehicles: Vec<VehicleAlertRow>,
+}

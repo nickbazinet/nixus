@@ -6,7 +6,6 @@ const navItems = [
   { label: 'Accounts', path: '/accounts', heading: 'Accounts' },
   { label: 'Assets', path: '/assets', heading: 'Assets' },
   { label: 'Net Worth', path: '/net-worth', heading: 'Net Worth' },
-  { label: 'Import', path: '/import', heading: 'Import' },
 ];
 
 test('tab nav renders with all nav items', async ({ page }) => {

@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod expense;
 pub mod import;
 pub mod income;
+pub mod maintenance;
 pub mod net_worth;
 pub mod onboarding;
 pub mod projection;

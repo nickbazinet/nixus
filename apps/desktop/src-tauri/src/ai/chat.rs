@@ -68,6 +68,19 @@ Available tools:
 
 Use a tool when you need expense details not available in the current context. After receiving tool results, answer the user's question using that data. When presenting multiple expenses, use a table format. Always convert cents to dollars for display.
 
+- **query_maintenance_status**: Get maintenance task status for vehicles. All params optional.
+  - `vehicle_id` (integer): Filter to one vehicle. Omit for all vehicles.
+  - `status_filter` (string): "upcoming", "due", "overdue", or "all" (default)
+
+- **query_maintenance_history**: Get service log history for a vehicle.
+  - `vehicle_id` (integer, required): Vehicle to query
+  - `task_type_key` (string, optional): Filter to one task type (e.g. "engine_oil_filter")
+  - `limit` (integer): Max results, default 20, max 50
+
+Use maintenance tools when the user asks about vehicle maintenance schedules, due dates, service history, or odometer-related upkeep. Custom service logs (not tied to a scheduled task) appear in history with their free-text service name. Match vehicles by their display label (year, make, model — case-insensitive partial match) when the user says "Civic" etc., then pass the resolved `vehicle_id`. Never fabricate maintenance data — if no vehicles are registered, say so.
+
+Maintenance data model: each vehicle has a display label derived from year/make/model and a current odometer (km). New vehicles get 12 default maintenance task types with km and/or time intervals. Status is computed from km OR time thresholds (whichever is worse): ok, upcoming, due, overdue. Default task type keys: engine_oil_filter, transmission_fluid, brake_fluid, coolant, power_steering_fluid, brake_pads, brake_discs, engine_air_filter, cabin_air_filter, spark_plugs, shock_absorbers, battery_replacement. Older vehicles may still have tire_rotation or tire_replacement tasks. Map user phrases: "oil change" → engine_oil_filter; "brake pads" → brake_pads; "rotors" or "disc brakes" → brake_discs; "battery" → battery_replacement.
+
 ## Actions
 
 When the user asks you to PERFORM AN ACTION (add expense, update balance, create account, update asset value), respond with ONLY a JSON block in this exact format:
@@ -131,6 +144,57 @@ pub fn format_tool_result(results: &[crate::db::expense::ExpenseSearchResult]) -
         out.push_str(&format!(
             "| {} | {} | ${:.2} | {} |\n",
             r.date, r.merchant, r.amount_cents as f64 / 100.0, r.category_name
+        ));
+    }
+    out
+}
+
+pub fn format_maintenance_status_result(
+    rows: &[crate::db::maintenance::MaintenanceStatusRow],
+) -> String {
+    if rows.is_empty() {
+        return "Tool result: No maintenance data found matching the query.".to_string();
+    }
+    let mut out = format!("Tool result: {} maintenance task(s) found:\n", rows.len());
+    out.push_str("| Vehicle | Task | Status | Next Due Date | Next Due Km | Km Remaining | Days Remaining |\n");
+    out.push_str("|---------|------|--------|---------------|-------------|--------------|----------------|\n");
+    for r in rows {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            r.vehicle_nickname,
+            r.task_type_key,
+            r.status,
+            r.next_due_date.as_deref().unwrap_or("-"),
+            r.next_due_odometer_km
+                .map(|km| km.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            r.km_remaining
+                .map(|km| km.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            r.days_remaining
+                .map(|d| d.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+        ));
+    }
+    out
+}
+
+pub fn format_maintenance_history_result(
+    rows: &[crate::db::maintenance::MaintenanceHistoryRow],
+) -> String {
+    if rows.is_empty() {
+        return "Tool result: No service history found.".to_string();
+    }
+    let mut out = format!("Tool result: {} service log(s) found:\n", rows.len());
+    out.push_str("| Date | Task | Odometer (km) | Notes |\n");
+    out.push_str("|------|------|---------------|-------|\n");
+    for r in rows {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            r.service_date,
+            r.service_name,
+            r.odometer_km,
+            r.notes.as_deref().unwrap_or("-"),
         ));
     }
     out
