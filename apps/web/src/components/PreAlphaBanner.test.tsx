@@ -59,7 +59,7 @@ describe("<PreAlphaBanner />", () => {
     // Banner mounts on every route via __root.tsx, so the anchor must
     // navigate back to the home route (where <FAQ /> lives), not be a
     // bare hash that dead-ends on /404.
-    expect(link).toHaveAttribute("href", "/#faq-pre-alpha");
+    expect(link).toHaveAttribute("href", "/#beta");
   });
 
   it("has data-pre-alpha-banner on the root element", () => {
@@ -109,6 +109,6 @@ describe("<PreAlphaBanner />", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /En savoir plus/i }),
-    ).toHaveAttribute("href", "/fr/#faq-pre-alpha");
+    ).toHaveAttribute("href", "/fr/#beta");
   });
 });

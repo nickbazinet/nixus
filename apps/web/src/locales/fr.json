@@ -12,7 +12,21 @@
   "skipToMain": "Aller au contenu principal",
 
   "hero.headline": "Le remplaçant de votre tableur, enfin.",
-  "hero.subhead": "Déposez un relevé de carte de crédit. Regardez-le se classer tout seul. Voyez votre portrait financier complet au même endroit — budget, comptes, actifs, avoir net.",
+  "hero.subhead": "Application de bureau local-first pour vos finances personnelles. Déposez un relevé de carte de crédit, regardez-le se classer tout seul, et voyez votre portrait complet — budget, comptes, actifs, avoir net. Vos données restent sur votre machine.",
+
+  "beta.eyebrow": "Pré-alpha",
+  "beta.limitations.heading": "Ce que Nixus est — et n'est pas",
+  "beta.limitations.intro": "Avant de télécharger : une liste honnête pour savoir si ça vaut votre temps.",
+  "beta.limitations.items.noBankSync": "Aucune connexion bancaire — vous téléversez vos relevés de carte de crédit manuellement (capture ou PDF).",
+  "beta.limitations.items.desktopOnly": "Bureau seulement — macOS et Windows. Pas d'application mobile.",
+  "beta.limitations.items.singleUser": "Utilisateur unique — les finances d'une personne par installation.",
+  "beta.limitations.items.aiCredentials": "L'importation IA exige vos propres identifiants API (stockés dans le trousseau du système).",
+  "beta.limitations.items.preAlphaStability": "Pré-alpha — les fonctionnalités changent et des bogues apparaissent entre les versions.",
+  "beta.limitations.items.notProfessionalAdvice": "Pas de conseil fiscal, juridique ou en placement — un outil de suivi, pas un service professionnel.",
+  "beta.invite.heading": "Aidez à façonner Nixus",
+  "beta.invite.body": "Je cherche quelques personnes qui suivent encore leurs finances dans un tableur et accepteraient d'essayer Nixus pendant quelques semaines pour me dire ce qui est confus ou brisé. J'ai construit ça pour moi — je ne vous demande pas de le promouvoir, seulement des retours honnêtes. Particulièrement intéressé par des testeurs au Québec et au Canada francophone.",
+  "beta.invite.cta": "M'écrire pour le beta",
+  "beta.invite.emailSubject": "Intérêt pour le beta Nixus",
 
   "aiDemo.titlebarLabel": "Nixus — Importation IA",
   "aiDemo.figureAria": "Démo d'analyse IA : un relevé de carte de crédit devient des dépenses classées en quelques secondes",
@@ -112,8 +126,8 @@
   "notFound.body": "La page que vous cherchez n'existe pas sur Nixus.",
   "notFound.backHome": "Retour à l'accueil",
 
-  "meta.home.title": "Nixus — Finances personnelles, automatisées",
-  "meta.home.description": "Application de bureau de finances personnelles qui remplace votre tableur. Déposez un relevé de carte de crédit, l'IA le classe automatiquement. Budget, comptes, avoir net.",
+  "meta.home.title": "Nixus — Finances personnelles local-first",
+  "meta.home.description": "Remplacez votre tableur de finances personnelles par une application de bureau local-first. Téléversez un relevé de carte de crédit, l'IA le classe. Budget, comptes, avoir net — vos données restent sur votre machine.",
   "meta.notFound.title": "Page introuvable — Nixus",
   "meta.notFound.description": "Cette page n'existe pas sur Nixus."
 }

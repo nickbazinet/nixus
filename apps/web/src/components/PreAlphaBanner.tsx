@@ -20,7 +20,7 @@ export function PreAlphaBanner() {
   // `/` and `/fr/`. Build a route-aware href so "Learn more" navigates home
   // first on non-home routes (e.g. /404) instead of dead-anchoring.
   const homePath = i18n.language?.startsWith("fr") ? "/fr/" : "/";
-  const learnMoreHref = `${homePath}#faq-pre-alpha`;
+  const learnMoreHref = `${homePath}#beta`;
 
   function handleDismiss() {
     // Move focus out of the soon-to-unmount banner so keyboard users don't
