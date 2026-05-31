@@ -1225,7 +1225,7 @@ test.describe("Maintenance Page", () => {
 
   test("displays page header with Add Vehicle button", async ({ page }) => {
     await expect(
-      page.getByRole("heading", { name: "Action queue" })
+      page.getByRole("heading", { name: "Dashboard" })
     ).toBeVisible();
     await expect(page.getByTestId("add-vehicle-button")).toBeVisible();
     await expect(page.getByTestId("add-vehicle-button")).toContainText(
@@ -1270,7 +1270,7 @@ test.describe("Maintenance Page", () => {
     await expect(
       page.getByText("Vehicle added — maintenance schedule created.")
     ).toBeVisible();
-    await expect(page.getByTestId("maintenance-inbox-empty")).toBeVisible();
+    await expect(page.getByTestId("car-dashboard-all-clear")).toBeVisible();
     await expect(page.getByText("1 vehicles tracked")).toBeVisible();
   });
 
@@ -1433,16 +1433,20 @@ test.describe("Maintenance Page", () => {
     await expect(detail.getByText("Engine oil & filter")).toBeVisible();
   });
 
-  test("inbox rows show vehicle, task, and View car action", async ({ page }) => {
+  test("dashboard urgent rows show vehicle, task, and garage link", async ({
+    page,
+  }) => {
     await prepareCarPage(page, {
       seedVehicles: [
         { make: "Toyota", model: "One", year: 2010, odometer_km: 10000 },
         { make: "Honda", model: "Two", year: 2011, odometer_km: 20000 },
       ],
     });
-    await expect(page.getByTestId("maintenance-inbox-list")).toBeVisible();
-    await expect(page.getByTestId(/^maintenance-inbox-row-/)).not.toHaveCount(0);
-    await expect(page.getByTestId("view-car-button-1").first()).toBeVisible();
+    await expect(page.getByTestId("car-dashboard-urgent-list")).toBeVisible();
+    await expect(page.getByTestId(/^car-dashboard-urgent-row-/)).not.toHaveCount(
+      0
+    );
+    await expect(page.getByTestId("car-dashboard-view-car-1").first()).toBeVisible();
   });
 });
 
@@ -1851,9 +1855,8 @@ test.describe("Car Module Navigation", () => {
     await page.goto("/car");
 
     const nav = page.locator('nav[aria-label="Car navigation"]');
-    await expect(nav.getByRole("link", { name: "Action queue" })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Dashboard" })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Garage" })).toBeVisible();
-    await expect(nav.getByText("Dashboard")).not.toBeVisible();
   });
 
   test("Garage tab navigates to garage page", async ({ page }) => {
@@ -1904,28 +1907,43 @@ test.describe("Maintenance End-to-End Flow", () => {
       .locator('nav[aria-label="Module navigation"]')
       .getByRole("link", { name: "Car" })
       .click();
-    await expect(page.getByTestId("maintenance-inbox-list")).toBeVisible();
+    await expect(page.getByTestId("car-dashboard-urgent-list")).toBeVisible();
 
-    const oilInboxRow = page
-      .getByTestId(/^maintenance-inbox-row-/)
+    const oilDashboardRow = page
+      .getByTestId(/^car-dashboard-urgent-row-/)
       .filter({ hasText: "Engine oil & filter" });
     await expect(
-      oilInboxRow.locator("[data-testid^='maintenance-task-status-']").filter({
+      oilDashboardRow.locator("[data-testid^='maintenance-task-status-']").filter({
         hasText: /Upcoming|Due|Overdue/,
       })
     ).toBeVisible();
 
-    await oilInboxRow.getByRole("button", { name: "Log service" }).click();
-    const inboxLogForm = page.getByTestId("log-service-form");
-    await expect(inboxLogForm).toBeVisible();
-    await inboxLogForm.getByTestId("log-service-save").click();
+    await goToGarage(page);
+    await openVehicleDetail(page, 1);
+    const detail = vehicleDetail(page);
+    const oilRow = detail
+      .getByTestId("maintenance-task-row")
+      .filter({ hasText: "Engine oil & filter" })
+      .first();
+    await oilRow.getByTestId("log-service-button").click();
+    const logForm = detail.getByTestId("log-service-form");
+    await expect(logForm).toBeVisible();
+    await logForm.getByTestId("log-service-save").click();
     await expect(page.getByText("Service logged").last()).toBeVisible();
 
-    await expect(oilInboxRow).not.toBeVisible();
+    await page
+      .locator('nav[aria-label="Car navigation"]')
+      .getByRole("link", { name: "Dashboard" })
+      .click();
+    await expect(oilDashboardRow).not.toBeVisible();
 
     await page.reload();
-    await expect(page.getByTestId("maintenance-inbox-list").or(page.getByTestId("maintenance-inbox-empty"))).toBeVisible();
-    await expect(page.getByTestId("maintenance-inbox-empty")).toBeVisible();
+    await expect(
+      page
+        .getByTestId("car-dashboard-urgent-list")
+        .or(page.getByTestId("car-dashboard-all-clear"))
+    ).toBeVisible();
+    await expect(page.getByTestId("car-dashboard-all-clear")).toBeVisible();
   });
 });
 

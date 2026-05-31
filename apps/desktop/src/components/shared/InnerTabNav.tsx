@@ -12,7 +12,6 @@ import {
   RefreshCw,
   CalendarDays,
   Bot,
-  Inbox,
   Car,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -45,7 +44,7 @@ const navGroups: NavItem[][] = [
 ];
 
 const carNavItems: NavItem[] = [
-  { to: "/car", labelKey: "nav.maintenanceInbox", icon: Inbox },
+  { to: "/car", labelKey: "nav.carDashboard", icon: LayoutDashboard },
   { to: "/car/garage", labelKey: "nav.maintenanceGarage", icon: Car },
 ];
 

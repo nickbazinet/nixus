@@ -4,7 +4,7 @@ import { Button } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
 
 interface CarMaintenanceHeaderProps {
-  titleKey: "nav.maintenanceInbox" | "nav.maintenanceGarage";
+  titleKey: "nav.carDashboard" | "nav.maintenanceGarage";
   vehicleCount: number | undefined;
   isLoading: boolean;
   onAddVehicle: () => void;

@@ -231,6 +231,53 @@ export function countOnTrackTasks(vehicles: VehicleWithTasks[]): number {
   );
 }
 
+export interface MaintenanceFleetSummary {
+  vehicleCount: number;
+  needsAttentionCount: number;
+  onTrackCount: number;
+  worstStatus: MaintenanceTaskStatus;
+  topUrgent: MaintenanceInboxItem[];
+}
+
+export function summarizeMaintenanceFleet(
+  vehicles: VehicleWithTasks[],
+  t: TFunction,
+  urgentLimit = 3
+): MaintenanceFleetSummary {
+  const vehicleCount = vehicles.length;
+  const urgentItems = flattenInboxItems(vehicles, t);
+  let worst: MaintenanceTaskStatus = "ok";
+  for (const { tasks } of vehicles) {
+    const vehicleWorst = getWorstStatus(tasks);
+    if (getStatusSortOrder(vehicleWorst) < getStatusSortOrder(worst)) {
+      worst = vehicleWorst;
+    }
+  }
+
+  return {
+    vehicleCount,
+    needsAttentionCount: urgentItems.length,
+    onTrackCount: countOnTrackTasks(vehicles),
+    worstStatus: urgentItems.length > 0 ? worst : "ok",
+    topUrgent: urgentItems.slice(0, urgentLimit),
+  };
+}
+
+export function getFleetStatusRingClass(
+  status: MaintenanceTaskStatus
+): string | undefined {
+  switch (status) {
+    case "upcoming":
+      return "ring-1 ring-amber-500/30";
+    case "due":
+      return "ring-1 ring-rose-500/40";
+    case "overdue":
+      return "ring-1 ring-rose-500/60";
+    case "ok":
+      return undefined;
+  }
+}
+
 export function getWorstStatus(
   tasks: MaintenanceTaskWithStatus[]
 ): MaintenanceTaskStatus {
