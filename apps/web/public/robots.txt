@@ -2,4 +2,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://nixus.app/sitemap.xml
+Sitemap: https://nixus.nicolasbazinet.net/sitemap.xml

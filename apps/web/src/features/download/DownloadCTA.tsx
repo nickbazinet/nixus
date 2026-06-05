@@ -37,6 +37,7 @@ import { useTranslation } from "react-i18next";
 import { Button, cn } from "@nixus/shared";
 
 import { trackEvent } from "@/lib/analytics";
+import { SITE } from "@/lib/meta";
 
 import { release } from "./release.gen";
 import { useOptionalDownloadState } from "./DownloadStateContext";
@@ -339,14 +340,14 @@ function MobileVariant({
   // SSR-guarded `window` access: in the prerender pass, fall back to the
   // production placeholder domain.
   const pageURL =
-    typeof window !== "undefined" ? window.location.href : "https://nixus.app";
+    typeof window !== "undefined" ? window.location.href : SITE.url;
 
-  // Use the placeholder domain in the mailto body per the spec — the
-  // copy reads naturally regardless of which path the visitor took to
-  // get here, and it works during SSR too.
+  // Use the production site URL in the mailto body — the copy reads
+  // naturally regardless of which path the visitor took to get here, and
+  // it works during SSR too.
   const mailtoHref = `mailto:?subject=${encodeURIComponent(
     t("download.emailSubject"),
-  )}&body=${encodeURIComponent("https://nixus.app")}`;
+  )}&body=${encodeURIComponent(SITE.url)}`;
 
   const handleCopy = async () => {
     try {

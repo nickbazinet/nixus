@@ -52,7 +52,7 @@ const svg = `<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg" v
   <text x="120" y="450" font-family="Inter, system-ui, sans-serif" font-size="26" font-weight="400" fill="#475569">Drop in a credit card statement. Watch the AI categorize it.</text>
   <text x="120" y="495" font-family="Inter, system-ui, sans-serif" font-size="26" font-weight="400" fill="#475569">Budget · Accounts · Assets · Net worth — in one place.</text>
   <rect x="120" y="555" width="60" height="4" rx="2" fill="url(#nixus-grad)"/>
-  <text x="200" y="566" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="500" fill="#64748B">nixus.app</text>
+  <text x="200" y="566" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="500" fill="#64748B">nixus.nicolasbazinet.net</text>
 </svg>`;
 
 const resvg = new Resvg(svg, {

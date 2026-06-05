@@ -458,7 +458,7 @@ apps/web/
 - Repo lives on GitHub; Actions are free for public repos and generous for private
 - Workflow: `on: push to main` → install deps → run tests → fetch GitHub Releases (build-time) → build TanStack Start app → run Lighthouse CI → upload to S3 → invalidate CloudFront paths
 - Separate `on: repository_dispatch` (from the desktop app's release pipeline) → triggers a marketing-site rebuild when a new desktop release ships
-- PR previews: optional — could deploy preview branches to a `*.preview.nixus.app` subdomain. Defer to post-v1 unless preview reviews become important.
+- PR previews: optional — could deploy preview branches to a `*.preview.nixus.nicolasbazinet.net` subdomain. Defer to post-v1 unless preview reviews become important.
 
 **Decision: Analytics — Cloudflare Web Analytics (free) OR Plausible (€19/mo)**
 
@@ -983,7 +983,7 @@ apps/web/
 
 - **Build-time:** the `features/download/release.ts` script runs in Node during build, calls `https://api.github.com/repos/{owner}/{repo}/releases`, and writes `release.gen.ts`. This is the only external API call in the entire v1 web app.
 - **Runtime:** zero API calls from the visitor's browser. The Download CTA navigates directly to a GitHub Releases asset URL (which is a static asset, not an API call).
-- **v2 boundary:** the platform API at `api.nixus.app` (or whatever it's named) becomes the runtime API surface. Boundary will be a single TanStack Query client configured in `app/router.tsx`.
+- **v2 boundary:** the platform API at `api.nixus.nicolasbazinet.net` (or whatever it's named) becomes the runtime API surface. Boundary will be a single TanStack Query client configured in `app/router.tsx`.
 
 **Component Boundaries:**
 

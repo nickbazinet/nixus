@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+import { SITE } from "./meta";
+
 describe("sitemap.xml", () => {
   const sitemapPath = path.resolve(__dirname, "../../public/sitemap.xml");
   const sitemap = fs.readFileSync(sitemapPath, "utf8");
@@ -11,7 +13,7 @@ describe("sitemap.xml", () => {
   });
 
   it("contains the homepage URL with lastmod", () => {
-    expect(sitemap).toMatch(/<loc>https:\/\/nixus\.app\/?<\/loc>/);
+    expect(sitemap).toContain(`<loc>${SITE.url}/</loc>`);
     expect(sitemap).toMatch(/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/);
   });
 

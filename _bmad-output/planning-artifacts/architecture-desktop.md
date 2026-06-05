@@ -20,6 +20,8 @@ _This document builds collaboratively through step-by-step discovery. Sections a
 
 **Module addenda:**
 - [Car Maintenance (FR49–FR61)](architecture-car-maintenance.md) — vehicle maintenance schedules, alerts, service logging
+- [Credential Management](architecture-credentials.md) — AI provider credential storage and provider abstraction
+- [Release Signing](architecture-release-signing.md) — Windows SignPath OSS signing, Tauri updater minisign, macOS deferral
 
 ## Project Context Analysis
 

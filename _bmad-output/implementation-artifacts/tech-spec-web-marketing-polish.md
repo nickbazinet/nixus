@@ -77,7 +77,7 @@ The Nixus marketing site (`apps/web/`) ships with several placeholder values tha
 1. **Distribution** — Download CTAs point to GitHub Releases (which 404 today since no releases exist) rather than a controlled, predictable S3 bucket the user can populate independently of GitHub.
 2. **Theming** — Light-only mode. The desktop app supports light/dark/system via `next-themes`; the marketing site doesn't yet, creating a visual disconnect between the install-and-launch experience.
 3. **Language** — English-only content. The desktop app ships with FR/EN via `i18next`; the marketing site can't reach French-Canadian visitors who form a meaningful slice of the target audience.
-4. **Contact** — Email placeholders use `hello@nixus.app` (a domain that isn't owned yet), preventing real visitor outreach.
+4. **Contact** — Email placeholders use `support@nixus.nicolasbazinet.net` (a domain that isn't owned yet), preventing real visitor outreach.
 5. **Footer** — Attribution line uses "Built in Canada by Nbazinet" voice that's too informal for a public-facing footer.
 6. **Favicon** — A placeholder favicon (or no favicon at all in some browsers) means the brand mark doesn't render in tabs, bookmarks, or PWA install prompts.
 7. **Header logo** — At 28px (`size-7`) the wordmark is visually small relative to the hero / CTA below; doesn't match the brand presence the desktop sidebar establishes.
@@ -114,7 +114,7 @@ All work is contained to `apps/web/` and `packages/shared/` — the desktop app 
 - Creating the actual S3 bucket (user creates manually after spec is locked)
 - Uploading the binary files to S3 (user does this; we just plumb the URLs)
 - AWS CloudFront distribution / custom subdomain
-- DNS configuration for `nixus.app` or `nixus.nicolasbazinet.net`
+- DNS configuration for `nixus.nicolasbazinet.net`
 - Real desktop app screenshots (deferred — Story 3.4)
 - Builder bio copy (deferred — Story 3.5)
 - Cross-browser / cross-OS / a11y manual sweeps (deferred — Stories 4.4–4.6)
@@ -280,10 +280,10 @@ src/routes/
 
 **TD-10: SEO — alternate-language link tags**
 Each route's `<head>` includes:
-- `<link rel="canonical" href="https://nixus.app/">` (or `/fr/`)
-- `<link rel="alternate" hreflang="en" href="https://nixus.app/">`
-- `<link rel="alternate" hreflang="fr" href="https://nixus.app/fr/">`
-- `<link rel="alternate" hreflang="x-default" href="https://nixus.app/">`
+- `<link rel="canonical" href="https://nixus.nicolasbazinet.net/">` (or `/fr/`)
+- `<link rel="alternate" hreflang="en" href="https://nixus.nicolasbazinet.net/">`
+- `<link rel="alternate" hreflang="fr" href="https://nixus.nicolasbazinet.net/fr/">`
+- `<link rel="alternate" hreflang="x-default" href="https://nixus.nicolasbazinet.net/">`
 
 This is the standard pattern Google honors for locale-targeted content.
 
@@ -401,7 +401,7 @@ Tasks are ordered by dependency. Each is a discrete unit of work, sized for one 
 
 - [ ] **T15: Update SiteFooter copy + email**
   - File: `apps/web/src/components/SiteFooter.tsx`, `apps/web/src/components/SiteFooter.test.tsx`
-  - Action: Remove "Built in Canada by Nbazinet · © 2026" line. Add `t('footer.copyright')` line below or in place of it. Replace the visible `hello@nixus.app` text and `mailto:hello@nixus.app` href with `support@nixus.nicolasbazinet.net`. Translate `aria-label="Footer"` and the GitHub link label via `t()`. Update tests: remove "Built in Canada by Nbazinet" assertion, add "Copyright © Nixus 2026" assertion against the EN translation, add a second test rendering with a French test wrapper that asserts the FR equivalent.
+  - Action: Remove "Built in Canada by Nbazinet · © 2026" line. Add `t('footer.copyright')` line below or in place of it. Replace the visible `support@nixus.nicolasbazinet.net` text and `mailto:support@nixus.nicolasbazinet.net` href with `support@nixus.nicolasbazinet.net`. Translate `aria-label="Footer"` and the GitHub link label via `t()`. Update tests: remove "Built in Canada by Nbazinet" assertion, add "Copyright © Nixus 2026" assertion against the EN translation, add a second test rendering with a French test wrapper that asserts the FR equivalent.
   - Notes: GitHub URL stays as `https://github.com/nickbazinet/n-finance` (not translated; it's a URL).
 
 #### Phase 4 — Per-locale prerendered routes
@@ -418,7 +418,7 @@ Tasks are ordered by dependency. Each is a discrete unit of work, sized for one 
 
 - [ ] **T18: Add locale support to meta builder**
   - File: `apps/web/src/lib/meta.ts`, `apps/web/src/lib/meta.test.ts`
-  - Action: Extend `MetaInput` type with `locale?: 'en' | 'fr'` (default `'en'`). `buildMeta` returns localized title/description by reading `t('meta.home.title')` etc. through the i18n instance. `og:locale` becomes `en_US` or `fr_CA` based on `locale`. Add `<link rel="alternate" hreflang="en" href="https://nixus.app/">`, `hreflang="fr" href="https://nixus.app/fr/"`, and `hreflang="x-default" href="https://nixus.app/"` to the `links` array. Canonical and `og:url` use the locale-prefixed path. Add tests for both locales' outputs.
+  - Action: Extend `MetaInput` type with `locale?: 'en' | 'fr'` (default `'en'`). `buildMeta` returns localized title/description by reading `t('meta.home.title')` etc. through the i18n instance. `og:locale` becomes `en_US` or `fr_CA` based on `locale`. Add `<link rel="alternate" hreflang="en" href="https://nixus.nicolasbazinet.net/">`, `hreflang="fr" href="https://nixus.nicolasbazinet.net/fr/"`, and `hreflang="x-default" href="https://nixus.nicolasbazinet.net/"` to the `links` array. Canonical and `og:url` use the locale-prefixed path. Add tests for both locales' outputs.
   - Notes: `buildMeta` runs at prerender time (Node), not client. Make sure the i18n instance is initialized + has the correct language set when `buildMeta({ locale: 'fr' })` is called. If that's awkward to wire, the function can accept the resolved strings directly: `buildMeta({ locale, title, description })` with the route handlers calling `t()` themselves and passing the resolved values.
 
 - [ ] **T19: Update existing EN routes to declare locale**
@@ -479,7 +479,7 @@ Tasks are ordered by dependency. Each is a discrete unit of work, sized for one 
 
 - [ ] **T28: Site-wide email replacement (catch any leftovers)**
   - File: any matching `apps/web/src/**/*.{ts,tsx}` and `apps/web/src/locales/*.json`
-  - Action: After T15 (footer) and T12 (FAQ) complete, run `grep -r "hello@nixus.app" apps/web/` from repo root to verify zero matches remain. The S3 work and i18n work should naturally cover all places, but run this as a final sweep. Replace any leftover with `support@nixus.nicolasbazinet.net`.
+  - Action: After T15 (footer) and T12 (FAQ) complete, run `grep -r "support@nixus.nicolasbazinet.net" apps/web/` from repo root to verify zero matches remain. The S3 work and i18n work should naturally cover all places, but run this as a final sweep. Replace any leftover with `support@nixus.nicolasbazinet.net`.
   - Notes: Includes any references in JSDoc comments, file headers, or test fixtures. Comments are non-user-visible but still worth updating for consistency.
 
 - [ ] **T29: Run full verification suite**
@@ -545,7 +545,7 @@ Tasks are ordered by dependency. Each is a discrete unit of work, sized for one 
 **AC-5: Email replacement**
 
 - **Given** the search-and-replace is complete
-- **When** I grep `hello@nixus.app` across `apps/web/src/`
+- **When** I grep `support@nixus.nicolasbazinet.net` across `apps/web/src/`
 - **Then** zero matches are returned
 - **And** the visible footer link, FAQ "Who built this?" answer, FAQ "Still have questions?" line, and InstallInstructions "Need help?" link all show `support@nixus.nicolasbazinet.net`
 - **And** the `mailto:` href on every relevant link is `mailto:support@nixus.nicolasbazinet.net`
@@ -625,7 +625,7 @@ Tasks are ordered by dependency. Each is a discrete unit of work, sized for one 
 
 - **Given** the prerendered output of `/` and `/fr/`
 - **When** a crawler reads the `<head>` of each page
-- **Then** both pages contain three `<link rel="alternate">` tags: `hreflang="en"` → `https://nixus.app/`, `hreflang="fr"` → `https://nixus.app/fr/`, `hreflang="x-default"` → `https://nixus.app/`
+- **Then** both pages contain three `<link rel="alternate">` tags: `hreflang="en"` → `https://nixus.nicolasbazinet.net/`, `hreflang="fr"` → `https://nixus.nicolasbazinet.net/fr/`, `hreflang="x-default"` → `https://nixus.nicolasbazinet.net/`
 - **And** each page's `<link rel="canonical">` points at its own URL
 - **And** each page's `og:locale` matches the route (`en_US` for `/`, `fr_CA` for `/fr/`) with `og:locale:alternate` pointing at the other
 

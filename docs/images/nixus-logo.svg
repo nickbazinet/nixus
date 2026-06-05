@@ -1,0 +1,21 @@
+<svg width="220" height="56" viewBox="0 0 220 56" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nixus">
+  <defs>
+    <linearGradient id="nixus-mark-gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#818CF8"/>
+      <stop offset="50%" stop-color="#A78BFA"/>
+      <stop offset="100%" stop-color="#F472B6"/>
+    </linearGradient>
+    <linearGradient id="nixus-word-gradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#A78BFA"/>
+      <stop offset="100%" stop-color="#F472B6"/>
+    </linearGradient>
+  </defs>
+  <!-- Logo mark: stylized "N" (mirrors packages/shared/src/ui/nixus-logo.tsx) -->
+  <g transform="translate(4 4) scale(1.5)">
+    <rect x="3" y="3" width="7" height="26" rx="2" fill="#818CF8"/>
+    <rect x="22" y="3" width="7" height="26" rx="2" fill="#F472B6"/>
+    <polygon points="3,29 10,29 29,3 22,3" fill="url(#nixus-mark-gradient)"/>
+  </g>
+  <!-- "ixus" wordmark continues from the mark's "N" -->
+  <text x="56" y="40" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="36" font-weight="600" fill="url(#nixus-word-gradient)">ixus</text>
+</svg>

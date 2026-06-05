@@ -30,8 +30,8 @@ export const SITE = {
   defaultTitle: "Nixus — Local-first personal finance app",
   defaultDescription:
     "Replace your personal finance spreadsheet with a local-first desktop app. Upload a credit card statement, AI categorizes it. Budget, accounts, net worth — data stays on your machine.",
-  url: "https://nixus.app",
-  ogImage: "https://nixus.app/og-image.png",
+  url: "https://nixus.nicolasbazinet.net",
+  ogImage: "https://nixus.nicolasbazinet.net/og-image.png",
   twitterHandle: "",
 } as const;
 

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+import { SITE } from "./meta";
+
 describe("robots.txt", () => {
   const robotsPath = path.resolve(__dirname, "../../public/robots.txt");
   const robots = fs.readFileSync(robotsPath, "utf8");
@@ -12,7 +14,7 @@ describe("robots.txt", () => {
   });
 
   it("references the sitemap", () => {
-    expect(robots).toMatch(/Sitemap:\s*https:\/\/nixus\.app\/sitemap\.xml/i);
+    expect(robots).toContain(`Sitemap: ${SITE.url}/sitemap.xml`);
   });
 
   it("does not contain Disallow rules in v1", () => {

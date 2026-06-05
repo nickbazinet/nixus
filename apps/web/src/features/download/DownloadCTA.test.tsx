@@ -266,7 +266,7 @@ describe("DownloadCTA — mobile hydrated (Story 2.4)", () => {
       "subject=Try%20Nixus%20on%20your%20Mac%20or%20PC",
     );
     expect(email.getAttribute("href")).toContain(
-      "body=https%3A%2F%2Fnixus.app",
+      "body=https%3A%2F%2Fnixus.nicolasbazinet.net",
     );
   });
 

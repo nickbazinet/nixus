@@ -1,335 +1,148 @@
-# Nixus
+<p align="center">
+  <img src="docs/images/nixus-logo.svg" alt="Nixus" width="240" />
+</p>
 
-A **local-first desktop app** for organizing your personal life from one place — without sending your data to the cloud.
+<p align="center"><strong>Automate and track your life — from one place, on your own machine.</strong></p>
 
-Nixus is built as a **modular platform**: each area of your life gets its own module in a shared shell (sidebar navigation, consistent design, one install). **Finance** is the first module and is fully functional today. More modules are planned — vacation planning, car maintenance, todos, healthy lifestyle, and others over time.
+Nixus is a **local-first desktop app** for **lifestyle automation and tracking**. It uses technology to take the tedious upkeep out of the things you should be staying on top of — money, your car, and more over time — so you actually keep doing them. Each area of life is a module in one shared app, and your data never leaves your machine.
 
-Built with Tauri 2, React 19, and SQLite. Runs natively on macOS and Windows; all data stays on your machine.
+**Finance** is the first module: upload a credit card statement, let AI categorize the transactions, and see your full picture — budget, accounts, assets, net worth — without touching a spreadsheet.
+
+> **Pre-alpha** — core features work, but the product is still maturing. [See limitations](#what-nixus-is--and-isnt) before you download.
+
+**[Download for macOS or Windows →](https://nixus.nicolasbazinet.net)** · **[Beta testing](#help-shape-nixus)** · **[Contributing](CONTRIBUTING.md)**
+
+---
+
+## What is Nixus?
+
+Most tracking tools die the moment they demand effort. Spreadsheets, maintenance logs, habit trackers — they all work until the upkeep becomes a chore and you quietly stop. **Nixus is built to remove that upkeep**, using automation and AI to handle the tedious parts (data entry, categorization, reminders) so staying organized doesn't depend on your willpower.
+
+It's a **modular platform**: each area of your life is its own module in a shared shell (sidebar, consistent design, one install). **Finance** and **Car** are available today, and the shell is designed so new lifestyle modules can plug in over time.
+
+Built by one person because my own spreadsheet stopped scaling. Not a startup pitch — a tool I use every week, opened to a small group of beta testers for honest feedback.
+
+---
+
+## Who it's for
+
+- You still track personal finances in a **spreadsheet** (or gave up because it was too much work)
+- You want **budget, expenses, accounts, and net worth** in one desktop app
+- You prefer **local storage** over cloud sync and bank connections
+- You're okay uploading **credit card statements manually** (screenshot or PDF) instead of linking your bank
+- You use **macOS or Windows**
+
+## Who it's not for (yet)
+
+- People who need **automatic bank sync** or Plaid-style connections
+- **Mobile-first** users — desktop only, no mobile app (for now)
+- **Multi-user / household** setups — one person's finances per install
+- Anyone expecting **tax, legal, or investment advice** — this is a tracking tool (for now)
+- People who need a **finished, stable product** — see [limitations](#what-nixus-is--and-isnt) below
+
+---
+
+## What's in the Finance module today
+
+| Feature | What you get |
+| ------- | ------------ |
+| **AI statement import** | Upload a CC screenshot or PDF; transactions are extracted and categorized |
+| **Budget builder** | Monthly budgets with category groups; see where you stand at a glance |
+| **Expense tracking** | Review, correct, and manually add transactions; recurring templates |
+| **Multi-account tracking** | Banks, credit cards, investment accounts (CAD and USD) in one view |
+| **Passive assets** | Real estate, vehicles, business equity — the full picture |
+| **Net worth history** | Track cash, TFSA, RRSP, crypto, housing, and more over time |
+| **AI chat** | Ask questions about your data in natural language |
+| **Income tracking** | Record monthly income alongside expenses for cash-flow visibility |
+
+English and French UI · Light/dark/system theme · Auto-updates · Database backup/restore
+
+---
 
 ## Modules
 
 | Module | Status | What it covers |
 | ------ | ------ | -------------- |
-| **Finance** | Available | Budgeting, expense tracking, accounts, income, net worth, AI chat, credit-card statement import |
-| **Vacation planning** | Planned | Trips, itineraries, travel prep |
-| **Car maintenance** | Planned | Service history, reminders, vehicle records |
-| **Todos** | Planned | Tasks and personal checklists |
-| **Healthy lifestyle** | Planned | Habits, wellness tracking |
+| **Finance** | Available | Budgeting, expenses, accounts, income, net worth, AI chat, CC import |
+| **Car** | Available | Multi-vehicle garage, maintenance schedules, service history, odometer tracking, due-date alerts |
 
-The app shell (sidebar, module switching, shared UI) is designed so new modules can plug in without reinventing the desktop experience each time.
+The app shell is designed so new modules plug in without reinventing the desktop experience each time.
 
-## Repository
+---
 
-This repository is a **pnpm monorepo** with three packages:
+## What Nixus is — and isn't
 
-| Package | Path | Purpose |
-| ------- | ---- | ------- |
-| `@nixus/desktop` | `apps/desktop/` | Tauri desktop app — module shell + Finance module |
-| `@nixus/web` | `apps/web/` | Public marketing site (TanStack Start) |
-| `@nixus/shared` | `packages/shared/` | Shared UI primitives and design tokens (used by all surfaces) |
+Before you download: an honest list so you know if this is worth your time.
 
-## Table of Contents
+- **No bank connection** — you upload credit card statements manually (screenshot or PDF).
+- **Desktop only** — macOS and Windows. No mobile app.
+- **Single user** — one person's finances per install.
+- **AI import requires your own API credentials** (stored in your OS keychain). The app works without AI; other features are unaffected.
+- **Pre-alpha** — features change and things break between releases.
+- **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
 
-- [Modules](#modules)
-- [Quick Start](#quick-start)
-- [Monorepo Commands](#monorepo-commands)
-- [Tech Stack](#tech-stack)
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Testing](#testing)
-- [Building & Packaging](#building--packaging)
-- [Database (Finance module)](#database-finance-module)
-- [AI Features (Finance module)](#ai-features-finance-module)
-- [Project Structure](#project-structure)
-- [Logging](#logging)
-
-## Quick Start
-
-For a new developer getting the desktop app running locally:
-
-```bash
-# 1. Clone and enter the repo
-git clone https://github.com/nickbazinet/nixus.git && cd nixus
-
-# 2. Install dependencies (requires pnpm — see Prerequisites)
-pnpm install
-
-# 3. Install Playwright browser for E2E tests (optional, but recommended)
-pnpm --filter @nixus/desktop exec playwright install chromium
-
-# 4. Verify Rust toolchain
-cargo --version   # should be 1.70+
-
-# 5. Launch the full desktop app (Tauri + Rust backend + hot reload)
-pnpm desktop:tauri dev
-```
-
-That opens the native **Nixus** window (1280×800). The Vite dev server starts automatically on port 1420.
-
-### Frontend-only (no Rust backend)
-
-Useful for UI work when you don't need live data or Tauri IPC:
-
-```bash
-pnpm desktop:dev
-```
-
-Opens http://localhost:1420 in the browser. `invoke()` calls won't work — data-dependent features show empty states or errors.
-
-### Marketing site
-
-```bash
-pnpm --filter @nixus/web dev
-```
-
-Opens http://localhost:3000. See [`apps/web/README.md`](apps/web/README.md) for web-specific details.
-
-### First-run notes
-
-- The SQLite database is created automatically on first desktop launch.
-- AI features (chat, CC import) require credentials — configure them in **Settings** inside the app, or see [AI Features](#ai-features). The app works without AI; all other features are unaffected.
-
-## Monorepo Commands
-
-Run these from the repo root. Use `pnpm --filter <package>` to target a specific workspace.
-
-| Command | Description |
-| ------- | ----------- |
-| `pnpm desktop:dev` | Desktop frontend only (Vite on :1420) |
-| `pnpm desktop:tauri dev` | Full Tauri desktop app |
-| `pnpm desktop:tauri build` | Build desktop installer (.dmg / .msi) |
-| `pnpm desktop:build` | Typecheck + Vite build for desktop frontend |
-| `pnpm --filter @nixus/web dev` | Marketing site dev server (:3000) |
-| `pnpm --filter @nixus/web build` | Static prerender to `apps/web/.output/public/` |
-| `pnpm --filter @nixus/shared typecheck` | Typecheck shared package |
+More detail on the marketing site: [nixus.nicolasbazinet.net/#beta](https://nixus.nicolasbazinet.net/#beta)
 
-## Tech Stack
+---
 
-| Layer | Technology |
-| ----- | ---------- |
-| Monorepo | pnpm workspaces |
-| Framework | [Tauri 2](https://v2.tauri.app/) (Rust + webview) |
-| Frontend | React 19, TypeScript 5.8, Vite 7 |
-| Routing | TanStack Router (file-based) |
-| State | TanStack React Query (server-state), React Hook Form (forms) |
-| Styling | Tailwind CSS 4, shadcn/ui via `@nixus/shared`, Lucide icons |
-| Charts | Recharts |
-| i18n | i18next + react-i18next |
-| Backend | Rust (edition 2021) |
-| Database | SQLite via rusqlite (bundled), WAL mode |
-| AI | AWS Bedrock and OpenAI (configurable in Settings) |
-| Testing | Playwright (E2E), Vitest (unit) |
-| Logging | tracing + tracing-appender (daily rolling log files) |
-| Marketing site | TanStack Start v1, Nitro (static prerender) |
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│                  Desktop Window                  │
-│              (Tauri 2 Webview)                   │
-├─────────────────────────────────────────────────┤
-│  React 19 Frontend (@nixus/desktop)             │
-│  ┌──────────┐ ┌────────────┐ ┌───────────────┐ │
-│  │ TanStack │ │  TanStack  │ │ @nixus/shared │ │
-│  │  Router  │ │React Query │ │  UI + tokens  │ │
-│  └──────────┘ └────────────┘ └───────────────┘ │
-├──────────────── Tauri IPC ──────────────────────┤
-│  Rust Backend (apps/desktop/src-tauri/)         │
-│  ┌──────────┐ ┌────────────┐ ┌───────────────┐ │
-│  │ Commands │ │  Database   │ │  AI Module    │ │
-│  │ (IPC     │ │  (rusqlite  │ │  (Bedrock /   │ │
-│  │  handlers│ │   + SQLite) │ │   OpenAI)     │ │
-│  └──────────┘ └────────────┘ └───────────────┘ │
-└─────────────────────────────────────────────────┘
-```
+## Screenshots
 
-### Frontend (`apps/desktop/`)
+<p align="center">
+  <img src="docs/images/screenshot-dashboard.png" alt="Nixus dashboard showing cash flow, net worth, budget remaining, and spending by category" width="900" />
+  <br /><em>Finance dashboard — budget, cash flow, and net worth at a glance</em>
+</p>
 
-- **Routing**: TanStack Router with file-based routes in `src/routes/`. Routes auto-generate `src/routeTree.gen.ts` via the Vite plugin.
-- **Data fetching**: TanStack React Query hooks in `src/hooks/` wrap Tauri `invoke()` calls. Each domain (budget, expenses, accounts, etc.) has its own hook file.
-- **UI components**: Shared shadcn/ui primitives live in `packages/shared/src/ui/`. Domain components live in `apps/desktop/src/components/<domain>/`.
-- **Styling**: Tailwind CSS 4 with design tokens from `@nixus/shared/styles/tokens.css`. Dark mode via `next-themes`.
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/images/screenshot-ai-chat.png" alt="Nixus AI chat answering a budget check-in with category-level insights" width="100%" />
+      <br /><em>AI budget assistant</em>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/images/screenshot-garage.png" alt="Nixus Garage view tracking vehicle maintenance with overdue and upcoming service items" width="100%" />
+      <br /><em>Car maintenance tracking</em>
+    </td>
+  </tr>
+</table>
 
-### Backend (`apps/desktop/src-tauri/`)
+More product visuals and an AI import demo: **[nixus.nicolasbazinet.net](https://nixus.nicolasbazinet.net)**. Additional screenshots live in [`docs/images/`](docs/images/).
 
-- **Commands** (`src/commands/`): Tauri IPC command handlers, one file per domain.
-- **Database** (`src/db/`): Query functions organized by domain.
-- **AI** (`src/ai/`): Bedrock and OpenAI integration for chat and credit card statement parsing.
-- **Credentials** (`src/credentials.rs`): OS keyring storage for AI provider credentials.
-- **Models** (`src/models/`): Shared serde-serializable data structures.
-- **Error handling** (`src/error.rs`): Centralized `AppError` type.
+---
 
-### Shared package (`packages/shared/`)
+## Help shape Nixus
 
-- UI primitives (`Button`, `Card`, `Dialog`, etc.) consumed by both desktop and web.
-- Design tokens (`src/styles/tokens.css`) registered against Tailwind v4's `@theme`.
-- Exported via `@nixus/shared` and `@nixus/shared/ui`.
+I'm looking for a handful of people who still track personal finances in a spreadsheet and are willing to use Nixus for a few weeks and tell me what's confusing or broken. I built this for myself — I'm not asking you to promote it, just honest friction reports.
 
-### Data Flow
+**[Email me about beta testing](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20beta%20tester%20interest)**
 
-```
-User action → React component → useQuery/useMutation hook
-  → invoke("command_name", { args }) → Tauri IPC
-  → Rust command handler → db query function → SQLite
-  → Result<T, AppError> → JSON → React Query cache → UI update
-```
+Or read the full beta section on the site: [nixus.nicolasbazinet.net/#beta](https://nixus.nicolasbazinet.net/#beta)
 
-## Prerequisites
+---
 
-- **[pnpm](https://pnpm.io/)** >= 9 (workspace package manager)
-- **Node.js** >= 20
-- **Rust** — install via [rustup](https://rustup.rs/)
-- **macOS**: Xcode Command Line Tools (`xcode-select --install`)
-- **Windows**: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 10+ since 2022)
+## Tech at a glance
 
-## Testing
+| | |
+| --- | --- |
+| **Stack** | Tauri 2, React 19, Rust, SQLite |
+| **Platforms** | macOS, Windows |
+| **Data** | Local SQLite on your machine — no cloud account required |
+| **Repo** | pnpm monorepo: desktop app, marketing site, shared UI package |
 
-### Desktop E2E (Playwright)
+Open source — inspect the code on GitHub. First-launch warnings (macOS Gatekeeper, Windows SmartScreen) are normal for apps not yet signed by Apple or trusted by Microsoft's reputation system.
 
-Tests run against the Vite dev server with mocked Tauri IPC — no Rust backend needed.
+---
 
-```bash
-# From repo root
-pnpm --filter @nixus/desktop exec playwright test
+## Links
 
-# Headed browser
-pnpm --filter @nixus/desktop exec playwright test --headed
+| Resource | Description |
+| -------- | ----------- |
+| [nixus.nicolasbazinet.net](https://nixus.nicolasbazinet.net) | Download, features, FAQ, beta info |
+| [Contributing](CONTRIBUTING.md) | Clone, run locally, tests, architecture |
+| [Beta validation roadmap (June 2026)](docs/beta-validation-roadmap-june-2026.html) | How this pre-alpha is being validated |
+| [Project context for AI agents](docs/project-context.md) | Implementation rules for contributors |
 
-# Single file
-pnpm --filter @nixus/desktop exec playwright test tests/budget.spec.ts
-```
+---
 
-Test files live in `apps/desktop/tests/` and cover: accessibility, accounts, assets, budget, chat, dashboard, design system, expenses, import, navigation, net worth, onboarding, and AI navigation.
+## Status
 
-### Type checking
-
-```bash
-# Desktop frontend
-pnpm --filter @nixus/desktop exec tsc --noEmit
-
-# Rust backend
-cd apps/desktop/src-tauri && cargo check
-
-# Shared package
-pnpm --filter @nixus/shared typecheck
-
-# Web marketing site
-pnpm --filter @nixus/web typecheck
-```
-
-### Unit tests
-
-```bash
-pnpm --filter @nixus/desktop test      # Vitest
-pnpm --filter @nixus/web test          # Vitest
-pnpm --filter @nixus/web test:e2e      # Playwright
-```
-
-## Building & Packaging
-
-### Desktop (macOS / Windows)
-
-```bash
-pnpm desktop:tauri build
-```
-
-Outputs to `apps/desktop/src-tauri/target/release/bundle/`:
-
-- **macOS**: `.app` bundle and `.dmg` installer
-- **Windows**: `.msi` and `.exe` (NSIS) installers
-
-The build runs `pnpm run build` (TypeScript check + Vite build) before compiling the Rust binary, as configured in `apps/desktop/src-tauri/tauri.conf.json`.
-
-### Marketing site
-
-```bash
-pnpm --filter @nixus/web build
-```
-
-Produces a statically prerendered site under `apps/web/.output/public/`.
-
-## Database (Finance module)
-
-The Finance module stores data locally in SQLite.
-
-**Engine**: SQLite via `rusqlite` with the `bundled` feature (compiles SQLite from source — no system dependency needed).
-
-**Location**: Tauri's app data directory (legacy bundle ID from the original project name):
-
-- macOS: `~/Library/Application Support/com.nbazinet.nkbaz-finance/nkbaz-finance.db`
-- Windows: `%APPDATA%/com.nbazinet.nkbaz-finance/nkbaz-finance.db`
-
-**Configuration**: WAL journal mode and foreign keys enabled on every connection.
-
-**Migrations**: Embedded in the binary via `include_str!()`. Run automatically on startup. Tracked in a `schema_version` table. Current schema has 17 migrations covering budget, expenses, accounts, audit log, assets, net worth, chat, income, config, merchant hints, recurring expenses, and more.
-
-**Backup/Restore**: Manual backup export and import via the `commands::backup` module.
-
-## AI Features (Finance module)
-
-The Finance module supports configurable AI providers for:
-
-1. **Chat** — Natural language queries about your financial data, with write actions (with confirmation)
-2. **Credit card statement import** — Parses uploaded CC statements, extracts transactions, and auto-categorizes them
-
-### Setup
-
-Configure credentials in the app's **Settings** page — they are stored in the OS keyring. Alternatively, set environment variables before launch:
-
-```bash
-# AWS Bedrock
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export AWS_REGION=us-east-1
-
-# OpenAI
-export OPENAI_API_KEY=...
-```
-
-The AI client initializes asynchronously on app startup. If credentials are unavailable, the app still works — AI features return errors but all other functionality is unaffected.
-
-## Project Structure
-
-```
-nixus/
-├── apps/
-│   ├── desktop/                  # @nixus/desktop — Tauri desktop app
-│   │   ├── src/                  # React frontend
-│   │   │   ├── routes/           # TanStack Router file-based routes
-│   │   │   ├── components/       # Domain-specific UI (budget, expenses, etc.)
-│   │   │   ├── hooks/            # React Query hooks (one per domain)
-│   │   │   ├── contexts/         # React context providers
-│   │   │   ├── locales/          # i18n translation files
-│   │   │   └── routeTree.gen.ts  # Auto-generated (do not edit)
-│   │   ├── src-tauri/            # Rust backend
-│   │   │   ├── src/
-│   │   │   │   ├── commands/     # IPC command handlers
-│   │   │   │   ├── db/           # Database query functions
-│   │   │   │   ├── ai/           # AI chat + CC statement parser
-│   │   │   │   ├── models/       # Shared data structures
-│   │   │   │   ├── credentials.rs
-│   │   │   │   └── error.rs
-│   │   │   ├── migrations/       # SQL migration files (001–017)
-│   │   │   └── tauri.conf.json
-│   │   └── tests/                # Playwright E2E tests
-│   └── web/                      # @nixus/web — marketing site
-│       ├── src/routes/           # TanStack Start routes
-│       ├── src/components/       # Marketing-specific components
-│       ├── content/              # Markdown content
-│       └── tests/e2e/            # Playwright tests
-├── packages/
-│   └── shared/                   # @nixus/shared — shared UI + tokens
-│       └── src/
-│           ├── ui/               # shadcn/ui primitives
-│           ├── styles/           # Design tokens (tokens.css)
-│           └── types/            # Shared TypeScript types
-├── docs/                         # Project guidelines and specs
-├── pnpm-workspace.yaml           # Workspace definition
-├── package.json                  # Root scripts (desktop:* shortcuts)
-└── pnpm-lock.yaml
-```
-
-## Logging
-
-Log files are written to the app data directory using daily rolling files (`nkbaz-finance.log`). Log level defaults to `info`. Configured via `tracing-subscriber` with `env-filter`.
+Nixus is in **pre-alpha**. The north star for June 2026: learn whether anyone besides the builder would actually use it — not growth, not revenue. If you try it, the most useful feedback is: *"What almost made you close it in the first 10 minutes?"*
