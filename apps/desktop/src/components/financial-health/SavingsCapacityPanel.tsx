@@ -4,6 +4,7 @@ import { useFinancialHealthDetail } from "@/hooks/useFinancialHealth";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { cn } from "@/lib/utils";
 import type { MonthlySurplusPoint } from "@/lib/types";
+import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
 
 function SavingsCapacityPanelSkeleton() {
   return (
@@ -113,6 +114,16 @@ export function SavingsCapacityPanel() {
 
         {hasIncome ? (
           <div className="mb-4">
+            <div className="flex items-center gap-1 mb-1">
+              <p className="text-xs text-muted-foreground">
+                {t("financialHealth.panel.savingsCapacity.rateLabel")}
+              </p>
+              <MetricInfoTooltip
+                ariaLabel={t("financialHealth.panel.savingsCapacity.rateInfoAria")}
+                content={t("financialHealth.panel.savingsCapacity.rateInfo")}
+                testId="savings-rate-info"
+              />
+            </div>
             <p
               className={cn(
                 "text-3xl font-mono font-medium",

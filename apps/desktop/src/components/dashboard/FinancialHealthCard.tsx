@@ -5,6 +5,7 @@ import { useFinancialHealthSummary } from "@/hooks/useFinancialHealth";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { cn } from "@/lib/utils";
 import type { EmergencyFundStatus } from "@/lib/types";
+import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
 
 const DETAIL_ROUTE = "/net-worth/financial-health";
 
@@ -216,9 +217,16 @@ export function FinancialHealthCard() {
 
             {/* Savings rate column */}
             <div>
-              <p className="text-xs text-muted-foreground mb-1">
-                {t("financialHealth.card.savingsRate")}
-              </p>
+              <div className="flex items-center gap-1 mb-1">
+                <p className="text-xs text-muted-foreground">
+                  {t("financialHealth.card.savingsRate")}
+                </p>
+                <MetricInfoTooltip
+                  ariaLabel={t("financialHealth.card.savingsRateInfoAria")}
+                  content={t("financialHealth.card.savingsRateInfo")}
+                  testId="financial-health-savings-rate-info"
+                />
+              </div>
               {hasIncome ? (
                 <>
                   <p

@@ -23,15 +23,6 @@ pub fn is_liability_account_type(account_type: &str) -> bool {
     LIABILITY_ACCOUNT_TYPES.contains(&account_type)
 }
 
-/// Amount owed regardless of sign convention (+200000 or -200000 both mean $2,000 owed).
-pub fn owed_balance_cents(balance_cents: i64) -> i64 {
-    if balance_cents == 0 {
-        0
-    } else {
-        balance_cents.abs()
-    }
-}
-
 pub fn get_total_liabilities_cents(conn: &Connection) -> Result<i64, AppError> {
     let mut total = 0i64;
     for account_type in LIABILITY_ACCOUNT_TYPES {
@@ -241,12 +232,5 @@ mod tests {
     fn credit_card_is_liability_account_type() {
         assert!(is_liability_account_type("credit_card"));
         assert!(!is_liability_account_type("chequing"));
-    }
-
-    #[test]
-    fn owed_balance_cents_uses_absolute_value() {
-        assert_eq!(owed_balance_cents(200_000), 200_000);
-        assert_eq!(owed_balance_cents(-200_000), 200_000);
-        assert_eq!(owed_balance_cents(0), 0);
     }
 }

@@ -179,3 +179,18 @@ development_status:
   epic-20: in-progress
   20-1-nhtsa-vehicle-catalog-cache-and-form-comboboxes: review
   epic-20-retrospective: optional
+
+  # Epic 21: Dashboard Financial Health at a Glance (financial decision intelligence)
+  epic-21: in-progress
+  21-1-financial-health-evaluator-aggregates-and-unit-tests: review
+  21-2-financial-health-ipc-commands-types-and-hooks: review
+  21-3-financial-health-card-dashboard-integration: review
+  epic-21-retrospective: optional
+
+  # Epic 22: Financial Health Planning View (financial decision intelligence)
+  epic-22: in-progress
+  22-1-net-worth-layout-refactor-and-section-navigation: review
+  22-2-emergency-fund-panel-and-target-configuration: review
+  22-3-action-waterfall-and-savings-capacity-panels: review
+  22-4-i18n-values-privacy-and-playwright-e2e: review
+  epic-22-retrospective: optional
