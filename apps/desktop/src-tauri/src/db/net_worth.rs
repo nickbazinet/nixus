@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 
+use crate::db::account;
 use crate::error::AppError;
 use crate::models::{NetWorthBreakdown, NetWorthChange, NetWorthCurrent, NetWorthSnapshot, NetWorthSnapshotSummary};
 
@@ -22,11 +23,14 @@ pub fn get_current_net_worth(conn: &Connection) -> Result<NetWorthCurrent, AppEr
         |row| row.get(0),
     )?;
 
+    let liabilities_cents = account::get_total_liabilities_cents(conn)?;
+
     Ok(NetWorthCurrent {
-        total_cents: cash_cents + investments_cents + assets_cents,
+        total_cents: cash_cents + investments_cents + assets_cents - liabilities_cents,
         cash_cents,
         investments_cents,
         assets_cents,
+        liabilities_cents,
     })
 }
 
@@ -105,6 +109,9 @@ pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, 
 
     for account in accounts {
         let (account_type, balance_cents) = account?;
+        if account::is_liability_account_type(&account_type) {
+            continue;
+        }
         match map_account_type_to_category(&account_type) {
             "cash" => breakdown.cash_cents += balance_cents,
             "crypto" => breakdown.crypto_cents += balance_cents,
@@ -132,6 +139,8 @@ pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, 
         }
     }
 
+    let liabilities_cents = account::get_total_liabilities_cents(conn)?;
+
     let total_cents = breakdown.cash_cents
         + breakdown.crypto_cents
         + breakdown.housing_cents
@@ -141,7 +150,8 @@ pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, 
         + breakdown.non_registered_cents
         + breakdown.business_cents
         + breakdown.vehicles_cents
-        + breakdown.other_cents;
+        + breakdown.other_cents
+        - liabilities_cents;
 
     let breakdown_json = serde_json::to_string(&breakdown).map_err(|e| AppError::Database {
         message: format!("Failed to serialize breakdown: {}", e),
@@ -408,5 +418,48 @@ mod tests {
         assert_eq!(breakdown.cash_cents, 0);
         assert_eq!(breakdown.crypto_cents, 0);
         assert_eq!(breakdown.housing_cents, 0);
+    }
+
+    #[test]
+    fn liabilities_reduce_current_net_worth() {
+        let conn = setup_test_db();
+
+        conn.execute(
+            "INSERT INTO accounts (name, institution, account_type, balance_cents) VALUES ('Chequing', 'Bank', 'chequing', 500000)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO accounts (name, institution, account_type, balance_cents) VALUES ('Visa', 'Bank', 'credit_card', 200000)",
+            [],
+        )
+        .unwrap();
+
+        let nw = get_current_net_worth(&conn).unwrap();
+        assert_eq!(nw.liabilities_cents, 200000);
+        assert_eq!(nw.total_cents, 300000);
+    }
+
+    #[test]
+    fn snapshot_subtracts_liabilities_and_excludes_them_from_breakdown() {
+        let conn = setup_test_db();
+
+        conn.execute(
+            "INSERT INTO accounts (name, institution, account_type, balance_cents) VALUES ('Chequing', 'Bank', 'chequing', 500000)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO accounts (name, institution, account_type, balance_cents) VALUES ('Visa', 'Bank', 'credit_card', 200000)",
+            [],
+        )
+        .unwrap();
+
+        let snapshot = record_net_worth_snapshot(&conn).unwrap();
+        assert_eq!(snapshot.total_cents, 300000);
+
+        let breakdown: NetWorthBreakdown = serde_json::from_str(&snapshot.breakdown_json).unwrap();
+        assert_eq!(breakdown.cash_cents, 500000);
+        assert_eq!(breakdown.other_cents, 0);
     }
 }

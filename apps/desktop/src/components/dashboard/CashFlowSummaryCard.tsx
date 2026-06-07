@@ -21,7 +21,7 @@ export function CashFlowSummaryCard({
 
   if (isLoading) {
     return (
-      <Card className="shadow-sm rounded-lg col-span-full">
+      <Card className="shadow-sm rounded-lg col-span-full" data-testid="cash-flow-card">
         <CardContent className="p-6">
           <div className="h-5 w-24 bg-muted animate-pulse rounded mb-3" />
           <div className="h-8 w-48 bg-muted animate-pulse rounded" />
@@ -37,6 +37,7 @@ export function CashFlowSummaryCard({
           className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
           role="link"
           aria-label="No income recorded this month. Go to Income page to record income."
+          data-testid="cash-flow-card"
         >
           <CardContent className="p-6 text-center">
             <p className="text-sm text-muted-foreground">
@@ -62,6 +63,7 @@ export function CashFlowSummaryCard({
         className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
         role="link"
         aria-label={ariaLabel}
+        data-testid="cash-flow-card"
       >
         <CardContent className="p-6">
           <p className="text-sm font-medium text-muted-foreground mb-3">

@@ -20,6 +20,7 @@ _This document builds collaboratively through step-by-step discovery. Sections a
 
 **Module addenda:**
 - [Car Maintenance (FR49–FR61)](architecture-car-maintenance.md) — vehicle maintenance schedules, alerts, service logging
+- [Financial Decision Intelligence (FR83–FR89)](architecture-financial-decision-intelligence.md) — emergency fund health, savings capacity, guardrailed waterfall guidance
 - [Credential Management](architecture-credentials.md) — AI provider credential storage and provider abstraction
 - [Release Signing](architecture-release-signing.md) — Windows SignPath OSS signing, Tauri updater minisign, macOS deferral
 

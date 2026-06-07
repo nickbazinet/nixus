@@ -3,6 +3,7 @@ mod commands;
 mod credentials;
 mod db;
 mod error;
+mod financial_health;
 mod maintenance;
 mod models;
 
@@ -170,6 +171,9 @@ pub fn run() {
             commands::maintenance::get_vehicle_catalog_status,
             commands::maintenance::get_vehicle_makes,
             commands::maintenance::get_vehicle_models,
+            commands::financial_health::get_financial_health_summary,
+            commands::financial_health::get_financial_health_detail,
+            commands::financial_health::set_emergency_fund_target,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

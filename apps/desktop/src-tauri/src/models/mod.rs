@@ -141,6 +141,7 @@ pub struct NetWorthCurrent {
     pub cash_cents: i64,
     pub investments_cents: i64,
     pub assets_cents: i64,
+    pub liabilities_cents: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,6 +341,87 @@ pub struct UpdateRecurringExpenseTemplateInput {
     pub budget_category_id: i64,
     pub day_of_month: i32,
     pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscretionaryCategory {
+    pub category_id: i64,
+    pub category_name: String,
+    pub group_name: String,
+    pub avg_monthly_spend_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum EmergencyFundStatus {
+    Underfunded,
+    Approaching,
+    Funded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EmergencyFundSummary {
+    pub coverage_months: Option<f64>,
+    pub target_months: i64,
+    pub progress_ratio: f64,
+    pub status: EmergencyFundStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SavingsSummary {
+    pub savings_rate_percent: Option<f64>,
+    pub avg_monthly_surplus_cents: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WaterfallSummary {
+    pub current_step: crate::financial_health::evaluator::WaterfallStep,
+    pub action_line_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WaterfallDetail {
+    pub current_step: crate::financial_health::evaluator::WaterfallStep,
+    pub completed_steps: Vec<crate::financial_health::evaluator::WaterfallStep>,
+    pub reasoning_key: String,
+    pub reasoning_params: crate::financial_health::evaluator::ReasoningParams,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FinancialHealthFigures {
+    pub liquid_savings_cents: i64,
+    pub avg_monthly_expenses_cents: i64,
+    pub avg_monthly_income_cents: i64,
+    pub credit_card_debt_cents: i64,
+    pub expense_month_count: i64,
+    pub income_month_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MonthlySurplusPoint {
+    pub month: String,
+    pub income_cents: i64,
+    pub expense_cents: i64,
+    pub surplus_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FinancialHealthSummary {
+    pub data_sufficient: bool,
+    pub emergency_fund: Option<EmergencyFundSummary>,
+    pub savings: Option<SavingsSummary>,
+    pub waterfall: Option<WaterfallSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FinancialHealthDetail {
+    pub data_sufficient: bool,
+    pub emergency_fund: Option<EmergencyFundSummary>,
+    pub savings: Option<SavingsSummary>,
+    pub figures: FinancialHealthFigures,
+    pub waterfall: WaterfallDetail,
+    pub top_discretionary_categories: Vec<DiscretionaryCategory>,
+    pub monthly_surplus_trend: Vec<MonthlySurplusPoint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

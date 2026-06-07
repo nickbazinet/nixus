@@ -17,8 +17,10 @@ import {
   buildAccountBreakdown,
   groupAccountsBySection,
   hasMixedCurrencies,
+  netAccountPositionCents,
   partitionAccounts,
   sumBalanceCents,
+  sumLiabilityOwedCents,
 } from "@/lib/accountUtils";
 import { SlideOver } from "@nixus/shared";
 import type { Account } from "@/lib/types";
@@ -71,7 +73,7 @@ function AccountsPage() {
   );
 
   const grandTotal = useMemo(
-    () => (accounts ? sumBalanceCents(accounts) : 0),
+    () => (accounts ? netAccountPositionCents(accounts) : 0),
     [accounts]
   );
 
@@ -86,7 +88,7 @@ function AccountsPage() {
   );
 
   const debtTotal = useMemo(
-    () => sumBalanceCents(liabilityAccounts),
+    () => sumLiabilityOwedCents(liabilityAccounts),
     [liabilityAccounts]
   );
 

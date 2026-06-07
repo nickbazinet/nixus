@@ -5,6 +5,7 @@ pub mod budget;
 pub mod chat;
 pub mod dashboard;
 pub mod expense;
+pub mod financial_health;
 pub mod import;
 pub mod income;
 pub mod maintenance;

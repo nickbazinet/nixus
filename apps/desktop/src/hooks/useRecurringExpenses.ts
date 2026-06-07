@@ -71,6 +71,7 @@ export function useApplyRecurringExpenses() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
       queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }

@@ -1,5 +1,6 @@
 use rusqlite::Connection;
 
+use crate::db::aggregates;
 use crate::error::AppError;
 use crate::models::{AccountBalanceByType, AssetValueByType, ProjectionInput};
 
@@ -34,37 +35,10 @@ pub fn get_projection_input(conn: &Connection) -> Result<ProjectionInput, AppErr
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Average monthly income
-    let (avg_monthly_income_cents, income_month_count): (i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_cents), 0),
-                    COUNT(DISTINCT strftime('%Y-%m', date))
-             FROM income_entries
-             WHERE strftime('%Y-%m', date) < strftime('%Y-%m', 'now')",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-    let avg_monthly_income_cents = if income_month_count > 0 {
-        avg_monthly_income_cents / income_month_count
-    } else {
-        0
-    };
-
-    // Average monthly expenses
-    let (avg_monthly_expense_cents, expense_month_count): (i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_cents), 0),
-                    COUNT(DISTINCT strftime('%Y-%m', date))
-             FROM expenses
-             WHERE strftime('%Y-%m', date) < strftime('%Y-%m', 'now')",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-    let avg_monthly_expense_cents = if expense_month_count > 0 {
-        avg_monthly_expense_cents / expense_month_count
-    } else {
-        0
-    };
+    let (avg_monthly_income_cents, income_month_count) =
+        aggregates::get_trailing_income_average(conn)?;
+    let (avg_monthly_expense_cents, expense_month_count) =
+        aggregates::get_trailing_expense_average(conn)?;
 
     Ok(ProjectionInput {
         account_balances,

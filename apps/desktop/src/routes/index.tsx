@@ -13,6 +13,7 @@ import { useCurrentNetWorth, useRecentNetWorthSnapshots } from "@/hooks/useNetWo
 import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { CashFlowSummaryCard } from "@/components/dashboard/CashFlowSummaryCard";
+import { FinancialHealthCard } from "@/components/dashboard/FinancialHealthCard";
 import { YearToDateCard } from "@/components/yearly-summary/YearToDateCard";
 import { useIncomeTotal } from "@/hooks/useIncome";
 import { useYearlySummary } from "@/hooks/useYearlySummary";
@@ -223,8 +224,13 @@ function IndexPage() {
         />
       </div>
 
-      {/* Top Budget Categories */}
+      {/* Financial Health Card */}
       <div className="mt-6">
+        <FinancialHealthCard />
+      </div>
+
+      {/* Top Budget Categories */}
+      <div className="mt-4">
         {topCategories.isPending ? (
           <Card className="shadow-sm rounded-lg" data-testid="categories-skeleton">
             <CardContent className="p-6">

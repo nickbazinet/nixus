@@ -101,8 +101,11 @@ export function buildAccountBreakdown(
   accounts: Account[],
   getTypeLabel: (accountType: string) => string
 ): NetWorthBreakdownCategory[] {
+  const assetAccounts = accounts.filter(
+    (account) => !isLiabilityAccountType(account.account_type)
+  );
   const totals = new Map<string, number>();
-  for (const account of accounts) {
+  for (const account of assetAccounts) {
     totals.set(
       account.account_type,
       (totals.get(account.account_type) ?? 0) + account.balance_cents
@@ -147,4 +150,22 @@ export function hasMixedCurrencies(accounts: Account[]): boolean {
 
 export function sumBalanceCents(accounts: Account[]): number {
   return accounts.reduce((sum, account) => sum + account.balance_cents, 0);
+}
+
+/** Owed amount for a liability account (positive or negative stored balance). */
+export function owedBalanceCents(balanceCents: number): number {
+  return balanceCents === 0 ? 0 : Math.abs(balanceCents);
+}
+
+export function sumLiabilityOwedCents(accounts: Account[]): number {
+  return accounts.reduce((sum, account) => sum + owedBalanceCents(account.balance_cents), 0);
+}
+
+export function netAccountPositionCents(accounts: Account[]): number {
+  const { assetAccounts, liabilityAccounts } = partitionAccounts(accounts);
+  return sumBalanceCents(assetAccounts) - sumLiabilityOwedCents(liabilityAccounts);
+}
+
+export function isLiabilityAccountType(accountType: string): boolean {
+  return (LIABILITY_ACCOUNT_TYPES as readonly string[]).includes(accountType);
 }

@@ -1,8 +1,12 @@
 ---
 stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 status: complete
-lastEdited: '2026-05-29'
+lastEdited: '2026-06-06'
 editHistory:
+  - date: '2026-06-06'
+    changes: 'Added Financial Decision Intelligence Module UX (FR83-FR89): FinancialHealthCard on dashboard (above Top Categories by Spending); detailed content as a Financial Health SECTION under the Net Worth page (section sub-nav) rather than a new tab/sidebar item — keeps nav scannable, consistent with Projection/Trends being sub-views; EmergencyFundPanel + ActionWaterfall (4-rung guardrailed ladder with Why? disclosure) + SavingsCapacityPanel; Journey 9 UX flow; passive-by-default trigger model (no nags); reuse of progress-bar/sparkline/status-color semantics; persistent educational-not-advice disclaimer (NFR22); empty/loading states; emotional design; i18n namespace; implementation notes; noted sidebar-sprawl grouping as a future improvement; conversational AI advisor deferred to Phase 3'
+  - date: '2026-06-06'
+    changes: 'Implementation parity: dashboard card placement above Top Categories; CC debt buffer UX note in waterfall Why? copy; liability accounts subtract from net worth (Accounts hero net position, dashboard net worth)'
   - date: '2026-05-29'
     changes: 'Added Car Maintenance Module UX (FR49-FR61): MaintenanceAlertCard on dashboard, /maintenance page layout, VehicleCard and task row components, Journey 7 (Car Maintenance Check-In), InnerTabNav placement, alert status semantics, service logging flow, odometer auto-update toast, empty states, and emotional design for maintenance interactions'
   - date: '2026-03-16'
@@ -1678,3 +1682,221 @@ All strings under `maintenance.*` in `en.json` / `fr.json`:
 - Task status colors must match dashboard alert card semantics — use shared Tailwind classes or a `maintenanceStatusVariant()` helper
 - Playwright E2E: register vehicle → verify dashboard alert → log service → verify alert clears
 - Do not add maintenance to onboarding wizard in MVP — module is opt-in after initial setup
+
+---
+
+# Financial Decision Intelligence Module (FR83–FR89)
+
+**Design thesis:** This module answers the question the dashboard has always implied but never answered — *"so what should I do with my money?"* It must read as **calm, confident guidance**, never as a sales pitch or financial advice. The user should feel oriented ("I know my next move"), not lectured. Deterministic numbers + plain-language reasoning earn the same trust the CC-import flow earns through transparency.
+
+## Where Insights Surface (Placement Summary)
+
+| Surface | Component | Answers | Frequency |
+|---------|-----------|---------|-----------|
+| Dashboard (zero-click) | `FinancialHealthCard` | "Where should my surplus go?" at a glance | Every app open |
+| Net Worth page → **Financial Health** section | `EmergencyFundPanel`, `SavingsCapacityPanel`, `ActionWaterfall` | "Why, and what's the full picture?" | On demand / when curious |
+| Existing AI chat | (Phase 3 — deferred) | Conversational "should I invest?" | Later |
+
+The intelligence is **passive by default**. There is no nag, no notification, no sidebar badge. The only "nudge" is the recommendation copy quietly changing when the user crosses a waterfall threshold — surfaced calmly on the next dashboard glance.
+
+## Navigation: Sub-view Under Net Worth (No New Tab)
+
+**Decision (2026-06-06):** Financial Health does **not** get its own tab or sidebar item. It is an *interpretation* of existing data, not a manage-my-data destination — the same category as Net Worth Projection and Spending Trends, which already live as sub-views rather than top-level tabs. Adding a 10th flat nav item would harm scannability.
+
+Instead, the detailed content lives as a **section under the Net Worth page**, which becomes the app's "wealth & planning" home (your net worth over time + where it should go next):
+
+| Property | Value |
+|----------|-------|
+| Home | Net Worth page |
+| Section nav | A section sub-nav on the Net Worth page: **Net Worth** · **Financial Health** (and Projection, if/when consolidated here) |
+| Route | `/net-worth/financial-health` (or a section toggle within `/net-worth` — implementation choice) |
+| Entry points | (1) Dashboard `FinancialHealthCard` "View details →"; (2) the Financial Health section sub-nav on the Net Worth page |
+| New sidebar/InnerTabNav items | **None** |
+
+**Section sub-nav vs. period filter:** the Net Worth section's existing period tabs (6M / 1Y / ALL) *filter* the trend; the new section sub-nav *navigates* between Net Worth and Financial Health. Keep these visually distinct — section sub-nav as a segmented control / tab row at the top of the page, period tabs scoped within the Net Worth trend card — so the two tab rows are never confused.
+
+> **Future improvement (noted, not actioned):** the sidebar is ~9 items and growing (Dashboard, Budget, Income, Accounts, Assets, Net Worth, Maintenance, Import, AI). A future pass should group it into sections (e.g. Overview / Money / Wealth / Car / AI) so it scales. Out of scope for this module.
+
+## Dashboard: `FinancialHealthCard`
+
+**Purpose:** Zero-click "what should I do with my surplus?" on dashboard load (Journey 9, FR89). Pairs with `CashFlowSummaryCard` — cash flow says *am I ahead?*, this says *here's where it should go*.
+
+**Placement:** Full-width card in the dashboard stack, **above Top Categories by Spending** (after hero net worth / budget cards and secondary account metric cards). Cash Flow remains near the top; Financial Health sits lower where planning context meets spending detail.
+
+**Anatomy:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Financial Health                                  View details → │
+│ ┌───────────────┬───────────────┬───────────────────────────┐ │
+│ │ Emergency fund│ Savings rate  │ Next best action          │ │
+│ │ 2.4 mo        │ 14%           │ Build your emergency fund │ │
+│ │ ▓▓▓▓░░░░░░│6mo │ +$620/mo      │ → before investing        │ │
+│ └───────────────┴───────────────┴───────────────────────────┘ │
+│ Educational guidance, not professional financial advice.       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+- Card title: "Financial Health" (muted, 14px); footer link "View details →" → `/financial-health` (entire card clickable)
+- **Three compact stat columns:**
+  - **Emergency fund** — hero monospace months ("2.4 mo") + thin progress bar with target marker ("│6mo")
+  - **Savings rate** — percentage + average monthly surplus/deficit ("+$620/mo")
+  - **Next best action** — the single current waterfall recommendation as one short imperative line
+- **Persistent disclaimer** footnote (muted, 12px, NFR22)
+
+**Status visual treatment (reuse existing semantics):**
+
+| Condition | Emergency-fund bar | Stat tone |
+|-----------|--------------------|-----------|
+| Coverage ≥ target | Teal fill, full | Positive |
+| Coverage approaching target (≥ ~50%) | Amber fill | Amber foreground |
+| Coverage < ~50% of target | Rose fill | Rose foreground |
+| Savings rate negative (deficit) | — | Rose "–$X/mo" |
+
+**States:**
+
+| State | Behavior |
+|-------|----------|
+| Loading | Skeleton matching 3-column layout (`data-testid="financial-health-skeleton"`) |
+| Insufficient data | Muted prompt: "Add accounts and a few expenses to see your financial health." → links to onboarding/import |
+| No income recorded | Show emergency fund only; savings-rate column reads "Add income to see savings rate" (FR39/FR85 depend on income) |
+| Healthy / funded | Teal fund bar, action line reflects next rung ("Use your registered account room") |
+
+**Accessibility:** `role="link"`, `aria-label` summarizes all three stats and the action ("Financial health: 2.4 months emergency fund, 14% savings rate. Next: build your emergency fund.").
+
+## Financial Health Section Layout (Net Worth → Financial Health)
+
+**Section header (within the Net Worth page):**
+
+- The Net Worth page shows a section sub-nav at the top: **Net Worth** · **Financial Health**
+- When **Financial Health** is active: subtitle "Where your money should go next" (muted)
+- No primary action button (this is an insight view, not a data-entry view)
+
+**Content structure (Financial Health section):**
+
+```
+Net Worth page
+├── Section sub-nav: [ Net Worth ] [ Financial Health ]   ← navigates
+└── Financial Health section
+    └── EmergencyFundPanel        (full-width card)
+    └── ActionWaterfall           (full-width card — the focal element)
+    └── SavingsCapacityPanel      (full-width card)
+    └── Disclaimer footnote       (muted, persistent)
+```
+
+The `ActionWaterfall` is the focal element — it's the answer the user came for.
+
+### `EmergencyFundPanel`
+
+- Hero monospace number: months of runway ("2.4 mo")
+- Horizontal progress bar with **target marker** at the user's chosen months
+- Inline-editable target (click months value → stepper/input → Enter saves, FR84) — matches the inline-edit pattern used for balances; default 6 months with helper "3–6 months is a common guideline"
+- Sub-line: "$X liquid savings ÷ $Y average monthly expenses" — shows the math (NFR20 traceability)
+
+### `ActionWaterfall`
+
+The next-best-action rendered as a **4-rung vertical ladder** (FR86):
+
+```
+✓  1. Build emergency fund        ← funded
+●  2. Pay down high-interest debt ← YOU ARE HERE  [Why? ▾]
+○  3. Contribute to registered accounts (TFSA/RRSP/FHSA)
+○  4. Invest your surplus
+```
+
+- **Completed rungs:** check icon, muted/positive tone
+- **Current rung:** highlighted (teal accent ring), bold label, expandable **"Why?"** disclosure
+- **Future rungs:** muted, `○` marker
+- **"Why?" disclosure** (inline expand): plain-language reasoning citing the user's own figures ("You have 2.4 months of expenses saved; your target is 6. Money beyond your everyday needs is best directed to your buffer first.")
+- **Guardrail (FR87):** rung 4 reads "Invest your surplus" and its Why explains *categories* (registered vs. non-registered) — **never** names securities, products, allocations, or projected returns
+
+### `SavingsCapacityPanel`
+
+- Savings rate (%) + trailing-average surplus/deficit (FR85)
+- A short trend (sparkline or 3/6-month mini-bar, reusing the spending-trends visual language) of monthly surplus
+- **Top discretionary categories** list — the 2–3 largest discretionary spend categories with amounts, framed as "where you could free up capacity" (links to the relevant spending view). Matter-of-fact, not judgmental.
+
+## Journey 9: The Financial Health Check (UX Flow)
+
+**Trigger:** User notices cash accumulating, or the dashboard `FinancialHealthCard` action line catches their eye → clicks "View details."
+
+```mermaid
+flowchart TD
+    A[Dashboard FinancialHealthCard] --> B{Enough data?}
+    B -->|No| C[Insufficient-data prompt → Import/Onboarding]
+    B -->|Yes| D[Click 'View details' → Net Worth ▸ Financial Health]
+    D --> E[EmergencyFundPanel: 2.4 mo vs 6 mo target]
+    E --> F[ActionWaterfall: 'You are here → build buffer']
+    F --> G{Read 'Why?'}
+    G -->|Expand| H[Plain-language reasoning from user's numbers]
+    F --> I[SavingsCapacityPanel: 14% rate, top categories]
+    I --> J{Adjust target?}
+    J -->|Yes| K[Inline edit emergency-fund target → recalculates]
+    J -->|No| L[User leaves oriented: knows next move]
+    M[Months later: fund crosses target] --> N[Card action line shifts to next rung — calm, no alert]
+```
+
+## Emotional Design (Financial-Intelligence-Specific)
+
+| Stage | Desired Emotion | Design Implication |
+|-------|----------------|--------------------|
+| Glancing at the card | Oriented | One clear next action, not a list of advice. "I know my move." |
+| Reading the waterfall | Confident | The ladder shows progress already made (checked rungs) — reassurance, not pressure |
+| Expanding "Why?" | Trust | Reasoning cites *their* numbers, not generic platitudes |
+| Crossing a threshold | Quiet reward | Recommendation advances on its own — a sense of progress, surfaced calmly |
+| Seeing discretionary categories | Empowered, not judged | "Where you could free up capacity" — neutral, factual tone |
+| Negative savings rate | Pragmatic calm | No alarm. "You're spending more than you earn this month" + the buffer/cut focus. No drama (matches maintenance tone) |
+
+## Feedback Patterns (Financial-Intelligence-Specific)
+
+| Event | Pattern | Copy key |
+|-------|---------|----------|
+| Emergency-fund target updated | Success toast + recalculated panels | `financialHealth.toast.targetUpdated` |
+| Recommendation changed since last visit | Calm in-card highlight (no toast) | `financialHealth.card.actionChanged` |
+| Validation error (target) | Inline field error | Standard form pattern |
+
+## Empty & Loading States (Financial Intelligence)
+
+| Location | Condition | Message | Action |
+|----------|-----------|---------|--------|
+| `FinancialHealthCard` | No accounts/expenses | "Add accounts and a few expenses to see your financial health." | Card links to Import/Onboarding |
+| `FinancialHealthCard` | No income recorded | "Add income to see your savings rate." (emergency fund still shown) | Links to Income |
+| Net Worth → Financial Health section | Insufficient data | Centered `Compass` icon (muted), title, description, CTA to Import | "Import transactions" |
+| `SavingsCapacityPanel` | < 1 month of data | "Track a full month to see your savings trend." | — |
+| All panels | Loading | Skeleton matching panel layout | — |
+
+## Data Display (Financial-Intelligence-Specific)
+
+- **Months of runway:** one decimal, monospace ("2.4 mo"). Cap display at "12+ mo" beyond a year.
+- **Savings rate:** integer percentage; surplus/deficit as signed currency respecting the values-privacy toggle (FR76).
+- **All monetary values** obey the app-wide hide/show privacy toggle.
+- **Disclaimer copy** is identical everywhere it appears, sourced from one i18n key.
+
+## AI Chat Integration (Deferred — Phase 3)
+
+No chat UI work in this module. The conversational advisor that reasons over these metrics ("should I invest my surplus?") is explicitly Phase 3 per the PRD. MVP ships the deterministic engine, the dashboard card, and the Financial Health page only. (The existing income-aware recommendation, FR39, remains unchanged.)
+
+## i18n Keys (Namespace)
+
+All strings under `financialHealth.*` in `en.json` / `fr.json`:
+
+- `netWorth.section.financialHealth` (section sub-nav label — no top-level `nav.*` key, since there is no new tab)
+- `financialHealth.card.*` (titles, stat labels, action line, disclaimer)
+- `financialHealth.waterfall.*` (4 rung labels, "Why?", reasoning templates)
+- `financialHealth.emergencyFund.*` (target editor, helper, math sub-line)
+- `financialHealth.savingsCapacity.*` (rate, surplus, top-categories framing)
+- `financialHealth.empty.*`
+- `financialHealth.toast.*`
+- `financialHealth.disclaimer` (single shared key, NFR22)
+
+## Implementation Notes
+
+- `FinancialHealthCard` placement in `routes/index.tsx`: after hero metrics and secondary account cards, **above Top Categories by Spending** (not immediately after Cash Flow)
+- **No new sidebar/`InnerTabNav` item.** Add a section sub-nav (segmented control or tab row) to the Net Worth route that toggles between the Net Worth trend view and the Financial Health section; route `/net-worth/financial-health` or an in-page section state
+- Keep the Net Worth period tabs (6M/1Y/ALL) visually distinct from the section sub-nav — they operate at different levels (filter vs. navigate)
+- Reuse the existing progress-bar component (budget/cash-flow) for the emergency-fund bar with an added target marker; reuse spending-trends sparkline for the savings sparkline
+- All recommendation logic is deterministic and backend-computed (NFR19) — the frontend renders results and the "Why?" reasoning string; it does not compute recommendations client-side
+- Reuse the inline-edit pattern (AccountRow) for the emergency-fund target editor
+- Respect the values-privacy toggle on every monetary display
+- Playwright E2E: seed accounts + expenses + income → verify card stats → open Net Worth ▸ Financial Health section → adjust target → verify waterfall current-rung shift
+- Do not add this module to the onboarding wizard in MVP — it becomes meaningful only after the user has accounts, expenses, and income data

@@ -79,6 +79,7 @@ export function useCreateIncomeEntry() {
       queryClient.invalidateQueries({ queryKey: ["income-entries"] });
       queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
       queryClient.invalidateQueries({ queryKey: ["income-total"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
@@ -99,6 +100,7 @@ export function useUpdateIncomeEntry() {
       queryClient.invalidateQueries({ queryKey: ["income-entries"] });
       queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
       queryClient.invalidateQueries({ queryKey: ["income-total"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
@@ -113,6 +115,7 @@ export function useDeleteIncomeEntry() {
       queryClient.invalidateQueries({ queryKey: ["income-entries"] });
       queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
       queryClient.invalidateQueries({ queryKey: ["income-total"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }

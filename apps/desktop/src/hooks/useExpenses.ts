@@ -24,6 +24,7 @@ export function useCreateExpense() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
       queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
@@ -51,6 +52,7 @@ export function useUpdateExpense() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
       queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
@@ -63,6 +65,7 @@ export function useDeleteExpense() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
       queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }

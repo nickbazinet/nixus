@@ -263,6 +263,7 @@ function ReviewScreen({
       queryClient.invalidateQueries({ queryKey: ["budget-status"] });
       queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
       queryClient.invalidateQueries({ queryKey: ["spending-breakdown"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
 
       toast.success(`${totalCount} ${t("import.transactionsImported")}`);
       setConfirmed(true);

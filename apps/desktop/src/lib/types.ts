@@ -125,6 +125,7 @@ export interface NetWorthCurrent {
   cash_cents: number;
   investments_cents: number;
   assets_cents: number;
+  liabilities_cents: number;
 }
 
 export interface NetWorthSnapshotSummary {
@@ -263,6 +264,87 @@ export interface AccountBalanceByType {
 export interface AssetValueByType {
   asset_type: string;
   total_cents: number;
+}
+
+export type WaterfallStep =
+  | "build_emergency_fund"
+  | "pay_high_interest_debt"
+  | "contribute_registered_accounts"
+  | "invest_surplus";
+
+export type EmergencyFundStatus = "underfunded" | "approaching" | "funded";
+
+export interface EmergencyFundSummary {
+  coverage_months: number | null;
+  target_months: number;
+  progress_ratio: number;
+  status: EmergencyFundStatus;
+}
+
+export interface SavingsSummary {
+  savings_rate_percent: number | null;
+  avg_monthly_surplus_cents: number | null;
+}
+
+export interface WaterfallSummary {
+  current_step: WaterfallStep;
+  action_line_key: string;
+}
+
+export interface ReasoningParams {
+  coverage_months: number | null;
+  target_months: number;
+  credit_card_debt_cents: number;
+  avg_monthly_surplus_cents: number;
+  liquid_savings_cents: number;
+  avg_monthly_expenses_cents: number;
+}
+
+export interface WaterfallDetail {
+  current_step: WaterfallStep;
+  completed_steps: WaterfallStep[];
+  reasoning_key: string;
+  reasoning_params: ReasoningParams;
+}
+
+export interface FinancialHealthFigures {
+  liquid_savings_cents: number;
+  avg_monthly_expenses_cents: number;
+  avg_monthly_income_cents: number;
+  credit_card_debt_cents: number;
+  expense_month_count: number;
+  income_month_count: number;
+}
+
+export interface DiscretionaryCategory {
+  category_id: number;
+  category_name: string;
+  group_name: string;
+  avg_monthly_spend_cents: number;
+}
+
+export interface MonthlySurplusPoint {
+  month: string;
+  income_cents: number;
+  expense_cents: number;
+  surplus_cents: number;
+}
+
+export interface FinancialHealthSummary {
+  data_sufficient: boolean;
+  emergency_fund: EmergencyFundSummary | null;
+  savings: SavingsSummary | null;
+  waterfall: WaterfallSummary | null;
+}
+
+export interface FinancialHealthDetail {
+  data_sufficient: boolean;
+  emergency_fund: EmergencyFundSummary | null;
+  savings: SavingsSummary | null;
+  figures: FinancialHealthFigures;
+  waterfall: WaterfallDetail;
+  top_discretionary_categories: DiscretionaryCategory[];
+  monthly_surplus_trend: MonthlySurplusPoint[];
 }
 
 export interface ProjectionInput {

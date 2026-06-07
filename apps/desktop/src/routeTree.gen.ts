@@ -27,9 +27,11 @@ import { Route as AiRouteImport } from './routes/ai'
 import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
+import { Route as NetWorthIndexRouteImport } from './routes/net-worth.index'
 import { Route as CarIndexRouteImport } from './routes/car.index'
 import { Route as AiIndexRouteImport } from './routes/ai.index'
 import { Route as SettingsAiProviderRouteImport } from './routes/settings.ai-provider'
+import { Route as NetWorthFinancialHealthRouteImport } from './routes/net-worth.financial-health'
 import { Route as CarGarageRouteImport } from './routes/car.garage'
 import { Route as AiAgentIdRouteImport } from './routes/ai.$agentId'
 
@@ -123,6 +125,11 @@ const SettingsIndexRoute = SettingsIndexRouteImport.update({
   path: '/',
   getParentRoute: () => SettingsRoute,
 } as any)
+const NetWorthIndexRoute = NetWorthIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => NetWorthRoute,
+} as any)
 const CarIndexRoute = CarIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -137,6 +144,11 @@ const SettingsAiProviderRoute = SettingsAiProviderRouteImport.update({
   id: '/ai-provider',
   path: '/ai-provider',
   getParentRoute: () => SettingsRoute,
+} as any)
+const NetWorthFinancialHealthRoute = NetWorthFinancialHealthRouteImport.update({
+  id: '/financial-health',
+  path: '/financial-health',
+  getParentRoute: () => NetWorthRoute,
 } as any)
 const CarGarageRoute = CarGarageRouteImport.update({
   id: '/garage',
@@ -160,7 +172,7 @@ export interface FileRoutesByFullPath {
   '/import': typeof ImportRoute
   '/income': typeof IncomeRoute
   '/maintenance': typeof MaintenanceRoute
-  '/net-worth': typeof NetWorthRoute
+  '/net-worth': typeof NetWorthRouteWithChildren
   '/onboarding': typeof OnboardingRoute
   '/projection': typeof ProjectionRoute
   '/recurring-expenses': typeof RecurringExpensesRoute
@@ -169,9 +181,11 @@ export interface FileRoutesByFullPath {
   '/year-summary': typeof YearSummaryRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
+  '/net-worth/financial-health': typeof NetWorthFinancialHealthRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
   '/ai/': typeof AiIndexRoute
   '/car/': typeof CarIndexRoute
+  '/net-worth/': typeof NetWorthIndexRoute
   '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -183,7 +197,6 @@ export interface FileRoutesByTo {
   '/import': typeof ImportRoute
   '/income': typeof IncomeRoute
   '/maintenance': typeof MaintenanceRoute
-  '/net-worth': typeof NetWorthRoute
   '/onboarding': typeof OnboardingRoute
   '/projection': typeof ProjectionRoute
   '/recurring-expenses': typeof RecurringExpensesRoute
@@ -191,9 +204,11 @@ export interface FileRoutesByTo {
   '/year-summary': typeof YearSummaryRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
+  '/net-worth/financial-health': typeof NetWorthFinancialHealthRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
   '/ai': typeof AiIndexRoute
   '/car': typeof CarIndexRoute
+  '/net-worth': typeof NetWorthIndexRoute
   '/settings': typeof SettingsIndexRoute
 }
 export interface FileRoutesById {
@@ -208,7 +223,7 @@ export interface FileRoutesById {
   '/import': typeof ImportRoute
   '/income': typeof IncomeRoute
   '/maintenance': typeof MaintenanceRoute
-  '/net-worth': typeof NetWorthRoute
+  '/net-worth': typeof NetWorthRouteWithChildren
   '/onboarding': typeof OnboardingRoute
   '/projection': typeof ProjectionRoute
   '/recurring-expenses': typeof RecurringExpensesRoute
@@ -217,9 +232,11 @@ export interface FileRoutesById {
   '/year-summary': typeof YearSummaryRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
+  '/net-worth/financial-health': typeof NetWorthFinancialHealthRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
   '/ai/': typeof AiIndexRoute
   '/car/': typeof CarIndexRoute
+  '/net-worth/': typeof NetWorthIndexRoute
   '/settings/': typeof SettingsIndexRoute
 }
 export interface FileRouteTypes {
@@ -244,9 +261,11 @@ export interface FileRouteTypes {
     | '/year-summary'
     | '/ai/$agentId'
     | '/car/garage'
+    | '/net-worth/financial-health'
     | '/settings/ai-provider'
     | '/ai/'
     | '/car/'
+    | '/net-worth/'
     | '/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -258,7 +277,6 @@ export interface FileRouteTypes {
     | '/import'
     | '/income'
     | '/maintenance'
-    | '/net-worth'
     | '/onboarding'
     | '/projection'
     | '/recurring-expenses'
@@ -266,9 +284,11 @@ export interface FileRouteTypes {
     | '/year-summary'
     | '/ai/$agentId'
     | '/car/garage'
+    | '/net-worth/financial-health'
     | '/settings/ai-provider'
     | '/ai'
     | '/car'
+    | '/net-worth'
     | '/settings'
   id:
     | '__root__'
@@ -291,9 +311,11 @@ export interface FileRouteTypes {
     | '/year-summary'
     | '/ai/$agentId'
     | '/car/garage'
+    | '/net-worth/financial-health'
     | '/settings/ai-provider'
     | '/ai/'
     | '/car/'
+    | '/net-worth/'
     | '/settings/'
   fileRoutesById: FileRoutesById
 }
@@ -308,7 +330,7 @@ export interface RootRouteChildren {
   ImportRoute: typeof ImportRoute
   IncomeRoute: typeof IncomeRoute
   MaintenanceRoute: typeof MaintenanceRoute
-  NetWorthRoute: typeof NetWorthRoute
+  NetWorthRoute: typeof NetWorthRouteWithChildren
   OnboardingRoute: typeof OnboardingRoute
   ProjectionRoute: typeof ProjectionRoute
   RecurringExpensesRoute: typeof RecurringExpensesRoute
@@ -445,6 +467,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsIndexRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/net-worth/': {
+      id: '/net-worth/'
+      path: '/'
+      fullPath: '/net-worth/'
+      preLoaderRoute: typeof NetWorthIndexRouteImport
+      parentRoute: typeof NetWorthRoute
+    }
     '/car/': {
       id: '/car/'
       path: '/'
@@ -465,6 +494,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/settings/ai-provider'
       preLoaderRoute: typeof SettingsAiProviderRouteImport
       parentRoute: typeof SettingsRoute
+    }
+    '/net-worth/financial-health': {
+      id: '/net-worth/financial-health'
+      path: '/financial-health'
+      fullPath: '/net-worth/financial-health'
+      preLoaderRoute: typeof NetWorthFinancialHealthRouteImport
+      parentRoute: typeof NetWorthRoute
     }
     '/car/garage': {
       id: '/car/garage'
@@ -507,6 +543,20 @@ const CarRouteChildren: CarRouteChildren = {
 
 const CarRouteWithChildren = CarRoute._addFileChildren(CarRouteChildren)
 
+interface NetWorthRouteChildren {
+  NetWorthFinancialHealthRoute: typeof NetWorthFinancialHealthRoute
+  NetWorthIndexRoute: typeof NetWorthIndexRoute
+}
+
+const NetWorthRouteChildren: NetWorthRouteChildren = {
+  NetWorthFinancialHealthRoute: NetWorthFinancialHealthRoute,
+  NetWorthIndexRoute: NetWorthIndexRoute,
+}
+
+const NetWorthRouteWithChildren = NetWorthRoute._addFileChildren(
+  NetWorthRouteChildren,
+)
+
 interface SettingsRouteChildren {
   SettingsAiProviderRoute: typeof SettingsAiProviderRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -532,7 +582,7 @@ const rootRouteChildren: RootRouteChildren = {
   ImportRoute: ImportRoute,
   IncomeRoute: IncomeRoute,
   MaintenanceRoute: MaintenanceRoute,
-  NetWorthRoute: NetWorthRoute,
+  NetWorthRoute: NetWorthRouteWithChildren,
   OnboardingRoute: OnboardingRoute,
   ProjectionRoute: ProjectionRoute,
   RecurringExpensesRoute: RecurringExpensesRoute,

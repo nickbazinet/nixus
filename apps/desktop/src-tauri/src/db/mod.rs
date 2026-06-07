@@ -7,6 +7,7 @@ use tracing::info;
 use crate::error::AppError;
 
 pub mod account;
+pub mod aggregates;
 pub mod asset;
 pub mod audit;
 pub mod budget;
@@ -14,6 +15,7 @@ pub mod chat;
 pub mod config;
 pub mod dashboard;
 pub mod expense;
+pub mod financial_health;
 pub mod income;
 pub mod maintenance;
 pub mod net_worth;

@@ -49,4 +49,7 @@ export const queryKeys = {
   vehicleMakes: ["vehicle-catalog", "makes"] as const,
   vehicleModels: (make: string, year: number) =>
     ["vehicle-catalog", "models", make, year] as const,
+  financialHealth: ["financial-health"] as const,
+  financialHealthSummary: ["financial-health", "summary"] as const,
+  financialHealthDetail: ["financial-health", "detail"] as const,
 };

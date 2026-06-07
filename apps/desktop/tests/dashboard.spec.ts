@@ -18,6 +18,16 @@ const yearlySummaryMock = {
   available_years: [2026, 2025],
 };
 
+const financialHealthInsufficientMock = {
+  data_sufficient: false,
+  emergency_fund: null,
+  savings: null,
+  waterfall: {
+    current_step: "build_emergency_fund" as const,
+    action_line_key: "build_emergency_fund",
+  },
+};
+
 const emptyYearlySummaryMock = {
   year: 2026,
   is_current_year: true,
@@ -33,7 +43,7 @@ const emptyYearlySummaryMock = {
 };
 
 async function setupEmptyDashboardMock(page: Page) {
-  await page.addInitScript((yearlyMock) => {
+  await page.addInitScript((yearlyMock, healthMock) => {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: (cmd: string) => {
         switch (cmd) {
@@ -59,12 +69,14 @@ async function setupEmptyDashboardMock(page: Page) {
             return Promise.resolve([]);
           case "get_yearly_summary":
             return Promise.resolve(yearlyMock);
+          case "get_financial_health_summary":
+            return Promise.resolve(healthMock);
           default:
             return Promise.resolve(null);
         }
       },
     };
-  }, emptyYearlySummaryMock);
+  }, emptyYearlySummaryMock, financialHealthInsufficientMock);
 }
 
 async function setupSeededDashboardMock(page: Page) {
@@ -149,6 +161,26 @@ async function setupSeededDashboardMock(page: Page) {
             return Promise.resolve(spendingBreakdown);
           case "get_yearly_summary":
             return Promise.resolve(yearlyMock);
+          case "get_income_total":
+            return Promise.resolve({ total_cents: 210000 });
+          case "get_financial_health_summary":
+            return Promise.resolve({
+              data_sufficient: true,
+              emergency_fund: {
+                coverage_months: 2.4,
+                target_months: 6,
+                progress_ratio: 0.4,
+                status: "underfunded",
+              },
+              savings: {
+                savings_rate_percent: 14,
+                avg_monthly_surplus_cents: 62000,
+              },
+              waterfall: {
+                current_step: "build_emergency_fund",
+                action_line_key: "build_emergency_fund",
+              },
+            });
           default:
             return Promise.resolve(null);
         }
@@ -250,6 +282,30 @@ test.describe("Dashboard — Story 5.1", () => {
             case "get_yearly_summary":
               return new Promise((resolve) =>
                 setTimeout(() => resolve(mock), 500)
+              );
+            case "get_financial_health_summary":
+              return new Promise((resolve) =>
+                setTimeout(
+                  () =>
+                    resolve({
+                      data_sufficient: true,
+                      emergency_fund: {
+                        coverage_months: 2.4,
+                        target_months: 6,
+                        progress_ratio: 0.4,
+                        status: "underfunded",
+                      },
+                      savings: {
+                        savings_rate_percent: 14,
+                        avg_monthly_surplus_cents: 62000,
+                      },
+                      waterfall: {
+                        current_step: "build_emergency_fund",
+                        action_line_key: "build_emergency_fund",
+                      },
+                    }),
+                  500
+                )
               );
             default:
               return Promise.resolve(null);
@@ -411,5 +467,132 @@ test.describe("Dashboard — Year to Date Card", () => {
 
     await page.getByTestId("ytd-card").click();
     await expect(page).toHaveURL(/\/year-summary/);
+  });
+});
+
+test.describe("Dashboard — Financial Health Card", () => {
+  test("financial health card displays three columns with data", async ({
+    page,
+  }) => {
+    await setupSeededDashboardMock(page);
+    await page.goto("/");
+
+    const card = page.getByTestId("financial-health-card");
+    await expect(card).toBeVisible();
+    await expect(card).toContainText("Financial Health");
+    await expect(card).toContainText("View details →");
+    await expect(page.getByTestId("financial-health-months")).toContainText(
+      "2.4 mo"
+    );
+    await expect(
+      page.getByTestId("financial-health-savings-rate")
+    ).toContainText("14%");
+    await expect(page.getByTestId("financial-health-surplus")).toContainText(
+      "+$620.00/mo"
+    );
+    await expect(page.getByTestId("financial-health-action")).toContainText(
+      "Build your emergency fund"
+    );
+    await expect(page.getByTestId("financial-health-disclaimer")).toContainText(
+      "Educational guidance"
+    );
+  });
+
+  test("financial health card shows skeleton while loading", async ({
+    page,
+  }) => {
+    await page.addInitScript((yearlyMock) => {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+        invoke: (cmd: string) => {
+          switch (cmd) {
+            case "get_financial_health_summary":
+              return new Promise((resolve) =>
+                setTimeout(
+                  () =>
+                    resolve({
+                      data_sufficient: true,
+                      emergency_fund: {
+                        coverage_months: 2.4,
+                        target_months: 6,
+                        progress_ratio: 0.4,
+                        status: "underfunded",
+                      },
+                      savings: {
+                        savings_rate_percent: 14,
+                        avg_monthly_surplus_cents: 62000,
+                      },
+                      waterfall: {
+                        current_step: "build_emergency_fund",
+                        action_line_key: "build_emergency_fund",
+                      },
+                    }),
+                  500
+                )
+              );
+            case "get_budget_summary":
+              return Promise.resolve({
+                total_target_cents: 0,
+                total_spent_cents: 0,
+                remaining_cents: 0,
+                month: "2026-03",
+              });
+            case "get_yearly_summary":
+              return Promise.resolve(yearlyMock);
+            default:
+              return Promise.resolve(null);
+          }
+        },
+      };
+    }, yearlySummaryMock);
+
+    await page.goto("/");
+
+    await expect(
+      page.getByTestId("financial-health-skeleton")
+    ).toBeVisible();
+    await expect(page.getByTestId("financial-health-card")).toBeVisible({
+      timeout: 5000,
+    });
+  });
+
+  test("financial health card shows empty state with insufficient data", async ({
+    page,
+  }) => {
+    await setupEmptyDashboardMock(page);
+    await page.goto("/");
+
+    const empty = page.getByTestId("financial-health-empty");
+    await expect(empty).toBeVisible();
+    await expect(empty).toContainText(
+      "Add accounts and a few expenses to see your financial health."
+    );
+  });
+
+  test("financial health card is placed above top categories", async ({
+    page,
+  }) => {
+    await setupSeededDashboardMock(page);
+    await page.goto("/");
+
+    const healthCard = page.getByTestId("financial-health-card");
+    const topCategories = page.getByTestId("top-categories");
+    await expect(healthCard).toBeVisible();
+    await expect(topCategories).toBeVisible();
+
+    const healthBox = await healthCard.boundingBox();
+    const categoriesBox = await topCategories.boundingBox();
+    expect(healthBox).not.toBeNull();
+    expect(categoriesBox).not.toBeNull();
+    expect(healthBox!.y).toBeLessThan(categoriesBox!.y);
+  });
+
+  test("clicking financial health card navigates to financial health route", async ({
+    page,
+  }) => {
+    await setupSeededDashboardMock(page);
+    await page.goto("/");
+
+    await page.getByTestId("financial-health-card").click();
+    await expect(page).toHaveURL(/\/net-worth\/financial-health/);
   });
 });

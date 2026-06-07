@@ -1,6 +1,6 @@
 ---
 stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit', 'step-e-04-complete']
-lastEdited: '2026-05-29'
+lastEdited: '2026-06-06'
 editHistory:
   - date: '2026-03-16'
     changes: 'Added income tracking: new Income Management FRs (FR33-FR39), Journey 6 (Income Entry), updated Executive Summary, Success Criteria, Dashboard Journey, AI Chat Journey, Product Scope MVP, Dashboard FRs, AI Chat FRs'
@@ -10,6 +10,10 @@ editHistory:
     changes: 'Added Car Maintenance Tracking module (FR49-FR61): multi-vehicle maintenance schedules, default task templates (fluids, filters, spark plugs, suspension, tires, brakes), in-app alerts at 500 km/14 days before due, service logging with odometer auto-update, Journey 7, MVP scope item #10, dashboard and AI chat integration; standalone vehicle entities (not linked to passive assets); architect dependency for schedule interval data source'
   - date: '2026-05-29'
     changes: 'Codebase parity sync: added FR63-FR81 for recurring expenses, spending trends, year summary, net worth projection, onboarding wizard, import duplicate detection and merchant hints, backup/restore, values privacy, i18n, theme, AI credentials keyring, auto-updater, FHSA/multi-currency accounts, YTD dashboard card; updated Product Scope and journeys; noted partial multi-agent and OpenAI runtime gaps'
+  - date: '2026-06-06'
+    changes: 'Added Financial Decision Intelligence capability (FR83-FR89, NFR19-NFR22): deterministic emergency-fund health (months of runway vs configurable target), savings-capacity analysis (savings rate, surplus, top discretionary categories), and a guardrailed priority-waterfall next-best-action engine (emergency fund -> high-interest debt -> registered accounts TFSA/RRSP/FHSA -> invest surplus) surfaced on a dashboard card and dedicated Financial Health view; guidance is category-level and educational only with no specific securities and a not-professional-advice disclaimer; added Journey 9, MVP capability #14, updated Executive Summary, What Makes This Special, Success Criteria, and Phase 3 (conversational AI advisor + anomaly detection deferred)'
+  - date: '2026-06-06'
+    changes: 'Implementation parity sync for Financial Decision Intelligence and liability-aware net worth: marked capability #14 implemented; dashboard Financial Health card placement (above Top Categories); Financial Health section under Net Worth; FR86 CC debt buffer (15% of trailing avg monthly expenses for revolving balances); liability account types subtract from net worth (FR18/FR23/FR26); positive or negative owed-balance convention for credit cards; updated Journey 3 net worth formula and Journey 9 waterfall behavior notes'
 inputDocuments: ['product-brief-nkbaz-finance-2026-03-14.md']
 workflowType: 'prd'
 documentCounts:
@@ -31,19 +35,20 @@ classification:
 
 ## Executive Summary
 
-nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
+nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. Beyond tracking, the app provides financial-decision intelligence: it gauges emergency-fund health (months of runway against a target), measures savings capacity, and recommends the next best action for surplus cash using an accepted priority waterfall (emergency fund → high-interest debt → tax-advantaged room → investing) — kept educational and category-level rather than prescribing specific investments. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
 
 The product solves a specific failure mode: financial tracking tools die when they demand effort. Spreadsheets work until the maintenance burden causes people to stop updating them. nkbaz-finance eliminates that friction by automating the most tedious part — data entry and categorization — starting with the highest-impact touchpoint (bi-weekly CC statements).
 
 ### What Makes This Special
 
 - **Automation-first philosophy** — the product's core promise is removing manual effort. CC statement parsing via AI is the entry point, not a feature bolted on later.
-- **Complete financial picture in one place** — budgeting, expense tracking, multi-account balances, passive assets (real estate, business, vehicles), and net worth history by category (cash, crypto, housing, TFSA, RRSP). No juggling separate tools.
+- **Complete financial picture in one place** — budgeting, expense tracking, multi-account balances (assets and liabilities), passive assets (real estate, business, vehicles), and net worth history by category (cash, crypto, housing, TFSA, RRSP). No juggling separate tools.
 - **Pragmatic automation path** — screenshot/PDF upload over bank API integration. Easier to build, no third-party dependencies, accessible to any user who can take a photo. Bank APIs come later as an expansion of the automation model.
 - **AI-native interaction** — conversational interface for querying and managing financial data, plus automated CC parsing. AI is woven into the product, not bolted on.
 - **Cash flow visibility** — income tracking alongside expenses gives the AI full financial context for meaningful recommendations, not just spending data in isolation.
 - **Proactive car maintenance** — multi-vehicle maintenance schedules with default industry-baseline templates and in-app alerts before service is due. No separate car app needed.
 - **Financial analytics beyond the dashboard** — spending trends, year-to-date summaries, and forward net worth projection turn tracking data into planning insight.
+- **Guidance, not just numbers** — built-in financial-decision intelligence gauges emergency-fund health, savings capacity, and the next best action for surplus cash using accepted financial-hygiene priorities. Deterministic and explainable, never black-box stock-picking.
 - **Built from real pain** — designed from the builder's own failed spreadsheet workflow, not theoretical user research.
 
 ## Project Classification
@@ -64,6 +69,8 @@ The product solves a specific failure mode: financial tracking tools die when th
 - All income sources represented with monthly entries reflecting actual amounts received
 - All owned vehicles have active maintenance schedules with accurate due-date tracking
 - Maintenance alerts appear in-app when service is within 500 km or 14 days of due, or overdue
+- Emergency fund coverage is always visible and accurate against the user's chosen target
+- Every surplus-cash decision has a clear, data-backed next-best-action recommendation the user understands
 - Google Sheets is fully replaced — no longer needed for finance tracking
 
 ### Business Success
@@ -87,6 +94,8 @@ N/A — personal project built to solve a personal problem. No commercial, growt
 | Income tracking completeness | 100% of months have income recorded | No gaps in monthly income data |
 | Vehicle maintenance coverage | 100% of owned vehicles tracked | Every vehicle has an active schedule |
 | Maintenance alert timeliness | Alerts within 500 km or 14 days of due | Compare alert trigger date to due date/mileage |
+| Emergency fund visibility | Always current | Coverage recalculates on balance/expense change |
+| Financial guidance grounding | 100% of recommendations traceable to user data | Each recommendation cites the figures behind it |
 | Spreadsheet dependency | Zero | Google Sheets no longer used for finances |
 
 ## User Journeys
@@ -126,14 +135,15 @@ A month later, he updates his Wealthsimple balances after checking the app — t
 
 ### Journey 3: The Dashboard Glance
 
-Dev opens the app mid-month just to check where things stand. The dashboard shows: budget status across all categories, total balances by account, total net worth with sparkline, year-to-date summary card, this month's income versus total expenses — the cash flow snapshot — and a maintenance alert badge showing his Civic is due for an oil change in 12 days. No clicks needed. He sees the number, closes the tab.
+Dev opens the app mid-month just to check where things stand. The dashboard shows: budget status across all categories, total net worth with sparkline, year-to-date summary card, this month's income versus total expenses — the cash flow snapshot — a **Financial Health** summary card (emergency fund months, savings rate, next best action), and a maintenance alert badge showing his Civic is due for an oil change in 12 days. Lower on the page, **Top Categories by Spending** rounds out the glance. No clicks needed. He sees the number, closes the tab.
 
 **What this reveals:**
 - Dashboard as the landing page
-- Net worth = sum of all account balances + all passive asset values
+- Net worth = sum of asset account balances + passive asset values **minus liability account balances** (credit cards and future liability types)
 - Budget status at a glance (per category, overall)
 - Income vs. expenses cash flow view
-- Maintenance alerts summary visible at a glance (exact placement TBD — UX design workflow)
+- Financial Health summary card for emergency fund, savings rate, and next-best action (links to Net Worth ▸ Financial Health)
+- Maintenance alerts summary visible at a glance
 - Zero-interaction read — everything visible without drilling in
 
 ### Journey 4: The CC Import Gone Wrong (Edge Case)
@@ -209,6 +219,28 @@ Before leaving a coffee shop, he toggles "Hide values" in the sidebar so passers
 - Values privacy toggle
 - Database backup/restore
 
+### Journey 9: The Financial Health Check
+
+Dev has been using nkbaz-finance for a few months — CC imports, income entries, and account balances are all current. He opens the new Financial Health view to figure out what to do with the cash piling up in his chequing account.
+
+At the top: **Emergency Fund — "2.4 months of expenses."** His target is 6 months, so the progress ring sits amber at 40%. Below it, **Savings Capacity:** "You're averaging a $620 monthly surplus — a 14% savings rate. Your two largest discretionary categories are Dining Out and Subscriptions." Then the part he actually came for — **Next Best Action:** "Build your emergency fund. You have surplus cash, but less than three months of buffer. Prioritize topping up your savings before investing." A short "Why?" line explains it's computed from his liquid balances and trailing average expenses. No ticker symbols, no "buy this fund" — just the priority and the reasoning. A small footnote reminds him this is educational guidance, not professional financial advice.
+
+A couple of months later his buffer crosses the 6-month mark. He opens the view again and the recommendation has shifted on its own: "Your emergency fund is funded. Next: contribute to your registered accounts (TFSA/RRSP/FHSA) before investing in non-registered accounts." Dev now knows the *category* of his next move — the specific picks remain his call.
+
+When he carries a small statement balance on his credit card — $300 against ~$2,000 average monthly expenses — the app treats that as normal revolving use (within a 15% expense buffer) and does **not** block him on "pay down debt." A larger balance still surfaces step 2 until it is paid down or falls below the buffer.
+
+**What this reveals:**
+- Emergency fund coverage metric (liquid savings ÷ trailing average monthly expenses)
+- Configurable emergency fund target with progress visualization
+- Savings rate and average surplus/deficit calculation
+- Top discretionary categories surfaced for "where to economize"
+- Priority-waterfall next-best-action engine that adapts as finances change
+- Revolving CC debt buffer — small statement balances (≤15% of trailing avg monthly expenses) do not block advancement past step 2
+- Category-level, guardrailed guidance — no specific securities or products
+- Plain-language reasoning ("Why?") behind each recommendation
+- Educational-not-advice disclaimer
+- Surfaced on both a dashboard summary card and a dedicated Financial Health view
+
 ### Journey Requirements Summary
 
 | Capability | Revealed By |
@@ -221,7 +253,8 @@ Before leaving a coffee shop, he toggles "Hide values" in the sidebar so passers
 | Passive asset tracking | Journey 2 |
 | Manual balance entry | Journey 2 |
 | Dashboard (budget + balances + net worth) | Journey 3 |
-| Net worth = accounts + passive assets | Journey 3 |
+| Net worth = asset accounts + passive assets − liabilities | Journey 3 |
+| Liability account types reduce net worth | Journey 2, 3 |
 | Partial AI extraction + manual fallback | Journey 4 |
 | AI chat for data queries | Journey 5 |
 | AI chat for write actions with confirmation | Journey 5 |
@@ -250,6 +283,15 @@ Before leaving a coffee shop, he toggles "Hide values" in the sidebar so passers
 | Merchant category hint learning | Journey 1 |
 | Multi-currency accounts (CAD/USD) | Journey 2 |
 | FHSA account type | Journey 2 |
+| Emergency fund coverage metric | Journey 9 |
+| Configurable emergency fund target | Journey 9 |
+| Savings rate / surplus calculation | Journey 9 |
+| Discretionary category surfacing | Journey 9 |
+| Priority-waterfall next-best-action | Journey 9 |
+| CC debt buffer for revolving balances | Journey 9 |
+| Guardrailed category-level guidance | Journey 9 |
+| Plain-language recommendation reasoning | Journey 9 |
+| Financial Health dashboard card | Journey 3, 9 |
 
 ## Product Scope
 
@@ -265,7 +307,7 @@ Before leaving a coffee shop, he toggles "Hide values" in the sidebar so passers
 3. **Expense Tracking** — view, review, correct auto-categorized expenses; manual entry as fallback; recurring expense templates with auto-apply
 4. **Multi-Account Tracking** — track balances across multiple banks and account types (chequing, savings, credit card, TFSA, RRSP, FHSA, non-registered, crypto) in CAD or USD
 5. **Passive Asset Tracking** — track value of business, real estate, vehicles, other assets
-6. **Dashboard** — budget status, spending by category, account balances, net worth sparkline, YTD card, cash flow, maintenance alerts
+6. **Dashboard** — budget status, spending by category, account balances, net worth sparkline, YTD card, cash flow, Financial Health summary card, maintenance alerts
 7. **Net Worth History** — historical tracking split by category (cash, crypto, housing, TFSA, RRSP, FHSA, etc.)
 8. **Financial Analytics** — spending trends (3/6/12 months), year summary, forward net worth projection
 9. **AI Chat** — natural language queries and actions across all financial data
@@ -273,6 +315,7 @@ Before leaving a coffee shop, he toggles "Hide values" in the sidebar so passers
 11. **Car Maintenance Tracking** — register multiple vehicles (standalone entities), track odometer and service history, pre-populated maintenance task templates with editable intervals, in-app alerts when service is approaching or overdue *(specified, not yet implemented)*
 12. **Onboarding Wizard** — guided first-run setup across budget, accounts, assets, income, and import
 13. **Application Platform** — database backup/restore, values privacy toggle, EN/FR localization, light/dark/system theme, OS keychain AI credentials, auto-update check
+14. **Financial Decision Intelligence** — emergency-fund health (months of runway vs. configurable target), savings-capacity analysis (savings rate, surplus, top discretionary categories), and a guardrailed priority-waterfall next-best-action engine (emergency fund → high-interest debt → registered accounts → invest surplus), surfaced on a dashboard card and a dedicated Financial Health section under Net Worth; guidance is category-level and educational only; CC debt buffer for normal revolving balances *(implemented 2026-06)*
 
 **Related Deliverable (separate app):** Marketing website (`apps/web`) — landing page, download CTA, feature showcase, FAQ. Not part of desktop MVP but ships alongside the product.
 
@@ -286,7 +329,11 @@ Single-user only. No authentication required for MVP.
 
 ### Phase 3 (Expansion)
 
-- Smart insights — AI-driven spending trends, anomaly detection, savings recommendations
+- Conversational AI advisor — AI chat reasons over the Financial Decision Intelligence metrics (emergency fund, savings rate, waterfall) to answer questions like "should I invest my surplus?" with grounded, non-prescriptive responses (deferred from MVP capability #14, which ships the deterministic engine and surfaces only)
+- Smart insights — AI-driven spending-pattern analysis and anomaly detection
+- Contribution-room-aware guidance — user-entered or tracked TFSA/RRSP/FHSA room feeding the waterfall recommendation (MVP ships generic registered-vs-non-registered guidance only; step 3 remains current while trailing surplus > 0)
+- Additional liability account types — lines of credit, personal loans, mortgages (MVP: `credit_card` only, via shared `LIABILITY_ACCOUNT_TYPES`)
+- Goal-based planning — set a target (e.g. "6-month fund by December") and track/coach toward it
 - Automatic recurring expense detection from import history (distinct from user-defined recurring templates in MVP)
 - Export/reporting capabilities
 - Additional AI agent personalities beyond Budget Helper
@@ -419,8 +466,8 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR15: User can add a financial account with a name, institution, type (chequing, savings, credit card, TFSA, RRSP, FHSA, non-registered, crypto), and currency (CAD or USD)
 - FR16: User can edit or remove an existing account
 - FR17: User can update the current balance of any account
-- FR18: User can view all accounts and their current balances in a single list, grouped by type with liabilities (credit cards) separated from assets
-- FR80: User can hold accounts in CAD or USD; net worth calculations handle mixed-currency portfolios
+- FR18: User can view all accounts and their current balances in a single list, grouped by type with **liability account types** (credit cards in MVP) separated from assets; owed balances on liability accounts reduce net worth rather than increase it
+- FR80: User can hold accounts in CAD or USD; net worth calculations handle mixed-currency portfolios (liability balances subtracted at stored cents — same mixed-currency limitation as assets)
 
 ### Income Management
 
@@ -439,7 +486,7 @@ Not required for account/asset balance updates (manual entry, standard request/r
 ### Dashboard
 
 - FR22: User can view a dashboard showing budget status across all categories for the current month
-- FR23: User can view total net worth (sum of all account balances + all passive asset values) on the dashboard
+- FR23: User can view total net worth on the dashboard: sum of asset account balances (chequing, savings, investment accounts) plus passive asset values **minus** liability account balances (credit cards in MVP)
 - FR24: User can view spending breakdown by category on the dashboard
 - FR25: User can view all account balances on the dashboard
 - FR38: User can view income versus total expenses for the current month on the dashboard
@@ -448,9 +495,9 @@ Not required for account/asset balance updates (manual entry, standard request/r
 
 ### Net Worth History
 
-- FR26: System can record a net worth snapshot each time account balances or asset values change
+- FR26: System can record a net worth snapshot each time account balances or asset values change; snapshots subtract liability account balances from total and exclude liabilities from category breakdown
 - FR27: User can view net worth history over time as a trend
-- FR28: User can view net worth breakdown by category (cash, crypto, housing, TFSA, RRSP, FHSA, etc.)
+- FR28: User can view net worth breakdown by category (cash, crypto, housing, TFSA, RRSP, FHSA, etc.); liability accounts are not included as positive breakdown categories
 
 ### Financial Analytics
 
@@ -511,11 +558,23 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR79: User can configure and test AI provider credentials stored in the OS keychain (AWS Bedrock, OpenAI)
 - FR82: System checks for application updates on launch and notifies the user when an update is available
 
+### Financial Decision Intelligence
+
+- FR83: System calculates the user's emergency fund coverage as liquid savings (chequing + savings account balances) divided by trailing average monthly expenses, expressed as months of runway
+- FR84: User can set an emergency fund target in months (with 3–6 months suggested as guidance) and view progress toward that target
+- FR85: System calculates the user's monthly savings rate ((income − expenses) ÷ income) and trailing-period average surplus/deficit, and surfaces the largest discretionary spending categories reducing savings capacity
+- FR86: System evaluates the user's finances against a fixed priority waterfall — (1) build emergency fund, (2) pay down high-interest debt, (3) contribute to registered accounts (TFSA/RRSP/FHSA) before non-registered, (4) invest surplus — and recommends the single next-best-action category for the user's surplus cash. **MVP rules:** step 2 uses liability account balances (`credit_card` in MVP); step 2 is considered complete when total owed CC balance is zero **or** at/below **15% of trailing average monthly expenses** (revolving-statement buffer); step 3 is current while trailing monthly surplus > 0 (no contribution-room tracking); step 4 is current when steps 1–2 are complete and surplus ≤ 0
+- FR87: System presents all guidance as category-level recommendations with plain-language reasoning tied to the user's data, and never recommends specific securities or financial products, nor guarantees returns
+- FR88: User can open a dedicated Financial Health section under Net Worth (section sub-nav: Net Worth · Financial Health) showing emergency fund status, savings-capacity trend, and the prioritized action waterfall with explanations
+- FR89: User can view a Financial Health summary card on the dashboard showing emergency fund coverage, savings rate, and the current next-best action; card appears above Top Categories by Spending and links to Net Worth ▸ Financial Health
+
+**Guardrail:** FR86 ships generic registered-vs-non-registered guidance only; contribution-room awareness (user-entered or tracked TFSA/RRSP/FHSA limits) is deferred to Phase 3. Step 3 remains the current recommendation while trailing monthly surplus > 0 — the app cannot detect when registered room is fully used. Step 4 ("invest surplus") applies when steps 1–2 are complete and trailing surplus ≤ 0. Liability owed balances use `ABS(balance_cents)` so users may enter positive or negative amounts in the Accounts UI. The conversational AI advisor that reasons over these metrics in chat is Phase 3 — MVP delivers the deterministic engine plus dashboard card and Financial Health section.
+
 ## Non-Functional Requirements
 
 ### Performance
 
-- NFR1: Dashboard loads and renders all data (budget status, account balances, net worth) within 1 second on subsequent visits
+- NFR1: Dashboard loads and renders all data (budget status, account balances, net worth, Financial Health card) within 1 second on subsequent visits
 - NFR2: Navigation between views within the desktop app completes instantly (no perceptible delay)
 - NFR3: CC statement import provides progress feedback within 2 seconds of upload
 - NFR4: AI parsing and categorization completes within 30 seconds for a typical CC statement (15-25 transactions)
@@ -536,7 +595,7 @@ Not required for account/asset balance updates (manual entry, standard request/r
 
 - NFR11: Financial records (transactions, balances, net worth snapshots) are never silently lost or corrupted
 - NFR12: Database supports backup and restore capability via user-initiated export/import (FR74, FR75)
-- NFR13: Balance and net worth calculations are accurate to the cent
+- NFR13: Balance and net worth calculations are accurate to the cent; liability account balances subtract from net worth at face value (absolute owed amount)
 
 ### Maintenance Alerts
 
@@ -551,3 +610,10 @@ Not required for account/asset balance updates (manual entry, standard request/r
 ### Application Lifecycle
 
 - NFR18: Auto-update check completes within 5 seconds of app launch without blocking dashboard render
+
+### Financial Decision Intelligence
+
+- NFR19: Financial Decision Intelligence recommendations are computed deterministically from stored user data (rule-based) — identical inputs always produce identical output; no generative or probabilistic model decides recommendations
+- NFR20: Every recommendation is traceable to the underlying figures that produced it, and those figures are inspectable by the user
+- NFR21: Financial Health calculations complete and render within 1 second on dashboard load and recalculate when account balances or expenses change
+- NFR22: The Financial Health view and dashboard card display a disclaimer that guidance is educational and not professional financial advice

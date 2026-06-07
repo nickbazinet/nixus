@@ -30,6 +30,7 @@ export function useCreateAccount() {
       queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
@@ -47,6 +48,7 @@ export function useUpdateAccountBalance() {
       queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
@@ -65,6 +67,7 @@ export function useUpdateAccount() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
@@ -78,6 +81,7 @@ export function useDeleteAccount() {
       queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
+      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
     },
   });
 }
