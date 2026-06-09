@@ -34,4 +34,12 @@ describe("<BetaSection />", () => {
       /^mailto:support@nixus\.nicolasbazinet\.net\?subject=/,
     );
   });
+
+  it("links to the full beta guide page", () => {
+    renderWithProviders(<BetaSection />);
+    expect(screen.getByTestId("beta-full-guide-link")).toHaveAttribute(
+      "href",
+      "/beta",
+    );
+  });
 });

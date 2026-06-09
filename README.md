@@ -2,6 +2,10 @@
   <img src="docs/images/nixus-logo.svg" alt="Nixus" width="240" />
 </p>
 
+<p align="center">
+  <img src="docs/images/nixus-banner.png" alt="Nixus — Financial clarity, built for your future" />
+</p>
+
 <p align="center"><strong>Automate and track your life — from one place, on your own machine.</strong></p>
 
 Nixus is a **local-first desktop app** for **lifestyle automation and tracking**. It uses technology to take the tedious upkeep out of the things you should be staying on top of — money, your car, and more over time — so you actually keep doing them. Each area of life is a module in one shared app, and your data never leaves your machine.
@@ -11,6 +15,12 @@ Nixus is a **local-first desktop app** for **lifestyle automation and tracking**
 > **Pre-alpha** — core features work, but the product is still maturing. [See limitations](#what-nixus-is--and-isnt) before you download.
 
 **[Download for macOS or Windows →](https://nixus.nicolasbazinet.net)** · **[Beta testing](#help-shape-nixus)** · **[Contributing](CONTRIBUTING.md)**
+
+<p align="center">
+  <a href="https://buymeacoffee.com/nickbaz">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210" />
+  </a>
+</p>
 
 ---
 

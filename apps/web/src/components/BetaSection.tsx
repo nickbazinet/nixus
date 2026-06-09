@@ -1,13 +1,14 @@
 import { useTranslation } from "react-i18next";
 
-import {
-  BETA_SUPPORT_EMAIL,
-  limitationIds,
-} from "@/content/limitations";
+import { BETA_SUPPORT_EMAIL } from "@/content/limitations";
+import { betaPagePath, localeFromLanguage } from "@/lib/localePaths";
+
+import { LimitationsList } from "./LimitationsList";
 
 export function BetaSection() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const mailtoHref = `mailto:${BETA_SUPPORT_EMAIL}?subject=${encodeURIComponent(t("beta.invite.emailSubject"))}`;
+  const fullGuideHref = betaPagePath(localeFromLanguage(i18n.language));
 
   return (
     <section
@@ -29,21 +30,7 @@ export function BetaSection() {
           </p>
         </div>
 
-        <ul
-          role="list"
-          data-testid="beta-limitations-list"
-          className="space-y-3 text-sm text-muted-foreground"
-        >
-          {limitationIds.map((id) => (
-            <li key={id} className="flex gap-3">
-              <span
-                aria-hidden="true"
-                className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground/60"
-              />
-              <span>{t(`beta.limitations.items.${id}`)}</span>
-            </li>
-          ))}
-        </ul>
+        <LimitationsList />
 
         <div
           data-testid="beta-invite"
@@ -55,13 +42,20 @@ export function BetaSection() {
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
             {t("beta.invite.body")}
           </p>
-          <div className="mt-6">
+          <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
             <a
               href={mailtoHref}
               data-testid="beta-invite-cta"
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40"
             >
               {t("beta.invite.cta")}
+            </a>
+            <a
+              href={fullGuideHref}
+              data-testid="beta-full-guide-link"
+              className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+            >
+              {t("beta.fullGuideLink")}
             </a>
           </div>
         </div>

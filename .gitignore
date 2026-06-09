@@ -51,3 +51,5 @@ _bmad-output/*
 .claude/worktrees
 
 .DS_Store
+
+docs/planning/

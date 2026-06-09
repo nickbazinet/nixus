@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "@tanstack/react-router";
 import { cn, NixusLogo } from "@nixus/shared";
 
 import { DownloadCTA } from "@/features/download/DownloadCTA";
+import { betaPagePath, localeFromLanguage } from "@/lib/localePaths";
 import { LanguageToggle } from "./LanguageToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -17,8 +19,13 @@ import { ThemeToggle } from "./ThemeToggle";
  * sit comfortably without crowding the Download CTA.
  */
 export function SiteHeader() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { pathname } = useLocation();
   const [scrolled, setScrolled] = useState(false);
+  const locale = localeFromLanguage(i18n.language);
+  const betaHref = betaPagePath(locale);
+  const onBetaPage =
+    pathname === "/beta" || pathname === "/fr/beta";
 
   useEffect(() => {
     let raf = 0;
@@ -63,6 +70,19 @@ export function SiteHeader() {
         </a>
 
         <div className="flex items-center gap-2 md:gap-3">
+          <a
+            href={betaHref}
+            data-testid="header-beta-link"
+            aria-current={onBetaPage ? "page" : undefined}
+            className={cn(
+              "hidden rounded-md px-2.5 py-1.5 text-sm font-medium outline-none sm:inline-flex focus-visible:ring-3 focus-visible:ring-ring/50",
+              onBetaPage
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t("header.beta")}
+          </a>
           <ThemeToggle />
           <LanguageToggle />
           <DownloadCTA size="sm" />

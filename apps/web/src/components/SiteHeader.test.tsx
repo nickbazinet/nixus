@@ -15,6 +15,15 @@ describe("SiteHeader", () => {
     expect(screen.getByText("ixus")).toBeInTheDocument();
   });
 
+  it("renders the Beta nav link", () => {
+    renderWithProviders(<SiteHeader />);
+    expect(screen.getByTestId("header-beta-link")).toHaveAttribute(
+      "href",
+      "/beta",
+    );
+    expect(screen.getByTestId("header-beta-link")).toHaveTextContent("Beta");
+  });
+
   it("renders the DownloadCTA", () => {
     renderWithProviders(<SiteHeader />);
     expect(screen.getByTestId("download-cta")).toBeInTheDocument();

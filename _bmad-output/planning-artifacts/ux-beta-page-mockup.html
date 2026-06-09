@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UX mockup — Nixus /beta page</title>
+  <style>
+    :root {
+      --background: #ffffff;
+      --foreground: #0f172a;
+      --muted: #f1f5f9;
+      --muted-fg: #64748b;
+      --border: #e2e8f0;
+      --card: #ffffff;
+      --primary: #0d9488;
+      --primary-fg: #ffffff;
+      --positive: #059669;
+      --positive-bg: #ecfdf5;
+      --negative: #dc2626;
+      --negative-bg: #fef2f2;
+      --radius: 0.5rem;
+      --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #0f172a;
+        --foreground: #f8fafc;
+        --muted: #1e293b;
+        --muted-fg: #94a3b8;
+        --border: #334155;
+        --card: #1e293b;
+        --positive-bg: #064e3b;
+        --negative-bg: #450a0a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      font-size: 15px;
+      line-height: 1.6;
+      color: var(--foreground);
+      background: var(--background);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Mockup chrome */
+    .mockup-badge {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 200;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #f59e0b;
+      color: #451a03;
+    }
+
+    /* Pre-alpha banner */
+    .pre-alpha {
+      border-bottom: 1px solid #fcd34d;
+      background: #fffbeb;
+      color: #92400e;
+      padding: 8px 24px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pre-alpha a { color: inherit; font-weight: 600; }
+
+    /* Header */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--background) 90%, transparent);
+      backdrop-filter: blur(10px);
+      height: 80px;
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+    }
+    .header-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .logo {
+      font-size: 20px;
+      font-weight: 600;
+      background: linear-gradient(90deg, #A78BFA, #F472B6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-decoration: none;
+    }
+    .header-nav { display: flex; align-items: center; gap: 12px; }
+    .header-nav a {
+      font-size: 14px;
+      color: var(--muted-fg);
+      text-decoration: none;
+      padding: 6px 10px;
+      border-radius: var(--radius);
+    }
+    .header-nav a.active {
+      color: var(--primary);
+      background: #f0fdfa;
+    }
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: calc(var(--radius) - 2px);
+      background: var(--primary);
+      color: var(--primary-fg);
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+    }
+    .btn-primary:hover { background: #0f766e; }
+    .btn-outline {
+      display: inline-flex;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: calc(var(--radius) - 2px);
+      background: transparent;
+      color: var(--foreground);
+      text-decoration: none;
+      border: 1px solid var(--border);
+    }
+
+    /* Page layout */
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--primary);
+      margin: 0 0 8px;
+      text-align: center;
+    }
+    h1 {
+      font-size: 2.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin: 0 0 16px;
+      text-align: center;
+    }
+    .lead {
+      font-size: 17px;
+      line-height: 1.55;
+      color: var(--muted-fg);
+      text-align: center;
+      max-width: 540px;
+      margin: 0 auto 32px;
+    }
+    .hero-cta { text-align: center; margin-bottom: 56px; }
+
+    section {
+      margin-top: 48px;
+      scroll-margin-top: 100px;
+    }
+    h2 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0 0 16px;
+    }
+
+    /* Fit cards */
+    .fit-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 600px) {
+      .fit-grid { grid-template-columns: 1fr; }
+    }
+    .fit-card {
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) + 2px);
+      padding: 20px;
+      background: var(--card);
+    }
+    .fit-card.positive { border-color: color-mix(in srgb, var(--positive) 30%, var(--border)); }
+    .fit-card.negative { border-color: color-mix(in srgb, var(--negative) 20%, var(--border)); }
+    .fit-card h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0 0 12px;
+    }
+    .fit-card.positive h3 { color: var(--positive); }
+    .fit-card.negative h3 { color: var(--negative); }
+    .fit-card ul {
+      margin: 0;
+      padding-left: 18px;
+      font-size: 14px;
+      color: var(--muted-fg);
+    }
+    .fit-card li { margin-bottom: 6px; }
+
+    /* Screenshots */
+    .screenshots {
+      display: grid;
+      gap: 20px;
+    }
+    .screenshot {
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) + 2px);
+      overflow: hidden;
+      background: var(--card);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+    }
+    .screenshot-placeholder {
+      aspect-ratio: 16 / 10;
+      background: linear-gradient(135deg, var(--muted) 0%, color-mix(in srgb, var(--primary) 8%, var(--muted)) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      color: var(--muted-fg);
+      font-weight: 500;
+    }
+    .screenshot figcaption {
+      padding: 12px 16px;
+      font-size: 13px;
+      color: var(--muted-fg);
+      border-top: 1px solid var(--border);
+    }
+
+    /* Limitations */
+    .limitations {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    .limitations li {
+      display: flex;
+      gap: 12px;
+      padding: 8px 0;
+      font-size: 14px;
+      color: var(--muted-fg);
+      border-bottom: 1px solid var(--border);
+    }
+    .limitations li:last-child { border-bottom: none; }
+    .limitations li::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--muted-fg);
+      opacity: 0.6;
+      margin-top: 8px;
+      flex-shrink: 0;
+    }
+
+    /* Steps */
+    .steps { counter-reset: step; list-style: none; margin: 0; padding: 0; }
+    .steps li {
+      counter-increment: step;
+      display: flex;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 14px;
+    }
+    .steps li:last-child { border-bottom: none; }
+    .steps li::before {
+      content: counter(step);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .steps strong { display: block; color: var(--foreground); margin-bottom: 4px; }
+
+    /* Feedback card */
+    .feedback-card {
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) + 2px);
+      padding: 24px;
+      background: var(--card);
+    }
+    .feedback-card p { margin: 0 0 12px; font-size: 14px; color: var(--muted-fg); }
+    .feedback-card .prompt {
+      font-style: italic;
+      padding: 12px 16px;
+      background: var(--muted);
+      border-radius: var(--radius);
+      margin: 16px 0;
+      font-size: 14px;
+      color: var(--foreground);
+    }
+
+    /* FAQ mini */
+    .faq-item {
+      border-bottom: 1px solid var(--border);
+      padding: 14px 0;
+    }
+    .faq-item summary {
+      font-weight: 500;
+      font-size: 14px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item p {
+      margin: 10px 0 0;
+      font-size: 14px;
+      color: var(--muted-fg);
+    }
+    .more-link {
+      display: inline-block;
+      margin-top: 16px;
+      font-size: 14px;
+      color: var(--primary);
+      text-decoration: none;
+    }
+    .more-link:hover { text-decoration: underline; }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 24px;
+      text-align: center;
+      font-size: 13px;
+      color: var(--muted-fg);
+      margin-top: 64px;
+    }
+    footer a { color: var(--muted-fg); }
+  </style>
+</head>
+<body>
+  <div class="mockup-badge">UX mockup — not production</div>
+
+  <div class="pre-alpha">
+    <span>⚠</span>
+    <span>Nixus is in pre-alpha — your feedback shapes what comes next.</span>
+    <a href="#expect">Learn more</a>
+  </div>
+
+  <header>
+    <div class="header-inner">
+      <a href="/" class="logo">Nixus</a>
+      <nav class="header-nav">
+        <a href="/beta" class="active">Beta</a>
+        <a href="#" class="btn-primary">Download for macOS</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- §1 Hero -->
+    <p class="eyebrow">Pre-alpha beta</p>
+    <h1>Try Nixus — honest preview</h1>
+    <p class="lead">
+      A local-first desktop app for people who still track finances in a spreadsheet.
+      I'm looking for 2–3 testers willing to use it for a few weeks and tell me what's confusing or broken.
+    </p>
+    <div class="hero-cta">
+      <a href="#" class="btn-primary">Download for macOS</a>
+    </div>
+
+    <!-- §2 Is this for you? -->
+    <section id="fit">
+      <h2>Is this for you?</h2>
+      <div class="fit-grid">
+        <div class="fit-card positive">
+          <h3>✓ Good fit if you…</h3>
+          <ul>
+            <li>Track personal finances in a spreadsheet today</li>
+            <li>Use macOS or Windows on a desktop or laptop</li>
+            <li>Can upload CC statements (screenshot or PDF)</li>
+            <li>Are okay with rough edges and will tell me what breaks</li>
+          </ul>
+        </div>
+        <div class="fit-card negative">
+          <h3>✗ Not for you if you…</h3>
+          <ul>
+            <li>Need automatic bank connection</li>
+            <li>Want a mobile app</li>
+            <li>Need tax, legal, or investment advice</li>
+            <li>Expect polished, supported software today</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- §3 Screenshots -->
+    <section id="screenshots">
+      <h2>See it in action</h2>
+      <div class="screenshots">
+        <figure class="screenshot">
+          <div class="screenshot-placeholder">Screenshot — Budget overview (demo data)</div>
+          <figcaption>Monthly budget at a glance — category groups and spending vs. plan.</figcaption>
+        </figure>
+        <figure class="screenshot">
+          <div class="screenshot-placeholder">Screenshot — AI statement import (demo data)</div>
+          <figcaption>Upload a credit card statement; AI categorizes transactions in seconds.</figcaption>
+        </figure>
+        <figure class="screenshot">
+          <div class="screenshot-placeholder">Screenshot — Net worth (demo data)</div>
+          <figcaption>Accounts, investments, and assets in a single view over time.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- §4 Limitations -->
+    <section id="expect">
+      <h2>What Nixus is — and isn't</h2>
+      <p style="font-size:14px;color:var(--muted-fg);margin:0 0 16px;">
+        Before you download: an honest list so you know if this is worth your time.
+      </p>
+      <ul class="limitations">
+        <li>No bank connection — you upload credit card statements manually (screenshot or PDF).</li>
+        <li>Desktop only — macOS and Windows. No mobile app.</li>
+        <li>Single user — one person's finances per install.</li>
+        <li>AI import requires your own API credentials (stored in your OS keychain).</li>
+        <li>Pre-alpha — features change and things break between releases.</li>
+        <li>Not tax, legal, or investment advice — a tracking tool, not a professional service.</li>
+      </ul>
+    </section>
+
+    <!-- §5 Get started -->
+    <section id="start">
+      <h2>Get started</h2>
+      <ol class="steps">
+        <li>
+          <div>
+            <strong>Download</strong>
+            Click the button above for your platform (macOS or Windows).
+          </div>
+        </li>
+        <li>
+          <div>
+            <strong>Install</strong>
+            macOS: if Gatekeeper blocks the app, open System Settings → Privacy &amp; Security → Open Anyway.
+            Windows: if SmartScreen appears, click More info → Run anyway.
+            <a href="/" style="color:var(--primary);">Full install help →</a>
+          </div>
+        </li>
+        <li>
+          <div>
+            <strong>Open Nixus</strong>
+            No web signup — your data stays on your machine from the first launch.
+          </div>
+        </li>
+      </ol>
+      <p style="text-align:center;margin-top:24px;">
+        <a href="#" class="btn-primary">Download for macOS</a>
+      </p>
+    </section>
+
+    <!-- §6 Feedback -->
+    <section id="feedback">
+      <h2>How to give feedback</h2>
+      <div class="feedback-card">
+        <p>
+          <strong style="color:var(--foreground);">No Discord or chat app required.</strong>
+          Email works — I read everything personally. This is pre-alpha, not a support desk.
+        </p>
+        <div class="prompt">
+          Most useful question: "What almost made you close it in the first 10 minutes?"
+        </div>
+        <p>You don't need a bug report template or screenshots — just tell me what felt wrong.</p>
+        <a href="mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20beta%20feedback" class="btn-primary">Email feedback</a>
+      </div>
+    </section>
+
+    <!-- §7 Quick FAQ -->
+    <section id="faq">
+      <h2>Quick questions</h2>
+      <details class="faq-item" open>
+        <summary>Does this connect to my bank?</summary>
+        <p>No, by design. You upload a credit card statement and the AI parses it. Nixus never asks for your bank login.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Where is my data stored?</summary>
+        <p>Locally on your machine. Your budget, accounts, and net worth never leave your computer.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Is it free?</summary>
+        <p>Yes, free for now during pre-alpha. No surprise charges.</p>
+      </details>
+      <a href="/#faq" class="more-link">More questions on the homepage →</a>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      <a href="https://github.com/nickbazinet/nixus">GitHub</a>
+      · <a href="mailto:support@nixus.nicolasbazinet.net">support@nixus.nicolasbazinet.net</a>
+      · Pre-alpha
+    </p>
+    <p style="margin-top:8px;">Copyright © Nixus 2026</p>
+    <p style="margin-top:24px;font-size:12px;opacity:0.7;">
+      Spec: ux-design-specification-beta-page-2026-06-09.md · FR version mirrors this at /fr/beta
+    </p>
+  </footer>
+</body>
+</html>

@@ -23,6 +23,8 @@ type MetaInput = {
   ogImage?: string;
   /** Locale of THIS page. Defaults to "en". Drives og:locale + hreflang. */
   locale?: Locale;
+  /** Per-locale alternate paths for hreflang. Defaults to home EN/FR. */
+  alternates?: Partial<Record<Locale, string>>;
 };
 
 export const SITE = {
@@ -76,6 +78,8 @@ export function buildMeta(input: MetaInput = {}) {
 
   const altSummary = description.split(".")[0]?.trim() ?? SITE.name;
   const otherLocale: Locale = locale === "en" ? "fr" : "en";
+  const enAlternatePath = input.alternates?.en ?? LOCALE_PATH.en;
+  const frAlternatePath = input.alternates?.fr ?? LOCALE_PATH.fr;
 
   return {
     meta: [
@@ -106,9 +110,9 @@ export function buildMeta(input: MetaInput = {}) {
     links: [
       { rel: "canonical", href: url },
       // Per-locale alternates so crawlers serve the right URL by locale.
-      { rel: "alternate", hrefLang: "en", href: `${SITE.url}/` },
-      { rel: "alternate", hrefLang: "fr", href: `${SITE.url}/fr/` },
-      { rel: "alternate", hrefLang: "x-default", href: `${SITE.url}/` },
+      { rel: "alternate", hrefLang: "en", href: `${SITE.url}${enAlternatePath}` },
+      { rel: "alternate", hrefLang: "fr", href: `${SITE.url}${frAlternatePath}` },
+      { rel: "alternate", hrefLang: "x-default", href: `${SITE.url}${enAlternatePath}` },
     ],
   };
 }

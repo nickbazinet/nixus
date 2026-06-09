@@ -4,6 +4,8 @@ import { AlertTriangle, X } from "lucide-react";
 
 import { cn } from "@nixus/shared";
 
+import { betaPagePath, localeFromLanguage } from "@/lib/localePaths";
+
 const STORAGE_KEY = "nixus.preAlphaDismissed";
 
 /**
@@ -16,11 +18,8 @@ export function PreAlphaBanner() {
   const { t, i18n } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
 
-  // Banner mounts in __root.tsx on every route, but <FAQ /> only exists on
-  // `/` and `/fr/`. Build a route-aware href so "Learn more" navigates home
-  // first on non-home routes (e.g. /404) instead of dead-anchoring.
-  const homePath = i18n.language?.startsWith("fr") ? "/fr/" : "/";
-  const learnMoreHref = `${homePath}#beta`;
+  // Link to the dedicated beta page — locale-aware for EN/FR outreach.
+  const learnMoreHref = betaPagePath(localeFromLanguage(i18n.language));
 
   function handleDismiss() {
     // Move focus out of the soon-to-unmount banner so keyboard users don't
