@@ -4,6 +4,8 @@ export interface ProjectionPoint {
   month: number;
   label: string;
   total_cents: number;
+  /** Wealth growth from returns on today's balances only (no new savings). */
+  investment_gain_cents: number;
   breakdown: Record<string, number>;
 }
 
@@ -82,6 +84,9 @@ export function computeProjection(
     balances[cashBucket] = 0;
   }
 
+  const passiveBalances: Record<string, number> = { ...balances };
+  const startCents = Object.values(balances).reduce((s, v) => s + v, 0);
+
   const now = new Date();
   const points: ProjectionPoint[] = [];
 
@@ -100,6 +105,13 @@ export function computeProjection(
         }
       }
 
+      for (const key of Object.keys(passiveBalances)) {
+        const rate = getMonthlyRate(key);
+        if (rate !== 0) {
+          passiveBalances[key] *= 1 + rate;
+        }
+      }
+
       // Distribute net cash flow
       if (netCashFlow > 0 && growthTotal > 0) {
         for (const [type, weight] of Object.entries(growthWeights)) {
@@ -112,11 +124,16 @@ export function computeProjection(
 
     const date = new Date(now.getFullYear(), now.getMonth() + m, 1);
     const totalCents = Object.values(balances).reduce((s, v) => s + v, 0);
+    const passiveTotalCents = Object.values(passiveBalances).reduce(
+      (s, v) => s + v,
+      0,
+    );
 
     points.push({
       month: m,
       label: formatLabel(date),
       total_cents: Math.round(totalCents),
+      investment_gain_cents: Math.round(passiveTotalCents) - startCents,
       breakdown: { ...balances },
     });
   }
