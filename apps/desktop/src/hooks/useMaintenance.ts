@@ -56,9 +56,13 @@ export function useCreateVehicle() {
         use_default_template: input.use_default_template ?? true,
         custom_tasks: null,
       }),
-    onSuccess: () => {
+    onSuccess: (vehicle) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.maintenance });
-      toast.success(t("maintenance.toast.vehicleCreated"));
+      toast.success(
+        t("maintenance.onboarding.successToast", {
+          nickname: vehicle.nickname,
+        })
+      );
     },
   });
 }

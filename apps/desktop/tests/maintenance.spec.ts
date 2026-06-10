@@ -1140,9 +1140,7 @@ async function createVehicle(
   await form.getByLabel("Odometer (km)").fill(odometerKm);
   await form.getByRole("button", { name: "Save" }).click();
   await expect(page.getByTestId("vehicle-slide-over")).not.toBeVisible();
-  await expect(
-    page.getByText("Vehicle added — maintenance schedule created.").first()
-  ).toBeVisible();
+  await expect(page.getByText("is now tracked").first()).toBeVisible();
   return label;
 }
 
@@ -1233,18 +1231,18 @@ test.describe("Maintenance Page", () => {
     );
   });
 
-  test("shows empty state when no vehicles exist", async ({ page }) => {
+  test("shows onboarding hero when no vehicles exist", async ({ page }) => {
     const emptyState = page.getByTestId("maintenance-empty-state");
     await expect(emptyState).toBeVisible();
-    await expect(emptyState).toContainText("No vehicles tracked yet.");
+    await expect(emptyState).toContainText("Let's set up your garage");
     await expect(emptyState).toContainText(
-      "Maintenance tracking is separate from asset values in Net Worth."
+      "Track maintenance so you never miss a service again."
     );
   });
 
   test("empty state button opens add vehicle form", async ({ page }) => {
     const emptyState = page.getByTestId("maintenance-empty-state");
-    await emptyState.getByRole("button", { name: /Add Vehicle/ }).click();
+    await emptyState.getByTestId("car-onboarding-hero-cta").click();
     await expect(page.getByTestId("add-vehicle-form")).toBeVisible();
   });
 
@@ -1268,7 +1266,7 @@ test.describe("Maintenance Page", () => {
 
     await expect(page.getByTestId("vehicle-slide-over")).not.toBeVisible();
     await expect(
-      page.getByText("Vehicle added — maintenance schedule created.")
+      page.getByText("2020 Toyota Camry is now tracked", { exact: false })
     ).toBeVisible();
     await expect(page.getByTestId("car-dashboard-all-clear")).toBeVisible();
     await expect(page.getByText("1 vehicles tracked")).toBeVisible();
@@ -1279,7 +1277,7 @@ test.describe("Maintenance Page", () => {
     const form = page.getByTestId("add-vehicle-form");
     await expect(form.getByTestId("maintenance-template-section")).toBeVisible();
     await expect(form.getByTestId("maintenance-template-mode-default")).toBeVisible();
-    await expect(form.getByText("Default template")).toBeVisible();
+    await expect(form.getByText("Recommended")).toBeVisible();
     await expect(form.getByText("Build your own")).toBeVisible();
   });
 

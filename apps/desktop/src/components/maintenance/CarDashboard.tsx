@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowRight, Car } from "lucide-react";
 import { Button, Card, CardContent, buttonVariants } from "@nixus/shared";
 import { DashboardMetricCard } from "@/components/dashboard/DashboardMetricCard";
+import { CarOnboardingChecklist } from "@/components/maintenance/CarOnboardingChecklist";
 import { MaintenanceStatusBadge } from "@/components/maintenance/MaintenanceStatusBadge";
 import {
   formatNextDueLine,
@@ -58,21 +59,55 @@ export function CarDashboard({
   }
 
   if (!vehicles || vehicles.length === 0) {
+    const onboardingSteps = [
+      {
+        title: t("maintenance.onboarding.step1Title"),
+        hint: t("maintenance.onboarding.step1Hint"),
+      },
+      {
+        title: t("maintenance.onboarding.step2Title"),
+        hint: t("maintenance.onboarding.step2Hint"),
+      },
+      {
+        title: t("maintenance.onboarding.step3Title"),
+        hint: t("maintenance.onboarding.step3Hint"),
+      },
+    ];
+
     return (
-      <Card className="shadow-sm rounded-lg" data-testid="maintenance-empty-state">
-        <CardContent className="p-8 text-center">
-          <Car
-            className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3"
-            aria-hidden="true"
-          />
-          <p className="font-medium text-foreground mb-1">
-            {t("maintenance.emptyTitle")}
+      <Card
+        className="shadow-sm rounded-lg"
+        data-testid="maintenance-empty-state"
+      >
+        <CardContent className="p-8 text-center" data-testid="car-onboarding-hero">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+            <Car className="h-8 w-8 text-primary" aria-hidden="true" />
+          </div>
+          <h2 className="text-xl font-semibold text-foreground mb-1">
+            {t("maintenance.onboarding.heroTitle")}
+          </h2>
+          <p className="text-sm text-muted-foreground mb-7 max-w-md mx-auto">
+            {t("maintenance.onboarding.heroSubtitle")}
           </p>
-          <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
-            {t("maintenance.emptyHelper")}
-          </p>
-          <Button size="sm" onClick={onAddVehicle}>
-            {t("maintenance.addVehicle")}
+
+          <ol className="mx-auto mb-7 grid max-w-2xl gap-6 text-left sm:grid-cols-3">
+            {onboardingSteps.map((step, index) => (
+              <li key={step.title}>
+                <span className="mb-2 flex h-7 w-7 items-center justify-center rounded-full border-2 border-primary text-sm font-semibold text-primary">
+                  {index + 1}
+                </span>
+                <p className="text-sm font-medium text-foreground">
+                  {step.title}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {step.hint}
+                </p>
+              </li>
+            ))}
+          </ol>
+
+          <Button onClick={onAddVehicle} data-testid="car-onboarding-hero-cta">
+            {t("maintenance.onboarding.heroCta")}
           </Button>
         </CardContent>
       </Card>
@@ -91,6 +126,8 @@ export function CarDashboard({
 
   return (
     <div className="space-y-4" data-testid="car-dashboard">
+      <CarOnboardingChecklist vehicles={vehicles} />
+
       <div
         className="grid grid-cols-1 gap-4 sm:grid-cols-3"
         data-testid="car-dashboard-metrics"
