@@ -1,7 +1,9 @@
 ---
 stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit', 'step-e-04-complete']
-lastEdited: '2026-06-06'
+lastEdited: '2026-06-10'
 editHistory:
+  - date: '2026-06-10'
+    changes: 'Added Transaction-Account Linking (FR90-FR94, NFR23): optional account selection when recording expenses or income with automatic liability-aware balance adjustment on create, edit, and delete; updated Executive Summary, Journey 2/5/6, Journey Requirements Summary, Product Scope (capabilities 3, 4, 10), FR12/FR35, Phase 3 deferrals; architecture in architecture-expense-income-account-linking.md'
   - date: '2026-03-16'
     changes: 'Added income tracking: new Income Management FRs (FR33-FR39), Journey 6 (Income Entry), updated Executive Summary, Success Criteria, Dashboard Journey, AI Chat Journey, Product Scope MVP, Dashboard FRs, AI Chat FRs'
   - date: '2026-05-18'
@@ -35,14 +37,14 @@ classification:
 
 ## Executive Summary
 
-nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. Beyond tracking, the app provides financial-decision intelligence: it gauges emergency-fund health (months of runway against a target), measures savings capacity, and recommends the next best action for surplus cash using an accepted priority waterfall (emergency fund → high-interest debt → tax-advantaged room → investing) — kept educational and category-level rather than prescribing specific investments. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
+nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), optionally link individual expenses and income entries to specific accounts so balances stay in sync automatically, monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. Beyond tracking, the app provides financial-decision intelligence: it gauges emergency-fund health (months of runway against a target), measures savings capacity, and recommends the next best action for surplus cash using an accepted priority waterfall (emergency fund → high-interest debt → tax-advantaged room → investing) — kept educational and category-level rather than prescribing specific investments. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
 
 The product solves a specific failure mode: financial tracking tools die when they demand effort. Spreadsheets work until the maintenance burden causes people to stop updating them. nkbaz-finance eliminates that friction by automating the most tedious part — data entry and categorization — starting with the highest-impact touchpoint (bi-weekly CC statements).
 
 ### What Makes This Special
 
 - **Automation-first philosophy** — the product's core promise is removing manual effort. CC statement parsing via AI is the entry point, not a feature bolted on later.
-- **Complete financial picture in one place** — budgeting, expense tracking, multi-account balances (assets and liabilities), passive assets (real estate, business, vehicles), and net worth history by category (cash, crypto, housing, TFSA, RRSP). No juggling separate tools.
+- **Complete financial picture in one place** — budgeting, expense tracking, multi-account balances (assets and liabilities), optional transaction-to-account linking so cash movement and balances stay aligned, passive assets (real estate, business, vehicles), and net worth history by category (cash, crypto, housing, TFSA, RRSP). No juggling separate tools.
 - **Pragmatic automation path** — screenshot/PDF upload over bank API integration. Easier to build, no third-party dependencies, accessible to any user who can take a photo. Bank APIs come later as an expansion of the automation model.
 - **AI-native interaction** — conversational interface for querying and managing financial data, plus automated CC parsing. AI is woven into the product, not bolted on.
 - **Cash flow visibility** — income tracking alongside expenses gives the AI full financial context for meaningful recommendations, not just spending data in isolation.
@@ -123,14 +125,15 @@ Dev is setting up the app for the first time. The onboarding wizard walks him th
 
 Then the passive assets: his condo, his share of a business, his car. He enters current estimated values.
 
-A month later, he updates his Wealthsimple balances after checking the app — types in the new TFSA and RRSP numbers. Adjusts the condo estimate after a comparable sold on his street.
+A month later, he logs a $120 grocery expense and links it to his Desjardins chequing account — the balance drops automatically. His pay deposit goes to the same account via an income entry with the account selected. He still updates his Wealthsimple TFSA and RRSP balances manually when he checks those apps. Adjusts the condo estimate after a comparable sold on his street.
 
 **What this reveals:**
 - Guided onboarding wizard for first-time setup
 - Budget builder with category groups and monthly targets
 - Account management (add/edit/remove, multiple types including FHSA, CAD/USD)
 - Passive asset management (add/edit/remove, various asset classes)
-- Manual balance entry for all non-CC accounts
+- Manual balance entry remains available for all accounts
+- Optional account link on expenses and income — when used, balances adjust automatically (subtract for expenses, add for income; liability-aware for credit cards)
 - Simple, fast data entry — no friction on updates
 
 ### Journey 3: The Dashboard Glance
@@ -159,25 +162,27 @@ Dev uploads a CC statement screenshot but the image is blurry — taken at an an
 
 Dev wants to know how his restaurant spending this quarter compares to last quarter. Instead of navigating through expense views and doing mental math, he opens the AI chat and types: "How much did I spend on dining out in Q1 vs Q4 last year?"
 
-The AI queries his data and responds with the breakdown. Dev follows up: "Am I spending more than I earn this month?" The AI pulls his recorded income and total expenses and responds: "You've spent 78% of this month's income with 10 days left. Your dining and entertainment categories are running hot — consider holding off on non-essentials." Dev then asks: "When is my Civic due for an oil change?" The AI responds with the due date and remaining mileage. Dev then says: "Add a $45 expense at Costco under Groceries for today." The AI confirms the details and Dev approves the action.
+The AI queries his data and responds with the breakdown. Dev follows up: "Am I spending more than I earn this month?" The AI pulls his recorded income and total expenses and responds: "You've spent 78% of this month's income with 10 days left. Your dining and entertainment categories are running hot — consider holding off on non-essentials." Dev then asks: "When is my Civic due for an oil change?" The AI responds with the due date and remaining mileage. Dev then says: "Add a $45 expense at Costco under Groceries for today from my Tangerine credit card." The AI confirms the details — including the optional linked account — and Dev approves the action. The expense is recorded and the card balance reflects the charge.
 
 **What this reveals:**
 - Natural language query interface for all financial data
 - AI can answer comparative and analytical questions
 - AI can answer maintenance schedule and due-date queries
 - AI can perform write actions with user confirmation
+- AI write actions can optionally specify a linked account (Phase 3 for chat; UI forms in MVP)
 - Income-aware spending recommendations
 - Conversational interaction as an alternative to UI navigation
 
 ### Journey 6: The Income Entry
 
-It's payday. Dev opens nkbaz-finance and navigates to income. His salary source is already set up — "Employment – Employer Name." He enters this month's net amount: $4,250 (a bit higher than last month due to overtime). Confirms. The dashboard updates: income bar for the month, cash flow ratio refreshes, and the AI now knows exactly how much came in versus what went out.
+It's payday. Dev opens nkbaz-finance and navigates to income. His salary source is already set up — "Employment – Employer Name." He enters this month's net amount: $4,250 (a bit higher than last month due to overtime) and selects his Desjardins chequing account. Confirms. His chequing balance increases by $4,250, the dashboard updates: income bar for the month, cash flow ratio refreshes, and the AI now knows exactly how much came in versus what went out.
 
-Next month his pay is lower — back to the base $3,800. He updates accordingly. Over time, the app builds a complete picture of income variability alongside spending patterns.
+Next month his pay is lower — back to the base $3,800. He updates accordingly, leaving the account unlinked this time because he already reconciled the balance manually. Over time, the app builds a complete picture of income variability alongside spending patterns.
 
 **What this reveals:**
 - Income source setup (name, type, recurring/variable)
 - Monthly income entry with actual amounts
+- Optional account link on income entries — when used, linked account balance increases automatically
 - Income history over time
 - Dashboard integration showing income vs. expenses
 - AI context enrichment for recommendations
@@ -252,6 +257,8 @@ When he carries a small statement balance on his credit card — $300 against ~$
 | Multi-account management | Journey 2 |
 | Passive asset tracking | Journey 2 |
 | Manual balance entry | Journey 2 |
+| Optional account link on expenses/income | Journey 2, 6 |
+| Automatic balance adjustment when linked | Journey 2, 5, 6 |
 | Dashboard (budget + balances + net worth) | Journey 3 |
 | Net worth = asset accounts + passive assets − liabilities | Journey 3 |
 | Liability account types reduce net worth | Journey 2, 3 |
@@ -304,14 +311,14 @@ When he carries a small statement balance on his credit card — $300 against ~$
 **Must-Have Capabilities:**
 1. **Monthly Budget Builder** — create/manage budgets with customizable category groups and targets
 2. **AI-Powered CC Import** — upload screenshot/PDF, auto-extract and categorize transactions, duplicate detection, merchant hint learning
-3. **Expense Tracking** — view, review, correct auto-categorized expenses; manual entry as fallback; recurring expense templates with auto-apply
-4. **Multi-Account Tracking** — track balances across multiple banks and account types (chequing, savings, credit card, TFSA, RRSP, FHSA, non-registered, crypto) in CAD or USD
+3. **Expense Tracking** — view, review, correct auto-categorized expenses; manual entry as fallback; optional account link with automatic balance adjustment; recurring expense templates with auto-apply
+4. **Multi-Account Tracking** — track balances across multiple banks and account types (chequing, savings, credit card, TFSA, RRSP, FHSA, non-registered, crypto) in CAD or USD; balances updatable manually or via linked expenses/income
 5. **Passive Asset Tracking** — track value of business, real estate, vehicles, other assets
 6. **Dashboard** — budget status, spending by category, account balances, net worth sparkline, YTD card, cash flow, Financial Health summary card, maintenance alerts
 7. **Net Worth History** — historical tracking split by category (cash, crypto, housing, TFSA, RRSP, FHSA, etc.)
 8. **Financial Analytics** — spending trends (3/6/12 months), year summary, forward net worth projection
 9. **AI Chat** — natural language queries and actions across all financial data
-10. **Income Tracking** — set up income sources, record monthly income amounts, view income history and cash flow (income vs. expenses)
+10. **Income Tracking** — set up income sources, record monthly income amounts with optional account link, view income history and cash flow (income vs. expenses)
 11. **Car Maintenance Tracking** — register multiple vehicles (standalone entities), track odometer and service history, pre-populated maintenance task templates with editable intervals, in-app alerts when service is approaching or overdue *(specified, not yet implemented)*
 12. **Onboarding Wizard** — guided first-run setup across budget, accounts, assets, income, and import
 13. **Application Platform** — database backup/restore, values privacy toggle, EN/FR localization, light/dark/system theme, OS keychain AI credentials, auto-update check
@@ -335,6 +342,9 @@ Single-user only. No authentication required for MVP.
 - Additional liability account types — lines of credit, personal loans, mortgages (MVP: `credit_card` only, via shared `LIABILITY_ACCOUNT_TYPES`)
 - Goal-based planning — set a target (e.g. "6-month fund by December") and track/coach toward it
 - Automatic recurring expense detection from import history (distinct from user-defined recurring templates in MVP)
+- Recurring expense templates with default linked account (MVP auto-applied recurring expenses remain unlinked)
+- CC import bulk insert with account assignment (imported transactions remain unlinked in MVP)
+- AI chat write actions with optional `account_id` on expense/income creation (UI forms ship first)
 - Export/reporting capabilities
 - Additional AI agent personalities beyond Budget Helper
 - OpenAI as full runtime provider for chat and CC import (credentials UI exists; Bedrock required today)
@@ -453,13 +463,23 @@ Not required for account/asset balance updates (manual entry, standard request/r
 ### Expense Tracking
 
 - FR11: User can view all expenses for a given month, grouped by budget category
-- FR12: User can manually add an expense entry (merchant, amount, category, date)
+- FR12: User can manually add an expense entry (merchant, amount, category, date, optional account)
 - FR13: User can edit or delete an existing expense
 - FR14: User can manually enter transactions that the AI failed to extract
 - FR63: User can create recurring expense templates with merchant, amount, category, and day of month
 - FR64: User can edit, activate, deactivate, or delete recurring expense templates
 - FR65: System auto-applies due recurring expenses on app launch for the current month
 - FR66: User can manually trigger application of due recurring expenses from the Recurring Expenses view
+
+### Transaction-Account Linking
+
+- FR90: User can optionally link an expense or income entry to an account when creating or editing; account selection is never required and entries without a linked account behave as they do today
+- FR91: When an expense is linked to an account, system automatically adjusts that account's balance by subtracting the expense amount; for liability accounts (credit cards in MVP), owed balance increases using the same positive/negative sign convention as manual balance entry (FR17)
+- FR92: When an income entry is linked to an account, system automatically adjusts that account's balance by adding the income amount; for liability accounts (credit cards in MVP), owed balance decreases (e.g., card payments reduce debt)
+- FR93: When a linked expense or income entry is edited, system atomically reverses the previous balance adjustment and applies the new adjustment in a single transaction
+- FR94: When a linked expense or income entry is deleted, system reverses the balance adjustment on the linked account
+
+**Implementation notes:** Architecture decisions in [architecture-expense-income-account-linking.md](architecture-expense-income-account-linking.md). Net worth snapshots (FR26) record after balance mutations. Recurring auto-apply, CC import, and AI chat write actions remain unlinked in MVP (see Phase 3).
 
 ### Account Management
 
@@ -473,7 +493,7 @@ Not required for account/asset balance updates (manual entry, standard request/r
 
 - FR33: User can add an income source with a name and type (employment, freelance, investment, other)
 - FR34: User can edit or remove an existing income source
-- FR35: User can record a monthly income entry for a source with the amount received and month
+- FR35: User can record a monthly income entry for a source with the amount received, date, and optional linked account
 - FR36: User can view income history by source and by month
 - FR37: User can view total income for the current month
 
@@ -596,6 +616,7 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - NFR11: Financial records (transactions, balances, net worth snapshots) are never silently lost or corrupted
 - NFR12: Database supports backup and restore capability via user-initiated export/import (FR74, FR75)
 - NFR13: Balance and net worth calculations are accurate to the cent; liability account balances subtract from net worth at face value (absolute owed amount)
+- NFR23: Linked expense and income mutations (FR90–FR94) apply the transaction row and account balance adjustment atomically in a single database transaction — the two never diverge on partial failure
 
 ### Maintenance Alerts
 

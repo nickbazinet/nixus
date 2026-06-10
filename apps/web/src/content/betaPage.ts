@@ -25,12 +25,12 @@ export const betaFitBadIds: readonly BetaFitBadId[] = [
   "polished",
 ] as const;
 
-/** Screenshot slots — add `src` under public/beta/ when assets are ready. */
+/** Screenshot slots — assets live under `public/beta/`. */
 export type BetaScreenshotId = "budget" | "aiImport" | "netWorth";
 
 export type BetaScreenshot = {
   id: BetaScreenshotId;
-  /** Optional path under site root, e.g. `/beta/budget.webp`. */
+  /** Path under site root, e.g. `/beta/budget.png`. */
   src?: string;
 };
 

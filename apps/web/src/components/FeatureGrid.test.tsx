@@ -14,7 +14,7 @@ describe("<FeatureGrid />", () => {
     renderWithProviders(<FeatureGrid />);
     const cards = screen.getAllByTestId("feature-card");
     expect(cards).toHaveLength(features.length);
-    expect(cards).toHaveLength(6);
+    expect(cards).toHaveLength(8);
   });
 
   it("uses an accessible section labelled by the h2", () => {
@@ -25,7 +25,7 @@ describe("<FeatureGrid />", () => {
 
     const h2 = within(section).getByRole("heading", { level: 2 });
     expect(h2).toHaveAttribute("id", "features-heading");
-    expect(h2).toHaveTextContent(/Everything tracked\. Nothing manual\./);
+    expect(h2).toHaveTextContent(/financial copilot on your machine/i);
   });
 
   it("renders each feature's translated title and description", () => {

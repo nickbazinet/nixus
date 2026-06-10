@@ -205,6 +205,7 @@ fn try_apply_template_for_month(
         amount_cents: template.amount_cents,
         budget_category_id: template.budget_category_id,
         date,
+        account_id: None,
     };
     let expense = expense_db::insert_expense_with_source(conn, &input, "recurring")?;
     Ok(Some(expense))
@@ -322,7 +323,17 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         conn.execute_batch(
-            "CREATE TABLE budget_categories (
+            "CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                institution TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'CAD',
+                balance_cents INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE budget_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
@@ -343,6 +354,7 @@ mod tests {
                 merchant TEXT NOT NULL,
                 amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
                 budget_category_id INTEGER NOT NULL REFERENCES budget_categories(id),
+                account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
                 date TEXT NOT NULL,
                 source TEXT NOT NULL DEFAULT 'manual',
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))

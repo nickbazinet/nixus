@@ -1,68 +1,24 @@
 use rusqlite::{params, Connection};
 
+use crate::db::account::{self as account_db, BalanceChange, CashFlowKind};
 use crate::error::AppError;
 use crate::models::{CreateExpenseInput, Expense, MerchantHint, UpdateExpenseInput};
 
+#[derive(Debug, Clone)]
+pub struct LinkedExpenseMutation {
+    pub expense: Expense,
+    pub balance_changes: Vec<BalanceChange>,
+}
+
 pub fn insert_expense(conn: &Connection, input: &CreateExpenseInput) -> Result<Expense, AppError> {
-    let merchant = input.merchant.trim();
-    if merchant.is_empty() {
-        return Err(AppError::Validation {
-            message: "Merchant name is required".to_string(),
-            field: Some("merchant".to_string()),
-        });
-    }
+    Ok(insert_expense_with_balance_changes(conn, input)?.expense)
+}
 
-    if input.amount_cents <= 0 {
-        return Err(AppError::Validation {
-            message: "Amount must be greater than 0".to_string(),
-            field: Some("amount_cents".to_string()),
-        });
-    }
-
-    if input.date.is_empty() {
-        return Err(AppError::Validation {
-            message: "Date is required".to_string(),
-            field: Some("date".to_string()),
-        });
-    }
-
-    // Verify budget_category_id exists
-    let category_exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1)",
-        params![input.budget_category_id],
-        |row| row.get(0),
-    )?;
-
-    if !category_exists {
-        return Err(AppError::Validation {
-            message: "Budget category not found".to_string(),
-            field: Some("budget_category_id".to_string()),
-        });
-    }
-
-    conn.execute(
-        "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date, source) VALUES (?1, ?2, ?3, ?4, 'manual')",
-        params![merchant, input.amount_cents, input.budget_category_id, input.date],
-    )?;
-
-    let id = conn.last_insert_rowid();
-
-    conn.query_row(
-        "SELECT id, merchant, amount_cents, budget_category_id, date, source, created_at FROM expenses WHERE id = ?1",
-        params![id],
-        |row| {
-            Ok(Expense {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                date: row.get(4)?,
-                source: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        },
-    )
-    .map_err(AppError::from)
+pub fn insert_expense_with_balance_changes(
+    conn: &Connection,
+    input: &CreateExpenseInput,
+) -> Result<LinkedExpenseMutation, AppError> {
+    insert_expense_with_source_with_balance_changes(conn, input, "manual")
 }
 
 pub fn insert_expense_with_source(
@@ -70,6 +26,14 @@ pub fn insert_expense_with_source(
     input: &CreateExpenseInput,
     source: &str,
 ) -> Result<Expense, AppError> {
+    Ok(insert_expense_with_source_with_balance_changes(conn, input, source)?.expense)
+}
+
+pub fn insert_expense_with_source_with_balance_changes(
+    conn: &Connection,
+    input: &CreateExpenseInput,
+    source: &str,
+) -> Result<LinkedExpenseMutation, AppError> {
     let merchant = input.merchant.trim();
     if merchant.is_empty() {
         return Err(AppError::Validation {
@@ -92,8 +56,10 @@ pub fn insert_expense_with_source(
         });
     }
 
+    let tx = conn.unchecked_transaction()?;
+
     // Verify budget_category_id exists
-    let category_exists: bool = conn.query_row(
+    let category_exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1)",
         params![input.budget_category_id],
         |row| row.get(0),
@@ -105,30 +71,39 @@ pub fn insert_expense_with_source(
             field: Some("budget_category_id".to_string()),
         });
     }
+    validate_account_id(&tx, input.account_id)?;
 
-    conn.execute(
-        "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date, source) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![merchant, input.amount_cents, input.budget_category_id, input.date, source],
+    tx.execute(
+        "INSERT INTO expenses (merchant, amount_cents, budget_category_id, account_id, date, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            merchant,
+            input.amount_cents,
+            input.budget_category_id,
+            input.account_id,
+            input.date,
+            source
+        ],
     )?;
 
-    let id = conn.last_insert_rowid();
+    let id = tx.last_insert_rowid();
+    let mut balance_changes = Vec::new();
+    if let Some(account_id) = input.account_id {
+        balance_changes.push(account_db::adjust_account_balance(
+            &tx,
+            account_id,
+            CashFlowKind::Expense,
+            input.amount_cents,
+        )?);
+    }
 
-    conn.query_row(
-        "SELECT id, merchant, amount_cents, budget_category_id, date, source, created_at FROM expenses WHERE id = ?1",
-        params![id],
-        |row| {
-            Ok(Expense {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                date: row.get(4)?,
-                source: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        },
-    )
-    .map_err(AppError::from)
+    let expense = get_expense_by_id(&tx, id)?;
+    tx.commit()?;
+
+    Ok(LinkedExpenseMutation {
+        expense,
+        balance_changes,
+    })
 }
 
 pub fn get_expenses_by_month(
@@ -145,7 +120,7 @@ pub fn get_expenses_by_month(
     let end_date = format!("{:04}-{:02}-01", next_year, next_month);
 
     let mut stmt = conn.prepare(
-        "SELECT id, merchant, amount_cents, budget_category_id, date, source, created_at
+        "SELECT id, merchant, amount_cents, budget_category_id, account_id, date, source, created_at
          FROM expenses
          WHERE date >= ?1 AND date < ?2
          ORDER BY date DESC, created_at DESC",
@@ -153,15 +128,7 @@ pub fn get_expenses_by_month(
 
     let expenses = stmt
         .query_map(params![start_date, end_date], |row| {
-            Ok(Expense {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                date: row.get(4)?,
-                source: row.get(5)?,
-                created_at: row.get(6)?,
-            })
+            row_to_expense(row)
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
@@ -172,7 +139,7 @@ pub fn update_expense(
     conn: &Connection,
     id: i64,
     input: &UpdateExpenseInput,
-) -> Result<Expense, AppError> {
+) -> Result<LinkedExpenseMutation, AppError> {
     let merchant = input.merchant.trim();
     if merchant.is_empty() {
         return Err(AppError::Validation {
@@ -188,8 +155,11 @@ pub fn update_expense(
         });
     }
 
+    let tx = conn.unchecked_transaction()?;
+    let old_expense = get_expense_by_id(&tx, id)?;
+
     // Verify budget_category_id exists
-    let category_exists: bool = conn.query_row(
+    let category_exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1)",
         params![input.budget_category_id],
         |row| row.get(0),
@@ -201,10 +171,30 @@ pub fn update_expense(
             field: Some("budget_category_id".to_string()),
         });
     }
+    validate_account_id(&tx, input.account_id)?;
 
-    let rows = conn.execute(
-        "UPDATE expenses SET merchant = ?1, amount_cents = ?2, budget_category_id = ?3, date = ?4 WHERE id = ?5",
-        params![merchant, input.amount_cents, input.budget_category_id, input.date, id],
+    let mut balance_changes = Vec::new();
+    if let Some(account_id) = old_expense.account_id {
+        balance_changes.push(account_db::reverse_adjustment(
+            &tx,
+            account_id,
+            CashFlowKind::Expense,
+            old_expense.amount_cents,
+        )?);
+    }
+
+    let rows = tx.execute(
+        "UPDATE expenses
+         SET merchant = ?1, amount_cents = ?2, budget_category_id = ?3, account_id = ?4, date = ?5
+         WHERE id = ?6",
+        params![
+            merchant,
+            input.amount_cents,
+            input.budget_category_id,
+            input.account_id,
+            input.date,
+            id
+        ],
     )?;
 
     if rows == 0 {
@@ -213,22 +203,22 @@ pub fn update_expense(
         });
     }
 
-    conn.query_row(
-        "SELECT id, merchant, amount_cents, budget_category_id, date, source, created_at FROM expenses WHERE id = ?1",
-        params![id],
-        |row| {
-            Ok(Expense {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                date: row.get(4)?,
-                source: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        },
-    )
-    .map_err(AppError::from)
+    if let Some(account_id) = input.account_id {
+        balance_changes.push(account_db::adjust_account_balance(
+            &tx,
+            account_id,
+            CashFlowKind::Expense,
+            input.amount_cents,
+        )?);
+    }
+
+    let expense = get_expense_by_id(&tx, id)?;
+    tx.commit()?;
+
+    Ok(LinkedExpenseMutation {
+        expense,
+        balance_changes,
+    })
 }
 
 pub fn bulk_insert_imported_expenses(
@@ -390,13 +380,72 @@ pub fn find_duplicate_indices(
     Ok(duplicates)
 }
 
-pub fn delete_expense(conn: &Connection, id: i64) -> Result<(), AppError> {
-    let rows = conn.execute("DELETE FROM expenses WHERE id = ?1", params![id])?;
+pub fn delete_expense(conn: &Connection, id: i64) -> Result<Vec<BalanceChange>, AppError> {
+    let tx = conn.unchecked_transaction()?;
+    let expense = get_expense_by_id(&tx, id)?;
+    let mut balance_changes = Vec::new();
+
+    if let Some(account_id) = expense.account_id {
+        balance_changes.push(account_db::reverse_adjustment(
+            &tx,
+            account_id,
+            CashFlowKind::Expense,
+            expense.amount_cents,
+        )?);
+    }
+
+    let rows = tx.execute("DELETE FROM expenses WHERE id = ?1", params![id])?;
     if rows == 0 {
         return Err(AppError::Database {
             message: "Expense not found".to_string(),
         });
     }
+    tx.commit()?;
+    Ok(balance_changes)
+}
+
+pub fn get_expense_by_id(conn: &Connection, id: i64) -> Result<Expense, AppError> {
+    conn.query_row(
+        "SELECT id, merchant, amount_cents, budget_category_id, account_id, date, source, created_at
+         FROM expenses
+         WHERE id = ?1",
+        params![id],
+        row_to_expense,
+    )
+    .map_err(AppError::from)
+}
+
+fn row_to_expense(row: &rusqlite::Row) -> rusqlite::Result<Expense> {
+    Ok(Expense {
+        id: row.get(0)?,
+        merchant: row.get(1)?,
+        amount_cents: row.get(2)?,
+        budget_category_id: row.get(3)?,
+        account_id: row.get(4)?,
+        date: row.get(5)?,
+        source: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
+fn validate_account_id(conn: &Connection, account_id: Option<i64>) -> Result<(), AppError> {
+    let Some(account_id) = account_id else {
+        return Ok(());
+    };
+
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = ?1)",
+        params![account_id],
+        |row| row.get(0),
+    )?;
+
+    if !exists {
+        return Err(AppError::Validation {
+            message: "Account not found".to_string(),
+            field: Some("account_id".to_string()),
+        });
+    }
+
     Ok(())
 }
 
@@ -469,4 +518,155 @@ pub fn record_merchant_category_hint(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    #[test]
+    fn insert_expense_without_account_preserves_account_balance() {
+        let conn = expense_test_db();
+        let input = expense_input(None, 2_500);
+
+        let result = insert_expense_with_balance_changes(&conn, &input).unwrap();
+
+        assert_eq!(result.expense.account_id, None);
+        assert!(result.balance_changes.is_empty());
+        assert_eq!(account_balance(&conn, 1), 10_000);
+    }
+
+    #[test]
+    fn insert_expense_with_account_decreases_asset_balance() {
+        let conn = expense_test_db();
+        let input = expense_input(Some(1), 2_500);
+
+        let result = insert_expense_with_balance_changes(&conn, &input).unwrap();
+
+        assert_eq!(result.expense.account_id, Some(1));
+        assert_eq!(result.balance_changes[0].old_balance_cents, 10_000);
+        assert_eq!(result.balance_changes[0].new_balance_cents, 7_500);
+        assert_eq!(account_balance(&conn, 1), 7_500);
+    }
+
+    #[test]
+    fn insert_expense_with_invalid_account_rolls_back() {
+        let conn = expense_test_db();
+        let input = expense_input(Some(999), 2_500);
+
+        let err = insert_expense_with_balance_changes(&conn, &input).unwrap_err();
+
+        assert!(matches!(err, AppError::Validation { field: Some(field), .. } if field == "account_id"));
+        assert_eq!(expense_count(&conn), 0);
+        assert_eq!(account_balance(&conn, 1), 10_000);
+    }
+
+    #[test]
+    fn update_expense_reverses_old_account_before_applying_new_account() {
+        let conn = expense_test_db();
+        let created = insert_expense_with_balance_changes(&conn, &expense_input(Some(1), 1_000))
+            .unwrap()
+            .expense;
+        let input = UpdateExpenseInput {
+            merchant: "Updated".to_string(),
+            amount_cents: 2_500,
+            budget_category_id: 1,
+            date: "2026-06-11".to_string(),
+            account_id: Some(2),
+        };
+
+        let result = update_expense(&conn, created.id, &input).unwrap();
+
+        assert_eq!(result.expense.account_id, Some(2));
+        assert_eq!(account_balance(&conn, 1), 10_000);
+        assert_eq!(account_balance(&conn, 2), 17_500);
+    }
+
+    #[test]
+    fn delete_expense_reverses_linked_account_balance() {
+        let conn = expense_test_db();
+        let created = insert_expense_with_balance_changes(&conn, &expense_input(Some(1), 1_500))
+            .unwrap()
+            .expense;
+
+        let changes = delete_expense(&conn, created.id).unwrap();
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(account_balance(&conn, 1), 10_000);
+        assert_eq!(expense_count(&conn), 0);
+    }
+
+    fn expense_input(account_id: Option<i64>, amount_cents: i64) -> CreateExpenseInput {
+        CreateExpenseInput {
+            merchant: "Grocer".to_string(),
+            amount_cents,
+            budget_category_id: 1,
+            date: "2026-06-10".to_string(),
+            account_id,
+        }
+    }
+
+    fn expense_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON;
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                institution TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'CAD',
+                balance_cents INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE budget_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE budget_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL REFERENCES budget_groups(id),
+                name TEXT NOT NULL,
+                target_cents INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                merchant TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
+                budget_category_id INTEGER NOT NULL REFERENCES budget_categories(id),
+                account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+                date TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO accounts (id, name, institution, account_type, currency, balance_cents)
+            VALUES (1, 'Chequing', 'Bank', 'chequing', 'CAD', 10000),
+                   (2, 'Savings', 'Bank', 'savings', 'CAD', 20000);
+            INSERT INTO budget_groups (id, name, sort_order) VALUES (1, 'Needs', 1);
+            INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order)
+            VALUES (1, 1, 'Groceries', 50000, 1);",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn account_balance(conn: &Connection, account_id: i64) -> i64 {
+        conn.query_row(
+            "SELECT balance_cents FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn expense_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM expenses", [], |row| row.get(0))
+            .unwrap()
+    }
 }

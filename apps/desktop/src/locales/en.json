@@ -66,6 +66,7 @@
   "common.currency": "Currency",
   "common.total": "Total",
   "common.confirm": "Confirm",
+  "common.none": "None",
 
   "dashboard.importStatement": "Import Statement",
   "dashboard.noAccountsOrAssets": "No accounts or assets yet. Add your first account.",
@@ -147,6 +148,8 @@
   "income.deleteSourceWarning": "All income entries for this source will also be deleted. This action cannot be undone.",
   "income.editEntry": "Edit income entry",
   "income.deleteEntryAction": "Delete income entry",
+  "income.accountOptional": "Account (optional)",
+  "income.accountLinkHelp": "Linking an account automatically updates its balance. You can still edit balances manually on the Accounts page.",
 
   "accounts.addAccount": "Add Account",
   "accounts.noAccounts": "No accounts yet. Add your first account.",
@@ -360,6 +363,8 @@
   "expenses.deleteExpense": "Delete Expense",
   "expenses.editExpense": "Edit expense",
   "expenses.deleteExpense_action": "Delete expense",
+  "expenses.accountOptional": "Account (optional)",
+  "expenses.accountLinkHelp": "Linking an account automatically updates its balance. You can still edit balances manually on the Accounts page.",
 
   "netWorth.period6M": "6M",
   "netWorth.period1Y": "1Y",

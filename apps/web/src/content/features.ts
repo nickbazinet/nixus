@@ -1,8 +1,10 @@
 import {
-  Home,
+  Car,
   MessageSquare,
   PieChart,
+  Shield,
   Sparkles,
+  Target,
   TrendingUp,
   Wallet,
   type LucideIcon,
@@ -18,20 +20,24 @@ export type Feature = {
   /** Stable slug used as a translation-key segment. */
   id:
     | "aiImport"
+    | "financialHealth"
     | "budget"
     | "accounts"
-    | "assets"
     | "netWorth"
-    | "aiChat";
+    | "aiChat"
+    | "garage"
+    | "localFirst";
   /** Lucide icon component (not JSX). */
   icon: LucideIcon;
 };
 
 export const features: readonly Feature[] = [
   { id: "aiImport", icon: Sparkles },
+  { id: "financialHealth", icon: Target },
   { id: "budget", icon: PieChart },
   { id: "accounts", icon: Wallet },
-  { id: "assets", icon: Home },
   { id: "netWorth", icon: TrendingUp },
   { id: "aiChat", icon: MessageSquare },
+  { id: "garage", icon: Car },
+  { id: "localFirst", icon: Shield },
 ] as const;

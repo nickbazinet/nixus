@@ -29,9 +29,9 @@ type MetaInput = {
 
 export const SITE = {
   name: "Nixus",
-  defaultTitle: "Nixus — Local-first personal finance app",
+  defaultTitle: "Nixus — Local financial copilot for Canadians",
   defaultDescription:
-    "Replace your personal finance spreadsheet with a local-first desktop app. Upload a credit card statement, AI categorizes it. Budget, accounts, net worth — data stays on your machine.",
+    "Automate spreadsheet upkeep without bank passwords. Upload statements, get next-action guidance, track budget and net worth locally. Finance and car in one desktop app.",
   url: "https://nixus.nicolasbazinet.net",
   ogImage: "https://nixus.nicolasbazinet.net/og-image.png",
   twitterHandle: "",

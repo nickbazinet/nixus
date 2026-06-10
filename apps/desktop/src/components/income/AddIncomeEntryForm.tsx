@@ -13,6 +13,7 @@ import { Button } from "@nixus/shared";
 import { Label } from "@nixus/shared";
 import { DatePicker } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
+import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import { useIncomeSources, useCreateIncomeEntry } from "@/hooks/useIncome";
 
 interface AddIncomeEntryFormProps {
@@ -21,6 +22,7 @@ interface AddIncomeEntryFormProps {
 
 interface EntryFormData {
   source_id: string;
+  account_id: string;
   amount_cents: number;
   date: string;
 }
@@ -38,6 +40,7 @@ export function AddIncomeEntryForm({ onClose }: AddIncomeEntryFormProps) {
   } = useForm<EntryFormData>({
     defaultValues: {
       source_id: "",
+      account_id: "",
       amount_cents: 0,
       date: format(new Date(), "yyyy-MM-dd"),
     },
@@ -50,6 +53,7 @@ export function AddIncomeEntryForm({ onClose }: AddIncomeEntryFormProps) {
         source_id: Number(data.source_id),
         amount_cents: data.amount_cents,
         date: data.date,
+        account_id: data.account_id ? Number(data.account_id) : null,
       },
       {
         onSuccess: () => {
@@ -93,6 +97,20 @@ export function AddIncomeEntryForm({ onClose }: AddIncomeEntryFormProps) {
           <p className="text-xs text-destructive">{errors.source_id.message}</p>
         )}
       </div>
+
+      <Controller
+        name="account_id"
+        control={control}
+        render={({ field }) => (
+          <OptionalAccountSelect
+            id="income-account"
+            value={field.value}
+            onChange={field.onChange}
+            labelKey="income.accountOptional"
+            helpKey="income.accountLinkHelp"
+          />
+        )}
+      />
 
       <div className="space-y-1.5">
         <Label htmlFor="income-amount">{t("common.amount")}</Label>

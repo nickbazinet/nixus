@@ -27,6 +27,7 @@ export interface Expense {
   merchant: string;
   amount_cents: number;
   budget_category_id: number;
+  account_id?: number | null;
   date: string;
   source: string;
   created_at: string;
@@ -37,6 +38,7 @@ export interface CreateExpenseInput {
   amount_cents: number;
   budget_category_id: number;
   date: string;
+  account_id?: number | null;
 }
 
 export interface UpdateExpenseInput {
@@ -45,6 +47,7 @@ export interface UpdateExpenseInput {
   amount_cents: number;
   budget_category_id: number;
   date: string;
+  account_id?: number | null;
 }
 
 export interface Account {
@@ -197,6 +200,7 @@ export interface IncomeEntry {
   amount_cents: number;
   date: string;
   month: string;
+  account_id?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -205,6 +209,7 @@ export interface CreateIncomeEntryInput {
   source_id: number;
   amount_cents: number;
   date: string;
+  account_id?: number | null;
 }
 
 export interface UpdateIncomeEntryInput {
@@ -212,6 +217,7 @@ export interface UpdateIncomeEntryInput {
   source_id: number;
   amount_cents: number;
   date: string;
+  account_id?: number | null;
 }
 
 export interface IncomeTotal {

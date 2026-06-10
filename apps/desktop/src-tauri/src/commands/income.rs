@@ -1,7 +1,9 @@
 use tauri::State;
 
+use crate::db::account::BalanceChange;
 use crate::db::audit as audit_db;
 use crate::db::income as income_db;
+use crate::db::net_worth as net_worth_db;
 use crate::db::DbState;
 use crate::error::AppError;
 use crate::models::{
@@ -109,6 +111,7 @@ pub fn create_income_entry(
     source_id: i64,
     amount_cents: i64,
     date: String,
+    account_id: Option<i64>,
 ) -> Result<IncomeEntry, AppError> {
     let conn = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
@@ -118,8 +121,10 @@ pub fn create_income_entry(
         source_id,
         amount_cents,
         date,
+        account_id,
     };
-    let result = income_db::insert_income_entry(&conn, &input)?;
+    let mutation = income_db::insert_income_entry(&conn, &input)?;
+    let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
@@ -132,6 +137,7 @@ pub fn create_income_entry(
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
+    record_account_balance_changes(&conn, &mutation.balance_changes);
 
     Ok(result)
 }
@@ -143,6 +149,7 @@ pub fn update_income_entry(
     source_id: i64,
     amount_cents: i64,
     date: String,
+    account_id: Option<i64>,
 ) -> Result<IncomeEntry, AppError> {
     let conn = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
@@ -150,8 +157,9 @@ pub fn update_income_entry(
 
     let old_json = get_entry_json(&conn, id);
 
-    let input = UpdateIncomeEntryInput { source_id, amount_cents, date };
-    let result = income_db::update_income_entry(&conn, id, &input)?;
+    let input = UpdateIncomeEntryInput { source_id, amount_cents, date, account_id };
+    let mutation = income_db::update_income_entry(&conn, id, &input)?;
+    let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
@@ -164,6 +172,7 @@ pub fn update_income_entry(
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
+    record_account_balance_changes(&conn, &mutation.balance_changes);
 
     Ok(result)
 }
@@ -176,7 +185,7 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
 
     let old_json = get_entry_json(&conn, id);
 
-    income_db::delete_income_entry(&conn, id)?;
+    let balance_changes = income_db::delete_income_entry(&conn, id)?;
 
     if let Err(e) = audit_db::insert_audit_log(
         &conn,
@@ -188,6 +197,7 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
+    record_account_balance_changes(&conn, &balance_changes);
 
     Ok(())
 }
@@ -250,7 +260,7 @@ fn get_source_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
 
 fn get_entry_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
     conn.query_row(
-        "SELECT e.id, e.source_id, s.name, s.income_type, e.amount_cents, e.date, e.month, e.created_at, e.updated_at
+        "SELECT e.id, e.source_id, s.name, s.income_type, e.amount_cents, e.date, e.month, e.account_id, e.created_at, e.updated_at
          FROM income_entries e
          JOIN income_sources s ON s.id = e.source_id
          WHERE e.id = ?1",
@@ -264,11 +274,55 @@ fn get_entry_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
                 amount_cents: row.get(4)?,
                 date: row.get(5)?,
                 month: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                account_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         },
     )
     .ok()
     .and_then(|e| serde_json::to_string(&e).ok())
+}
+
+fn record_account_balance_changes(conn: &rusqlite::Connection, changes: &[BalanceChange]) {
+    let mut summaries: Vec<(i64, i64, i64)> = Vec::new();
+    for change in changes {
+        if change.old_balance_cents == change.new_balance_cents {
+            continue;
+        }
+
+        if let Some((_, _, new_balance_cents)) = summaries
+            .iter_mut()
+            .find(|(account_id, _, _)| *account_id == change.account_id)
+        {
+            *new_balance_cents = change.new_balance_cents;
+        } else {
+            summaries.push((
+                change.account_id,
+                change.old_balance_cents,
+                change.new_balance_cents,
+            ));
+        }
+    }
+
+    if summaries.is_empty() {
+        return;
+    }
+
+    for (account_id, old_balance_cents, new_balance_cents) in &summaries {
+        if let Err(e) = audit_db::insert_audit_log(
+            conn,
+            "account",
+            *account_id,
+            "balance_update",
+            Some(&old_balance_cents.to_string()),
+            Some(&new_balance_cents.to_string()),
+        ) {
+            tracing::error!("Failed to write audit log: {}", e);
+        }
+    }
+
+    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
+        tracing::error!("Failed to record snapshot: {}", e);
+    }
 }

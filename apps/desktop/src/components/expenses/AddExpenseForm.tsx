@@ -16,6 +16,7 @@ import { Input } from "@nixus/shared";
 import { Label } from "@nixus/shared";
 import { DatePicker } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
+import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import { useAllBudgetCategories, useCreateExpense } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";
 
@@ -29,6 +30,7 @@ interface ExpenseFormData {
   merchant: string;
   amount_cents: number;
   budget_category_id: string;
+  account_id: string;
   date: string;
 }
 
@@ -49,6 +51,7 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
       merchant: "",
       amount_cents: 0,
       budget_category_id: defaultCategoryId ? String(defaultCategoryId) : "",
+      account_id: "",
       date: format(new Date(), "yyyy-MM-dd"),
     },
     mode: "onSubmit",
@@ -61,6 +64,7 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
         amount_cents: data.amount_cents,
         budget_category_id: Number(data.budget_category_id),
         date: data.date,
+        account_id: data.account_id ? Number(data.account_id) : null,
       },
       {
         onSuccess: () => {
@@ -157,6 +161,20 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
           </p>
         )}
       </div>
+
+      <Controller
+        name="account_id"
+        control={control}
+        render={({ field }) => (
+          <OptionalAccountSelect
+            id="expense-account"
+            value={field.value}
+            onChange={field.onChange}
+            labelKey="expenses.accountOptional"
+            helpKey="expenses.accountLinkHelp"
+          />
+        )}
+      />
 
       <div className="space-y-1.5">
         <Label htmlFor="expense-date">{t("common.date")}</Label>

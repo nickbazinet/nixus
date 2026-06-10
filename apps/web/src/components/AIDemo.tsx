@@ -192,6 +192,15 @@ export function AIDemo() {
       // out of the gradient.
       className="bg-background py-16 md:py-24"
     >
+      <div className="mx-auto mb-12 max-w-[1024px] px-6 text-center md:mb-14 md:px-8">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
+          {t("aiDemo.eyebrow")}
+        </p>
+        <h2 className="text-display-l text-foreground">{t("aiDemo.heading")}</h2>
+        <p className="mx-auto mt-4 max-w-[540px] text-lead text-muted-foreground">
+          {t("aiDemo.subhead")}
+        </p>
+      </div>
       <figure
         aria-label={t("aiDemo.figureAria")}
         // Width capped at 1024px (a touch narrower than the page max of

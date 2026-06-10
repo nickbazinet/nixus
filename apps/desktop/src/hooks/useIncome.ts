@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
 import type {
@@ -11,6 +12,19 @@ import type {
   CreateIncomeEntryInput,
   UpdateIncomeEntryInput,
 } from "@/lib/types";
+
+function invalidateIncomeEntryMutationQueries(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: queryKeys.incomeSources });
+  queryClient.invalidateQueries({ queryKey: ["income-entries"] });
+  queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
+  queryClient.invalidateQueries({ queryKey: ["income-total"] });
+  queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+  queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
+  queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
+  queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
+  queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
+  queryClient.invalidateQueries({ queryKey: ["top-budget-categories"] });
+}
 
 export function useIncomeSources() {
   return useQuery({
@@ -73,13 +87,10 @@ export function useCreateIncomeEntry() {
         source_id: input.source_id,
         amount_cents: input.amount_cents,
         date: input.date,
+        account_id: input.account_id ?? null,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.incomeSources });
-      queryClient.invalidateQueries({ queryKey: ["income-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
-      queryClient.invalidateQueries({ queryKey: ["income-total"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      invalidateIncomeEntryMutationQueries(queryClient);
     },
   });
 }
@@ -94,13 +105,10 @@ export function useUpdateIncomeEntry() {
         source_id: input.source_id,
         amount_cents: input.amount_cents,
         date: input.date,
+        account_id: input.account_id ?? null,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.incomeSources });
-      queryClient.invalidateQueries({ queryKey: ["income-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
-      queryClient.invalidateQueries({ queryKey: ["income-total"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      invalidateIncomeEntryMutationQueries(queryClient);
     },
   });
 }
@@ -111,11 +119,7 @@ export function useDeleteIncomeEntry() {
   return useMutation({
     mutationFn: (id: number) => invoke<void>("delete_income_entry", { id }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.incomeSources });
-      queryClient.invalidateQueries({ queryKey: ["income-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
-      queryClient.invalidateQueries({ queryKey: ["income-total"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      invalidateIncomeEntryMutationQueries(queryClient);
     },
   });
 }

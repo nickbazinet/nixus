@@ -9,6 +9,14 @@ afterEach(() => {
 });
 
 describe("<AIDemo />", () => {
+  it("renders the section heading above the demo figure", () => {
+    renderWithProviders(<AIDemo />);
+    expect(
+      screen.getByRole("heading", { level: 2, name: /Statement in\. Categorized out\./i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/No bank login required/i)).toBeInTheDocument();
+  });
+
   it("renders the figure with the translated aria-label", () => {
     renderWithProviders(<AIDemo />);
     const fig = screen.getByLabelText(/AI parsing demo:/i);

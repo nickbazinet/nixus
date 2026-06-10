@@ -66,6 +66,7 @@
   "common.currency": "Devise",
   "common.total": "Total",
   "common.confirm": "Confirmer",
+  "common.none": "Aucun",
 
   "dashboard.importStatement": "Importer un relevé",
   "dashboard.noAccountsOrAssets": "Aucun compte ou actif pour le moment. Ajoutez votre premier compte.",
@@ -147,6 +148,8 @@
   "income.deleteSourceWarning": "Toutes les entrées de revenus associées à cette source seront également supprimées. Cette action est irréversible.",
   "income.editEntry": "Modifier l'entrée de revenus",
   "income.deleteEntryAction": "Supprimer l'entrée de revenus",
+  "income.accountOptional": "Compte (facultatif)",
+  "income.accountLinkHelp": "Lier un compte met à jour automatiquement son solde. Vous pouvez toujours modifier les soldes manuellement sur la page Comptes.",
 
   "accounts.addAccount": "Ajouter un compte",
   "accounts.noAccounts": "Aucun compte pour le moment. Ajoutez votre premier compte.",
@@ -362,6 +365,8 @@
   "expenses.deleteExpense": "Supprimer la dépense",
   "expenses.editExpense": "Modifier la dépense",
   "expenses.deleteExpense_action": "Supprimer la dépense",
+  "expenses.accountOptional": "Compte (facultatif)",
+  "expenses.accountLinkHelp": "Lier un compte met à jour automatiquement son solde. Vous pouvez toujours modifier les soldes manuellement sur la page Comptes.",
 
   "netWorth.period6M": "6M",
   "netWorth.period1Y": "1A",

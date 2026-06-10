@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
@@ -14,6 +14,7 @@ import { Button } from "@nixus/shared";
 import { Label } from "@nixus/shared";
 import { DatePicker } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
+import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import {
   useDeleteIncomeEntry,
   useIncomeSources,
 } from "@/hooks/useIncome";
+import { useAccounts } from "@/hooks/useAccounts";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import type { IncomeEntry } from "@/lib/types";
 
@@ -36,6 +38,7 @@ interface IncomeEntryListProps {
 
 interface EditFormData {
   source_id: string;
+  account_id: string;
   amount_cents: number;
   date: string;
 }
@@ -68,6 +71,7 @@ function EditIncomeEntryForm({
   } = useForm<EditFormData>({
     defaultValues: {
       source_id: String(entry.source_id),
+      account_id: entry.account_id ? String(entry.account_id) : "",
       amount_cents: entry.amount_cents,
       date: entry.date,
     },
@@ -81,6 +85,7 @@ function EditIncomeEntryForm({
         source_id: Number(data.source_id),
         amount_cents: data.amount_cents,
         date: data.date,
+        account_id: data.account_id ? Number(data.account_id) : null,
       },
       {
         onSuccess: () => {
@@ -121,6 +126,20 @@ function EditIncomeEntryForm({
           )}
         />
       </div>
+
+      <Controller
+        name="account_id"
+        control={control}
+        render={({ field }) => (
+          <OptionalAccountSelect
+            id="edit-income-account"
+            value={field.value}
+            onChange={field.onChange}
+            labelKey="income.accountOptional"
+            helpKey="income.accountLinkHelp"
+          />
+        )}
+      />
 
       <div className="space-y-1.5">
         <Label htmlFor="edit-income-amount">{t("common.amount")}</Label>
@@ -179,6 +198,11 @@ function EditIncomeEntryForm({
 export function IncomeEntryList({ entries }: IncomeEntryListProps) {
   const { t } = useTranslation();
   const formatCurrency = useFormatCurrency();
+  const { data: accounts = [] } = useAccounts();
+  const accountNameById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.name])),
+    [accounts]
+  );
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IncomeEntry | null>(null);
   const deleteEntry = useDeleteIncomeEntry();
@@ -222,6 +246,11 @@ export function IncomeEntryList({ entries }: IncomeEntryListProps) {
             >
               <div className="flex items-center gap-3">
                 <span>{entry.source_name}</span>
+                {entry.account_id != null && accountNameById.has(entry.account_id) && (
+                  <span className="text-xs text-muted-foreground">
+                    {accountNameById.get(entry.account_id)}
+                  </span>
+                )}
                 <span className="text-muted-foreground">
                   {formatShortDate(entry.date)}
                 </span>

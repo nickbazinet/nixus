@@ -47,6 +47,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (18, include_str!("../../migrations/018_maintenance_tables.sql")),
     (19, include_str!("../../migrations/019_custom_service_logs.sql")),
     (20, include_str!("../../migrations/020_maintenance_custom_tasks.sql")),
+    (21, include_str!("../../migrations/021_expense_income_account_id.sql")),
 ];
 
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {

@@ -24,23 +24,70 @@ async function setupTauriMock(page: Page) {
       merchant: string;
       amount_cents: number;
       budget_category_id: number;
+      account_id: number | null;
       date: string;
       source: string;
       created_at: string;
     }
+    interface MockAccount {
+      id: number;
+      name: string;
+      institution: string;
+      account_type: string;
+      currency: string;
+      balance_cents: number;
+      created_at: string;
+      updated_at: string;
+    }
+    interface MockState {
+      groups: MockGroup[];
+      categories: MockCategory[];
+      expenses: MockExpense[];
+      accounts: MockAccount[];
+      nextExpenseId: number;
+      nextGroupId: number;
+      nextCategoryId: number;
+    }
 
-    // Pre-seed with a group and two categories so expense form has options
-    const groups: MockGroup[] = [
-      { id: 1, name: "Essentials", sort_order: 0, created_at: new Date().toISOString() },
-    ];
-    const categories: MockCategory[] = [
-      { id: 1, group_id: 1, name: "Housing", target_cents: 70000, sort_order: 0, created_at: new Date().toISOString() },
-      { id: 2, group_id: 1, name: "Food", target_cents: 30000, sort_order: 1, created_at: new Date().toISOString() },
-    ];
-    const expenses: MockExpense[] = [];
-    let nextExpenseId = 1;
-    let nextGroupId = 2;
-    let nextCategoryId = 3;
+    const win = window as typeof window & { __EXPENSE_MOCK_STATE__?: MockState };
+    if (!win.__EXPENSE_MOCK_STATE__) {
+      win.__EXPENSE_MOCK_STATE__ = {
+        groups: [
+          { id: 1, name: "Essentials", sort_order: 0, created_at: new Date().toISOString() },
+        ],
+        categories: [
+          { id: 1, group_id: 1, name: "Housing", target_cents: 70000, sort_order: 0, created_at: new Date().toISOString() },
+          { id: 2, group_id: 1, name: "Food", target_cents: 30000, sort_order: 1, created_at: new Date().toISOString() },
+        ],
+        expenses: [],
+        accounts: [
+          {
+            id: 1,
+            name: "Main Chequing",
+            institution: "TD Bank",
+            account_type: "chequing",
+            currency: "CAD",
+            balance_cents: 100_000,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        nextExpenseId: 1,
+        nextGroupId: 2,
+        nextCategoryId: 3,
+      };
+    }
+
+    const state = win.__EXPENSE_MOCK_STATE__;
+    const { groups, categories, expenses, accounts } = state;
+
+    function adjustChequingBalance(accountId: number, deltaCents: number) {
+      const account = accounts.find((a) => a.id === accountId);
+      if (account && account.account_type === "chequing") {
+        account.balance_cents += deltaCents;
+        account.updated_at = new Date().toISOString();
+      }
+    }
 
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args: Record<string, unknown>) => {
@@ -54,7 +101,7 @@ async function setupTauriMock(page: Page) {
               return Promise.reject({ type: "validation", message: "Group name is required", field: "name" });
             }
             const group: MockGroup = {
-              id: nextGroupId++,
+              id: state.nextGroupId++,
               name: name.trim(),
               sort_order: groups.length,
               created_at: new Date().toISOString(),
@@ -71,6 +118,20 @@ async function setupTauriMock(page: Page) {
           case "get_all_budget_categories":
             return Promise.resolve([...categories]);
 
+          case "get_accounts":
+            return Promise.resolve(
+              [...accounts].sort((a, b) => a.name.localeCompare(b.name))
+            );
+
+          case "get_current_net_worth":
+            return Promise.resolve({
+              total_cents: accounts.reduce((sum, a) => sum + a.balance_cents, 0),
+              cash_cents: accounts.reduce((sum, a) => sum + a.balance_cents, 0),
+              investments_cents: 0,
+              assets_cents: 0,
+              liabilities_cents: 0,
+            });
+
           case "create_budget_category": {
             const catName = args.name as string;
             const targetCents = args.target_cents as number;
@@ -82,7 +143,7 @@ async function setupTauriMock(page: Page) {
               return Promise.reject({ type: "validation", message: "Target must be greater than 0", field: "target_cents" });
             }
             const category: MockCategory = {
-              id: nextCategoryId++,
+              id: state.nextCategoryId++,
               group_id: catGroupId,
               name: catName.trim(),
               target_cents: targetCents,
@@ -147,6 +208,7 @@ async function setupTauriMock(page: Page) {
             const amountCents = args.amount_cents as number;
             const categoryId = args.budget_category_id as number;
             const date = args.date as string;
+            const accountId = (args.account_id as number | null | undefined) ?? null;
 
             if (!merchant) {
               return Promise.reject({ type: "validation", message: "Merchant name is required", field: "merchant" });
@@ -157,17 +219,24 @@ async function setupTauriMock(page: Page) {
             if (!categories.some((c) => c.id === categoryId)) {
               return Promise.reject({ type: "validation", message: "Budget category not found", field: "budget_category_id" });
             }
+            if (accountId !== null && !accounts.some((a) => a.id === accountId)) {
+              return Promise.reject({ type: "validation", message: "Account not found", field: "account_id" });
+            }
 
             const expense: MockExpense = {
-              id: nextExpenseId++,
+              id: state.nextExpenseId++,
               merchant,
               amount_cents: amountCents,
               budget_category_id: categoryId,
+              account_id: accountId,
               date,
               source: "manual",
               created_at: new Date().toISOString(),
             };
             expenses.push(expense);
+            if (accountId !== null) {
+              adjustChequingBalance(accountId, -amountCents);
+            }
             return Promise.resolve(expense);
           }
 
@@ -177,6 +246,7 @@ async function setupTauriMock(page: Page) {
             const updAmount = args.amount_cents as number;
             const updCategoryId = args.budget_category_id as number;
             const updDate = args.date as string;
+            const updAccountId = (args.account_id as number | null | undefined) ?? null;
 
             if (!updMerchant) {
               return Promise.reject({ type: "validation", message: "Merchant name is required", field: "merchant" });
@@ -190,10 +260,18 @@ async function setupTauriMock(page: Page) {
               return Promise.reject({ type: "database", message: "Expense not found" });
             }
 
+            if (expToUpdate.account_id !== null) {
+              adjustChequingBalance(expToUpdate.account_id, expToUpdate.amount_cents);
+            }
+            if (updAccountId !== null) {
+              adjustChequingBalance(updAccountId, -updAmount);
+            }
+
             expToUpdate.merchant = updMerchant;
             expToUpdate.amount_cents = updAmount;
             expToUpdate.budget_category_id = updCategoryId;
             expToUpdate.date = updDate;
+            expToUpdate.account_id = updAccountId;
             return Promise.resolve({ ...expToUpdate });
           }
 
@@ -202,6 +280,10 @@ async function setupTauriMock(page: Page) {
             const expIdx = expenses.findIndex((e) => e.id === delExpId);
             if (expIdx === -1) {
               return Promise.reject({ type: "database", message: "Expense not found" });
+            }
+            const deleted = expenses[expIdx];
+            if (deleted.account_id !== null) {
+              adjustChequingBalance(deleted.account_id, deleted.amount_cents);
             }
             expenses.splice(expIdx, 1);
             return Promise.resolve(null);
@@ -260,16 +342,16 @@ test.describe("Expense Tracking", () => {
     await page.goto("/budget");
   });
 
-  test("clicking Add Expense opens the form with all four fields", async ({ page }) => {
+  test("clicking Add Expense opens the form with all fields including optional account", async ({ page }) => {
     await page.getByTestId("add-expense-button").click();
 
     const form = page.getByTestId("add-expense-form");
     await expect(form).toBeVisible();
 
-    // All four fields should be present
     await expect(form.getByLabel("Merchant")).toBeVisible();
     await expect(form.getByLabel("Amount")).toBeVisible();
     await expect(form.getByLabel("Category")).toBeVisible();
+    await expect(form.getByLabel("Account (optional)")).toBeVisible();
     await expect(form.getByLabel("Date")).toBeVisible();
   });
 
@@ -598,5 +680,55 @@ test.describe("Expense Tracking", () => {
     // Dialog should close, expense still present
     await expect(page.getByTestId("delete-expense-dialog")).not.toBeVisible();
     await expect(page.getByTestId("expense-merchant")).toContainText("Coffee Shop");
+  });
+
+  test("creating expense with linked chequing account decreases account balance on accounts page", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-expense-button").click();
+    const form = page.getByTestId("add-expense-form");
+    await form.getByLabel("Merchant").fill("Grocery Store");
+    await form.getByLabel("Amount").fill("50");
+    await form.getByLabel("Category").click();
+    await page.getByRole("option", { name: "Housing" }).click();
+    await form.getByLabel("Account (optional)").click();
+    await page.getByRole("option", { name: /Main Chequing/ }).click();
+    await page.getByRole("button", { name: "Save Expense" }).click();
+    await expect(page.getByText('Expense "Grocery Store" saved')).toBeVisible();
+
+    await page
+      .getByRole("navigation", { name: "Finance navigation" })
+      .getByRole("link", { name: "Accounts" })
+      .click();
+    const accountRow = page.getByTestId("account-row").filter({ hasText: "Main Chequing" });
+    await expect(accountRow.getByTestId("account-balance")).toContainText("$950.00");
+  });
+
+  test("expense without linked account leaves account balance unchanged", async ({ page }) => {
+    await page
+      .getByRole("navigation", { name: "Finance navigation" })
+      .getByRole("link", { name: "Accounts" })
+      .click();
+    const accountRow = page.getByTestId("account-row").filter({ hasText: "Main Chequing" });
+    await expect(accountRow.getByTestId("account-balance")).toContainText("$1,000.00");
+
+    await page
+      .getByRole("navigation", { name: "Finance navigation" })
+      .getByRole("link", { name: "Budget" })
+      .click();
+    await page.getByTestId("add-expense-button").click();
+    const form = page.getByTestId("add-expense-form");
+    await form.getByLabel("Merchant").fill("Cash Purchase");
+    await form.getByLabel("Amount").fill("25");
+    await form.getByLabel("Category").click();
+    await page.getByRole("option", { name: "Housing" }).click();
+    await page.getByRole("button", { name: "Save Expense" }).click();
+    await expect(page.getByText('Expense "Cash Purchase" saved')).toBeVisible();
+
+    await page
+      .getByRole("navigation", { name: "Finance navigation" })
+      .getByRole("link", { name: "Accounts" })
+      .click();
+    await expect(accountRow.getByTestId("account-balance")).toContainText("$1,000.00");
   });
 });

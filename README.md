@@ -91,7 +91,7 @@ Before you download: an honest list so you know if this is worth your time.
 - **Pre-alpha** — features change and things break between releases.
 - **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
 
-More detail on the marketing site: [nixus.nicolasbazinet.net/#beta](https://nixus.nicolasbazinet.net/#beta)
+More detail on the marketing site: [nixus.nicolasbazinet.net/beta](https://nixus.nicolasbazinet.net/beta)
 
 ---
 
@@ -125,7 +125,7 @@ I'm looking for a handful of people who still track personal finances in a sprea
 
 **[Email me about beta testing](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20beta%20tester%20interest)**
 
-Or read the full beta section on the site: [nixus.nicolasbazinet.net/#beta](https://nixus.nicolasbazinet.net/#beta)
+Or read the full beta guide on the site: [nixus.nicolasbazinet.net/beta](https://nixus.nicolasbazinet.net/beta)
 
 ---
 

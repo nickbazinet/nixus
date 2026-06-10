@@ -45,6 +45,7 @@ pub struct Expense {
     pub merchant: String,
     pub amount_cents: i64,
     pub budget_category_id: i64,
+    pub account_id: Option<i64>,
     pub date: String,
     pub source: String,
     pub created_at: String,
@@ -56,6 +57,7 @@ pub struct CreateExpenseInput {
     pub amount_cents: i64,
     pub budget_category_id: i64,
     pub date: String,
+    pub account_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +66,7 @@ pub struct UpdateExpenseInput {
     pub amount_cents: i64,
     pub budget_category_id: i64,
     pub date: String,
+    pub account_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -217,22 +220,25 @@ pub struct IncomeEntry {
     pub amount_cents: i64,
     pub date: String,
     pub month: String,
+    pub account_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateIncomeEntryInput {
     pub source_id: i64,
     pub amount_cents: i64,
     pub date: String,
+    pub account_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateIncomeEntryInput {
     pub source_id: i64,
     pub amount_cents: i64,
     pub date: String,
+    pub account_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -427,6 +427,7 @@ pub fn execute_chat_action(
                 amount_cents: params["amount_cents"].as_i64().unwrap_or(0),
                 budget_category_id: params["budget_category_id"].as_i64().unwrap_or(0),
                 date: params["date"].as_str().unwrap_or("").to_string(),
+                account_id: None,
             };
             let expense = expense_db::insert_expense(&conn, &input)?;
             format!(

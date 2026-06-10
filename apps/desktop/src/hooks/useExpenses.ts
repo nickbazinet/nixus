@@ -1,7 +1,19 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
 import type { BudgetCategory, CreateExpenseInput, Expense, UpdateExpenseInput } from "@/lib/types";
+
+function invalidateExpenseMutationQueries(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
+  queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+  queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+  queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
+  queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
+  queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
+  queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
+  queryClient.invalidateQueries({ queryKey: ["top-budget-categories"] });
+}
 
 export function useAllBudgetCategories() {
   return useQuery({
@@ -20,11 +32,10 @@ export function useCreateExpense() {
         amount_cents: input.amount_cents,
         budget_category_id: input.budget_category_id,
         date: input.date,
+        account_id: input.account_id ?? null,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
-      queryClient.invalidateQueries({ queryKey: ["budget-status"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      invalidateExpenseMutationQueries(queryClient);
     },
   });
 }
@@ -48,11 +59,10 @@ export function useUpdateExpense() {
         amount_cents: input.amount_cents,
         budget_category_id: input.budget_category_id,
         date: input.date,
+        account_id: input.account_id ?? null,
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
-      queryClient.invalidateQueries({ queryKey: ["budget-status"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      invalidateExpenseMutationQueries(queryClient);
     },
   });
 }
@@ -63,9 +73,7 @@ export function useDeleteExpense() {
   return useMutation({
     mutationFn: (id: number) => invoke<void>("delete_expense", { id }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
-      queryClient.invalidateQueries({ queryKey: ["budget-status"] });
-      queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      invalidateExpenseMutationQueries(queryClient);
     },
   });
 }

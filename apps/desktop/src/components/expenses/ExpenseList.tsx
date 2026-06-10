@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import {
@@ -17,6 +17,7 @@ import { Input } from "@nixus/shared";
 import { Label } from "@nixus/shared";
 import { DatePicker } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
+import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import {
   DialogTitle,
 } from "@nixus/shared";
 import { useUpdateExpense, useDeleteExpense, useAllBudgetCategories } from "@/hooks/useExpenses";
+import { useAccounts } from "@/hooks/useAccounts";
 import { useBudgetGroups } from "@/hooks/useBudget";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import type { Expense } from "@/lib/types";
@@ -38,6 +40,7 @@ interface EditFormData {
   merchant: string;
   amount_cents: number;
   budget_category_id: string;
+  account_id: string;
   date: string;
 }
 
@@ -63,6 +66,7 @@ function EditExpenseForm({ expense, onClose }: { expense: Expense; onClose: () =
       merchant: expense.merchant,
       amount_cents: expense.amount_cents,
       budget_category_id: String(expense.budget_category_id),
+      account_id: expense.account_id ? String(expense.account_id) : "",
       date: expense.date,
     },
     mode: "onSubmit",
@@ -76,6 +80,7 @@ function EditExpenseForm({ expense, onClose }: { expense: Expense; onClose: () =
         amount_cents: data.amount_cents,
         budget_category_id: Number(data.budget_category_id),
         date: data.date,
+        account_id: data.account_id ? Number(data.account_id) : null,
       },
       {
         onSuccess: () => {
@@ -166,6 +171,20 @@ function EditExpenseForm({ expense, onClose }: { expense: Expense; onClose: () =
         )}
       </div>
 
+      <Controller
+        name="account_id"
+        control={control}
+        render={({ field }) => (
+          <OptionalAccountSelect
+            id="edit-expense-account"
+            value={field.value}
+            onChange={field.onChange}
+            labelKey="expenses.accountOptional"
+            helpKey="expenses.accountLinkHelp"
+          />
+        )}
+      />
+
       <div className="space-y-1.5">
         <Label htmlFor="edit-date">{t("common.date")}</Label>
         <Controller
@@ -194,6 +213,11 @@ function EditExpenseForm({ expense, onClose }: { expense: Expense; onClose: () =
 export function ExpenseList({ expenses }: ExpenseListProps) {
   const { t } = useTranslation();
   const formatCurrency = useFormatCurrency();
+  const { data: accounts = [] } = useAccounts();
+  const accountNameById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.name])),
+    [accounts]
+  );
   const [editingId, setEditingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
   const deleteExpense = useDeleteExpense();
@@ -238,6 +262,14 @@ export function ExpenseList({ expenses }: ExpenseListProps) {
             >
               <div className="flex items-center gap-3">
                 <span data-testid="expense-merchant">{expense.merchant}</span>
+                {expense.account_id != null && accountNameById.has(expense.account_id) && (
+                  <span
+                    className="text-xs text-muted-foreground"
+                    data-testid="expense-account"
+                  >
+                    {accountNameById.get(expense.account_id)}
+                  </span>
+                )}
                 <span className="text-muted-foreground" data-testid="expense-date">
                   {formatShortDate(expense.date)}
                 </span>

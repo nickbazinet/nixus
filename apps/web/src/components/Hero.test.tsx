@@ -10,7 +10,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { Hero } from "./Hero";
 
-const HEADLINE = "Your spreadsheet's replacement, finally.";
+const HEADLINE = "Stay on top of your money — not buried in spreadsheets.";
 
 function renderHero(props: Partial<Parameters<typeof Hero>[0]> = {}) {
   return renderWithProviders(
@@ -31,17 +31,24 @@ describe("<Hero />", () => {
   it("renders the translated subhead text", () => {
     renderHero();
     expect(
-      screen.getByText(/Drop in a credit card statement/i),
+      screen.getByText(/upload a credit card statement/i),
     ).toBeInTheDocument();
   });
 
-  it("renders the eyebrow when the prop is provided", () => {
+  it("renders the marketing eyebrow from i18n by default", () => {
+    renderHero();
+    expect(screen.getByTestId("hero-eyebrow")).toHaveTextContent(
+      /Local-first · No bank passwords/i,
+    );
+  });
+
+  it("prefers an explicit eyebrow prop over the i18n default", () => {
     renderHero({ eyebrow: "The pitch" });
     expect(screen.getByTestId("hero-eyebrow")).toHaveTextContent("The pitch");
   });
 
-  it("omits the eyebrow when the prop is absent", () => {
-    renderHero();
+  it("omits the eyebrow when the prop is an empty string", () => {
+    renderHero({ eyebrow: "" });
     expect(screen.queryByTestId("hero-eyebrow")).not.toBeInTheDocument();
   });
 

@@ -2,7 +2,9 @@
 workflow: create-ux-design
 mode: focused-pass
 stepsCompleted: [1, 2, 7, 10, 11, 13]
-status: ready-for-implementation
+status: complete
+implementationStatus: shipped
+shippedDate: 2026-06-09
 project_name: nixus-marketing-site-beta-page
 scope: "/beta and /fr/beta only"
 date: 2026-06-09
@@ -17,6 +19,15 @@ inputDocuments:
   - apps/web/src/locales/en.json
   - apps/web/src/locales/fr.json
 visualMockup: ux-beta-page-mockup.html
+implementation:
+  routes:
+    - apps/web/src/routes/beta.tsx
+    - apps/web/src/routes/fr/beta.tsx
+  components:
+    - apps/web/src/components/BetaPage.tsx
+    - apps/web/src/components/LimitationsList.tsx
+  tests:
+    - apps/web/src/components/BetaPage.test.tsx
 ---
 
 # UX Design Specification — `/beta` page
@@ -80,7 +91,7 @@ One scroll. Max content width `720px` (matches existing `BetaSection`).
 | Homepage `/#beta` | Short limitations + invite for organic visitors |
 | **`/beta`** | Full shareable URL for outreach DMs |
 
-Homepage `#beta` gains one line at the bottom: *“Full beta guide →”* linking to `/beta`. Pre-alpha banner “Learn more” should point to `/beta` when on non-home routes (already route-aware in `PreAlphaBanner` — update target from `#beta` to `/beta`).
+Homepage `#beta` includes *“Full beta guide →”* linking to `/beta`. Pre-alpha banner “Learn more” points to `/beta` (locale-aware via `PreAlphaBanner` and `betaPagePath`).
 
 ---
 
@@ -182,16 +193,16 @@ Footer link: “More questions →” home page FAQ anchor.
 
 ## Component strategy
 
-| Component | Action |
+| Component | Status |
 |-----------|--------|
-| `BetaPage` | New route composition in `apps/web/src/routes/beta.tsx` + `fr/beta.tsx` |
-| `LimitationsList` | Extract from `BetaSection` — shared by home `#beta` and `/beta` |
-| `BetaInviteCard` / `BetaFeedbackCard` | Extract or extend invite card for feedback section |
-| `AudienceFitCards` | New — for/not-for two-column block |
-| `BetaScreenshotGallery` | New — 2–3 framed screenshots |
-| `BetaGetStartedSteps` | New — numbered install steps |
-| `DownloadCTA` | Reuse unchanged |
-| `FAQ` | Reuse single-item accordion or extract 3-item subset |
+| `BetaPage` | Shipped — `apps/web/src/routes/beta.tsx` + `fr/beta.tsx` |
+| `LimitationsList` | Shipped — extracted from `BetaSection`, shared by home `#beta` and `/beta` |
+| `BetaInviteCard` / feedback section | Shipped — inline in `BetaPage` |
+| `AudienceFitCards` | Shipped — for/not-for two-column block in `BetaPage` |
+| `BetaScreenshotGallery` | Shipped — 3 framed screenshots from `public/beta/` |
+| `BetaGetStartedSteps` | Shipped — numbered install steps |
+| `DownloadCTA` | Reused unchanged |
+| `FAQ` | Reused — 3-item subset on beta page |
 
 **i18n:** New namespace keys under `betaPage.*` in `en.json` / `fr.json`. Limitations and FAQ subsets reference existing keys where possible.
 
@@ -216,31 +227,31 @@ Footer link: “More questions →” home page FAQ anchor.
 
 ---
 
-## Outreach snippet (Week 3)
+## Outreach snippet
 
-> Everything about the beta in one place: **yoursite.com/beta**  
+> Everything about the beta in one place: **nixus.nicolasbazinet.net/beta**  
 > Download, what to expect, and how to reach me if something’s confusing. No chat app required.
 
-FR: **yoursite.com/fr/beta**
+FR: **nixus.nicolasbazinet.net/fr/beta**
 
 ---
 
 ## Implementation checklist
 
-- [ ] Routes `/beta` + `/fr/beta` with `buildMeta`
-- [ ] Extract `LimitationsList` from `BetaSection`
-- [ ] New i18n keys `betaPage.*`
-- [ ] 2–3 screenshot assets in `public/` (demo data)
-- [ ] Header “Beta” link
-- [ ] Pre-alpha banner → `/beta` on non-home routes
-- [ ] Sitemap entries
-- [ ] Homepage `#beta` → “Full beta guide” link
-- [ ] Playwright smoke: page renders, mailto + download present
+- [x] Routes `/beta` + `/fr/beta` with `buildMeta`
+- [x] Extract `LimitationsList` from `BetaSection`
+- [x] New i18n keys `betaPage.*`
+- [x] 2–3 screenshot assets in `public/beta/` (demo data)
+- [x] Header “Beta” link
+- [x] Pre-alpha banner → `/beta` (locale-aware)
+- [x] Sitemap entries
+- [x] Homepage `#beta` → “Full beta guide” link
+- [x] Vitest smoke: page renders, mailto + download present
 
-**Estimated effort:** 2–3 hours (matches Week 2 roadmap budget).
+**Shipped:** 2026-06-09. Live at [nixus.nicolasbazinet.net/beta](https://nixus.nicolasbazinet.net/beta) and [nixus.nicolasbazinet.net/fr/beta](https://nixus.nicolasbazinet.net/fr/beta).
 
 ---
 
 ## Sally’s sign-off
 
-This is the URL you paste in personal messages. Marie gets everything she needs without feeling like she joined a gamer Discord or read developer docs. Ship `/beta` first; `/docs` can wait until you have technical contributors asking for setup guides.
+This is the URL you paste in personal messages. Marie gets everything she needs without feeling like she joined a gamer Discord or read developer docs. **`/beta` is shipped** — use it for outreach. `/docs` can wait until you have technical contributors asking for setup guides.

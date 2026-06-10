@@ -1,5 +1,5 @@
 # generated: 2026-03-14
-# last_updated: 2026-05-30
+# last_updated: 2026-06-10
 # project: nkbaz-finance
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-03-14
-last_updated: 2026-05-30
+last_updated: 2026-06-10
 project: nkbaz-finance
 project_key: NOKEY
 tracking_system: file-system
@@ -194,3 +194,9 @@ development_status:
   22-3-action-waterfall-and-savings-capacity-panels: review
   22-4-i18n-values-privacy-and-playwright-e2e: review
   epic-22-retrospective: optional
+
+  # Epic 23: Transaction-Account Linking (FR90-FR94)
+  epic-23: in-progress
+  23-1-transaction-account-linking-backend: review
+  23-2-transaction-account-linking-frontend: review
+  epic-23-retrospective: optional
