@@ -18,6 +18,7 @@ import { YearToDateCard } from "@/components/yearly-summary/YearToDateCard";
 import { useIncomeTotal } from "@/hooks/useIncome";
 import { useYearlySummary } from "@/hooks/useYearlySummary";
 import { MonthNavigator } from "@/components/budget/MonthNavigator";
+import { LastExpenseLine } from "@/components/dashboard/LastExpenseLine";
 
 export const Route = createFileRoute("/")({
   component: IndexPage,
@@ -99,6 +100,8 @@ function IndexPage() {
           </>
         }
       />
+
+      <LastExpenseLine />
 
       {/* Cash Flow Card */}
       <div className="mb-4">

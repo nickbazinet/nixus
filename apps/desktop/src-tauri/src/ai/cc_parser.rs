@@ -9,7 +9,7 @@ use tracing::info;
 use crate::error::AppError;
 use crate::models::{BudgetCategory, MerchantHint};
 
-const MODEL_ID: &str = "us.anthropic.claude-sonnet-4-20250514-v1:0";
+const MODEL_ID: &str = "us.anthropic.claude-sonnet-5";
 const CONFIDENCE_THRESHOLD: f64 = 0.8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -71,6 +71,8 @@ async function setupEmptyDashboardMock(page: Page) {
             return Promise.resolve(yearlyMock);
           case "get_financial_health_summary":
             return Promise.resolve(healthMock);
+          case "get_latest_expense":
+            return Promise.resolve(null);
           default:
             return Promise.resolve(null);
         }
@@ -81,6 +83,16 @@ async function setupEmptyDashboardMock(page: Page) {
 
 async function setupSeededDashboardMock(page: Page) {
   await page.addInitScript((yearlyMock) => {
+    const latestExpense = {
+      id: 99,
+      merchant: "Costco",
+      amount_cents: 4500,
+      budget_category_id: 1,
+      account_id: null,
+      date: "2026-03-20",
+      source: "manual",
+      created_at: "2026-03-20T12:00:00.000Z",
+    };
     const summary = {
       total_target_cents: 300000,
       total_spent_cents: 175000,
@@ -181,6 +193,8 @@ async function setupSeededDashboardMock(page: Page) {
                 action_line_key: "build_emergency_fund",
               },
             });
+          case "get_latest_expense":
+            return Promise.resolve(latestExpense);
           default:
             return Promise.resolve(null);
         }
@@ -306,6 +320,10 @@ test.describe("Dashboard — Story 5.1", () => {
                     }),
                   500
                 )
+              );
+            case "get_latest_expense":
+              return new Promise((resolve) =>
+                setTimeout(() => resolve(null), 500)
               );
             default:
               return Promise.resolve(null);
@@ -538,6 +556,8 @@ test.describe("Dashboard — Financial Health Card", () => {
               });
             case "get_yearly_summary":
               return Promise.resolve(yearlyMock);
+            case "get_latest_expense":
+              return Promise.resolve(null);
             default:
               return Promise.resolve(null);
           }
@@ -594,5 +614,40 @@ test.describe("Dashboard — Financial Health Card", () => {
 
     await page.getByTestId("financial-health-card").click();
     await expect(page).toHaveURL(/\/net-worth\/financial-health/);
+  });
+});
+
+test.describe("Dashboard — Last Expense Line", () => {
+  test("empty dashboard shows no expenses yet", async ({ page }) => {
+    await setupEmptyDashboardMock(page);
+    await page.goto("/");
+
+    const line = page.getByTestId("last-expense-line");
+    await expect(line).toBeVisible();
+    await expect(line).toContainText("No expenses yet");
+    await expect(line).not.toContainText("Import your first CC statement");
+  });
+
+  test("seeded dashboard shows latest expense merchant and amount", async ({
+    page,
+  }) => {
+    await setupSeededDashboardMock(page);
+    await page.goto("/");
+
+    const line = page.getByTestId("last-expense-line");
+    await expect(line).toBeVisible();
+    await expect(line).toContainText("Costco");
+    await expect(line).toContainText("$45.00");
+    await expect(line).toContainText("Mar 20, 2026");
+  });
+
+  test("last expense line is display-only", async ({ page }) => {
+    await setupSeededDashboardMock(page);
+    await page.goto("/");
+
+    const line = page.getByTestId("last-expense-line");
+    await expect(line).toBeVisible();
+    await expect(line).not.toHaveRole("link");
+    await expect(line).not.toHaveRole("button");
   });
 });

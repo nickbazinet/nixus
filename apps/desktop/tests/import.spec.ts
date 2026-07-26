@@ -26,6 +26,13 @@ async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDate
 
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string, args: Record<string, unknown>) => {
+          const invokeLog =
+            ((window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__ as
+              | { cmd: string; args: Record<string, unknown> }[]
+              | undefined) ?? [];
+          invokeLog.push({ cmd, args });
+          (window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__ = invokeLog;
+
           if (cmd === "plugin:event|listen") {
             const event = args.event as string;
             const handlerId = args.handler as number;
@@ -47,6 +54,23 @@ async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDate
               }
               const fileName = filePath.split("/").pop() ?? "unknown";
               return Promise.resolve({ file_name: fileName, file_path: filePath, file_size: 1024 });
+            }
+
+            case "save_import_clipboard_image": {
+              const extension = String(args.extension ?? "").toLowerCase();
+              const bytesBase64 = String(args.bytes_base64 ?? "");
+              if (!bytesBase64) {
+                return Promise.reject({ type: "file", message: "Clipboard image is empty" });
+              }
+              if (!["png", "jpg", "jpeg"].includes(extension)) {
+                return Promise.reject({
+                  type: "file",
+                  message: "Only PNG and JPEG screenshots can be pasted",
+                });
+              }
+              return Promise.resolve({
+                file_path: `/tmp/pasted-statement.${extension === "jpeg" ? "jpg" : extension}`,
+              });
             }
 
             case "import_cc_statement": {
@@ -127,7 +151,69 @@ test.describe("Import Page — Story 6.1", () => {
   test("upload zone shows drag-and-drop instructions [AC1]", async ({ page }) => {
     const zone = page.getByTestId("upload-zone");
     await expect(zone).toContainText("Drop your statement here");
+    await expect(zone).toContainText("paste a screenshot");
     await expect(zone).toContainText("PNG, JPG, PDF accepted");
+  });
+
+  test("pasting a screenshot image starts the import pipeline [AC1, AC7]", async ({ page }) => {
+    await page.evaluate(async () => {
+      (window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__ = [];
+      // Minimal 1x1 PNG
+      const pngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+      const binary = atob(pngBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const file = new File([bytes], "screenshot.png", { type: "image/png" });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+
+    await expect(page.getByTestId("import-progress-stepper")).toBeVisible({ timeout: 5000 });
+
+    const saveCalls = await page.evaluate(() => {
+      const log =
+        ((window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__ as
+          | { cmd: string; args: Record<string, unknown> }[]
+          | undefined) ?? [];
+      return log.filter((entry) => entry.cmd === "save_import_clipboard_image");
+    });
+    expect(saveCalls.length).toBeGreaterThan(0);
+    expect(saveCalls[0]?.args?.extension).toBe("png");
+    expect(typeof saveCalls[0]?.args?.bytes_base64).toBe("string");
+    expect(String(saveCalls[0]?.args?.bytes_base64).length).toBeGreaterThan(0);
+  });
+
+  test("pasting without an image shows inline paste error [AC2, AC7]", async ({ page }) => {
+    await page.evaluate(() => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", "not an image");
+      window.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })
+      );
+    });
+
+    await expect(page.getByTestId("upload-error")).toBeVisible();
+    await expect(page.getByTestId("upload-error")).toContainText(
+      "Clipboard has no image to paste"
+    );
+    await expect(page.getByTestId("upload-zone")).toBeVisible();
+  });
+
+  test("pasting an unsupported image type shows a specific error [AC2]", async ({ page }) => {
+    await page.evaluate(() => {
+      const file = new File([new Uint8Array([0, 0, 0, 0])], "shot.webp", { type: "image/webp" });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      window.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })
+      );
+    });
+
+    await expect(page.getByTestId("upload-error")).toContainText(
+      "Only PNG and JPEG screenshots can be pasted"
+    );
   });
 
   test("clicking upload zone triggers file selection interaction [AC2]", async ({ page }) => {

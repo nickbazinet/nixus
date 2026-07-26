@@ -1,9 +1,11 @@
-import { useState, useCallback, type DragEvent } from "react";
+import { useState, useCallback, useEffect, useRef, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Upload, FileCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 
 interface FileValidationResult {
   file_name: string;
@@ -11,8 +13,84 @@ interface FileValidationResult {
   file_size: number;
 }
 
+interface ClipboardImageSaveResult {
+  file_path: string;
+}
+
 interface UploadZoneProps {
   onValidated: (result: FileValidationResult) => void;
+}
+
+type ClipboardImageExtract =
+  | { kind: "supported"; blob: Blob; extension: "png" | "jpg" }
+  | { kind: "unsupported"; mime: string }
+  | { kind: "none" };
+
+function extensionFromMime(mime: string): "png" | "jpg" | null {
+  if (mime === "image/png") return "png";
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
+  return null;
+}
+
+function isEditablePasteTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function extractClipboardImage(
+  clipboardData: DataTransfer | null
+): ClipboardImageExtract {
+  if (!clipboardData) return { kind: "none" };
+
+  let sawUnsupportedImage = false;
+  let unsupportedMime = "";
+
+  const items = clipboardData.items;
+  if (items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (!item.type.startsWith("image/")) continue;
+      const extension = extensionFromMime(item.type);
+      if (!extension) {
+        sawUnsupportedImage = true;
+        unsupportedMime = item.type;
+        continue;
+      }
+      const blob = item.getAsFile();
+      if (blob) return { kind: "supported", blob, extension };
+    }
+  }
+
+  const files = clipboardData.files;
+  if (files) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith("image/")) continue;
+      const extension = extensionFromMime(file.type);
+      if (!extension) {
+        sawUnsupportedImage = true;
+        unsupportedMime = file.type;
+        continue;
+      }
+      return { kind: "supported", blob: file, extension };
+    }
+  }
+
+  if (sawUnsupportedImage) {
+    return { kind: "unsupported", mime: unsupportedMime };
+  }
+  return { kind: "none" };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 export function UploadZone({ onValidated }: UploadZoneProps) {
@@ -21,27 +99,105 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
   const [error, setError] = useState<string | null>(null);
   const [validatedFile, setValidatedFile] = useState<FileValidationResult | null>(null);
   const [validating, setValidating] = useState(false);
+  const validatingRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  const setValidatingSafe = useCallback((value: boolean) => {
+    validatingRef.current = value;
+    if (mountedRef.current) setValidating(value);
+  }, []);
 
   const validateFile = useCallback(
     async (filePath: string) => {
-      setError(null);
-      setValidating(true);
+      if (mountedRef.current) setError(null);
+      setValidatingSafe(true);
       try {
         const result = await invoke<FileValidationResult>("validate_cc_file", {
           file_path: filePath,
         });
+        if (!mountedRef.current) return;
         setValidatedFile(result);
         onValidated(result);
       } catch (err: unknown) {
+        if (!mountedRef.current) return;
         const error = err as { message?: string };
         setError(error.message ?? "Failed to validate file");
         setValidatedFile(null);
       } finally {
-        setValidating(false);
+        setValidatingSafe(false);
       }
     },
-    [onValidated]
+    [onValidated, setValidatingSafe]
   );
+
+  const handlePasteEvent = useCallback(
+    async (e: ClipboardEvent) => {
+      if (isEditablePasteTarget(e.target)) {
+        return;
+      }
+
+      if (validatingRef.current) {
+        e.preventDefault();
+        return;
+      }
+
+      const extracted = extractClipboardImage(e.clipboardData);
+      if (extracted.kind === "none") {
+        e.preventDefault();
+        if (mountedRef.current) setError(t("import.pasteNoImage"));
+        return;
+      }
+      if (extracted.kind === "unsupported") {
+        e.preventDefault();
+        if (mountedRef.current) setError(t("import.pasteUnsupportedImage"));
+        return;
+      }
+
+      e.preventDefault();
+      if (extracted.blob.size > MAX_CLIPBOARD_IMAGE_BYTES) {
+        if (mountedRef.current) {
+          setError(t("import.pasteTooLarge"));
+        }
+        return;
+      }
+
+      if (mountedRef.current) setError(null);
+      setValidatingSafe(true);
+      try {
+        const buffer = await extracted.blob.arrayBuffer();
+        if (!mountedRef.current) return;
+        const bytesBase64 = bytesToBase64(new Uint8Array(buffer));
+        const saved = await invoke<ClipboardImageSaveResult>(
+          "save_import_clipboard_image",
+          {
+            bytes_base64: bytesBase64,
+            extension: extracted.extension,
+          }
+        );
+        if (!mountedRef.current) return;
+        await validateFile(saved.file_path);
+      } catch (err: unknown) {
+        if (!mountedRef.current) return;
+        const error = err as { message?: string };
+        setError(error.message ?? t("import.pasteNoImage"));
+        setValidatedFile(null);
+        setValidatingSafe(false);
+      }
+    },
+    [t, validateFile, setValidatingSafe]
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const onWindowPaste = (e: ClipboardEvent) => {
+      void handlePasteEvent(e);
+    };
+    window.addEventListener("paste", onWindowPaste);
+    return () => {
+      mountedRef.current = false;
+      window.removeEventListener("paste", onWindowPaste);
+    };
+  }, [handlePasteEvent]);
 
   const handleClick = useCallback(async () => {
     const selected = await open({

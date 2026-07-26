@@ -237,9 +237,35 @@ export interface MonthlySpendTotal {
   total_cents: number;
 }
 
+export type CategoryCompareStatus = "under" | "on_track" | "over" | "no_target";
+
+export interface CategoryCompareRow {
+  category_id: number;
+  category_name: string;
+  avg_cents: number;
+  target_cents: number | null;
+  delta_pct: number | null;
+  status: CategoryCompareStatus;
+}
+
 export interface SpendingTrendsData {
   by_category: MonthlySpendByCategory[];
   totals: MonthlySpendTotal[];
+  category_compare: CategoryCompareRow[];
+}
+
+export interface TrendsInsightRequest {
+  months: number;
+  window_label: string;
+  locale: string;
+  categories: CategoryCompareRow[];
+}
+
+export interface TrendsInsightResponse {
+  headline: string;
+  body: string;
+  tone: "calm" | "caution" | "positive";
+  window_label: string;
 }
 
 export interface YearlyCategorySpend {

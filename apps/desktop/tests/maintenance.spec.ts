@@ -1022,6 +1022,9 @@ async function setupMaintenanceTauriMock(
           case "get_income_total":
             return Promise.resolve({ total_cents: 0 });
 
+          case "get_latest_expense":
+            return Promise.resolve(null);
+
           case "get_maintenance_alert_summary":
             return Promise.resolve(buildMaintenanceAlertSummary());
 

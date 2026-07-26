@@ -4,6 +4,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
 import type { BudgetCategory, CreateExpenseInput, Expense, UpdateExpenseInput } from "@/lib/types";
 
+function invalidateTrendsQueries(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: ["spending-trends"] });
+  queryClient.invalidateQueries({ queryKey: ["trends-insight"] });
+}
+
 function invalidateExpenseMutationQueries(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: queryKeys.expenses });
   queryClient.invalidateQueries({ queryKey: ["budget-status"] });
@@ -13,6 +18,7 @@ function invalidateExpenseMutationQueries(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
   queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
   queryClient.invalidateQueries({ queryKey: ["top-budget-categories"] });
+  invalidateTrendsQueries(queryClient);
 }
 
 export function useAllBudgetCategories() {
@@ -45,6 +51,13 @@ export function useExpensesByMonth(year: number, month: number) {
     queryKey: queryKeys.expensesByMonth(year, month),
     queryFn: () => invoke<Expense[]>("get_expenses", { year, month }),
     placeholderData: keepPreviousData,
+  });
+}
+
+export function useLatestExpense() {
+  return useQuery({
+    queryKey: queryKeys.latestExpense,
+    queryFn: () => invoke<Expense | null>("get_latest_expense"),
   });
 }
 

@@ -166,6 +166,8 @@ async function setupFinancialHealthMock(page: Page) {
             });
           case "get_financial_health_summary":
             return Promise.resolve(buildSummary());
+          case "get_latest_expense":
+            return Promise.resolve(null);
           case "get_financial_health_detail":
             return Promise.resolve(buildDetail());
           case "set_emergency_fund_target":

@@ -158,6 +158,9 @@ async function setupTauriMock(page: Page, options?: { hasData?: boolean }) {
             case "get_spending_breakdown":
               return Promise.resolve([]);
 
+            case "get_latest_expense":
+              return Promise.resolve(null);
+
             case "get_db_status":
               return Promise.resolve({ db_path: "mock.db", wal_mode: true, schema_version: 3, migrations_applied: 3 });
 

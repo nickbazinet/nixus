@@ -5,7 +5,10 @@ import { PageHeader } from "@/components/shared/PageHeader";
 import { Card, CardContent, PillTabs } from "@nixus/shared";
 import { SpendingTrendChart } from "@/components/spending-trends/SpendingTrendChart";
 import { CategorySpendTable } from "@/components/spending-trends/CategorySpendTable";
+import { TrendsInsightPanel } from "@/components/spending-trends/TrendsInsightPanel";
 import { useSpendingTrends } from "@/hooks/useSpendingTrends";
+import { useTrendsInsight, useInsightGate } from "@/hooks/useTrendsInsight";
+import { useAiConfig } from "@/hooks/useAiConfig";
 
 export const Route = createFileRoute("/spending-trends")({
   component: SpendingTrendsPage,
@@ -35,11 +38,23 @@ function SpendingTrendsPage() {
     [t]
   );
 
-  const { data, isPending } = useSpendingTrends(WINDOW_MONTHS[selectedWindow]);
+  const months = WINDOW_MONTHS[selectedWindow];
+  const { data, isPending } = useSpendingTrends(months);
+  const { data: aiConfig } = useAiConfig();
 
   const totals = data?.totals ?? [];
-  const byCategory = data?.by_category ?? [];
+  const categoryCompare = data?.category_compare ?? [];
   const isEmpty = totals.length === 0 && !isPending;
+  const gatePassed = useInsightGate(categoryCompare);
+  const aiConfigured = aiConfig?.configured ?? false;
+
+  const insightQuery = useTrendsInsight({
+    months,
+    windowLabel: windowLabels[selectedWindow],
+    categoryCompare,
+    aiConfigured,
+    gatePassed,
+  });
 
   return (
     <div>
@@ -64,9 +79,14 @@ function SpendingTrendsPage() {
             />
           </div>
           <SpendingTrendChart data={totals} isLoading={isPending} />
+          <TrendsInsightPanel
+            gatePassed={gatePassed}
+            aiConfigured={aiConfigured}
+            insightQuery={insightQuery}
+          />
           <CategorySpendTable
-            data={byCategory}
-            monthCount={totals.length || WINDOW_MONTHS[selectedWindow]}
+            categoryCompare={categoryCompare}
+            monthCount={months}
             isLoading={isPending}
           />
         </div>

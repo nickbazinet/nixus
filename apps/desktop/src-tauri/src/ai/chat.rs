@@ -7,7 +7,7 @@ use tracing::{error, info};
 
 use crate::error::AppError;
 
-const MODEL_ID: &str = "us.anthropic.claude-sonnet-4-20250514-v1:0";
+const MODEL_ID: &str = "us.anthropic.claude-sonnet-5";
 
 #[derive(Clone, serde::Serialize)]
 struct ChatResponseChunk {

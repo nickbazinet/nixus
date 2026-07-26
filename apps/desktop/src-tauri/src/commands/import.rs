@@ -1,9 +1,13 @@
 use chrono::{Datelike, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info};
 
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+
+use base64::Engine;
 
 use crate::ai::cc_parser;
 use crate::ai::{AiProvider, AiState};
@@ -17,11 +21,71 @@ const MAX_FILE_SIZE: u64 = 20 * 1024 * 1024; // 20MB
 
 const ALLOWED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "pdf"];
 
+const CLIPBOARD_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
+
+static PASTE_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Serialize)]
 pub struct FileValidationResult {
     pub file_name: String,
     pub file_path: String,
     pub file_size: u64,
+}
+
+#[derive(Serialize)]
+pub struct ClipboardImageSaveResult {
+    pub file_path: String,
+}
+
+fn resolve_app_data_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
+    app.path().app_data_dir().map_err(|e| AppError::File {
+        message: format!("Failed to resolve app data dir: {}", e),
+    })
+}
+
+fn normalize_clipboard_extension(extension: &str) -> Result<String, AppError> {
+    let ext = extension.trim().trim_start_matches('.').to_lowercase();
+    if !CLIPBOARD_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(AppError::File {
+            message: "Only PNG and JPEG screenshots can be pasted".to_string(),
+        });
+    }
+    Ok(ext)
+}
+
+fn validate_clipboard_bytes(bytes: &[u8]) -> Result<(), AppError> {
+    if bytes.is_empty() {
+        return Err(AppError::File {
+            message: "Clipboard image is empty".to_string(),
+        });
+    }
+    if bytes.len() as u64 > MAX_FILE_SIZE {
+        return Err(AppError::File {
+            message: "File exceeds 20MB size limit".to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn cleanup_old_paste_files(imports_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(imports_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("paste-") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn decode_clipboard_base64(bytes_base64: &str) -> Result<Vec<u8>, AppError> {
+    base64::engine::general_purpose::STANDARD
+        .decode(bytes_base64.trim())
+        .map_err(|_| AppError::File {
+            message: "Invalid clipboard image data".to_string(),
+        })
 }
 
 #[derive(Clone, Serialize)]
@@ -88,6 +152,47 @@ pub fn validate_cc_file(file_path: String) -> Result<FileValidationResult, AppEr
         file_path,
         file_size: metadata.len(),
     })
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn save_import_clipboard_image(
+    app: AppHandle,
+    bytes_base64: String,
+    extension: String,
+) -> Result<ClipboardImageSaveResult, AppError> {
+    let ext = normalize_clipboard_extension(&extension)?;
+    let bytes = decode_clipboard_base64(&bytes_base64)?;
+    validate_clipboard_bytes(&bytes)?;
+
+    let app_data_dir = resolve_app_data_dir(&app)?;
+    let imports_dir = app_data_dir.join("imports");
+    std::fs::create_dir_all(&imports_dir).map_err(|e| AppError::File {
+        message: format!("Failed to create imports directory: {}", e),
+    })?;
+
+    cleanup_old_paste_files(&imports_dir);
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = PASTE_FILE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let file_path = imports_dir.join(format!("paste-{stamp}-{seq}.{ext}"));
+
+    std::fs::write(&file_path, &bytes).map_err(|e| AppError::File {
+        message: format!("Failed to write clipboard image: {}", e),
+    })?;
+
+    let file_path = file_path
+        .to_str()
+        .ok_or_else(|| AppError::File {
+            message: "Invalid clipboard image path".to_string(),
+        })?
+        .to_string();
+
+    info!("Saved clipboard import image to {}", file_path);
+
+    Ok(ClipboardImageSaveResult { file_path })
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -337,6 +442,34 @@ pub fn confirm_import(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_clipboard_extension_allows_png_jpg_jpeg() {
+        assert_eq!(normalize_clipboard_extension("PNG").unwrap(), "png");
+        assert_eq!(normalize_clipboard_extension(".jpg").unwrap(), "jpg");
+        assert_eq!(normalize_clipboard_extension("jpeg").unwrap(), "jpeg");
+    }
+
+    #[test]
+    fn normalize_clipboard_extension_rejects_pdf_and_unknown() {
+        assert!(normalize_clipboard_extension("pdf").is_err());
+        assert!(normalize_clipboard_extension("gif").is_err());
+    }
+
+    #[test]
+    fn validate_clipboard_bytes_rejects_empty_and_oversized() {
+        assert!(validate_clipboard_bytes(&[]).is_err());
+        let oversized = vec![0u8; (MAX_FILE_SIZE as usize) + 1];
+        assert!(validate_clipboard_bytes(&oversized).is_err());
+        assert!(validate_clipboard_bytes(&[1, 2, 3]).is_ok());
+    }
+
+    #[test]
+    fn decode_clipboard_base64_roundtrip() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3, 4]);
+        assert_eq!(decode_clipboard_base64(&encoded).unwrap(), vec![1, 2, 3, 4]);
+        assert!(decode_clipboard_base64("%%%").is_err());
+    }
 
     #[test]
     fn normalize_date_yyyy_mm_dd_passthrough() {

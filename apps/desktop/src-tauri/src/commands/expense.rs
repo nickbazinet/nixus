@@ -54,6 +54,15 @@ pub fn get_expenses(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn get_latest_expense(state: State<DbState>) -> Result<Option<Expense>, AppError> {
+    let conn = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    expense_db::get_latest_expense(&conn)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn update_expense(
     state: State<DbState>,
     id: i64,

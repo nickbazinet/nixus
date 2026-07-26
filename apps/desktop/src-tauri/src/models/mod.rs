@@ -273,9 +273,36 @@ pub struct MonthlySpendTotal {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryCompareRow {
+    pub category_id: i64,
+    pub category_name: String,
+    pub avg_cents: i64,
+    pub target_cents: Option<i64>,
+    pub delta_pct: Option<i32>,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendingTrendsData {
     pub by_category: Vec<MonthlySpendByCategory>,
     pub totals: Vec<MonthlySpendTotal>,
+    pub category_compare: Vec<CategoryCompareRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendsInsightRequest {
+    pub months: i32,
+    pub window_label: String,
+    pub locale: String,
+    pub categories: Vec<CategoryCompareRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendsInsightResponse {
+    pub headline: String,
+    pub body: String,
+    pub tone: String,
+    pub window_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

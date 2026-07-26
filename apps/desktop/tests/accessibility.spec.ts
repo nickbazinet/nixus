@@ -45,6 +45,8 @@ async function setupTauriMock(page: Page) {
             return Promise.resolve([{ category_id: 1, category_name: "Groceries", spent_cents: 35000 }]);
           case "get_expenses":
             return Promise.resolve([]);
+          case "get_latest_expense":
+            return Promise.resolve(null);
           case "get_all_budget_categories":
             return Promise.resolve(categories);
           case "get_net_worth_history":

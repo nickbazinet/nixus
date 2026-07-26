@@ -3982,6 +3982,7 @@ dependencies = [
  "async-openai",
  "aws-config",
  "aws-sdk-bedrockruntime",
+ "base64 0.22.1",
  "chrono",
  "keyring",
  "keyring-core",

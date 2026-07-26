@@ -6,6 +6,7 @@ export const queryKeys = {
     ["budget-status", year, month] as const,
   allBudgetCategories: ["all-budget-categories"] as const,
   expenses: ["expenses"] as const,
+  latestExpense: ["expenses", "latest"] as const,
   expensesByMonth: (year: number, month: number) =>
     ["expenses", year, month] as const,
   accounts: ["accounts"] as const,
@@ -34,6 +35,8 @@ export const queryKeys = {
     ["income-total", year, month] as const,
   spendingTrends: (months: number) =>
     ["spending-trends", months] as const,
+  trendsInsight: (months: number, locale: string) =>
+    ["trends-insight", months, locale] as const,
   yearlySummary: (year: number) => ["yearly-summary", year] as const,
   projectionInput: ["projection-input"] as const,
   recurringTemplates: ["recurring-templates"] as const,

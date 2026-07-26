@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::account::{self as account_db, BalanceChange, CashFlowKind};
 use crate::error::AppError;
@@ -412,6 +412,19 @@ pub fn get_expense_by_id(conn: &Connection, id: i64) -> Result<Expense, AppError
         params![id],
         row_to_expense,
     )
+    .map_err(AppError::from)
+}
+
+pub fn get_latest_expense(conn: &Connection) -> Result<Option<Expense>, AppError> {
+    conn.query_row(
+        "SELECT id, merchant, amount_cents, budget_category_id, account_id, date, source, created_at
+         FROM expenses
+         ORDER BY date DESC, id DESC
+         LIMIT 1",
+        [],
+        row_to_expense,
+    )
+    .optional()
     .map_err(AppError::from)
 }
 
