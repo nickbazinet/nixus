@@ -16,7 +16,7 @@ use tracing::info;
 use crate::error::AppError;
 use crate::models::{CategoryCompareRow, TrendsInsightRequest, TrendsInsightResponse};
 
-const BEDROCK_MODEL_ID: &str = "us.anthropic.claude-sonnet-5";
+const BEDROCK_MODEL_ID: &str = "us.anthropic.claude-sonnet-4-6";
 const OPENAI_MODEL_ID: &str = "gpt-4o";
 
 pub enum ProviderClient {
