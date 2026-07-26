@@ -118,6 +118,7 @@
   "budget.saveCategory": "Save Category",
   "budget.addCategory": "Add Category",
   "budget.deleteCategory": "Delete Category",
+  "budget.archivedCategory": "Archived",
   "budget.confirmDelete": "Are you sure you want to delete",
   "budget.cannotBeUndone": "This cannot be undone.",
   "budget.deleteGroupTitle": "Delete Group",

@@ -12,16 +12,12 @@ pub fn get_budget_summary(
     let month_str = format!("{:02}", month);
 
     let (total_target_cents, total_spent_cents): (i64, i64) = conn.query_row(
-        "SELECT COALESCE(SUM(bc.target_cents), 0),
-                COALESCE(SUM(e_agg.spent), 0)
-         FROM budget_categories bc
-         LEFT JOIN (
-             SELECT budget_category_id, SUM(amount_cents) AS spent
-             FROM expenses
-             WHERE strftime('%Y', date) = ?1
-               AND strftime('%m', date) = ?2
-             GROUP BY budget_category_id
-         ) e_agg ON e_agg.budget_category_id = bc.id",
+        "SELECT COALESCE((SELECT SUM(target_cents) FROM budget_categories WHERE deleted_at IS NULL), 0),
+                COALESCE((
+                    SELECT SUM(amount_cents) FROM expenses
+                    WHERE strftime('%Y', date) = ?1
+                      AND strftime('%m', date) = ?2
+                ), 0)",
         params![year_str, month_str],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
@@ -55,6 +51,7 @@ pub fn get_top_budget_categories(
                AND strftime('%m', date) = ?2
              GROUP BY budget_category_id
          ) e_agg ON e_agg.budget_category_id = bc.id
+         WHERE bc.deleted_at IS NULL OR COALESCE(e_agg.spent, 0) > 0
          ORDER BY spent_cents DESC
          LIMIT ?3",
     )?;

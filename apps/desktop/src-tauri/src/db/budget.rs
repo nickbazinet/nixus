@@ -81,7 +81,7 @@ pub fn create_budget_category(
     }
 
     let sort_order: i32 = conn.query_row(
-        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM budget_categories WHERE group_id = ?1",
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM budget_categories WHERE group_id = ?1 AND deleted_at IS NULL",
         params![input.group_id],
         |row| row.get(0),
     )?;
@@ -115,7 +115,7 @@ pub fn get_budget_categories_by_group(
     group_id: i64,
 ) -> Result<Vec<BudgetCategory>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE group_id = ?1 ORDER BY sort_order",
+        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE group_id = ?1 AND deleted_at IS NULL ORDER BY sort_order",
     )?;
 
     let categories = stmt
@@ -198,6 +198,18 @@ pub fn update_budget_category(
         }
     }
 
+    let is_active: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL)",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    if !is_active {
+        return Err(AppError::Database {
+            message: "Budget category not found".to_string(),
+        });
+    }
+
     if let Some(ref n) = name {
         conn.execute(
             "UPDATE budget_categories SET name = ?1 WHERE id = ?2",
@@ -230,29 +242,15 @@ pub fn update_budget_category(
 }
 
 pub fn delete_budget_category(conn: &Connection, id: i64) -> Result<(), AppError> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1)",
+    let is_active: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL)",
         params![id],
         |row| row.get(0),
     )?;
 
-    if !exists {
+    if !is_active {
         return Err(AppError::Database {
             message: "Budget category not found".to_string(),
-        });
-    }
-
-    let expense_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM expenses WHERE budget_category_id = ?1",
-        params![id],
-        |row| row.get(0),
-    )?;
-
-    if expense_count > 0 {
-        return Err(AppError::Validation {
-            message: "Cannot delete category with expenses. Delete or reassign them first."
-                .to_string(),
-            field: None,
         });
     }
 
@@ -276,7 +274,10 @@ pub fn delete_budget_category(conn: &Connection, id: i64) -> Result<(), AppError
         "DELETE FROM merchant_category_hints WHERE budget_category_id = ?1",
         params![id],
     )?;
-    let rows = tx.execute("DELETE FROM budget_categories WHERE id = ?1", params![id])?;
+    let rows = tx.execute(
+        "UPDATE budget_categories SET deleted_at = datetime('now') WHERE id = ?1 AND deleted_at IS NULL",
+        params![id],
+    )?;
     tx.commit()?;
 
     if rows == 0 {
@@ -290,7 +291,7 @@ pub fn delete_budget_category(conn: &Connection, id: i64) -> Result<(), AppError
 
 pub fn delete_budget_group(conn: &Connection, id: i64) -> Result<(), AppError> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM budget_categories WHERE group_id = ?1",
+        "SELECT COUNT(*) FROM budget_categories WHERE group_id = ?1 AND deleted_at IS NULL",
         params![id],
         |row| row.get(0),
     )?;
@@ -321,11 +322,19 @@ pub fn get_budget_status(
 
     let mut stmt = conn.prepare(
         "SELECT bc.id, bc.group_id, bc.name, bc.target_cents,
-                COALESCE(SUM(e.amount_cents), 0) AS spent_cents
+                COALESCE(SUM(e.amount_cents), 0) AS spent_cents,
+                CASE WHEN bc.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
          FROM budget_categories bc
          LEFT JOIN expenses e ON e.budget_category_id = bc.id
            AND strftime('%Y', e.date) = ?1
            AND strftime('%m', e.date) = ?2
+         WHERE bc.deleted_at IS NULL
+            OR EXISTS (
+                SELECT 1 FROM expenses ex
+                WHERE ex.budget_category_id = bc.id
+                  AND strftime('%Y', ex.date) = ?1
+                  AND strftime('%m', ex.date) = ?2
+            )
          GROUP BY bc.id
          ORDER BY bc.group_id, bc.sort_order",
     )?;
@@ -338,6 +347,7 @@ pub fn get_budget_status(
                 name: row.get(2)?,
                 target_cents: row.get(3)?,
                 spent_cents: row.get(4)?,
+                is_deleted: row.get::<_, i32>(5)? != 0,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -347,7 +357,7 @@ pub fn get_budget_status(
 
 pub fn get_all_budget_categories(conn: &Connection) -> Result<Vec<BudgetCategory>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories ORDER BY group_id, sort_order",
+        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE deleted_at IS NULL ORDER BY group_id, sort_order",
     )?;
 
     let categories = stmt
@@ -387,7 +397,8 @@ mod tests {
                 name TEXT NOT NULL,
                 target_cents INTEGER NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at TEXT
             );
             CREATE TABLE expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -427,17 +438,21 @@ mod tests {
     }
 
     #[test]
-    fn delete_budget_category_succeeds_when_unreferenced() {
+    fn delete_budget_category_soft_deletes_when_unreferenced() {
         let conn = budget_test_db();
         delete_budget_category(&conn, 1).unwrap();
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM budget_categories", [], |row| row.get(0))
+        let deleted_at: Option<String> = conn
+            .query_row(
+                "SELECT deleted_at FROM budget_categories WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
-        assert_eq!(count, 0);
+        assert!(deleted_at.is_some());
     }
 
     #[test]
-    fn delete_budget_category_blocked_when_expenses_exist() {
+    fn delete_budget_category_soft_deletes_when_expenses_exist() {
         let conn = budget_test_db();
         conn.execute(
             "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date)
@@ -446,13 +461,40 @@ mod tests {
         )
         .unwrap();
 
-        let err = delete_budget_category(&conn, 1).unwrap_err();
-        match err {
-            AppError::Validation { message, .. } => {
-                assert!(message.contains("expenses"));
-            }
-            other => panic!("expected validation error, got {other:?}"),
-        }
+        delete_budget_category(&conn, 1).unwrap();
+
+        let deleted_at: Option<String> = conn
+            .query_row(
+                "SELECT deleted_at FROM budget_categories WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(deleted_at.is_some());
+    }
+
+    #[test]
+    fn get_budget_status_includes_archived_category_only_in_months_with_spending() {
+        let conn = budget_test_db();
+        conn.execute(
+            "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date)
+             VALUES ('Store', 1500, 1, '2026-06-10')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE budget_categories SET deleted_at = datetime('now') WHERE id = 1",
+            [],
+        )
+        .unwrap();
+
+        let june_status = get_budget_status(&conn, 2026, 6).unwrap();
+        assert_eq!(june_status.len(), 1);
+        assert!(june_status[0].is_deleted);
+        assert_eq!(june_status[0].spent_cents, 1500);
+
+        let july_status = get_budget_status(&conn, 2026, 7).unwrap();
+        assert!(july_status.is_empty());
     }
 
     #[test]
@@ -487,8 +529,12 @@ mod tests {
 
         delete_budget_category(&conn, 1).unwrap();
 
-        let category_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM budget_categories", [], |row| row.get(0))
+        let deleted_at: Option<String> = conn
+            .query_row(
+                "SELECT deleted_at FROM budget_categories WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let hint_count: i64 = conn
             .query_row(
@@ -497,7 +543,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(category_count, 0);
+        assert!(deleted_at.is_some());
         assert_eq!(hint_count, 0);
     }
 }

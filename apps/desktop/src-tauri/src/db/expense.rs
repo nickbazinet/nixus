@@ -58,9 +58,9 @@ pub fn insert_expense_with_source_with_balance_changes(
 
     let tx = conn.unchecked_transaction()?;
 
-    // Verify budget_category_id exists
+    // Verify budget_category_id exists and is active
     let category_exists: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL)",
         params![input.budget_category_id],
         |row| row.get(0),
     )?;
@@ -158,9 +158,9 @@ pub fn update_expense(
     let tx = conn.unchecked_transaction()?;
     let old_expense = get_expense_by_id(&tx, id)?;
 
-    // Verify budget_category_id exists
+    // Verify budget_category_id exists and is active
     let category_exists: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1)",
+        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL)",
         params![input.budget_category_id],
         |row| row.get(0),
     )?;
@@ -240,7 +240,7 @@ pub fn bulk_insert_imported_expenses(
             });
         }
         let category_exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL)",
             params![category_id],
             |row| row.get(0),
         )?;
@@ -646,7 +646,8 @@ mod tests {
                 name TEXT NOT NULL,
                 target_cents INTEGER NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at TEXT
             );
             CREATE TABLE expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

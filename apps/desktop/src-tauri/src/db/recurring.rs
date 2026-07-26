@@ -337,7 +337,8 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
-                target_cents INTEGER NOT NULL DEFAULT 0
+                target_cents INTEGER NOT NULL DEFAULT 0,
+                deleted_at TEXT
             );
             CREATE TABLE recurring_expense_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

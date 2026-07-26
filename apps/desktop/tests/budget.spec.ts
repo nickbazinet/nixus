@@ -8,7 +8,6 @@ async function setupTauriMock(page: Page) {
   await page.addInitScript(() => {
     const groups: MockGroup[] = [];
     const categories: MockCategory[] = [];
-    const categoryExpenseCounts: Record<number, number> = {};
     let nextGroupId = 1;
     let nextCategoryId = 1;
 
@@ -156,13 +155,6 @@ async function setupTauriMock(page: Page) {
                 message: "Budget category not found",
               });
             }
-            if ((categoryExpenseCounts[delCatId] ?? 0) > 0) {
-              return Promise.reject({
-                type: "validation",
-                message:
-                  "Cannot delete category with expenses. Delete or reassign them first.",
-              });
-            }
             categories.splice(idx, 1);
             return Promise.resolve(null);
           }
@@ -197,6 +189,7 @@ async function setupTauriMock(page: Page) {
                 name: c.name,
                 target_cents: c.target_cents,
                 spent_cents: 0,
+                is_deleted: false,
               }))
             );
           }
@@ -216,12 +209,6 @@ async function setupTauriMock(page: Page) {
         }
       },
       convertFileSrc: (path: string) => path,
-    };
-
-    (window as unknown as Record<string, unknown>).__budgetTestHelpers = {
-      setCategoryExpenseCount(categoryId: number, count: number) {
-        categoryExpenseCounts[categoryId] = count;
-      },
     };
   });
 }
@@ -489,36 +476,6 @@ test.describe("Budget Page", () => {
 
     // Category row should be gone
     await expect(page.getByTestId("budget-category-row")).not.toBeVisible();
-  });
-
-  test("blocked category delete shows actionable error and keeps dialog open", async ({
-    page,
-  }) => {
-    await page.getByTestId("add-group-button").click();
-    await page.getByLabel("Group Name").fill("Essentials");
-    await page.getByRole("button", { name: "Save Group" }).click();
-
-    await page.getByTestId("add-category-button").click();
-    await page.getByLabel("Category Name").fill("Groceries");
-    await page.getByLabel("Monthly Target").fill("500");
-    await page.getByRole("button", { name: "Save Category" }).click();
-
-    await page.evaluate(() => {
-      const helpers = (window as unknown as Record<string, { setCategoryExpenseCount: (id: number, count: number) => void }>).__budgetTestHelpers;
-      helpers.setCategoryExpenseCount(1, 1);
-    });
-
-    await page.getByTestId("budget-category-row").hover();
-    await page.getByTestId("delete-category-button").click();
-    await page.getByTestId("confirm-delete-button").click();
-
-    await expect(
-      page.getByText(
-        "Cannot delete category with expenses. Delete or reassign them first."
-      )
-    ).toBeVisible({ timeout: 10000 });
-    await expect(page.getByTestId("delete-category-dialog")).toBeVisible();
-    await expect(page.getByTestId("budget-category-row")).toBeVisible();
   });
 
   test("budget page header shows current month and year", async ({ page }) => {

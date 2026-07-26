@@ -118,6 +118,7 @@
   "budget.saveCategory": "Enregistrer la catégorie",
   "budget.addCategory": "Ajouter une catégorie",
   "budget.deleteCategory": "Supprimer la catégorie",
+  "budget.archivedCategory": "Archivée",
   "budget.confirmDelete": "Voulez-vous vraiment supprimer",
   "budget.cannotBeUndone": "Cette action est irréversible.",
   "budget.deleteGroupTitle": "Supprimer le groupe",

@@ -37,6 +37,7 @@ pub struct BudgetCategoryStatus {
     pub name: String,
     pub target_cents: i64,
     pub spent_cents: i64,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@nixus/shared";
 import { Button } from "@nixus/shared";
+import { Badge } from "@nixus/shared";
 import { Input } from "@nixus/shared";
 import { Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
@@ -55,6 +56,17 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
   const updateCategory = useUpdateBudgetCategory();
   const deleteCategory = useDeleteBudgetCategory();
   const deleteGroup = useDeleteBudgetGroup();
+
+  const archivedStatuses = useMemo(() => {
+    if (!statusByCategory) return [];
+    const activeIds = new Set(categories.map((cat) => cat.id));
+    return Array.from(statusByCategory.values()).filter(
+      (status) =>
+        status.group_id === group.id &&
+        status.is_deleted &&
+        !activeIds.has(status.id)
+    );
+  }, [statusByCategory, categories, group.id]);
 
   const {
     register,
@@ -225,7 +237,7 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
         </CardHeader>
         {!collapsed && (
         <CardContent className="space-y-3">
-          {categories.length > 0 && (
+          {(categories.length > 0 || archivedStatuses.length > 0) && (
             <div>
               {categories.map((cat, index) => {
                 const status = statusByCategory?.get(cat.id);
@@ -283,6 +295,25 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
                   </div>
                 );
               })}
+              {archivedStatuses.map((status) => (
+                <div key={status.id} data-testid="archived-budget-category-row">
+                  <div className="flex items-center justify-between py-1.5 px-2 rounded-md bg-muted/20">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">{status.name}</span>
+                      <Badge variant="outline" className="text-xs" data-testid="archived-category-badge">
+                        {t("budget.archivedCategory")}
+                      </Badge>
+                    </div>
+                    <span className="font-mono text-sm text-muted-foreground" data-testid="category-target">
+                      {formatCurrency(status.target_cents)}
+                    </span>
+                  </div>
+                  <BudgetCategoryRow
+                    category={status}
+                    expenses={expensesByCategory?.[status.id]}
+                  />
+                </div>
+              ))}
             </div>
           )}
 

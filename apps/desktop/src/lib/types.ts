@@ -20,6 +20,7 @@ export interface BudgetCategoryStatus {
   name: string;
   target_cents: number;
   spent_cents: number;
+  is_deleted: boolean;
 }
 
 export interface Expense {

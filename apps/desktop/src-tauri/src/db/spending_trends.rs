@@ -62,7 +62,7 @@ pub fn get_monthly_spend_totals(
 
 pub fn get_category_targets(conn: &Connection) -> Result<HashMap<i64, i64>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, target_cents FROM budget_categories",
+        "SELECT id, target_cents FROM budget_categories WHERE deleted_at IS NULL",
     )?;
 
     let rows = stmt
