@@ -518,6 +518,7 @@
   "chat.quickPlaceholder": "Ask anything...",
   "chat.openFullChat": "Open in full chat →",
   "chat.searching": "Searching your expenses...",
+  "chat.thinking": "Assistant is thinking",
   "chat.conversationNotFound": "This conversation doesn't exist",
   "chat.startNew": "Start a new chat",
   "chat.newChat": "+ New Chat",

@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 
 const remarkPlugins = [remarkGfm];
 
+const THINKING_DOT_DELAYS = ["-0.3s", "-0.15s", ""];
+
 export interface ActionPayload {
   action: true;
   action_type: string;
@@ -52,6 +54,7 @@ export function ChatMessageBubble({
   const { t } = useTranslation();
   const isUser = role === "user";
   const isToolSearching = !isUser && content === "tool-searching";
+  const isThinking = !isUser && !isToolSearching && isStreaming && content === "";
   const hasToolCall = !isUser && !isToolSearching && /```tool_call[\s\S]*?```/.test(content);
   const actionPayload = useMemo(
     () => (!isUser && !isToolSearching && !hasToolCall ? parseActionFromContent(content) : null),
@@ -73,8 +76,27 @@ export function ChatMessageBubble({
       >
         {isUser ? (
           content
+        ) : isThinking ? (
+          <div
+            className="flex items-center gap-1 py-0.5"
+            role="status"
+            aria-label={t("chat.thinking")}
+            data-testid="thinking-indicator"
+          >
+            {THINKING_DOT_DELAYS.map((delay) => (
+              <span
+                key={delay}
+                className="h-1.5 w-1.5 animate-bounce rounded-full bg-current opacity-60"
+                style={delay ? { animationDelay: delay } : undefined}
+              />
+            ))}
+          </div>
         ) : isToolSearching || hasToolCall ? (
-          <div className="flex items-center gap-2" data-testid="tool-searching-indicator">
+          <div
+            className="flex items-center gap-2"
+            role="status"
+            data-testid="tool-searching-indicator"
+          >
             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
             <span>{t("chat.searching")}</span>
           </div>

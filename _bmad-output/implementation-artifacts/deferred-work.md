@@ -63,3 +63,19 @@ Comments in `apps/web/src/features/download/DownloadStateContext.tsx` and `apps/
 
 The projection page treats credit card debt at 0% growth (static balance). In reality, unpaid credit card debt accrues ~20% interest. Consider adding a configurable rate for credit card debt in Goal 2 scenarios.
 
+## fr.json: duplicate `expenses.merchant` key
+
+`apps/desktop/src/locales/fr.json` defines `"expenses.merchant"` twice (lines ~372 and ~374), silently shadowing one value. Pre-existing, unrelated to any current feature — remove the duplicate.
+
+## Chat: assistant "busy" state is encoded via magic content strings
+
+`ChatMessageBubble.tsx` infers UI state from sentinel content values (`content === ""` for "thinking", `content === "tool-searching"` for tool execution) instead of an explicit status enum from `useChat`. Real assistant text could theoretically collide with these sentinels, and the state machine is implicit. Consider adding an explicit `status: "idle" | "thinking" | "tool-executing" | "streaming"` field to `useChat`'s message/hook state.
+
+## Chat: no component test coverage for ChatMessageBubble
+
+There are no tests for `ChatMessageBubble.tsx` (thinking indicator, tool-searching indicator, action confirmation card, markdown rendering). Bootstrapping component tests for this file is a larger lift than any single chat UI tweak — track separately.
+
+## Chat: bouncing/spinning indicators ignore `prefers-reduced-motion`
+
+Both the "thinking" dots and the "tool-searching" spinner in `ChatMessageBubble.tsx` animate unconditionally. Users with a reduced-motion preference still see the animation. Systemic accessibility gap, not introduced by any single change — consider a `motion-reduce:animate-none` (or equivalent) treatment across all chat indicators.
+
