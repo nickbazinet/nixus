@@ -138,9 +138,9 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
           toast.success("Category deleted");
           setDeleteTarget(null);
         },
-        onError: () => {
-          toast.error("Failed to delete category");
-          setDeleteTarget(null);
+        onError: (err) => {
+          const error = err as { message?: string };
+          toast.error(error.message ?? "Failed to delete category");
         },
       }
     );
