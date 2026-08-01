@@ -334,7 +334,7 @@ pub fn search_expenses(
     };
     sql.push_str(&format!(" ORDER BY {}", sort_order));
 
-    let limit = filters.limit.unwrap_or(50).max(1).min(100);
+    let limit = filters.limit.unwrap_or(50).clamp(1, 100);
     sql.push_str(&format!(" LIMIT {}", limit));
 
     let mut stmt = conn.prepare(&sql)?;

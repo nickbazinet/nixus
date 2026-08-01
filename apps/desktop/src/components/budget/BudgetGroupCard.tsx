@@ -5,11 +5,10 @@ import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@nixus/shared";
 import { Button } from "@nixus/shared";
-import { Badge } from "@nixus/shared";
 import { Input } from "@nixus/shared";
 import { Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
-import { InlineEditText, InlineEditMoney } from "@/components/shared/InlineEdit";
+import { InlineEditText } from "@/components/shared/InlineEdit";
 import {
   Dialog,
   DialogContent,
@@ -240,77 +239,32 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
           {(categories.length > 0 || archivedStatuses.length > 0) && (
             <div>
               {categories.map((cat, index) => {
-                const status = statusByCategory?.get(cat.id);
+                const status: BudgetCategoryStatus = statusByCategory?.get(cat.id) ?? {
+                  id: cat.id,
+                  group_id: cat.group_id,
+                  name: cat.name,
+                  target_cents: cat.target_cents,
+                  spent_cents: 0,
+                  is_deleted: false,
+                };
                 return (
-                  <div key={cat.id}>
-                    <div
-                      className={`group flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-muted/50 ${
-                        index % 2 === 0 ? "bg-muted/30" : ""
-                      }`}
-                      data-testid="budget-category-row"
-                    >
-                      <InlineEditText
-                        value={cat.name}
-                        onSave={(name) => handleUpdateCategoryName(cat, name)}
-                        className="text-sm text-foreground"
-                        data-testid="category-name"
-                      />
-                      <div className="flex items-center gap-2">
-                        {status && status.target_cents > 0 && (() => {
-                          const ratio = status.spent_cents / status.target_cents;
-                          const progressPercent = Math.min(ratio * 100, 100);
-                          const barColor = ratio > 1.0 ? "bg-rose-500" : ratio >= 0.75 ? "bg-amber-500" : "bg-primary";
-                          return (
-                            <div className="w-20 h-1.5 rounded-full bg-muted shrink-0">
-                              <div
-                                className={`h-full rounded-full transition-all ${barColor}`}
-                                style={{ width: `${progressPercent}%` }}
-                              />
-                            </div>
-                          );
-                        })()}
-                        <InlineEditMoney
-                          value={cat.target_cents}
-                          onSave={(cents) => handleUpdateCategoryTarget(cat, cents)}
-                          data-testid="category-target"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => setDeleteTarget(cat)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity"
-                          data-testid="delete-category-button"
-                          aria-label={t("budget.deleteCategory")}
-                        >
-                          <Trash2 className="size-3.5 text-muted-foreground" />
-                        </Button>
-                      </div>
-                    </div>
-                    {status && (
-                      <BudgetCategoryRow
-                        category={status}
-                        expenses={expensesByCategory?.[cat.id]}
-                      />
-                    )}
-                  </div>
+                  <BudgetCategoryRow
+                    key={cat.id}
+                    category={status}
+                    expenses={expensesByCategory?.[cat.id]}
+                    striped={index % 2 === 0}
+                    onRename={(name) => handleUpdateCategoryName(cat, name)}
+                    onUpdateTarget={(cents) => handleUpdateCategoryTarget(cat, cents)}
+                    onDelete={() => setDeleteTarget(cat)}
+                  />
                 );
               })}
               {archivedStatuses.map((status) => (
                 <div key={status.id} data-testid="archived-budget-category-row">
-                  <div className="flex items-center justify-between py-1.5 px-2 rounded-md bg-muted/20">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">{status.name}</span>
-                      <Badge variant="outline" className="text-xs" data-testid="archived-category-badge">
-                        {t("budget.archivedCategory")}
-                      </Badge>
-                    </div>
-                    <span className="font-mono text-sm text-muted-foreground" data-testid="category-target">
-                      {formatCurrency(status.target_cents)}
-                    </span>
-                  </div>
                   <BudgetCategoryRow
                     category={status}
                     expenses={expensesByCategory?.[status.id]}
+                    archived
                   />
                 </div>
               ))}

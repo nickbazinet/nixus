@@ -10,6 +10,7 @@ import { AddRecurringTemplateForm } from "@/components/expenses/AddRecurringTemp
 import { RecurringTemplateList } from "@/components/expenses/RecurringTemplateList";
 import { useRecurringTemplates } from "@/hooks/useRecurringExpenses";
 import { useAllBudgetCategories } from "@/hooks/useExpenses";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 
 export const Route = createFileRoute("/recurring-expenses")({
   component: RecurringExpensesPage,
@@ -20,6 +21,13 @@ function RecurringExpensesPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const { data: templates = [], isLoading } = useRecurringTemplates();
   const { data: categories = [] } = useAllBudgetCategories();
+  const formatCurrency = useFormatCurrency();
+
+  const activeTemplates = templates.filter((template) => template.is_active);
+  const committedCents = activeTemplates.reduce(
+    (sum, template) => sum + template.amount_cents,
+    0
+  );
 
   return (
     <div>
@@ -27,14 +35,27 @@ function RecurringExpensesPage() {
         title={t("recurring.title")}
         subtitle={t("recurring.subtitle")}
         actions={
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setShowAddForm(true)}
-          >
-            <Plus className="h-4 w-4 mr-1" />
-            {t("recurring.addTemplate")}
-          </Button>
+          <>
+            {activeTemplates.length > 0 && (
+              <p
+                className="mr-2 font-mono text-sm text-foreground"
+                data-testid="recurring-committed-total"
+              >
+                {t("recurring.committedEachMonth", {
+                  amount: formatCurrency(committedCents),
+                  count: activeTemplates.length,
+                })}
+              </p>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowAddForm(true)}
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              {t("recurring.addTemplate")}
+            </Button>
+          </>
         }
       />
 

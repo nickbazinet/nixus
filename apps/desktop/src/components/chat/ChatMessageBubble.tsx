@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import type { Components } from "react-markdown";
+import type { Components, Options } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 
-const remarkPlugins = [remarkGfm];
+// remark-gfm defaults singleTilde to true, which renders "~$430" (approximately
+// $430) as struck-through — the assistant appears to cross out dollar figures.
+const remarkPlugins: Options["remarkPlugins"] = [[remarkGfm, { singleTilde: false }]];
 
 const THINKING_DOT_DELAYS = ["-0.3s", "-0.15s", ""];
 

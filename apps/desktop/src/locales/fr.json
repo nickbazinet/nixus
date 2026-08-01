@@ -94,6 +94,10 @@
   "dashboard.over": "Dépassé",
   "dashboard.warning": "Attention",
   "dashboard.onTrack": "En bonne voie",
+  "dashboard.setupIncompleteTitle": "Terminer la configuration",
+  "dashboard.setupIncompleteBody": "Vous avez passé la configuration, donc aucune donnée budgétaire n'est enregistrée. Ajoutez un budget pour afficher les chiffres de votre tableau de bord.",
+  "dashboard.setupIncompleteCta": "Reprendre la configuration",
+  "dashboard.setupIncompleteDismiss": "Ignorer",
 
   "budget.addGroup": "Ajouter un groupe",
   "budget.noGroups": "Aucun groupe de budget. Cliquez sur « Ajouter un groupe » pour commencer.",
@@ -108,6 +112,8 @@
   "budget.remaining": "Restant",
   "budget.expandGroup": "Développer le groupe",
   "budget.collapseGroup": "Réduire le groupe",
+  "budget.expandCategory": "Développer la catégorie",
+  "budget.collapseCategory": "Réduire la catégorie",
   "budget.deleteGroup": "Supprimer le groupe",
   "budget.removeAllCategoriesFirst": "Supprimez d'abord toutes les catégories",
   "budget.categoryName": "Nom de la catégorie",
@@ -513,6 +519,8 @@
   "import.transactionsAutoCategorized": "transactions catégorisées automatiquement",
   "import.possibleDuplicate": "Doublon possible",
   "import.select": "Sélectionner...",
+  "import.duplicatesUncheckedNotice": "{{count}} doublons probables trouvés — décochés. Passez-les en revue si vous les voulez.",
+  "import.duplicatesUncheckedNotice_one": "{{count}} doublon probable trouvé — décoché. Passez-le en revue si vous le voulez.",
 
   "chat.title": "Clavardage IA",
   "chat.description": "Posez-moi n'importe quelle question sur vos finances.",
@@ -551,6 +559,7 @@
   "onboarding.importDescription": "Vous pouvez importer des relevés de carte de crédit pour ajouter automatiquement des dépenses. Cette étape est facultative — vous pouvez toujours importer plus tard depuis la page Importation.",
   "onboarding.importReady": "Prêt à importer? Vous pouvez utiliser la page Importation après la configuration pour téléverser vos relevés de carte de crédit.",
   "onboarding.goToImportPage": "Aller à la page Importation",
+  "onboarding.skipForNow": "Passer pour l'instant",
 
   "validation.required": "Ce champ est requis",
   "validation.nameRequired": "Le nom est requis",
@@ -596,6 +605,8 @@
   "recurring.applyFailed": "Échec de l'application des dépenses récurrentes",
   "recurring.activate": "Activer le modèle",
   "recurring.deactivate": "Désactiver le modèle",
+  "recurring.committedEachMonth": "{{amount}} engagés chaque mois pour {{count}} modèles actifs",
+  "recurring.committedEachMonth_one": "{{amount}} engagé chaque mois pour {{count}} modèle actif",
 
   "financialHealth.card.title": "Santé financière",
   "financialHealth.card.viewDetails": "Voir les détails →",
@@ -676,5 +687,21 @@
   "settings.notConfigured": "L'IA n'est pas encore configurée.",
   "settings.credentialsCleared": "Identifiants supprimés.",
   "settings.notConfiguredPrompt": "IA non configurée",
-  "settings.openSettings": "Ouvrir les paramètres"
+  "settings.openSettings": "Ouvrir les paramètres",
+  "settings.dangerZone": "Zone de danger",
+  "settings.dangerZoneDescription": "Supprimer définitivement tout ce que vous avez enregistré dans Nixus. Cette action est irréversible.",
+  "settings.dangerZoneDeletedTitle": "Ceci supprime :",
+  "settings.dangerZoneDeletedList": "Budgets et catégories, dépenses, modèles récurrents, comptes, actifs passifs, historique de valeur nette, revenus, véhicules et historique d'entretien, conversations avec l'IA, et le journal d'audit.",
+  "settings.dangerZoneKeptTitle": "Ceci est conservé :",
+  "settings.dangerZoneKeptList": "Vos préférences d'application et vos identifiants de fournisseur IA. Utilisez Supprimer les identifiants ci-dessus pour les retirer.",
+  "settings.dangerZoneExportBackup": "Exporter une sauvegarde d'abord",
+  "settings.dangerZoneExporting": "Exportation...",
+  "settings.dangerZoneDeleteAll": "Supprimer toutes les données",
+  "settings.dangerZoneDialogTitle": "Supprimer toutes les données ?",
+  "settings.dangerZoneDialogDescription": "Chaque budget, dépense, compte, actif, entrée de valeur nette, revenu, véhicule, entretien, conversation et entrée d'audit sera définitivement supprimé. Nixus redémarrera avec une base de données vide.",
+  "settings.dangerZoneConfirmWord": "SUPPRIMER",
+  "settings.dangerZoneTypeToConfirm": "Tapez {{word}} pour confirmer",
+  "settings.dangerZoneConfirmDelete": "Tout supprimer",
+  "settings.dangerZoneDeleting": "Suppression...",
+  "settings.dangerZoneRestartFailed": "Vos données ont été supprimées. Veuillez fermer et réouvrir Nixus pour terminer."
 }

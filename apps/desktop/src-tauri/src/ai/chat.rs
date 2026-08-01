@@ -21,6 +21,8 @@ pub struct ToolCallRequest {
     pub params: serde_json::Value,
 }
 
+// Single-arm match is the extension point for additional agent prompts.
+#[allow(clippy::match_single_binding)]
 pub fn build_system_prompt(agent_id: &str, today: &str, context: &str) -> String {
     match agent_id {
         _ => build_budget_helper_prompt(today, context),

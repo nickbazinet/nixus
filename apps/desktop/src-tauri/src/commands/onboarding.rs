@@ -1,27 +1,36 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::db::onboarding as onboarding_db;
 use crate::db::DbState;
 use crate::error::AppError;
 
 #[derive(Serialize)]
 pub struct OnboardingStatus {
     pub needs_onboarding: bool,
+    pub setup_incomplete: bool,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn check_onboarding_status(state: State<DbState>) -> Result<OnboardingStatus, AppError> {
     let conn = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
 
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM budget_groups",
-        [],
-        |row| row.get(0),
-    )?;
+    let has_data = onboarding_db::has_budget_data(&conn)?;
+    let completed = onboarding_db::is_completed(&conn);
 
     Ok(OnboardingStatus {
-        needs_onboarding: count == 0,
+        needs_onboarding: !has_data && !completed,
+        setup_incomplete: completed && !has_data,
     })
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn complete_onboarding(state: State<DbState>) -> Result<(), AppError> {
+    let conn = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    onboarding_db::set_completed(&conn)
 }

@@ -2,7 +2,9 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { Check } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@nixus/shared";
+import { useCompleteOnboarding } from "@/hooks/useOnboardingStatus";
 import { OnboardingBudgetStep } from "./OnboardingBudgetStep";
 import { OnboardingAccountsStep } from "./OnboardingAccountsStep";
 import { OnboardingAssetsStep } from "./OnboardingAssetsStep";
@@ -21,6 +23,7 @@ export function OnboardingWizard() {
   const { t } = useTranslation();
   const [currentStep, setCurrentStep] = useState(0);
   const navigate = useNavigate();
+  const completeOnboarding = useCompleteOnboarding();
 
   const handleNext = () => {
     if (currentStep < STEPS.length - 1) {
@@ -40,8 +43,18 @@ export function OnboardingWizard() {
     handleNext();
   };
 
-  const handleFinish = () => {
+  const exitToDashboard = async () => {
+    try {
+      await completeOnboarding.mutateAsync();
+    } catch {
+      toast.error(t("toast.saveFailed"));
+      return;
+    }
     navigate({ to: "/" });
+  };
+
+  const handleExit = () => {
+    void exitToDashboard();
   };
 
   return (
@@ -112,12 +125,21 @@ export function OnboardingWizard() {
 
       {/* Navigation Buttons */}
       <div className="flex justify-between mt-8" data-testid="step-navigation">
-        <div>
+        <div className="flex gap-2">
           {currentStep > 0 && (
             <Button variant="ghost" onClick={handleBack} data-testid="back-button">
               {t("common.back")}
             </Button>
           )}
+          <Button
+            variant="ghost"
+            onClick={handleExit}
+            disabled={completeOnboarding.isPending}
+            className="text-muted-foreground"
+            data-testid="skip-onboarding-button"
+          >
+            {t("onboarding.skipForNow")}
+          </Button>
         </div>
         <div className="flex gap-2">
           {currentStep > 0 && currentStep < STEPS.length - 1 && (
@@ -130,7 +152,11 @@ export function OnboardingWizard() {
               {t("common.next")}
             </Button>
           ) : (
-            <Button onClick={handleFinish} data-testid="finish-button">
+            <Button
+              onClick={handleExit}
+              disabled={completeOnboarding.isPending}
+              data-testid="finish-button"
+            >
               {t("common.finish")}
             </Button>
           )}

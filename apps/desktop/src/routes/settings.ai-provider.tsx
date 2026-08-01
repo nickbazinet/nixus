@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "../components/shared/PageHeader";
 import { CredentialsForm } from "../components/settings/CredentialsForm";
+import { DangerZone } from "../components/settings/DangerZone";
 
 export const Route = createFileRoute("/settings/ai-provider")({
   component: AiProviderSettingsPage,
@@ -22,6 +23,9 @@ function AiProviderSettingsPage() {
           </p>
           <CredentialsForm />
         </div>
+      </div>
+      <div className="mx-auto mt-6 max-w-2xl">
+        <DangerZone />
       </div>
     </div>
   );

@@ -135,14 +135,18 @@ export function InlineEditMoney({
 
   if (editing) {
     return (
-      <div onKeyDown={handleKeyDown} data-testid={testId ? `${testId}-input` : undefined}>
+      <span
+        onKeyDown={handleKeyDown}
+        className="inline-flex align-middle"
+        data-testid={testId ? `${testId}-input` : undefined}
+      >
         <MoneyInput
           value={draft}
           onChange={setDraft}
           onBlur={handleSave}
           className="h-7 w-28 text-sm"
         />
-      </div>
+      </span>
     );
   }
 

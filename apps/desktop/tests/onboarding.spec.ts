@@ -4,11 +4,15 @@ import { test, expect, type Page } from "@playwright/test";
  * Sets up Tauri IPC mocks for the onboarding wizard tests.
  * Starts with empty state (needs_onboarding: true) by default.
  */
-async function setupTauriMock(page: Page, options?: { hasData?: boolean }) {
+async function setupTauriMock(
+  page: Page,
+  options?: { hasData?: boolean; completed?: boolean }
+) {
   const hasData = options?.hasData ?? false;
+  const completed = options?.completed ?? false;
 
   await page.addInitScript(
-    ({ hasData }) => {
+    ({ hasData, completed }) => {
       interface MockGroup {
         id: number;
         name: string;
@@ -52,12 +56,22 @@ async function setupTauriMock(page: Page, options?: { hasData?: boolean }) {
       let nextCategoryId = 1;
       let nextAccountId = 1;
       let nextAssetId = 1;
+      let onboardingCompleted = completed;
 
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string, args: Record<string, unknown>) => {
           switch (cmd) {
-            case "check_onboarding_status":
-              return Promise.resolve({ needs_onboarding: groups.length === 0 });
+            case "check_onboarding_status": {
+              const hasBudgetData = groups.length > 0;
+              return Promise.resolve({
+                needs_onboarding: !hasBudgetData && !onboardingCompleted,
+                setup_incomplete: onboardingCompleted && !hasBudgetData,
+              });
+            }
+
+            case "complete_onboarding":
+              onboardingCompleted = true;
+              return Promise.resolve(null);
 
             case "get_budget_groups":
               return Promise.resolve(groups);
@@ -171,7 +185,7 @@ async function setupTauriMock(page: Page, options?: { hasData?: boolean }) {
         convertFileSrc: (path: string) => path,
       };
     },
-    { hasData }
+    { hasData, completed }
   );
 }
 
@@ -299,5 +313,57 @@ test.describe("Onboarding Wizard", () => {
     // Should stay on dashboard, not redirect to onboarding
     await expect(page.locator("h1")).toHaveText("Dashboard");
     await expect(page.getByTestId("onboarding-wizard")).not.toBeVisible();
+  });
+
+  test("Skip for now on Step 1 with no data lands on the dashboard and stays there", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    await expect(page.getByTestId("onboarding-budget-step")).toBeVisible();
+    await expect(page.getByTestId("skip-onboarding-button")).toBeVisible();
+    await page.getByTestId("skip-onboarding-button").click();
+
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByTestId("onboarding-wizard")).not.toBeVisible();
+
+    // The redirect effect re-runs on every status refetch — confirm no bounce back
+    await expect(page.getByTestId("setup-incomplete-banner")).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test("relaunch after skipping with no data shows the setup-incomplete banner", async ({ page }) => {
+    await setupTauriMock(page, { hasData: false, completed: true });
+    await page.goto("/");
+
+    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByTestId("onboarding-wizard")).not.toBeVisible();
+
+    const banner = page.getByTestId("setup-incomplete-banner");
+    await expect(banner).toBeVisible();
+    await expect(banner.getByTestId("setup-incomplete-cta")).toHaveAttribute("href", "/onboarding");
+    await expect(page.getByTestId("empty-budget")).toBeVisible();
+    await expect(page.getByTestId("empty-net-worth")).toBeVisible();
+  });
+
+  test("with budget data present the setup-incomplete banner is absent", async ({ page }) => {
+    await setupTauriMock(page, { hasData: true, completed: true });
+    await page.goto("/");
+
+    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByTestId("setup-incomplete-banner")).not.toBeVisible();
+  });
+
+  test("dismissing the setup-incomplete banner keeps it hidden on revisit", async ({ page }) => {
+    await setupTauriMock(page, { hasData: false, completed: true });
+    await page.goto("/");
+
+    await page.getByTestId("setup-incomplete-dismiss").click();
+    await expect(page.getByTestId("setup-incomplete-banner")).not.toBeVisible();
+
+    await page.reload();
+    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByTestId("setup-incomplete-banner")).not.toBeVisible();
+    await expect(page.getByTestId("empty-budget")).toBeVisible();
   });
 });

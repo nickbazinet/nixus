@@ -3,6 +3,7 @@ pub mod asset;
 pub mod backup;
 pub mod budget;
 pub mod chat;
+pub mod danger_zone;
 pub mod dashboard;
 pub mod expense;
 pub mod financial_health;

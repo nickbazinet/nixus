@@ -94,6 +94,10 @@
   "dashboard.over": "Over",
   "dashboard.warning": "Warning",
   "dashboard.onTrack": "On track",
+  "dashboard.setupIncompleteTitle": "Finish setting up",
+  "dashboard.setupIncompleteBody": "You skipped setup, so there's no budget data yet. Add a budget to unlock your dashboard numbers.",
+  "dashboard.setupIncompleteCta": "Resume setup",
+  "dashboard.setupIncompleteDismiss": "Dismiss",
 
   "budget.addGroup": "Add Group",
   "budget.noGroups": "No budget groups yet. Click \"Add Group\" to get started.",
@@ -108,6 +112,8 @@
   "budget.remaining": "Remaining",
   "budget.expandGroup": "Expand group",
   "budget.collapseGroup": "Collapse group",
+  "budget.expandCategory": "Expand category",
+  "budget.collapseCategory": "Collapse category",
   "budget.deleteGroup": "Delete group",
   "budget.removeAllCategoriesFirst": "Remove all categories first",
   "budget.categoryName": "Category Name",
@@ -511,6 +517,8 @@
   "import.transactionsAutoCategorized": "transactions auto-categorized",
   "import.possibleDuplicate": "Possible duplicate",
   "import.select": "Select...",
+  "import.duplicatesUncheckedNotice": "{{count}} likely duplicates found — unchecked. Review if you want them.",
+  "import.duplicatesUncheckedNotice_one": "{{count}} likely duplicate found — unchecked. Review if you want it.",
 
   "chat.title": "AI Chat",
   "chat.description": "Ask me anything about your finances.",
@@ -549,6 +557,7 @@
   "onboarding.importDescription": "You can import credit card statements to automatically add expenses. This step is optional — you can always import later from the Import page.",
   "onboarding.importReady": "Ready to import? You can use the Import page after setup to upload your CC statements.",
   "onboarding.goToImportPage": "Go to Import Page",
+  "onboarding.skipForNow": "Skip for now",
 
   "validation.required": "This field is required",
   "validation.nameRequired": "Name is required",
@@ -594,6 +603,8 @@
   "recurring.applyFailed": "Failed to apply recurring expenses",
   "recurring.activate": "Activate template",
   "recurring.deactivate": "Deactivate template",
+  "recurring.committedEachMonth": "{{amount}} committed each month across {{count}} active templates",
+  "recurring.committedEachMonth_one": "{{amount}} committed each month across {{count}} active template",
 
   "financialHealth.card.title": "Financial Health",
   "financialHealth.card.viewDetails": "View details →",
@@ -674,5 +685,21 @@
   "settings.notConfigured": "AI is not configured yet.",
   "settings.credentialsCleared": "Credentials cleared.",
   "settings.notConfiguredPrompt": "AI not configured",
-  "settings.openSettings": "Open Settings"
+  "settings.openSettings": "Open Settings",
+  "settings.dangerZone": "Danger Zone",
+  "settings.dangerZoneDescription": "Permanently delete everything you have recorded in Nixus. This cannot be undone.",
+  "settings.dangerZoneDeletedTitle": "This deletes:",
+  "settings.dangerZoneDeletedList": "Budgets and categories, expenses, recurring templates, accounts, passive assets, net worth history, income, vehicles and maintenance history, AI chat conversations, and the audit log.",
+  "settings.dangerZoneKeptTitle": "This keeps:",
+  "settings.dangerZoneKeptList": "Your app preferences and stored AI provider credentials. Use Clear Credentials above to remove those.",
+  "settings.dangerZoneExportBackup": "Export a backup first",
+  "settings.dangerZoneExporting": "Exporting...",
+  "settings.dangerZoneDeleteAll": "Delete all data",
+  "settings.dangerZoneDialogTitle": "Delete all data?",
+  "settings.dangerZoneDialogDescription": "Every budget, expense, account, asset, net worth entry, income record, vehicle, maintenance log, chat conversation and audit entry will be permanently deleted. Nixus will restart with an empty database.",
+  "settings.dangerZoneConfirmWord": "DELETE",
+  "settings.dangerZoneTypeToConfirm": "Type {{word}} to confirm",
+  "settings.dangerZoneConfirmDelete": "Delete everything",
+  "settings.dangerZoneDeleting": "Deleting...",
+  "settings.dangerZoneRestartFailed": "Your data was deleted. Please close and reopen Nixus to finish."
 }

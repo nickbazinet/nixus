@@ -1,5 +1,5 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Button } from "@nixus/shared";
@@ -10,7 +10,7 @@ import { DashboardBudgetCategoryRow } from "@/components/dashboard/BudgetCategor
 import { NetWorthSparkline } from "@/components/dashboard/NetWorthSparkline";
 import { useBudgetSummary, useTopBudgetCategories, useSpendingBreakdown } from "@/hooks/useDashboard";
 import { useCurrentNetWorth, useRecentNetWorthSnapshots } from "@/hooks/useNetWorth";
-import { useOnboardingStatus } from "@/hooks/useOnboardingStatus";
+import { fetchOnboardingStatus, useOnboardingStatus } from "@/hooks/useOnboardingStatus";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { CashFlowSummaryCard } from "@/components/dashboard/CashFlowSummaryCard";
 import { FinancialHealthCard } from "@/components/dashboard/FinancialHealthCard";
@@ -19,22 +19,24 @@ import { useIncomeTotal } from "@/hooks/useIncome";
 import { useYearlySummary } from "@/hooks/useYearlySummary";
 import { MonthNavigator } from "@/components/budget/MonthNavigator";
 import { LastExpenseLine } from "@/components/dashboard/LastExpenseLine";
+import { SetupIncompleteBanner } from "@/components/dashboard/SetupIncompleteBanner";
 
 export const Route = createFileRoute("/")({
+  beforeLoad: async () => {
+    // A failed status check must not block the dashboard, so it degrades to "no
+    // redirect" rather than propagating into the route error boundary.
+    const status = await fetchOnboardingStatus().catch(() => null);
+    if (status?.needs_onboarding) {
+      throw redirect({ to: "/onboarding" });
+    }
+  },
   component: IndexPage,
 });
 
 function IndexPage() {
   const { t } = useTranslation();
   const formatCurrency = useFormatCurrency();
-  const navigate = useNavigate();
   const onboarding = useOnboardingStatus();
-
-  useEffect(() => {
-    if (onboarding.data?.needs_onboarding) {
-      navigate({ to: "/onboarding" });
-    }
-  }, [onboarding.data, navigate]);
 
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
@@ -100,6 +102,8 @@ function IndexPage() {
           </>
         }
       />
+
+      {onboarding.data?.setup_incomplete && <SetupIncompleteBanner />}
 
       <LastExpenseLine />
 

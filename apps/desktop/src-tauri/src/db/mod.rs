@@ -13,12 +13,14 @@ pub mod audit;
 pub mod budget;
 pub mod chat;
 pub mod config;
+pub mod danger_zone;
 pub mod dashboard;
 pub mod expense;
 pub mod financial_health;
 pub mod income;
 pub mod maintenance;
 pub mod net_worth;
+pub mod onboarding;
 pub mod projection;
 pub mod recurring;
 pub mod spending_trends;
@@ -68,7 +70,7 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
     Ok(conn)
 }
 
-fn run_migrations(conn: &Connection) -> Result<(), AppError> {
+pub(crate) fn run_migrations(conn: &Connection) -> Result<(), AppError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_version (
             version INTEGER PRIMARY KEY,

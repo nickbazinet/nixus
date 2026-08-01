@@ -134,8 +134,7 @@ function ReviewScreen({
     Record<number, Partial<ParsedTransaction>>
   >({});
 
-  // Track deselected transactions (all start selected)
-  const [deselected, setDeselected] = useState<Set<number>>(new Set());
+  const [deselected, setDeselected] = useState<Set<number>>(() => new Set(duplicateIndices));
 
   // Track manual entries for unreadable transactions
   const [manualEntries, setManualEntries] = useState<
@@ -331,6 +330,14 @@ function ReviewScreen({
           {autoTransactions.length} {t("import.autoCategorized")}, {flaggedTransactions.length}{" "}
           {t("import.needReview")}
         </p>
+        {duplicateIndices.size > 0 && (
+          <p
+            className="mt-2 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+            data-testid="duplicates-unchecked-notice"
+          >
+            {t("import.duplicatesUncheckedNotice", { count: duplicateIndices.size })}
+          </p>
+        )}
       </div>
 
       <div className="space-y-4">
