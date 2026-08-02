@@ -404,7 +404,7 @@
   "spendingTrends.insightSkeleton": "Reading your trends…",
   "spendingTrends.insightGateEmpty": "Set monthly budget targets to see how your spending trends compare.",
   "spendingTrends.insightNotConfigured": "AI insights are available once you configure a provider in Settings.",
-  "spendingTrends.insightError": "Couldn't generate an insight right now.",
+  "spendingTrends.insightError": "AI trend summary isn't available right now.",
   "spendingTrends.insightRetry": "Retry",
   "yearSummary.title": "Year Summary",
   "yearSummary.ytd": "{{year}} Year to Date",

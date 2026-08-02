@@ -41,7 +41,7 @@ export function TrendsInsightPanel({
   insightQuery,
 }: TrendsInsightPanelProps) {
   const { t } = useTranslation();
-  const { data, isPending, isError, error, refetch, isFetching } = insightQuery;
+  const { data, isPending, isError, refetch, isFetching } = insightQuery;
 
   if (!gatePassed) {
     return (
@@ -109,7 +109,7 @@ export function TrendsInsightPanel({
         <Alert variant="over" icon={<TriangleAlertIcon />}>
           <AlertTitle>{t("spendingTrends.insightError")}</AlertTitle>
           <AlertDescription>
-            {error?.message || t("insights.insightManualPath")}
+            {t("insights.insightManualPath")}
           </AlertDescription>
           <Button
             variant="outline"

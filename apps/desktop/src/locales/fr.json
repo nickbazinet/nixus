@@ -404,7 +404,7 @@
   "spendingTrends.insightSkeleton": "Analyse de vos tendances…",
   "spendingTrends.insightGateEmpty": "Définissez des cibles budgétaires mensuelles pour comparer vos tendances de dépenses.",
   "spendingTrends.insightNotConfigured": "Les aperçus IA sont disponibles une fois un fournisseur configuré dans les paramètres.",
-  "spendingTrends.insightError": "Impossible de générer un aperçu pour le moment.",
+  "spendingTrends.insightError": "Le résumé IA des tendances n'est pas disponible pour le moment.",
   "spendingTrends.insightRetry": "Réessayer",
   "yearSummary.title": "Résumé annuel",
   "yearSummary.ytd": "{{year}} — cumul annuel",

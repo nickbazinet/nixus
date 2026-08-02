@@ -225,9 +225,14 @@ test.describe("Spending Trends — budget compare + AI insight", () => {
     await setupSpendingTrendsMock(page, { insightError: true });
     await page.goto("/insights/trends");
 
-    await expect(page.getByTestId("trends-insight-error")).toBeVisible();
+    const errorPanel = page.getByTestId("trends-insight-error");
+    await expect(errorPanel).toBeVisible();
     await expect(page.getByTestId("trends-insight-retry")).toBeVisible();
     await expect(page.getByTestId("category-spend-table")).toBeVisible();
+
+    // Never leak the raw backend error to the user — always show the friendly fallback.
+    await expect(errorPanel).not.toContainText("Service unavailable");
+    await expect(errorPanel).toContainText("AI trend summary isn't available");
   });
 
   test("window switch shows insight for current window only", async ({ page }) => {
