@@ -71,13 +71,17 @@ export function ConversationListPanel({
                     onClick={() => onSelectConversation(conv.id)}
                     aria-current={isActive ? "true" : undefined}
                     className={cn(
-                      "flex w-full flex-col gap-0.5 border-l-3 py-2 pr-3 pl-2 text-left transition-colors hover:bg-hover",
-                      isActive
-                        ? "border-l-brand bg-brand-soft"
-                        : "border-l-transparent",
+                      "relative flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors hover:bg-hover",
+                      isActive && "bg-brand-soft",
                       focusRing
                     )}
                   >
+                    {isActive && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute inset-y-0 left-0 w-[3px] rounded-r-full bg-brand"
+                      />
+                    )}
                     <span className="truncate text-label text-ink">
                       {conv.title ?? t("chat.newChat")}
                     </span>

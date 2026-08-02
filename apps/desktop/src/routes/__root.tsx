@@ -132,12 +132,16 @@ function RootLayout() {
               isAiChat ? "overflow-hidden" : "overflow-y-auto"
             )}
           >
-            {/* Same measure on every surface, AI routes included. AI chat is height-constrained
-             * and scrolls internally, so it gets no page padding of its own. */}
+            {/* Same centred measure on every surface, except AI chat: its two-pane layout
+             * (history rail + conversation) needs the full main-column width to lay out its
+             * own panels edge-to-edge, and it scrolls internally, so it gets no page padding
+             * or max-width of its own. */}
             <div
               className={cn(
-                "mx-auto flex w-full max-w-[1280px] flex-col px-page-x",
-                isAiChat ? "min-h-0 flex-1 overflow-hidden" : "py-page-y"
+                "flex w-full flex-col",
+                isAiChat
+                  ? "min-h-0 flex-1 overflow-hidden"
+                  : "mx-auto max-w-[1280px] px-page-x py-page-y"
               )}
             >
               <Outlet />
