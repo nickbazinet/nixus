@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Card, CardContent, SlideOver } from "@nixus/shared";
+import { Car } from "lucide-react";
+import {
+  Button,
+  Card,
+  CardContent,
+  EmptyState,
+  Skeleton,
+  SlideOver,
+} from "@nixus/shared";
 import { AddVehicleForm } from "@/components/maintenance/AddVehicleForm";
 import { CarMaintenanceHeader } from "@/components/maintenance/CarMaintenanceHeader";
 import { GarageVehicleRow } from "@/components/maintenance/GarageVehicleRow";
@@ -77,44 +85,48 @@ function GaragePage() {
 
       {isLoading && (
         <div
-          className="grid gap-6 lg:grid-cols-[minmax(240px,300px)_1fr]"
+          className="grid gap-section-gap lg:grid-cols-[minmax(240px,300px)_1fr]"
           data-testid="garage-skeleton"
         >
-          <Card className="shadow-sm rounded-lg">
-            <CardContent className="p-4 space-y-3">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-14 bg-muted animate-pulse rounded-lg" />
-              ))}
+          {/* One vehicle card's worth of lines. A first fetch cannot know how many cars are in the
+              garage, and guessing high is what makes the list jump when the data lands. */}
+          <Card size="sm">
+            <CardContent>
+              <Skeleton rows={3} />
             </CardContent>
           </Card>
-          <Card className="shadow-sm rounded-lg min-h-[320px]">
-            <CardContent className="p-4">
-              <div className="h-6 w-48 bg-muted animate-pulse rounded mb-4" />
-              <div className="h-40 bg-muted animate-pulse rounded" />
+          <Card className="min-h-[320px]">
+            <CardContent className="flex flex-col gap-4">
+              <Skeleton rows={1} className="max-w-48" />
+              <Skeleton rows={4} />
             </CardContent>
           </Card>
         </div>
       )}
 
       {!isLoading && vehicles && vehicles.length === 0 && (
-        <Card className="shadow-sm rounded-lg" data-testid="maintenance-empty-state">
-          <CardContent className="p-8 text-center">
-            <p className="font-medium text-foreground mb-1">
-              {t("maintenance.emptyTitle")}
-            </p>
-            <p className="text-sm text-muted-foreground max-w-md mx-auto">
-              {t("maintenance.emptyHelper")}
-            </p>
+        <Card data-testid="maintenance-empty-state">
+          <CardContent>
+            <EmptyState
+              icon={<Car />}
+              title={t("maintenance.emptyTitle")}
+              description={t("maintenance.emptyHelper")}
+              action={
+                <Button onClick={() => setShowForm(true)}>
+                  {t("maintenance.onboarding.heroCta")}
+                </Button>
+              }
+            />
           </CardContent>
         </Card>
       )}
 
       {!isLoading && vehicles && vehicles.length > 0 && (
         <div
-          className="grid gap-6 lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start"
+          className="grid gap-section-gap lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start"
           data-testid="garage-layout"
         >
-          <div className="space-y-2" data-testid="garage-vehicle-list">
+          <div className="flex flex-col gap-2" data-testid="garage-vehicle-list">
             {vehicles.map((vehicleWithTasks) => (
               <GarageVehicleRow
                 key={vehicleWithTasks.vehicle.id}
@@ -133,11 +145,11 @@ function GaragePage() {
               />
             ) : (
               <Card
-                className="shadow-sm rounded-lg min-h-[280px]"
+                className="min-h-[280px]"
                 data-testid="garage-detail-placeholder"
               >
-                <CardContent className="flex min-h-[280px] items-center justify-center p-8 text-center">
-                  <p className="text-sm text-muted-foreground">
+                <CardContent className="flex min-h-[248px] items-center justify-center">
+                  <p className="text-caption text-ink-dim">
                     {t("maintenance.garage.selectVehicle")}
                   </p>
                 </CardContent>
@@ -151,6 +163,7 @@ function GaragePage() {
         open={showForm}
         onClose={() => setShowForm(false)}
         title={t("maintenance.addVehicle")}
+        description={t("maintenance.addVehicleDescription")}
         data-testid="vehicle-slide-over"
       >
         <AddVehicleForm onClose={() => setShowForm(false)} />

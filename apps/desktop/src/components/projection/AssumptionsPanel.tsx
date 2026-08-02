@@ -1,7 +1,23 @@
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@nixus/shared";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
-import { INCOME_GROWTH_RATE, EXPENSE_GROWTH_RATE } from "@/lib/projection";
+import { InfoIcon } from "lucide-react";
+import {
+  Alert,
+  AlertDescription,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Money,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@nixus/shared";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
+import { insightsLocale } from "@/components/spending-trends/insights-chart";
+import { EXPENSE_GROWTH_RATE, INCOME_GROWTH_RATE } from "@/lib/projection";
 
 interface AssumptionsPanelProps {
   avgMonthlyIncomeCents: number;
@@ -11,10 +27,16 @@ interface AssumptionsPanelProps {
 }
 
 const GROWTH_RATE_KEYS = [
-  { categoryKey: "projection.tfsaRrspFhsa", rateKey: "projection.tfsaRrspFhsaRate" },
+  {
+    categoryKey: "projection.tfsaRrspFhsa",
+    rateKey: "projection.tfsaRrspFhsaRate",
+  },
   { categoryKey: "projection.realEstate", rateKey: "projection.realEstateRate" },
   { categoryKey: "projection.vehicles", rateKey: "projection.vehiclesRate" },
-  { categoryKey: "projection.cashBusinessOther", rateKey: "projection.cashBusinessOtherRate" },
+  {
+    categoryKey: "projection.cashBusinessOther",
+    rateKey: "projection.cashBusinessOtherRate",
+  },
 ];
 
 export function AssumptionsPanel({
@@ -23,83 +45,144 @@ export function AssumptionsPanel({
   incomeMonthCount,
   expenseMonthCount,
 }: AssumptionsPanelProps) {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
-  const netCashFlow = avgMonthlyIncomeCents - avgMonthlyExpenseCents;
+  const { t, i18n } = useTranslation();
+  const { maskProps } = useValuesHidden();
+  const locale = insightsLocale(i18n.language);
+  const leftOverCents = avgMonthlyIncomeCents - avgMonthlyExpenseCents;
 
   return (
-    <Card className="shadow-sm rounded-lg">
-      <CardContent className="p-6 space-y-5">
-        {/* Cash Flow Assumptions */}
-        <div>
-          <h3 className="text-sm font-semibold mb-2">{t("projection.cashFlowAssumptions")}</h3>
-          <dl className="space-y-1 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">{t("projection.avgMonthlyIncome")}</dt>
-              <dd>
-                {incomeMonthCount > 0 ? (
-                  <>
-                    {formatCurrency(avgMonthlyIncomeCents)}
-                    <span className="text-muted-foreground ml-1">
-                      ({t("projection.basedOn")} {incomeMonthCount} {incomeMonthCount !== 1 ? t("projection.months") : t("projection.month")} {t("projection.ofData")})
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">{t("projection.noIncomeHistory")}</span>
-                )}
-              </dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">{t("projection.avgMonthlyExpenses")}</dt>
-              <dd>
-                {expenseMonthCount > 0 ? (
-                  <>
-                    {formatCurrency(avgMonthlyExpenseCents)}
-                    <span className="text-muted-foreground ml-1">
-                      ({t("projection.basedOn")} {expenseMonthCount} {expenseMonthCount !== 1 ? t("projection.months") : t("projection.month")} {t("projection.ofData")})
-                    </span>
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">{t("projection.noExpenseHistory")}</span>
-                )}
-              </dd>
-            </div>
-            <div className="flex justify-between font-medium">
-              <dt>{t("projection.netMonthlyCashFlow")}</dt>
-              <dd>{formatCurrency(netCashFlow)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">{t("projection.incomeGrowth")}</dt>
-              <dd>+{(INCOME_GROWTH_RATE * 100).toFixed(1)}{t("projection.wageGrowthRate")}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">{t("projection.expenseGrowth")}</dt>
-              <dd>+{(EXPENSE_GROWTH_RATE * 100).toFixed(1)}{t("projection.inflationRate")}</dd>
-            </div>
-          </dl>
-        </div>
+    <Card flush>
+      <CardHeader className="pt-card-pad">
+        <CardTitle>{t("projection.cashFlowAssumptions")}</CardTitle>
+      </CardHeader>
 
-        {/* Growth Rate Assumptions */}
-        <div>
-          <h3 className="text-sm font-semibold mb-2">{t("projection.growthRateAssumptions")}</h3>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-muted-foreground text-left">
-                <th className="font-medium pb-1">{t("common.category")}</th>
-                <th className="font-medium pb-1 text-right">{t("projection.annualRate")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {GROWTH_RATE_KEYS.map((row) => (
-                <tr key={row.categoryKey}>
-                  <td className="py-0.5">{t(row.categoryKey)}</td>
-                  <td className="py-0.5 text-right">{t(row.rateKey)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <Alert variant="info" icon={<InfoIcon />} className="mt-3">
+        <AlertDescription>
+          {t("projection.assumptionsExplainer")}
+        </AlertDescription>
+      </Alert>
+
+      <dl className="flex flex-col gap-2 p-card-pad text-body">
+        <AssumptionRow
+          term={t("projection.avgMonthlyIncome")}
+          detail={
+            incomeMonthCount > 0
+              ? t("projection.monthsCounted", { months: incomeMonthCount })
+              : undefined
+          }
+        >
+          {incomeMonthCount > 0 ? (
+            <Money
+              cents={avgMonthlyIncomeCents}
+              locale={locale}
+              {...maskProps}
+            />
+          ) : (
+            <span className="text-ink-dim">
+              {t("projection.noIncomeHistory")}
+            </span>
+          )}
+        </AssumptionRow>
+
+        <AssumptionRow
+          term={t("projection.avgMonthlyExpenses")}
+          detail={
+            expenseMonthCount > 0
+              ? t("projection.monthsCounted", { months: expenseMonthCount })
+              : undefined
+          }
+        >
+          {expenseMonthCount > 0 ? (
+            <Money
+              cents={avgMonthlyExpenseCents}
+              locale={locale}
+              {...maskProps}
+            />
+          ) : (
+            <span className="text-ink-dim">
+              {t("projection.noExpenseHistory")}
+            </span>
+          )}
+        </AssumptionRow>
+
+        <AssumptionRow
+          term={t("projection.netMonthlyCashFlow")}
+          detail={t("projection.netMonthlyCashFlowCaption")}
+          emphasis
+        >
+          <Money
+            cents={leftOverCents}
+            locale={locale}
+            sign="always"
+            {...maskProps}
+          />
+        </AssumptionRow>
+
+        <AssumptionRow term={t("projection.incomeGrowth")}>
+          {t("projection.perYearWages", {
+            percent: (INCOME_GROWTH_RATE * 100).toFixed(1),
+          })}
+        </AssumptionRow>
+
+        <AssumptionRow term={t("projection.expenseGrowth")}>
+          {t("projection.perYearInflation", {
+            percent: (EXPENSE_GROWTH_RATE * 100).toFixed(1),
+          })}
+        </AssumptionRow>
+      </dl>
+
+      <CardHeader>
+        <CardTitle>{t("projection.growthRateAssumptions")}</CardTitle>
+      </CardHeader>
+      <Table className="mt-2 [&_tbody_tr:last-child>td]:border-b-0">
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t("common.category")}</TableHead>
+            <TableHead numeric>{t("projection.annualRate")}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {GROWTH_RATE_KEYS.map((row) => (
+            <TableRow key={row.categoryKey}>
+              <TableCell>{t(row.categoryKey)}</TableCell>
+              <TableCell numeric>{t(row.rateKey)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <CardContent className="pb-card-pad">
+        <p className="text-caption text-ink-faint">
+          {t("projection.growthRateBasis")}
+        </p>
       </CardContent>
     </Card>
+  );
+}
+
+function AssumptionRow({
+  term,
+  detail,
+  emphasis = false,
+  children,
+}: {
+  term: string;
+  detail?: string;
+  emphasis?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <div className="min-w-0">
+        <dt className={emphasis ? "text-label text-ink" : "text-body text-ink-dim"}>
+          {term}
+        </dt>
+        {detail ? (
+          <p className="text-caption text-ink-faint">{detail}</p>
+        ) : null}
+      </div>
+      <dd className={emphasis ? "text-label text-ink" : "text-body text-ink"}>
+        {children}
+      </dd>
+    </div>
   );
 }

@@ -1,14 +1,15 @@
 import { useMemo, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { CalendarRangeIcon } from "lucide-react";
+import { Button, Card, EmptyState, PillTabs } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Card, CardContent, PillTabs } from "@nixus/shared";
 import { SpendingTrendChart } from "@/components/spending-trends/SpendingTrendChart";
 import { YearSummaryMetrics } from "@/components/yearly-summary/YearSummaryMetrics";
 import { YearlyCategoryTable } from "@/components/yearly-summary/YearlyCategoryTable";
 import { useYearlySummary } from "@/hooks/useYearlySummary";
 
-export const Route = createFileRoute("/year-summary")({
+export const Route = createFileRoute("/insights/year-summary")({
   component: YearSummaryPage,
 });
 
@@ -26,8 +27,11 @@ function YearSummaryPage() {
 
   const yearLabels = useMemo(
     () =>
-      Object.fromEntries(yearOptions.map((y) => [y, y])) as Record<string, string>,
-    [yearOptions]
+      Object.fromEntries(yearOptions.map((year) => [year, year])) as Record<
+        string,
+        string
+      >,
+    [yearOptions],
   );
 
   const isEmpty =
@@ -36,37 +40,40 @@ function YearSummaryPage() {
     data.total_spent_cents === 0 &&
     data.total_income_cents === 0;
 
-  const monthCountForAvg = data?.is_current_year
-    ? new Date().getMonth() + 1
-    : 12;
-
   return (
     <div>
-      <PageHeader title={t("yearSummary.title")} />
-
-      <div className="mb-4">
-        <PillTabs
-          options={yearOptions}
-          labels={yearLabels}
-          value={String(selectedYear)}
-          onChange={(y) => setSelectedYear(Number(y))}
-          data-testid="year-summary-tabs"
-        />
-      </div>
+      <PageHeader
+        title={t("nav.yearSummary")}
+        actions={
+          <PillTabs
+            options={yearOptions}
+            labels={yearLabels}
+            value={String(selectedYear)}
+            onChange={(year) => setSelectedYear(Number(year))}
+            data-testid="year-summary-tabs"
+          />
+        }
+      />
 
       {isEmpty ? (
-        <Card className="shadow-sm rounded-lg" data-testid="year-summary-empty">
-          <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground">{t("yearSummary.noData")}</p>
-          </CardContent>
+        <Card data-testid="year-summary-empty">
+          <EmptyState
+            icon={<CalendarRangeIcon />}
+            title={t("insights.yearEmptyTitle")}
+            description={t("yearSummary.noData")}
+            action={
+              <Button render={<Link to="/import" />}>
+                {t("dashboard.importStatement")}
+              </Button>
+            }
+          />
         </Card>
       ) : (
-        <div className="space-y-4">
+        <div className="flex flex-col gap-section-gap">
           {data && <YearSummaryMetrics data={data} />}
           <SpendingTrendChart
             data={data?.monthly_totals ?? []}
             isLoading={isPending}
-            monthCount={monthCountForAvg}
             titleKey={
               data?.is_current_year
                 ? "yearSummary.avgMonthlySpendYtd"

@@ -1,7 +1,22 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { format, subMonths } from "date-fns";
+import { fr as frLocale } from "date-fns/locale";
 import { Send } from "lucide-react";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  Label,
+  focusRing,
+} from "@nixus/shared";
+import { cn } from "@/lib/utils";
+import { SURFACE_HEADING_ID } from "@/components/shared/PageHeader";
 import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
 import { ConversationListPanel } from "@/components/chat/ConversationListPanel";
 import { useChat } from "@/hooks/useChat";
@@ -9,9 +24,7 @@ import { AGENTS, setLastUsedAgentId } from "@/lib/agents";
 
 export const Route = createFileRoute("/ai/$agentId")({
   component: AgentChatPage,
-  validateSearch: (
-    search: Record<string, unknown>
-  ): { conversation?: number } => {
+  validateSearch: (search: Record<string, unknown>): { conversation?: number } => {
     const conv = Number(search.conversation);
     return Number.isInteger(conv) && conv > 0 ? { conversation: conv } : {};
   },
@@ -23,12 +36,8 @@ interface ChatPanelProps {
   onNewChat: () => void;
 }
 
-function ChatPanel({
-  agentId,
-  initialConversationId,
-  onNewChat,
-}: ChatPanelProps) {
-  const { t } = useTranslation();
+function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps) {
+  const { t, i18n } = useTranslation();
   const agent = AGENTS.find((a) => a.id === agentId);
   const {
     messages,
@@ -43,119 +52,165 @@ function ChatPanel({
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const dateLocale = i18n.language.startsWith("fr") ? frLocale : undefined;
+  const today = useMemo(() => new Date(), []);
+  const freshnessDate = format(today, "PPP", { locale: dateLocale });
+  const previousMonth = format(subMonths(today, 1), "LLLL", { locale: dateLocale });
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
-    if (input.trim() && !streaming) {
-      sendMessage(input.trim());
+  const send = (text: string) => {
+    const trimmed = text.trim();
+    if (trimmed !== "" && !streaming) {
+      sendMessage(trimmed);
       setInput("");
     }
   };
 
+  const showStarters =
+    messages.length === 0 && !chatError && initialConversationId === undefined && agent;
+  const starterPrompts = [
+    t("chat.starterTracking"),
+    t("chat.starterVsLastMonth", { month: previousMonth }),
+    t("chat.starterWhereItGoes"),
+  ];
+
   return (
-    <div className="flex h-full flex-col" role="main">
-      <div className="flex items-center gap-3 border-b border-border px-6 py-4 bg-background">
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-3 border-b border-line bg-page px-page-x py-3">
         {agent && (
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-            <agent.icon size={18} className="text-primary" />
-          </div>
+          <span
+            aria-hidden="true"
+            className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-ink"
+          >
+            <agent.icon size={18} />
+          </span>
         )}
-        <div>
-          <h1 className="text-lg font-semibold leading-tight bg-gradient-to-r from-[#A78BFA] to-[#F472B6] bg-clip-text text-transparent">
+        <div className="min-w-0">
+          {/* The shell's skip link and its route-change focus move both target this id, so the
+            * chat surface needs the same heading contract as PageHeader gives every other route. */}
+          <h1
+            id={SURFACE_HEADING_ID}
+            data-surface-heading=""
+            tabIndex={-1}
+            className={cn("truncate text-h1 text-ink", focusRing)}
+          >
             {agent ? t(agent.nameKey) : agentId}
           </h1>
           {agent && (
-            <p className="text-xs text-muted-foreground">{t(agent.descriptionKey)}</p>
+            <p className="truncate text-caption text-ink-dim">{t(agent.descriptionKey)}</p>
           )}
         </div>
       </div>
+
+      {/* role="log" without aria-live: streaming announcements are published per sentence by the
+        * bubble itself, so a live region here would re-announce every token. */}
       <div
-        className="flex-1 overflow-y-auto px-4 py-4"
+        className="flex-1 space-y-3 overflow-y-auto px-page-x py-4"
         role="log"
-        aria-live="polite"
         data-testid="chat-message-area"
       >
         {chatError?.type === "not_configured" && (
-          <div className="mx-auto max-w-md rounded-lg border border-border bg-card p-4 text-sm">
-            {t("settings.notConfiguredPrompt", "AI not configured")}
-            {" — "}
-            <Link to="/settings" className="text-primary underline">
-              {t("settings.openSettings", "Open Settings")}
-            </Link>
-          </div>
+          <Alert variant="info" className="mx-auto max-w-md">
+            <AlertTitle>{t("settings.notConfiguredPrompt")}</AlertTitle>
+            <AlertDescription className="mt-2 flex flex-wrap gap-2">
+              <Button size="sm" render={<Link to="/settings" />}>
+                {t("settings.openSettings")}
+              </Button>
+            </AlertDescription>
+          </Alert>
         )}
         {chatError?.type === "validation" && (
-          <div className="mx-auto max-w-md rounded-lg border border-destructive bg-destructive/10 p-4 text-sm">
-            {t("chat.conversationNotFound")}
-            {" — "}
-            <button
-              onClick={onNewChat}
-              className="text-primary underline"
-            >
-              {t("chat.startNew")}
-            </button>
-          </div>
+          <Alert variant="over" className="mx-auto max-w-md">
+            <AlertTitle>{t("chat.conversationNotFound")}</AlertTitle>
+            <AlertDescription className="mt-2">
+              <Button size="sm" variant="outline" onClick={onNewChat}>
+                {t("chat.startNew")}
+              </Button>
+            </AlertDescription>
+          </Alert>
         )}
-        {messages.length === 0 &&
-          !chatError &&
-          !initialConversationId &&
-          agent && (
-            <div className="flex h-full items-center justify-center">
-              <div className="text-center">
-                <agent.icon className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-                <p className="text-muted-foreground">
-                  {t("chat.agentReady", { agentName: t(agent.nameKey) })}
-                </p>
+
+        {showStarters && agent && (
+          <Card>
+            <EmptyState
+              icon={<agent.icon />}
+              title={t("chat.agentReady")}
+              description={t("chat.dataScope")}
+            >
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {starterPrompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => send(prompt)}
+                    className={cn(
+                      "min-h-target-min rounded-md border border-line-strong px-2.5 py-1 text-caption text-ink transition-colors hover:bg-hover",
+                      focusRing
+                    )}
+                    data-testid="chat-starter-prompt"
+                  >
+                    {prompt}
+                  </button>
+                ))}
               </div>
-            </div>
-          )}
-        <div className="space-y-3">
-          {messages.map((msg, i) => (
-            <ChatMessageBubble
-              key={i}
-              role={msg.role}
-              content={msg.content}
-              isStreaming={
-                streaming &&
-                msg.role === "assistant" &&
-                i === messages.length - 1
-              }
-              actionHandled={msg.actionHandled}
-              onConfirm={(payload) => confirmAction(i, payload)}
-              onCancel={() => cancelAction(i)}
-            />
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
+            </EmptyState>
+          </Card>
+        )}
+
+        {messages.map((msg, i) => (
+          <ChatMessageBubble
+            key={i}
+            role={msg.role}
+            content={msg.content}
+            isStreaming={streaming && msg.role === "assistant" && i === messages.length - 1}
+            actionHandled={msg.actionHandled}
+            onConfirm={(payload) => confirmAction(i, payload)}
+            onCancel={() => cancelAction(i)}
+          />
+        ))}
+        {messages.length > 0 && !streaming && (
+          <p className="text-caption text-ink-faint" data-testid="chat-freshness">
+            {t("chat.freshness", { date: freshnessDate })}
+          </p>
+        )}
+        <div ref={messagesEndRef} />
       </div>
-      <div className="border-t p-4" data-testid="chat-input-area">
-        <div className="mx-auto flex max-w-2xl gap-2">
-          <input
+
+      <div className="border-t border-line px-page-x py-3" data-testid="chat-input-area">
+        <div className="mx-auto flex max-w-2xl items-center gap-2">
+          <Label htmlFor="agent-chat-input" className="sr-only">
+            {t("chat.placeholder")}
+          </Label>
+          <Input
+            id="agent-chat-input"
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                handleSend();
+                send(input);
               }
             }}
             placeholder={t("chat.placeholder")}
             disabled={streaming || loading}
-            className="flex-1 rounded-lg border bg-background px-4 py-2.5 text-sm placeholder:text-muted-foreground disabled:opacity-50"
+            aria-disabled={streaming || loading || undefined}
             data-testid="chat-input"
             autoFocus
           />
-          <button
-            onClick={handleSend}
-            disabled={streaming || loading || !input.trim()}
-            className="rounded-lg bg-primary px-3 py-2.5 text-primary-foreground disabled:opacity-50"
+          <Button
+            size="icon"
+            onClick={() => send(input)}
+            disabled={streaming || loading || input.trim() === ""}
+            aria-disabled={streaming || loading || input.trim() === "" || undefined}
+            aria-label={t("chat.placeholder")}
             data-testid="chat-send-button"
           >
-            <Send className="h-4 w-4" />
-          </button>
+            <Send aria-hidden="true" />
+          </Button>
         </div>
       </div>
     </div>
@@ -175,16 +230,21 @@ function AgentChatPage() {
 
   const agent = AGENTS.find((a) => a.id === agentId);
 
-  const [activeConversationId, setActiveConversationId] = useState<
-    number | null
-  >(conversation ?? null);
+  const [activeConversationId, setActiveConversationId] = useState<number | null>(
+    conversation ?? null
+  );
   const [chatKey, setChatKey] = useState(0);
 
   if (!agent) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-muted-foreground">Agent not found.</p>
-      </div>
+      <EmptyState
+        title={t("chat.agentNotFound")}
+        action={
+          <Button variant="outline" render={<Link to="/ai" />}>
+            {t("chat.backToAgents")}
+          </Button>
+        }
+      />
     );
   }
 
@@ -213,7 +273,7 @@ function AgentChatPage() {
   return (
     <div className="flex h-full overflow-hidden">
       <aside
-        className="w-[220px] shrink-0 border-r flex flex-col bg-muted rounded-tl-lg"
+        className="flex w-56 shrink-0 flex-col border-r border-line bg-chrome"
         aria-label={t("chat.conversationHistory")}
       >
         <ConversationListPanel
@@ -223,7 +283,7 @@ function AgentChatPage() {
           onNewChat={handleNewChat}
         />
       </aside>
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden">
         <ChatPanel
           key={chatKey}
           agentId={agentId}

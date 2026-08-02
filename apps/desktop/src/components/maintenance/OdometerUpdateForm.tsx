@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { useTranslation } from "react-i18next";
-import { Input } from "@nixus/shared";
+import { Input, focusRing } from "@nixus/shared";
 import { formatOdometerKm } from "@/lib/maintenanceUtils";
 import { useUpdateVehicleOdometer } from "@/hooks/useMaintenance";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,7 @@ export function OdometerUpdateForm({
   const [draft, setDraft] = useState(String(odometerKm));
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const errorId = useId();
   const updateOdometer = useUpdateVehicleOdometer();
 
   useEffect(() => {
@@ -121,12 +122,19 @@ export function OdometerUpdateForm({
             setError(null);
           }}
           onKeyDown={handleKeyDown}
-          className="h-7 w-28 text-sm font-mono tabular-nums text-right"
+          className="w-28"
+          money
           aria-label={t("maintenance.odometer.label")}
+          aria-invalid={error !== null}
+          aria-describedby={error ? errorId : undefined}
           data-testid={`odometer-input-${vehicleId}`}
         />
         {error && (
-          <p className="text-xs text-destructive" data-testid={`odometer-error-${vehicleId}`}>
+          <p
+            id={errorId}
+            className="text-caption text-over-ink"
+            data-testid={`odometer-error-${vehicleId}`}
+          >
             {error}
           </p>
         )}
@@ -145,14 +153,17 @@ export function OdometerUpdateForm({
       }}
       onKeyDown={(e) => {
         stopPropagation(e);
-        if (e.key === "Enter") {
+        if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           enterEditMode();
         }
       }}
+      // The dotted underline is the resting affordance, not a hover reveal: a keyboard-focus-only
+      // user never hovers and would have no way to know the value is editable.
       className={cn(
-        "text-sm font-mono text-foreground tabular-nums shrink-0 cursor-pointer",
-        "hover:underline decoration-dashed underline-offset-2"
+        "money inline-flex min-h-target-min shrink-0 cursor-pointer items-center rounded-sm text-body text-ink",
+        "underline decoration-line-strong decoration-dotted underline-offset-4 hover:decoration-ink-dim",
+        focusRing
       )}
       data-testid={`odometer-display-${vehicleId}`}
     >

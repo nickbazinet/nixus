@@ -2,13 +2,16 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
-import { Card, CardContent } from "@nixus/shared";
-import { MoneyInput } from "@/components/shared/MoneyInput";
-import { useCreateBudgetGroup, useCreateBudgetCategory, useBudgetGroups, useBudgetCategories } from "@/hooks/useBudget";
 import { Plus } from "lucide-react";
+import { Button, Card, CardContent, Input, Label, Money } from "@nixus/shared";
+import { MoneyInput } from "@/components/shared/MoneyInput";
+import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
+import {
+  useCreateBudgetGroup,
+  useCreateBudgetCategory,
+  useBudgetGroups,
+  useBudgetCategories,
+} from "@/hooks/useBudget";
 import type { BudgetGroup } from "@/lib/types";
 
 interface GroupFormData {
@@ -22,6 +25,7 @@ interface CategoryFormData {
 
 function GroupCategoryList({ group }: { group: BudgetGroup }) {
   const { t } = useTranslation();
+  const maskProps = useMaskProps();
   const { data: categories = [] } = useBudgetCategories(group.id);
   const createCategory = useCreateBudgetCategory();
   const [showCatForm, setShowCatForm] = useState(false);
@@ -34,72 +38,122 @@ function GroupCategoryList({ group }: { group: BudgetGroup }) {
     formState: { errors },
   } = useForm<CategoryFormData>({
     defaultValues: { name: "", target_cents: 0 },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
+
+  const nameId = `cat-name-${group.id}`;
+  const targetId = `cat-target-${group.id}`;
 
   const onSubmitCategory = (data: CategoryFormData) => {
     createCategory.mutate(
       { group_id: group.id, name: data.name, target_cents: data.target_cents },
       {
         onSuccess: () => {
-          toast.success(`Category "${data.name}" added`);
+          toast.success(t("budget.categoryAdded", { name: data.name }));
           reset();
           setShowCatForm(false);
         },
-        onError: () => toast.error("Failed to add category"),
+        onError: () => toast.error(t("budget.categoryAddFailed")),
       }
     );
   };
 
   return (
     <div className="space-y-2">
+      {categories.length === 0 && !showCatForm && (
+        <p className="text-caption text-ink-dim">{t("onboarding.groupEmpty")}</p>
+      )}
       {categories.map((cat) => (
-        <div key={cat.id} className="flex items-center justify-between text-sm px-2 py-1 rounded bg-muted/30">
-          <span>{cat.name}</span>
-          <span className="font-mono text-muted-foreground">
-            ${(cat.target_cents / 100).toFixed(2)}
-          </span>
+        <div
+          key={cat.id}
+          className="flex items-center justify-between gap-3 rounded-sm bg-chrome px-2.5 py-1.5"
+        >
+          <span className="min-w-0 truncate text-label text-ink">{cat.name}</span>
+          <Money
+            cents={cat.target_cents}
+            className="shrink-0 text-label text-ink-dim"
+            {...maskProps}
+          />
         </div>
       ))}
       {showCatForm ? (
-        <form onSubmit={handleSubmit(onSubmitCategory)} className="space-y-2 p-3 rounded-lg ring-1 ring-foreground/10">
+        <form
+          onSubmit={handleSubmit(onSubmitCategory)}
+          className="space-y-2 rounded-md border border-line bg-page p-3"
+        >
           <div className="space-y-1">
-            <Label htmlFor={`cat-name-${group.id}`}>{t("budget.categoryName")}</Label>
+            <Label htmlFor={nameId} required>
+              {t("budget.categoryName")}
+            </Label>
             <Input
-              id={`cat-name-${group.id}`}
+              id={nameId}
               placeholder={t("budget.categoryNamePlaceholder")}
               autoFocus
-              aria-invalid={!!errors.name}
+              required
+              aria-required="true"
+              aria-invalid={errors.name !== undefined || undefined}
+              aria-describedby={errors.name ? `${nameId}-error` : undefined}
               {...register("name", { required: t("budget.nameRequired") })}
             />
-            {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+            {errors.name && (
+              <p id={`${nameId}-error`} className="text-caption text-over-ink" role="alert">
+                {errors.name.message}
+              </p>
+            )}
           </div>
           <div className="space-y-1">
-            <Label htmlFor={`cat-target-${group.id}`}>{t("budget.monthlyTarget")}</Label>
+            <Label htmlFor={targetId} required>
+              {t("budget.monthlyTarget")}
+            </Label>
             <Controller
               name="target_cents"
               control={control}
               rules={{ validate: (v) => v > 0 || t("budget.targetRequired") }}
               render={({ field }) => (
                 <MoneyInput
-                  id={`cat-target-${group.id}`}
+                  id={targetId}
                   value={field.value}
                   onChange={field.onChange}
                   onBlur={field.onBlur}
-                  aria-invalid={!!errors.target_cents}
+                  aria-invalid={errors.target_cents !== undefined || undefined}
                 />
               )}
             />
-            {errors.target_cents && <p className="text-xs text-destructive">{errors.target_cents.message}</p>}
+            {errors.target_cents && (
+              <p
+                id={`${targetId}-error`}
+                className="text-caption text-over-ink"
+                role="alert"
+              >
+                {errors.target_cents.message}
+              </p>
+            )}
           </div>
           <div className="flex gap-2">
-            <Button type="submit" size="sm">{t("budget.saveCategory")}</Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => { reset(); setShowCatForm(false); }}>{t("common.cancel")}</Button>
+            <Button type="submit" size="sm">
+              {t("budget.saveCategory")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                reset();
+                setShowCatForm(false);
+              }}
+            >
+              {t("common.cancel")}
+            </Button>
           </div>
         </form>
       ) : (
-        <Button variant="ghost" size="sm" onClick={() => setShowCatForm(true)} data-testid={`add-category-btn-${group.id}`}>
-          <Plus className="size-4 mr-1" /> {t("budget.addCategory")}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowCatForm(true)}
+          data-testid={`add-category-btn-${group.id}`}
+        >
+          <Plus className="size-3.5" aria-hidden="true" /> {t("budget.addCategory")}
         </Button>
       )}
     </div>
@@ -119,64 +173,93 @@ export function OnboardingBudgetStep() {
     formState: { errors },
   } = useForm<GroupFormData>({
     defaultValues: { name: "" },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmitGroup = (data: GroupFormData) => {
     createGroup.mutate(data.name, {
       onSuccess: () => {
-        toast.success(`Group "${data.name}" created`);
+        toast.success(t("budget.groupCreated", { name: data.name }));
         reset();
         setShowGroupForm(false);
       },
-      onError: () => toast.error("Failed to create group"),
+      onError: () => toast.error(t("budget.groupCreateFailed")),
     });
   };
 
   return (
-    <div data-testid="onboarding-budget-step">
-      <h2 className="text-lg font-medium mb-2">{t("onboarding.budgetTitle")}</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        {t("onboarding.budgetDescription")}
-      </p>
-
-      <div className="space-y-4">
-        {groups.map((group) => (
-          <Card key={group.id}>
-            <CardContent className="p-4">
-              <h3 className="font-medium mb-2">{group.name}</h3>
-              <GroupCategoryList group={group} />
-            </CardContent>
-          </Card>
-        ))}
+    <div className="space-y-4" data-testid="onboarding-budget-step">
+      <div>
+        <h2 className="text-h2 text-ink">{t("onboarding.budgetTitle")}</h2>
+        <p className="mt-1 text-caption text-ink-dim">
+          {t("onboarding.budgetDescription")}
+        </p>
+        <p className="mt-1 text-caption text-ink-faint">{t("onboarding.editableLater")}</p>
       </div>
 
+      {groups.map((group) => (
+        <Card key={group.id}>
+          <CardContent>
+            <h3 className="mb-2 text-h3 text-ink">{group.name}</h3>
+            <GroupCategoryList group={group} />
+          </CardContent>
+        </Card>
+      ))}
+
       {showGroupForm ? (
-        <form onSubmit={handleSubmit(onSubmitGroup)} className="mt-4 space-y-2 p-4 rounded-xl ring-1 ring-foreground/10 bg-card">
-          <div className="space-y-1.5">
-            <Label htmlFor="onboarding-group-name">{t("budget.groupName")}</Label>
-            <Input
-              id="onboarding-group-name"
-              placeholder={t("budget.groupNamePlaceholder")}
-              autoFocus
-              aria-invalid={!!errors.name}
-              {...register("name", { required: t("budget.groupNameRequired") })}
-            />
-            {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" size="sm">{t("budget.saveGroup")}</Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => { reset(); setShowGroupForm(false); }}>{t("common.cancel")}</Button>
-          </div>
-        </form>
+        <Card>
+          <CardContent>
+            <form onSubmit={handleSubmit(onSubmitGroup)} className="space-y-2">
+              <div className="space-y-1">
+                <Label htmlFor="onboarding-group-name" required>
+                  {t("budget.groupName")}
+                </Label>
+                <Input
+                  id="onboarding-group-name"
+                  placeholder={t("budget.groupNamePlaceholder")}
+                  autoFocus
+                  required
+                  aria-required="true"
+                  aria-invalid={errors.name !== undefined || undefined}
+                  aria-describedby={errors.name ? "onboarding-group-name-error" : undefined}
+                  {...register("name", { required: t("budget.groupNameRequired") })}
+                />
+                {errors.name && (
+                  <p
+                    id="onboarding-group-name-error"
+                    className="text-caption text-over-ink"
+                    role="alert"
+                  >
+                    {errors.name.message}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" size="sm">
+                  {t("budget.saveGroup")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    reset();
+                    setShowGroupForm(false);
+                  }}
+                >
+                  {t("common.cancel")}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       ) : (
         <Button
-          variant="ghost"
-          className="mt-4"
+          variant="outline"
           onClick={() => setShowGroupForm(true)}
           data-testid="add-group-button"
         >
-          <Plus className="size-4 mr-1" /> {t("budget.addGroup")}
+          <Plus className="size-4" aria-hidden="true" /> {t("budget.addGroup")}
         </Button>
       )}
     </div>

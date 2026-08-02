@@ -1,15 +1,22 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { DatePicker } from "@nixus/shared";
 import {
+  Badge,
+  Card,
+  Checkbox,
+  DatePicker,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
+import { MoneyInput } from "@/components/shared/MoneyInput";
+import { cn } from "@/lib/utils";
+import { focusRing } from "@nixus/shared";
 import type { ParsedTransaction } from "@/hooks/useImport";
 
 interface BudgetCategory {
@@ -23,6 +30,7 @@ interface AutoCategorizedSummaryProps {
   onCategoryChange: (index: number, categoryId: number) => void;
   selectedSet: Set<number>;
   onToggleSelect: (index: number) => void;
+  onSelectAll: (selected: boolean) => void;
   onFieldChange: (index: number, field: keyof ParsedTransaction, value: string | number) => void;
   fieldOverrides: Record<number, Partial<ParsedTransaction>>;
   globalIndices: number[];
@@ -35,6 +43,7 @@ export function AutoCategorizedSummary({
   onCategoryChange,
   selectedSet,
   onToggleSelect,
+  onSelectAll,
   onFieldChange,
   fieldOverrides,
   globalIndices,
@@ -46,102 +55,168 @@ export function AutoCategorizedSummary({
   if (transactions.length === 0) return null;
 
   const selectedCount = globalIndices.filter((gi) => selectedSet.has(gi)).length;
+  const allSelected = selectedCount === globalIndices.length;
+  const someSelected = selectedCount > 0 && !allSelected;
+  const categoryItems = categories.map((cat) => ({
+    value: String(cat.id),
+    label: cat.name,
+  }));
 
   return (
-    <div data-testid="auto-categorized-summary">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-2 rounded-lg border bg-card p-4 text-left transition-colors hover:bg-muted/50"
-        data-testid="auto-categorized-toggle"
-      >
-        <Check className="h-5 w-5 text-emerald-500" />
-        <span className="flex-1 text-sm font-medium">
-          {selectedCount} {t("import.of")} {transactions.length} {t("import.transactionsAutoCategorized")}
-        </span>
-        {expanded ? (
-          <ChevronUp className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        )}
-      </button>
+    <Card flush data-testid="auto-categorized-summary">
+      <div className="flex items-center gap-2 px-card-pad py-3">
+        <Checkbox
+          checked={allSelected}
+          indeterminate={someSelected}
+          onCheckedChange={(next) => onSelectAll(next)}
+          aria-label={t("import.autoSelectAll")}
+          className="-ml-1"
+          data-testid="auto-select-all"
+        />
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
+          aria-controls="auto-categorized-list"
+          className={cn(
+            "flex min-h-target-min flex-1 items-center gap-2 rounded-md text-left transition-colors hover:text-brand-ink",
+            focusRing
+          )}
+          data-testid="auto-categorized-toggle"
+        >
+          <Check className="size-4 shrink-0 text-good" aria-hidden="true" />
+          <span className="flex-1 text-label text-ink">
+            {t("import.autoCategorizedToggle", {
+              selected: selectedCount,
+              total: transactions.length,
+            })}
+          </span>
+          {expanded ? (
+            <ChevronUp className="size-4 text-ink-dim" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="size-4 text-ink-dim" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+
+      {!expanded && (
+        <p className="border-t border-line px-card-pad py-2.5 text-caption text-ink-dim">
+          {t("import.autoCategorizedHint")}
+        </p>
+      )}
 
       {expanded && (
-        <div className="mt-2 space-y-2" data-testid="auto-categorized-list">
+        <div id="auto-categorized-list" data-testid="auto-categorized-list">
           {transactions.map((tx, index) => {
             const gi = globalIndices[index];
             const isSelected = selectedSet.has(gi);
             const overrides = fieldOverrides[gi];
             const isDup = duplicateIndices?.has(gi) ?? false;
+            const merchantValue = overrides?.merchant ?? tx.merchant;
+            const merchantId = `auto-merchant-${gi}`;
+            const amountId = `auto-amount-${gi}`;
+            const dateId = `auto-date-${gi}`;
+            const categoryId = `auto-category-${gi}`;
+
             return (
               <div
-                key={index}
-                className={cn(
-                  "flex items-center gap-3 rounded-md border px-4 py-2",
-                  isDup ? "border-amber-500/50 bg-amber-500/5" : "bg-card"
-                )}
+                key={gi}
+                className="flex items-start gap-2 border-t border-line px-card-pad py-2.5"
                 data-testid="auto-categorized-row"
               >
-                {isDup && (
-                  <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400" data-testid="duplicate-badge">
-                    {t("import.possibleDuplicate")}
-                  </span>
-                )}
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={isSelected}
-                  onChange={() => onToggleSelect(index)}
+                  onCheckedChange={() => onToggleSelect(index)}
+                  aria-label={merchantValue}
+                  className="mt-1 -ml-1"
                   data-testid="auto-transaction-checkbox"
                 />
-                <div className={cn("flex flex-1 items-center gap-3", !isSelected && "opacity-50")}>
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={overrides?.merchant ?? tx.merchant}
-                      onChange={(e) => onFieldChange(index, "merchant", e.target.value)}
-                      className="rounded-md border bg-background px-2 py-1 text-sm"
-                      data-testid="auto-merchant-input"
-                    />
-                    <div className="ml-2 inline-block" data-testid="auto-date-input">
+                <div
+                  className={cn(
+                    "min-w-0 flex-1 space-y-2",
+                    !isSelected && "text-ink-dim"
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      <Label htmlFor={merchantId} className="sr-only">
+                        {t("expenses.merchant")}
+                      </Label>
+                      <Input
+                        id={merchantId}
+                        type="text"
+                        value={merchantValue}
+                        onChange={(e) =>
+                          onFieldChange(index, "merchant", e.target.value)
+                        }
+                        data-testid="auto-merchant-input"
+                      />
+                    </div>
+                    <div className="w-28 shrink-0" data-testid="auto-amount-input-field">
+                      <Label htmlFor={amountId} className="sr-only">
+                        {t("common.amount")}
+                      </Label>
+                      <MoneyInput
+                        id={amountId}
+                        value={overrides?.amount_cents ?? tx.amount_cents}
+                        onChange={(cents) =>
+                          onFieldChange(index, "amount_cents", cents)
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="shrink-0" data-testid="auto-date-input">
+                      <Label htmlFor={dateId} className="sr-only">
+                        {t("common.date")}
+                      </Label>
                       <DatePicker
+                        id={dateId}
                         value={overrides?.date ?? tx.date}
                         onChange={(value) => onFieldChange(index, "date", value)}
                       />
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <Label htmlFor={categoryId} className="sr-only">
+                        {t("common.category")}
+                      </Label>
+                      <Select
+                        value={String(
+                          overrides?.suggested_category_id ??
+                            tx.suggested_category_id ??
+                            ""
+                        )}
+                        onValueChange={(val) => onCategoryChange(index, Number(val))}
+                        items={categoryItems}
+                      >
+                        <SelectTrigger
+                          id={categoryId}
+                          data-testid="auto-category-select"
+                          className="w-full"
+                        >
+                          <SelectValue placeholder={t("import.select")} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {categories.map((cat) => (
+                            <SelectItem key={cat.id} value={String(cat.id)}>
+                              {cat.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {isDup && (
+                      <Badge variant="caution" data-testid="duplicate-badge">
+                        {t("import.possibleDuplicate")}
+                      </Badge>
+                    )}
                   </div>
-                  <input
-                    type="number"
-                    value={(overrides?.amount_cents ?? tx.amount_cents) / 100}
-                    step="0.01"
-                    onChange={(e) => {
-                      const val = e.target.valueAsNumber;
-                      if (!isNaN(val)) onFieldChange(index, "amount_cents", Math.round(val * 100));
-                    }}
-                    className="w-24 rounded-md border bg-background px-2 py-1 text-right font-mono text-sm"
-                    data-testid="auto-amount-input"
-                  />
-                  <Select
-                    value={String(overrides?.suggested_category_id ?? tx.suggested_category_id ?? "")}
-                    onValueChange={(val) => onCategoryChange(index, Number(val))}
-                    items={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}
-                  >
-                    <SelectTrigger data-testid="auto-category-select" className="w-40">
-                      <SelectValue placeholder={t("import.select")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories.map((cat) => (
-                        <SelectItem key={cat.id} value={String(cat.id)}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
             );
           })}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

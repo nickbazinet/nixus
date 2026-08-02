@@ -1,7 +1,8 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { Button } from "@nixus/shared";
+import { Button, focusRing } from "@nixus/shared";
+import { cn } from "@/lib/utils";
 
 interface MonthNavigatorProps {
   selectedYear: number;
@@ -9,9 +10,13 @@ interface MonthNavigatorProps {
   onChange: (year: number, month: number) => void;
 }
 
-function getMonthName(month: number, format: "short" | "long" = "long"): string {
+function getMonthName(
+  month: number,
+  locale: string,
+  format: "short" | "long" = "long"
+): string {
   // month is 1-based
-  return new Date(2000, month - 1).toLocaleDateString("en-US", { month: format });
+  return new Date(2000, month - 1).toLocaleDateString(locale, { month: format });
 }
 
 function prevMonth(year: number, month: number): [number, number] {
@@ -23,7 +28,8 @@ function nextMonth(year: number, month: number): [number, number] {
 }
 
 export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthNavigatorProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language;
   const [prevY, prevM] = prevMonth(selectedYear, selectedMonth);
   const [nextY, nextM] = nextMonth(selectedYear, selectedMonth);
 
@@ -45,7 +51,7 @@ export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthN
 
   return (
     <div
-      className="flex items-center gap-2"
+      className={cn("flex items-center gap-2 rounded-md", focusRing)}
       role="navigation"
       aria-label={t("budget.monthNavigation")}
       data-testid="month-navigator"
@@ -56,26 +62,26 @@ export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthN
         variant="ghost"
         size="sm"
         onClick={goPrev}
-        aria-label={`${t("budget.goTo")} ${getMonthName(prevM, "long")} ${prevY}`}
+        aria-label={`${t("budget.goTo")} ${getMonthName(prevM, locale, "long")} ${prevY}`}
         data-testid="prev-month-button"
       >
-        <ChevronLeft className="size-4 mr-1" />
-        {getMonthName(prevM, "short")}
+        <ChevronLeft aria-hidden="true" />
+        {getMonthName(prevM, locale, "short")}
       </Button>
 
-      <span className="font-semibold text-foreground" data-testid="current-month-label">
-        {getMonthName(selectedMonth)} {selectedYear}
+      <span className="text-h3 text-ink" data-testid="current-month-label">
+        {getMonthName(selectedMonth, locale)} {selectedYear}
       </span>
 
       <Button
         variant="ghost"
         size="sm"
         onClick={goNext}
-        aria-label={`${t("budget.goTo")} ${getMonthName(nextM, "long")} ${nextY}`}
+        aria-label={`${t("budget.goTo")} ${getMonthName(nextM, locale, "long")} ${nextY}`}
         data-testid="next-month-button"
       >
-        {getMonthName(nextM, "short")}
-        <ChevronRight className="size-4 ml-1" />
+        {getMonthName(nextM, locale, "short")}
+        <ChevronRight aria-hidden="true" />
       </Button>
     </div>
   );

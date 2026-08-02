@@ -112,7 +112,7 @@ test.describe("Accessibility", () => {
 
   test("focus rings are visible on focused interactive elements", async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/budget");
+    await page.goto("/spending/budget");
 
     // Focus the add group button
     const addGroupBtn = page.getByTestId("add-group-button");
@@ -188,7 +188,7 @@ test.describe("Accessibility", () => {
 
   test("account row has aria-label with name, type, and balance", async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/accounts");
+    await page.goto("/wealth/accounts");
 
     const accountRow = page.getByTestId("account-row").first();
     await expect(accountRow).toBeVisible();
@@ -201,7 +201,7 @@ test.describe("Accessibility", () => {
 
   test("asset row has aria-label with name, type, and value", async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/assets");
+    await page.goto("/wealth/assets");
 
     const assetRow = page.getByTestId("asset-row").first();
     await expect(assetRow).toBeVisible();

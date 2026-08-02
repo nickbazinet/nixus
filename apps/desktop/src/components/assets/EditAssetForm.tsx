@@ -1,16 +1,16 @@
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
+  Button,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
-import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
 import { useUpdateAsset } from "@/hooks/useAssets";
 import type { PassiveAsset } from "@/lib/types";
 
@@ -34,7 +34,10 @@ interface AssetFormData {
 export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
   const { t } = useTranslation();
   const updateAsset = useUpdateAsset();
-  const ASSET_TYPE_OPTIONS = ASSET_TYPE_VALUES.map((o) => ({ value: o.value, label: t(o.key) }));
+  const ASSET_TYPE_OPTIONS = ASSET_TYPE_VALUES.map((o) => ({
+    value: o.value,
+    label: t(o.key),
+  }));
 
   const {
     register,
@@ -46,7 +49,7 @@ export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
       name: asset.name,
       asset_type: asset.asset_type,
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmit = (data: AssetFormData) => {
@@ -69,21 +72,31 @@ export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
   };
 
   return (
+    // Native constraint checking aborts submit before it fires, which suppresses the styled inline
+    // error and the `aria-invalid` / `aria-describedby` wiring. Validation belongs to the form layer.
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3"
+      noValidate
+      className="space-y-4"
       data-testid="edit-asset-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="edit-asset-name">{t("common.name")}</Label>
+        <Label htmlFor="edit-asset-name" required>
+          {t("common.name")}
+        </Label>
         <Input
           id="edit-asset-name"
           autoFocus
+          required
+          aria-required="true"
           aria-invalid={!!errors.name}
+          aria-describedby={errors.name ? "edit-asset-name-error" : undefined}
           {...register("name", { required: t("assets.nameRequired") })}
         />
         {errors.name && (
-          <p className="text-xs text-destructive">{errors.name.message}</p>
+          <p id="edit-asset-name-error" className="text-caption text-over-ink">
+            {errors.name.message}
+          </p>
         )}
       </div>
 
@@ -93,7 +106,11 @@ export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
           name="asset_type"
           control={control}
           render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange} items={ASSET_TYPE_OPTIONS}>
+            <Select
+              value={field.value}
+              onValueChange={field.onChange}
+              items={ASSET_TYPE_OPTIONS}
+            >
               <SelectTrigger id="edit-asset-type">
                 <SelectValue />
               </SelectTrigger>
@@ -113,7 +130,7 @@ export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
         <Button type="submit" size="sm">
           {t("common.save")}
         </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+        <Button type="button" variant="outline" size="sm" onClick={onClose}>
           {t("common.cancel")}
         </Button>
       </div>

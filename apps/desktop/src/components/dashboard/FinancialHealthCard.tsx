@@ -1,39 +1,27 @@
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@nixus/shared";
+import { ChevronDown, Compass, Info } from "lucide-react";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Meter,
+  Skeleton,
+  focusRing,
+  formatMoney,
+} from "@nixus/shared";
 import { useFinancialHealthSummary } from "@/hooks/useFinancialHealth";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { cn } from "@/lib/utils";
-import type { EmergencyFundStatus } from "@/lib/types";
-import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
 
-const DETAIL_ROUTE = "/net-worth/financial-health";
+const DETAIL_ROUTE = "/wealth/where-to-put-your-money";
 
-function formatCoverageMonths(months: number, cappedLabel: string): string {
-  if (months >= 12) return cappedLabel;
+function formatCoverageMonths(months: number): string {
   return months.toFixed(1);
-}
-
-function emergencyFundBarColor(status: EmergencyFundStatus): string {
-  switch (status) {
-    case "funded":
-      return "bg-teal-500";
-    case "approaching":
-      return "bg-amber-500";
-    case "underfunded":
-      return "bg-rose-500";
-  }
-}
-
-function emergencyFundTextColor(status: EmergencyFundStatus): string {
-  switch (status) {
-    case "funded":
-      return "text-teal-600 dark:text-teal-400";
-    case "approaching":
-      return "text-amber-600 dark:text-amber-400";
-    case "underfunded":
-      return "text-rose-500";
-  }
 }
 
 function getActionLine(
@@ -46,69 +34,46 @@ function getActionLine(
   return translated === key ? actionLineKey : translated;
 }
 
-function buildAriaLabel(
-  t: (key: string, opts?: Record<string, unknown>) => string,
-  monthsDisplay: string,
-  savingsRateDisplay: string,
-  surplusDisplay: string,
-  actionLine: string,
-): string {
-  return t("financialHealth.card.ariaLabel", {
-    months: monthsDisplay,
-    savingsRate: savingsRateDisplay,
-    surplus: surplusDisplay,
-    action: actionLine,
-  });
-}
-
 function FinancialHealthSkeleton() {
   return (
-    <Card className="shadow-sm rounded-lg" data-testid="financial-health-skeleton">
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="h-4 w-28 bg-muted animate-pulse rounded" />
-          <div className="h-4 w-24 bg-muted animate-pulse rounded" />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-          {[1, 2, 3].map((i) => (
-            <div key={i}>
-              <div className="h-3 w-20 bg-muted animate-pulse rounded mb-2" />
-              <div className="h-7 w-16 bg-muted animate-pulse rounded mb-2" />
-              <div className="h-1.5 w-full bg-muted animate-pulse rounded" />
-            </div>
-          ))}
-        </div>
-        <div className="h-3 w-3/4 bg-muted animate-pulse rounded mt-4" />
+    <Card data-testid="financial-health-skeleton">
+      <CardContent>
+        {/* Title, action line, cushion sentence, meter, savings sentence, trailing note. */}
+        <Skeleton rows={6} />
       </CardContent>
     </Card>
   );
 }
 
+// `data_sufficient: false` is a first-class state, not an error, and no financial-health figure may
+// render inside it. `get_financial_health_summary` returns no completed-month count, so this state
+// cannot honestly show the 1-of-3 progress indicator that the Financial Health surface does.
 function InsufficientDataCard() {
   const { t } = useTranslation();
 
   return (
-    <Link to="/import" className="block">
-      <Card
-        className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
-        role="link"
-        aria-label={t("financialHealth.empty.insufficientData")}
-        data-testid="financial-health-empty"
-      >
-        <CardContent className="p-6 text-center">
-          <p className="text-sm text-muted-foreground">
-            {t("financialHealth.empty.insufficientData")}
-          </p>
-        </CardContent>
-      </Card>
-    </Link>
+    <Card data-testid="financial-health-empty">
+      <CardContent>
+        <EmptyState
+          icon={<Compass />}
+          title={t("financialHealth.empty.title")}
+          description={t("financialHealth.empty.bodyNoCount")}
+          action={
+            <Button render={<Link to="/import" />} data-testid="financial-health-empty-cta">
+              {t("financialHealth.empty.importCta")}
+            </Button>
+          }
+        />
+      </CardContent>
+    </Card>
   );
 }
 
 export function FinancialHealthCard() {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
+  const { t, i18n } = useTranslation();
+  const { hidden } = useValuesHidden();
   const { data, isPending } = useFinancialHealthSummary();
+  const [disclaimerOpen, setDisclaimerOpen] = useState(false);
 
   if (isPending) {
     return <FinancialHealthSkeleton />;
@@ -122,165 +87,120 @@ export function FinancialHealthCard() {
   const savings = data.savings;
   const waterfall = data.waterfall;
 
-  const hasIncome = savings?.savings_rate_percent != null;
+  const amountHidden = t("common.amountHidden");
+  const money = (cents: number) =>
+    hidden ? amountHidden : formatMoney({ cents, locale: i18n.language });
+
   const coverageMonths = emergencyFund?.coverage_months ?? 0;
+  const targetMonths = emergencyFund?.target_months ?? 6;
   const monthsCapped = coverageMonths >= 12;
-  const monthsDisplay = monthsCapped
-    ? t("financialHealth.card.monthsCapped")
-    : t("financialHealth.card.months", {
-        months: formatCoverageMonths(coverageMonths, t("financialHealth.card.monthsCapped")),
-      });
+  const monthsText = monthsCapped
+    ? t("financialHealth.monthsCapped")
+    : t("financialHealth.months", { months: formatCoverageMonths(coverageMonths) });
 
-  const savingsRateDisplay = hasIncome
-    ? `${Math.round(savings!.savings_rate_percent!)}%`
-    : "";
-
+  const savingsRatePercent = savings?.savings_rate_percent;
   const surplusCents = savings?.avg_monthly_surplus_cents ?? 0;
-  const surplusDisplay = hasIncome
-    ? surplusCents >= 0
-      ? `+${formatCurrency(surplusCents)}${t("financialHealth.card.perMonth")}`
-      : `${formatCurrency(surplusCents)}${t("financialHealth.card.perMonth")}`
-    : "";
-
-  const actionLine = getActionLine(t, waterfall?.action_line_key);
-  const ariaLabel = buildAriaLabel(
-    t,
-    monthsDisplay,
-    savingsRateDisplay || t("financialHealth.empty.noIncome"),
-    surplusDisplay,
-    actionLine,
-  );
-
-  const efStatus = emergencyFund?.status ?? "underfunded";
-  const progressPercent = Math.min((emergencyFund?.progress_ratio ?? 0) * 100, 100);
+  const hasIncome = savingsRatePercent != null;
   const isDeficit = hasIncome && surplusCents < 0;
 
+  const actionLine = getActionLine(t, waterfall?.action_line_key);
+
   return (
-    <Link to={DETAIL_ROUTE} className="block">
-      <Card
-        className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
-        role="link"
-        aria-label={ariaLabel}
-        data-testid="financial-health-card"
-      >
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <p className="text-sm font-medium text-muted-foreground">
-              {t("financialHealth.card.title")}
+    <Card
+      // {components.action-card}: a 3px brand left border, used once per surface. Its scarcity is
+      // what makes it read as "do this".
+      className="border-l-3 border-l-brand"
+      data-testid="financial-health-card"
+    >
+      <CardHeader>
+        <CardTitle>{t("financialHealth.card.suggestedNextStep")}</CardTitle>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-3">
+        <p className="text-h2 text-ink" data-testid="financial-health-action">
+          {actionLine}
+        </p>
+
+        {emergencyFund && (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-body text-ink-dim" data-testid="financial-health-months">
+              {t("financialHealth.card.cushionSentence", {
+                months: monthsText,
+                target: targetMonths,
+              })}
             </p>
-            <span className="text-xs text-primary">
-              {t("financialHealth.card.viewDetails")}
-            </span>
+            {/* The meter is never the only indicator: the sentence above carries the figures. */}
+            <Meter
+              label={t("financialHealth.card.cushionMeterLabel")}
+              value={Math.min(emergencyFund.progress_ratio * 100, 100)}
+              valueText={t("financialHealth.card.cushionMeterValue", {
+                months: monthsText,
+                target: targetMonths,
+              })}
+              data-testid="financial-health-progress"
+            />
           </div>
+        )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            {/* Emergency fund column */}
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">
-                {t("financialHealth.card.emergencyFund")}
-              </p>
-              <p
-                className={cn(
-                  "text-lg font-mono font-medium",
-                  emergencyFundTextColor(efStatus),
-                )}
-                data-testid="financial-health-months"
-              >
-                {monthsDisplay}
-              </p>
-              {emergencyFund && (
-                <div className="flex items-center gap-1 mt-1">
-                  <div
-                    className="relative flex-1 h-1.5 rounded-full bg-muted"
-                    role="progressbar"
-                    aria-valuenow={Math.round(progressPercent)}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    data-testid="financial-health-progress"
-                  >
-                    <div
-                      className={cn(
-                        "h-full rounded-full transition-all",
-                        emergencyFundBarColor(efStatus),
-                      )}
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">
-                    {t("financialHealth.card.targetMarker", {
-                      months: emergencyFund.target_months,
-                    })}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Savings rate column */}
-            <div>
-              <div className="flex items-center gap-1 mb-1">
-                <p className="text-xs text-muted-foreground">
-                  {t("financialHealth.card.savingsRate")}
-                </p>
-                <MetricInfoTooltip
-                  ariaLabel={t("financialHealth.card.savingsRateInfoAria")}
-                  content={t("financialHealth.card.savingsRateInfo")}
-                  testId="financial-health-savings-rate-info"
-                />
-              </div>
-              {hasIncome ? (
-                <>
-                  <p
-                    className={cn(
-                      "text-lg font-mono font-medium",
-                      isDeficit ? "text-rose-500" : "text-teal-600 dark:text-teal-400",
-                    )}
-                    data-testid="financial-health-savings-rate"
-                  >
-                    {savingsRateDisplay}
-                  </p>
-                  <p
-                    className={cn(
-                      "text-sm font-mono mt-0.5",
-                      isDeficit ? "text-rose-500" : "text-muted-foreground",
-                    )}
-                    data-testid="financial-health-surplus"
-                  >
-                    {surplusDisplay}
-                  </p>
-                </>
-              ) : (
-                <Link
-                  to="/income"
-                  className="block"
-                  onClick={(e) => e.stopPropagation()}
-                  data-testid="financial-health-no-income"
-                >
-                  <p className="text-sm text-muted-foreground hover:text-primary transition-colors">
-                    {t("financialHealth.empty.noIncome")}
-                  </p>
-                </Link>
-              )}
-            </div>
-
-            {/* Next best action column */}
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">
-                {t("financialHealth.card.nextAction")}
-              </p>
-              <p
-                className="text-sm font-medium leading-snug"
-                data-testid="financial-health-action"
-              >
-                {actionLine}
-              </p>
-            </div>
-          </div>
-
-          <p className="text-xs text-muted-foreground mt-4" data-testid="financial-health-disclaimer">
-            {t("financialHealth.disclaimer")}
+        {hasIncome ? (
+          <p className="text-body text-ink-dim" data-testid="financial-health-savings-rate">
+            {isDeficit
+              ? t("financialHealth.card.deficitSentence", {
+                  surplus: money(Math.abs(surplusCents)),
+                })
+              : t("financialHealth.card.savingsSentence", {
+                  percent: Math.round(savingsRatePercent),
+                  surplus: money(surplusCents),
+                })}
           </p>
-        </CardContent>
-      </Card>
-    </Link>
+        ) : (
+          <Link
+            to="/spending/income"
+            className={cn(
+              "w-fit text-label text-brand-ink underline-offset-4 hover:underline",
+              focusRing,
+            )}
+            data-testid="financial-health-no-income"
+          >
+            {t("financialHealth.empty.noIncome")}
+          </Link>
+        )}
+
+        <p className="text-caption text-ink-faint" data-testid="financial-health-trailing-note">
+          {t("financialHealth.card.trailingNote")}
+        </p>
+
+        <Button variant="outline" render={<Link to={DETAIL_ROUTE} />} className="w-fit">
+          {t("financialHealth.card.seeThePlan")}
+        </Button>
+
+        {/* Calibrated weight: a full disclaimer beside the very first recommendation a user ever
+            receives stacks two hedges in one session and reads as the app retracting itself. */}
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => setDisclaimerOpen((open) => !open)}
+            aria-expanded={disclaimerOpen}
+            className={cn(
+              "inline-flex w-fit min-h-target-min items-center gap-1 text-caption text-ink-dim hover:text-ink",
+              focusRing,
+            )}
+            data-testid="financial-health-disclaimer-toggle"
+          >
+            <Info className="size-3.5 shrink-0" aria-hidden="true" />
+            {t("financialHealth.card.disclaimerCompact")}
+            <ChevronDown
+              className={cn("size-3 transition-transform", disclaimerOpen && "rotate-180")}
+              aria-hidden="true"
+            />
+          </button>
+          {disclaimerOpen && (
+            <p className="text-caption text-ink-dim" data-testid="financial-health-disclaimer">
+              {t("financialHealth.disclaimerFull")}
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

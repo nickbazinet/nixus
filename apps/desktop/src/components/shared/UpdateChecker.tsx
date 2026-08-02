@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@nixus/shared";
-import { Button } from "@nixus/shared";
+import { Button, Meter } from "@nixus/shared";
 import { toast } from "sonner";
 
 type Stage = "idle" | "available" | "downloading" | "ready";
@@ -90,26 +90,22 @@ export function UpdateChecker() {
                 ? t("update.downloading")
                 : `${t("update.available")} — v${update.version}`}
           </DialogTitle>
-          <DialogDescription>
-            {stage === "downloading" ? (
-              <span className="block mt-2">
-                <span className="block h-2 w-full rounded-full bg-muted overflow-hidden">
-                  <span
-                    className="block h-full bg-primary rounded-full transition-all duration-300"
-                    style={{ width: `${progress}%` }}
-                  />
-                </span>
-                <span className="block text-xs text-muted-foreground mt-1 text-right">
-                  {progress}%
-                </span>
-              </span>
-            ) : (
-              <span className="block mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap text-xs">
-                {update.body || t("update.newVersion")}
-              </span>
-            )}
+          <DialogDescription className="max-h-40 overflow-y-auto whitespace-pre-wrap">
+            {update.body || t("update.newVersion")}
           </DialogDescription>
         </DialogHeader>
+
+        {stage === "downloading" && (
+          <div className="flex flex-col gap-1">
+            {/* The meter is never the only indicator: the percentage below it is the paired figure. */}
+            <Meter
+              value={progress}
+              label={t("update.downloading")}
+              valueText={`${progress}%`}
+            />
+            <span className="text-right text-caption text-ink-dim">{progress}%</span>
+          </div>
+        )}
 
         {stage === "available" && (
           <DialogFooter>

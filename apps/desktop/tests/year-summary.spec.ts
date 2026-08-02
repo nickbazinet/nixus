@@ -71,7 +71,7 @@ async function setupYearSummaryMock(page: Page, yearlyOverrides: Record<string, 
 test.describe("Year Summary Page", () => {
   test("renders metrics and chart with seeded data", async ({ page }) => {
     await setupYearSummaryMock(page);
-    await page.goto("/year-summary");
+    await page.goto("/insights/year-summary");
 
     await expect(
       page.getByRole("heading", { name: "Year Summary" })
@@ -96,7 +96,7 @@ test.describe("Year Summary Page", () => {
 
   test("past year uses full-year monthly average", async ({ page }) => {
     await setupYearSummaryMock(page);
-    await page.goto("/year-summary");
+    await page.goto("/insights/year-summary");
 
     await page.getByTestId("year-summary-tabs-2025").click();
 
@@ -110,7 +110,7 @@ test.describe("Year Summary Page", () => {
 
   test("year pill tabs switch data", async ({ page }) => {
     await setupYearSummaryMock(page);
-    await page.goto("/year-summary");
+    await page.goto("/insights/year-summary");
 
     await page.getByTestId("year-summary-tabs-2025").click();
     await expect(page.getByTestId("year-metric-spent")).toContainText("$3,200.00");
@@ -128,7 +128,7 @@ test.describe("Year Summary Page", () => {
         total_cents: 0,
       })),
     });
-    await page.goto("/year-summary");
+    await page.goto("/insights/year-summary");
 
     await expect(page.getByTestId("year-summary-empty")).toBeVisible();
     await expect(page.getByTestId("year-summary-empty")).toContainText(

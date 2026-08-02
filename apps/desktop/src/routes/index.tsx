@@ -2,22 +2,32 @@ import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Button } from "@nixus/shared";
-import { Card, CardContent } from "@nixus/shared";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { usePeriod } from "@/hooks/usePeriod";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Meter,
+  Money,
+  Skeleton,
+  formatMoney,
+} from "@nixus/shared";
+import { ChevronDown, ChevronRight, PiggyBank, Wallet } from "lucide-react";
 import { DashboardMetricCard } from "@/components/dashboard/DashboardMetricCard";
 import { DashboardBudgetCategoryRow } from "@/components/dashboard/BudgetCategoryRow";
 import { NetWorthSparkline } from "@/components/dashboard/NetWorthSparkline";
 import { useBudgetSummary, useTopBudgetCategories, useSpendingBreakdown } from "@/hooks/useDashboard";
 import { useCurrentNetWorth, useRecentNetWorthSnapshots } from "@/hooks/useNetWorth";
 import { fetchOnboardingStatus, useOnboardingStatus } from "@/hooks/useOnboardingStatus";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { CashFlowSummaryCard } from "@/components/dashboard/CashFlowSummaryCard";
 import { FinancialHealthCard } from "@/components/dashboard/FinancialHealthCard";
 import { YearToDateCard } from "@/components/yearly-summary/YearToDateCard";
 import { useIncomeTotal } from "@/hooks/useIncome";
 import { useYearlySummary } from "@/hooks/useYearlySummary";
-import { MonthNavigator } from "@/components/budget/MonthNavigator";
 import { LastExpenseLine } from "@/components/dashboard/LastExpenseLine";
 import { SetupIncompleteBanner } from "@/components/dashboard/SetupIncompleteBanner";
 
@@ -34,18 +44,11 @@ export const Route = createFileRoute("/")({
 });
 
 function IndexPage() {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
+  const { t, i18n } = useTranslation();
+  const { hidden } = useValuesHidden();
   const onboarding = useOnboardingStatus();
 
-  const now = new Date();
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
-
-  const handleMonthChange = (year: number, month: number) => {
-    setSelectedYear(year);
-    setSelectedMonth(month);
-  };
+  const { year: selectedYear, month: selectedMonth } = usePeriod();
 
   const budgetSummary = useBudgetSummary(selectedYear, selectedMonth);
   const topCategories = useTopBudgetCategories(selectedYear, selectedMonth);
@@ -53,7 +56,7 @@ function IndexPage() {
   const snapshots = useRecentNetWorthSnapshots(12);
   const spending = useSpendingBreakdown(selectedYear, selectedMonth);
   const incomeTotal = useIncomeTotal(selectedYear, selectedMonth);
-  const yearlySummary = useYearlySummary(now.getFullYear());
+  const yearlySummary = useYearlySummary(selectedYear);
 
   const summary = budgetSummary.data;
   const categories = topCategories.data;
@@ -61,7 +64,22 @@ function IndexPage() {
   const snapshotData = snapshots.data ?? [];
   const spendingData = spending.data ?? [];
 
-  const monthLabel = new Date(selectedYear, selectedMonth - 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const amountHidden = t("common.amountHidden");
+  const money = (cents: number) =>
+    hidden ? amountHidden : formatMoney({ cents, locale: i18n.language });
+  const moneyNode = (cents: number) => (
+    <Money
+      cents={cents}
+      locale={i18n.language}
+      masked={hidden}
+      maskedLabel={amountHidden}
+    />
+  );
+
+  const monthLabel = new Date(selectedYear, selectedMonth - 1).toLocaleDateString(
+    i18n.language,
+    { month: "long", year: "numeric" },
+  );
 
   const hasBudget = summary && summary.total_target_cents > 0;
   const hasExpenses = summary && summary.total_spent_cents > 0;
@@ -81,21 +99,16 @@ function IndexPage() {
     if (diff === 0) return { direction: "flat" as const, percentage: t("dashboard.noChange") };
     const pct = prev !== 0 ? Math.abs((diff / prev) * 100).toFixed(1) : "0.0";
     return diff > 0
-      ? { direction: "up" as const, percentage: `+${formatCurrency(diff)} (+${pct}%)` }
-      : { direction: "down" as const, percentage: `${formatCurrency(diff)} (${pct}%)` };
+      ? { direction: "up" as const, percentage: `${money(diff)} (+${pct}%)` }
+      : { direction: "down" as const, percentage: `${money(diff)} (${pct}%)` };
   })();
 
   return (
-    <div>
+    <div className="flex flex-col gap-grid-gap">
       <PageHeader
-        title={t("nav.dashboard")}
+        title={t("nav.today")}
         actions={
           <>
-            <MonthNavigator
-              selectedYear={selectedYear}
-              selectedMonth={selectedMonth}
-              onChange={handleMonthChange}
-            />
             <Link to="/import">
               <Button data-testid="import-statement-btn">{t("dashboard.importStatement")}</Button>
             </Link>
@@ -107,34 +120,83 @@ function IndexPage() {
 
       <LastExpenseLine />
 
-      {/* Cash Flow Card */}
-      <div className="mb-4">
+      {/* Hero row. One text-display figure lives here — budget remaining, which answers "am I OK
+          this month?". Three columns at 1100px and up, one column below. */}
+      <div className="grid grid-cols-1 gap-grid-gap min-[1100px]:grid-cols-3">
+        {budgetSummary.isPending ? (
+          <DashboardMetricCard
+            title={t("dashboard.budgetRemaining")}
+            value=""
+            variant="hero"
+            isLoading
+          />
+        ) : !hasBudget ? (
+          <Card data-testid="empty-budget">
+            <CardContent>
+              <EmptyState
+                icon={<PiggyBank />}
+                title={t("dashboard.noBudget")}
+                action={
+                  <Button render={<Link to="/spending/budget" />} data-testid="create-budget-link">
+                    {t("dashboard.goToBudget")}
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
+        ) : (
+          <DashboardMetricCard
+            title={`${t("dashboard.budgetRemaining")} — ${monthLabel}`}
+            value={moneyNode(summary.remaining_cents)}
+            valueLabel={money(summary.remaining_cents)}
+            variant="hero"
+            href="/spending/budget"
+            trend={
+              summary.remaining_cents >= 0
+                ? {
+                    direction: "up",
+                    percentage: `${Math.round(100 - budgetUtilization)}${t("dashboard.percentLeft")}`,
+                  }
+                : {
+                    direction: "down",
+                    percentage: `${Math.round(budgetUtilization - 100)}${t("dashboard.percentOver")}`,
+                  }
+            }
+            progressBar={
+              <Meter
+                label={t("dashboard.budgetMeterLabel")}
+                value={Math.min(budgetUtilization, 100)}
+                valueText={t("dashboard.budgetMeterValue", {
+                  spent: money(summary.total_spent_cents),
+                  target: money(summary.total_target_cents),
+                })}
+                data-testid="budget-overall-progress"
+              />
+            }
+          />
+        )}
+
         <CashFlowSummaryCard
           incomeCents={incomeTotal.data?.total_cents ?? 0}
           expensesCents={summary?.total_spent_cents ?? 0}
           isLoading={incomeTotal.isPending || budgetSummary.isPending}
         />
+
+        {/* The surface's single action-card. */}
+        <FinancialHealthCard />
       </div>
 
-      {/* Year to Date Card */}
-      <div className="mb-4">
-        <YearToDateCard
-          data={yearlySummary.data}
-          isLoading={yearlySummary.isPending}
-        />
-      </div>
-
-      {/* Hero Section: 2-column grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Net Worth Hero */}
+      {/* Net worth and its parts. Secondary figures only — never a second text-display. */}
+      <div className="grid grid-cols-1 gap-grid-gap sm:grid-cols-2 min-[1100px]:grid-cols-4">
         {netWorth.isPending ? (
-          <DashboardMetricCard title={t("nav.netWorth")} value="" variant="hero" isLoading />
+          <DashboardMetricCard title={t("nav.netWorth")} value="" variant="secondary" isLoading />
         ) : hasNetWorth ? (
           <DashboardMetricCard
             title={t("nav.netWorth")}
-            value={formatCurrency(nw!.total_cents)}
-            variant="hero"
-            href="/net-worth"
+            value={moneyNode(nw.total_cents)}
+            valueLabel={money(nw.total_cents)}
+            variant="secondary"
+            href="/wealth/net-worth"
             trend={netWorthTrend}
             progressBar={
               snapshotData.length >= 2 ? (
@@ -143,151 +205,89 @@ function IndexPage() {
             }
           />
         ) : (
-          <Card className="shadow-sm rounded-lg" data-testid="empty-net-worth">
-            <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">
-                {t("dashboard.noAccountsOrAssets")}
-              </p>
-              <Link to="/accounts">
-                <Button className="mt-3" data-testid="add-account-link">
-                  {t("dashboard.goToAccounts")}
-                </Button>
-              </Link>
+          <Card data-testid="empty-net-worth">
+            <CardContent>
+              <EmptyState
+                icon={<Wallet />}
+                title={t("dashboard.noAccountsOrAssets")}
+                action={
+                  <Button render={<Link to="/wealth/accounts" />} data-testid="add-account-link">
+                    {t("dashboard.goToAccounts")}
+                  </Button>
+                }
+              />
             </CardContent>
           </Card>
         )}
 
-        {/* Budget Remaining Hero */}
-        {budgetSummary.isPending ? (
-          <DashboardMetricCard title={t("dashboard.budgetRemaining")} value="" variant="hero" isLoading />
-        ) : !hasBudget ? (
-          <Card className="shadow-sm rounded-lg" data-testid="empty-budget">
-            <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">
-                {t("dashboard.noBudget")}
-              </p>
-              <Link to="/budget">
-                <Button className="mt-3" data-testid="create-budget-link">
-                  {t("dashboard.goToBudget")}
-                </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        ) : (
-          <DashboardMetricCard
-            title={`${t("dashboard.budgetRemaining")} — ${monthLabel}`}
-            value={formatCurrency(summary!.remaining_cents)}
-            variant="hero"
-            href="/budget"
-            trend={
-              summary!.remaining_cents >= 0
-                ? { direction: "up", percentage: `${Math.round(100 - budgetUtilization)}${t("dashboard.percentLeft")}` }
-                : { direction: "down", percentage: `${Math.round(budgetUtilization - 100)}${t("dashboard.percentOver")}` }
-            }
-            progressBar={
-              <div
-                className="h-2 w-full rounded-full bg-muted"
-                role="progressbar"
-                aria-valuenow={summary!.total_spent_cents}
-                aria-valuemin={0}
-                aria-valuemax={summary!.total_target_cents}
-                data-testid="budget-overall-progress"
-              >
-                <div
-                  className={`h-full rounded-full transition-all ${
-                    budgetUtilization > 100
-                      ? "bg-rose-500"
-                      : budgetUtilization >= 75
-                        ? "bg-amber-500"
-                        : "bg-primary"
-                  }`}
-                  style={{ width: `${Math.min(budgetUtilization, 100)}%` }}
-                />
-              </div>
-            }
-          />
-        )}
-      </div>
-
-      {/* Secondary Cards: 3-column grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-4">
         <DashboardMetricCard
           title={t("dashboard.cash")}
-          value={formatCurrency(nw?.cash_cents ?? 0)}
+          value={moneyNode(nw?.cash_cents ?? 0)}
+          valueLabel={money(nw?.cash_cents ?? 0)}
           variant="secondary"
           isLoading={netWorth.isPending}
         />
         <DashboardMetricCard
           title={t("dashboard.investments")}
-          value={formatCurrency(nw?.investments_cents ?? 0)}
+          value={moneyNode(nw?.investments_cents ?? 0)}
+          valueLabel={money(nw?.investments_cents ?? 0)}
           variant="secondary"
           isLoading={netWorth.isPending}
         />
         <DashboardMetricCard
           title={t("dashboard.assets")}
-          value={formatCurrency(nw?.assets_cents ?? 0)}
+          value={moneyNode(nw?.assets_cents ?? 0)}
+          valueLabel={money(nw?.assets_cents ?? 0)}
           variant="secondary"
           isLoading={netWorth.isPending}
         />
       </div>
 
-      {/* Financial Health Card */}
-      <div className="mt-6">
-        <FinancialHealthCard />
-      </div>
+      <YearToDateCard data={yearlySummary.data} isLoading={yearlySummary.isPending} />
 
       {/* Top Budget Categories */}
-      <div className="mt-4">
-        {topCategories.isPending ? (
-          <Card className="shadow-sm rounded-lg" data-testid="categories-skeleton">
-            <CardContent className="p-6">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="py-2">
-                  <div className="h-4 w-32 bg-muted animate-pulse rounded mb-2" />
-                  <div className="h-2 w-full bg-muted animate-pulse rounded" />
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        ) : hasBudget && categories && categories.length > 0 ? (
-          <Card className="shadow-sm rounded-lg" data-testid="top-categories">
-            <CardContent className="p-6">
-              <p className="text-sm font-medium text-muted-foreground mb-3">
-                {t("dashboard.topCategories")} — {monthLabel}
-              </p>
-              {categories.map((cat) => (
-                <DashboardBudgetCategoryRow
-                  key={cat.id}
-                  name={cat.name}
-                  targetCents={cat.target_cents}
-                  spentCents={cat.spent_cents}
-                />
-              ))}
-            </CardContent>
-          </Card>
-        ) : hasBudget && !hasExpenses ? (
-          <Card className="shadow-sm rounded-lg" data-testid="empty-expenses">
-            <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">
-                {t("dashboard.noExpenses")}
-              </p>
-              <Link to="/import">
-                <Button className="mt-3" data-testid="import-link">
+      {topCategories.isPending ? (
+        <Card data-testid="categories-skeleton">
+          <CardContent>
+            <Skeleton rows={5} />
+          </CardContent>
+        </Card>
+      ) : hasBudget && categories && categories.length > 0 ? (
+        <Card data-testid="top-categories">
+          <CardHeader>
+            <CardTitle>
+              {t("dashboard.topCategories")} — {monthLabel}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {categories.map((cat) => (
+              <DashboardBudgetCategoryRow
+                key={cat.id}
+                name={cat.name}
+                targetCents={cat.target_cents}
+                spentCents={cat.spent_cents}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      ) : hasBudget && !hasExpenses ? (
+        <Card data-testid="empty-expenses">
+          <CardContent>
+            <EmptyState
+              title={t("dashboard.noExpenses")}
+              action={
+                <Button render={<Link to="/import" />} data-testid="import-link">
                   {t("dashboard.importStatement")}
                 </Button>
-              </Link>
-            </CardContent>
-          </Card>
-        ) : null}
-      </div>
+              }
+            />
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Spending Breakdown */}
       {spending.isPending ? null : spendingData.length > 0 ? (
-        <SpendingBreakdown
-          monthLabel={monthLabel}
-          spendingData={spendingData}
-          formatCurrency={formatCurrency}
-        />
+        <SpendingBreakdown monthLabel={monthLabel} spendingData={spendingData} />
       ) : null}
     </div>
   );
@@ -296,45 +296,46 @@ function IndexPage() {
 function SpendingBreakdown({
   monthLabel,
   spendingData,
-  formatCurrency,
 }: {
   monthLabel: string;
   spendingData: { category_id: number; category_name: string; spent_cents: number }[];
-  formatCurrency: (cents: number) => string;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { hidden } = useValuesHidden();
   const [isOpen, setIsOpen] = useState(true);
 
   return (
-    <div className="mt-4">
-      <Card className="shadow-sm rounded-lg" data-testid="spending-breakdown">
-        <CardContent className="p-6">
-          <Button variant="ghost" size="sm" className="gap-1 text-muted-foreground mb-3 -ml-2"
-            onClick={() => setIsOpen(!isOpen)}
-            data-testid="spending-breakdown-toggle"
-          >
-            {isOpen ? (
-              <ChevronDown className="h-4 w-4" />
-            ) : (
-              <ChevronRight className="h-4 w-4" />
-            )}
-            {t("dashboard.spendingBreakdown")} — {monthLabel}
-          </Button>
-          {isOpen &&
-            spendingData.map((item) => (
-              <div
-                key={item.category_id}
-                className="flex items-center justify-between py-2"
-                data-testid="spending-row"
-              >
-                <span className="text-sm">{item.category_name}</span>
-                <span className="font-mono text-sm">
-                  {formatCurrency(item.spent_cents)}
-                </span>
-              </div>
-            ))}
-        </CardContent>
-      </Card>
-    </div>
+    <Card data-testid="spending-breakdown">
+      <CardContent>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2 mb-2 gap-1 text-ink-dim"
+          onClick={() => setIsOpen(!isOpen)}
+          aria-expanded={isOpen}
+          data-testid="spending-breakdown-toggle"
+        >
+          {isOpen ? <ChevronDown /> : <ChevronRight />}
+          {t("dashboard.spendingBreakdown")} — {monthLabel}
+        </Button>
+        {isOpen &&
+          spendingData.map((item) => (
+            <div
+              key={item.category_id}
+              className="flex items-center justify-between border-b border-line py-2 last:border-b-0"
+              data-testid="spending-row"
+            >
+              <span className="text-caption text-ink">{item.category_name}</span>
+              <Money
+                className="text-caption text-ink"
+                cents={item.spent_cents}
+                locale={i18n.language}
+                masked={hidden}
+                maskedLabel={t("common.amountHidden")}
+              />
+            </div>
+          ))}
+      </CardContent>
+    </Card>
   );
 }

@@ -32,7 +32,7 @@ export function CarMaintenanceHeader({
           onClick={onAddVehicle}
           data-testid="add-vehicle-button"
         >
-          <Plus className="h-4 w-4 mr-1" />
+          <Plus aria-hidden="true" />
           {t("maintenance.addVehicle")}
         </Button>
       }

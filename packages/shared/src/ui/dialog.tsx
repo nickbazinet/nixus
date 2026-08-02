@@ -7,6 +7,15 @@ import { cn } from "../lib/cn"
 import { Button } from "./button"
 import { XIcon } from "lucide-react"
 
+// Destructive confirms only — delete account / asset / vehicle. Modal-heavy workflows are a named
+// anti-pattern; create and edit belong in a SlideOver, and a recoverable error belongs inline.
+//
+// Labelling is not optional here. DialogTitle and DialogDescription register themselves with the
+// popup through Base UI's dialog context, which is what puts `aria-labelledby` and
+// `aria-describedby` on the popup element — the app currently ships 0 of each. Always render both.
+//
+// Focus return is Base UI's default `finalFocus`: the element that opened the dialog, never
+// `<body>`. Do not override `finalFocus` without providing an equivalent target.
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
@@ -31,7 +40,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-50 bg-scrim duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -53,7 +62,7 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-background p-4 text-sm ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-line bg-card p-card-pad text-body text-ink shadow-float duration-100 sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}
@@ -70,8 +79,7 @@ function DialogContent({
               />
             }
           >
-            <XIcon
-            />
+            <XIcon />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         )}
@@ -102,7 +110,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        "-mx-card-pad -mb-card-pad flex flex-col-reverse gap-2 rounded-b-xl border-t border-line bg-chrome p-card-pad sm:flex-row sm:justify-end",
         className
       )}
       {...props}
@@ -121,7 +129,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       data-slot="dialog-title"
-      className={cn("text-base leading-none font-medium", className)}
+      className={cn("text-h2 text-ink", className)}
       {...props}
     />
   )
@@ -135,7 +143,7 @@ function DialogDescription({
     <DialogPrimitive.Description
       data-slot="dialog-description"
       className={cn(
-        "text-sm text-muted-foreground *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
+        "text-caption text-ink-dim *:[a]:text-brand-ink *:[a]:underline *:[a]:underline-offset-3",
         className
       )}
       {...props}

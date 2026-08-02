@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ArrowRight, Check } from "lucide-react";
-import { Card, CardContent } from "@nixus/shared";
+import { Button, Card, CardContent, Meter, focusRing } from "@nixus/shared";
 import type { VehicleWithTasks } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -70,67 +70,71 @@ export function CarOnboardingChecklist({
   };
 
   return (
-    <Card className="shadow-sm rounded-lg" data-testid="car-onboarding-checklist">
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <p className="text-sm font-medium text-foreground">
+    <Card data-testid="car-onboarding-checklist">
+      <CardContent>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-h3 text-ink">
             {t("maintenance.onboarding.checklistTitle")}
           </p>
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="sm"
             onClick={handleDismiss}
-            className="text-xs text-primary hover:underline"
             data-testid="car-onboarding-dismiss"
           >
             {t("maintenance.onboarding.checklistDismiss")}
-          </button>
+          </Button>
         </div>
 
-        <div className="flex items-center gap-3 mb-3">
-          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-primary transition-all"
-              style={{ width: `${percent}%` }}
-            />
-          </div>
-          <span className="text-xs font-mono text-muted-foreground tabular-nums">
+        <div className="mb-3 flex items-center gap-3">
+          <Meter
+            value={percent}
+            label={t("maintenance.onboarding.progressMeterLabel")}
+            valueText={t("maintenance.onboarding.progressValueText", {
+              done: completedCount,
+              total: steps.length,
+            })}
+          />
+          <span className="money shrink-0 text-caption text-ink-dim">
             {t("maintenance.onboarding.progressLabel", { percent })}
           </span>
         </div>
 
-        <ul className="divide-y divide-border">
+        <ul className="divide-y divide-line">
           {steps.map((step) => {
             const content = (
               <>
                 <span
                   className={cn(
-                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2",
+                    "flex size-5 shrink-0 items-center justify-center rounded-full border",
                     step.done
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-muted-foreground/30"
+                      ? "border-brand bg-brand text-brand-on"
+                      : "border-line-strong"
                   )}
                   aria-hidden="true"
                 >
-                  {step.done && <Check className="h-3 w-3" strokeWidth={3} />}
+                  {step.done && <Check className="size-3" strokeWidth={3} />}
                 </span>
                 <span
                   className={cn(
-                    "flex-1 text-sm",
-                    step.done
-                      ? "text-muted-foreground line-through"
-                      : "text-foreground"
+                    "flex-1 text-body",
+                    step.done ? "text-ink-dim line-through" : "text-ink"
                   )}
                 >
                   {step.label}
                 </span>
                 {!step.done && step.to && (
-                  <ArrowRight className="h-4 w-4 text-muted-foreground/50" />
+                  <ArrowRight
+                    className="size-4 text-ink-faint"
+                    aria-hidden="true"
+                  />
                 )}
               </>
             );
 
             const rowClass =
-              "flex items-center gap-3 py-2.5 first:pt-0 last:pb-0";
+              "flex min-h-target-min items-center gap-3 py-2.5 first:pt-0 last:pb-0";
 
             return (
               <li key={step.key}>
@@ -138,7 +142,7 @@ export function CarOnboardingChecklist({
                   <Link
                     to={step.to}
                     search={{ vehicle: firstVehicleId }}
-                    className={cn(rowClass, "hover:opacity-80")}
+                    className={cn(rowClass, "no-underline hover:bg-hover", focusRing)}
                     data-testid={`car-onboarding-step-${step.key}`}
                   >
                     {content}

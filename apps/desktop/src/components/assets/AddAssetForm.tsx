@@ -1,16 +1,16 @@
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
+  Button,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
-import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { useCreateAsset } from "@/hooks/useAssets";
 
@@ -34,7 +34,10 @@ interface AddAssetFormProps {
 export function AddAssetForm({ onClose }: AddAssetFormProps) {
   const { t } = useTranslation();
   const createAsset = useCreateAsset();
-  const ASSET_TYPE_OPTIONS = ASSET_TYPE_VALUES.map((o) => ({ value: o.value, label: t(o.key) }));
+  const ASSET_TYPE_OPTIONS = ASSET_TYPE_VALUES.map((o) => ({
+    value: o.value,
+    label: t(o.key),
+  }));
 
   const {
     register,
@@ -47,7 +50,9 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
       asset_type: "real_estate",
       value_cents: 0,
     },
-    mode: "onSubmit",
+    // Validate on blur, not on submit: filling every field and only then learning what was wrong is
+    // the pattern the required markers and this mode exist together to replace.
+    mode: "onBlur",
   });
 
   const onSubmit = (data: AssetFormData) => {
@@ -70,22 +75,32 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
   };
 
   return (
+    // Native constraint checking aborts submit before it fires, which suppresses the styled inline
+    // error and the `aria-invalid` / `aria-describedby` wiring. Validation belongs to the form layer.
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      noValidate
+      className="space-y-4"
       data-testid="add-asset-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="asset-name">{t("common.name")}</Label>
+        <Label htmlFor="asset-name" required>
+          {t("common.name")}
+        </Label>
         <Input
           id="asset-name"
           placeholder={t("assets.namePlaceholder")}
           autoFocus
+          required
+          aria-required="true"
           aria-invalid={!!errors.name}
+          aria-describedby={errors.name ? "asset-name-error" : undefined}
           {...register("name", { required: t("assets.nameRequired") })}
         />
         {errors.name && (
-          <p className="text-xs text-destructive">{errors.name.message}</p>
+          <p id="asset-name-error" className="text-caption text-over-ink">
+            {errors.name.message}
+          </p>
         )}
       </div>
 
@@ -95,7 +110,11 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
           name="asset_type"
           control={control}
           render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange} items={ASSET_TYPE_OPTIONS}>
+            <Select
+              value={field.value}
+              onValueChange={field.onChange}
+              items={ASSET_TYPE_OPTIONS}
+            >
               <SelectTrigger id="asset-type">
                 <SelectValue />
               </SelectTrigger>
@@ -112,7 +131,9 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="asset-value">{t("assets.estimatedValue")}</Label>
+        <Label htmlFor="asset-value" required>
+          {t("assets.estimatedValue")}
+        </Label>
         <Controller
           name="value_cents"
           control={control}
@@ -130,10 +151,11 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
           )}
         />
         {errors.value_cents && (
-          <p className="text-xs text-destructive">
+          <p id="asset-value-error" className="text-caption text-over-ink">
             {errors.value_cents.message}
           </p>
         )}
+        <p className="text-caption text-ink-dim">{t("assets.valueNote")}</p>
       </div>
 
       <div className="flex gap-2">
@@ -142,7 +164,7 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
         </Button>
         <Button
           type="button"
-          variant="ghost"
+          variant="outline"
           size="sm"
           onClick={onClose}
           data-testid="cancel-add-asset"

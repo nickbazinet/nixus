@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Button, DatePicker, Input, Label } from "@nixus/shared";
+import { Button, DatePicker, Input, Label, focusRing } from "@nixus/shared";
 import { useLogCustomService } from "@/hooks/useMaintenance";
+import { todayIsoDate } from "@/lib/maintenanceUtils";
 import { cn } from "@/lib/utils";
 
 interface LogCustomServiceFormData {
@@ -18,10 +19,6 @@ interface LogCustomServiceFormProps {
   defaultOdometerKm: number;
   onSuccess: () => void;
   onCancel: () => void;
-}
-
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function parseOdometerKm(raw: string): number | null {
@@ -42,6 +39,9 @@ export function LogCustomServiceForm({
 }: LogCustomServiceFormProps) {
   const { t } = useTranslation();
   const logCustomService = useLogCustomService();
+  const nameErrorId = useId();
+  const dateErrorId = useId();
+  const odometerErrorId = useId();
 
   const {
     register,
@@ -56,7 +56,7 @@ export function LogCustomServiceForm({
       odometer_km: String(defaultOdometerKm),
       notes: "",
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   useEffect(() => {
@@ -125,29 +125,33 @@ export function LogCustomServiceForm({
       data-vehicle-id={vehicleId}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor={`custom-service-name-${vehicleId}`}>
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <Label htmlFor={`custom-service-name-${vehicleId}`} required>
             {t("maintenance.customService.name")}
           </Label>
           <Input
             id={`custom-service-name-${vehicleId}`}
             type="text"
             placeholder={t("maintenance.customService.namePlaceholder")}
+            aria-required="true"
             aria-invalid={!!errors.custom_service_name}
+            aria-describedby={
+              errors.custom_service_name ? nameErrorId : undefined
+            }
             data-testid="custom-service-name"
             {...register("custom_service_name", {
               required: t("maintenance.validation.serviceNameRequired"),
             })}
           />
           {errors.custom_service_name && (
-            <p className="text-xs text-destructive">
+            <p id={nameErrorId} className="text-caption text-over-ink">
               {errors.custom_service_name.message}
             </p>
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor={`custom-service-date-${vehicleId}`}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`custom-service-date-${vehicleId}`} required>
             {t("maintenance.logService.date")}
           </Label>
           <div data-testid="custom-service-date">
@@ -160,18 +164,24 @@ export function LogCustomServiceForm({
                   id={`custom-service-date-${vehicleId}`}
                   value={field.value}
                   onChange={field.onChange}
+                  aria-required="true"
                   aria-invalid={!!errors.service_date}
+                  aria-describedby={
+                    errors.service_date ? dateErrorId : undefined
+                  }
                 />
               )}
             />
           </div>
           {errors.service_date && (
-            <p className="text-xs text-destructive">{errors.service_date.message}</p>
+            <p id={dateErrorId} className="text-caption text-over-ink">
+              {errors.service_date.message}
+            </p>
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor={`custom-service-odometer-${vehicleId}`}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`custom-service-odometer-${vehicleId}`} required>
             {t("maintenance.logService.odometer")}
           </Label>
           <div className="flex items-center gap-2">
@@ -180,21 +190,27 @@ export function LogCustomServiceForm({
               type="number"
               min={0}
               step={1}
+              money
+              aria-required="true"
               aria-invalid={!!errors.odometer_km}
+              aria-describedby={
+                errors.odometer_km ? odometerErrorId : undefined
+              }
               data-testid="custom-service-odometer"
-              className="font-mono tabular-nums"
               {...register("odometer_km", {
                 required: t("maintenance.validation.odometerRequired"),
               })}
             />
-            <span className="text-sm text-muted-foreground shrink-0">km</span>
+            <span className="shrink-0 text-caption text-ink-dim">km</span>
           </div>
           {errors.odometer_km && (
-            <p className="text-xs text-destructive">{errors.odometer_km.message}</p>
+            <p id={odometerErrorId} className="text-caption text-over-ink">
+              {errors.odometer_km.message}
+            </p>
           )}
         </div>
 
-        <div className="space-y-1.5 sm:col-span-2">
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
           <Label htmlFor={`custom-service-notes-${vehicleId}`}>
             {t("maintenance.logService.notes")}
           </Label>
@@ -203,8 +219,9 @@ export function LogCustomServiceForm({
             rows={2}
             data-testid="custom-service-notes"
             className={cn(
-              "w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-base transition-colors outline-none",
-              "placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm"
+              "w-full min-w-0 rounded-sm border border-line-strong bg-card px-2.5 py-1.5 text-body text-ink transition-colors",
+              "placeholder:text-ink-faint",
+              focusRing
             )}
             {...register("notes")}
           />

@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { Input } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
 interface MoneyInputProps {
@@ -12,9 +13,9 @@ interface MoneyInputProps {
 }
 
 /**
- * MoneyInput - UX-DR18 compliant monetary input.
- * Displays with $ prefix, monospace font, auto-formats with commas on blur.
- * Accepts dollar input, stores/returns value as integer cents.
+ * Monetary input. Accepts dollars, stores and returns integer cents.
+ * Numeric treatment comes from the shared Input's `money` prop — tabular Inter, never a
+ * monospace family.
  */
 export function MoneyInput({
   value,
@@ -79,16 +80,18 @@ export function MoneyInput({
   return (
     <div className="relative">
       <span
+        aria-hidden="true"
         className={cn(
-          "absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-muted-foreground",
-          isFocused && "text-foreground"
+          "pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-body",
+          isFocused ? "text-ink" : "text-ink-faint"
         )}
       >
         $
       </span>
-      <input
+      <Input
         id={id}
         type="text"
+        money
         inputMode="decimal"
         value={displayValue}
         onChange={handleChange}
@@ -96,10 +99,7 @@ export function MoneyInput({
         onBlur={handleBlur}
         placeholder={placeholder}
         aria-invalid={ariaInvalid}
-        className={cn(
-          "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent pl-7 pr-2.5 py-1 font-mono text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm",
-          className
-        )}
+        className={cn("pl-7", className)}
       />
     </div>
   );

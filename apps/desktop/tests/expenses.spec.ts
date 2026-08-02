@@ -89,8 +89,18 @@ async function setupTauriMock(page: Page) {
       }
     }
 
+    // Unlisten cleanup calls into this namespace; without it teardown throws.
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ =
+      { unregisterListener: () => {} };
+
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        // Plugin commands (updater, etc.) must resolve null: a truthy updater
+        // response opens a modal Dialog that aria-hides the whole app.
+        if (cmd.startsWith("plugin:")) {
+          return Promise.resolve(null);
+        }
         switch (cmd) {
           case "get_budget_groups":
             return Promise.resolve(groups);
@@ -314,9 +324,26 @@ async function setupTauriMock(page: Page) {
                   name: c.name,
                   target_cents: c.target_cents,
                   spent_cents: spent,
+                  is_deleted: false,
                 };
               })
             );
+          }
+
+          case "get_budget_summary": {
+            const totalTarget = categories.reduce((sum, c) => sum + c.target_cents, 0);
+            const summaryYear = args.year as number;
+            const summaryMonth = args.month as number;
+            const prefix = `${String(summaryYear).padStart(4, "0")}-${String(summaryMonth).padStart(2, "0")}`;
+            const totalSpent = expenses
+              .filter((e) => e.date.startsWith(prefix))
+              .reduce((sum, e) => sum + e.amount_cents, 0);
+            return Promise.resolve({
+              total_target_cents: totalTarget,
+              total_spent_cents: totalSpent,
+              remaining_cents: totalTarget - totalSpent,
+              month: prefix,
+            });
           }
 
           case "get_db_status":
@@ -336,10 +363,29 @@ async function setupTauriMock(page: Page) {
   });
 }
 
+function financeNav(page: Page) {
+  return page.getByRole("navigation", { name: "Finance navigation" });
+}
+
+async function gotoAccounts(page: Page) {
+  await financeNav(page).getByRole("link", { name: "Wealth" }).click();
+  await expect(
+    page.getByRole("link", { name: "Accounts" })
+  ).toHaveAttribute("aria-current", "page");
+}
+
+async function gotoBudget(page: Page) {
+  await financeNav(page).getByRole("link", { name: "Spending" }).click();
+  await expect(page.getByRole("link", { name: "Budget" })).toHaveAttribute(
+    "aria-current",
+    "page"
+  );
+}
+
 test.describe("Expense Tracking", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/budget");
+    await page.goto("/spending/budget");
   });
 
   test("clicking Add Expense opens the form with all fields including optional account", async ({ page }) => {
@@ -371,7 +417,7 @@ test.describe("Expense Tracking", () => {
     await page.getByRole("button", { name: "Save Expense" }).click();
 
     // Success toast should appear
-    await expect(page.getByText('Expense "Grocery Store" saved')).toBeVisible();
+    await expect(page.getByText('"Grocery Store" saved')).toBeVisible();
 
     // Form should close
     await expect(page.getByTestId("add-expense-form")).not.toBeVisible();
@@ -392,7 +438,7 @@ test.describe("Expense Tracking", () => {
     await page.getByRole("button", { name: "Save Expense" }).click();
 
     // Wait for success toast
-    await expect(page.getByText('Expense "Rent Payment" saved')).toBeVisible();
+    await expect(page.getByText('"Rent Payment" saved')).toBeVisible();
 
     // The Housing category's spent amount should now show $1,200.00
     await expect(spentTargets.first()).toContainText("$1,200.00");
@@ -439,7 +485,7 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Coffee Shop" saved')).toBeVisible();
+    await expect(page.getByText('"Coffee Shop" saved')).toBeVisible();
 
     // Expand the Housing category
     const statusRows = page.getByTestId("budget-status-row");
@@ -451,7 +497,7 @@ test.describe("Expense Tracking", () => {
     await expect(page.getByTestId("expense-amount")).toContainText("$5.50");
   });
 
-  test("expense row shows merchant, amount (right-aligned monospace), and date", async ({ page }) => {
+  test("expense list is a real table: sentence-case sortable heads, right-aligned tabular amount", async ({ page }) => {
     // Add an expense
     await page.getByTestId("add-expense-button").click();
     const form = page.getByTestId("add-expense-form");
@@ -460,19 +506,85 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Grocery Store" saved')).toBeVisible();
+    await expect(page.getByText('"Grocery Store" saved')).toBeVisible();
 
     // Expand
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
 
-    // Verify amount has monospace font
-    const amountEl = page.getByTestId("expense-amount");
-    const fontFamily = await amountEl.evaluate((el) => getComputedStyle(el).fontFamily);
-    expect(fontFamily.toLowerCase()).toContain("mono");
+    const table = page.getByTestId("expense-list").getByRole("table");
+    await expect(table).toBeVisible();
 
-    // Verify date is displayed
-    await expect(page.getByTestId("expense-date")).toBeVisible();
+    const heads = table.getByRole("columnheader");
+    // Select-all, Date, Merchant, Account, Amount — no Category column inside a category row.
+    await expect(heads).toHaveCount(5);
+    await expect(heads.nth(1)).toHaveText("Date");
+    await expect(heads.nth(2)).toHaveText("Merchant");
+    await expect(heads.nth(3)).toHaveText("Account");
+    await expect(heads.nth(4)).toHaveText("Amount");
+
+    // Sortable heads must carry aria-sort: the arrow glyph alone is invisible to a screen reader.
+    await expect(heads.nth(1)).toHaveAttribute("aria-sort", "descending");
+    await expect(heads.nth(2)).toHaveAttribute("aria-sort", "none");
+    await expect(heads.nth(4)).toHaveAttribute("aria-sort", "none");
+    await expect(heads.nth(3)).not.toHaveAttribute("aria-sort", /.*/);
+
+    // Sentence case, not the uppercase shouting the old header used.
+    expect(
+      await heads.nth(1).evaluate((el) => getComputedStyle(el).textTransform)
+    ).toBe("none");
+
+    const row = table.getByRole("row").filter({ hasText: "Grocery Store" });
+    await expect(row.getByTestId("expense-date")).toBeVisible();
+    await expect(row.getByTestId("expense-merchant")).toHaveText("Grocery Store");
+
+    // Amounts are right-aligned and tabular so a column of them is comparable at a glance — the
+    // alignment monospace used to buy, without a code font on a financial figure.
+    const amountCell = row.getByTestId("expense-amount");
+    await expect(amountCell).toContainText("$45.99");
+    const { textAlign, fontFamily, fontVariantNumeric } = await amountCell.evaluate(
+      (el) => {
+        const style = getComputedStyle(el);
+        return {
+          textAlign: style.textAlign,
+          fontFamily: style.fontFamily,
+          fontVariantNumeric: style.fontVariantNumeric,
+        };
+      }
+    );
+    expect(textAlign).toBe("right");
+    expect(fontVariantNumeric).toContain("tabular-nums");
+    expect(fontFamily.toLowerCase()).not.toContain("mono");
+  });
+
+  test("search placeholder promises only what it does: merchant substrings", async ({ page }) => {
+    for (const merchant of ["Coffee Shop", "Grocery Store"]) {
+      await page.getByTestId("add-expense-button").click();
+      const addForm = page.getByTestId("add-expense-form");
+      await addForm.getByLabel("Merchant").fill(merchant);
+      await addForm.getByLabel("Amount").fill("10");
+      await addForm.getByLabel("Category").click();
+      await page.getByRole("option", { name: "Housing" }).click();
+      await page.getByRole("button", { name: "Save Expense" }).click();
+      await expect(page.getByText(`"${merchant}" saved`)).toBeVisible();
+    }
+
+    const statusRows = page.getByTestId("budget-status-row");
+    await statusRows.first().getByTestId("category-expand-toggle").click();
+
+    const search = page.getByTestId("expense-search");
+    await expect(search).toHaveAttribute("placeholder", "Search merchants");
+
+    await search.fill("coffee");
+    await expect(page.getByTestId("expense-merchant")).toHaveText("Coffee Shop");
+    await expect(page.getByTestId("expense-count")).toHaveText("1 expense");
+
+    // Matching is merchant-only, so a category name must not match.
+    await search.fill("Housing");
+    await expect(page.getByTestId("expense-no-match")).toBeVisible();
+    await expect(
+      page.getByText("Nixus searches merchant names only — not categories or notes.")
+    ).toBeVisible();
   });
 
   test("navigating to a different month clears expenses if none exist for that month", async ({ page }) => {
@@ -484,7 +596,7 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Rent" saved')).toBeVisible();
+    await expect(page.getByText('"Rent" saved')).toBeVisible();
 
     // Expand Housing category
     const statusRows = page.getByTestId("budget-status-row");
@@ -498,7 +610,7 @@ test.describe("Expense Tracking", () => {
     await expect(page.getByText("No expenses this month")).toBeVisible();
   });
 
-  test("hovering over an expense row reveals edit and delete action icons", async ({ page }) => {
+  test("expense row actions need no hover: row activates, select control rests visible", async ({ page }) => {
     // Add an expense
     await page.getByTestId("add-expense-button").click();
     const form = page.getByTestId("add-expense-form");
@@ -507,22 +619,27 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Coffee Shop" saved')).toBeVisible();
+    await expect(page.getByText('"Coffee Shop" saved')).toBeVisible();
 
     // Expand category
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
 
-    // Hover over expense row
+    // Hover-revealed icons are gone. Editing is the row itself and deleting is the row's checkbox,
+    // both of which rest visible — deliberately, since a keyboard user never hovers. No hover() call
+    // appears below on purpose.
     const expenseRow = page.getByTestId("expense-row").first();
-    await expenseRow.hover();
+    await expect(expenseRow.getByTestId("select-expense")).toBeVisible();
+    await expect(expenseRow).toHaveAttribute("aria-label", "Open Coffee Shop");
+    await expect(expenseRow).toHaveAttribute("tabindex", "0");
 
-    // Edit and delete buttons should be visible
-    await expect(page.getByTestId("edit-expense-button")).toBeVisible();
-    await expect(page.getByTestId("delete-expense-button")).toBeVisible();
+    // Keyboard activation must reach the same editor a click does.
+    await expenseRow.focus();
+    await expenseRow.press("Enter");
+    await expect(page.getByTestId("edit-expense-form")).toBeVisible();
   });
 
-  test("clicking edit opens form pre-populated with expense values", async ({ page }) => {
+  test("activating a row opens the editor pre-populated with expense values", async ({ page }) => {
     // Add expense
     await page.getByTestId("add-expense-button").click();
     const form = page.getByTestId("add-expense-form");
@@ -531,19 +648,19 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Coffee Shop" saved')).toBeVisible();
+    await expect(page.getByText('"Coffee Shop" saved')).toBeVisible();
 
-    // Expand and click edit
+    // Expand and open the row
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
-    const expenseRow = page.getByTestId("expense-row").first();
-    await expenseRow.hover();
-    await page.getByTestId("edit-expense-button").click();
+    await page.getByTestId("expense-row").first().click();
 
-    // Edit form should appear with pre-populated values
+    // Edit form should appear in the slide-over with pre-populated values
+    await expect(page.getByTestId("edit-expense-slide-over")).toBeVisible();
     const editForm = page.getByTestId("edit-expense-form");
     await expect(editForm).toBeVisible();
     await expect(editForm.getByLabel("Merchant")).toHaveValue("Coffee Shop");
+    await expect(editForm.getByLabel("Amount")).toHaveValue("5.50");
   });
 
   test("saving an edited expense updates displayed values and shows success toast", async ({ page }) => {
@@ -555,19 +672,17 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Coffee Shop" saved')).toBeVisible();
+    await expect(page.getByText('"Coffee Shop" saved')).toBeVisible();
 
     // Expand and edit
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
-    const expenseRow = page.getByTestId("expense-row").first();
-    await expenseRow.hover();
-    await page.getByTestId("edit-expense-button").click();
+    await page.getByTestId("expense-row").first().click();
 
     // Change merchant name
     const editForm = page.getByTestId("edit-expense-form");
     await editForm.getByLabel("Merchant").fill("Fancy Coffee");
-    await editForm.getByRole("button", { name: "Save" }).click();
+    await editForm.getByRole("button", { name: "Save", exact: true }).click();
 
     // Success toast
     await expect(page.getByText("Expense updated")).toBeVisible();
@@ -576,7 +691,7 @@ test.describe("Expense Tracking", () => {
     await expect(page.getByTestId("expense-merchant")).toContainText("Fancy Coffee");
   });
 
-  test("clicking delete shows confirmation dialog with destructive button", async ({ page }) => {
+  test("selecting a row and deleting shows confirmation dialog with destructive button", async ({ page }) => {
     // Add expense
     await page.getByTestId("add-expense-button").click();
     const form = page.getByTestId("add-expense-form");
@@ -585,19 +700,25 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Coffee Shop" saved')).toBeVisible();
+    await expect(page.getByText('"Coffee Shop" saved')).toBeVisible();
 
-    // Expand and click delete
+    // Expand, select the row, then delete from the bulk bar
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
-    const expenseRow = page.getByTestId("expense-row").first();
-    await expenseRow.hover();
-    await page.getByTestId("delete-expense-button").click();
+    await page.getByTestId("expense-row").first().getByTestId("select-expense").check();
 
-    // Confirmation dialog
-    await expect(page.getByTestId("delete-expense-dialog")).toBeVisible();
-    await expect(page.getByText("Delete Expense")).toBeVisible();
-    await expect(page.getByTestId("confirm-delete-expense-button")).toBeVisible();
+    const bulkBar = page.getByTestId("expense-bulk-bar");
+    await expect(bulkBar).toBeVisible();
+    await expect(bulkBar).toContainText("1 selected");
+    await expect(bulkBar).toContainText("$5.50");
+    await bulkBar.getByTestId("bulk-delete-button").click();
+
+    // Confirmation dialog names the figure being removed, not just the count
+    const dialog = page.getByTestId("delete-expense-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("Delete Expense");
+    await expect(dialog).toContainText("This expense of $5.50 will be removed.");
+    await expect(dialog.getByTestId("confirm-delete-expense-button")).toBeVisible();
   });
 
   test("confirming delete removes expense and shows success toast", async ({ page }) => {
@@ -609,16 +730,15 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Coffee Shop" saved')).toBeVisible();
+    await expect(page.getByText('"Coffee Shop" saved')).toBeVisible();
 
     // Expand and delete
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
     await expect(page.getByTestId("expense-merchant")).toContainText("Coffee Shop");
 
-    const expenseRow = page.getByTestId("expense-row").first();
-    await expenseRow.hover();
-    await page.getByTestId("delete-expense-button").click();
+    await page.getByTestId("expense-row").first().getByTestId("select-expense").check();
+    await page.getByTestId("bulk-delete-button").click();
     await page.getByTestId("confirm-delete-expense-button").click();
 
     // Toast
@@ -637,7 +757,7 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Rent" saved')).toBeVisible();
+    await expect(page.getByText('"Rent" saved')).toBeVisible();
 
     // Verify spent shows $1,200.00
     const spentTargets = page.getByTestId("spent-target");
@@ -646,9 +766,8 @@ test.describe("Expense Tracking", () => {
     // Expand and delete
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
-    const expenseRow = page.getByTestId("expense-row").first();
-    await expenseRow.hover();
-    await page.getByTestId("delete-expense-button").click();
+    await page.getByTestId("expense-row").first().getByTestId("select-expense").check();
+    await page.getByTestId("bulk-delete-button").click();
     await page.getByTestId("confirm-delete-expense-button").click();
     await expect(page.getByText("Expense deleted")).toBeVisible();
 
@@ -665,20 +784,20 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Coffee Shop" saved')).toBeVisible();
+    await expect(page.getByText('"Coffee Shop" saved')).toBeVisible();
 
-    // Expand and click delete
+    // Expand, select the row, then open the delete dialog
     const statusRows = page.getByTestId("budget-status-row");
     await statusRows.first().getByTestId("category-expand-toggle").click();
-    const expenseRow = page.getByTestId("expense-row").first();
-    await expenseRow.hover();
-    await page.getByTestId("delete-expense-button").click();
+    await page.getByTestId("expense-row").first().getByTestId("select-expense").check();
+    await page.getByTestId("bulk-delete-button").click();
 
     // Cancel
-    await page.getByRole("button", { name: "Cancel" }).click();
+    const dialog = page.getByTestId("delete-expense-dialog");
+    await dialog.getByRole("button", { name: "Cancel" }).click();
 
     // Dialog should close, expense still present
-    await expect(page.getByTestId("delete-expense-dialog")).not.toBeVisible();
+    await expect(dialog).not.toBeVisible();
     await expect(page.getByTestId("expense-merchant")).toContainText("Coffee Shop");
   });
 
@@ -694,28 +813,21 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Account (optional)").click();
     await page.getByRole("option", { name: /Main Chequing/ }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Grocery Store" saved')).toBeVisible();
+    await expect(page.getByText('"Grocery Store" saved')).toBeVisible();
 
-    await page
-      .getByRole("navigation", { name: "Finance navigation" })
-      .getByRole("link", { name: "Accounts" })
-      .click();
+    // Accounts is no longer a top-level tab: the four destinations are Today, Spending, Wealth and
+    // Insights, and Accounts is a Wealth sub-surface that the destination link deep-links straight to.
+    await gotoAccounts(page);
     const accountRow = page.getByTestId("account-row").filter({ hasText: "Main Chequing" });
     await expect(accountRow.getByTestId("account-balance")).toContainText("$950.00");
   });
 
   test("expense without linked account leaves account balance unchanged", async ({ page }) => {
-    await page
-      .getByRole("navigation", { name: "Finance navigation" })
-      .getByRole("link", { name: "Accounts" })
-      .click();
+    await gotoAccounts(page);
     const accountRow = page.getByTestId("account-row").filter({ hasText: "Main Chequing" });
     await expect(accountRow.getByTestId("account-balance")).toContainText("$1,000.00");
 
-    await page
-      .getByRole("navigation", { name: "Finance navigation" })
-      .getByRole("link", { name: "Budget" })
-      .click();
+    await gotoBudget(page);
     await page.getByTestId("add-expense-button").click();
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Cash Purchase");
@@ -723,12 +835,9 @@ test.describe("Expense Tracking", () => {
     await form.getByLabel("Category").click();
     await page.getByRole("option", { name: "Housing" }).click();
     await page.getByRole("button", { name: "Save Expense" }).click();
-    await expect(page.getByText('Expense "Cash Purchase" saved')).toBeVisible();
+    await expect(page.getByText('"Cash Purchase" saved')).toBeVisible();
 
-    await page
-      .getByRole("navigation", { name: "Finance navigation" })
-      .getByRole("link", { name: "Accounts" })
-      .click();
+    await gotoAccounts(page);
     await expect(accountRow.getByTestId("account-balance")).toContainText("$1,000.00");
   });
 });

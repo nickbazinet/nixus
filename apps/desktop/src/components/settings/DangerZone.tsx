@@ -5,6 +5,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import {
+  Alert,
+  Button,
+  Card,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -13,8 +16,10 @@ import {
   DialogTitle,
   Input,
   Label,
+  focusRing,
 } from "@nixus/shared";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface AppError {
   message?: string;
@@ -43,7 +48,7 @@ export function DangerZone() {
   const [wiped, setWiped] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const confirmWord = t("settings.dangerZoneConfirmWord", "DELETE");
+  const confirmWord = t("settings.dangerZoneConfirmWord");
   const canDelete = typed.trim() === confirmWord && !deleting && !wiped;
   // Stay open through the wipe so the restart-failure message cannot be hidden.
   const isExpanded = expanded || deleting || wiped;
@@ -60,9 +65,7 @@ export function DangerZone() {
     setError(null);
     try {
       const result = await invoke<{ path: string } | null>("export_backup");
-      if (result) {
-        toast.success(t("sidebar.backupSaved", { path: result.path }));
-      }
+      if (result) toast.success(t("sidebar.backupSaved", { path: result.path }));
     } catch (err: unknown) {
       setError(getErrorMessage(err));
     } finally {
@@ -96,96 +99,81 @@ export function DangerZone() {
     try {
       await relaunch();
     } catch {
-      setError(
-        t(
-          "settings.dangerZoneRestartFailed",
-          "Your data was deleted. Please close and reopen Nixus to finish."
-        )
-      );
+      setError(t("settings.dangerZoneRestartFailed"));
     }
   };
 
   return (
-    <div
-      className="rounded-lg border border-destructive/50 bg-card"
-      data-testid="danger-zone"
-    >
+    <Card flush data-testid="danger-zone">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
         disabled={deleting || wiped}
         aria-expanded={isExpanded}
         aria-controls="danger-zone-content"
-        className="flex w-full items-center gap-2 rounded-lg p-6 text-left transition-colors hover:bg-destructive/5 disabled:cursor-default"
+        className={cn(
+          "flex w-full items-center gap-2 px-card-pad py-3.5 text-left transition-colors hover:bg-hover disabled:cursor-default",
+          focusRing
+        )}
         data-testid="danger-zone-toggle"
       >
-        <span className="flex-1">
-          <span className="block text-base font-semibold text-destructive">
-            {t("settings.dangerZone", "Danger Zone")}
-          </span>
-          <span className="mt-2 block text-sm text-muted-foreground">
-            {t(
-              "settings.dangerZoneDescription",
-              "Permanently delete everything you have recorded in Nixus. This cannot be undone."
-            )}
+        <span className="min-w-0 flex-1">
+          <span className="block text-h3 text-over-ink">{t("settings.dangerZone")}</span>
+          <span className="mt-0.5 block text-caption text-ink-dim">
+            {t("settings.dangerZoneDescription")}
           </span>
         </span>
         {isExpanded ? (
-          <ChevronUp className="h-5 w-5 shrink-0 text-muted-foreground" />
+          <ChevronUp className="size-4 shrink-0 text-ink-dim" aria-hidden="true" />
         ) : (
-          <ChevronDown className="h-5 w-5 shrink-0 text-muted-foreground" />
+          <ChevronDown className="size-4 shrink-0 text-ink-dim" aria-hidden="true" />
         )}
       </button>
 
       {isExpanded && (
-        <div id="danger-zone-content" className="px-6 pb-6">
-          <div className="space-y-2 text-sm">
-            <p className="font-medium text-foreground">
-              {t("settings.dangerZoneDeletedTitle", "This deletes:")}
-            </p>
-            <p className="text-muted-foreground">
-              {t(
-                "settings.dangerZoneDeletedList",
-                "Budgets and categories, expenses, recurring templates, accounts, passive assets, net worth history, income, vehicles and maintenance history, AI chat conversations, and the audit log."
-              )}
-            </p>
-            <p className="font-medium text-foreground">
-              {t("settings.dangerZoneKeptTitle", "This keeps:")}
-            </p>
-            <p className="text-muted-foreground">
-              {t(
-                "settings.dangerZoneKeptList",
-                "Your app preferences and stored AI provider credentials. Use Clear Credentials above to remove those."
-              )}
-            </p>
-          </div>
+        <div
+          id="danger-zone-content"
+          className="border-t border-line px-card-pad py-card-pad"
+        >
+          <dl className="space-y-2 text-caption">
+            <dt className="text-label text-ink">{t("settings.dangerZoneDeletedTitle")}</dt>
+            <dd className="text-ink-dim">{t("settings.dangerZoneDeletedList")}</dd>
+            <dt className="text-label text-ink">{t("settings.dangerZoneKeptTitle")}</dt>
+            <dd className="text-ink-dim">{t("settings.dangerZoneKeptList")}</dd>
+          </dl>
 
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <button
+          <div className="mt-4">
+            <Button
+              variant="outline"
               onClick={handleExportBackup}
               disabled={exporting}
-              className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
+              aria-disabled={exporting || undefined}
               data-testid="danger-zone-export-backup"
             >
               {exporting
-                ? t("settings.dangerZoneExporting", "Exporting...")
-                : t("settings.dangerZoneExportBackup", "Export a backup first")}
-            </button>
+                ? t("settings.dangerZoneExporting")
+                : t("settings.dangerZoneExportBackup")}
+            </Button>
+          </div>
 
-            <button
+          {/* Demoted out of the primary row: a destructive action is never a peer of a primary
+            * action side by side, so it sits on its own line under the safe one. */}
+          <div className="mt-4 border-t border-line pt-4">
+            <Button
+              variant="destructive"
               onClick={() => handleOpenChange(true)}
               disabled={exporting || deleting || wiped}
-              className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+              aria-disabled={exporting || deleting || wiped || undefined}
               data-testid="danger-zone-delete-button"
             >
-              {t("settings.dangerZoneDeleteAll", "Delete all data")}
-            </button>
+              {t("settings.dangerZoneDeleteAll")}
+            </Button>
           </div>
 
           {error !== null && !open && (
-            <p className="mt-3 text-sm text-destructive" role="alert">
+            <Alert variant="over" className="mt-3">
               {error}
-            </p>
+            </Alert>
           )}
         </div>
       )}
@@ -193,22 +181,17 @@ export function DangerZone() {
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-destructive">
-              {t("settings.dangerZoneDialogTitle", "Delete all data?")}
+            <DialogTitle className="text-over-ink">
+              {t("settings.dangerZoneDialogTitle")}
             </DialogTitle>
             <DialogDescription>
-              {t(
-                "settings.dangerZoneDialogDescription",
-                "Every budget, expense, account, asset, net worth entry, income record, vehicle, maintenance log, chat conversation and audit entry will be permanently deleted. Nixus will restart with an empty database."
-              )}
+              {t("settings.dangerZoneDialogDescription")}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2">
-            <Label htmlFor="danger-zone-confirm">
-              {t("settings.dangerZoneTypeToConfirm", "Type {{word}} to confirm", {
-                word: confirmWord,
-              })}
+          <div className="space-y-1">
+            <Label htmlFor="danger-zone-confirm" required>
+              {t("settings.dangerZoneTypeToConfirm", { word: confirmWord })}
             </Label>
             <Input
               id="danger-zone-confirm"
@@ -218,42 +201,42 @@ export function DangerZone() {
               placeholder={confirmWord}
               autoComplete="off"
               autoFocus
+              required
+              aria-required="true"
               disabled={deleting || wiped}
               data-testid="danger-zone-confirm-input"
             />
           </div>
 
           {error !== null && (
-            <p
-              className="text-sm text-destructive"
-              role="alert"
-              data-testid="danger-zone-error"
-            >
+            <Alert variant="over" data-testid="danger-zone-error">
               {error}
-            </p>
+            </Alert>
           )}
 
           <DialogFooter>
-            <button
+            <Button
+              variant="outline"
               onClick={() => handleOpenChange(false)}
               disabled={deleting || wiped}
-              className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
+              aria-disabled={deleting || wiped || undefined}
             >
               {t("common.cancel")}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="destructive"
               onClick={handleDelete}
               disabled={!canDelete}
-              className="rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+              aria-disabled={!canDelete || undefined}
               data-testid="danger-zone-confirm-button"
             >
               {deleting
-                ? t("settings.dangerZoneDeleting", "Deleting...")
-                : t("settings.dangerZoneConfirmDelete", "Delete everything")}
-            </button>
+                ? t("settings.dangerZoneDeleting")
+                : t("settings.dangerZoneConfirmDelete")}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Card>
   );
 }

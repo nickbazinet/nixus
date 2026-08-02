@@ -1,16 +1,16 @@
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
+  Button,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
 import { useUpdateIncomeSource } from "@/hooks/useIncome";
 import type { IncomeSourceWithLastEntry } from "@/lib/types";
 
@@ -49,7 +49,7 @@ export function EditIncomeSourceForm({
       name: source.name,
       income_type: source.income_type,
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmit = (data: IncomeSourceFormData) => {
@@ -70,24 +70,25 @@ export function EditIncomeSourceForm({
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onClose();
-        }
-      }}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      className="space-y-3"
+      data-testid="edit-income-source-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="edit-source-name">{t("common.name")}</Label>
+        <Label htmlFor="edit-source-name" required>
+          {t("common.name")}
+        </Label>
         <Input
           id="edit-source-name"
           autoFocus
+          aria-required="true"
           aria-invalid={!!errors.name}
+          aria-describedby={errors.name ? "edit-source-name-error" : undefined}
           {...register("name", { required: t("income.sourceNameRequired") })}
         />
         {errors.name && (
-          <p className="text-xs text-destructive">{errors.name.message}</p>
+          <p id="edit-source-name-error" className="text-caption text-over">
+            {errors.name.message}
+          </p>
         )}
       </div>
 

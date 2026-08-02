@@ -1,4 +1,23 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
+
+// Hero-row position is not a contract; card identity is. Scoping by the card's own label is what
+// keeps these tests honest about which figure they are reading after the row order changed.
+function metricCard(page: Page, label: string): Locator {
+  return page.getByTestId("metric-card").filter({ hasText: label });
+}
+
+// The largest computed font size inside a figure block is the figure itself. Read from computed
+// style rather than from a class name so the assertion survives a token rename.
+function figureSize(figure: Locator): Promise<number> {
+  return figure.evaluate((el) =>
+    Math.max(
+      parseFloat(getComputedStyle(el).fontSize),
+      ...Array.from(el.querySelectorAll("*"), (node) =>
+        parseFloat(getComputedStyle(node).fontSize)
+      )
+    )
+  );
+}
 
 const yearlySummaryMock = {
   year: 2026,
@@ -43,42 +62,50 @@ const emptyYearlySummaryMock = {
 };
 
 async function setupEmptyDashboardMock(page: Page) {
-  await page.addInitScript((yearlyMock, healthMock) => {
-    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
-      invoke: (cmd: string) => {
-        switch (cmd) {
-          case "get_budget_summary":
-            return Promise.resolve({
-              total_target_cents: 0,
-              total_spent_cents: 0,
-              remaining_cents: 0,
-              month: "2026-03",
-            });
-          case "get_top_budget_categories":
-            return Promise.resolve([]);
-          case "get_current_net_worth":
-            return Promise.resolve({
-              total_cents: 0,
-              cash_cents: 0,
-              investments_cents: 0,
-              assets_cents: 0,
-            });
-          case "get_recent_net_worth_snapshots":
-            return Promise.resolve([]);
-          case "get_spending_breakdown":
-            return Promise.resolve([]);
-          case "get_yearly_summary":
-            return Promise.resolve(yearlyMock);
-          case "get_financial_health_summary":
-            return Promise.resolve(healthMock);
-          case "get_latest_expense":
-            return Promise.resolve(null);
-          default:
-            return Promise.resolve(null);
-        }
-      },
-    };
-  }, emptyYearlySummaryMock, financialHealthInsufficientMock);
+  // addInitScript takes a single argument, so the two mocks travel as one object. Passing them as
+  // two arguments silently dropped the second, and get_financial_health_summary resolved undefined.
+  await page.addInitScript(
+    ({ yearlyMock, healthMock }) => {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+        invoke: (cmd: string) => {
+          switch (cmd) {
+            case "get_budget_summary":
+              return Promise.resolve({
+                total_target_cents: 0,
+                total_spent_cents: 0,
+                remaining_cents: 0,
+                month: "2026-03",
+              });
+            case "get_top_budget_categories":
+              return Promise.resolve([]);
+            case "get_current_net_worth":
+              return Promise.resolve({
+                total_cents: 0,
+                cash_cents: 0,
+                investments_cents: 0,
+                assets_cents: 0,
+              });
+            case "get_recent_net_worth_snapshots":
+              return Promise.resolve([]);
+            case "get_spending_breakdown":
+              return Promise.resolve([]);
+            case "get_yearly_summary":
+              return Promise.resolve(yearlyMock);
+            case "get_financial_health_summary":
+              return Promise.resolve(healthMock);
+            case "get_latest_expense":
+              return Promise.resolve(null);
+            default:
+              return Promise.resolve(null);
+          }
+        },
+      };
+    },
+    {
+      yearlyMock: emptyYearlySummaryMock,
+      healthMock: financialHealthInsufficientMock,
+    }
+  );
 }
 
 async function setupSeededDashboardMock(page: Page) {
@@ -203,6 +230,74 @@ async function setupSeededDashboardMock(page: Page) {
   }, yearlySummaryMock);
 }
 
+// Over target, exactly at target, and under target — the three states that replaced the deleted
+// ">=75% is a Warning" rule.
+async function setupPacingDashboardMock(page: Page) {
+  await page.addInitScript((yearlyMock) => {
+    const categories = [
+      {
+        id: 1,
+        name: "Groceries",
+        group_name: "Essentials",
+        target_cents: 40000,
+        spent_cents: 46000,
+        percentage: 115.0,
+      },
+      {
+        id: 2,
+        name: "Mortgage",
+        group_name: "Essentials",
+        target_cents: 165000,
+        spent_cents: 165000,
+        percentage: 100.0,
+      },
+      {
+        id: 3,
+        name: "Transport",
+        group_name: "Essentials",
+        target_cents: 20000,
+        spent_cents: 11200,
+        percentage: 56.0,
+      },
+    ];
+
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: (cmd: string) => {
+        switch (cmd) {
+          case "get_budget_summary":
+            return Promise.resolve({
+              total_target_cents: 225000,
+              total_spent_cents: 222200,
+              remaining_cents: 2800,
+              month: "2026-03",
+            });
+          case "get_top_budget_categories":
+            return Promise.resolve(categories);
+          case "get_current_net_worth":
+            return Promise.resolve({
+              total_cents: 52500000,
+              cash_cents: 1500000,
+              investments_cents: 25000000,
+              assets_cents: 26000000,
+            });
+          case "get_recent_net_worth_snapshots":
+            return Promise.resolve([]);
+          case "get_spending_breakdown":
+            return Promise.resolve([]);
+          case "get_yearly_summary":
+            return Promise.resolve(yearlyMock);
+          case "get_financial_health_summary":
+            return Promise.resolve(null);
+          case "get_latest_expense":
+            return Promise.resolve(null);
+          default:
+            return Promise.resolve(null);
+        }
+      },
+    };
+  }, yearlySummaryMock);
+}
+
 test.describe("Dashboard — Story 5.1", () => {
   test("is the landing page when the app opens (route is /)", async ({
     page,
@@ -210,23 +305,31 @@ test.describe("Dashboard — Story 5.1", () => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
     await expect(page).toHaveURL("/");
+    // The Finance module's landing surface is "Today". "Dashboard" survives only as the CAR
+    // module's sub-nav label, so it must not appear as this surface's heading.
     await expect(
-      page.getByRole("heading", { name: "Dashboard" })
+      page.getByRole("heading", { name: "Today", exact: true })
     ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Dashboard" })).toHaveCount(0);
   });
 
-  test("Budget Remaining hero card is visible with formatted dollar amount", async ({
+  test("Budget Remaining is the surface's single display figure", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
-    const metricValues = page.getByTestId("metric-value");
-    // Budget Remaining is the second hero card
-    await expect(metricValues.nth(1)).toContainText("$1,250.00");
+    const hero = metricCard(page, "Budget Remaining").getByTestId("metric-value");
+    await expect(hero).toContainText("$1,250.00");
+    // Exactly one 34px figure on `/`: two competing display figures mean neither is the answer to
+    // the surface's question.
+    expect(await figureSize(hero)).toBe(34);
+    const allFigures = await page.getByTestId("metric-value").all();
+    const displaySized = await Promise.all(allFigures.map(figureSize));
+    expect(displaySized.filter((size) => size === 34)).toHaveLength(1);
   });
 
-  test("Budget category rows with progress bars are displayed", async ({
+  test("Budget category rows announce as one sentence with a status dot", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
@@ -236,11 +339,17 @@ test.describe("Dashboard — Story 5.1", () => {
     await expect(categoryRows).toHaveCount(4);
 
     const firstRow = categoryRows.first();
-    await expect(firstRow).toContainText("Housing");
-    await expect(firstRow.getByTestId("category-amount")).toContainText(
-      "$1,200.00 / $1,500.00"
+    // AttentionRow replaced the per-row progress bar: the visible figure is the spend, the target
+    // and remainder are carried by the row's one accessible sentence, and pacing by the dot.
+    await expect(firstRow.getByTestId("category-amount")).toHaveText("$1,200.00");
+    await expect(firstRow).toContainText(
+      "Housing, $1,200.00 of $1,500.00 spent, $300.00 left"
     );
-    await expect(firstRow.getByRole("progressbar")).toBeVisible();
+    await expect(firstRow.locator("[data-slot='status-dot']")).toHaveAttribute(
+      "data-status",
+      "good"
+    );
+    await expect(firstRow.getByRole("progressbar")).toHaveCount(0);
   });
 
   test("Import Statement button is visible in the page header", async ({
@@ -368,26 +477,57 @@ test.describe("Dashboard — Story 5.1", () => {
     await expect(overallProgress).toBeVisible();
   });
 
-  test("Category status badges display correct status", async ({ page }) => {
-    await setupSeededDashboardMock(page);
+  test("Category badges name the amount for over, at, and under target", async ({
+    page,
+  }) => {
+    await setupPacingDashboardMock(page);
     await page.goto("/");
 
-    const badges = page.getByTestId("category-badge");
-    await expect(badges.first()).toContainText("Warning");
-    await expect(badges.nth(1)).toContainText("On track");
+    const rows = page.getByTestId("dashboard-category-row");
+    await expect(rows).toHaveCount(3);
+
+    const badgeFor = (name: string) =>
+      rows.filter({ hasText: name }).getByTestId("category-badge");
+    const dotFor = (name: string) =>
+      rows.filter({ hasText: name }).locator("[data-slot='status-dot']");
+
+    await expect(badgeFor("Groceries")).toHaveText("Over by $60.00");
+    await expect(dotFor("Groceries")).toHaveAttribute("data-status", "over");
+
+    // The deleted ">=75% is a Warning" rule read a mortgage at exactly $1,650/$1,650 as a problem.
+    // A commitment that has simply been met is neutral.
+    await expect(badgeFor("Mortgage")).toHaveText("Fully spent");
+    await expect(dotFor("Mortgage")).toHaveAttribute("data-status", "neutral");
+
+    await expect(badgeFor("Transport")).toHaveText("$88.00 left");
+    await expect(dotFor("Transport")).toHaveAttribute("data-status", "good");
+
+    // Every badge carries a figure; none is a bare adjective.
+    for (const bareAdjective of ["Warning", "On track"]) {
+      await expect(
+        page.getByTestId("category-badge").filter({ hasText: bareAdjective })
+      ).toHaveCount(0);
+    }
   });
 });
 
 test.describe("Dashboard — Story 5.2", () => {
-  test("Net Worth hero card displays with formatted dollar amount", async ({
+  test("Net worth is a secondary figure, not a second hero", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
-    // Net Worth is the first hero card
-    const metricValues = page.getByTestId("metric-value");
-    await expect(metricValues.first()).toContainText("$525,000.00");
+    const netWorth = metricCard(page, "Net worth").getByTestId("metric-value");
+    await expect(netWorth).toContainText("$525,000.00");
+
+    // Net worth was demoted from a 34px hero to a 26px secondary figure so that budget remaining
+    // is the only number answering "am I OK this month?".
+    const heroSize = await figureSize(
+      metricCard(page, "Budget Remaining").getByTestId("metric-value")
+    );
+    expect(await figureSize(netWorth)).toBe(26);
+    expect(await figureSize(netWorth)).toBeLessThan(heroSize);
   });
 
   test("3 secondary cards (Cash, Investments, Assets) are visible with values", async ({
@@ -402,7 +542,7 @@ test.describe("Dashboard — Story 5.2", () => {
 
     // Check secondary card values
     const values = page.getByTestId("metric-value");
-    // 0: Net Worth hero, 1: Budget hero, 2: Cash, 3: Investments, 4: Assets
+    // 0: Budget hero, 1: Net worth, 2: Cash, 3: Investments, 4: Assets
     await expect(values.nth(2)).toContainText("$15,000.00"); // Cash
     await expect(values.nth(3)).toContainText("$250,000.00"); // Investments
     await expect(values.nth(4)).toContainText("$260,000.00"); // Assets
@@ -424,36 +564,37 @@ test.describe("Dashboard — Story 5.2", () => {
     await expect(rows.first()).toContainText("$1,200.00");
   });
 
-  test("Dashboard uses 2-column hero layout", async ({ page }) => {
-    await setupSeededDashboardMock(page);
-    await page.goto("/");
-
-    // Both hero cards should be visible
-    const heroCards = page.getByTestId("metric-card");
-    await expect(heroCards.first()).toBeVisible();
-    await expect(heroCards.nth(1)).toBeVisible();
-  });
-
-  test("Clicking Net Worth hero card navigates to Net Worth page", async ({
+  test("hero row carries the budget figure, cash flow, and the next-step card", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
-    const netWorthCard = page.getByTestId("metric-card").first();
-    await netWorthCard.click();
-    await expect(page).toHaveURL(/\/net-worth/);
+    // The hero row is three cards wide now, and the next-action card is the only 3px brand
+    // left-border on the surface.
+    await expect(metricCard(page, "Budget Remaining")).toBeVisible();
+    await expect(page.getByTestId("cash-flow-card")).toBeVisible();
+    await expect(page.getByTestId("financial-health-card")).toBeVisible();
   });
 
-  test("Clicking Budget Remaining hero card navigates to Budget page", async ({
+  test("Clicking the Net worth card navigates to the Net worth surface", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
-    const budgetCard = page.getByTestId("metric-card").nth(1);
-    await budgetCard.click();
-    await expect(page).toHaveURL(/\/budget/);
+    await metricCard(page, "Net worth").click();
+    await expect(page).toHaveURL(/\/wealth\/net-worth/);
+  });
+
+  test("Clicking the Budget Remaining card navigates to the Budget surface", async ({
+    page,
+  }) => {
+    await setupSeededDashboardMock(page);
+    await page.goto("/");
+
+    await metricCard(page, "Budget Remaining").click();
+    await expect(page).toHaveURL(/\/spending\/budget/);
   });
 });
 
@@ -484,12 +625,12 @@ test.describe("Dashboard — Year to Date Card", () => {
     await page.goto("/");
 
     await page.getByTestId("ytd-card").click();
-    await expect(page).toHaveURL(/\/year-summary/);
+    await expect(page).toHaveURL(/\/insights\/year-summary/);
   });
 });
 
-test.describe("Dashboard — Financial Health Card", () => {
-  test("financial health card displays three columns with data", async ({
+test.describe("Dashboard — Suggested Next Step Card", () => {
+  test("card names the action and the figures behind it", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
@@ -497,22 +638,32 @@ test.describe("Dashboard — Financial Health Card", () => {
 
     const card = page.getByTestId("financial-health-card");
     await expect(card).toBeVisible();
-    await expect(card).toContainText("Financial Health");
-    await expect(card).toContainText("View details →");
-    await expect(page.getByTestId("financial-health-months")).toContainText(
-      "2.4 mo"
-    );
+    await expect(card).toContainText("Suggested next step");
+    // No user-facing string says "Financial Health" any more, and "View details →" was replaced by
+    // a link that says what it opens.
+    await expect(card).not.toContainText("Financial Health");
+    await expect(card).not.toContainText("View details");
     await expect(
-      page.getByTestId("financial-health-savings-rate")
-    ).toContainText("14%");
-    await expect(page.getByTestId("financial-health-surplus")).toContainText(
-      "+$620.00/mo"
-    );
-    await expect(page.getByTestId("financial-health-action")).toContainText(
+      card.getByRole("button", { name: "See the plan" })
+    ).toBeVisible();
+
+    await expect(page.getByTestId("financial-health-action")).toHaveText(
       "Build your emergency fund"
     );
+    await expect(page.getByTestId("financial-health-months")).toHaveText(
+      "You have 2.4 months of spending covered — you're aiming for 6."
+    );
+    // Rate and surplus are one sentence now, not two standalone figures in a three-column grid.
+    await expect(page.getByTestId("financial-health-savings-rate")).toHaveText(
+      "You're keeping 14% of what you earn — about $620.00 left over in a typical month."
+    );
+
+    // The full disclaimer expands on demand: stacking a complete hedge beside the very first
+    // recommendation a user ever receives reads as the app retracting itself.
+    await expect(page.getByTestId("financial-health-disclaimer")).toHaveCount(0);
+    await page.getByTestId("financial-health-disclaimer-toggle").click();
     await expect(page.getByTestId("financial-health-disclaimer")).toContainText(
-      "Educational guidance"
+      "This isn't financial advice."
     );
   });
 
@@ -575,7 +726,7 @@ test.describe("Dashboard — Financial Health Card", () => {
     });
   });
 
-  test("financial health card shows empty state with insufficient data", async ({
+  test("card shows the wait-for-data state without inventing a month count", async ({
     page,
   }) => {
     await setupEmptyDashboardMock(page);
@@ -583,12 +734,19 @@ test.describe("Dashboard — Financial Health Card", () => {
 
     const empty = page.getByTestId("financial-health-empty");
     await expect(empty).toBeVisible();
+    await expect(empty).toContainText("Come back in a couple of months");
     await expect(empty).toContainText(
-      "Add accounts and a few expenses to see your financial health."
+      "To suggest what to do next, Nixus needs about three finished months of spending to see a pattern."
     );
+    // get_financial_health_summary carries no completed-month count, so this card cannot honestly
+    // show the "n of 3 months" indicator that the Where-to-put-your-money surface can.
+    await expect(empty).not.toContainText("of 3 months");
+    await expect(
+      empty.getByTestId("financial-health-months-progress")
+    ).toHaveCount(0);
   });
 
-  test("financial health card is placed above top categories", async ({
+  test("card is placed above top categories", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
@@ -606,14 +764,18 @@ test.describe("Dashboard — Financial Health Card", () => {
     expect(healthBox!.y).toBeLessThan(categoriesBox!.y);
   });
 
-  test("clicking financial health card navigates to financial health route", async ({
+  test("the card's one link opens the Where to put your money surface", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
-    await page.getByTestId("financial-health-card").click();
-    await expect(page).toHaveURL(/\/net-worth\/financial-health/);
+    // The whole card is no longer a click target; the action-card carries one explicit link.
+    await page
+      .getByTestId("financial-health-card")
+      .getByRole("button", { name: "See the plan" })
+      .click();
+    await expect(page).toHaveURL(/\/wealth\/where-to-put-your-money/);
   });
 });
 

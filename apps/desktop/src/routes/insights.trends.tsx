@@ -1,16 +1,17 @@
-import { useState, useMemo } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { ChartNoAxesColumnIcon } from "lucide-react";
+import { Button, Card, EmptyState, PillTabs } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Card, CardContent, PillTabs } from "@nixus/shared";
 import { SpendingTrendChart } from "@/components/spending-trends/SpendingTrendChart";
 import { CategorySpendTable } from "@/components/spending-trends/CategorySpendTable";
 import { TrendsInsightPanel } from "@/components/spending-trends/TrendsInsightPanel";
 import { useSpendingTrends } from "@/hooks/useSpendingTrends";
-import { useTrendsInsight, useInsightGate } from "@/hooks/useTrendsInsight";
+import { useInsightGate, useTrendsInsight } from "@/hooks/useTrendsInsight";
 import { useAiConfig } from "@/hooks/useAiConfig";
 
-export const Route = createFileRoute("/spending-trends")({
+export const Route = createFileRoute("/insights/trends")({
   component: SpendingTrendsPage,
 });
 
@@ -33,9 +34,9 @@ function SpendingTrendsPage() {
   const windowLabels = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(WINDOW_LABEL_KEYS).map(([k, v]) => [k, t(v)])
+        Object.entries(WINDOW_LABEL_KEYS).map(([key, value]) => [key, t(value)]),
       ) as Record<string, string>,
-    [t]
+    [t],
   );
 
   const months = WINDOW_MONTHS[selectedWindow];
@@ -58,26 +59,34 @@ function SpendingTrendsPage() {
 
   return (
     <div>
-      <PageHeader title={t("nav.trends")} />
+      <PageHeader
+        title={t("nav.trends")}
+        actions={
+          <PillTabs
+            options={WINDOW_OPTIONS}
+            labels={windowLabels}
+            value={selectedWindow}
+            onChange={setSelectedWindow}
+            data-testid="spending-trends-window"
+          />
+        }
+      />
 
       {isEmpty ? (
-        <Card className="shadow-sm rounded-lg">
-          <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground">
-              {t("spendingTrends.noData")}
-            </p>
-          </CardContent>
+        <Card data-testid="spending-trends-empty">
+          <EmptyState
+            icon={<ChartNoAxesColumnIcon />}
+            title={t("insights.trendsEmptyTitle")}
+            description={t("spendingTrends.noData")}
+            action={
+              <Button render={<Link to="/import" />}>
+                {t("dashboard.importStatement")}
+              </Button>
+            }
+          />
         </Card>
       ) : (
-        <div className="space-y-4">
-          <div className="mb-4">
-            <PillTabs
-              options={WINDOW_OPTIONS}
-              labels={windowLabels}
-              value={selectedWindow}
-              onChange={setSelectedWindow}
-            />
-          </div>
+        <div className="flex flex-col gap-section-gap">
           <SpendingTrendChart data={totals} isLoading={isPending} />
           <TrendsInsightPanel
             gatePassed={gatePassed}

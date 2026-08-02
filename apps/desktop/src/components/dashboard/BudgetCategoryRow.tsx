@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { Badge } from "@nixus/shared";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { AttentionRow, Badge, Money, formatMoney } from "@nixus/shared";
+import type { AttentionStatus } from "@nixus/shared";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 
 interface DashboardBudgetCategoryRowProps {
   name: string;
@@ -8,73 +9,95 @@ interface DashboardBudgetCategoryRowProps {
   spentCents: number;
 }
 
-function getSpentRatio(spent: number, target: number): number {
-  if (target <= 0) return 0;
-  return spent / target;
+type Pacing = "over" | "met" | "under";
+
+// The shipped rule badged anything at >=75% of target as "Warning", which reads a mortgage at
+// exactly $1,650/$1,650 as a problem. Pacing is derived from the remainder alone: over target is
+// unambiguously over, and a commitment that has simply been met is `neutral`, never a warning.
+//
+// A `due_soon` / `overdue` distinction would need to know which categories are bills that cannot
+// move. No such field exists on DashboardBudgetCategory, so this deliberately does not guess.
+function getPacing(spentCents: number, targetCents: number): Pacing {
+  if (targetCents <= 0) return "under";
+  if (spentCents > targetCents) return "over";
+  if (spentCents === targetCents) return "met";
+  return "under";
 }
 
-function getBarColor(ratio: number): string {
-  if (ratio > 1.0) return "bg-rose-500";
-  if (ratio >= 0.75) return "bg-amber-500";
-  return "bg-primary";
-}
+const pacingStatus: Record<Pacing, AttentionStatus> = {
+  over: "over",
+  met: "neutral",
+  under: "good",
+};
+
+const pacingBadgeVariant = {
+  over: "over",
+  met: "neutral",
+  under: "good",
+} as const;
 
 export function DashboardBudgetCategoryRow({
   name,
   targetCents,
   spentCents,
 }: DashboardBudgetCategoryRowProps) {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
-  const ratio = getSpentRatio(spentCents, targetCents);
-  const progressPercent = Math.min(ratio * 100, 100);
-  const barColor = getBarColor(ratio);
+  const { t, i18n } = useTranslation();
+  const { hidden } = useValuesHidden();
+
+  const pacing = getPacing(spentCents, targetCents);
+  const remainingCents = targetCents - spentCents;
+
+  const amountHidden = t("common.amountHidden");
+  const money = (cents: number) =>
+    hidden ? amountHidden : formatMoney({ cents, locale: i18n.language });
 
   const badgeLabel =
-    ratio > 1.0
-      ? t("dashboard.over")
-      : ratio >= 0.75
-        ? t("dashboard.warning")
-        : t("dashboard.onTrack");
-  const badgeClassName =
-    ratio > 1.0
-      ? "bg-rose-500/10 text-rose-600 border-transparent"
-      : ratio >= 0.75
-        ? "bg-amber-500/10 text-amber-600 border-transparent"
-        : "bg-emerald-500/10 text-emerald-600 border-transparent";
+    pacing === "over"
+      ? t("dashboard.categoryOverBy", { amount: money(Math.abs(remainingCents)) })
+      : pacing === "met"
+        ? t("dashboard.categoryFullySpent")
+        : t("dashboard.categoryLeft", { amount: money(remainingCents) });
 
-  const percentUsed = Math.round(ratio * 100);
+  // One coherent sentence: the dot, figure, and badge are all presentational inside AttentionRow.
+  const accessibleName =
+    pacing === "over"
+      ? t("dashboard.categoryRowOver", {
+          name,
+          amount: money(Math.abs(remainingCents)),
+        })
+      : pacing === "met"
+        ? t("dashboard.categoryRowFullySpent", {
+            name,
+            spent: money(spentCents),
+            target: money(targetCents),
+          })
+        : t("dashboard.categoryRowUnder", {
+            name,
+            spent: money(spentCents),
+            target: money(targetCents),
+            remaining: money(remainingCents),
+          });
 
   return (
-    <div
-      className="py-2"
-      data-testid="dashboard-category-row"
-      aria-label={`${name}: ${formatCurrency(spentCents)} of ${formatCurrency(targetCents)}, ${percentUsed}% used`}
-    >
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-sm font-medium">{name}</span>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-sm" data-testid="category-amount">
-            {formatCurrency(spentCents)} / {formatCurrency(targetCents)}
-          </span>
-          <Badge className={badgeClassName} data-testid="category-badge">
-            {badgeLabel}
-          </Badge>
-        </div>
-      </div>
-      <div
-        className="h-2 w-full rounded-full bg-muted"
-        role="progressbar"
-        aria-valuenow={spentCents}
-        aria-valuemin={0}
-        aria-valuemax={targetCents}
-        data-testid="category-progress"
-      >
-        <div
-          className={`h-full rounded-full transition-all ${barColor}`}
-          style={{ width: `${progressPercent}%` }}
+    <AttentionRow
+      status={pacingStatus[pacing]}
+      name={name}
+      figure={
+        <Money
+          cents={spentCents}
+          locale={i18n.language}
+          masked={hidden}
+          maskedLabel={amountHidden}
+          data-testid="category-amount"
         />
-      </div>
-    </div>
+      }
+      badge={
+        <Badge variant={pacingBadgeVariant[pacing]} data-testid="category-badge">
+          {badgeLabel}
+        </Badge>
+      }
+      accessibleName={accessibleName}
+      data-testid="dashboard-category-row"
+    />
   );
 }

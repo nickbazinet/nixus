@@ -1,7 +1,19 @@
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@nixus/shared";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Meter,
+  Money,
+  Skeleton,
+  SubStat,
+  focusRing,
+} from "@nixus/shared";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
+import { cn } from "@/lib/utils";
 
 interface CashFlowSummaryCardProps {
   incomeCents: number;
@@ -14,17 +26,19 @@ export function CashFlowSummaryCard({
   expensesCents,
   isLoading,
 }: CashFlowSummaryCardProps) {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
+  const { t, i18n } = useTranslation();
+  const { hidden } = useValuesHidden();
+
   const netCents = incomeCents - expensesCents;
   const ratio = incomeCents > 0 ? (expensesCents / incomeCents) * 100 : 0;
+  const amountHidden = t("common.amountHidden");
 
   if (isLoading) {
     return (
-      <Card className="shadow-sm rounded-lg col-span-full" data-testid="cash-flow-card">
-        <CardContent className="p-6">
-          <div className="h-5 w-24 bg-muted animate-pulse rounded mb-3" />
-          <div className="h-8 w-48 bg-muted animate-pulse rounded" />
+      <Card data-testid="cash-flow-card">
+        <CardContent>
+          {/* Title, three figures, meter. */}
+          <Skeleton rows={5} />
         </CardContent>
       </Card>
     );
@@ -32,83 +46,105 @@ export function CashFlowSummaryCard({
 
   if (incomeCents === 0) {
     return (
-      <Link to="/income" className="col-span-full">
-        <Card
-          className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
-          role="link"
-          aria-label="No income recorded this month. Go to Income page to record income."
-          data-testid="cash-flow-card"
-        >
-          <CardContent className="p-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              {t("dashboard.noIncomeThisMonth")}
-            </p>
-            <p className="text-xs text-primary mt-1">
-              {t("dashboard.recordIncome")}
-            </p>
-          </CardContent>
-        </Card>
-      </Link>
+      <Card
+        interactive
+        render={<Link to="/spending/income" />}
+        aria-label={t("dashboard.noIncomeThisMonth")}
+        data-testid="cash-flow-card"
+      >
+        <CardContent className="flex flex-col gap-1">
+          <p className="text-body text-ink">{t("dashboard.noIncomeThisMonth")}</p>
+          <p className="text-caption text-ink-dim">{t("dashboard.recordIncome")}</p>
+        </CardContent>
+      </Card>
     );
   }
 
-  const progressColor =
-    ratio > 100 ? "bg-rose-500" : ratio >= 90 ? "bg-amber-500" : "bg-emerald-500";
-
-  const ariaLabel = `Cash Flow: ${formatCurrency(incomeCents)} income, ${formatCurrency(expensesCents)} expenses, net ${netCents >= 0 ? "positive" : "negative"} ${formatCurrency(Math.abs(netCents))}`;
+  const isShortfall = netCents < 0;
+  const spentPercent = Math.round(Math.min(ratio, 999));
 
   return (
-    <Link to="/income" className="col-span-full">
-      <Card
-        className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
-        role="link"
-        aria-label={ariaLabel}
-        data-testid="cash-flow-card"
-      >
-        <CardContent className="p-6">
-          <p className="text-sm font-medium text-muted-foreground mb-3">
-            {t("dashboard.cashFlow")}
-          </p>
-          <div className="flex items-baseline gap-6">
-            <div>
-              <span className="text-xs text-muted-foreground">{t("dashboard.income")}</span>
-              <p className="text-lg font-mono font-medium text-emerald-600 dark:text-emerald-400">
-                {formatCurrency(incomeCents)}
-              </p>
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground">{t("dashboard.expenses")}</span>
-              <p className="text-lg font-mono font-medium text-rose-500">
-                {formatCurrency(expensesCents)}
-              </p>
-            </div>
-            <div>
-              <span className="text-xs text-muted-foreground">{t("dashboard.net")}</span>
-              <p
-                className={`text-lg font-mono font-medium ${
-                  netCents >= 0
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : "text-rose-500"
-                }`}
-              >
-                {formatCurrency(netCents)}
-              </p>
-            </div>
-          </div>
-          <div
-            className="h-2 w-full rounded-full bg-muted mt-3"
-            role="progressbar"
-            aria-valuenow={Math.min(ratio, 100)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <div
-              className={`h-full rounded-full transition-all ${progressColor}`}
-              style={{ width: `${Math.min(ratio, 100)}%` }}
+    <Card data-testid="cash-flow-card">
+      <CardHeader>
+        <CardTitle>{t("dashboard.cashFlow")}</CardTitle>
+      </CardHeader>
+
+      <CardContent className="@container flex flex-col gap-4">
+        <div className="grid grid-cols-1 gap-4 @lg:grid-cols-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-caption text-ink-dim">{t("dashboard.moneyIn")}</span>
+            <Money
+              className="text-h2 text-ink"
+              cents={incomeCents}
+              locale={i18n.language}
+              masked={hidden}
+              maskedLabel={amountHidden}
             />
           </div>
-        </CardContent>
-      </Card>
-    </Link>
+
+          <div className="flex flex-col gap-1">
+            <span className="text-caption text-ink-dim">{t("dashboard.moneyOut")}</span>
+            <Money
+              className="text-h2 text-ink"
+              cents={expensesCents}
+              locale={i18n.language}
+              masked={hidden}
+              maskedLabel={amountHidden}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <SubStat
+              label={t("dashboard.netLeftOver")}
+              value={
+                <span className={cn(isShortfall && "text-over-ink")}>
+                  <Money
+                    cents={netCents}
+                    locale={i18n.language}
+                    sign="always"
+                    masked={hidden}
+                    maskedLabel={amountHidden}
+                  />
+                </span>
+              }
+            />
+            {/* The colour on a shortfall is never the only signal. */}
+            <Badge variant={isShortfall ? "over" : "good"}>
+              {isShortfall
+                ? t("dashboard.cashFlowShortfall")
+                : t("dashboard.cashFlowLeftOver")}
+            </Badge>
+          </div>
+        </div>
+
+        {/* A spreadsheet user's most practised habit is reading a running balance, so an
+            unqualified net figure gets read as one. */}
+        <p className="text-caption text-ink-dim" data-testid="cash-flow-net-caveat">
+          {t("dashboard.cashFlowNetCaption")}
+        </p>
+
+        <div className="flex flex-col gap-1.5">
+          <Meter
+            label={t("dashboard.cashFlowMeterLabel")}
+            value={Math.min(ratio, 100)}
+            valueText={t("dashboard.cashFlowSpentOfIncome", { percent: spentPercent })}
+          />
+          <span className="text-caption text-ink-dim">
+            {t("dashboard.cashFlowSpentOfIncome", { percent: spentPercent })}
+          </span>
+        </div>
+
+        <Link
+          to="/spending/income"
+          className={cn(
+            "text-label text-brand-ink underline-offset-4 hover:underline",
+            focusRing,
+          )}
+          data-testid="cash-flow-income-link"
+        >
+          {t("dashboard.viewIncome")}
+        </Link>
+      </CardContent>
+    </Card>
   );
 }

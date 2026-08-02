@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
-import { Card, CardContent } from "@nixus/shared";
+import { useNavigate, type LinkProps } from "@tanstack/react-router";
+import { ArrowDown, ArrowRight, ArrowUp } from "lucide-react";
+import { Card, CardContent, Skeleton, Stat, SubStat } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
 interface TrendInfo {
@@ -11,41 +12,56 @@ interface TrendInfo {
 
 interface DashboardMetricCardProps {
   title: string;
-  value: string;
+  /** Pass a `<Money>` node for currency; a plain string only for counts and non-money figures. */
+  value: ReactNode;
+  /** The figure spoken in the card's accessible name. Required when `value` is not a string. */
+  valueLabel?: string;
   trend?: TrendInfo;
+  /** `hero` is the surface's one `text-display` figure. Every other card is `secondary`. */
   variant: "hero" | "secondary";
-  href?: string;
+  /** Route-typed, not `string`: a plain string let the pre-migration `/budget` path compile. */
+  href?: LinkProps["to"];
   progressBar?: ReactNode;
   isLoading?: boolean;
 }
 
+const trendIcon = {
+  up: ArrowUp,
+  down: ArrowDown,
+  flat: ArrowRight,
+} as const;
+
+// A rising figure is `good` and a falling one is `over`. The glyph carries the direction as well as
+// the hue, so the trend still reads without colour.
+const trendColor = {
+  up: "text-good-ink",
+  down: "text-over-ink",
+  flat: "text-ink-dim",
+} as const;
+
 function TrendIndicator({ trend }: { trend: TrendInfo }) {
-  const arrow = trend.direction === "up" ? "↑" : trend.direction === "down" ? "↓" : "→";
-  const color =
-    trend.direction === "up"
-      ? "text-emerald-600"
-      : trend.direction === "down"
-        ? "text-rose-600"
-        : "text-muted-foreground";
+  const Icon = trendIcon[trend.direction];
 
   return (
-    <span className={cn("text-sm", color)}>
-      {arrow} {trend.percentage}
-      {trend.description && (
-        <span className="text-muted-foreground ml-1">{trend.description}</span>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-caption",
+        trendColor[trend.direction],
       )}
+    >
+      <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+      <span className="money">{trend.percentage}</span>
+      {trend.description && <span className="text-ink-dim">{trend.description}</span>}
     </span>
   );
 }
 
-function SkeletonCard({ variant }: { variant: "hero" | "secondary" }) {
-  const valueH = variant === "hero" ? "h-10" : "h-6";
+function SkeletonCard() {
   return (
-    <Card className="shadow-sm rounded-lg" data-testid="metric-card-skeleton">
-      <CardContent className="p-8">
-        <div className="h-4 w-24 bg-muted animate-pulse rounded mb-3" />
-        <div className={cn(valueH, "w-40 bg-muted animate-pulse rounded mb-2")} />
-        <div className="h-4 w-20 bg-muted animate-pulse rounded" />
+    <Card data-testid="metric-card-skeleton">
+      <CardContent>
+        {/* Three rows: label, figure, trend — the real card's own row count. */}
+        <Skeleton rows={3} />
       </CardContent>
     </Card>
   );
@@ -54,6 +70,7 @@ function SkeletonCard({ variant }: { variant: "hero" | "secondary" }) {
 export function DashboardMetricCard({
   title,
   value,
+  valueLabel,
   trend,
   variant,
   href,
@@ -63,43 +80,44 @@ export function DashboardMetricCard({
   const navigate = useNavigate();
 
   if (isLoading) {
-    return <SkeletonCard variant={variant} />;
+    return <SkeletonCard />;
   }
 
-  const isHero = variant === "hero";
+  const Figure = variant === "hero" ? Stat : SubStat;
 
-  const trendLabel = trend
-    ? `, ${trend.direction === "up" ? "up" : trend.direction === "down" ? "down" : "flat"} ${trend.percentage}`
-    : "";
+  const trendLabel = trend ? `, ${trend.direction} ${trend.percentage}` : "";
+  const spokenValue = valueLabel ?? (typeof value === "string" ? value : "");
+  const accessibleName = `${title}: ${spokenValue}${trendLabel}`;
 
   return (
     <Card
-      className={cn(
-        "shadow-sm rounded-lg transition-shadow",
-        href && "cursor-pointer hover:shadow-md"
-      )}
+      interactive={Boolean(href)}
       role={href ? "link" : undefined}
-      aria-label={`${title}: ${value}${trendLabel}`}
+      tabIndex={href ? 0 : undefined}
+      aria-label={href ? accessibleName : undefined}
       onClick={href ? () => navigate({ to: href }) : undefined}
+      onKeyDown={
+        href
+          ? (event) => {
+              // Click and Enter must open the same thing; the shipped card was mouse-only.
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                navigate({ to: href });
+              }
+            }
+          : undefined
+      }
       data-testid="metric-card"
     >
-      <CardContent className="p-8">
-        <p className="text-sm text-muted-foreground mb-1">{title}</p>
-        <p
-          className={cn(
-            "font-mono font-semibold",
-            isHero ? "text-[40px] leading-tight" : "text-2xl"
-          )}
+      <CardContent className="flex flex-col gap-2">
+        <Figure
+          label={title}
+          value={value}
+          aria-hidden={href ? true : undefined}
           data-testid="metric-value"
-        >
-          {value}
-        </p>
-        {trend && (
-          <div className="mt-1">
-            <TrendIndicator trend={trend} />
-          </div>
-        )}
-        {progressBar && <div className="mt-3">{progressBar}</div>}
+        />
+        {trend && <TrendIndicator trend={trend} />}
+        {progressBar}
       </CardContent>
     </Card>
   );

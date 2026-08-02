@@ -46,6 +46,8 @@ export function OptionalAccountSelect({
     })),
   ];
 
+  const helpId = `${id}-help`;
+
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{t(labelKey)}</Label>
@@ -54,7 +56,9 @@ export function OptionalAccountSelect({
         onValueChange={(next) => onChange(next ?? "")}
         items={items}
       >
-        <SelectTrigger id={id}>
+        {/* The help text explains why imports carry no account, so it has to reach the accessible
+         * name rather than float beside the field unassociated. */}
+        <SelectTrigger id={id} aria-describedby={helpId}>
           <SelectValue placeholder={t("common.none")} />
         </SelectTrigger>
         <SelectContent>
@@ -66,7 +70,9 @@ export function OptionalAccountSelect({
           ))}
         </SelectContent>
       </Select>
-      <p className="text-xs text-muted-foreground">{t(helpKey)}</p>
+      <p id={helpId} className="text-caption text-ink-dim">
+        {t(helpKey)}
+      </p>
     </div>
   );
 }

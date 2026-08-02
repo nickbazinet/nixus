@@ -148,7 +148,7 @@ async function setupSpendingTrendsMock(
 test.describe("Spending Trends — budget compare + AI insight", () => {
   test("renders compare table columns from category_compare", async ({ page }) => {
     await setupSpendingTrendsMock(page);
-    await page.goto("/spending-trends");
+    await page.goto("/insights/trends");
 
     await expect(page.getByRole("heading", { name: "Trends" })).toBeVisible();
     await expect(page.getByTestId("category-spend-table")).toBeVisible();
@@ -170,7 +170,7 @@ test.describe("Spending Trends — budget compare + AI insight", () => {
     page,
   }) => {
     const mock = await setupSpendingTrendsMock(page, { insightDelayMs: 300 });
-    await page.goto("/spending-trends");
+    await page.goto("/insights/trends");
 
     await expect(page.getByTestId("category-spend-table")).toBeVisible();
     await expect(page.getByText("Average Monthly Spend")).toBeVisible();
@@ -190,7 +190,7 @@ test.describe("Spending Trends — budget compare + AI insight", () => {
 
   test("does not invoke insight when AI is not configured", async ({ page }) => {
     const mock = await setupSpendingTrendsMock(page, { aiConfigured: false });
-    await page.goto("/spending-trends");
+    await page.goto("/insights/trends");
 
     await expect(page.getByTestId("trends-insight-panel")).toBeVisible();
     await expect(page.getByTestId("trends-insight-settings-link")).toBeVisible();
@@ -202,7 +202,7 @@ test.describe("Spending Trends — budget compare + AI insight", () => {
 
   test("shows soft error with retry on insight failure", async ({ page }) => {
     await setupSpendingTrendsMock(page, { insightError: true });
-    await page.goto("/spending-trends");
+    await page.goto("/insights/trends");
 
     await expect(page.getByTestId("trends-insight-error")).toBeVisible();
     await expect(page.getByTestId("trends-insight-retry")).toBeVisible();
@@ -211,7 +211,7 @@ test.describe("Spending Trends — budget compare + AI insight", () => {
 
   test("window switch shows insight for current window only", async ({ page }) => {
     const mock = await setupSpendingTrendsMock(page);
-    await page.goto("/spending-trends");
+    await page.goto("/insights/trends");
 
     await expect(page.getByTestId("trends-insight-panel")).toContainText(
       "Insight for 6 months",

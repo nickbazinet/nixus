@@ -51,10 +51,10 @@ function DatePicker({
             disabled={disabled}
             aria-invalid={ariaInvalid}
             className={cn(
-              "w-full justify-start text-left font-normal",
-              !value && "text-muted-foreground",
+              "w-full justify-start text-left",
+              !value && "text-ink-faint",
               ariaInvalid &&
-                "border-destructive ring-3 ring-destructive/20 dark:border-destructive/50 dark:ring-destructive/40",
+                "border-over",
               className
             )}
           />

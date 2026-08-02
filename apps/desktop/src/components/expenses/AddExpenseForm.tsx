@@ -1,25 +1,24 @@
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import {
+  Button,
+  DatePicker,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
-  SelectItem,
   SelectGroup,
   SelectGroupLabel,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
-import { DatePicker } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import { useAllBudgetCategories, useCreateExpense } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";
-
 
 interface AddExpenseFormProps {
   defaultCategoryId?: number;
@@ -33,7 +32,6 @@ interface ExpenseFormData {
   account_id: string;
   date: string;
 }
-
 
 export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormProps) {
   const { t } = useTranslation();
@@ -54,7 +52,9 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
       account_id: "",
       date: format(new Date(), "yyyy-MM-dd"),
     },
-    mode: "onSubmit",
+    // Each field reports its own problem as the user leaves it. On submit-only validation, five
+    // fields get filled before the first error is ever shown.
+    mode: "onBlur",
   });
 
   const onSubmit = (data: ExpenseFormData) => {
@@ -68,11 +68,11 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
       },
       {
         onSuccess: () => {
-          toast.success(`Expense "${data.merchant}" saved`);
+          toast.success(t("expenses.expenseSaved", { merchant: data.merchant }));
           onClose();
         },
         onError: () => {
-          toast.error("Failed to save expense");
+          toast.error(t("expenses.expenseSaveFailed"));
         },
       }
     );
@@ -81,25 +81,33 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      className="space-y-3"
       data-testid="add-expense-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="expense-merchant">{t("expenses.merchant")}</Label>
+        <Label htmlFor="expense-merchant" required>
+          {t("expenses.merchant")}
+        </Label>
         <Input
           id="expense-merchant"
           placeholder={t("expenses.merchantPlaceholder")}
           autoFocus
+          aria-required="true"
           aria-invalid={!!errors.merchant}
+          aria-describedby={errors.merchant ? "expense-merchant-error" : undefined}
           {...register("merchant", { required: t("expenses.merchantRequired") })}
         />
         {errors.merchant && (
-          <p className="text-xs text-destructive">{errors.merchant.message}</p>
+          <p id="expense-merchant-error" className="text-caption text-over">
+            {errors.merchant.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="expense-amount">{t("common.amount")}</Label>
+        <Label htmlFor="expense-amount" required>
+          {t("common.amount")}
+        </Label>
         <Controller
           name="amount_cents"
           control={control}
@@ -112,26 +120,37 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
               value={field.value}
               onChange={field.onChange}
               onBlur={field.onBlur}
+              aria-required
               aria-invalid={!!errors.amount_cents}
+              aria-describedby={errors.amount_cents ? "expense-amount-error" : undefined}
             />
           )}
         />
         {errors.amount_cents && (
-          <p className="text-xs text-destructive">
+          <p id="expense-amount-error" className="text-caption text-over">
             {errors.amount_cents.message}
           </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="expense-category">{t("common.category")}</Label>
+        <Label htmlFor="expense-category" required>
+          {t("common.category")}
+        </Label>
         <Controller
           name="budget_category_id"
           control={control}
           rules={{ required: t("expenses.categoryRequired") }}
           render={({ field }) => (
             <Select value={field.value} onValueChange={field.onChange} items={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}>
-              <SelectTrigger id="expense-category" aria-invalid={!!errors.budget_category_id}>
+              <SelectTrigger
+                id="expense-category"
+                aria-required="true"
+                aria-invalid={!!errors.budget_category_id}
+                aria-describedby={
+                  errors.budget_category_id ? "expense-category-error" : undefined
+                }
+              >
                 <SelectValue placeholder={t("expenses.selectCategory")} />
               </SelectTrigger>
               <SelectContent>
@@ -156,7 +175,7 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
           )}
         />
         {errors.budget_category_id && (
-          <p className="text-xs text-destructive">
+          <p id="expense-category-error" className="text-caption text-over">
             {errors.budget_category_id.message}
           </p>
         )}
@@ -177,7 +196,9 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
       />
 
       <div className="space-y-1.5">
-        <Label htmlFor="expense-date">{t("common.date")}</Label>
+        <Label htmlFor="expense-date" required>
+          {t("common.date")}
+        </Label>
         <Controller
           name="date"
           control={control}
@@ -187,12 +208,16 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
               id="expense-date"
               value={field.value}
               onChange={field.onChange}
+              aria-required="true"
               aria-invalid={!!errors.date}
+              aria-describedby={errors.date ? "expense-date-error" : undefined}
             />
           )}
         />
         {errors.date && (
-          <p className="text-xs text-destructive">{errors.date.message}</p>
+          <p id="expense-date-error" className="text-caption text-over">
+            {errors.date.message}
+          </p>
         )}
       </div>
 

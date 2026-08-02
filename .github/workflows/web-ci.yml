@@ -67,6 +67,11 @@ jobs:
       - name: Typecheck shared package
         run: pnpm --filter @nixus/shared typecheck
 
+      # Recomputes every contrast ratio in the token layer. The margins are
+      # load-bearing: a 1% "warm this up" nudge can silently break 4.5:1.
+      - name: Design token contrast regression
+        run: pnpm --filter @nixus/shared test
+
       - name: Typecheck web app
         run: pnpm --filter @nixus/web typecheck
 

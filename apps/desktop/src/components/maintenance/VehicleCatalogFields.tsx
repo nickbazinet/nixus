@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
@@ -7,7 +7,9 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  focusRing,
 } from "@nixus/shared";
+import { cn } from "@/lib/utils";
 import {
   useVehicleCatalogStatus,
   useVehicleMakes,
@@ -70,6 +72,7 @@ function SearchableCombobox({
 }: SearchableComboboxProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const hintId = useId();
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -80,7 +83,7 @@ function SearchableCombobox({
   const displayValue = value.trim() || placeholder;
 
   return (
-    <div className="space-y-1.5">
+    <div className="flex flex-col gap-1.5">
       <Label htmlFor={labelFor}>{label}</Label>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
@@ -90,12 +93,14 @@ function SearchableCombobox({
               type="button"
               variant="outline"
               disabled={disabled}
+              aria-disabled={disabled || undefined}
+              aria-describedby={disabled && disabledHint ? hintId : undefined}
               data-testid={testId}
-              className="h-8 w-full justify-start font-normal"
+              className="w-full justify-start text-body"
             />
           }
         >
-          <span className={value.trim() ? "" : "text-muted-foreground"}>
+          <span className={value.trim() ? "" : "text-ink-faint"}>
             {displayValue}
           </span>
         </PopoverTrigger>
@@ -104,34 +109,31 @@ function SearchableCombobox({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             placeholder={searchPlaceholder}
-            className="h-8 mb-2"
+            className="mb-2"
             autoFocus
             name={`catalog-search-${testId}`}
             {...disableBrowserAutocomplete}
           />
-          <div className="max-h-48 overflow-y-auto space-y-0.5">
+          <div className="flex max-h-48 flex-col gap-0.5 overflow-y-auto">
             {loading && (
-              <p className="text-xs text-muted-foreground px-2 py-1.5">
+              <p className="px-2 py-1.5 text-caption text-ink-dim">
                 {loadingMessage}
               </p>
             )}
-            {!loading && disabled && disabledHint && (
-              <p className="text-xs text-muted-foreground px-2 py-1.5">
-                {disabledHint}
-              </p>
-            )}
-            {!loading && !disabled && filtered.length === 0 && (
-              <p className="text-xs text-muted-foreground px-2 py-1.5">
+            {!loading && filtered.length === 0 && (
+              <p className="px-2 py-1.5 text-caption text-ink-dim">
                 {emptyMessage}
               </p>
             )}
             {!loading &&
-              !disabled &&
               filtered.map((opt) => (
                 <button
                   key={opt}
                   type="button"
-                  className="w-full text-left text-sm px-2 py-1.5 rounded-md hover:bg-muted"
+                  className={cn(
+                    "min-h-target-min w-full rounded-md px-2 py-1.5 text-left text-body text-ink hover:bg-hover",
+                    focusRing
+                  )}
                   onClick={() => {
                     onSelect(opt);
                     setFilter("");
@@ -144,6 +146,13 @@ function SearchableCombobox({
           </div>
         </PopoverContent>
       </Popover>
+      {/* The reason sits beside the control, not inside a popover the disabled trigger cannot
+          open — a dead button with no reachable explanation is the pattern this replaces. */}
+      {disabled && disabledHint && (
+        <p id={hintId} className="text-caption text-ink-dim">
+          {disabledHint}
+        </p>
+      )}
     </div>
   );
 }
@@ -209,8 +218,8 @@ export function VehicleCatalogFields({
 
   if (statusLoading) {
     return (
-      <div className="space-y-3" data-testid="vehicle-catalog-loading">
-        <div className="space-y-1.5">
+      <div className="flex flex-col gap-3" data-testid="vehicle-catalog-loading">
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor={makeInputId}>{t("maintenance.fields.make")}</Label>
           <Input
             id={makeInputId}
@@ -220,7 +229,7 @@ export function VehicleCatalogFields({
             {...disableBrowserAutocomplete}
           />
         </div>
-        <div className="space-y-1.5">
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor={modelInputId}>{t("maintenance.fields.model")}</Label>
           <Input
             id={modelInputId}
@@ -230,7 +239,7 @@ export function VehicleCatalogFields({
             {...disableBrowserAutocomplete}
           />
         </div>
-        <div className="space-y-1.5">
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor={yearInputId}>{t("maintenance.fields.year")}</Label>
           <Input
             id={yearInputId}
@@ -249,11 +258,11 @@ export function VehicleCatalogFields({
   if (!catalogAvailable) {
     return (
       <div data-testid="vehicle-catalog-mode-manual">
-        <p className="text-xs text-muted-foreground mb-3">
+        <p className="mb-3 text-caption text-ink-dim">
           {t("maintenance.catalog.unavailableHint")}
         </p>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor={makeInputId}>{t("maintenance.fields.make")}</Label>
             <Input
               id={makeInputId}
@@ -263,7 +272,7 @@ export function VehicleCatalogFields({
               {...disableBrowserAutocomplete}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor={modelInputId}>
               {t("maintenance.fields.model")}
             </Label>
@@ -275,7 +284,7 @@ export function VehicleCatalogFields({
               {...disableBrowserAutocomplete}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor={yearInputId}>{t("maintenance.fields.year")}</Label>
             <Input
               id={yearInputId}
@@ -295,8 +304,8 @@ export function VehicleCatalogFields({
   if (manualMode) {
     return (
       <div data-testid="vehicle-catalog-mode-manual">
-        <div className="space-y-3">
-          <div className="space-y-1.5">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor={makeInputId}>{t("maintenance.fields.make")}</Label>
             <Input
               id={makeInputId}
@@ -306,7 +315,7 @@ export function VehicleCatalogFields({
               {...disableBrowserAutocomplete}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor={modelInputId}>
               {t("maintenance.fields.model")}
             </Label>
@@ -318,7 +327,7 @@ export function VehicleCatalogFields({
               {...disableBrowserAutocomplete}
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="flex flex-col gap-1.5">
             <Label htmlFor={yearInputId}>{t("maintenance.fields.year")}</Label>
             <Input
               id={yearInputId}
@@ -335,7 +344,7 @@ export function VehicleCatalogFields({
           type="button"
           variant="link"
           size="sm"
-          className="h-auto p-0 mt-2"
+          className="mt-2 h-auto p-0"
           data-testid="vehicle-catalog-manual-toggle"
           onClick={() => setManualMode(false)}
         >
@@ -348,12 +357,12 @@ export function VehicleCatalogFields({
   return (
     <div data-testid="vehicle-catalog-mode-catalog">
       {status?.stale && (
-        <p className="text-xs text-muted-foreground mb-3">
+        <p className="mb-3 text-caption text-ink-dim">
           {t("maintenance.catalog.staleHint")}
         </p>
       )}
-      <div className="space-y-3">
-        <div className="space-y-1.5">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor={yearInputId}>{t("maintenance.fields.year")}</Label>
           <Input
             id={yearInputId}
@@ -402,7 +411,7 @@ export function VehicleCatalogFields({
         type="button"
         variant="link"
         size="sm"
-        className="h-auto p-0 mt-2"
+        className="mt-2 h-auto p-0"
         data-testid="vehicle-catalog-manual-toggle"
         onClick={() => setManualMode(true)}
       >

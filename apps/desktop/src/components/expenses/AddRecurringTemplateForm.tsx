@@ -1,18 +1,18 @@
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import {
+  Button,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
-  SelectItem,
   SelectGroup,
   SelectGroupLabel,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { useAllBudgetCategories } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";
@@ -47,7 +47,7 @@ export function AddRecurringTemplateForm({ onClose }: AddRecurringTemplateFormPr
       budget_category_id: "",
       day_of_month: 1,
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmit = (data: RecurringTemplateFormData) => {
@@ -73,25 +73,33 @@ export function AddRecurringTemplateForm({ onClose }: AddRecurringTemplateFormPr
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      className="space-y-3"
       data-testid="add-recurring-template-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="recurring-merchant">{t("expenses.merchant")}</Label>
+        <Label htmlFor="recurring-merchant" required>
+          {t("expenses.merchant")}
+        </Label>
         <Input
           id="recurring-merchant"
           placeholder={t("expenses.merchantPlaceholder")}
           autoFocus
+          aria-required="true"
           aria-invalid={!!errors.merchant}
+          aria-describedby={errors.merchant ? "recurring-merchant-error" : undefined}
           {...register("merchant", { required: t("expenses.merchantRequired") })}
         />
         {errors.merchant && (
-          <p className="text-xs text-destructive">{errors.merchant.message}</p>
+          <p id="recurring-merchant-error" className="text-caption text-over">
+            {errors.merchant.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="recurring-amount">{t("common.amount")}</Label>
+        <Label htmlFor="recurring-amount" required>
+          {t("common.amount")}
+        </Label>
         <Controller
           name="amount_cents"
           control={control}
@@ -104,19 +112,23 @@ export function AddRecurringTemplateForm({ onClose }: AddRecurringTemplateFormPr
               value={field.value}
               onChange={field.onChange}
               onBlur={field.onBlur}
+              aria-required
               aria-invalid={!!errors.amount_cents}
+              aria-describedby={errors.amount_cents ? "recurring-amount-error" : undefined}
             />
           )}
         />
         {errors.amount_cents && (
-          <p className="text-xs text-destructive">
+          <p id="recurring-amount-error" className="text-caption text-over">
             {errors.amount_cents.message}
           </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="recurring-category">{t("common.category")}</Label>
+        <Label htmlFor="recurring-category" required>
+          {t("common.category")}
+        </Label>
         <Controller
           name="budget_category_id"
           control={control}
@@ -127,7 +139,14 @@ export function AddRecurringTemplateForm({ onClose }: AddRecurringTemplateFormPr
               onValueChange={field.onChange}
               items={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}
             >
-              <SelectTrigger id="recurring-category" aria-invalid={!!errors.budget_category_id}>
+              <SelectTrigger
+                id="recurring-category"
+                aria-required="true"
+                aria-invalid={!!errors.budget_category_id}
+                aria-describedby={
+                  errors.budget_category_id ? "recurring-category-error" : undefined
+                }
+              >
                 <SelectValue placeholder={t("expenses.selectCategory")} />
               </SelectTrigger>
               <SelectContent>
@@ -150,20 +169,26 @@ export function AddRecurringTemplateForm({ onClose }: AddRecurringTemplateFormPr
           )}
         />
         {errors.budget_category_id && (
-          <p className="text-xs text-destructive">
+          <p id="recurring-category-error" className="text-caption text-over">
             {errors.budget_category_id.message}
           </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="recurring-day">{t("recurring.dayOfMonth")}</Label>
+        <Label htmlFor="recurring-day" required>
+          {t("recurring.dayOfMonth")}
+        </Label>
         <Input
           id="recurring-day"
           type="number"
           min={1}
           max={31}
+          aria-required="true"
           aria-invalid={!!errors.day_of_month}
+          aria-describedby={
+            errors.day_of_month ? "recurring-day-hint recurring-day-error" : "recurring-day-hint"
+          }
           {...register("day_of_month", {
             required: t("recurring.dayRequired"),
             min: { value: 1, message: t("recurring.dayRange") },
@@ -171,9 +196,13 @@ export function AddRecurringTemplateForm({ onClose }: AddRecurringTemplateFormPr
             valueAsNumber: true,
           })}
         />
-        <p className="text-xs text-muted-foreground">{t("recurring.dayHint")}</p>
+        <p id="recurring-day-hint" className="text-caption text-ink-dim">
+          {t("recurring.dayHint")}
+        </p>
         {errors.day_of_month && (
-          <p className="text-xs text-destructive">{errors.day_of_month.message}</p>
+          <p id="recurring-day-error" className="text-caption text-over">
+            {errors.day_of_month.message}
+          </p>
         )}
       </div>
 

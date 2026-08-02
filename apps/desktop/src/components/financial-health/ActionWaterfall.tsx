@@ -1,9 +1,18 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronDown } from "lucide-react";
-import { Card, CardContent } from "@nixus/shared";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Skeleton,
+  focusRing,
+  formatMoney,
+} from "@nixus/shared";
 import { useFinancialHealthDetail } from "@/hooks/useFinancialHealth";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { cn } from "@/lib/utils";
 import type { ReasoningParams, WaterfallStep } from "@/lib/types";
 
@@ -34,42 +43,39 @@ function formatCoverageMonths(months: number | null): string {
 
 function buildReasoningParams(
   params: ReasoningParams,
-  formatCurrency: (cents: number) => string,
+  money: (cents: number, sign?: "auto" | "always") => string,
 ): Record<string, string | number> {
-  const surplusCents = params.avg_monthly_surplus_cents;
-  const surplusFormatted =
-    surplusCents >= 0
-      ? `+${formatCurrency(surplusCents)}`
-      : formatCurrency(surplusCents);
-
   return {
     months: formatCoverageMonths(params.coverage_months),
     target: params.target_months,
-    debt: formatCurrency(params.credit_card_debt_cents),
-    surplus: surplusFormatted,
-    liquid: formatCurrency(params.liquid_savings_cents),
-    expenses: formatCurrency(params.avg_monthly_expenses_cents),
+    debt: money(params.credit_card_debt_cents),
+    // Signed: a shortfall and a surplus read identically otherwise.
+    surplus: money(params.avg_monthly_surplus_cents, "always"),
+    liquid: money(params.liquid_savings_cents),
+    expenses: money(params.avg_monthly_expenses_cents),
   };
 }
 
 function ActionWaterfallSkeleton() {
   return (
-    <Card className="shadow-sm rounded-lg" data-testid="action-waterfall-loading">
-      <CardContent className="p-6">
-        <div className="h-4 w-40 bg-muted animate-pulse rounded mb-4" />
-        <div className="space-y-3">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-10 bg-muted animate-pulse rounded" />
-          ))}
-        </div>
+    <Card data-testid="action-waterfall-loading">
+      <CardContent>
+        {/* One row per rung — a hardcoded count is what makes the list jump when data lands. */}
+        <Skeleton rows={WATERFALL_STEPS.length} />
       </CardContent>
     </Card>
   );
 }
 
+const numeralClasses: Record<RungState, string> = {
+  completed: "bg-good-bg text-good-ink",
+  current: "bg-brand text-brand-on",
+  future: "bg-neutral-bg text-neutral-ink",
+};
+
 export function ActionWaterfall() {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
+  const { t, i18n } = useTranslation();
+  const { hidden } = useValuesHidden();
   const { data, isPending } = useFinancialHealthDetail();
   const [whyExpanded, setWhyExpanded] = useState(false);
 
@@ -82,16 +88,21 @@ export function ActionWaterfall() {
   }
 
   const waterfall = data.waterfall;
+  const amountHidden = t("common.amountHidden");
+  const money = (cents: number, sign: "auto" | "always" = "auto") =>
+    hidden ? amountHidden : formatMoney({ cents, locale: i18n.language, sign });
 
   return (
-    <Card className="shadow-sm rounded-lg" data-testid="action-waterfall">
-      <CardContent className="p-6">
-        <p className="text-sm font-medium text-muted-foreground mb-4">
-          {t("financialHealth.waterfall.title")}
-        </p>
+    <Card data-testid="action-waterfall">
+      <CardHeader>
+        <CardTitle>{t("financialHealth.waterfall.orderOfOperations")}</CardTitle>
+      </CardHeader>
 
-        <ol className="space-y-2" aria-label={t("financialHealth.waterfall.title")}>
+      <CardContent>
+        <ol aria-label={t("financialHealth.waterfall.orderOfOperations")}>
           {WATERFALL_STEPS.map((step, index) => {
+            // The waterfall is deterministic and backend-owned: this renders `current_step` and
+            // never re-derives which rung should be highlighted.
             const state = getRungState(
               step,
               waterfall.current_step,
@@ -104,89 +115,89 @@ export function ActionWaterfall() {
               <li
                 key={step}
                 className={cn(
-                  "rounded-lg border px-4 py-3 transition-colors",
-                  state === "completed" &&
-                    "border-transparent bg-muted/40 text-muted-foreground",
-                  state === "current" &&
-                    "border-teal-500/60 ring-2 ring-teal-500/20 bg-background",
-                  state === "future" &&
-                    "border-transparent bg-muted/20 text-muted-foreground/70",
+                  "flex gap-3 border-b border-line py-3.5 last:border-b-0",
+                  // {components.action-card} — the only brand-tinted treatment on this surface, on
+                  // exactly one rung. Its scarcity is what makes it read as "do this".
+                  isCurrent &&
+                    "-mx-card-pad border-l-3 border-l-brand bg-brand-soft px-card-pad",
                 )}
                 data-testid={`waterfall-rung-${step}`}
                 data-state={state}
               >
-                <div className="flex items-start gap-3">
-                  <span
-                    className={cn(
-                      "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-sm",
-                      state === "completed" && "text-teal-600 dark:text-teal-400",
-                      state === "current" && "text-teal-600 dark:text-teal-400 font-bold",
-                      state === "future" && "text-muted-foreground/50",
-                    )}
-                    aria-hidden="true"
-                  >
-                    {state === "completed" ? (
-                      <Check className="h-4 w-4" strokeWidth={2.5} />
-                    ) : state === "current" ? (
-                      "●"
-                    ) : (
-                      "○"
-                    )}
-                  </span>
+                <span
+                  className={cn(
+                    "mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-caption",
+                    numeralClasses[state],
+                  )}
+                  aria-hidden="true"
+                >
+                  {state === "completed" ? (
+                    <Check className="size-3.5" strokeWidth={2.5} />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span
-                        className={cn(
-                          "text-sm leading-snug",
-                          isCurrent ? "font-semibold text-foreground" : "font-medium",
-                        )}
-                      >
-                        {index + 1}. {stepLabel}
-                      </span>
-                      {isCurrent && (
-                        <span className="text-xs font-medium text-teal-600 dark:text-teal-400">
-                          {t("financialHealth.waterfall.youAreHere")}
-                        </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span
+                      className={cn(
+                        "text-h3",
+                        state === "future" ? "text-ink-dim" : "text-ink",
                       )}
-                    </div>
-
+                    >
+                      {stepLabel}
+                    </span>
+                    {state === "completed" && (
+                      <Badge variant="good">{t("financialHealth.waterfall.done")}</Badge>
+                    )}
                     {isCurrent && (
-                      <div className="mt-2">
-                        <button
-                          type="button"
-                          onClick={() => setWhyExpanded((prev) => !prev)}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
-                          aria-expanded={whyExpanded}
-                          data-testid="waterfall-why-toggle"
-                        >
-                          {t("financialHealth.waterfall.why")}
-                          <ChevronDown
-                            className={cn(
-                              "h-3 w-3 transition-transform",
-                              whyExpanded && "rotate-180",
-                            )}
-                            aria-hidden="true"
-                          />
-                        </button>
-
-                        {whyExpanded && (
-                          <p
-                            className="mt-2 text-sm text-muted-foreground leading-relaxed"
-                            data-testid="waterfall-reasoning"
-                          >
-                            {t(
-                              `financialHealth.waterfall.reasoning.${waterfall.reasoning_key}`,
-                              buildReasoningParams(
-                                waterfall.reasoning_params,
-                                formatCurrency,
-                              ),
-                            )}
-                          </p>
-                        )}
-                      </div>
+                      <Badge variant="caution">
+                        {t("financialHealth.waterfall.youreHere")}
+                      </Badge>
+                    )}
+                    {state === "future" && (
+                      <span className="sr-only">
+                        {t("financialHealth.waterfall.comesLater")}
+                      </span>
                     )}
                   </div>
+
+                  {isCurrent && (
+                    <div className="mt-2 flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setWhyExpanded((prev) => !prev)}
+                        className={cn(
+                          "inline-flex w-fit min-h-target-min items-center gap-1 text-label text-brand-ink hover:underline",
+                          focusRing,
+                        )}
+                        aria-expanded={whyExpanded}
+                        data-testid="waterfall-why-toggle"
+                      >
+                        {t("financialHealth.waterfall.whyThisFirst")}
+                        <ChevronDown
+                          className={cn(
+                            "size-3 transition-transform",
+                            whyExpanded && "rotate-180",
+                          )}
+                          aria-hidden="true"
+                        />
+                      </button>
+
+                      {whyExpanded && (
+                        <p
+                          className="money text-body text-ink-dim"
+                          data-testid="waterfall-reasoning"
+                        >
+                          {t(
+                            `financialHealth.waterfall.reasoning.${waterfall.reasoning_key}`,
+                            buildReasoningParams(waterfall.reasoning_params, money),
+                          )}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </li>
             );

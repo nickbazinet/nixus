@@ -2,10 +2,22 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ArrowRight } from "lucide-react";
-import { Card, CardContent } from "@nixus/shared";
+import {
+  Button,
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  focusRing,
+} from "@nixus/shared";
+import { cn } from "@/lib/utils";
 
 const DISMISS_STORAGE_KEY = "finance.onboarding.dismissed";
 
+// Deliberately a plain Card, not an Alert: the `info` Alert variant carries a brand left border,
+// and the 3px brand accent is reserved for the one suggested-next-step card on this surface. Its
+// scarcity is what makes that card read as "do this".
 export function SetupIncompleteBanner() {
   const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(() => {
@@ -28,34 +40,37 @@ export function SetupIncompleteBanner() {
   };
 
   return (
-    <Card className="shadow-sm rounded-lg mb-4" data-testid="setup-incomplete-banner">
-      <CardContent className="p-5">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <p className="text-sm font-medium text-foreground">
-            {t("dashboard.setupIncompleteTitle")}
-          </p>
+    <Card size="sm" data-testid="setup-incomplete-banner">
+      <CardHeader>
+        <CardTitle>{t("dashboard.setupIncompleteTitle")}</CardTitle>
+        <CardAction>
           <button
             type="button"
             onClick={handleDismiss}
-            className="text-xs text-primary hover:underline"
+            className={cn(
+              "min-h-target-min text-caption text-ink-dim hover:text-ink",
+              focusRing,
+            )}
             data-testid="setup-incomplete-dismiss"
           >
             {t("dashboard.setupIncompleteDismiss")}
           </button>
-        </div>
+        </CardAction>
+      </CardHeader>
 
-        <p className="text-sm text-muted-foreground mb-3">
-          {t("dashboard.setupIncompleteBody")}
-        </p>
+      <CardContent className="flex flex-col gap-3">
+        <p className="text-caption text-ink-dim">{t("dashboard.setupIncompleteBody")}</p>
 
-        <Link
-          to="/onboarding"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-fit"
+          render={<Link to="/onboarding" />}
           data-testid="setup-incomplete-cta"
         >
           {t("dashboard.setupIncompleteCta")}
-          <ArrowRight className="h-4 w-4" />
-        </Link>
+          <ArrowRight data-icon="inline-end" aria-hidden="true" />
+        </Button>
       </CardContent>
     </Card>
   );

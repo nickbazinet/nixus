@@ -35,6 +35,7 @@ function CarDashboardPage() {
         open={showForm}
         onClose={() => setShowForm(false)}
         title={t("maintenance.addVehicle")}
+        description={t("maintenance.addVehicleDescription")}
         data-testid="vehicle-slide-over"
       >
         <AddVehicleForm onClose={() => setShowForm(false)} />

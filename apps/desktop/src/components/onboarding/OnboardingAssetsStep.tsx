@@ -1,21 +1,25 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
+import { toast } from "sonner";
+import { Plus } from "lucide-react";
 import {
+  Badge,
+  Button,
+  Card,
+  Input,
+  Label,
+  Money,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
-import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
-import { Card, CardContent } from "@nixus/shared";
+import { CardContent } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
+import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import { useAssets, useCreateAsset } from "@/hooks/useAssets";
-import { Plus } from "lucide-react";
 
 const ASSET_TYPE_OPTIONS = [
   { value: "real_estate", labelKey: "assets.typeRealEstate" },
@@ -32,6 +36,7 @@ interface AssetFormData {
 
 export function OnboardingAssetsStep() {
   const { t } = useTranslation();
+  const maskProps = useMaskProps();
   const { data: assets = [] } = useAssets();
   const createAsset = useCreateAsset();
   const [showForm, setShowForm] = useState(false);
@@ -44,7 +49,7 @@ export function OnboardingAssetsStep() {
     formState: { errors },
   } = useForm<AssetFormData>({
     defaultValues: { name: "", asset_type: "real_estate", value_cents: 0 },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmit = (data: AssetFormData) => {
@@ -52,104 +57,157 @@ export function OnboardingAssetsStep() {
       { name: data.name, asset_type: data.asset_type, value_cents: data.value_cents },
       {
         onSuccess: () => {
-          toast.success(`Asset "${data.name}" added`);
+          toast.success(data.name);
           reset();
           setShowForm(false);
         },
-        onError: () => toast.error("Failed to add asset"),
+        onError: () => toast.error(t("toast.saveFailed")),
       }
     );
   };
 
-  const assetTypeItems = ASSET_TYPE_OPTIONS.map((opt) => ({ value: opt.value, label: t(opt.labelKey) }));
+  const assetTypeItems = ASSET_TYPE_OPTIONS.map((opt) => ({
+    value: opt.value,
+    label: t(opt.labelKey),
+  }));
+  const typeLabel = (value: string) => {
+    const match = ASSET_TYPE_OPTIONS.find((opt) => opt.value === value);
+    return match ? t(match.labelKey) : value;
+  };
 
   return (
-    <div data-testid="onboarding-assets-step">
-      <h2 className="text-lg font-medium mb-2">{t("onboarding.assetsTitle")}</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        {t("onboarding.assetsDescription")}
-      </p>
+    <div className="space-y-4" data-testid="onboarding-assets-step">
+      <div>
+        <h2 className="text-h2 text-ink">{t("onboarding.assetsTitle")}</h2>
+        <p className="mt-1 text-caption text-ink-dim">
+          {t("onboarding.assetsDescription")}
+        </p>
+      </div>
 
-      {assets.length > 0 && (
-        <div className="space-y-2 mb-4">
+      {assets.length === 0 ? (
+        <p className="text-caption text-ink-dim">{t("onboarding.assetsEmpty")}</p>
+      ) : (
+        <Card flush>
           {assets.map((asset) => (
-            <Card key={asset.id}>
-              <CardContent className="p-3 flex items-center justify-between">
-                <div>
-                  <span className="font-medium text-sm">{asset.name}</span>
-                  <span className="text-xs text-muted-foreground ml-2">{asset.asset_type}</span>
-                </div>
-                <span className="font-mono text-sm">${(asset.value_cents / 100).toFixed(2)}</span>
-              </CardContent>
-            </Card>
+            <div
+              key={asset.id}
+              className="flex items-center justify-between gap-3 px-card-pad py-3 not-last:border-b not-last:border-line"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-label text-ink">{asset.name}</span>
+                <Badge variant="neutral">{typeLabel(asset.asset_type)}</Badge>
+              </span>
+              <Money
+                cents={asset.value_cents}
+                className="shrink-0 text-label text-ink"
+                {...maskProps}
+              />
+            </div>
           ))}
-        </div>
+        </Card>
       )}
 
       {showForm ? (
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card">
-          <div className="space-y-1.5">
-            <Label htmlFor="ob-asset-name">{t("common.name")}</Label>
-            <Input
-              id="ob-asset-name"
-              placeholder={t("assets.namePlaceholder")}
-              autoFocus
-              aria-invalid={!!errors.name}
-              {...register("name", { required: t("assets.nameRequired") })}
-            />
-            {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="ob-asset-type">{t("common.type")}</Label>
-            <Controller
-              name="asset_type"
-              control={control}
-              render={({ field }) => (
-                <Select value={field.value} onValueChange={field.onChange} items={assetTypeItems}>
-                  <SelectTrigger id="ob-asset-type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ASSET_TYPE_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {t(opt.labelKey)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="ob-asset-value">{t("assets.estimatedValue")}</Label>
-            <Controller
-              name="value_cents"
-              control={control}
-              rules={{ validate: (v) => v > 0 || t("assets.valueRequired") }}
-              render={({ field }) => (
-                <MoneyInput
-                  id="ob-asset-value"
-                  value={field.value}
-                  onChange={field.onChange}
-                  onBlur={field.onBlur}
-                  aria-invalid={!!errors.value_cents}
+        <Card>
+          <CardContent>
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="ob-asset-name" required>
+                  {t("common.name")}
+                </Label>
+                <Input
+                  id="ob-asset-name"
+                  placeholder={t("assets.namePlaceholder")}
+                  autoFocus
+                  required
+                  aria-required="true"
+                  aria-invalid={errors.name !== undefined || undefined}
+                  aria-describedby={errors.name ? "ob-asset-name-error" : undefined}
+                  {...register("name", { required: t("assets.nameRequired") })}
                 />
-              )}
-            />
-            {errors.value_cents && <p className="text-xs text-destructive">{errors.value_cents.message}</p>}
-          </div>
-          <div className="flex gap-2">
-            <Button type="submit" size="sm">{t("assets.saveAsset")}</Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => { reset(); setShowForm(false); }}>{t("common.cancel")}</Button>
-          </div>
-        </form>
+                {errors.name && (
+                  <p id="ob-asset-name-error" className="text-caption text-over-ink" role="alert">
+                    {errors.name.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ob-asset-type" required>
+                  {t("common.type")}
+                </Label>
+                <Controller
+                  name="asset_type"
+                  control={control}
+                  render={({ field }) => (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={assetTypeItems}
+                    >
+                      <SelectTrigger id="ob-asset-type">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ASSET_TYPE_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {t(opt.labelKey)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="ob-asset-value" required>
+                  {t("assets.estimatedValue")}
+                </Label>
+                <Controller
+                  name="value_cents"
+                  control={control}
+                  rules={{ validate: (v) => v > 0 || t("assets.valueRequired") }}
+                  render={({ field }) => (
+                    <MoneyInput
+                      id="ob-asset-value"
+                      value={field.value}
+                      onChange={field.onChange}
+                      onBlur={field.onBlur}
+                      aria-invalid={errors.value_cents !== undefined || undefined}
+                    />
+                  )}
+                />
+                {errors.value_cents && (
+                  <p className="text-caption text-over-ink" role="alert">
+                    {errors.value_cents.message}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" size="sm">
+                  {t("assets.saveAsset")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    reset();
+                    setShowForm(false);
+                  }}
+                >
+                  {t("common.cancel")}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
       ) : (
         <Button
-          variant="ghost"
+          variant="outline"
           onClick={() => setShowForm(true)}
           data-testid="add-asset-button"
         >
-          <Plus className="size-4 mr-1" /> {t("assets.addAsset")}
+          <Plus className="size-4" aria-hidden="true" /> {t("assets.addAsset")}
         </Button>
       )}
     </div>

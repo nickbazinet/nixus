@@ -1,16 +1,16 @@
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
+  Button,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
 import { useCreateIncomeSource } from "@/hooks/useIncome";
 
 const INCOME_TYPE_VALUES = [
@@ -44,7 +44,7 @@ export function AddIncomeSourceForm({ onClose }: AddIncomeSourceFormProps) {
       name: "",
       income_type: "employment",
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmit = (data: IncomeSourceFormData) => {
@@ -65,25 +65,26 @@ export function AddIncomeSourceForm({ onClose }: AddIncomeSourceFormProps) {
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onClose();
-        }
-      }}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      className="space-y-3"
+      data-testid="add-income-source-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="source-name">{t("common.name")}</Label>
+        <Label htmlFor="source-name" required>
+          {t("common.name")}
+        </Label>
         <Input
           id="source-name"
           placeholder={t("income.sourceNamePlaceholder")}
           autoFocus
+          aria-required="true"
           aria-invalid={!!errors.name}
+          aria-describedby={errors.name ? "source-name-error" : undefined}
           {...register("name", { required: t("income.sourceNameRequired") })}
         />
         {errors.name && (
-          <p className="text-xs text-destructive">{errors.name.message}</p>
+          <p id="source-name-error" className="text-caption text-over">
+            {errors.name.message}
+          </p>
         )}
       </div>
 

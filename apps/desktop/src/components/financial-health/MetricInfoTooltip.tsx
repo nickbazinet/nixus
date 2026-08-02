@@ -4,12 +4,14 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
+  focusRing,
 } from "@nixus/shared";
+import { cn } from "@/lib/utils";
 
 interface MetricInfoTooltipProps {
   /** Accessible name for the info button (e.g. "How savings rate is calculated"). */
   ariaLabel: string;
-  /** Tooltip body copy. */
+  /** Tooltip body copy. Plain language — the arithmetic lives here, never on the surface. */
   content: string;
   testId?: string;
 }
@@ -24,13 +26,16 @@ export function MetricInfoTooltip({
       <Tooltip>
         <TooltipTrigger
           type="button"
-          className="inline-flex shrink-0 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded-sm"
+          className={cn(
+            "inline-flex min-h-target-min min-w-target-min shrink-0 items-center justify-center rounded-sm text-ink-faint hover:text-ink",
+            focusRing,
+          )}
           aria-label={ariaLabel}
           data-testid={testId}
         >
-          <Info className="h-3.5 w-3.5" aria-hidden="true" />
+          <Info className="size-3.5" aria-hidden="true" />
         </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs text-xs leading-relaxed">
+        <TooltipContent side="top" className="max-w-xs text-caption">
           {content}
         </TooltipContent>
       </Tooltip>

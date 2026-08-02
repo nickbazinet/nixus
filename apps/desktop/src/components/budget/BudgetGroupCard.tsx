@@ -2,21 +2,26 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@nixus/shared";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
-import { MoneyInput } from "@/components/shared/MoneyInput";
-import { InlineEditText } from "@/components/shared/InlineEdit";
+import { ChevronDown, ChevronRight, Plus, Trash2, TriangleAlert } from "lucide-react";
 import {
+  Alert,
+  AlertDescription,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Input,
+  Label,
+  Money,
 } from "@nixus/shared";
+import { MoneyInput } from "@/components/shared/MoneyInput";
+import { InlineEditText } from "@/components/shared/InlineEdit";
 import {
   useBudgetCategories,
   useCreateBudgetCategory,
@@ -27,6 +32,7 @@ import {
 } from "@/hooks/useBudget";
 import { BudgetCategoryRow } from "@/components/budget/BudgetCategoryRow";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import type { BudgetGroup, BudgetCategory, BudgetCategoryStatus, Expense } from "@/lib/types";
 
 interface CategoryFormData {
@@ -38,11 +44,18 @@ interface BudgetGroupCardProps {
   group: BudgetGroup;
   statusByCategory?: Map<number, BudgetCategoryStatus>;
   expensesByCategory?: Record<number, Expense[]>;
+  onAddExpense?: (categoryId: number) => void;
 }
 
-export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }: BudgetGroupCardProps) {
-  const { t } = useTranslation();
+export function BudgetGroupCard({
+  group,
+  statusByCategory,
+  expensesByCategory,
+  onAddExpense,
+}: BudgetGroupCardProps) {
+  const { t, i18n } = useTranslation();
   const formatCurrency = useFormatCurrency();
+  const maskProps = useMaskProps();
   const [collapsed, setCollapsed] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BudgetCategory | null>(null);
@@ -75,8 +88,13 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
     formState: { errors },
   } = useForm<CategoryFormData>({
     defaultValues: { name: "", target_cents: 0 },
-    mode: "onSubmit",
+    // On blur, not on submit: a user should learn a field is wrong when they leave it, not after
+    // filling the whole form and pressing Save.
+    mode: "onBlur",
   });
+
+  const nameFieldId = `cat-name-${group.id}`;
+  const targetFieldId = `cat-target-${group.id}`;
 
   const onSubmit = (data: CategoryFormData) => {
     createCategory.mutate(
@@ -87,12 +105,12 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
       },
       {
         onSuccess: () => {
-          toast.success(`Category "${data.name}" added`);
+          toast.success(t("budget.categoryAdded", { name: data.name }));
           reset();
           setShowForm(false);
         },
         onError: () => {
-          toast.error("Failed to create category");
+          toast.error(t("budget.categoryAddFailed"));
         },
       }
     );
@@ -102,11 +120,8 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
     updateGroup.mutate(
       { id: group.id, name },
       {
-        onSuccess: () => {
-          toast.success("Group name updated");
-        },
         onError: () => {
-          toast.error("Failed to update group name");
+          toast.error(t("budget.groupRenameFailed"));
         },
       }
     );
@@ -116,11 +131,8 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
     updateCategory.mutate(
       { id: cat.id, group_id: cat.group_id, name },
       {
-        onSuccess: () => {
-          toast.success("Category name updated");
-        },
         onError: () => {
-          toast.error("Failed to update category name");
+          toast.error(t("budget.categoryRenameFailed"));
         },
       }
     );
@@ -131,10 +143,12 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
       { id: cat.id, group_id: cat.group_id, target_cents },
       {
         onSuccess: (updated) => {
-          toast.success(`Budget target updated to ${formatCurrency(updated.target_cents)}`);
+          toast.success(
+            t("budget.targetUpdated", { amount: formatCurrency(updated.target_cents) })
+          );
         },
         onError: () => {
-          toast.error("Failed to update budget target");
+          toast.error(t("budget.targetUpdateFailed"));
         },
       }
     );
@@ -146,12 +160,12 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
       { id: deleteTarget.id, group_id: deleteTarget.group_id },
       {
         onSuccess: () => {
-          toast.success("Category deleted");
+          toast.success(t("budget.categoryDeleted"));
           setDeleteTarget(null);
         },
         onError: (err) => {
           const error = err as { message?: string };
-          toast.error(error.message ?? "Failed to delete category");
+          toast.error(error.message ?? t("budget.categoryDeleteFailed"));
         },
       }
     );
@@ -174,64 +188,71 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
   const confirmDeleteGroup = () => {
     deleteGroup.mutate(group.id, {
       onSuccess: () => {
-        toast.success("Group deleted");
+        toast.success(t("budget.groupDeleted"));
         setShowDeleteGroupDialog(false);
       },
       onError: () => {
-        toast.error("Failed to delete group");
+        toast.error(t("budget.groupDeleteFailed"));
         setShowDeleteGroupDialog(false);
       },
     });
   };
 
+  const groupTargetCents = categories.reduce((sum, cat) => sum + cat.target_cents, 0);
+
   return (
     <>
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 onClick={() => setCollapsed(!collapsed)}
-                className="p-0.5 rounded hover:bg-muted/50 transition-colors"
                 aria-label={collapsed ? t("budget.expandGroup") : t("budget.collapseGroup")}
+                aria-expanded={!collapsed}
                 data-testid="toggle-group-button"
               >
                 {collapsed ? (
-                  <ChevronRight className="size-4 text-muted-foreground" />
+                  <ChevronRight className="text-ink-dim" aria-hidden="true" />
                 ) : (
-                  <ChevronDown className="size-4 text-muted-foreground" />
+                  <ChevronDown className="text-ink-dim" aria-hidden="true" />
                 )}
-              </button>
-              <CardTitle>
-                <h2 className="text-lg font-semibold flex items-center gap-2">
-                  <InlineEditText
-                    value={group.name}
-                    onSave={handleUpdateGroupName}
-                    data-testid="group-name"
-                  />
-                  {categories.length > 0 && (
-                    <span className="text-sm font-normal text-muted-foreground" data-testid="group-total">
-                      {formatCurrency(categories.reduce((sum, cat) => sum + cat.target_cents, 0))}
-                    </span>
-                  )}
-                </h2>
-              </CardTitle>
+              </Button>
+              <h2 className="flex min-w-0 items-center gap-2 text-h2 text-ink">
+                <InlineEditText
+                  value={group.name}
+                  onSave={handleUpdateGroupName}
+                  data-testid="group-name"
+                />
+                {categories.length > 0 && (
+                  <span className="text-caption text-ink-dim" data-testid="group-total">
+                    <Money cents={groupTargetCents} locale={i18n.language} {...maskProps} />
+                  </span>
+                )}
+              </h2>
             </div>
             <Button
               variant="ghost"
               size="icon-sm"
               onClick={handleDeleteGroup}
+              className="text-ink-faint hover:text-over"
               data-testid="delete-group-button"
               aria-label={t("budget.deleteGroup")}
             >
-              <Trash2 className="size-4 text-muted-foreground" />
+              <Trash2 aria-hidden="true" />
             </Button>
           </div>
           {groupError && (
-            <p className="text-xs text-destructive mt-1" data-testid="group-error">
-              {groupError}
-            </p>
+            <Alert
+              variant="over"
+              icon={<TriangleAlert />}
+              className="mt-2"
+              data-testid="group-error"
+            >
+              <AlertDescription>{groupError}</AlertDescription>
+            </Alert>
           )}
         </CardHeader>
         {!collapsed && (
@@ -256,6 +277,7 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
                     onRename={(name) => handleUpdateCategoryName(cat, name)}
                     onUpdateTarget={(cents) => handleUpdateCategoryTarget(cat, cents)}
                     onDelete={() => setDeleteTarget(cat)}
+                    onAddExpense={onAddExpense ? () => onAddExpense(cat.id) : undefined}
                   />
                 );
               })}
@@ -274,22 +296,30 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
           {showForm ? (
             <form
               onSubmit={handleSubmit(onSubmit)}
-              className="space-y-3 border-t pt-3"
+              className="space-y-3 border-t border-line pt-3"
             >
               <div className="space-y-1.5">
-                <Label htmlFor={`cat-name-${group.id}`}>{t("budget.categoryName")}</Label>
+                <Label htmlFor={nameFieldId} required>
+                  {t("budget.categoryName")}
+                </Label>
                 <Input
-                  id={`cat-name-${group.id}`}
+                  id={nameFieldId}
                   placeholder={t("budget.categoryNamePlaceholder")}
+                  aria-required="true"
                   aria-invalid={!!errors.name}
+                  aria-describedby={errors.name ? `${nameFieldId}-error` : undefined}
                   {...register("name", { required: t("budget.nameRequired") })}
                 />
                 {errors.name && (
-                  <p className="text-xs text-destructive">{errors.name.message}</p>
+                  <p id={`${nameFieldId}-error`} className="text-caption text-over">
+                    {errors.name.message}
+                  </p>
                 )}
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor={`cat-target-${group.id}`}>{t("budget.monthlyTarget")}</Label>
+                <Label htmlFor={targetFieldId} required>
+                  {t("budget.monthlyTarget")}
+                </Label>
                 <Controller
                   name="target_cents"
                   control={control}
@@ -298,16 +328,20 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
                   }}
                   render={({ field }) => (
                     <MoneyInput
-                      id={`cat-target-${group.id}`}
+                      id={targetFieldId}
                       value={field.value}
                       onChange={field.onChange}
                       onBlur={field.onBlur}
                       aria-invalid={!!errors.target_cents}
+                      aria-required
+                      aria-describedby={
+                        errors.target_cents ? `${targetFieldId}-error` : undefined
+                      }
                     />
                   )}
                 />
                 {errors.target_cents && (
-                  <p className="text-xs text-destructive">
+                  <p id={`${targetFieldId}-error`} className="text-caption text-over">
                     {errors.target_cents.message}
                   </p>
                 )}
@@ -334,23 +368,24 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
               variant="ghost"
               size="sm"
               onClick={() => setShowForm(true)}
-              className="w-full justify-start text-muted-foreground"
+              className="w-full justify-start text-ink-dim"
               data-testid="add-category-button"
             >
-              <Plus className="size-4 mr-1" />
+              <Plus aria-hidden="true" />
               {t("budget.addCategory")}
             </Button>
           )}
         </CardContent>)}
       </Card>
 
-      {/* Delete Category Confirmation Dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <DialogContent data-testid="delete-category-dialog">
           <DialogHeader>
             <DialogTitle>{t("budget.deleteCategory")}</DialogTitle>
+            {/* States what happens to the expenses filed under it, because the backend soft-deletes
+              * the category and leaves them attached — a silent orphaning is what this copy prevents. */}
             <DialogDescription>
-              {t("budget.confirmDelete")} {deleteTarget?.name}? {t("budget.cannotBeUndone")}
+              {t("budget.deleteCategoryExplain", { name: deleteTarget?.name ?? "" })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -365,19 +400,18 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
               onClick={handleDeleteCategory}
               data-testid="confirm-delete-button"
             >
-              {t("common.delete")}
+              {t("budget.archiveCategoryAction")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Group Confirmation Dialog */}
       <Dialog open={showDeleteGroupDialog} onOpenChange={setShowDeleteGroupDialog}>
         <DialogContent data-testid="delete-group-dialog">
           <DialogHeader>
             <DialogTitle>{t("budget.deleteGroupTitle")}</DialogTitle>
             <DialogDescription>
-              {t("budget.confirmDelete")} {group.name}? {t("budget.cannotBeUndone")}
+              {t("budget.deleteGroupExplain", { name: group.name })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -390,7 +424,7 @@ export function BudgetGroupCard({ group, statusByCategory, expensesByCategory }:
             <Button
               variant="destructive"
               onClick={confirmDeleteGroup}
-              data-testid="confirm-delete-button"
+              data-testid="confirm-delete-group-button"
             >
               {t("common.delete")}
             </Button>

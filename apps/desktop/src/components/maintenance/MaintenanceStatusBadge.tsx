@@ -1,34 +1,17 @@
 import { useTranslation } from "react-i18next";
 import { Badge } from "@nixus/shared";
+import {
+  getMaintenanceStatusLabelKey,
+  getMaintenanceStatusTone,
+} from "@/lib/maintenanceUtils";
 import type { MaintenanceTaskStatus } from "@/lib/types";
 
-function getStatusBadgeConfig(
-  status: MaintenanceTaskStatus,
-  t: (key: string) => string
-) {
-  switch (status) {
-    case "ok":
-      return {
-        label: t("maintenance.status.ok"),
-        className: "bg-slate-500/10 text-slate-600 border-transparent",
-      };
-    case "upcoming":
-      return {
-        label: t("maintenance.status.upcoming"),
-        className: "bg-amber-500/10 text-amber-600 border-transparent",
-      };
-    case "due":
-      return {
-        label: t("maintenance.status.due"),
-        className: "border-amber-500/50 text-amber-600 bg-transparent",
-      };
-    case "overdue":
-      return {
-        label: t("maintenance.status.overdue"),
-        className: "bg-rose-500/10 text-rose-600 border-transparent",
-      };
-  }
-}
+const BADGE_VARIANT = {
+  over: "over",
+  caution: "caution",
+  good: "good",
+  neutral: "neutral",
+} as const;
 
 interface MaintenanceStatusBadgeProps {
   status: MaintenanceTaskStatus;
@@ -36,14 +19,13 @@ interface MaintenanceStatusBadgeProps {
 
 export function MaintenanceStatusBadge({ status }: MaintenanceStatusBadgeProps) {
   const { t } = useTranslation();
-  const badge = getStatusBadgeConfig(status, t);
 
   return (
     <Badge
-      className={badge.className}
+      variant={BADGE_VARIANT[getMaintenanceStatusTone(status)]}
       data-testid={`maintenance-task-status-${status}`}
     >
-      {badge.label}
+      {t(getMaintenanceStatusLabelKey(status))}
     </Badge>
   );
 }

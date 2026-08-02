@@ -462,8 +462,10 @@ async function setupMaintenanceTauriMock(
           case "get_maintenance_task_baselines":
             return Promise.resolve(DEFAULT_TASKS);
 
+          // Real IPC serializes every reply. Hand back copies so a later in-place mutation of mock
+          // state cannot retroactively rewrite data the app is already holding.
           case "get_vehicles":
-            return Promise.resolve([...vehicles]);
+            return Promise.resolve(vehicles.map((entry) => ({ ...entry })));
 
           case "get_vehicle": {
             const id = args.id as number;
@@ -478,7 +480,7 @@ async function setupMaintenanceTauriMock(
               ...task,
               ...evaluateMockTask(task, vehicle),
             }));
-            return Promise.resolve({ vehicle, tasks });
+            return Promise.resolve({ vehicle: { ...vehicle }, tasks });
           }
 
           case "create_vehicle": {
@@ -695,7 +697,7 @@ async function setupMaintenanceTauriMock(
             }
 
             persistMockState();
-            return Promise.resolve(updatedTask);
+            return Promise.resolve({ ...updatedTask });
           }
 
           case "update_vehicle_odometer": {
@@ -727,7 +729,10 @@ async function setupMaintenanceTauriMock(
             }
 
             persistMockState();
-            return Promise.resolve({ vehicle, tasks });
+            return Promise.resolve({
+              vehicle: { ...vehicle },
+              tasks: tasks.map((task) => ({ ...task })),
+            });
           }
 
           case "log_maintenance_service": {
@@ -929,7 +934,7 @@ async function setupMaintenanceTauriMock(
                 return b.created_at.localeCompare(a.created_at);
               });
 
-            return Promise.resolve(entries);
+            return Promise.resolve(entries.map((entry) => ({ ...entry })));
           }
 
           case "update_vehicle": {
@@ -1174,6 +1179,32 @@ function vehicleDetail(page: Page) {
   return page.getByTestId("vehicle-detail-panel");
 }
 
+// The row's one sr-only sentence repeats these same words after the task name, so anchoring on the
+// figure's first word is what keeps this locator to the single visible element.
+function taskNextDue(row: Locator) {
+  return row
+    .locator('[data-slot="attention-row"]')
+    .getByText(/^(Not yet serviced|Due |\d)/);
+}
+
+// Selecting a row only queues the switch. Interacting before the panel repaints edits the task
+// rows of the vehicle you just navigated away from.
+async function selectGarageVehicle(
+  page: Page,
+  vehicleId: number,
+  displayName: string
+) {
+  await page.getByTestId(`garage-vehicle-row-${vehicleId}`).click();
+  await expect(page).toHaveURL(new RegExp(`vehicle=${vehicleId}`));
+  await expect(
+    vehicleDetail(page).getByRole("heading", {
+      level: 2,
+      name: displayName,
+      exact: true,
+    })
+  ).toBeVisible();
+}
+
 async function showAllMaintenanceTasks(page: Page) {
   const detail = vehicleDetail(page);
   await detail.getByTestId("detail-tab-all-tasks").click();
@@ -1208,7 +1239,7 @@ async function submitLogServiceForm(form: Locator) {
 }
 
 async function saveEditIntervalDialog(dialog: Locator) {
-  await dialog.getByTestId("edit-interval-save").click({ force: true });
+  await dialog.getByTestId("edit-interval-save").click();
 }
 
 async function goToGarage(page: Page) {
@@ -1329,7 +1360,9 @@ test.describe("Maintenance Page", () => {
     await dialog.getByTestId("add-schedule-task-save").click();
     await expect(dialog).not.toBeVisible();
     await expect(page.getByText("Service added to schedule.")).toBeVisible();
-    await expect(detail.getByText("Engine oil & filter")).toBeVisible();
+    await expect(
+      detail.getByText("Engine oil & filter", { exact: true })
+    ).toBeVisible();
     await expect(detail.getByTestId("maintenance-task-row")).toHaveCount(1);
 
     await detail.getByTestId("add-schedule-task-button").click();
@@ -1363,7 +1396,7 @@ test.describe("Maintenance Page", () => {
     await page.getByTestId("add-schedule-task-save-custom").click();
 
     await expect(page.getByText("Service added to schedule.")).toBeVisible();
-    await expect(detail.getByText("Timing belt")).toBeVisible();
+    await expect(detail.getByText("Timing belt", { exact: true })).toBeVisible();
     await expect(detail.getByTestId("maintenance-task-row")).toHaveCount(1);
   });
 
@@ -1400,7 +1433,7 @@ test.describe("Maintenance Page", () => {
     await expect(taskRows).not.toHaveCount(0);
   });
 
-  test("task rows show status badges and monospace next-due line", async ({
+  test("task rows show status badges and tabular next-due figures", async ({
     page,
   }) => {
     await createVehicle(page, "10000");
@@ -1415,13 +1448,15 @@ test.describe("Maintenance Page", () => {
     await expect(statusBadges.first()).toBeVisible();
     await expect(
       statusBadges.filter({ hasText: "On track" }).or(
-        statusBadges.filter({ hasText: "Upcoming" })
+        statusBadges.filter({ hasText: "Due soon" })
       ).first()
     ).toBeVisible();
 
-    const monoLine = firstRow.locator(".font-mono");
-    await expect(monoLine).toBeVisible();
-    await expect(monoLine).toContainText(/Not yet serviced|km remaining|Due in/);
+    const nextDue = taskNextDue(firstRow);
+    await expect(nextDue).toBeVisible();
+    await expect(nextDue).toContainText(/Not yet serviced|km remaining|Due /);
+    await expect(nextDue).toHaveCSS("font-variant-numeric", "tabular-nums");
+    await expect(nextDue).not.toHaveCSS("font-family", /mono/i);
   });
 
   test("task rows do not show raw task type keys", async ({ page }) => {
@@ -1431,7 +1466,9 @@ test.describe("Maintenance Page", () => {
 
     const detail = vehicleDetail(page);
     await expect(detail.getByText("engine_oil_filter")).toHaveCount(0);
-    await expect(detail.getByText("Engine oil & filter")).toBeVisible();
+    await expect(
+      detail.getByText("Engine oil & filter", { exact: true })
+    ).toBeVisible();
   });
 
   test("dashboard urgent rows show vehicle, task, and garage link", async ({
@@ -1466,7 +1503,7 @@ test.describe("Maintenance Interval Editing", () => {
     const oilRow = detail
       .getByTestId("maintenance-task-row")
       .filter({ hasText: "Engine oil & filter" });
-    await oilRow.getByTestId("edit-interval-button").click({ force: true });
+    await oilRow.getByTestId("edit-interval-button").click();
     await expect(page.getByTestId("edit-interval-dialog")).toBeVisible();
     return page.getByTestId("edit-interval-dialog");
   }
@@ -1500,7 +1537,7 @@ test.describe("Maintenance Interval Editing", () => {
     const oilRow = detail
       .getByTestId("maintenance-task-row")
       .filter({ hasText: "Engine oil & filter" });
-    await expect(oilRow.locator(".font-mono")).toContainText("100000 km remaining");
+    await expect(taskNextDue(oilRow)).toContainText("100000 km remaining");
   });
 
   test("both-zero intervals show inline error and do not save", async ({
@@ -1536,15 +1573,15 @@ test.describe("Maintenance Interval Editing", () => {
     const oilRowB = detailB
       .getByTestId("maintenance-task-row")
       .filter({ hasText: "Engine oil & filter" });
-    const baselineText = await oilRowB.locator(".font-mono").textContent();
-    await page.getByTestId("garage-vehicle-row-1").click();
+    const baselineText = await taskNextDue(oilRowB).textContent();
+    await selectGarageVehicle(page, 1, "2020 Toyota Camry");
 
     await showAllMaintenanceTasks(page);
     const detailA = vehicleDetail(page);
     const oilRowA = detailA
       .getByTestId("maintenance-task-row")
       .filter({ hasText: "Engine oil & filter" });
-    await oilRowA.getByTestId("edit-interval-button").click({ force: true });
+    await oilRowA.getByTestId("edit-interval-button").click();
 
     const dialog = page.getByTestId("edit-interval-dialog");
     await dialog.getByLabel("Interval (km)").fill("120000");
@@ -1554,13 +1591,13 @@ test.describe("Maintenance Interval Editing", () => {
       page.getByText("Maintenance interval updated.")
     ).toBeVisible();
 
-    await page.getByTestId("garage-vehicle-row-2").click();
+    await selectGarageVehicle(page, 2, "2018 Honda Civic");
     await showAllMaintenanceTasks(page);
     const detailBAfter = vehicleDetail(page);
     const oilRowBAfter = detailBAfter
       .getByTestId("maintenance-task-row")
       .filter({ hasText: "Engine oil & filter" });
-    await expect(oilRowBAfter.locator(".font-mono")).toHaveText(baselineText ?? "");
+    await expect(taskNextDue(oilRowBAfter)).toHaveText(baselineText ?? "");
   });
 });
 
@@ -1764,7 +1801,7 @@ test.describe("Service History", () => {
     await expect(
       oilRow.locator("[data-testid='maintenance-task-status-ok']")
     ).toBeVisible();
-    await expect(oilRow.locator(".font-mono")).toContainText("Not yet serviced");
+    await expect(taskNextDue(oilRow)).toContainText("Not yet serviced");
   });
 });
 
@@ -1779,7 +1816,12 @@ test.describe("Vehicle Edit and Delete", () => {
   }) => {
     await openVehicleDetail(page, 1);
     const detail = vehicleDetail(page);
-    await detail.getByTestId("delete-vehicle-button").click();
+
+    // Destructive action is never a peer of Edit in the primary row: it lives in the overflow.
+    const actions = detail.getByTestId("vehicle-detail-actions");
+    await expect(actions.getByText("Delete vehicle")).toHaveCount(0);
+    await actions.getByTestId("vehicle-detail-menu").click();
+    await page.getByTestId("delete-vehicle-button").click();
 
     const dialog = page.getByTestId("delete-vehicle-dialog");
     await expect(dialog).toBeVisible();
@@ -1840,7 +1882,7 @@ test.describe("Car Module Navigation", () => {
     expect(aiIndex).toBeGreaterThan(carIndex);
   });
 
-  test("clicking Car in sidebar navigates to maintenance page", async ({
+  test("clicking Car in sidebar navigates to the car dashboard", async ({
     page,
   }) => {
     await page.goto("/");
@@ -1849,7 +1891,13 @@ test.describe("Car Module Navigation", () => {
     await nav.getByRole("link", { name: "Car" }).click();
 
     await expect(page).toHaveURL("/car");
-    await expect(page.locator("h1")).toHaveText("Maintenance");
+    await expect(page.locator("h1")).toHaveText("Dashboard");
+    // "Dashboard" is also a Finance-era word, so pin the module by its own nav.
+    await expect(
+      page
+        .locator('nav[aria-label="Car navigation"]')
+        .getByRole("link", { name: "Garage" })
+    ).toBeVisible();
   });
 
   test("InnerTabNav shows Car tabs on /car routes", async ({ page }) => {
@@ -1866,14 +1914,20 @@ test.describe("Car Module Navigation", () => {
     await expect(page.getByTestId("garage-vehicle-list").or(page.locator("h1"))).toBeVisible();
   });
 
-  test("InnerTabNav shows Finance tabs on Finance routes", async ({
+  test("Finance navigation shows its four destinations and no car surfaces", async ({
     page,
   }) => {
     await page.goto("/");
 
     const nav = page.locator('nav[aria-label="Finance navigation"]');
-    await expect(nav.getByText("Dashboard")).toBeVisible();
-    await expect(nav.getByText("Maintenance")).not.toBeVisible();
+    for (const destination of ["Today", "Spending", "Wealth", "Insights"]) {
+      await expect(
+        nav.getByRole("link", { name: destination, exact: true })
+      ).toBeVisible();
+    }
+    await expect(nav.getByRole("link")).toHaveCount(4);
+    await expect(nav.getByText("Maintenance")).toHaveCount(0);
+    await expect(nav.getByText("Garage")).toHaveCount(0);
   });
 });
 

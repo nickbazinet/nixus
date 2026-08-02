@@ -27,7 +27,7 @@ export function EditVehicleForm({ vehicle, onClose }: EditVehicleFormProps) {
       model: vehicle.model ?? "",
       year: vehicle.year ? String(vehicle.year) : "",
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const make = watch("make");
@@ -61,7 +61,7 @@ export function EditVehicleForm({ vehicle, onClose }: EditVehicleFormProps) {
         event.preventDefault();
         onSubmit();
       }}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      className="flex flex-col gap-4"
       data-testid="edit-vehicle-form"
       autoComplete="off"
     >

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2, Circle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,9 @@ const STAGE_KEYS: { key: ImportStage; labelKey: string }[] = [
   { key: "done", labelKey: "import.stepDone" },
 ];
 
+/** Past this, a user with no other loading affordance concludes the app froze and force-quits. */
+const SLOW_AFTER_MS = 15_000;
+
 interface ImportProgressStepperProps {
   currentStage: ImportStage;
   message?: string | null;
@@ -25,73 +29,106 @@ export function ImportProgressStepper({
   message,
 }: ImportProgressStepperProps) {
   const { t } = useTranslation();
+  const [slow, setSlow] = useState(false);
   const currentIndex = STAGE_KEYS.findIndex((s) => s.key === currentStage);
+  const activeIndex = currentIndex < 0 ? 0 : currentIndex;
+  const stageLabel = t(STAGE_KEYS[activeIndex].labelKey);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSlow(true), SLOW_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <div
       role="progressbar"
-      aria-valuenow={currentIndex + 1}
+      aria-valuenow={activeIndex + 1}
       aria-valuemin={1}
-      aria-valuemax={4}
-      aria-label={`Import progress: ${t(STAGE_KEYS[currentIndex]?.labelKey ?? "")}`}
-      aria-live="polite"
+      aria-valuemax={STAGE_KEYS.length}
+      aria-valuetext={stageLabel}
+      aria-label={t("import.progressLabel", {
+        current: activeIndex + 1,
+        total: STAGE_KEYS.length,
+        stage: stageLabel,
+      })}
       data-testid="import-progress-stepper"
     >
-      <div className="flex items-center justify-center gap-2">
+      <ol className="flex list-none items-start justify-center gap-1 p-0">
         {STAGE_KEYS.map((stage, index) => {
-          const isDone = index < currentIndex || currentStage === "done";
-          const isCurrent = index === currentIndex && currentStage !== "done";
+          const isDone = index < activeIndex || currentStage === "done";
+          const isCurrent = index === activeIndex && currentStage !== "done";
           const label = t(stage.labelKey);
+          const state = isDone
+            ? t("import.statusComplete")
+            : isCurrent
+              ? t("import.statusInProgress")
+              : t("import.statusPending");
 
           return (
-            <div key={stage.key} className="flex items-center gap-2">
-              <div className="flex flex-col items-center gap-1.5">
-                <div
+            <li key={stage.key} className="flex items-start">
+              <span className="flex w-24 flex-col items-center gap-1.5">
+                <span
                   data-testid={`stage-${stage.key}`}
-                  aria-label={`${label}: ${isDone ? t("import.statusComplete") : isCurrent ? t("import.statusInProgress") : t("import.statusPending")}`}
+                  aria-label={`${label}: ${state}`}
                   className={cn(
-                    "flex h-10 w-10 items-center justify-center rounded-full transition-colors",
-                    isDone && "bg-emerald-500/20 text-emerald-500",
-                    isCurrent && "bg-teal-500/20 text-teal-500",
-                    !isDone && !isCurrent && "bg-muted text-muted-foreground"
+                    "flex size-10 items-center justify-center rounded-full transition-colors",
+                    isDone && "bg-good-bg text-good-ink",
+                    isCurrent && "bg-brand-soft text-brand-ink",
+                    !isDone && !isCurrent && "bg-track text-ink-faint"
                   )}
                 >
                   {isDone ? (
-                    <Check className="h-5 w-5" />
+                    <Check className="size-5" aria-hidden="true" />
                   ) : isCurrent ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
+                    <Loader2 className="size-5 animate-spin" aria-hidden="true" />
                   ) : (
-                    <Circle className="h-5 w-5" />
+                    <Circle className="size-5" aria-hidden="true" />
                   )}
-                </div>
+                </span>
                 <span
                   className={cn(
-                    "text-xs font-medium",
-                    isDone && "text-emerald-500",
-                    isCurrent && "text-teal-500",
-                    !isDone && !isCurrent && "text-muted-foreground"
+                    "text-center text-caption",
+                    isDone || isCurrent ? "text-ink" : "text-ink-faint"
                   )}
                 >
                   {label}
                 </span>
-              </div>
+              </span>
               {index < STAGE_KEYS.length - 1 && (
-                <div
+                <span
+                  aria-hidden="true"
                   className={cn(
-                    "mb-5 h-0.5 w-12",
-                    index < currentIndex || currentStage === "done"
-                      ? "bg-emerald-500/50"
-                      : "bg-muted"
+                    "mt-5 h-px w-6 shrink-0",
+                    isDone ? "bg-good" : "bg-line-strong"
                   )}
                 />
               )}
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
+
+      {/* Stage level, never per-tick: this region carries the stage name alone, so the Tauri
+        * progress messages rendered below can change freely without a screen-reader firehose. */}
+      <p aria-live="polite" className="sr-only">
+        {stageLabel}
+      </p>
+
       {message && (
-        <p className="mt-4 text-center text-sm text-muted-foreground" data-testid="import-message">
+        <p
+          className="mt-4 text-center text-caption text-ink-dim"
+          data-testid="import-message"
+        >
           {message}
+        </p>
+      )}
+
+      {slow && currentStage !== "done" && (
+        <p
+          className="mt-2 text-center text-caption text-ink-dim"
+          data-testid="import-slow-notice"
+        >
+          {t("import.stillWorking")}
         </p>
       )}
     </div>

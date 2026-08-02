@@ -1,7 +1,19 @@
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent, Badge } from "@nixus/shared";
-import { cn } from "@/lib/utils";
+import { InfoIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Badge,
+  Button,
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  EmptyState,
+  Skeleton,
+} from "@nixus/shared";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { TrendsInsightResponse } from "@/lib/types";
 
@@ -11,28 +23,17 @@ interface TrendsInsightPanelProps {
   insightQuery: UseQueryResult<TrendsInsightResponse, Error>;
 }
 
-function toneAccentClass(tone: string): string {
-  switch (tone) {
-    case "positive":
-      return "border-teal-500/30 bg-teal-500/5";
-    case "caution":
-      return "border-amber-500/30 bg-amber-500/5";
-    default:
-      return "border-border bg-card";
-  }
-}
+/** Headline plus two body lines — the shape the resolved insight actually has. */
+const INSIGHT_SKELETON_ROWS = 3;
 
-function InsightSkeleton() {
-  return (
-    <Card className="shadow-sm rounded-lg" data-testid="trends-insight-skeleton">
-      <CardContent className="p-6 space-y-3">
-        <div className="h-4 w-48 bg-muted animate-pulse rounded" />
-        <div className="h-3 w-full bg-muted animate-pulse rounded" />
-        <div className="h-3 w-5/6 bg-muted animate-pulse rounded" />
-      </CardContent>
-    </Card>
-  );
-}
+const TONE_VARIANT: Record<
+  TrendsInsightResponse["tone"],
+  "good" | "caution" | "neutral"
+> = {
+  positive: "good",
+  caution: "caution",
+  calm: "neutral",
+};
 
 export function TrendsInsightPanel({
   gatePassed,
@@ -44,69 +45,82 @@ export function TrendsInsightPanel({
 
   if (!gatePassed) {
     return (
-      <Card className="shadow-sm rounded-lg" data-testid="trends-insight-panel">
-        <CardContent className="p-6">
-          <p className="text-sm text-muted-foreground">
-            {t("spendingTrends.insightGateEmpty")}
-          </p>
-        </CardContent>
+      <Card data-testid="trends-insight-panel">
+        <EmptyState
+          title={t("insights.insightGateTitle")}
+          description={t("spendingTrends.insightGateEmpty")}
+          action={
+            <Button
+              variant="outline"
+              render={<Link to="/spending/budget" />}
+              data-testid="trends-insight-budget-link"
+            >
+              {t("insights.insightGateAction")}
+            </Button>
+          }
+        />
       </Card>
     );
   }
 
+  // AI unavailable is inline, non-modal, and recoverable, and it names the manual path. It never
+  // blocks the chart or the compare table sitting either side of it.
   if (!aiConfigured) {
     return (
-      <Card className="shadow-sm rounded-lg" data-testid="trends-insight-panel">
-        <CardContent className="p-6">
-          <p className="text-sm text-muted-foreground">
-            {t("spendingTrends.insightNotConfigured")}{" "}
-            <Link
-              to="/settings"
-              className="text-primary underline"
-              data-testid="trends-insight-settings-link"
-            >
-              {t("settings.openSettings")}
-            </Link>
-          </p>
-        </CardContent>
+      <Card flush data-testid="trends-insight-panel">
+        <Alert variant="info" icon={<InfoIcon />}>
+          <AlertTitle>{t("spendingTrends.insightNotConfigured")}</AlertTitle>
+          <AlertDescription>
+            {t("insights.insightManualPath")}
+          </AlertDescription>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            render={<Link to="/settings" />}
+            data-testid="trends-insight-settings-link"
+          >
+            {t("settings.openSettings")}
+          </Button>
+        </Alert>
       </Card>
     );
   }
 
   if (isPending || (isFetching && !data)) {
     return (
-      <div data-testid="trends-insight-panel">
-        <p className="text-sm text-muted-foreground mb-2">
-          {t("spendingTrends.insightSkeleton")}
-        </p>
-        <InsightSkeleton />
-      </div>
+      <Card data-testid="trends-insight-panel">
+        <CardContent>
+          <p className="mb-3 text-caption text-ink-dim">
+            {t("spendingTrends.insightSkeleton")}
+          </p>
+          <Skeleton
+            rows={INSIGHT_SKELETON_ROWS}
+            data-testid="trends-insight-skeleton"
+          />
+        </CardContent>
+      </Card>
     );
   }
 
   if (isError) {
-    const appError = error as Error & { type?: string };
     return (
-      <Card
-        className="shadow-sm rounded-lg border-destructive/30"
-        data-testid="trends-insight-error"
-      >
-        <CardContent className="p-6">
-          <p className="text-sm text-destructive">
-            {t("spendingTrends.insightError")}
-          </p>
-          {appError?.message && (
-            <p className="mt-1 text-xs text-muted-foreground">{appError.message}</p>
-          )}
-          <button
-            type="button"
-            className="mt-3 text-sm text-primary underline"
+      <Card flush data-testid="trends-insight-error">
+        <Alert variant="over" icon={<TriangleAlertIcon />}>
+          <AlertTitle>{t("spendingTrends.insightError")}</AlertTitle>
+          <AlertDescription>
+            {error?.message || t("insights.insightManualPath")}
+          </AlertDescription>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
             onClick={() => refetch()}
             data-testid="trends-insight-retry"
           >
             {t("spendingTrends.insightRetry")}
-          </button>
-        </CardContent>
+          </Button>
+        </Alert>
       </Card>
     );
   }
@@ -116,18 +130,15 @@ export function TrendsInsightPanel({
   }
 
   return (
-    <Card
-      className={cn("shadow-sm rounded-lg border", toneAccentClass(data.tone))}
-      data-testid="trends-insight-panel"
-    >
-      <CardContent className="p-6 space-y-2">
-        <div className="flex items-start justify-between gap-3">
-          <h3 className="text-base font-medium">{data.headline}</h3>
-          <Badge variant="outline" className="shrink-0 text-xs">
-            {data.window_label}
-          </Badge>
-        </div>
-        <p className="text-sm text-muted-foreground">{data.body}</p>
+    <Card data-testid="trends-insight-panel">
+      <CardHeader>
+        <h2 className="text-h2 text-ink">{data.headline}</h2>
+        <CardAction>
+          <Badge variant={TONE_VARIANT[data.tone]}>{data.window_label}</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <p className="text-body text-ink-dim">{data.body}</p>
       </CardContent>
     </Card>
   );

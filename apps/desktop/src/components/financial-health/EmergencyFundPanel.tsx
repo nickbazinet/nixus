@@ -1,45 +1,37 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Input } from "@nixus/shared";
-import { Card, CardContent } from "@nixus/shared";
+import {
+  Badge,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Input,
+  Meter,
+  Skeleton,
+  Stat,
+  focusRing,
+  formatMoney,
+} from "@nixus/shared";
 import {
   useFinancialHealthDetail,
   useSetEmergencyFundTarget,
 } from "@/hooks/useFinancialHealth";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { cn } from "@/lib/utils";
 import type { EmergencyFundStatus } from "@/lib/types";
 
 const MIN_TARGET_MONTHS = 1;
 const MAX_TARGET_MONTHS = 24;
 
-function formatCoverageMonths(months: number, cappedLabel: string): string {
-  if (months >= 12) return cappedLabel;
-  return months.toFixed(1);
-}
-
-function emergencyFundBarColor(status: EmergencyFundStatus): string {
-  switch (status) {
-    case "funded":
-      return "bg-teal-500";
-    case "approaching":
-      return "bg-amber-500";
-    case "underfunded":
-      return "bg-rose-500";
-  }
-}
-
-function emergencyFundTextColor(status: EmergencyFundStatus): string {
-  switch (status) {
-    case "funded":
-      return "text-teal-600 dark:text-teal-400";
-    case "approaching":
-      return "text-amber-600 dark:text-amber-400";
-    case "underfunded":
-      return "text-rose-500";
-  }
-}
+// Status is carried by the badge beside the figure, never by colouring the figure itself: the meter
+// fill is always brand, because brand means brand and action and nothing else.
+const statusBadgeVariant: Record<EmergencyFundStatus, "good" | "caution" | "over"> = {
+  funded: "good",
+  approaching: "caution",
+  underfunded: "over",
+};
 
 function parseTargetMonths(raw: string): number | null {
   const trimmed = raw.trim();
@@ -55,20 +47,18 @@ function parseTargetMonths(raw: string): number | null {
 
 function EmergencyFundPanelSkeleton() {
   return (
-    <Card className="shadow-sm rounded-lg" data-testid="emergency-fund-panel-loading">
-      <CardContent className="p-6">
-        <div className="h-4 w-32 bg-muted animate-pulse rounded mb-4" />
-        <div className="h-10 w-24 bg-muted animate-pulse rounded mb-3" />
-        <div className="h-2.5 w-full bg-muted animate-pulse rounded mb-2" />
-        <div className="h-3 w-64 bg-muted animate-pulse rounded" />
+    <Card data-testid="emergency-fund-panel-loading">
+      <CardContent>
+        {/* Title, figure, caption, meter, source line, savings-only note. */}
+        <Skeleton rows={6} />
       </CardContent>
     </Card>
   );
 }
 
 export function EmergencyFundPanel() {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
+  const { t, i18n } = useTranslation();
+  const { hidden } = useValuesHidden();
   const { data, isPending } = useFinancialHealthDetail();
   const setTarget = useSetEmergencyFundTarget();
 
@@ -105,17 +95,14 @@ export function EmergencyFundPanel() {
 
   const coverageMonths = emergencyFund.coverage_months ?? 0;
   const monthsCapped = coverageMonths >= 12;
-  const monthsDisplay = monthsCapped
-    ? t("financialHealth.panel.emergencyFund.monthsCapped")
-    : t("financialHealth.panel.emergencyFund.months", {
-        months: formatCoverageMonths(
-          coverageMonths,
-          t("financialHealth.panel.emergencyFund.monthsCapped"),
-        ),
-      });
+  const monthsText = monthsCapped
+    ? t("financialHealth.monthsCapped")
+    : t("financialHealth.months", { months: coverageMonths.toFixed(1) });
 
-  const progressPercent = Math.min(emergencyFund.progress_ratio * 100, 100);
   const efStatus = emergencyFund.status;
+  const amountHidden = t("common.amountHidden");
+  const money = (cents: number) =>
+    hidden ? amountHidden : formatMoney({ cents, locale: i18n.language });
 
   const enterTargetEdit = () => {
     setDraftTarget(String(targetMonths));
@@ -163,44 +150,45 @@ export function EmergencyFundPanel() {
   };
 
   return (
-    <Card className="shadow-sm rounded-lg" data-testid="emergency-fund-panel">
-      <CardContent className="p-6">
-        <p className="text-sm font-medium text-muted-foreground mb-3">
-          {t("financialHealth.panel.emergencyFund.title")}
-        </p>
+    <Card data-testid="emergency-fund-panel">
+      <CardHeader>
+        <CardTitle>{t("financialHealth.panel.cushion.title")}</CardTitle>
+      </CardHeader>
 
-        <p
-          className={cn(
-            "text-4xl font-mono font-medium mb-4",
-            emergencyFundTextColor(efStatus),
-          )}
-          data-testid="emergency-fund-months"
-        >
-          {monthsDisplay}
-        </p>
+      <CardContent className="flex flex-col gap-4">
+        {/* The one text-display figure on this surface — it answers "am I saving enough?". */}
+        <div className="flex flex-wrap items-end gap-3">
+          <Stat
+            value={monthsText}
+            caption={t("financialHealth.panel.cushion.coveredCaption", {
+              target: targetMonths,
+            })}
+            data-testid="emergency-fund-months"
+          />
+          <Badge variant={statusBadgeVariant[efStatus]} className="mb-1">
+            {t(`financialHealth.panel.cushion.status.${efStatus}`)}
+          </Badge>
+        </div>
 
-        <div className="flex items-center gap-2 mb-3">
-          <div
-            className="relative flex-1 h-2.5 rounded-full bg-muted"
-            role="progressbar"
-            aria-valuenow={Math.round(progressPercent)}
-            aria-valuemin={0}
-            aria-valuemax={100}
+        <div className="flex items-center gap-3">
+          <Meter
+            className="flex-1"
+            label={t("financialHealth.panel.cushion.meterLabel")}
+            value={Math.min(emergencyFund.progress_ratio * 100, 100)}
+            valueText={t("financialHealth.panel.cushion.meterValue", {
+              months: monthsText,
+              target: targetMonths,
+            })}
             data-testid="emergency-fund-progress"
-          >
-            <div
-              className={cn(
-                "h-full rounded-full transition-all",
-                emergencyFundBarColor(efStatus),
-              )}
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
+          />
 
-          <div className="flex items-center text-xs text-muted-foreground font-mono whitespace-nowrap shrink-0">
-            <span aria-hidden="true">│</span>
+          <div className="flex shrink-0 items-center gap-1.5 text-caption text-ink-dim">
+            <span>{t("financialHealth.panel.cushion.targetLabel")}</span>
             {editingTarget ? (
-              <div className="flex flex-col items-end gap-1" onKeyDown={handleTargetKeyDown}>
+              <div
+                className="flex flex-col items-end gap-1"
+                onKeyDown={handleTargetKeyDown}
+              >
                 <Input
                   ref={inputRef}
                   type="number"
@@ -213,13 +201,16 @@ export function EmergencyFundPanel() {
                     setTargetError(null);
                   }}
                   onKeyDown={handleTargetKeyDown}
-                  className="h-7 w-16 text-xs font-mono tabular-nums text-right"
+                  aria-invalid={targetError ? true : undefined}
+                  aria-describedby={targetError ? "emergency-fund-target-error" : undefined}
+                  className="money h-7 w-16 text-right"
                   aria-label={t("financialHealth.panel.emergencyFund.targetEditLabel")}
                   data-testid="emergency-fund-target-input"
                 />
                 {targetError && (
                   <p
-                    className="text-xs text-destructive max-w-40 text-right"
+                    id="emergency-fund-target-error"
+                    className="max-w-40 text-right text-caption text-over-ink"
                     data-testid="emergency-fund-target-error"
                   >
                     {targetError}
@@ -227,40 +218,41 @@ export function EmergencyFundPanel() {
                 )}
               </div>
             ) : (
-              <span
-                role="button"
-                tabIndex={0}
+              <button
+                type="button"
                 onClick={enterTargetEdit}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    enterTargetEdit();
-                  }
-                }}
-                className="cursor-pointer hover:underline decoration-dashed underline-offset-2"
+                // The dotted underline is the required resting affordance: a keyboard-focus-only
+                // user never triggers hover, so a hover-revealed pencil is not a substitute.
+                className={cn(
+                  "money min-h-target-min border-b border-dotted border-line-strong text-ink",
+                  focusRing,
+                )}
                 aria-label={t("financialHealth.panel.emergencyFund.targetEditLabel")}
                 data-testid="emergency-fund-target"
               >
-                {t("financialHealth.panel.emergencyFund.targetDisplay", {
-                  months: targetMonths,
-                })}
-              </span>
+                {t("financialHealth.panel.cushion.targetValue", { months: targetMonths })}
+              </button>
             )}
           </div>
         </div>
 
-        <p
-          className="text-sm text-muted-foreground font-mono"
-          data-testid="emergency-fund-math-line"
-        >
-          {t("financialHealth.panel.emergencyFund.mathLine", {
-            liquid: formatCurrency(figures.liquid_savings_cents),
-            expenses: formatCurrency(figures.avg_monthly_expenses_cents),
+        {/* Prose, not a formula. The shipped line stated the division outright, which is the exact
+            copy this spine names as a failure. */}
+        <p className="money text-body text-ink-dim" data-testid="emergency-fund-math-line">
+          {t("financialHealth.panel.cushion.sourceLine", {
+            liquid: money(figures.liquid_savings_cents),
+            expenses: money(figures.avg_monthly_expenses_cents),
           })}
         </p>
 
-        <p className="text-xs text-muted-foreground mt-2">
-          {t("financialHealth.panel.emergencyFund.guideline")}
+        <p className="text-caption text-ink-faint">
+          {t("financialHealth.panel.cushion.trailingNote", {
+            months: figures.expense_month_count,
+          })}
+        </p>
+
+        <p className="text-caption text-ink-faint">
+          {t("financialHealth.panel.cushion.savingsOnlyNote")}
         </p>
       </CardContent>
     </Card>

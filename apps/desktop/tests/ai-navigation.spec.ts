@@ -19,7 +19,7 @@ test.describe('AI Section Navigation', () => {
   test('clicking agent card navigates to agent route', async ({ page }) => {
     await page.goto('/ai');
     await page.getByText('Budget Helper').click();
-    await expect(page).toHaveURL(/\/ai\/budget-helper/);
+    await expect(page).toHaveURL(/\/ai\/spending\/budget-helper/);
   });
 
   test('legacy /chat redirects to /ai/budget-helper', async ({ page }) => {
@@ -31,7 +31,7 @@ test.describe('AI Section Navigation', () => {
 
   test('legacy /chat?conversation=42 redirects preserving param', async ({ page }) => {
     await page.goto('/chat?conversation=42');
-    await expect(page).toHaveURL(/\/ai\/budget-helper\?conversation=42/);
+    await expect(page).toHaveURL(/\/ai\/spending\/budget-helper\?conversation=42/);
   });
 
   test('InnerTabNav shows AI tabs on /ai/* routes', async ({ page }) => {
@@ -48,11 +48,12 @@ test.describe('AI Section Navigation', () => {
     await expect(nav.getByText('Dashboard')).toBeVisible();
   });
 
-  test('InnerTabNav shows Settings tabs on /settings routes', async ({ page }) => {
+  test('Settings routes render no destination nav', async ({ page }) => {
     await page.goto('/settings');
-    const nav = page.locator('nav[aria-label="Settings navigation"]');
-    await expect(nav.getByText('AI Provider')).toBeVisible();
-    await expect(nav.getByText('Dashboard')).not.toBeVisible();
+    await expect(page.locator('nav[aria-label="Settings navigation"]')).toHaveCount(0);
+    // Falling through to FinanceNav is the regression this guards against.
+    await expect(page.locator('nav[aria-label="Finance navigation"]')).toHaveCount(0);
+    await expect(page.getByTestId('settings-sub-nav')).toBeVisible();
   });
 
   test('/settings redirects to AI Provider', async ({ page }) => {

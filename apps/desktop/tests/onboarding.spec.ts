@@ -58,8 +58,16 @@ async function setupTauriMock(
       let nextAssetId = 1;
       let onboardingCompleted = completed;
 
+      (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+        unregisterListener: () => {},
+      };
+
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string, args: Record<string, unknown>) => {
+          // Every plugin channel resolves null. A truthy updater response mounts an always-open
+          // Dialog that aria-hidden's the whole app, which makes every getByRole find nothing.
+          if (cmd.startsWith("plugin:")) return Promise.resolve(null);
+
           switch (cmd) {
             case "check_onboarding_status": {
               const hasBudgetData = groups.length > 0;
@@ -182,6 +190,8 @@ async function setupTauriMock(
               return Promise.reject(`Unknown command: ${cmd}`);
           }
         },
+        transformCallback: () => 1,
+        unregisterCallback: () => {},
         convertFileSrc: (path: string) => path,
       };
     },
@@ -199,21 +209,30 @@ test.describe("Onboarding Wizard", () => {
     await expect(page).toHaveURL(/\/onboarding/);
   });
 
-  test("4-step horizontal indicator shows Budget, Accounts, Assets, Import", async ({ page }) => {
+  test("step indicator is a labelled progress indicator, not a tab list", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/onboarding");
 
     const indicator = page.getByTestId("step-indicator");
     await expect(indicator).toBeVisible();
-    await expect(indicator).toHaveAttribute("role", "tablist");
+    await expect(indicator).toHaveAttribute("role", "progressbar");
+    await expect(indicator).toHaveAccessibleName("Setup steps");
+    await expect(indicator).toHaveAttribute("aria-valuemin", "1");
+    await expect(indicator).toHaveAttribute("aria-valuemax", "5");
+    await expect(indicator).toHaveAttribute("aria-valuenow", "1");
+    await expect(indicator).toHaveAttribute("aria-valuetext", "Step 1 of 5");
 
-    await expect(page.getByTestId("step-tab-budget")).toBeVisible();
-    await expect(page.getByTestId("step-tab-accounts")).toBeVisible();
-    await expect(page.getByTestId("step-tab-assets")).toBeVisible();
-    await expect(page.getByTestId("step-tab-import")).toBeVisible();
+    // A wizard's progress is not a set of tabs: the pips are not activatable, so tab semantics
+    // promised navigation the indicator never offered.
+    await expect(page.getByRole("tablist")).toHaveCount(0);
+    await expect(page.getByRole("tab")).toHaveCount(0);
 
-    // First step should be selected
-    await expect(page.getByTestId("step-tab-budget")).toHaveAttribute("aria-selected", "true");
+    for (const step of ["budget", "accounts", "assets", "income", "import"]) {
+      await expect(page.getByTestId(`step-dot-${step}`)).toBeAttached();
+    }
+
+    // The step the user is on is named by its own heading, which is what the pips cannot carry.
+    await expect(page.getByRole("heading", { name: "Set up your budget" })).toBeVisible();
   });
 
   test("Step 1 (Budget) allows creating a group and category; Next advances to Step 2", async ({ page }) => {
@@ -227,14 +246,18 @@ test.describe("Onboarding Wizard", () => {
     await page.getByTestId("add-group-button").click();
     await page.getByLabel("Group Name").fill("Essentials");
     await page.getByRole("button", { name: "Save Group" }).click();
-    await expect(page.getByText('Group "Essentials" created')).toBeVisible();
+    await expect(page.getByText('"Essentials" created')).toBeVisible();
 
     // Click Next to advance to Step 2
     await page.getByTestId("next-button").click();
 
     // Verify Step 2 (Accounts) is now shown
     await expect(page.getByTestId("onboarding-accounts-step")).toBeVisible();
-    await expect(page.getByTestId("step-tab-accounts")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("step-indicator")).toHaveAttribute("aria-valuenow", "2");
+    await expect(page.getByTestId("step-indicator")).toHaveAttribute(
+      "aria-valuetext",
+      "Step 2 of 5"
+    );
   });
 
   test("Steps 2-4 show a Skip button that advances to the next step", async ({ page }) => {
@@ -283,7 +306,7 @@ test.describe("Onboarding Wizard", () => {
     await expect(page.getByTestId("onboarding-budget-step")).toBeVisible();
   });
 
-  test("after completing onboarding, user lands on Dashboard", async ({ page }) => {
+  test("after completing onboarding, user lands on the Today surface", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/onboarding");
 
@@ -291,7 +314,7 @@ test.describe("Onboarding Wizard", () => {
     await page.getByTestId("add-group-button").click();
     await page.getByLabel("Group Name").fill("Essentials");
     await page.getByRole("button", { name: "Save Group" }).click();
-    await expect(page.getByText('Group "Essentials" created')).toBeVisible();
+    await expect(page.getByText('"Essentials" created')).toBeVisible();
 
     await page.getByTestId("next-button").click(); // Step 2
     await page.getByTestId("skip-button").click();  // Step 3
@@ -301,21 +324,20 @@ test.describe("Onboarding Wizard", () => {
     // Finish
     await page.getByTestId("finish-button").click();
 
-    // Should land on Dashboard
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
   });
 
-  test("on next launch with data, dashboard loads directly (no onboarding redirect)", async ({ page }) => {
+  test("on next launch with data, Today loads directly (no onboarding redirect)", async ({ page }) => {
     await setupTauriMock(page, { hasData: true });
     await page.goto("/");
 
-    // Should stay on dashboard, not redirect to onboarding
-    await expect(page.locator("h1")).toHaveText("Dashboard");
+    // Should stay on the Finance home surface, not redirect to onboarding
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("onboarding-wizard")).not.toBeVisible();
   });
 
-  test("Skip for now on Step 1 with no data lands on the dashboard and stays there", async ({ page }) => {
+  test("Skip for now on Step 1 with no data lands on Today and stays there", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/onboarding");
 
@@ -324,7 +346,7 @@ test.describe("Onboarding Wizard", () => {
     await page.getByTestId("skip-onboarding-button").click();
 
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("onboarding-wizard")).not.toBeVisible();
 
     // The redirect effect re-runs on every status refetch — confirm no bounce back
@@ -336,7 +358,7 @@ test.describe("Onboarding Wizard", () => {
     await setupTauriMock(page, { hasData: false, completed: true });
     await page.goto("/");
 
-    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("onboarding-wizard")).not.toBeVisible();
 
     const banner = page.getByTestId("setup-incomplete-banner");
@@ -350,7 +372,7 @@ test.describe("Onboarding Wizard", () => {
     await setupTauriMock(page, { hasData: true, completed: true });
     await page.goto("/");
 
-    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("setup-incomplete-banner")).not.toBeVisible();
   });
 
@@ -362,7 +384,7 @@ test.describe("Onboarding Wizard", () => {
     await expect(page.getByTestId("setup-incomplete-banner")).not.toBeVisible();
 
     await page.reload();
-    await expect(page.locator("h1")).toHaveText("Dashboard");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("setup-incomplete-banner")).not.toBeVisible();
     await expect(page.getByTestId("empty-budget")).toBeVisible();
   });

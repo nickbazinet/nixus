@@ -1,16 +1,16 @@
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import {
+  Button,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
-import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
 import { useUpdateAccount } from "@/hooks/useAccounts";
 import type { Account } from "@/lib/types";
 
@@ -45,8 +45,14 @@ interface AccountFormData {
 export function EditAccountForm({ account, onClose }: EditAccountFormProps) {
   const { t } = useTranslation();
   const updateAccount = useUpdateAccount();
-  const ACCOUNT_TYPE_OPTIONS = ACCOUNT_TYPE_VALUES.map((o) => ({ value: o.value, label: t(o.key) }));
-  const CURRENCY_OPTIONS = CURRENCY_VALUES.map((o) => ({ value: o.value, label: t(o.key) }));
+  const ACCOUNT_TYPE_OPTIONS = ACCOUNT_TYPE_VALUES.map((o) => ({
+    value: o.value,
+    label: t(o.key),
+  }));
+  const CURRENCY_OPTIONS = CURRENCY_VALUES.map((o) => ({
+    value: o.value,
+    label: t(o.key),
+  }));
 
   const {
     register,
@@ -60,7 +66,7 @@ export function EditAccountForm({ account, onClose }: EditAccountFormProps) {
       account_type: account.account_type,
       currency: account.currency,
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmit = (data: AccountFormData) => {
@@ -85,33 +91,55 @@ export function EditAccountForm({ account, onClose }: EditAccountFormProps) {
   };
 
   return (
+    // Native constraint checking aborts submit before it fires, which suppresses the styled inline
+    // error and the `aria-invalid` / `aria-describedby` wiring. Validation belongs to the form layer.
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3 p-3 rounded-lg ring-1 ring-foreground/10 bg-card"
+      noValidate
+      className="space-y-4"
       data-testid="edit-account-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="edit-account-name">{t("common.name")}</Label>
+        <Label htmlFor="edit-account-name" required>
+          {t("common.name")}
+        </Label>
         <Input
           id="edit-account-name"
           autoFocus
+          required
+          aria-required="true"
           aria-invalid={!!errors.name}
+          aria-describedby={errors.name ? "edit-account-name-error" : undefined}
           {...register("name", { required: t("accounts.nameRequired") })}
         />
         {errors.name && (
-          <p className="text-xs text-destructive">{errors.name.message}</p>
+          <p id="edit-account-name-error" className="text-caption text-over-ink">
+            {errors.name.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="edit-account-institution">{t("accounts.institution")}</Label>
+        <Label htmlFor="edit-account-institution" required>
+          {t("accounts.institution")}
+        </Label>
         <Input
           id="edit-account-institution"
+          required
+          aria-required="true"
           aria-invalid={!!errors.institution}
-          {...register("institution", { required: t("accounts.institutionRequired") })}
+          aria-describedby={
+            errors.institution ? "edit-account-institution-error" : undefined
+          }
+          {...register("institution", {
+            required: t("accounts.institutionRequired"),
+          })}
         />
         {errors.institution && (
-          <p className="text-xs text-destructive">
+          <p
+            id="edit-account-institution-error"
+            className="text-caption text-over-ink"
+          >
             {errors.institution.message}
           </p>
         )}
@@ -123,7 +151,11 @@ export function EditAccountForm({ account, onClose }: EditAccountFormProps) {
           name="account_type"
           control={control}
           render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange} items={ACCOUNT_TYPE_OPTIONS}>
+            <Select
+              value={field.value}
+              onValueChange={field.onChange}
+              items={ACCOUNT_TYPE_OPTIONS}
+            >
               <SelectTrigger id="edit-account-type">
                 <SelectValue />
               </SelectTrigger>
@@ -145,7 +177,11 @@ export function EditAccountForm({ account, onClose }: EditAccountFormProps) {
           name="currency"
           control={control}
           render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange} items={CURRENCY_OPTIONS}>
+            <Select
+              value={field.value}
+              onValueChange={field.onChange}
+              items={CURRENCY_OPTIONS}
+            >
               <SelectTrigger id="edit-account-currency">
                 <SelectValue />
               </SelectTrigger>
@@ -159,13 +195,16 @@ export function EditAccountForm({ account, onClose }: EditAccountFormProps) {
             </Select>
           )}
         />
+        <p className="text-caption text-ink-dim">
+          {t("accounts.currencyNote")}
+        </p>
       </div>
 
       <div className="flex gap-2">
         <Button type="submit" size="sm">
           {t("common.save")}
         </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={onClose}>
+        <Button type="button" variant="outline" size="sm" onClick={onClose}>
           {t("common.cancel")}
         </Button>
       </div>

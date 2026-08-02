@@ -1,5 +1,7 @@
 import { useTranslation } from "react-i18next";
-import { CircleUser, Search } from "lucide-react";
+import { Search } from "lucide-react";
+import { focusRing } from "@nixus/shared";
+import { cn } from "@/lib/utils";
 
 interface TopBarProps {
   onSearchClick?: () => void;
@@ -8,28 +10,29 @@ interface TopBarProps {
 export function TopBar({ onSearchClick }: TopBarProps) {
   const { t } = useTranslation();
 
+  // No account avatar: this is one user, one machine, no login, and a person-shaped glyph in the
+  // chrome implies an account the product does not have.
   return (
-    <header className="flex items-center h-14 px-6 bg-sidebar">
-      <div className="flex-1" />
+    <header className="flex h-14 shrink-0 items-center justify-center bg-chrome px-page-x">
       <button
+        type="button"
         onClick={onSearchClick}
-        className="flex items-center gap-2 w-full max-w-[480px] bg-sidebar-accent rounded-lg px-3.5 py-2 cursor-pointer hover:bg-sidebar-accent/80 transition-colors"
+        className={cn(
+          "flex w-full max-w-[480px] min-h-target-min cursor-pointer items-center gap-2 rounded-md border border-line-strong bg-card px-3 py-1.5 transition-colors hover:bg-hover",
+          focusRing
+        )}
         aria-label={t("topbar.searchAriaLabel")}
         data-testid="topbar-search-trigger"
       >
-        <Search size={16} className="text-sidebar-foreground/50 shrink-0" />
-        <span className="text-sm text-sidebar-foreground/50 flex-1 text-left">
+        <Search className="size-4 shrink-0 text-ink-faint" aria-hidden="true" />
+        <span className="flex-1 text-left text-body text-ink-faint">
           {t("topbar.searchPlaceholder")}
         </span>
-        <kbd className="text-[11px] text-sidebar-foreground/40 bg-sidebar rounded px-1.5 py-0.5 border border-sidebar-border">
+        {/* Read as content, not a badge, so it sits at the 13px caption floor rather than micro. */}
+        <kbd className="rounded-sm border border-line bg-track px-1.5 py-0.5 text-caption text-ink-faint">
           ⌘K
         </kbd>
       </button>
-      <div className="flex-1 flex justify-end">
-        <span className="text-sidebar-foreground/70" aria-hidden="true">
-          <CircleUser size={24} />
-        </span>
-      </div>
     </header>
   );
 }

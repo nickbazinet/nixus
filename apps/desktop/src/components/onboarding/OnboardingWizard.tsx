@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { Check } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
+import { Button, Card, CardContent } from "@nixus/shared";
 import { useCompleteOnboarding } from "@/hooks/useOnboardingStatus";
+import { cn } from "@/lib/utils";
 import { OnboardingBudgetStep } from "./OnboardingBudgetStep";
 import { OnboardingAccountsStep } from "./OnboardingAccountsStep";
 import { OnboardingAssetsStep } from "./OnboardingAssetsStep";
@@ -19,28 +19,29 @@ const STEPS = [
   { labelKey: "onboarding.stepImport", key: "import" },
 ] as const;
 
+const LIMITS = [
+  { titleKey: "onboarding.limitLocal", bodyKey: "onboarding.limitLocalBody" },
+  { titleKey: "onboarding.limitNoBank", bodyKey: "onboarding.limitNoBankBody" },
+  { titleKey: "onboarding.limitReminders", bodyKey: "onboarding.limitRemindersBody" },
+  { titleKey: "onboarding.limitEarly", bodyKey: "onboarding.limitEarlyBody" },
+];
+
 export function OnboardingWizard() {
   const { t } = useTranslation();
   const [currentStep, setCurrentStep] = useState(0);
   const navigate = useNavigate();
   const completeOnboarding = useCompleteOnboarding();
 
+  const isFirstStep = currentStep === 0;
+  const isLastStep = currentStep === STEPS.length - 1;
+  const stepProgressLabel = t("onboarding.stepsProgress", {
+    current: currentStep + 1,
+    total: STEPS.length,
+  });
+
   const handleNext = () => {
-    if (currentStep < STEPS.length - 1) {
-      setCurrentStep(currentStep + 1);
-    } else {
-      navigate({ to: "/" });
-    }
-  };
-
-  const handleBack = () => {
-    if (currentStep > 0) {
-      setCurrentStep(currentStep - 1);
-    }
-  };
-
-  const handleSkip = () => {
-    handleNext();
+    if (!isLastStep) setCurrentStep(currentStep + 1);
+    else navigate({ to: "/" });
   };
 
   const exitToDashboard = async () => {
@@ -58,64 +59,74 @@ export function OnboardingWizard() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto py-8" data-testid="onboarding-wizard">
-      <h1 className="text-2xl font-semibold mb-6 text-center">
-        {t("onboarding.welcome")}
-      </h1>
-      <p className="text-muted-foreground text-center mb-8">
-        {t("onboarding.description")}
-      </p>
+    <div className="mx-auto max-w-2xl py-8" data-testid="onboarding-wizard">
+      {/* Limitations lead, before anything is asked for: "acknowledge limitations first" is the
+        * trust rule this product is positioned on, and nothing here mentions an API key. */}
+      {isFirstStep && (
+        <div className="mb-section-gap text-center">
+          <span
+            aria-hidden="true"
+            className="mx-auto mb-5 block size-10 rounded-xl bg-logo-gradient"
+          />
+          <h1 className="text-h1 text-ink">{t("onboarding.welcome")}</h1>
+          <p className="mx-auto mt-2 max-w-prose text-body text-ink-dim">
+            {t("onboarding.description")}
+          </p>
+          <Card className="mt-5 text-left">
+            <CardContent>
+              <ul className="flex list-none flex-col gap-2.5 p-0">
+                {LIMITS.map((limit) => (
+                  <li key={limit.titleKey} className="flex gap-2.5">
+                    <span
+                      aria-hidden="true"
+                      className="mt-2 size-1.5 shrink-0 rounded-full bg-line-strong"
+                    />
+                    <span className="text-caption text-ink-dim">
+                      <span className="text-label text-ink">{t(limit.titleKey)}</span>{" "}
+                      {t(limit.bodyKey)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-      {/* Step Indicator */}
+      {/* Progress only, and a labelled one. The previous indicator rendered role="tab" buttons with
+        * no handler, so every step was a dead control announced as an activatable tab; a bare div
+        * of pips replaced it but carried no name or value, so it announced nothing at all. */}
       <div
-        role="tablist"
+        role="progressbar"
         aria-label={t("onboarding.stepsLabel")}
-        className="flex items-center justify-center gap-2 mb-8"
+        aria-valuenow={currentStep + 1}
+        aria-valuemin={1}
+        aria-valuemax={STEPS.length}
+        aria-valuetext={stepProgressLabel}
+        className="mb-section-gap flex items-center justify-center gap-1.5"
         data-testid="step-indicator"
       >
-        {STEPS.map((step, index) => {
-          const isCompleted = index < currentStep;
-          const isCurrent = index === currentStep;
-          const label = t(step.labelKey);
-
-          return (
-            <div key={step.key} className="flex items-center">
-              <button
-                role="tab"
-                aria-selected={isCurrent}
-                aria-label={label}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                  isCurrent
-                    ? "bg-teal-600 text-white"
-                    : isCompleted
-                      ? "bg-teal-100 text-teal-700"
-                      : "bg-muted text-muted-foreground"
-                }`}
-                data-testid={`step-tab-${step.key}`}
-              >
-                {isCompleted ? (
-                  <Check className="size-4" />
-                ) : (
-                  <span className="size-5 flex items-center justify-center rounded-full bg-white/20 text-xs">
-                    {index + 1}
-                  </span>
-                )}
-                {label}
-              </button>
-              {index < STEPS.length - 1 && (
-                <div
-                  className={`w-8 h-0.5 mx-1 ${
-                    index < currentStep ? "bg-teal-400" : "bg-muted"
-                  }`}
-                />
-              )}
-            </div>
-          );
-        })}
+        {STEPS.map((step, index) => (
+          <span
+            key={step.key}
+            aria-hidden="true"
+            data-testid={`step-dot-${step.key}`}
+            className={cn(
+              "h-1.5 rounded-full transition-all",
+              index === currentStep
+                ? "w-5 bg-brand"
+                : index < currentStep
+                  ? "w-1.5 bg-brand-soft"
+                  : "w-1.5 bg-line-strong"
+            )}
+          />
+        ))}
+        <span aria-hidden="true" className="ml-2 text-caption text-ink-faint">
+          {stepProgressLabel}
+        </span>
       </div>
 
-      {/* Step Content */}
-      <div role="tabpanel" aria-label={t(STEPS[currentStep].labelKey)} data-testid="step-content">
+      <div data-testid="step-content">
         {currentStep === 0 && <OnboardingBudgetStep />}
         {currentStep === 1 && <OnboardingAccountsStep />}
         {currentStep === 2 && <OnboardingAssetsStep />}
@@ -123,31 +134,37 @@ export function OnboardingWizard() {
         {currentStep === 4 && <OnboardingImportStep />}
       </div>
 
-      {/* Navigation Buttons */}
-      <div className="flex justify-between mt-8" data-testid="step-navigation">
-        <div className="flex gap-2">
-          {currentStep > 0 && (
-            <Button variant="ghost" onClick={handleBack} data-testid="back-button">
+      <div
+        className="mt-section-gap flex items-center justify-between gap-2"
+        data-testid="step-navigation"
+      >
+        <div className="flex items-center gap-2">
+          {!isFirstStep && (
+            <Button
+              variant="outline"
+              onClick={() => setCurrentStep(currentStep - 1)}
+              data-testid="back-button"
+            >
               {t("common.back")}
             </Button>
           )}
           <Button
-            variant="ghost"
+            variant="link"
             onClick={handleExit}
             disabled={completeOnboarding.isPending}
-            className="text-muted-foreground"
+            aria-disabled={completeOnboarding.isPending || undefined}
             data-testid="skip-onboarding-button"
           >
             {t("onboarding.skipForNow")}
           </Button>
         </div>
-        <div className="flex gap-2">
-          {currentStep > 0 && currentStep < STEPS.length - 1 && (
-            <Button variant="ghost" onClick={handleSkip} data-testid="skip-button">
+        <div className="flex items-center gap-2">
+          {!isFirstStep && !isLastStep && (
+            <Button variant="outline" onClick={handleNext} data-testid="skip-button">
               {t("common.skip")}
             </Button>
           )}
-          {currentStep < STEPS.length - 1 ? (
+          {!isLastStep ? (
             <Button onClick={handleNext} data-testid="next-button">
               {t("common.next")}
             </Button>
@@ -155,6 +172,7 @@ export function OnboardingWizard() {
             <Button
               onClick={handleExit}
               disabled={completeOnboarding.isPending}
+              aria-disabled={completeOnboarding.isPending || undefined}
               data-testid="finish-button"
             >
               {t("common.finish")}

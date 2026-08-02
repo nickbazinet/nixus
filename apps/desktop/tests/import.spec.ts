@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 
 const MOCK_CATEGORIES = [
   { id: 1, group_id: 1, name: "Groceries", target_cents: 50000, sort_order: 1, created_at: "2026-01-01" },
@@ -23,6 +23,11 @@ async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDate
           cb({ event, payload, id: Math.random() });
         }
       }
+
+      // Unlisten reads this synchronously; without it every listener cleanup throws.
+      (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+        unregisterListener: () => {},
+      };
 
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string, args: Record<string, unknown>) => {
@@ -133,6 +138,24 @@ async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDate
 
 async function triggerUpload(page: Page) {
   await page.getByTestId("upload-zone").click();
+}
+
+/** Amount fields are the shared `Input money`, so the field is reached through its wrapper. */
+function amountInputOf(scope: Locator) {
+  return scope.getByTestId("amount-input-field").getByRole("textbox");
+}
+
+/** Resolves a utility class to the colour it actually computes to, so dimming can be asserted
+ *  as a rendered style rather than as a class-name string. */
+async function computedColorOfClass(page: Page, className: string): Promise<string> {
+  return page.evaluate((cls) => {
+    const probe = document.createElement("span");
+    probe.className = cls;
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, className);
 }
 
 // === Story 6.1 Tests ===
@@ -267,8 +290,9 @@ test.describe("Import Page — Story 6.2", () => {
     await triggerUpload(page);
 
     await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("2 transactions extracted")).toBeVisible();
-    await expect(page.getByText("1 auto-categorized, 1 need review")).toBeVisible();
+    const summary = page.getByTestId("review-summary");
+    await expect(summary.getByRole("heading")).toHaveText("2 transactions found");
+    await expect(summary).toContainText("1 already sorted. 1 need a look from you.");
   });
 
   test("when AI service is unavailable, inline alert shows with manual entry link [AC6]", async ({ page }) => {
@@ -277,8 +301,16 @@ test.describe("Import Page — Story 6.2", () => {
     await triggerUpload(page);
 
     await expect(page.getByTestId("import-error-state")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("Import is temporarily unavailable.")).toBeVisible();
-    await expect(page.getByTestId("manual-entry-link")).toBeVisible();
+    await expect(page.getByText("Nixus can't read statements right now")).toBeVisible();
+
+    // Non-modal and recoverable: nothing traps focus, retry stays available, and the manual path
+    // is named rather than implied.
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByTestId("try-again-button")).toBeVisible();
+    const manual = page.getByTestId("manual-entry-link");
+    await expect(manual).toBeVisible();
+    await expect(manual).toHaveText("Add transactions manually");
+    await expect(manual).toHaveAttribute("href", "/spending/transactions");
   });
 });
 
@@ -294,14 +326,16 @@ test.describe("Import Page — Story 6.3", () => {
   });
 
   test("summary header shows transaction counts [AC1]", async ({ page }) => {
-    await expect(page.getByText("2 transactions extracted")).toBeVisible();
-    await expect(page.getByText("1 auto-categorized, 1 need review")).toBeVisible();
+    const summary = page.getByTestId("review-summary");
+    await expect(summary.getByRole("heading")).toHaveText("2 transactions found");
+    await expect(summary).toContainText("1 already sorted. 1 need a look from you.");
   });
 
   test("AutoCategorizedSummary renders collapsed with count [AC2]", async ({ page }) => {
     const summary = page.getByTestId("auto-categorized-summary");
     await expect(summary).toBeVisible();
-    await expect(summary).toContainText("1 transactions auto-categorized");
+    await expect(summary).toContainText("1 of 1 already sorted");
+    await expect(page.getByTestId("auto-categorized-list")).toHaveCount(0);
   });
 
   test("clicking expand on AutoCategorizedSummary shows transaction list [AC2]", async ({ page }) => {
@@ -315,21 +349,22 @@ test.describe("Import Page — Story 6.3", () => {
     const card = page.getByTestId("transaction-review-card");
     await expect(card).toBeVisible();
     await expect(card.getByTestId("merchant-input")).toHaveValue("Uber Eats");
-    await expect(card.getByTestId("amount-input")).toHaveValue("21.5");
+    // Money is entered through the shared `Input money`, which renders dollars at two decimals.
+    await expect(amountInputOf(card)).toHaveValue("21.50");
     await expect(card.getByTestId("category-select")).toBeVisible();
   });
 
-  test("selecting a different category on flagged card keeps positive styling [AC4]", async ({ page }) => {
+  test("selecting a different category on flagged card keeps the resolved status [AC4]", async ({ page }) => {
     const card = page.getByTestId("transaction-review-card");
-    // Card has a suggested category (id: 2), so it's already resolved with emerald
-    await expect(card).toHaveClass(/emerald/);
+    // The card has a suggested category (id: 2), so it already reads as resolved. Status is now
+    // carried by a labelled badge instead of a palette class on the card.
+    await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
 
-    // Change to a different category
     await card.getByTestId("category-select").click();
     await page.getByRole("option", { name: "Shopping" }).click();
 
-    // Should still have emerald styling (resolved)
-    await expect(card).toHaveClass(/emerald/);
+    await expect(card.getByTestId("category-select")).toContainText("Shopping");
+    await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
   });
 
   test("confirm button is disabled until all flagged items resolved [AC5]", async ({ page }) => {
@@ -337,7 +372,7 @@ test.describe("Import Page — Story 6.3", () => {
     // The flagged transaction (Uber Eats) already has suggested_category_id: 2
     // which is non-null, so it should be resolved
     await expect(confirmBtn).toBeEnabled();
-    await expect(confirmBtn).toContainText("Import 2 transactions");
+    await expect(confirmBtn).toContainText("Add 2 transactions");
   });
 
   test("clicking confirm saves transactions and shows completion screen [AC6, AC7]", async ({ page }) => {
@@ -345,8 +380,10 @@ test.describe("Import Page — Story 6.3", () => {
     await confirmBtn.click();
 
     // Wait for completion screen
-    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("Import Complete")).toBeVisible();
+    const completion = page.getByTestId("import-completion");
+    await expect(completion).toBeVisible({ timeout: 5000 });
+    await expect(completion.getByRole("heading")).toHaveText("Added to your spending");
+    await expect(completion.getByTestId("completion-total")).toContainText("2 transactions");
     await expect(page.getByTestId("view-dashboard-button")).toBeVisible();
     await expect(page.getByTestId("import-another-link")).toBeVisible();
   });
@@ -369,19 +406,19 @@ test.describe("Import Page — Editable & Removable Transactions", () => {
     await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
   });
 
-  test("unchecking a transaction excludes it from import count", async ({ page }) => {
+  test("unchecking a transaction removes it from the import count", async ({ page }) => {
     // Uncheck the flagged transaction (Uber Eats)
     const card = page.getByTestId("transaction-review-card");
     await card.getByTestId("transaction-checkbox").uncheck();
-    await expect(page.getByTestId("confirm-import-button")).toContainText("Import 1 transaction");
+    await expect(page.getByTestId("confirm-import-button")).toContainText("Add 1 transaction");
   });
 
   test("re-checking a transaction includes it again", async ({ page }) => {
     const card = page.getByTestId("transaction-review-card");
     await card.getByTestId("transaction-checkbox").uncheck();
-    await expect(page.getByTestId("confirm-import-button")).toContainText("Import 1 transaction");
+    await expect(page.getByTestId("confirm-import-button")).toContainText("Add 1 transaction");
     await card.getByTestId("transaction-checkbox").check();
-    await expect(page.getByTestId("confirm-import-button")).toContainText("Import 2 transactions");
+    await expect(page.getByTestId("confirm-import-button")).toContainText("Add 2 transactions");
   });
 
   test("editing merchant name on flagged card persists the value", async ({ page }) => {
@@ -393,26 +430,32 @@ test.describe("Import Page — Editable & Removable Transactions", () => {
 
   test("editing amount on flagged card persists the value", async ({ page }) => {
     const card = page.getByTestId("transaction-review-card");
-    const amountInput = card.getByTestId("amount-input");
+    const amountInput = amountInputOf(card);
     await amountInput.fill("3000");
-    await expect(amountInput).toHaveValue("3000");
+    await amountInput.blur();
+    // Re-formatting on blur proves the typed dollars round-tripped through stored cents.
+    await expect(amountInput).toHaveValue("3,000.00");
   });
 
   test("unchecked transactions are visually dimmed", async ({ page }) => {
     const card = page.getByTestId("transaction-review-card");
+    const content = card.getByTestId("review-row-content");
+    const inkColor = await computedColorOfClass(page, "text-ink");
+    const dimColor = await computedColorOfClass(page, "text-ink-dim");
+    expect(dimColor).not.toBe(inkColor);
+
+    await expect(content).toHaveCSS("color", inkColor);
     await card.getByTestId("transaction-checkbox").uncheck();
-    // The content div inside the card should have opacity-50
-    const contentDiv = card.locator("> div > div.flex-1");
-    await expect(contentDiv).toHaveClass(/opacity-50/);
+    await expect(content).toHaveCSS("color", dimColor);
   });
 
-  test("unchecking an auto-categorized transaction excludes it from import count", async ({ page }) => {
+  test("unchecking an auto-categorized transaction removes it from the import count", async ({ page }) => {
     // Expand auto-categorized section
     await page.getByTestId("auto-categorized-toggle").click();
     await expect(page.getByTestId("auto-categorized-list")).toBeVisible();
     // Uncheck the Amazon auto-categorized transaction
     await page.getByTestId("auto-transaction-checkbox").uncheck();
-    await expect(page.getByTestId("confirm-import-button")).toContainText("Import 1 transaction");
+    await expect(page.getByTestId("confirm-import-button")).toContainText("Add 1 transaction");
   });
 
   test("editing merchant name on auto-categorized row persists the value", async ({ page }) => {
@@ -426,12 +469,45 @@ test.describe("Import Page — Editable & Removable Transactions", () => {
     // Uncheck the flagged transaction
     const card = page.getByTestId("transaction-review-card");
     await card.getByTestId("transaction-checkbox").uncheck();
-    await expect(page.getByTestId("confirm-import-button")).toContainText("Import 1 transaction");
+    await expect(page.getByTestId("confirm-import-button")).toContainText("Add 1 transaction");
 
     // Confirm
     await page.getByTestId("confirm-import-button").click();
-    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByTestId("import-completion").getByText("1 transactions")).toBeVisible();
+    const completion = page.getByTestId("import-completion");
+    await expect(completion).toBeVisible({ timeout: 5000 });
+    await expect(completion.getByTestId("completion-total")).toContainText("1 transaction");
+
+    const sent = (await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__LAST_CONFIRM_IMPORT_ARGS__
+    )) as { transactions: { merchant: string }[] };
+    expect(sent.transactions).toHaveLength(1);
+    expect(sent.transactions[0].merchant).toBe("Amazon");
+  });
+
+  test("review header checkbox is indeterminate on a partial selection and states the selected sum", async ({
+    page,
+  }) => {
+    const headerCheckbox = page.getByTestId("review-select-all");
+    await expect(headerCheckbox).toBeChecked();
+
+    await page.getByTestId("transaction-review-card").getByTestId("transaction-checkbox").uncheck();
+
+    // Partial selection is neither checked nor unchecked; reporting it as either misstates what
+    // the header controls.
+    await expect(headerCheckbox).toHaveAttribute("aria-checked", "mixed");
+
+    const bulkBar = page.getByTestId("import-bulk-bar");
+    await expect(bulkBar).toContainText("1 selected");
+    await expect(bulkBar).toContainText("$45.99");
+
+    // Money is tabular Inter, never monospace.
+    await expect(bulkBar.getByText("$45.99", { exact: true })).toHaveCSS(
+      "font-variant-numeric",
+      "tabular-nums"
+    );
+
+    await headerCheckbox.click();
+    await expect(page.getByTestId("confirm-import-button")).toContainText("Add 2 transactions");
   });
 });
 
@@ -478,23 +554,36 @@ test.describe("Import Page — Date Normalization", () => {
     await page.getByTestId("auto-categorized-toggle").click();
     await expect(page.getByTestId("auto-categorized-list")).toBeVisible();
 
-    // Fix the Coffee Shop date — click the date picker button, then select March 14
+    // Fix the Coffee Shop date — click the date picker button, then select the 14th
     const rows = page.getByTestId("auto-categorized-row");
     const firstDatePicker = rows.first().getByTestId("auto-date-input").locator("button");
     await firstDatePicker.click();
     // Select day 14 from the calendar popover
     await page.getByRole("gridcell", { name: "14" }).first().click();
 
+    // The calendar cannot seed a month from an unreadable AI date, so it opens on the current one.
+    // The expected value is therefore read back off the control rather than hard-coded.
+    const pickedLabel = (await firstDatePicker.innerText()).trim();
+
     // Now confirm
     await page.getByTestId("confirm-import-button").click();
-    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("Import Complete")).toBeVisible();
+    const completion = page.getByTestId("import-completion");
+    await expect(completion).toBeVisible({ timeout: 5000 });
+    await expect(completion.getByRole("heading")).toHaveText("Added to your spending");
 
-    // Verify the corrected date was sent to confirm_import
-    const lastArgs = await page.evaluate(() =>
-      (window as unknown as Record<string, unknown>).__LAST_CONFIRM_IMPORT_ARGS__
-    ) as { transactions: { date: string; merchant: string }[] };
+    // Verify the corrected date was sent to confirm_import, and that it is the date the control
+    // shows — a picker that displays one day and commits another is the failure worth catching.
+    const lastArgs = (await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__LAST_CONFIRM_IMPORT_ARGS__
+    )) as { transactions: { date: string; merchant: string }[] };
     const coffeeShop = lastArgs.transactions.find((t) => t.merchant === "Coffee Shop");
-    expect(coffeeShop?.date).toBe("2026-03-14");
+    expect(coffeeShop?.date).toMatch(/^\d{4}-\d{2}-14$/);
+    expect(
+      new Date(`${coffeeShop?.date}T00:00:00`).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    ).toBe(pickedLabel);
   });
 });

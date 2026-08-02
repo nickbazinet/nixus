@@ -1,135 +1,515 @@
-/* Canonical design tokens shared across nkbaz apps.
+/* ============================================================================
+ * Nixus design tokens — Direction A "Quiet Ledger"
  *
- * Consumers should import this AFTER `@import "tailwindcss"` (and any tailwind
- * plugins like tw-animate-css / shadcn) so the @theme blocks register against
- * the Tailwind v4 theme.
- */
+ * Source of truth: _bmad-output/planning-artifacts/ux-designs/ux-nixus-2026-08-01/DESIGN.md
+ * The spine wins on conflict with any mock, wireframe, or screenshot. Where the
+ * .working/*.html mocks disagree with DESIGN.md (--ink-faint, uppercase column
+ * heads) the values here follow DESIGN.md.
+ *
+ * Consumers import this AFTER `@import "tailwindcss"` (and any tailwind plugins
+ * like tw-animate-css / shadcn) so the @theme blocks register against the
+ * Tailwind v4 theme.
+ *
+ * ---------------------------------------------------------------------------
+ * READ BEFORE EDITING
+ *
+ * 1. Every colour pair here is contrast-verified: 4.5:1 for text, 3:1 for
+ *    graphical objects and disabled states, in BOTH modes, against all four
+ *    surfaces (card, page, chrome, rail). A 1% "warm this up" nudge can
+ *    silently break a margin, so `src/styles/__tests__/contrast.test.ts`
+ *    re-computes every ratio from this file. Change a hex, run the test.
+ *
+ * 2. `--brand` means brand and action. Nothing else. Not "good", not
+ *    "on track", not chart colour 1.
+ *
+ * 3. Chart colours are assigned by RANK ORDER (largest segment first), never
+ *    pinned to a category identity, and every stacked/allocation chart draws a
+ *    1px `--card` divider between segments. The ramp alternates luminance
+ *    (odd steps dark, even steps light) so adjacent pairs are separable; that
+ *    guarantee depends on both rules holding.
+ *
+ * 4. `shadow: none` is a rule. Depth is a 1px `--line` hairline plus the
+ *    `--bg` -> `--card` tonal step. `--shadow-float` exists for exactly four
+ *    consumers: slide-over, dialog, toast, popover.
+ *
+ * 5. No raw Tailwind palette classes anywhere in the product. If you need a
+ *    colour and it is not here, the answer is a token, not `emerald-600`.
+ *
+ * ---------------------------------------------------------------------------
+ * NAMING
+ *
+ * Custom property names match DESIGN.md verbatim (`--ink`, `--line-strong`,
+ * `--brand-soft`, ...). Tailwind utility names match too, with ONE deviation:
+ * the page surface token is `--bg` in DESIGN.md but is exposed as
+ * `bg-page` / `text-page` rather than `bg-bg`, which is unreadable.
+ *
+ * The `--background` / `--foreground` / `--primary` / `--muted` ... family at
+ * the bottom is a COMPATIBILITY ALIAS layer pointing at spine tokens. It keeps
+ * @base-ui primitives and the marketing site rendering. Do not reach for it in
+ * new product code — use the spine names.
+ * ========================================================================== */
 
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  --color-positive: #059669;
-  --color-warning: #F59E0B;
-
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
-}
-
+/* ---------------------------------------------------------------------------
+ * Light — the default surface. Warm paper, not white.
+ * ------------------------------------------------------------------------- */
 :root {
-  --background: #FFFFFF;
-  --foreground: #0F172A;
+  /* Surfaces */
+  --bg: #FAF8F5;
   --card: #FFFFFF;
-  --card-foreground: #0F172A;
-  --popover: #FFFFFF;
-  --popover-foreground: #0F172A;
-  --primary: #4F46E5;
-  --primary-foreground: #FFFFFF;
-  --secondary: #F1F5F9;
-  --secondary-foreground: #0F172A;
-  --muted: #F1F5F9;
-  --muted-foreground: #64748B;
-  --accent: #EEF2FF;
-  --accent-foreground: #0F172A;
-  --destructive: #F43F5E;
-  --destructive-foreground: #FFFFFF;
-  --border: #E2E8F0;
-  --input: #E2E8F0;
-  --ring: #4F46E5;
-  --positive: #059669;
-  --warning: #F59E0B;
-  --chart-1: #4F46E5;
-  --chart-2: #059669;
-  --chart-3: #F59E0B;
-  --chart-4: #F43F5E;
-  --chart-5: #64748B;
-  --radius: 0.5rem;
-  --sidebar: #1E293B;
-  --sidebar-foreground: #F1F5F9;
-  --sidebar-primary: #A5B4FC;
-  --sidebar-primary-foreground: #1E1B4B;
-  --sidebar-accent: #334155;
-  --sidebar-accent-foreground: #F1F5F9;
-  --sidebar-border: #334155;
-  --sidebar-ring: #A5B4FC;
+  --chrome: #F5F2EC;
+  --rail: #F0ECE4;
+  --rail-line: #E3DDD2;
+  --track: #EFEAE1;
+  --hover: #FBF9F6;
+
+  /* Ink */
+  --ink: #1C1917;
+  --ink-dim: #6B635A;
+  --ink-faint: #71685F;
+  --ink-disabled: #9C938A;
+
+  /* Hairlines */
+  --line: #E8E3DA;
+  --line-strong: #D8D1C5;
+
+  /* Rail — its own inks, because the rail expands to 192px and renders
+   * real text labels, so it needs 4.5:1 rather than icon-level 3:1. */
+  --rail-ink: #71685F;
+  --rail-on: #E7E2F7;
+  --rail-on-ink: #5D56C5;
+
+  /* Brand and action. Nothing else. */
+  --brand: #5B54D6;
+  --brand-ink: #4A43BE;
+  --brand-on: #FFFFFF;
+  --brand-soft: #EFEDFB;
+  --focus-ring: #5B54D6;
+
+  /* Status — a separate family, and never the sole signal. */
+  --good: #15803D;
+  --good-bg: #E8F3EA;
+  --good-ink: #14672F;
+  --caution: #B45309;
+  --caution-bg: #FBF0DF;
+  --caution-ink: #8F4208;
+  --over: #BE123C;
+  --over-bg: #FBE9ED;
+  --over-ink: #9D0F33;
+  --over-on: #FFFFFF;
+  --neutral-bg: #EFEAE1;
+  --neutral-ink: #6B635A;
+
+  /* Charts — eight steps, alternating luminance, walking the logo's hue
+   * journey then picking up a teal, gold, olive, and warm neutral.
+   * chart-3 and chart-7 share luminance: never let them end up adjacent. */
+  --chart-1: #5A54D7;
+  --chart-2: #AB7DD9;
+  --chart-3: #B54AB5;
+  --chart-4: #DB6D9B;
+  --chart-5: #368580;
+  --chart-6: #BA8741;
+  --chart-7: #7F773F;
+  --chart-8: #9B8F85;
+
+  /* Floating layers only: slide-over, dialog, toast, popover. */
+  --shadow-float-value: 0 2px 10px rgba(28, 25, 23, 0.10);
+
+  /* The scrim behind a floating layer. Deliberately not derived from an ink
+   * token: a backdrop must darken in BOTH modes, and `--ink` inverts to a
+   * near-white in dark, which would wash the page out instead. */
+  --scrim: rgba(28, 25, 23, 0.32);
 }
 
+/* ---------------------------------------------------------------------------
+ * Dark — warm charcoal, not blue-black. Cards are LIGHTER than the page.
+ * ------------------------------------------------------------------------- */
 .dark {
-  --background: #0F172A;
-  --foreground: #E2E8F0;
-  --card: #1E293B;
-  --card-foreground: #E2E8F0;
-  --popover: #1E293B;
-  --popover-foreground: #E2E8F0;
-  --primary: #818CF8;
-  --primary-foreground: #1E1B4B;
-  --secondary: #1E293B;
-  --secondary-foreground: #E2E8F0;
-  --muted: #1E293B;
-  --muted-foreground: #94A3B8;
-  --accent: #1E1B4B;
-  --accent-foreground: #E2E8F0;
-  --destructive: #FB7185;
-  --destructive-foreground: #1E293B;
-  --border: #334155;
-  --input: #334155;
-  --ring: #818CF8;
-  --positive: #34D399;
-  --warning: #FBBF24;
-  --chart-1: #818CF8;
-  --chart-2: #34D399;
-  --chart-3: #FBBF24;
-  --chart-4: #FB7185;
-  --chart-5: #94A3B8;
-  --sidebar: #0F172A;
-  --sidebar-foreground: #CBD5E1;
-  --sidebar-primary: #818CF8;
-  --sidebar-primary-foreground: #1E1B4B;
-  --sidebar-accent: #1E293B;
-  --sidebar-accent-foreground: #E2E8F0;
-  --sidebar-border: #334155;
-  --sidebar-ring: #818CF8;
+  --bg: #17150F;
+  --card: #211E18;
+  --chrome: #1D1A14;
+  --rail: #141209;
+  --rail-line: #302A21;
+  --track: #2C2721;
+  --hover: #282419;
+
+  --ink: #EDE9E1;
+  --ink-dim: #A79E91;
+  --ink-faint: #8E867A;
+  --ink-disabled: #6F685E;
+
+  --line: #332E25;
+  --line-strong: #413A2E;
+
+  --rail-ink: #8E8271;
+  --rail-on: #2E2A44;
+  --rail-on-ink: #928AEF;
+
+  --brand: #A5A0F0;
+  --brand-ink: #BDB8F5;
+  --brand-on: #1E1B36;
+  --brand-soft: #2A2640;
+  --focus-ring: #BDB8F5;
+
+  --good: #4ADE80;
+  --good-bg: #1B2E20;
+  --good-ink: #6EE79A;
+  --caution: #FBBF24;
+  --caution-bg: #332813;
+  --caution-ink: #FCD34D;
+  --over: #FB7185;
+  --over-bg: #3A1B22;
+  --over-ink: #FDA4AF;
+  --over-on: #3A1B22;
+  --neutral-bg: #2C2721;
+  --neutral-ink: #A79E91;
+
+  --chart-1: #A4A0F0;
+  --chart-2: #A56DDD;
+  --chart-3: #DE8FDE;
+  --chart-4: #E1528E;
+  --chart-5: #41B9B1;
+  --chart-6: #B47B2A;
+  --chart-7: #B7AA50;
+  --chart-8: #968373;
+
+  --shadow-float-value: 0 2px 12px rgba(0, 0, 0, 0.45);
+  --scrim: rgba(0, 0, 0, 0.55);
 }
 
-@theme inline {
+/* ---------------------------------------------------------------------------
+ * Identity — mode-independent. The gradient belongs on the rail mark, the
+ * installer, and marketing. NEVER on a surface, card, button, or chart.
+ * ------------------------------------------------------------------------- */
+:root {
+  --logo-stop-1: #818CF8;
+  --logo-stop-2: #A78BFA;
+  --logo-stop-3: #F472B6;
+  --logo-gradient: linear-gradient(
+    135deg,
+    var(--logo-stop-1),
+    var(--logo-stop-2) 50%,
+    var(--logo-stop-3)
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * Scales that do not vary by mode.
+ * ------------------------------------------------------------------------- */
+@theme {
+  /* Type. Inter throughout; no monospace for money, ever.
+   * 10px and 11px are banned. 12px (`text-micro`) is uppercase badge text
+   * only, max ~20 characters — never column heads, axis ticks, or prose.
+   * 13px (`text-caption`) is the floor for anything a user reads. */
+  --text-display: 34px;
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -0.03em;
+  --text-display--font-weight: 600;
+
+  --text-stat: 26px;
+  --text-stat--line-height: 1.1;
+  --text-stat--letter-spacing: -0.025em;
+  --text-stat--font-weight: 600;
+
+  --text-h1: 20px;
+  --text-h1--line-height: 1.25;
+  --text-h1--letter-spacing: -0.02em;
+  --text-h1--font-weight: 650;
+
+  --text-h2: 16px;
+  --text-h2--line-height: 1.3;
+  --text-h2--letter-spacing: -0.015em;
+  --text-h2--font-weight: 650;
+
+  --text-h3: 14px;
+  --text-h3--line-height: 1.35;
+  --text-h3--letter-spacing: -0.012em;
+  --text-h3--font-weight: 650;
+
+  --text-body: 14px;
+  --text-body--line-height: 1.5;
+  --text-body--font-weight: 400;
+
+  --text-label: 13.5px;
+  --text-label--line-height: 1.4;
+  --text-label--font-weight: 550;
+
+  /* Table column heads. Sentence case, NOT uppercase — these are scanned
+   * rapidly and uppercase costs letter-shape discrimination for the
+   * 40s-50s primary user. */
+  --text-column-head: 13px;
+  --text-column-head--line-height: 1.35;
+  --text-column-head--letter-spacing: 0.01em;
+  --text-column-head--font-weight: 650;
+
+  --text-caption: 13px;
+  --text-caption--line-height: 1.45;
+  --text-caption--font-weight: 400;
+
+  --text-micro: 12px;
+  --text-micro--line-height: 1.35;
+  --text-micro--letter-spacing: 0.045em;
+  --text-micro--font-weight: 650;
+
+  /* Shapes. Crisp, not soft — a financial statement is squarer than a
+   * consumer app. sm inputs/checkboxes, md buttons/badges, lg cards,
+   * xl slide-overs/dialogs, full meters/dots only. */
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 7px;
+  --radius-xl: 10px;
+
+  /* Named spacing for the recurring cases. The numeric 4-based scale is
+   * Tailwind's default (`p-4` == 16px) and is not overridden. */
+  --spacing-card-pad: 16px;
+  --spacing-grid-gap: 12px;
+  --spacing-page-x: 20px;
+  --spacing-page-y: 20px;
+  --spacing-section-gap: 24px;
+  --spacing-rail-w: 52px;
+  --spacing-rail-w-expanded: 192px;
+  --spacing-target-min: 24px;
+
+  /* Focus ring geometry — always ring PLUS surface-coloured offset. In dark
+   * mode no single ring hex clears 3:1 against both --card and --brand; the
+   * offset is what makes the ring legible on a brand-filled button. */
+  --spacing-focus-ring-w: 2px;
+  --spacing-focus-offset-w: 2px;
+
+  /* Fonts are vendored locally by the consuming app. Never @import Google
+   * Fonts in a local-first product. --font-mono is the system stack and is
+   * for paths and identifiers, never for money. */
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ---------------------------------------------------------------------------
+ * Bridge the mode-dependent custom properties into Tailwind's theme so they
+ * generate utilities (`bg-card`, `text-ink-dim`, `border-line-strong`, ...).
+ * ------------------------------------------------------------------------- */
+@theme inline {
+  /* Surfaces. `--bg` is exposed as `page` — `bg-bg` is unreadable. */
+  --color-page: var(--bg);
   --color-card: var(--card);
-  --color-foreground: var(--foreground);
-  --color-background: var(--background);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --color-chrome: var(--chrome);
+  --color-rail: var(--rail);
+  --color-rail-line: var(--rail-line);
+  --color-track: var(--track);
+  --color-hover: var(--hover);
+
+  /* Ink */
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
+  --color-ink-faint: var(--ink-faint);
+  --color-ink-disabled: var(--ink-disabled);
+
+  /* Hairlines */
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  /* Rail */
+  --color-rail-ink: var(--rail-ink);
+  --color-rail-on: var(--rail-on);
+  --color-rail-on-ink: var(--rail-on-ink);
+
+  /* Brand */
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-on: var(--brand-on);
+  --color-brand-soft: var(--brand-soft);
+  --color-focus-ring: var(--focus-ring);
+
+  /* Status */
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-good-ink: var(--good-ink);
+  --color-caution: var(--caution);
+  --color-caution-bg: var(--caution-bg);
+  --color-caution-ink: var(--caution-ink);
+  --color-over: var(--over);
+  --color-over-bg: var(--over-bg);
+  --color-over-ink: var(--over-ink);
+  --color-over-on: var(--over-on);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-neutral-ink: var(--neutral-ink);
+
+  /* Charts */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+
+  --color-scrim: var(--scrim);
+
+  /* The only shadow in the system. Four consumers. */
+  --shadow-float: var(--shadow-float-value);
+
+  /* ---- Compatibility aliases -------------------------------------------
+   * @base-ui/shadcn primitives and the marketing site reference these.
+   * They point at spine tokens so there is still exactly one answer.
+   * Prefer the spine names in new product code. */
+  --color-background: var(--bg);
+  --color-foreground: var(--ink);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--brand);
+  --color-primary-foreground: var(--brand-on);
+  --color-secondary: var(--track);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: var(--track);
+  --color-muted-foreground: var(--ink-dim);
+  --color-accent: var(--brand-soft);
+  --color-accent-foreground: var(--brand-ink);
+  --color-destructive: var(--over);
+  --color-destructive-foreground: var(--over-on);
+  --color-border: var(--line);
+  --color-input: var(--line-strong);
+  --color-ring: var(--focus-ring);
+  --color-positive: var(--good);
+  --color-warning: var(--caution);
+  --color-sidebar: var(--rail);
+  --color-sidebar-foreground: var(--rail-ink);
+  --color-sidebar-primary: var(--brand);
+  --color-sidebar-primary-foreground: var(--brand-on);
+  --color-sidebar-accent: var(--rail-on);
+  --color-sidebar-accent-foreground: var(--rail-on-ink);
+  --color-sidebar-border: var(--rail-line);
+  --color-sidebar-ring: var(--focus-ring);
+}
+
+/* Plain-CSS aliases for the same compatibility layer, so `var(--background)`
+ * and friends still resolve inside hand-written CSS and inline styles. */
+:root,
+.dark {
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card-foreground: var(--ink);
+  --popover: var(--card);
+  --popover-foreground: var(--ink);
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-on);
+  --secondary: var(--track);
+  --secondary-foreground: var(--ink);
+  --muted: var(--track);
+  --muted-foreground: var(--ink-dim);
+  --accent: var(--brand-soft);
+  --accent-foreground: var(--brand-ink);
+  --destructive: var(--over);
+  --destructive-foreground: var(--over-on);
+  --border: var(--line);
+  --input: var(--line-strong);
+  --ring: var(--focus-ring);
+  --positive: var(--good);
+  --warning: var(--caution);
+  --radius: 5px;
+  --sidebar: var(--rail);
+  --sidebar-foreground: var(--rail-ink);
+  --sidebar-primary: var(--brand);
+  --sidebar-primary-foreground: var(--brand-on);
+  --sidebar-accent: var(--rail-on);
+  --sidebar-accent-foreground: var(--rail-on-ink);
+  --sidebar-border: var(--rail-line);
+  --sidebar-ring: var(--focus-ring);
+}
+
+/* ---------------------------------------------------------------------------
+ * Utilities
+ * ------------------------------------------------------------------------- */
+
+/* Money is not a size — it is a numeric treatment, applied at whatever type
+ * role the context calls for. Tabular figures buy the column alignment that
+ * a monospace family was previously used for, at no cost in register. */
+@utility money {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* The focus ring the whole system uses: ring plus surface-coloured offset.
+ * The offset colour is inherited from the local surface via
+ * `--focus-offset-color`, which defaults to the card. Set it at the call site
+ * when the element sits on the page, chrome, rail, or a brand fill. */
+@utility focus-spine {
+  outline: var(--spacing-focus-ring-w) solid var(--focus-ring);
+  outline-offset: var(--spacing-focus-offset-w);
+}
+
+/* The identity gradient. Rail mark, installer, marketing. Nothing else. */
+@utility bg-logo-gradient {
+  background-image: var(--logo-gradient);
+}
+
+/* ---------------------------------------------------------------------------
+ * Windows High Contrast Mode.
+ *
+ * Not optional: Windows is a first-class platform and this system is unusually
+ * exposed. Elevation is hairline-only, badge states are soft background tints,
+ * and chart segments are flat fills — all three are exactly what
+ * `forced-colors` overrides. Without this block, card boundaries vanish, the
+ * four badge tints collapse into one, and an allocation bar becomes a single
+ * undifferentiated block. HCM users skew older and low-vision, which is the
+ * primary persona.
+ *
+ * Requires verification in a real Windows HCM session, not Chromium emulation.
+ * ------------------------------------------------------------------------- */
+@media (forced-colors: active) {
+  /* Cards, badges, meters, and dots get a system-mapped border so the
+   * boundary survives when the fill is overridden. */
+  [data-slot="card"],
+  [data-slot="badge"],
+  [data-slot="alert"],
+  [data-slot="empty-state"],
+  [data-slot="meter"],
+  [data-slot="bulk-bar"],
+  [data-slot="status-dot"] {
+    border: 1px solid CanvasText;
+  }
+
+  /* The meter fill and chart segments are semantically load-bearing: the
+   * ratio IS the information, so the fill must survive. */
+  [data-slot="meter-fill"],
+  [data-chart-segment] {
+    forced-color-adjust: none;
+  }
+
+  /* Segment dividers must remain perceivable against overridden fills. */
+  [data-chart-segment] + [data-chart-segment] {
+    border-left: 1px solid Canvas;
+  }
+
+  /* A filled status dot must stay distinguishable from a ring dot. */
+  [data-slot="status-dot"][data-status="over"] {
+    background: CanvasText;
+  }
+  [data-slot="status-dot"][data-status="caution"] {
+    background: Canvas;
+  }
+
+  /* Focus must not rely on the brand hue. */
+  :focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Reduced motion — a blanket rule with no carve-outs, so coverage is
+ * unambiguous. Applies to rail expansion, slide-over and dialog enter/exit,
+ * toast slide-in, skeleton pulse, meter fill, chart transitions, and chat
+ * typing indicators. Lives in the token layer so both apps inherit it.
+ * ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

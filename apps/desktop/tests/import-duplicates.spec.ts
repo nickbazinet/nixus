@@ -18,6 +18,11 @@ async function setupTauriMock(page: Page, duplicateIndices: number[]) {
         for (const cb of cbs) cb({ event, payload, id: Math.random() });
       }
 
+      // Unlisten reads this synchronously; without it every listener cleanup throws.
+      (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+        unregisterListener: () => {},
+      };
+
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string, args: Record<string, unknown>) => {
           if (cmd === "plugin:event|listen") {
@@ -101,7 +106,7 @@ test.describe("Import Duplicate Detection", () => {
     // First row should have duplicate badge
     const rows = page.getByTestId("auto-categorized-row");
     await expect(rows.first().getByTestId("duplicate-badge")).toBeVisible();
-    await expect(rows.first().getByTestId("duplicate-badge")).toContainText("Possible duplicate");
+    await expect(rows.first().getByTestId("duplicate-badge")).toContainText("Likely duplicate");
   });
 
   test("non-duplicate transactions do not show badge", async ({ page }) => {
@@ -126,7 +131,11 @@ test.describe("Import Duplicate Detection", () => {
 
     const card = page.getByTestId("transaction-review-card");
     await expect(card.getByTestId("duplicate-badge")).toBeVisible();
-    await expect(card.getByTestId("duplicate-badge")).toContainText("Possible duplicate");
+    // The flagged card states the reason, not just the label: "duplicate" alone does not say
+    // against what.
+    await expect(card.getByTestId("duplicate-badge")).toContainText(
+      "Likely a duplicate — you already have an expense with this merchant, date, and amount."
+    );
   });
 
   test("duplicate transactions are still selectable and importable", async ({ page }) => {
@@ -134,16 +143,37 @@ test.describe("Import Duplicate Detection", () => {
     await page.goto("/import");
     await triggerUpload(page);
 
-    // Expand auto-categorized and verify checkbox is still checked
+    // Auto-deselection is a default, not a removal — re-checking still imports.
     await page.getByTestId("auto-categorized-toggle").click();
     const firstCheckbox = page.getByTestId("auto-transaction-checkbox").first();
+    await expect(firstCheckbox).not.toBeChecked();
+    await firstCheckbox.click();
     await expect(firstCheckbox).toBeChecked();
+  });
+
+  test("auto-deselected duplicates say so up front, and say nothing was removed", async ({ page }) => {
+    await setupTauriMock(page, [0, 1]);
+    await page.goto("/import");
+    await triggerUpload(page);
+
+    // Reversibility has to be legible without opening anything: the notice states the count, that
+    // they are only unchecked, and that reviewing them is the user's call.
+    const notice = page.getByTestId("duplicates-unchecked-notice");
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveText(
+      "2 likely duplicates found — unchecked. Review if you want them."
+    );
+    await expect(page.getByText("excluded")).toHaveCount(0);
+
+    await expect(page.getByTestId("confirm-import-button")).toContainText("Add 1 transaction");
   });
 
   test("no duplicates means no badges shown", async ({ page }) => {
     await setupTauriMock(page, []);
     await page.goto("/import");
     await triggerUpload(page);
+
+    await expect(page.getByTestId("duplicates-unchecked-notice")).toHaveCount(0);
 
     // Expand auto-categorized
     await page.getByTestId("auto-categorized-toggle").click();

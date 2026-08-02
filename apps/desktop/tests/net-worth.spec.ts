@@ -10,28 +10,22 @@ const financialHealthInsufficientMock = {
   },
 };
 
-const financialHealthSufficientMock = {
-  data_sufficient: true,
-  emergency_fund: {
-    coverage_months: 2.4,
-    target_months: 6,
-    progress_ratio: 0.4,
-    status: "approaching" as const,
-  },
-  savings: {
-    savings_rate_percent: 14,
-    avg_monthly_surplus_cents: 62000,
-  },
-  waterfall: {
-    current_step: "build_emergency_fund" as const,
-    action_line_key: "build_emergency_fund",
-  },
-};
-
 async function setupEmptyNetWorthMock(page: Page) {
   await page.addInitScript((healthMock) => {
+    // unlisten() reaches into the event plugin's own internals object on cleanup.
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ =
+      { unregisterListener: () => {} };
+
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      // Real Tauri exposes this; event.listen() calls it, and without it every listener throws.
+      transformCallback: (cb: unknown) => {
+        const id = Math.floor(Math.random() * 1e9);
+        (window as unknown as Record<string, unknown>)[`_${id}`] = cb;
+        return id;
+      },
       invoke: (cmd: string) => {
+        // A truthy updater answer opens an always-modal dialog that aria-hidden()s the whole app.
+        if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
           case "get_current_net_worth":
             return Promise.resolve({
@@ -151,8 +145,17 @@ async function setupSeededNetWorthMock(page: Page) {
       ],
     });
 
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ =
+      { unregisterListener: () => {} };
+
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      transformCallback: (cb: unknown) => {
+        const id = Math.floor(Math.random() * 1e9);
+        (window as unknown as Record<string, unknown>)[`_${id}`] = cb;
+        return id;
+      },
       invoke: (cmd: string, args?: { months?: number }) => {
+        if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
           case "get_current_net_worth":
             return Promise.resolve({
@@ -197,13 +200,18 @@ async function setupSeededNetWorthMock(page: Page) {
   });
 }
 
+/** The Wealth destination's segmented sub-nav — real links, deliberately not an ARIA tablist. */
+function wealthSubNav(page: Page) {
+  return page.getByRole("navigation", { name: "Wealth" });
+}
+
 test.describe("Net Worth Page", () => {
   test("displays H1 title and current total", async ({ page }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     await expect(
-      page.getByRole("heading", { name: "Net Worth" })
+      page.getByRole("heading", { name: "Net worth", level: 1 })
     ).toBeVisible();
 
     const total = page.getByTestId("net-worth-total");
@@ -212,7 +220,7 @@ test.describe("Net Worth Page", () => {
 
   test("trend chart element is rendered", async ({ page }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     const chart = page.getByTestId("trend-chart");
     await expect(chart).toBeVisible();
@@ -225,7 +233,7 @@ test.describe("Net Worth Page", () => {
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     const tabs = page.getByTestId("period-tabs");
     await expect(tabs).toBeVisible();
@@ -237,7 +245,7 @@ test.describe("Net Worth Page", () => {
 
   test("clicking a different period tab updates chart", async ({ page }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     // Default is 1Y
     const tab6m = page.getByTestId("period-tabs-6m");
@@ -251,7 +259,7 @@ test.describe("Net Worth Page", () => {
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     const bar = page.getByTestId("breakdown-bar");
     await expect(bar).toBeVisible();
@@ -266,7 +274,7 @@ test.describe("Net Worth Page", () => {
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     const legend = page.getByTestId("breakdown-legend");
     await expect(legend).toBeVisible();
@@ -280,126 +288,200 @@ test.describe("Net Worth Page", () => {
     await expect(items.first()).toContainText("%");
   });
 
-  test("hovering a bar segment shows tooltip", async ({ page }) => {
+  test("the allocation bar is presentational and the table carries every label", async ({
+    page,
+  }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
+
+    // The hover tooltip is retired: a hover-only readout is unreachable for anyone who does not use
+    // a pointer. The bar now carries proportion only, and the table beside it is the direct label,
+    // in the same rank order as the bands.
+    const bar = page.getByTestId("breakdown-bar");
+    await expect(bar).toHaveAttribute("aria-hidden", "true");
+    await expect(page.getByTestId("breakdown-tooltip")).toHaveCount(0);
 
     const segments = page.getByTestId("breakdown-segment");
-    await segments.first().hover();
+    const rows = page.getByTestId("legend-item");
+    expect(await rows.count()).toBe(await segments.count());
 
-    const tooltip = page.getByTestId("breakdown-tooltip");
-    await expect(tooltip).toBeVisible();
-    await expect(tooltip).toContainText("$");
+    // Largest first, so the biggest holding names itself in the first row.
+    await expect(rows.first()).toContainText("Housing");
+    await expect(rows.first()).toContainText("$450,000.00");
+    await expect(rows.first()).toContainText("%");
   });
 
   test("with no snapshots, empty state message is visible", async ({
     page,
   }) => {
     await setupEmptyNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     const emptyState = page.getByTestId("empty-net-worth");
     await expect(emptyState).toBeVisible();
+    await expect(emptyState).toContainText("No snapshots yet");
+    // Honest caption: it says when a snapshot appears rather than blaming the user for empty data.
     await expect(emptyState).toContainText(
-      "No net worth history yet. Add accounts and assets to start tracking."
+      "Your first snapshot is taken when you enter account balances."
     );
+    // Never an empty axis in place of a real state.
+    await expect(page.getByTestId("trend-chart")).toHaveCount(0);
   });
 
-  test("empty state shows Add Account and Add Asset buttons", async ({
-    page,
-  }) => {
+  test("empty state carries exactly one action", async ({ page }) => {
     await setupEmptyNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
     await expect(page.getByTestId("add-account-btn")).toBeVisible();
-    await expect(page.getByTestId("add-asset-btn")).toBeVisible();
+    await expect(page.getByTestId("add-account-btn")).toHaveText(
+      "Add an account"
+    );
+    // One action only: balances are what produce a snapshot, so a second equal-weight choice
+    // sends half the users down the path that does not unblock them.
+    const emptyState = page.getByTestId("empty-net-worth");
+    await expect(emptyState.getByRole("button")).toHaveCount(1);
+    await expect(page.getByTestId("add-asset-btn")).toHaveCount(0);
   });
 
-  test("section sub-nav shows Net Worth and Financial Health", async ({
+  test("Wealth sub-nav lists its four surfaces and marks the current one", async ({
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
+    await page.goto("/wealth/net-worth");
 
-    const sectionNav = page.getByTestId("net-worth-section-nav");
-    await expect(sectionNav).toBeVisible();
-    await expect(page.getByTestId("section-nav-net-worth")).toContainText(
-      "Net Worth"
-    );
-    await expect(page.getByTestId("section-nav-financial-health")).toContainText(
-      "Financial Health"
-    );
+    // Exactly one segmented sub-nav per destination, owned by the shell rather than the surface.
+    const subNav = wealthSubNav(page);
+    await expect(subNav).toBeVisible();
+    await expect(subNav.getByRole("link")).toHaveText([
+      "Accounts",
+      "What you own",
+      "Net worth",
+      "Where to put your money",
+    ]);
+    await expect(
+      subNav.getByRole("link", { name: "Net worth", exact: true })
+    ).toHaveAttribute("aria-current", "page");
+
+    // Not a tablist, so arrow keys are deliberately unbound — announcing "link" and then behaving
+    // like a tab is what confuses anyone who knows either pattern.
+    await expect(subNav.locator('[role="tab"], [role="tablist"]')).toHaveCount(0);
+    const first = subNav.getByRole("link", { name: "Accounts", exact: true });
+    await first.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(first).toBeFocused();
   });
 
-  test("period tabs are not shown on Financial Health section", async ({
+  test("period tabs are not shown on the where-to-put-your-money surface", async ({
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
-    await expect(page.getByTestId("period-tabs")).not.toBeVisible();
-    await expect(page.getByTestId("net-worth-section-nav")).toBeVisible();
+    await expect(page.getByTestId("period-tabs")).toHaveCount(0);
+    await expect(
+      wealthSubNav(page).getByRole("link", {
+        name: "Where to put your money",
+        exact: true,
+      })
+    ).toHaveAttribute("aria-current", "page");
   });
 
-  test("clicking Financial Health section shows subtitle", async ({ page }) => {
+  test("no surface in the Wealth destination says Financial Health", async ({
+    page,
+  }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth");
 
-    await page.getByTestId("section-nav-financial-health").click();
-    await expect(page).toHaveURL(/\/net-worth\/financial-health/);
-    await expect(page.getByText("Where your money should go next")).toBeVisible();
+    for (const path of ["/wealth/net-worth", "/wealth/where-to-put-your-money"]) {
+      await page.goto(path);
+      await expect(wealthSubNav(page)).toBeVisible();
+      await expect(page.getByText("Financial Health")).toHaveCount(0);
+    }
   });
 
-  test("Financial Health section shows Compass empty state when data insufficient", async ({
+  test("clicking Where to put your money navigates and marks it current", async ({
+    page,
+  }) => {
+    await setupSeededNetWorthMock(page);
+    await page.goto("/wealth/net-worth");
+
+    const target = wealthSubNav(page).getByRole("link", {
+      name: "Where to put your money",
+      exact: true,
+    });
+    await target.click();
+
+    await expect(page).toHaveURL(/\/wealth\/where-to-put-your-money/);
+    await expect(target).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("action-waterfall")).toBeVisible();
+  });
+
+  test("where-to-put-your-money shows Compass empty state when data insufficient", async ({
     page,
   }) => {
     await setupEmptyNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     const emptyState = page.getByTestId("financial-health-section-empty");
     await expect(emptyState).toBeVisible();
-    await expect(emptyState).toContainText("Not enough data yet");
+    await expect(emptyState).toContainText("Come back in a couple of months");
+    await expect(emptyState).toContainText(
+      "needs about three finished months of spending to see a pattern. You have 0 so far."
+    );
+    // Progress, not a figure the app cannot yet know.
+    await expect(
+      page.getByTestId("financial-health-months-progress")
+    ).toBeVisible();
+    await expect(emptyState).toContainText("0 of 3 months");
     await expect(page.getByTestId("financial-health-import-cta")).toContainText(
       "Import transactions"
     );
   });
 
-  test("clicking Net Worth section returns to trend view with period tabs", async ({
+  test("clicking Net worth returns to trend view with period tabs", async ({
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
-    await page.getByTestId("section-nav-net-worth").click();
-    await expect(page).toHaveURL(/\/net-worth\/?$/);
+    await wealthSubNav(page)
+      .getByRole("link", { name: "Net worth", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/wealth\/net-worth\/?$/);
     await expect(page.getByTestId("period-tabs")).toBeVisible();
     await expect(page.getByTestId("trend-chart")).toBeVisible();
   });
 
-  test("Financial Health section shows emergency fund panel with math line", async ({
+  test("where-to-put-your-money shows the savings cushion panel with its source line", async ({
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     const panel = page.getByTestId("emergency-fund-panel");
     await expect(panel).toBeVisible();
-    await expect(page.getByTestId("emergency-fund-months")).toContainText("2.4 mo");
+    await expect(page.getByTestId("emergency-fund-months")).toContainText(
+      "2.4 months"
+    );
     await expect(page.getByTestId("emergency-fund-progress")).toBeVisible();
-    await expect(page.getByTestId("emergency-fund-target")).toContainText("6 mo");
-    await expect(page.getByTestId("emergency-fund-math-line")).toContainText(
-      "$15,000.00 liquid savings"
+    await expect(page.getByTestId("emergency-fund-target")).toContainText(
+      "6 months"
     );
-    await expect(page.getByTestId("emergency-fund-math-line")).toContainText(
-      "$6,250.00 average monthly expenses"
+    // Prose, not a division: the figures are named in the sentence that uses them.
+    const mathLine = page.getByTestId("emergency-fund-math-line");
+    await expect(mathLine).toContainText("$15,000.00 in chequing and savings");
+    await expect(mathLine).toContainText(
+      "$6,250.00 of spending in a typical month"
     );
-    await expect(panel.getByText("3–6 months is a common guideline")).toBeVisible();
-    await expect(page.getByTestId("financial-health-section-disclaimer")).toBeVisible();
+    // A guideline number alone is not actionable; the note names which money actually counts.
+    await expect(panel.getByText(/Savings accounts only/)).toBeVisible();
+    await expect(
+      page.getByTestId("financial-health-section-disclaimer")
+    ).toBeVisible();
   });
 
   test("clicking target months opens inline edit", async ({ page }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     await page.getByTestId("emergency-fund-target").click();
     await expect(page.getByTestId("emergency-fund-target-input")).toBeVisible();
@@ -407,7 +489,7 @@ test.describe("Net Worth Page", () => {
 
   test("saving valid target shows toast and updates display", async ({ page }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     await page.getByTestId("emergency-fund-target").click();
     const input = page.getByTestId("emergency-fund-target-input");
@@ -420,7 +502,7 @@ test.describe("Net Worth Page", () => {
 
   test("invalid target shows inline error without toast", async ({ page }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     await page.getByTestId("emergency-fund-target").click();
     const input = page.getByTestId("emergency-fund-target-input");
@@ -437,7 +519,7 @@ test.describe("Net Worth Page", () => {
 
   test("pressing Escape on target edit reverts without saving", async ({ page }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     await page.getByTestId("emergency-fund-target").click();
     const input = page.getByTestId("emergency-fund-target-input");
@@ -449,19 +531,21 @@ test.describe("Net Worth Page", () => {
     await expect(page.getByText("Emergency fund target updated")).not.toBeVisible();
   });
 
-  test("Financial Health section shows action waterfall with current rung", async ({
+  test("where-to-put-your-money shows the action waterfall with current rung", async ({
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     const waterfall = page.getByTestId("action-waterfall");
     await expect(waterfall).toBeVisible();
-    await expect(waterfall.getByText("Priority ladder")).toBeVisible();
+    await expect(
+      waterfall.getByText("Your order of operations", { exact: true })
+    ).toBeVisible();
 
     const currentRung = page.getByTestId("waterfall-rung-build_emergency_fund");
     await expect(currentRung).toHaveAttribute("data-state", "current");
-    await expect(currentRung).toContainText("You are here");
+    await expect(currentRung).toContainText("You're here");
     await expect(page.getByTestId("waterfall-why-toggle")).toBeVisible();
   });
 
@@ -469,7 +553,7 @@ test.describe("Net Worth Page", () => {
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     await page.getByTestId("waterfall-why-toggle").click();
 
@@ -479,22 +563,27 @@ test.describe("Net Worth Page", () => {
     await expect(reasoning).toContainText("6 months");
   });
 
-  test("Financial Health section shows savings capacity panel", async ({
+  test("where-to-put-your-money shows savings capacity panel", async ({
     page,
   }) => {
     await setupSeededNetWorthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     const panel = page.getByTestId("savings-capacity-panel");
     await expect(panel).toBeVisible();
-    await expect(page.getByTestId("savings-capacity-rate")).toContainText("14%");
-    await expect(page.getByTestId("savings-capacity-surplus")).toContainText(
-      "+$620.00/mo"
+    await expect(panel.getByText("What you're able to save")).toBeVisible();
+
+    // The surplus is stated in the sentence that gives it meaning rather than as a bare +$/mo.
+    const rate = page.getByTestId("savings-capacity-rate");
+    await expect(rate).toContainText("14%");
+    await expect(rate).toContainText(
+      "$620.00 left over in a typical month"
     );
+
     await expect(page.getByTestId("savings-capacity-trend")).toBeVisible();
     await expect(page.getByTestId("savings-capacity-categories")).toBeVisible();
     await expect(panel.getByText("Dining Out")).toBeVisible();
     await expect(panel.getByText("Subscriptions")).toBeVisible();
-    await expect(panel.getByText("Where you could free up capacity")).toBeVisible();
+    await expect(panel.getByText("Where you'd find the money")).toBeVisible();
   });
 });

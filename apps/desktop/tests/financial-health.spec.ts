@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-const MASKED_CURRENCY = "$••••";
+const MASKED_AMOUNT = "Amount hidden";
 
 const yearlySummaryMock = {
   year: 2026,
@@ -196,60 +196,91 @@ test.describe("Financial Health — Story 22.4", () => {
 
     const card = page.getByTestId("financial-health-card");
     await expect(card).toBeVisible();
-    await expect(page.getByTestId("financial-health-months")).toContainText("2.4 mo");
-    await expect(page.getByTestId("financial-health-savings-rate")).toContainText("14%");
-    await expect(page.getByTestId("financial-health-surplus")).toContainText(
-      "+$620.00/mo"
+    await expect(page.getByTestId("financial-health-months")).toHaveText(
+      "You have 2.4 months of spending covered — you're aiming for 6."
     );
-    await expect(page.getByTestId("financial-health-action")).toContainText(
+    // The rate and the surplus are one sentence now, not two standalone figures.
+    await expect(page.getByTestId("financial-health-savings-rate")).toHaveText(
+      "You're keeping 14% of what you earn — about $620.00 left over in a typical month."
+    );
+    await expect(page.getByTestId("financial-health-action")).toHaveText(
       "Build your emergency fund"
     );
-    await expect(page.getByTestId("financial-health-disclaimer")).toContainText(
-      "Educational guidance, not professional financial advice."
+
+    await page.getByTestId("financial-health-disclaimer-toggle").click();
+    await expect(page.getByTestId("financial-health-disclaimer")).toHaveText(
+      "This isn't financial advice. Nixus points at general categories of account, never at specific investments, and it doesn't know your tax situation."
     );
   });
 
-  test("navigates to Financial Health section and renders all panels", async ({
+  test("navigates to Where to put your money and renders all panels", async ({
     page,
   }) => {
     await setupFinancialHealthMock(page);
     await page.goto("/");
 
-    await page.getByTestId("financial-health-card").click();
-    await expect(page).toHaveURL(/\/net-worth\/financial-health/);
-    await expect(page.getByText("Where your money should go next")).toBeVisible();
+    await page
+      .getByTestId("financial-health-card")
+      .getByRole("button", { name: "See the plan" })
+      .click();
+    await expect(page).toHaveURL(/\/wealth\/where-to-put-your-money/);
+    // The page-level subtitle was retired: the shell's Wealth sub-nav names the surface and marks
+    // the active segment, so the page does not repeat it.
+    await expect(
+      page.getByRole("link", { name: "Where to put your money" })
+    ).toHaveAttribute("aria-current", "page");
 
     await expect(page.getByTestId("emergency-fund-panel")).toBeVisible();
-    await expect(page.getByTestId("emergency-fund-months")).toContainText("2.4 mo");
-    await expect(page.getByTestId("emergency-fund-math-line")).toContainText(
-      "$15,000.00 liquid savings"
+    await expect(page.getByTestId("emergency-fund-months")).toContainText(
+      "2.4 months"
     );
-    await expect(page.getByTestId("emergency-fund-math-line")).toContainText(
-      "$6,250.00 average monthly expenses"
+    // Prose, not the retired "liquid savings ÷ average monthly expenses" formula: no raw formula
+    // reaches the screen, and "liquid" is an engineering word.
+    await expect(page.getByTestId("emergency-fund-math-line")).toHaveText(
+      "$15,000.00 in chequing and savings, against $6,250.00 of spending in a typical month."
+    );
+    await expect(page.getByTestId("emergency-fund-math-line")).not.toContainText(
+      "÷"
+    );
+    await expect(page.getByTestId("emergency-fund-math-line")).not.toContainText(
+      "liquid"
     );
 
     const waterfall = page.getByTestId("action-waterfall");
     await expect(waterfall).toBeVisible();
+    await expect(waterfall).toContainText("Your order of operations");
+    await expect(waterfall).not.toContainText("Priority ladder");
     await expect(
       page.getByTestId("waterfall-rung-build_emergency_fund")
     ).toHaveAttribute("data-state", "current");
 
     const savingsPanel = page.getByTestId("savings-capacity-panel");
     await expect(savingsPanel).toBeVisible();
+    await expect(savingsPanel).toContainText("What you're able to save");
+    await expect(savingsPanel).not.toContainText("Savings capacity");
+    // The surplus is the rate figure's caption now, not a separate figure.
     await expect(page.getByTestId("savings-capacity-rate")).toContainText("14%");
-    await expect(page.getByTestId("savings-capacity-surplus")).toContainText(
-      "+$620.00/mo"
+    await expect(page.getByTestId("savings-capacity-rate")).toContainText(
+      "of what you earn — about $620.00 left over in a typical month"
     );
     await expect(page.getByTestId("savings-capacity-trend")).toBeVisible();
+    await expect(
+      savingsPanel.getByRole("heading", { name: "Where you'd find the money" })
+    ).toBeVisible();
+    await expect(savingsPanel).not.toContainText(
+      "Where you could free up capacity"
+    );
     await expect(page.getByTestId("savings-capacity-category-1")).toContainText(
-      "$450.00/mo"
+      "$450.00 / mo"
     );
     await expect(page.getByTestId("savings-capacity-category-2")).toContainText(
-      "$120.00/mo"
+      "$120.00 / mo"
     );
 
-    await expect(page.getByTestId("financial-health-section-disclaimer")).toContainText(
-      "Educational guidance, not professional financial advice."
+    await expect(
+      page.getByTestId("financial-health-section-disclaimer")
+    ).toHaveText(
+      "This isn't financial advice. Nixus points at general categories of account, never at specific investments, and it doesn't know your tax situation."
     );
   });
 
@@ -257,7 +288,7 @@ test.describe("Financial Health — Story 22.4", () => {
     page,
   }) => {
     await setupFinancialHealthMock(page);
-    await page.goto("/net-worth/financial-health");
+    await page.goto("/wealth/where-to-put-your-money");
 
     await expect(
       page.getByTestId("waterfall-rung-build_emergency_fund")
@@ -285,7 +316,7 @@ test.describe("Financial Health — Story 22.4", () => {
     ).toHaveAttribute("data-state", "current");
     await expect(
       page.getByTestId("waterfall-rung-contribute_registered_accounts")
-    ).toContainText("You are here");
+    ).toContainText("You're here");
   });
 
   test("values privacy toggle masks all monetary displays in financial health module", async ({
@@ -294,36 +325,50 @@ test.describe("Financial Health — Story 22.4", () => {
     await setupFinancialHealthMock(page);
     await page.goto("/");
 
-    await expect(page.getByTestId("financial-health-surplus")).toContainText(
-      "+$620.00/mo"
+    await expect(page.getByTestId("financial-health-savings-rate")).toContainText(
+      "$620.00"
     );
 
     await page.getByTestId("toggle-values-button").click();
 
-    await expect(page.getByTestId("financial-health-surplus")).toContainText(
-      `+${MASKED_CURRENCY}/mo`
+    // A figure interpolated into a sentence is masked as the localized phrase, not as a
+    // digit-shaped glyph mask — "about $•••• left over" does not read as prose.
+    await expect(page.getByTestId("financial-health-savings-rate")).toContainText(
+      MASKED_AMOUNT
     );
-    await expect(page.getByTestId("financial-health-surplus")).not.toContainText(
-      "620"
-    );
+    await expect(
+      page.getByTestId("financial-health-savings-rate")
+    ).not.toContainText("620");
 
-    await page.getByTestId("financial-health-card").click();
-    await expect(page).toHaveURL(/\/net-worth\/financial-health/);
+    await page
+      .getByTestId("financial-health-card")
+      .getByRole("button", { name: "See the plan" })
+      .click();
+    await expect(page).toHaveURL(/\/wealth\/where-to-put-your-money/);
 
     const mathLine = page.getByTestId("emergency-fund-math-line");
-    await expect(mathLine).toContainText(MASKED_CURRENCY);
+    await expect(mathLine).toContainText(MASKED_AMOUNT);
     await expect(mathLine).not.toContainText("15,000");
     await expect(mathLine).not.toContainText("6,250");
 
-    await expect(page.getByTestId("savings-capacity-surplus")).toContainText(
-      `+${MASKED_CURRENCY}/mo`
+    await expect(page.getByTestId("savings-capacity-rate")).toContainText(
+      MASKED_AMOUNT
+    );
+    await expect(page.getByTestId("savings-capacity-rate")).not.toContainText(
+      "620"
     );
     await expect(page.getByTestId("savings-capacity-category-1")).toContainText(
-      `${MASKED_CURRENCY}/mo`
+      `${MASKED_AMOUNT} / mo`
     );
+    await expect(
+      page.getByTestId("savings-capacity-category-1")
+    ).not.toContainText("450");
     await expect(page.getByTestId("savings-capacity-category-2")).toContainText(
-      `${MASKED_CURRENCY}/mo`
+      `${MASKED_AMOUNT} / mo`
     );
+    await expect(
+      page.getByTestId("savings-capacity-category-2")
+    ).not.toContainText("120");
 
     await page.getByTestId("emergency-fund-target").click();
     const targetInput = page.getByTestId("emergency-fund-target-input");
@@ -337,7 +382,7 @@ test.describe("Financial Health — Story 22.4", () => {
     await page.getByTestId("waterfall-why-toggle").click();
     const reasoning = page.getByTestId("waterfall-reasoning");
     await expect(reasoning).toBeVisible();
-    await expect(reasoning).toContainText(MASKED_CURRENCY);
+    await expect(reasoning).toContainText(MASKED_AMOUNT);
     await expect(reasoning).not.toContainText("620");
   });
 });

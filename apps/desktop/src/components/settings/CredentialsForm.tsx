@@ -1,11 +1,24 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
-import { Input, Label, Badge } from "@nixus/shared";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+  Badge,
+  Button,
+  Card,
+  Input,
+  Label,
+  Skeleton,
+} from "@nixus/shared";
 import { ProviderSelector } from "./ProviderSelector";
+import { SettingRow } from "./SettingRow";
 import { useAiConfig, useInvalidateAiConfig } from "../../hooks/useAiConfig";
 
 type Status = "idle" | "saving" | "success" | "error" | "testing" | "clearing";
+type Provider = "bedrock" | "openai";
+type FieldName = "accessKey" | "secretKey" | "region" | "apiKey";
 
 interface AppError {
   type?: string;
@@ -15,8 +28,7 @@ interface AppError {
 function getErrorMessage(err: unknown): { type: string; message: string } {
   const e = err as AppError;
   const message =
-    e?.message ??
-    (typeof err === "string" ? err : JSON.stringify(err, null, 2));
+    e?.message ?? (typeof err === "string" ? err : JSON.stringify(err, null, 2));
   return {
     type: e?.type ?? "unknown",
     message: message ?? "An unexpected error occurred",
@@ -28,40 +40,60 @@ export function CredentialsForm() {
   const { data: config, isLoading } = useAiConfig();
   const invalidateAiConfig = useInvalidateAiConfig();
 
-  const [selectedProvider, setSelectedProvider] = useState<"bedrock" | "openai">(
+  const [selectedProvider, setSelectedProvider] = useState<Provider>(
     config?.provider ?? "bedrock"
   );
   const [accessKey, setAccessKey] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [region, setRegion] = useState(config?.region ?? "us-east-1");
   const [apiKey, setApiKey] = useState("");
+  const [touched, setTouched] = useState<Record<FieldName, boolean>>({
+    accessKey: false,
+    secretKey: false,
+    region: false,
+    apiKey: false,
+  });
 
   const [status, setStatus] = useState<Status>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [rawError, setRawError] = useState<unknown>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
+  const [tested, setTested] = useState(false);
 
   if (isLoading) {
     return (
-      <div className="text-sm text-muted-foreground">{t("common.loading", "Loading...")}</div>
+      <Card>
+        <Skeleton rows={4} className="px-card-pad" />
+      </Card>
     );
   }
 
   const isConfigured = config?.configured ?? false;
   const activeProvider = config?.provider ?? selectedProvider;
 
-  const handleProviderChange = (v: "bedrock" | "openai") => {
+  const markTouched = (field: FieldName) =>
+    setTouched((prev) => ({ ...prev, [field]: true }));
+
+  const handleProviderChange = (v: Provider) => {
     setSelectedProvider(v);
     setStatusMessage(null);
     setStatus("idle");
   };
 
-  const canSaveBedrock = accessKey.trim() !== "" && secretKey.trim() !== "" && region.trim() !== "";
-  const canSaveOpenAI = apiKey.trim() !== "";
+  const errors = {
+    accessKey: accessKey.trim() === "",
+    secretKey: secretKey.trim() === "",
+    region: region.trim() === "",
+    apiKey: apiKey.trim() === "",
+  };
   const canSave =
-    selectedProvider === "bedrock" ? canSaveBedrock : canSaveOpenAI;
+    selectedProvider === "bedrock"
+      ? !errors.accessKey && !errors.secretKey && !errors.region
+      : !errors.apiKey;
+  const busy = status === "saving" || status === "clearing" || status === "testing";
 
   const handleSave = async () => {
+    setTouched({ accessKey: true, secretKey: true, region: true, apiKey: true });
     setStatus("saving");
     setStatusMessage(null);
     setRawError(null);
@@ -77,20 +109,19 @@ export function CredentialsForm() {
       }
       await invalidateAiConfig();
       setStatus("success");
-      setStatusMessage(t("settings.saveSuccess", "Credentials saved and verified."));
-      // Reset form fields
+      setTested(false);
+      setStatusMessage(t("settings.saveSuccess"));
       setAccessKey("");
       setSecretKey("");
       setApiKey("");
+      setTouched({ accessKey: false, secretKey: false, region: false, apiKey: false });
     } catch (err: unknown) {
       const { type, message } = getErrorMessage(err);
       setStatus("error");
       setRawError(err);
-      if (type === "invalid_credentials") {
-        setStatusMessage(t("settings.invalidCredentials", "Credentials are invalid. Please check and try again."));
-      } else {
-        setStatusMessage(message);
-      }
+      setStatusMessage(
+        type === "invalid_credentials" ? t("settings.invalidCredentials") : message
+      );
     }
   };
 
@@ -98,24 +129,23 @@ export function CredentialsForm() {
     setStatus("testing");
     setStatusMessage(null);
     try {
-      const result = await invoke<{ status: string; provider: string }>("test_ai_connection");
-      setStatus("success");
-      setStatusMessage(
-        t("settings.testSuccess", "Connection successful ({{provider}}).", {
-          provider: result.provider,
-        })
+      const result = await invoke<{ status: string; provider: string }>(
+        "test_ai_connection"
       );
+      setStatus("success");
+      setTested(true);
+      setStatusMessage(t("settings.testSuccess", { provider: result.provider }));
     } catch (err: unknown) {
       const { type, message } = getErrorMessage(err);
       setStatus("error");
       setRawError(err);
-      if (type === "unavailable") {
-        setStatusMessage(t("settings.testUnavailable", "AI service is unreachable. Check your network and credentials."));
-      } else if (type === "not_configured") {
-        setStatusMessage(t("settings.notConfigured", "AI is not configured yet."));
-      } else {
-        setStatusMessage(message);
-      }
+      setStatusMessage(
+        type === "unavailable"
+          ? t("settings.testUnavailable")
+          : type === "not_configured"
+            ? t("settings.notConfigured")
+            : message
+      );
     }
   };
 
@@ -127,7 +157,8 @@ export function CredentialsForm() {
       await invoke("clear_ai_credentials");
       await invalidateAiConfig();
       setStatus("idle");
-      setStatusMessage(t("settings.credentialsCleared", "Credentials cleared."));
+      setTested(false);
+      setStatusMessage(t("settings.credentialsCleared"));
     } catch (err: unknown) {
       const { message } = getErrorMessage(err);
       setStatus("error");
@@ -136,170 +167,251 @@ export function CredentialsForm() {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Provider selection — always visible when not configured */}
-      {!isConfigured && (
-        <div className="space-y-3">
-          <Label>{t("settings.selectProvider", "Select AI Provider")}</Label>
+    <div className="space-y-3">
+      <Card flush>
+        <SettingRow
+          title={t("settings.providerLegend")}
+          description={t("settings.providerDescription")}
+        />
+        <div className="px-card-pad pb-3.5">
           <ProviderSelector value={selectedProvider} onChange={handleProviderChange} />
         </div>
-      )}
 
-      {/* Current configuration status */}
-      {isConfigured && (
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4">
-          <div className="flex-1">
-            <p className="text-sm font-medium">
-              {activeProvider === "bedrock" ? "AWS Bedrock" : "OpenAI"}
-            </p>
-            {activeProvider === "bedrock" && config?.region && (
-              <p className="text-xs text-muted-foreground">{t("settings.region", "Region")}: {config.region}</p>
+        {isConfigured && (
+          <SettingRow
+            title={t("settings.connectionTitle")}
+            description={
+              tested ? t("settings.connectionChecked") : t("settings.connectionUnchecked")
+            }
+            control={
+              <span className="flex items-center gap-2">
+                <Badge variant={tested ? "good" : "neutral"}>
+                  {tested ? t("settings.connected") : activeProvider}
+                </Badge>
+                <Button
+                  variant="outline"
+                  onClick={handleTest}
+                  disabled={busy}
+                  aria-disabled={busy || undefined}
+                  data-testid="credentials-test"
+                >
+                  {status === "testing" ? t("settings.testing") : t("settings.testAgain")}
+                </Button>
+              </span>
+            }
+            data-testid="setting-connection"
+          />
+        )}
+      </Card>
+
+      <Card>
+        <div className="space-y-3 px-card-pad">
+          <h4 className="text-h3 text-ink">
+            {isConfigured
+              ? t("settings.updateCredentials")
+              : t("settings.enterCredentials")}
+          </h4>
+
+          {selectedProvider === "bedrock" ? (
+            <>
+              <Field
+                id="access-key"
+                label={t("settings.accessKeyId")}
+                hint={t("settings.keychainNote")}
+                error={touched.accessKey && errors.accessKey ? t("settings.accessKeyRequired") : null}
+              >
+                <Input
+                  id="access-key"
+                  type="text"
+                  placeholder={isConfigured ? "••••••••" : t("settings.accessKeyPlaceholder")}
+                  value={accessKey}
+                  required
+                  aria-required="true"
+                  aria-invalid={(touched.accessKey && errors.accessKey) || undefined}
+                  aria-describedby="access-key-hint access-key-error"
+                  autoComplete="off"
+                  onBlur={() => markTouched("accessKey")}
+                  onChange={(e) => setAccessKey(e.target.value)}
+                />
+              </Field>
+              <Field
+                id="secret-key"
+                label={t("settings.secretAccessKey")}
+                hint={t("settings.secretKeyNote")}
+                error={touched.secretKey && errors.secretKey ? t("settings.secretKeyRequired") : null}
+              >
+                <Input
+                  id="secret-key"
+                  type="password"
+                  placeholder={isConfigured ? "••••••••" : t("settings.secretKeyPlaceholder")}
+                  value={secretKey}
+                  required
+                  aria-required="true"
+                  aria-invalid={(touched.secretKey && errors.secretKey) || undefined}
+                  aria-describedby="secret-key-hint secret-key-error"
+                  autoComplete="off"
+                  onBlur={() => markTouched("secretKey")}
+                  onChange={(e) => setSecretKey(e.target.value)}
+                />
+              </Field>
+              <Field
+                id="region"
+                label={t("settings.region")}
+                hint={t("settings.regionNote")}
+                error={touched.region && errors.region ? t("settings.regionRequired") : null}
+              >
+                <Input
+                  id="region"
+                  type="text"
+                  placeholder="ca-central-1"
+                  value={region}
+                  required
+                  aria-required="true"
+                  aria-invalid={(touched.region && errors.region) || undefined}
+                  aria-describedby="region-hint region-error"
+                  onBlur={() => markTouched("region")}
+                  onChange={(e) => setRegion(e.target.value)}
+                />
+              </Field>
+            </>
+          ) : (
+            <Field
+              id="api-key"
+              label={t("settings.apiKey")}
+              hint={t("settings.keychainNote")}
+              error={touched.apiKey && errors.apiKey ? t("settings.apiKeyRequired") : null}
+            >
+              <Input
+                id="api-key"
+                type="password"
+                placeholder={isConfigured ? "••••••••" : "sk-..."}
+                value={apiKey}
+                required
+                aria-required="true"
+                aria-invalid={(touched.apiKey && errors.apiKey) || undefined}
+                aria-describedby="api-key-hint api-key-error"
+                autoComplete="off"
+                onBlur={() => markTouched("apiKey")}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </Field>
+          )}
+
+          {statusMessage !== null && (
+            <Alert variant={status === "error" ? "over" : "info"}>
+              <AlertDescription className={status === "error" ? "text-ink" : undefined}>
+                {statusMessage}
+              </AlertDescription>
+              {status === "error" && rawError !== null && (
+                <pre className="mt-2 max-h-40 overflow-auto rounded-sm bg-track p-2 text-caption whitespace-pre-wrap text-ink-dim">
+                  {typeof rawError === "string"
+                    ? rawError
+                    : JSON.stringify(rawError, null, 2)}
+                </pre>
+              )}
+            </Alert>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={handleSave}
+              disabled={!canSave || busy}
+              aria-disabled={!canSave || busy || undefined}
+              aria-describedby={!canSave ? "credentials-save-blocked" : undefined}
+              data-testid="credentials-save"
+            >
+              {status === "saving" ? t("settings.saving") : t("settings.saveCredentials")}
+            </Button>
+            {!canSave && (
+              <p id="credentials-save-blocked" className="text-caption text-ink-dim">
+                {selectedProvider === "bedrock"
+                  ? t("settings.accessKeyRequired")
+                  : t("settings.apiKeyRequired")}
+              </p>
             )}
           </div>
-          <Badge variant="default" className="bg-emerald-500/20 text-emerald-600 border-emerald-500/30 hover:bg-emerald-500/20">
-            {t("settings.connected", "Connected")}
-          </Badge>
         </div>
-      )}
+      </Card>
 
-      {/* Credential input fields */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-foreground">
-          {isConfigured
-            ? t("settings.updateCredentials", "Update Credentials")
-            : t("settings.enterCredentials", "Enter Credentials")}
-        </h3>
-
-        {/* Provider selector when reconfiguring */}
-        {isConfigured && (
-          <div className="space-y-3">
-            <Label>{t("settings.selectProvider", "Select AI Provider")}</Label>
-            <ProviderSelector value={selectedProvider} onChange={handleProviderChange} />
-          </div>
-        )}
-
-        {selectedProvider === "bedrock" ? (
-          <div className="space-y-3">
-            <div>
-              <Label htmlFor="access-key">{t("settings.accessKeyId", "Access Key ID")}</Label>
-              <Input
-                id="access-key"
-                type="text"
-                placeholder={isConfigured ? "••••••••" : t("settings.accessKeyPlaceholder", "AKIA...")}
-                value={accessKey}
-                onChange={(e) => setAccessKey(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
-            <div>
-              <Label htmlFor="secret-key">{t("settings.secretAccessKey", "Secret Access Key")}</Label>
-              <Input
-                id="secret-key"
-                type="password"
-                placeholder={isConfigured ? "••••••••" : t("settings.secretKeyPlaceholder", "Enter secret key")}
-                value={secretKey}
-                onChange={(e) => setSecretKey(e.target.value)}
-                autoComplete="off"
-              />
-            </div>
-            <div>
-              <Label htmlFor="region">{t("settings.region", "Region")}</Label>
-              <Input
-                id="region"
-                type="text"
-                placeholder="us-east-1"
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-              />
-            </div>
-          </div>
-        ) : (
-          <div>
-            <Label htmlFor="api-key">{t("settings.apiKey", "API Key")}</Label>
-            <Input
-              id="api-key"
-              type="password"
-              placeholder={isConfigured ? "••••••••" : "sk-..."}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              autoComplete="off"
+      {isConfigured && (
+        <Card flush>
+          {confirmingClear ? (
+            <Alert variant="caution" data-testid="credentials-clear-confirm">
+              <AlertTitle>{t("settings.confirmClear")}</AlertTitle>
+              <AlertDescription className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleClearConfirm}
+                  data-testid="credentials-clear-confirm-button"
+                >
+                  {t("common.confirm")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setConfirmingClear(false)}
+                >
+                  {t("common.cancel")}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <SettingRow
+              title={t("settings.clearCredentials")}
+              control={
+                <Button
+                  variant="outline"
+                  onClick={() => setConfirmingClear(true)}
+                  disabled={busy}
+                  aria-disabled={busy || undefined}
+                  data-testid="credentials-clear"
+                >
+                  {status === "clearing"
+                    ? t("settings.clearing")
+                    : t("settings.clearCredentials")}
+                </Button>
+              }
+              data-testid="setting-clear-credentials"
             />
-          </div>
-        )}
-      </div>
-
-      {/* Status message */}
-      {statusMessage && (
-        <p
-          className={
-            status === "error"
-              ? "text-sm text-destructive"
-              : "text-sm text-emerald-600 dark:text-emerald-400"
-          }
-        >
-          {statusMessage}
-        </p>
+          )}
+        </Card>
       )}
-      {status === "error" && rawError !== null && (
-        <pre className="rounded bg-muted p-3 text-xs text-muted-foreground overflow-auto max-h-40 whitespace-pre-wrap">
-          {typeof rawError === "string" ? rawError : JSON.stringify(rawError, null, 2)}
-        </pre>
-      )}
+    </div>
+  );
+}
 
-      {/* Actions */}
-      <div className="flex flex-wrap gap-3">
-        <button
-          onClick={handleSave}
-          disabled={!canSave || status === "saving" || status === "clearing"}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-        >
-          {status === "saving"
-            ? t("settings.saving", "Saving...")
-            : t("settings.saveCredentials", "Save Credentials")}
-        </button>
-
-        {isConfigured && (
-          <button
-            onClick={handleTest}
-            disabled={status === "testing" || status === "saving" || status === "clearing"}
-            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
-          >
-            {status === "testing"
-              ? t("settings.testing", "Testing...")
-              : t("settings.testConnection", "Test Connection")}
-          </button>
-        )}
-
-        {isConfigured && !confirmingClear && (
-          <button
-            onClick={() => setConfirmingClear(true)}
-            disabled={status === "saving" || status === "clearing"}
-            className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/5 disabled:opacity-50"
-          >
-            {t("settings.clearCredentials", "Clear Credentials")}
-          </button>
-        )}
-
-        {confirmingClear && (
-          <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">
-              {t("settings.confirmClear", "Remove stored credentials?")}
-            </span>
-            <button
-              onClick={handleClearConfirm}
-              className="rounded-md bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground"
-            >
-              {t("common.confirm")}
-            </button>
-            <button
-              onClick={() => setConfirmingClear(false)}
-              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium"
-            >
-              {t("common.cancel")}
-            </button>
-          </div>
-        )}
-      </div>
+// Required marker plus validate-on-blur in one place: submit-only validation with no markers is a
+// banned pattern, and it is the pattern every sampled form in this app used.
+function Field({
+  id,
+  label,
+  hint,
+  error,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  error: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} required>
+        {label}
+      </Label>
+      {children}
+      <p id={`${id}-hint`} className="text-caption text-ink-dim">
+        {hint}
+      </p>
+      <p
+        id={`${id}-error`}
+        className="text-caption text-over-ink empty:hidden"
+        role={error === null ? undefined : "alert"}
+      >
+        {error}
+      </p>
     </div>
   );
 }

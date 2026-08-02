@@ -47,7 +47,11 @@ export function useTrendsInsight({
   const debouncedWindowLabel = useDebouncedValue(windowLabel, DEBOUNCE_MS);
   const debouncedCategories = useDebouncedValue(categoryCompare, DEBOUNCE_MS);
 
-  const enabled = gatePassed && aiConfigured;
+  // The request body carries the debounced categories, so the gate must be evaluated on that same
+  // snapshot. Gating on the live array fires the first request with the still-empty debounced
+  // value, which the backend rejects with "No category compare data provided".
+  const debouncedGatePassed = useInsightGate(debouncedCategories);
+  const enabled = gatePassed && debouncedGatePassed && aiConfigured;
 
   return useQuery({
     queryKey: queryKeys.trendsInsight(debouncedMonths, debouncedLocale),

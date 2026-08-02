@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus } from "lucide-react";
+import { MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
+  Card,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  EmptyState,
   SlideOver,
   Tabs,
   TabsContent,
@@ -24,7 +30,7 @@ import { ServiceHistoryTable } from "@/components/maintenance/ServiceHistoryTabl
 import { useDeleteVehicle } from "@/hooks/useMaintenance";
 import {
   formatVehicleDisplayName,
-  formatVehicleMakeModel,
+  formatVehicleSubtitle,
   sortMaintenanceTasks,
 } from "@/lib/maintenanceUtils";
 import type { VehicleWithTasks } from "@/lib/types";
@@ -76,7 +82,7 @@ export function VehicleDetailPanel({
   }, [vehicle.id, defaultTab]);
 
   const displayName = formatVehicleDisplayName(vehicle);
-  const makeModel = formatVehicleMakeModel(vehicle);
+  const subtitle = formatVehicleSubtitle(vehicle);
 
   const handleDelete = () => {
     deleteVehicle.mutate(vehicle.id, {
@@ -89,16 +95,13 @@ export function VehicleDetailPanel({
 
   return (
     <>
-      <div
-        className="flex min-h-0 flex-col rounded-lg border border-border bg-card shadow-sm"
-        data-testid="vehicle-detail-panel"
-      >
-        <div className="border-b border-border px-4 py-3 sm:px-5">
+      <Card flush className="min-h-0" data-testid="vehicle-detail-panel">
+        <div className="border-b border-line px-card-pad py-3">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-semibold text-foreground">{displayName}</h2>
-              {makeModel && (
-                <p className="mt-0.5 text-sm text-muted-foreground">{makeModel}</p>
+              <h2 className="text-h2 text-ink">{displayName}</h2>
+              {subtitle && (
+                <p className="mt-0.5 text-caption text-ink-dim">{subtitle}</p>
               )}
               <div className="mt-2">
                 <OdometerUpdateForm
@@ -118,7 +121,7 @@ export function VehicleDetailPanel({
                 onClick={() => setCustomLogOpen(true)}
                 data-testid="log-custom-service-button"
               >
-                <Plus className="h-4 w-4 mr-1" />
+                <Plus aria-hidden="true" />
                 {t("maintenance.customService.add")}
               </Button>
               <Button
@@ -130,26 +133,45 @@ export function VehicleDetailPanel({
               >
                 {t("maintenance.editVehicle")}
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10"
-                onClick={() => setDeleteOpen(true)}
-                data-testid="delete-vehicle-button"
-              >
-                {t("maintenance.deleteVehicle")}
-              </Button>
+              {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive
+                  action is never a peer of an ordinary one in the same row. */}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={t("maintenance.detail.vehicleActions", {
+                        vehicle: displayName,
+                      })}
+                      data-testid="vehicle-detail-menu"
+                    />
+                  }
+                >
+                  <MoreHorizontal aria-hidden="true" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => setDeleteOpen(true)}
+                    data-testid="delete-vehicle-button"
+                  >
+                    <Trash2 aria-hidden="true" />
+                    {t("maintenance.deleteVehicle")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 p-4 sm:p-5">
+        <div className="flex-1 p-card-pad">
           <Tabs
             value={activeTab}
             onValueChange={(value) => setActiveTab(value as DetailTab)}
           >
-            <TabsList className="w-full flex-wrap h-auto gap-1">
+            <TabsList className="h-auto w-full flex-wrap">
               <TabsTrigger
                 value="needs-attention"
                 data-testid="detail-tab-needs-attention"
@@ -166,12 +188,13 @@ export function VehicleDetailPanel({
 
             <TabsContent value="needs-attention" className="mt-4">
               {sortedAttentionTasks.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  {t("maintenance.garage.allOnTrack")}
-                </p>
+                <EmptyState
+                  title={t("maintenance.garage.allOnTrack")}
+                  description={t("maintenance.garage.allOnTrackHelper")}
+                />
               ) : (
                 <div
-                  className="rounded-lg border border-border overflow-hidden"
+                  className="overflow-hidden rounded-lg border border-line"
                   data-testid="vehicle-detail-tasks"
                 >
                   {sortedAttentionTasks.map((task) => (
@@ -186,32 +209,39 @@ export function VehicleDetailPanel({
               )}
             </TabsContent>
 
-            <TabsContent value="all-tasks" className="mt-4 space-y-3">
+            <TabsContent
+              value="all-tasks"
+              className="mt-4 flex flex-col gap-grid-gap"
+            >
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-muted-foreground">
-                  {tasks.length === 0
-                    ? t("maintenance.schedule.empty")
-                    : t("maintenance.schedule.summary", { count: tasks.length })}
-                </p>
+                {/* Count only: when empty, the EmptyState below is what says so. */}
+                {tasks.length > 0 && (
+                  <p className="text-caption text-ink-dim">
+                    {t("maintenance.schedule.summary", { count: tasks.length })}
+                  </p>
+                )}
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="ml-auto"
                   onClick={() => setAddScheduleOpen(true)}
                   data-testid="add-schedule-task-button"
                 >
-                  <Plus className="h-4 w-4 mr-1" />
+                  <Plus aria-hidden="true" />
                   {t("maintenance.schedule.addService")}
                 </Button>
               </div>
 
               {sortedAllTasks.length === 0 ? (
-                <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border px-4 py-6 text-center">
-                  {t("maintenance.schedule.emptyHint")}
-                </p>
+                // No action: the Add service button above is already the one.
+                <EmptyState
+                  title={t("maintenance.schedule.empty")}
+                  description={t("maintenance.schedule.emptyHint")}
+                />
               ) : (
                 <div
-                  className="rounded-lg border border-border overflow-hidden"
+                  className="overflow-hidden rounded-lg border border-line"
                   data-testid="vehicle-schedule-tasks"
                 >
                   {sortedAllTasks.map((task) => (
@@ -226,15 +256,16 @@ export function VehicleDetailPanel({
               )}
             </TabsContent>
 
-            <TabsContent value="history" className="mt-4 space-y-4">
+            <TabsContent value="history" className="mt-4">
               <ServiceHistoryTable
                 vehicleId={vehicle.id}
                 enabled={activeTab === "history"}
+                onLogService={() => setCustomLogOpen(true)}
               />
             </TabsContent>
           </Tabs>
         </div>
-      </div>
+      </Card>
 
       <AddScheduleTaskDialog
         open={addScheduleOpen}
@@ -247,6 +278,7 @@ export function VehicleDetailPanel({
         open={editOpen}
         onClose={() => setEditOpen(false)}
         title={t("maintenance.editVehicle")}
+        description={t("maintenance.editVehicleDescription")}
         data-testid="edit-vehicle-slide-over"
       >
         <EditVehicleForm vehicle={vehicle} onClose={() => setEditOpen(false)} />
@@ -256,6 +288,7 @@ export function VehicleDetailPanel({
         open={customLogOpen}
         onClose={() => setCustomLogOpen(false)}
         title={t("maintenance.customService.title")}
+        description={t("maintenance.customService.description")}
         data-testid="log-custom-service-slide-over"
       >
         <LogCustomServiceForm

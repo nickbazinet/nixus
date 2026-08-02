@@ -26,9 +26,19 @@ async function setupTauriMock(page: Page) {
       created_at: string;
     }
 
+    // Unlisten cleanup calls into this namespace; without it teardown throws.
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ =
+      { unregisterListener: () => {} };
+
     // Mock the Tauri IPC internals
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        // Plugin commands (updater, etc.) must resolve null: a truthy updater
+        // response opens a modal Dialog that aria-hides the whole app.
+        if (cmd.startsWith("plugin:")) {
+          return Promise.resolve(null);
+        }
         switch (cmd) {
           case "get_budget_groups":
             return Promise.resolve(groups);
@@ -194,6 +204,25 @@ async function setupTauriMock(page: Page) {
             );
           }
 
+          case "get_budget_summary": {
+            const totalTarget = categories.reduce(
+              (sum, c) => sum + c.target_cents,
+              0
+            );
+            return Promise.resolve({
+              total_target_cents: totalTarget,
+              total_spent_cents: 0,
+              remaining_cents: totalTarget,
+              month: `${args.year}-${String(args.month).padStart(2, "0")}`,
+            });
+          }
+
+          case "get_all_budget_categories":
+            return Promise.resolve([...categories]);
+
+          case "get_accounts":
+            return Promise.resolve([]);
+
           case "get_db_status":
             return Promise.resolve({
               db_path: "mock.db",
@@ -216,7 +245,7 @@ async function setupTauriMock(page: Page) {
 test.describe("Budget Page", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/budget");
+    await page.goto("/spending/budget");
   });
 
   test("user can create a budget group and see it appear on the page", async ({
@@ -235,7 +264,7 @@ test.describe("Budget Page", () => {
     await expect(page.getByRole("heading", { name: "Essentials" })).toBeVisible();
 
     // Verify success toast
-    await expect(page.getByText('Group "Essentials" created')).toBeVisible();
+    await expect(page.getByText('"Essentials" created')).toBeVisible();
   });
 
   test("user can add a category with a dollar target to a group", async ({
@@ -265,10 +294,10 @@ test.describe("Budget Page", () => {
     ).toBeVisible();
 
     // Verify success toast
-    await expect(page.getByText('Category "Housing" added')).toBeVisible();
+    await expect(page.getByText('"Housing" added')).toBeVisible();
   });
 
-  test("category displays with formatted target amount in monospace", async ({
+  test("category target renders as tabular figures, never a code font", async ({
     page,
   }) => {
     // Create a group
@@ -289,11 +318,18 @@ test.describe("Budget Page", () => {
     const amountEl = page.getByTestId("category-target");
     await expect(amountEl).toContainText("$1,234.56");
 
-    // Verify monospace font
-    const fontFamily = await amountEl.evaluate(
-      (el) => getComputedStyle(el).fontFamily
-    );
-    expect(fontFamily.toLowerCase()).toContain("jetbrains mono");
+    // Tabular figures buy the column alignment monospace was used for, without putting a code font
+    // on a financial figure.
+    const figure = amountEl.locator('[data-slot="money"]');
+    const { fontFamily, fontVariantNumeric } = await figure.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        fontFamily: style.fontFamily,
+        fontVariantNumeric: style.fontVariantNumeric,
+      };
+    });
+    expect(fontVariantNumeric).toContain("tabular-nums");
+    expect(fontFamily.toLowerCase()).not.toContain("mono");
   });
 
   test("form validation prevents saving without a group name", async ({
@@ -341,7 +377,7 @@ test.describe("Budget Page", () => {
     await page.getByRole("button", { name: "Save Group" }).click();
 
     // Toast should appear and auto-dismiss
-    const toastMessage = page.getByText('Group "Fun Money" created');
+    const toastMessage = page.getByText('"Fun Money" created');
     await expect(toastMessage).toBeVisible();
   });
 
@@ -402,7 +438,7 @@ test.describe("Budget Page", () => {
     await moneyInput.press("Enter");
 
     // Verify success toast
-    await expect(page.getByText("Budget target updated to $800.00")).toBeVisible();
+    await expect(page.getByText("Target is now $800.00")).toBeVisible();
   });
 
   test("pressing Escape on edited target reverts without saving", async ({
@@ -436,10 +472,10 @@ test.describe("Budget Page", () => {
     await expect(page.getByTestId("category-target")).toContainText("$700.00");
 
     // No success toast should appear
-    await expect(page.getByText("Budget target updated")).not.toBeVisible();
+    await expect(page.getByText("Target is now")).not.toBeVisible();
   });
 
-  test("deleting a category shows confirmation dialog; confirming removes it", async ({
+  test("deleting a category shows an archive confirmation dialog; confirming archives it", async ({
     page,
   }) => {
     // Create a group and category
@@ -458,21 +494,28 @@ test.describe("Budget Page", () => {
       page.getByTestId("budget-category-row").getByText("Housing")
     ).toBeVisible();
 
-    // Hover to reveal delete button, then click it
-    await page.getByTestId("budget-category-row").hover();
-    await page.getByTestId("delete-category-button").click();
+    // Hover-only affordances are banned: the delete control has a visible resting state, so it is
+    // reachable without a pointer ever entering the row.
+    const deleteButton = page.getByTestId("delete-category-button");
+    await expect(deleteButton).toBeVisible();
+    await deleteButton.click();
 
-    // Confirmation dialog should appear
-    await expect(page.getByTestId("delete-category-dialog")).toBeVisible();
-    await expect(
-      page.getByText("Are you sure you want to delete Housing?")
-    ).toBeVisible();
+    // Confirmation dialog states what happens to the expenses already filed under the category,
+    // because the backend soft-deletes and leaves them attached.
+    const dialog = page.getByTestId("delete-category-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('"Housing" will be archived.');
+    await expect(dialog).toContainText(
+      "The expenses already filed under it stay on record"
+    );
 
-    // Confirm deletion
-    await page.getByTestId("confirm-delete-button").click();
+    // Confirm — the label names the action rather than saying "Delete"
+    const confirm = dialog.getByTestId("confirm-delete-button");
+    await expect(confirm).toHaveText("Archive category");
+    await confirm.click();
 
     // Success toast
-    await expect(page.getByText("Category deleted")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("Category archived")).toBeVisible();
 
     // Category row should be gone
     await expect(page.getByTestId("budget-category-row")).not.toBeVisible();
@@ -512,7 +555,7 @@ test.describe("Budget Page", () => {
     await expect(progressBar).toHaveAttribute("role", "progressbar");
   });
 
-  test("with no expenses, progress bar shows 0% and teal color", async ({
+  test("with no expenses, the meter reads zero and status lives beside it", async ({
     page,
   }) => {
     // Create a group and category
@@ -528,26 +571,45 @@ test.describe("Budget Page", () => {
     await page.getByLabel("Monthly Target").fill("700");
     await page.getByRole("button", { name: "Save Category" }).click();
 
-    // Wait for progress bar container to appear
-    const progressBar = page.getByTestId("progress-bar");
-    await expect(progressBar).toBeVisible();
-
-    // Check the fill element has 0% width and teal color
-    const progressBarFill = page.getByTestId("progress-bar-fill");
-    await expect(progressBarFill).toBeAttached();
-
-    const width = await progressBarFill.evaluate(
-      (el) => el.style.width
+    // A Meter must expose a label and a spoken value, not a bare percentage.
+    const meter = page.getByTestId("progress-bar");
+    await expect(meter).toBeVisible();
+    await expect(meter).toHaveRole("progressbar");
+    await expect(meter).toHaveAttribute("aria-label", "Share of Housing spent");
+    await expect(meter).toHaveAttribute("aria-valuenow", "0");
+    await expect(meter).toHaveAttribute("aria-valuemin", "0");
+    await expect(meter).toHaveAttribute("aria-valuemax", "70000");
+    await expect(meter).toHaveAttribute(
+      "aria-valuetext",
+      "$0.00 spent of $700.00"
     );
-    expect(width).toBe("0%");
 
-    const classList = await progressBarFill.evaluate((el) =>
-      Array.from(el.classList)
+    const fill = meter.locator('[data-slot="meter-fill"]');
+    await expect(fill).toBeAttached();
+    expect(await fill.evaluate((el) => (el as HTMLElement).style.width)).toBe("0%");
+
+    // The meter fill is brand at every ratio: hue on the bar would be a second, weaker status
+    // channel. Status is the badge and the dot next to it, which carry shape as well as hue.
+    const [fillColor, brandColor] = await fill.evaluate((el) => {
+      const probe = document.createElement("div");
+      probe.className = "bg-brand";
+      el.ownerDocument.body.append(probe);
+      const brand = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return [getComputedStyle(el).backgroundColor, brand];
+    });
+    expect(fillColor).toBe(brandColor);
+
+    await expect(page.getByTestId("status-badge")).toHaveAttribute(
+      "data-variant",
+      "good"
     );
-    expect(classList).toContain("bg-teal-600");
+    await expect(
+      page.locator('[data-slot="status-dot"]')
+    ).toHaveAttribute("data-status", "under");
   });
 
-  test("spent / target text shows $0.00 with no expenses", async ({
+  test("spent / target reads as a slash on screen and \"of\" to a screen reader", async ({
     page,
   }) => {
     // Create a group and category
@@ -566,16 +628,39 @@ test.describe("Budget Page", () => {
     // Wait for the status display
     const spentTarget = page.getByTestId("spent-target");
     await expect(spentTarget).toBeVisible();
-    await expect(spentTarget).toContainText("$0.00 / $700.00");
 
-    // Verify monospace font
-    const fontFamily = await spentTarget.evaluate(
-      (el) => getComputedStyle(el).fontFamily
-    );
-    expect(fontFamily.toLowerCase()).toContain("mono");
+    // The separator is split across two channels: a sighted reader gets the "/" glyph, a screen
+    // reader gets the word, and neither gets both. Asserting raw textContent would see the pair.
+    const { seen, spoken } = await spentTarget.evaluate((el) => {
+      const strip = (selector: string) => {
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll(selector).forEach((node) => node.remove());
+        return (clone.textContent ?? "").replace(/\s+/g, " ").trim();
+      };
+      return { seen: strip(".sr-only"), spoken: strip('[aria-hidden="true"]') };
+    });
+    expect(seen).toBe("$0.00 / $700.00");
+    expect(spoken).toBe("$0.00 of $700.00");
+
+    // Money is tabular Inter — monospace on a financial figure was the retired convention.
+    const figures = spentTarget.locator('[data-slot="money"]');
+    await expect(figures).toHaveCount(2);
+    for (const figure of await figures.all()) {
+      const { fontFamily, fontVariantNumeric } = await figure.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          fontFamily: style.fontFamily,
+          fontVariantNumeric: style.fontVariantNumeric,
+        };
+      });
+      expect(fontVariantNumeric).toContain("tabular-nums");
+      expect(fontFamily.toLowerCase()).not.toContain("mono");
+    }
   });
 
-  test("status badge shows 'on track' with no expenses", async ({ page }) => {
+  test("status badge names the amount still unspent, never a bare adjective", async ({
+    page,
+  }) => {
     // Create a group and category
     await page.getByTestId("add-group-button").click();
     await page.getByLabel("Group Name").fill("Essentials");
@@ -589,10 +674,13 @@ test.describe("Budget Page", () => {
     await page.getByLabel("Monthly Target").fill("700");
     await page.getByRole("button", { name: "Save Category" }).click();
 
-    // Wait for the status badge
+    // A badge reading "on track" or "Warning" told the user nothing they could act on, and the
+    // ≥75% "Warning" rule badged a mortgage at exactly its target as a problem. Under target now
+    // states the figure left; the tone carries the judgement.
     const badge = page.getByTestId("status-badge");
     await expect(badge).toBeVisible();
-    await expect(badge).toContainText("on track");
+    await expect(badge).toHaveText("$700.00 left");
+    await expect(badge).toHaveAttribute("data-variant", "good");
   });
 
   test("month navigation arrows are visible", async ({ page }) => {

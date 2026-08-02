@@ -14,8 +14,20 @@ async function setupTauriMock(page: Page) {
     const assets: MockAsset[] = [];
     let nextAssetId = 1;
 
+    // unlisten() reaches into the event plugin's own internals object on cleanup.
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ =
+      { unregisterListener: () => {} };
+
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      // Real Tauri exposes this; event.listen() calls it, and without it every listener throws.
+      transformCallback: (cb: unknown) => {
+        const id = Math.floor(Math.random() * 1e9);
+        (window as unknown as Record<string, unknown>)[`_${id}`] = cb;
+        return id;
+      },
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        // A truthy updater answer opens an always-modal dialog that aria-hidden()s the whole app.
+        if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
           case "get_assets":
             return Promise.resolve(
@@ -126,7 +138,7 @@ async function setupTauriMock(page: Page) {
 async function createAsset(
   page: Page,
   name: string,
-  typeLabel = "Real Estate",
+  typeLabel = "Real estate",
   value = "450000"
 ) {
   await page.getByTestId("add-asset-button").click();
@@ -134,16 +146,20 @@ async function createAsset(
   await form.getByLabel("Name").fill(name);
   await form.getByLabel("Type").click();
   await page.getByRole("option", { name: typeLabel }).click();
-  await form.getByLabel("Estimated Value").fill(value);
-  await page.getByRole("button", { name: "Save Asset" }).click();
+  await form.getByLabel("What it's worth").fill(value);
+  await page.getByRole("button", { name: "Save asset" }).click();
   await expect(page.getByTestId("asset-slide-over")).not.toBeVisible();
   await expect(page.getByTestId("asset-row").filter({ hasText: name })).toBeVisible();
+}
+
+async function openRowMenu(page: Page) {
+  await page.getByTestId("asset-row-menu").click();
 }
 
 test.describe("Assets Page", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/assets");
+    await page.goto("/wealth/assets");
   });
 
   test("displays page header with Add Asset button", async ({ page }) => {
@@ -152,7 +168,7 @@ test.describe("Assets Page", () => {
     ).toBeVisible();
     await expect(page.getByTestId("add-asset-button")).toBeVisible();
     await expect(page.getByTestId("add-asset-button")).toContainText(
-      "Add Asset"
+      "Add an asset"
     );
     await expect(page.getByTestId("view-net-worth-button")).toBeVisible();
   });
@@ -160,17 +176,22 @@ test.describe("Assets Page", () => {
   test("shows empty state when no assets exist", async ({ page }) => {
     const emptyState = page.getByTestId("assets-empty-state");
     await expect(emptyState).toBeVisible();
-    await expect(emptyState).toContainText("No passive assets yet");
+    await expect(emptyState).toContainText("Nothing here yet");
     await expect(emptyState).toContainText(
-      "Track real estate, vehicles, and other non-liquid holdings"
+      "Add a home, a car, or a business stake to see it in your net worth."
     );
-    await expect(page.getByTestId("empty-view-net-worth")).toBeVisible();
+    await expect(
+      emptyState.getByRole("button", { name: /Add an asset/ })
+    ).toBeVisible();
+    // An empty state carries one action; the former View-net-worth peer is gone by design, because
+    // two competing choices is a decision the user has no data to make yet.
+    await expect(emptyState.getByRole("button")).toHaveCount(1);
   });
 
   test("adding an asset shows it in the list with formatted value", async ({
     page,
   }) => {
-    await createAsset(page, "Family Home", "Real Estate", "450000");
+    await createAsset(page, "Family Home", "Real estate", "450000");
 
     await expect(page.getByTestId("assets-total")).toContainText("$450,000.00");
     await expect(page.getByTestId("assets-net-worth-context")).toBeVisible();
@@ -178,7 +199,7 @@ test.describe("Assets Page", () => {
     const row = page.getByTestId("asset-row");
     await expect(row).toBeVisible();
     await expect(row).toContainText("Family Home");
-    await expect(row).toContainText("Real Estate");
+    await expect(row).toContainText("Real estate");
     await expect(page.getByTestId("asset-value")).toContainText("$450,000.00");
     await expect(page.getByTestId("asset-type-group")).toBeVisible();
   });
@@ -186,7 +207,7 @@ test.describe("Assets Page", () => {
   test("multiple assets show breakdown bar and type groups", async ({
     page,
   }) => {
-    await createAsset(page, "Family Home", "Real Estate", "450000");
+    await createAsset(page, "Family Home", "Real estate", "450000");
     await createAsset(page, "Old Car", "Vehicle", "15000");
 
     await expect(page.getByTestId("assets-total")).toContainText("$465,000.00");
@@ -195,60 +216,96 @@ test.describe("Assets Page", () => {
     await expect(page.getByTestId("asset-type-group")).toHaveCount(2);
   });
 
+  test("the value is a focusable control that Enter opens for editing", async ({
+    page,
+  }) => {
+    await createAsset(page, "Family Home", "Real estate", "450000");
+
+    const value = page.getByTestId("asset-value");
+    // The dotted underline is the required resting affordance, and the value is a real control: a
+    // keyboard-only user never hovers, so Enter has to do what the click does.
+    await expect(value).toHaveCSS("border-bottom-style", "dotted");
+    await expect(value).toHaveAttribute("role", "button");
+    await value.focus();
+    await value.press("Enter");
+    await expect(page.getByTestId("asset-value-input")).toBeVisible();
+  });
+
+  test("the value affordance is never explained in helper text", async ({
+    page,
+  }) => {
+    await createAsset(page, "Family Home", "Real estate", "450000");
+
+    // A hover-only hint is invisible to a keyboard user, so the affordance carries itself.
+    await expect(
+      page.getByTestId("asset-row").getByText(/click to update/i)
+    ).toHaveCount(0);
+  });
+
   test("clicking asset value makes it inline-editable; Enter saves", async ({
     page,
   }) => {
-    await createAsset(page, "Family Home", "Real Estate", "450000");
+    await createAsset(page, "Family Home", "Real estate", "450000");
 
     await page.getByTestId("asset-value").click();
-    await expect(page.getByTestId("value-edit-input")).toBeVisible();
+    await expect(page.getByTestId("asset-value-input")).toBeVisible();
 
-    const input = page.getByTestId("value-edit-input").locator("input");
+    const input = page.getByTestId("asset-value-input").locator("input");
     // Select all existing text and replace with new value
     await input.click({ clickCount: 3 });
     await input.pressSequentially("475000");
     await input.press("Enter");
 
-    await expect(
-      page.getByText("Changes saved successfully").last()
-    ).toBeVisible();
+    await expect(page.getByText("Change saved").last()).toBeVisible();
     await expect(page.getByTestId("asset-value")).toContainText("$475,000.00");
   });
 
   test("pressing Escape cancels value edit without saving", async ({
     page,
   }) => {
-    await createAsset(page, "Family Home", "Real Estate", "450000");
+    await createAsset(page, "Family Home", "Real estate", "450000");
 
     await page.getByTestId("asset-value").click();
-    const input = page.getByTestId("value-edit-input").locator("input");
+    const input = page.getByTestId("asset-value-input").locator("input");
     await input.fill("999999");
     await input.press("Escape");
 
     await expect(page.getByTestId("asset-value")).toContainText("$450,000.00");
   });
 
-  test("hover reveals edit/delete actions; delete removes asset", async ({
+  test("row actions live in an always-visible overflow menu, not a hover reveal", async ({
     page,
   }) => {
     await createAsset(page, "Old Car", "Vehicle", "15000");
 
     const row = page.getByTestId("asset-row");
-    await row.hover();
+    const rowMenu = page.getByTestId("asset-row-menu");
+    // Hover-only affordances with no resting state are banned, so the trigger is visible before any
+    // pointer or keyboard interaction.
+    await expect(rowMenu).toBeVisible();
 
+    // A destructive action is never a peer of an ordinary one in the same row.
+    await expect(row.getByTestId("delete-asset-button")).toHaveCount(0);
+
+    await rowMenu.click();
     await expect(page.getByTestId("edit-asset-button")).toBeVisible();
     await expect(page.getByTestId("delete-asset-button")).toBeVisible();
+  });
 
-    // Delete
-    await page.getByTestId("delete-asset-button").dispatchEvent("click");
+  test("deleting an asset shows confirmation dialog and removes it", async ({
+    page,
+  }) => {
+    await createAsset(page, "Old Car", "Vehicle", "15000");
+
+    await openRowMenu(page);
+    await page.getByTestId("delete-asset-button").click();
+
     await expect(page.getByTestId("delete-asset-dialog")).toBeVisible();
     await expect(
       page.getByText("Are you sure you want to delete Old Car?")
     ).toBeVisible();
 
-    await page
-      .getByTestId("confirm-delete-asset-button")
-      .dispatchEvent("click");
+    await page.getByTestId("confirm-delete-asset-button").click();
     await expect(page.getByText("Successfully deleted")).toBeVisible();
     await expect(page.getByTestId("assets-empty-state")).toBeVisible();
   });
@@ -257,34 +314,31 @@ test.describe("Assets Page", () => {
     page,
   }) => {
     await createAsset(page, "Business", "Business", "100000");
-    // Add toast already verified in createAsset helper
+    await expect(page.getByText("Changes saved successfully").last()).toBeVisible();
 
     // Edit value
     await page.getByTestId("asset-value").click();
-    const input = page.getByTestId("value-edit-input").locator("input");
+    const input = page.getByTestId("asset-value-input").locator("input");
     await input.click({ clickCount: 3 });
     await input.pressSequentially("120000");
     await input.press("Enter");
 
-    await expect(
-      page.getByText("Changes saved successfully").last()
-    ).toBeVisible();
+    await expect(page.getByText("Change saved").last()).toBeVisible();
   });
 
   test("empty state button opens add asset form", async ({ page }) => {
     const emptyState = page.getByTestId("assets-empty-state");
-    await emptyState.getByRole("button", { name: /Add Asset/ }).click();
+    await emptyState.getByRole("button", { name: /Add an asset/ }).click();
     await expect(page.getByTestId("add-asset-form")).toBeVisible();
   });
 
-  test("clicking edit pencil opens SlideOver with pre-filled form", async ({
+  test("clicking edit opens SlideOver with pre-filled form", async ({
     page,
   }) => {
-    await createAsset(page, "Family Home", "Real Estate", "450000");
+    await createAsset(page, "Family Home", "Real estate", "450000");
 
-    const row = page.getByTestId("asset-row");
-    await row.hover();
-    await page.getByTestId("edit-asset-button").dispatchEvent("click");
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
 
     const slideOver = page.getByTestId("edit-asset-slide-over");
     await expect(slideOver).toBeVisible();
@@ -299,9 +353,8 @@ test.describe("Assets Page", () => {
   }) => {
     await createAsset(page, "Old Car", "Vehicle", "15000");
 
-    const row = page.getByTestId("asset-row");
-    await row.hover();
-    await page.getByTestId("edit-asset-button").dispatchEvent("click");
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
 
     const slideOver = page.getByTestId("edit-asset-slide-over");
     const editForm = slideOver.getByTestId("edit-asset-form");
@@ -317,18 +370,17 @@ test.describe("Assets Page", () => {
   test("closing edit SlideOver does not affect inline value editing", async ({
     page,
   }) => {
-    await createAsset(page, "Family Home", "Real Estate", "450000");
+    await createAsset(page, "Family Home", "Real estate", "450000");
 
     // Open then close edit SlideOver
-    const row = page.getByTestId("asset-row");
-    await row.hover();
-    await page.getByTestId("edit-asset-button").dispatchEvent("click");
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
     await expect(page.getByTestId("edit-asset-slide-over")).toBeVisible();
     await page.getByTestId("slide-over-close").click();
     await expect(page.getByTestId("edit-asset-slide-over")).not.toBeVisible();
 
     // Inline value edit should still work
     await page.getByTestId("asset-value").click();
-    await expect(page.getByTestId("value-edit-input")).toBeVisible();
+    await expect(page.getByTestId("asset-value-input")).toBeVisible();
   });
 });

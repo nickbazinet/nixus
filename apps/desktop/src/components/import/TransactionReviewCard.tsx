@@ -1,14 +1,22 @@
 import { useTranslation } from "react-i18next";
-import { cn } from "@/lib/utils";
 import {
+  Alert,
+  Badge,
+  Card,
+  CardContent,
+  Checkbox,
+  DatePicker,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@nixus/shared";
+import { MoneyInput } from "@/components/shared/MoneyInput";
+import { cn } from "@/lib/utils";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
-import { DatePicker } from "@nixus/shared";
 
 interface BudgetCategory {
   id: number;
@@ -16,6 +24,8 @@ interface BudgetCategory {
 }
 
 interface TransactionReviewCardProps {
+  /** Stable per-row suffix so every label in the row can carry a real `htmlFor`. */
+  rowId: string;
   merchant: string;
   amountCents: number;
   date: string;
@@ -33,6 +43,7 @@ interface TransactionReviewCardProps {
 }
 
 export function TransactionReviewCard({
+  rowId,
   merchant,
   amountCents,
   date,
@@ -50,80 +61,109 @@ export function TransactionReviewCard({
 }: TransactionReviewCardProps) {
   const { t } = useTranslation();
   const formatCurrency = useFormatCurrency();
+  const merchantId = `review-merchant-${rowId}`;
+  const amountId = `review-amount-${rowId}`;
+  const dateId = `review-date-${rowId}`;
+  const categoryId = `review-category-${rowId}`;
+
   return (
-    <div
+    <Card
+      flush
       data-testid="transaction-review-card"
-      aria-label={`${merchant} ${formatCurrency(amountCents)} - ${isResolved ? "resolved" : "needs review"}`}
-      className={cn(
-        "rounded-lg border-2 p-4 transition-colors",
-        isResolved
-          ? "border-emerald-500/30 bg-emerald-500/5"
-          : "border-amber-500/30 bg-amber-500/5"
-      )}
+      aria-label={`${merchant} ${formatCurrency(amountCents)} — ${
+        isResolved ? t("import.rowSorted") : t("import.rowNeedsCategory")
+      }`}
     >
       {isDuplicate && (
-        <div className="mb-2 rounded bg-amber-500/20 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400" data-testid="duplicate-badge">
+        <Alert variant="caution" data-testid="duplicate-badge">
           {t("import.possibleDuplicateWarning")}
-        </div>
+        </Alert>
       )}
-      <div className="flex items-start gap-3">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onToggleSelect}
-          className="mt-1"
-          data-testid="transaction-checkbox"
-        />
-        <div className={cn("flex-1", !selected && "opacity-50")}>
-          <div className="flex items-center justify-between">
-            <div className="flex-1">
-              <input
-                type="text"
-                value={merchant}
-                onChange={(e) => onMerchantChange(e.target.value)}
-                className="rounded-md border bg-background px-2 py-1 text-sm font-medium"
-                data-testid="merchant-input"
-              />
-              <div className="ml-2 inline-block" data-testid="date-input">
-                <DatePicker
-                  value={date}
-                  onChange={onDateChange}
+      <CardContent className="py-card-pad">
+        <div className="flex items-start gap-2">
+          <Checkbox
+            checked={selected}
+            onCheckedChange={onToggleSelect}
+            aria-label={`${merchant} ${formatCurrency(amountCents)}`}
+            className="mt-1 -ml-1"
+            data-testid="transaction-checkbox"
+          />
+          <div
+            className={cn("min-w-0 flex-1", !selected && "text-ink-dim")}
+            data-testid="review-row-content"
+          >
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <Label htmlFor={merchantId} className="sr-only">
+                  {t("expenses.merchant")}
+                </Label>
+                <Input
+                  id={merchantId}
+                  type="text"
+                  value={merchant}
+                  onChange={(e) => onMerchantChange(e.target.value)}
+                  data-testid="merchant-input"
+                />
+              </div>
+              <div className="w-28 shrink-0" data-testid="amount-input-field">
+                <Label htmlFor={amountId} className="sr-only">
+                  {t("common.amount")}
+                </Label>
+                <MoneyInput
+                  id={amountId}
+                  value={amountCents}
+                  onChange={onAmountChange}
                 />
               </div>
             </div>
-            <input
-              type="number"
-              value={amountCents / 100}
-              step="0.01"
-              onChange={(e) => {
-                const val = e.target.valueAsNumber;
-                if (!isNaN(val)) onAmountChange(Math.round(val * 100));
-              }}
-              className="w-24 rounded-md border bg-background px-2 py-1 text-right font-mono text-sm font-medium"
-              data-testid="amount-input"
-            />
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">{t("import.aiSuggests")}</span>
-            <Select
-              value={String(selectedCategoryId ?? suggestedCategoryId ?? "")}
-              onValueChange={(val) => onCategoryChange(Number(val))}
-              items={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}
-            >
-              <SelectTrigger data-testid="category-select" className="flex-1">
-                <SelectValue placeholder={t("import.selectCategory")} />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.id} value={String(cat.id)}>
-                    {cat.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+
+            <div className="mt-2 flex items-center gap-2">
+              <div className="shrink-0" data-testid="date-input">
+                <Label htmlFor={dateId} className="sr-only">
+                  {t("common.date")}
+                </Label>
+                <DatePicker id={dateId} value={date} onChange={onDateChange} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <Label htmlFor={categoryId} className="sr-only">
+                  {t("common.category")}
+                </Label>
+                <Select
+                  value={String(selectedCategoryId ?? suggestedCategoryId ?? "")}
+                  onValueChange={(val) => onCategoryChange(Number(val))}
+                  items={categories.map((cat) => ({
+                    value: String(cat.id),
+                    label: cat.name,
+                  }))}
+                >
+                  <SelectTrigger
+                    id={categoryId}
+                    data-testid="category-select"
+                    className="w-full"
+                  >
+                    <SelectValue placeholder={t("import.selectCategory")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.map((cat) => (
+                      <SelectItem key={cat.id} value={String(cat.id)}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Badge
+                variant={isResolved ? "good" : "caution"}
+                data-testid="review-row-status"
+              >
+                {isResolved
+                  ? t("import.rowSorted")
+                  : t("import.rowNeedsCategory")}
+              </Badge>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

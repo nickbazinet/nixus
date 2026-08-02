@@ -1,18 +1,19 @@
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import {
+  Button,
+  Input,
+  Label,
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
-  SelectItem,
   SelectGroup,
   SelectGroupLabel,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Switch,
 } from "@nixus/shared";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { useAllBudgetCategories } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";
@@ -54,7 +55,7 @@ export function EditRecurringTemplateForm({
       day_of_month: template.day_of_month,
       is_active: template.is_active,
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const onSubmit = (data: RecurringTemplateFormData) => {
@@ -82,25 +83,33 @@ export function EditRecurringTemplateForm({
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      className="space-y-3"
       data-testid="edit-recurring-template-form"
     >
       <div className="space-y-1.5">
-        <Label htmlFor="edit-recurring-merchant">{t("expenses.merchant")}</Label>
+        <Label htmlFor="edit-recurring-merchant" required>
+          {t("expenses.merchant")}
+        </Label>
         <Input
           id="edit-recurring-merchant"
           placeholder={t("expenses.merchantPlaceholder")}
           autoFocus
+          aria-required="true"
           aria-invalid={!!errors.merchant}
+          aria-describedby={errors.merchant ? "edit-recurring-merchant-error" : undefined}
           {...register("merchant", { required: t("expenses.merchantRequired") })}
         />
         {errors.merchant && (
-          <p className="text-xs text-destructive">{errors.merchant.message}</p>
+          <p id="edit-recurring-merchant-error" className="text-caption text-over">
+            {errors.merchant.message}
+          </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="edit-recurring-amount">{t("common.amount")}</Label>
+        <Label htmlFor="edit-recurring-amount" required>
+          {t("common.amount")}
+        </Label>
         <Controller
           name="amount_cents"
           control={control}
@@ -113,19 +122,25 @@ export function EditRecurringTemplateForm({
               value={field.value}
               onChange={field.onChange}
               onBlur={field.onBlur}
+              aria-required
               aria-invalid={!!errors.amount_cents}
+              aria-describedby={
+                errors.amount_cents ? "edit-recurring-amount-error" : undefined
+              }
             />
           )}
         />
         {errors.amount_cents && (
-          <p className="text-xs text-destructive">
+          <p id="edit-recurring-amount-error" className="text-caption text-over">
             {errors.amount_cents.message}
           </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="edit-recurring-category">{t("common.category")}</Label>
+        <Label htmlFor="edit-recurring-category" required>
+          {t("common.category")}
+        </Label>
         <Controller
           name="budget_category_id"
           control={control}
@@ -141,7 +156,11 @@ export function EditRecurringTemplateForm({
             >
               <SelectTrigger
                 id="edit-recurring-category"
+                aria-required="true"
                 aria-invalid={!!errors.budget_category_id}
+                aria-describedby={
+                  errors.budget_category_id ? "edit-recurring-category-error" : undefined
+                }
               >
                 <SelectValue placeholder={t("expenses.selectCategory")} />
               </SelectTrigger>
@@ -167,20 +186,28 @@ export function EditRecurringTemplateForm({
           )}
         />
         {errors.budget_category_id && (
-          <p className="text-xs text-destructive">
+          <p id="edit-recurring-category-error" className="text-caption text-over">
             {errors.budget_category_id.message}
           </p>
         )}
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="edit-recurring-day">{t("recurring.dayOfMonth")}</Label>
+        <Label htmlFor="edit-recurring-day" required>
+          {t("recurring.dayOfMonth")}
+        </Label>
         <Input
           id="edit-recurring-day"
           type="number"
           min={1}
           max={31}
+          aria-required="true"
           aria-invalid={!!errors.day_of_month}
+          aria-describedby={
+            errors.day_of_month
+              ? "edit-recurring-day-hint edit-recurring-day-error"
+              : "edit-recurring-day-hint"
+          }
           {...register("day_of_month", {
             required: t("recurring.dayRequired"),
             min: { value: 1, message: t("recurring.dayRange") },
@@ -188,10 +215,37 @@ export function EditRecurringTemplateForm({
             valueAsNumber: true,
           })}
         />
-        <p className="text-xs text-muted-foreground">{t("recurring.dayHint")}</p>
+        <p id="edit-recurring-day-hint" className="text-caption text-ink-dim">
+          {t("recurring.dayHint")}
+        </p>
         {errors.day_of_month && (
-          <p className="text-xs text-destructive">{errors.day_of_month.message}</p>
+          <p id="edit-recurring-day-error" className="text-caption text-over">
+            {errors.day_of_month.message}
+          </p>
         )}
+      </div>
+
+      {/* The page told users to "toggle a template off" while no toggle existed anywhere. This is it. */}
+      <div className="flex items-start justify-between gap-3 border-t border-line pt-3">
+        <div className="min-w-0">
+          <Label htmlFor="edit-recurring-active">{t("recurring.activeLabel")}</Label>
+          <p id="edit-recurring-active-hint" className="mt-1 text-caption text-ink-dim">
+            {t("recurring.activeHint")}
+          </p>
+        </div>
+        <Controller
+          name="is_active"
+          control={control}
+          render={({ field }) => (
+            <Switch
+              id="edit-recurring-active"
+              checked={field.value}
+              onCheckedChange={field.onChange}
+              aria-describedby="edit-recurring-active-hint"
+              data-testid="recurring-active-switch"
+            />
+          )}
+        />
       </div>
 
       <div className="flex gap-2">

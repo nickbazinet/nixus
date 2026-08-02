@@ -1,15 +1,22 @@
-import { useState, useMemo } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { InfoIcon, TrendingUpIcon } from "lucide-react";
+import {
+  Alert,
+  AlertDescription,
+  Button,
+  Card,
+  EmptyState,
+  PillTabs,
+} from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Card, CardContent } from "@nixus/shared";
-import { PillTabs } from "@nixus/shared";
 import { ProjectionChart } from "@/components/projection/ProjectionChart";
 import { AssumptionsPanel } from "@/components/projection/AssumptionsPanel";
 import { useProjectionInput } from "@/hooks/useProjectionData";
 import { computeProjection } from "@/lib/projection";
 
-export const Route = createFileRoute("/projection")({
+export const Route = createFileRoute("/insights/projection")({
   component: ProjectionPage,
 });
 
@@ -39,9 +46,12 @@ function ProjectionPage() {
   const horizonLabels = useMemo(
     () =>
       Object.fromEntries(
-        Object.entries(HORIZON_LABEL_KEYS).map(([k, v]) => [k, t(v)])
+        Object.entries(HORIZON_LABEL_KEYS).map(([key, value]) => [
+          key,
+          t(value),
+        ]),
       ) as Record<string, string>,
-    [t]
+    [t],
   );
 
   const points = useMemo(() => {
@@ -62,32 +72,42 @@ function ProjectionPage() {
 
   return (
     <div>
-      <PageHeader title={t("nav.projection")} />
+      <PageHeader
+        title={t("nav.projection")}
+        actions={
+          <PillTabs
+            options={HORIZONS}
+            labels={horizonLabels}
+            value={horizon}
+            onChange={setHorizon}
+            data-testid="horizon-tabs"
+          />
+        }
+      />
 
       {isEmpty ? (
-        <Card className="shadow-sm rounded-lg">
-          <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground">
-              {t("projection.noAccountsOrAssets")}
-            </p>
-          </CardContent>
+        <Card data-testid="projection-empty">
+          <EmptyState
+            icon={<TrendingUpIcon />}
+            title={t("insights.projectionEmptyTitle")}
+            description={t("projection.noAccountsOrAssets")}
+            action={
+              <Button render={<Link to="/wealth/accounts" />}>
+                {t("dashboard.goToAccounts")}
+              </Button>
+            }
+          />
         </Card>
       ) : (
-        <div className="space-y-4">
-          <div className="mb-4">
-            <PillTabs
-              options={HORIZONS}
-              labels={horizonLabels}
-              value={horizon}
-              onChange={setHorizon}
-              data-testid="horizon-tabs"
-            />
-          </div>
-
+        <div className="flex flex-col gap-section-gap">
           {noCashFlowHistory && (
-            <p className="text-sm text-muted-foreground">
-              {t("projection.noIncomeOrExpense")}
-            </p>
+            <Card flush data-testid="projection-no-cash-flow">
+              <Alert variant="caution" icon={<InfoIcon />}>
+                <AlertDescription>
+                  {t("projection.noIncomeOrExpense")}
+                </AlertDescription>
+              </Alert>
+            </Card>
           )}
 
           <ProjectionChart data={points} isLoading={isPending} />

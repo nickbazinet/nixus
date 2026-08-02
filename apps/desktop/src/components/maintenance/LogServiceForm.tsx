@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Button, DatePicker, Input, Label } from "@nixus/shared";
+import { Button, DatePicker, Input, Label, focusRing } from "@nixus/shared";
 import { useLogMaintenanceService } from "@/hooks/useMaintenance";
+import { todayIsoDate } from "@/lib/maintenanceUtils";
 import { cn } from "@/lib/utils";
 
 interface LogServiceFormData {
@@ -18,10 +19,6 @@ interface LogServiceFormProps {
   defaultOdometerKm: number;
   onSuccess: () => void;
   onCancel: () => void;
-}
-
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function parseOdometerKm(raw: string): number | null {
@@ -43,6 +40,8 @@ export function LogServiceForm({
 }: LogServiceFormProps) {
   const { t } = useTranslation();
   const logService = useLogMaintenanceService();
+  const dateErrorId = useId();
+  const odometerErrorId = useId();
 
   const {
     register,
@@ -56,7 +55,9 @@ export function LogServiceForm({
       odometer_km: String(defaultOdometerKm),
       notes: "",
     },
-    mode: "onSubmit",
+    // Validate on blur: submit-only validation makes the user fill every field before learning
+    // which one was wrong.
+    mode: "onBlur",
   });
 
   useEffect(() => {
@@ -111,14 +112,14 @@ export function LogServiceForm({
     <form
       onSubmit={handleSubmit(onSubmit)}
       noValidate
-      className="border-b border-border bg-muted/20 px-3 py-3 sm:pl-10"
+      className="border-b border-line bg-hover px-3 py-3 sm:pl-10"
       data-testid="log-service-form"
       data-vehicle-id={vehicleId}
       data-task-id={taskId}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor={`log-service-date-${taskId}`}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`log-service-date-${taskId}`} required>
             {t("maintenance.logService.date")}
           </Label>
           <div data-testid="log-service-date">
@@ -131,18 +132,24 @@ export function LogServiceForm({
                   id={`log-service-date-${taskId}`}
                   value={field.value}
                   onChange={field.onChange}
+                  aria-required="true"
                   aria-invalid={!!errors.service_date}
+                  aria-describedby={
+                    errors.service_date ? dateErrorId : undefined
+                  }
                 />
               )}
             />
           </div>
           {errors.service_date && (
-            <p className="text-xs text-destructive">{errors.service_date.message}</p>
+            <p id={dateErrorId} className="text-caption text-over-ink">
+              {errors.service_date.message}
+            </p>
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor={`log-service-odometer-${taskId}`}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`log-service-odometer-${taskId}`} required>
             {t("maintenance.logService.odometer")}
           </Label>
           <div className="flex items-center gap-2">
@@ -151,21 +158,27 @@ export function LogServiceForm({
               type="number"
               min={0}
               step={1}
+              money
+              aria-required="true"
               aria-invalid={!!errors.odometer_km}
+              aria-describedby={
+                errors.odometer_km ? odometerErrorId : undefined
+              }
               data-testid="log-service-odometer"
-              className="font-mono tabular-nums"
               {...register("odometer_km", {
                 required: t("maintenance.validation.odometerRequired"),
               })}
             />
-            <span className="text-sm text-muted-foreground shrink-0">km</span>
+            <span className="shrink-0 text-caption text-ink-dim">km</span>
           </div>
           {errors.odometer_km && (
-            <p className="text-xs text-destructive">{errors.odometer_km.message}</p>
+            <p id={odometerErrorId} className="text-caption text-over-ink">
+              {errors.odometer_km.message}
+            </p>
           )}
         </div>
 
-        <div className="space-y-1.5 sm:col-span-2">
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
           <Label htmlFor={`log-service-notes-${taskId}`}>
             {t("maintenance.logService.notes")}
           </Label>
@@ -174,8 +187,9 @@ export function LogServiceForm({
             rows={2}
             data-testid="log-service-notes"
             className={cn(
-              "w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-base transition-colors outline-none",
-              "placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 md:text-sm"
+              "w-full min-w-0 rounded-sm border border-line-strong bg-card px-2.5 py-1.5 text-body text-ink transition-colors",
+              "placeholder:text-ink-faint",
+              focusRing
             )}
             {...register("notes")}
           />

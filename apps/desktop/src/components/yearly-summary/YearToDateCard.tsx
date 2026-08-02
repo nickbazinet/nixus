@@ -1,7 +1,19 @@
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent } from "@nixus/shared";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { ArrowRightIcon } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Money,
+  Skeleton,
+  SubStat,
+  formatMoney,
+} from "@nixus/shared";
+import { cn } from "@/lib/utils";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
+import { insightsLocale } from "@/components/spending-trends/insights-chart";
 import type { YearlySummaryData } from "@/lib/types";
 
 interface YearToDateCardProps {
@@ -9,21 +21,23 @@ interface YearToDateCardProps {
   isLoading?: boolean;
 }
 
+/** Spent, gained, top categories. */
+const YTD_SKELETON_ROWS = 3;
+
 export function YearToDateCard({ data, isLoading }: YearToDateCardProps) {
-  const { t } = useTranslation();
-  const formatCurrency = useFormatCurrency();
+  const { t, i18n } = useTranslation();
+  const { maskProps } = useValuesHidden();
+  const locale = insightsLocale(i18n.language);
   const year = data?.year ?? new Date().getFullYear();
 
   if (isLoading) {
     return (
-      <Card className="shadow-sm rounded-lg" data-testid="ytd-card-skeleton">
-        <CardContent className="p-6">
-          <div className="h-5 w-40 bg-muted animate-pulse rounded mb-4" />
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-16 bg-muted animate-pulse rounded" />
-            ))}
-          </div>
+      <Card data-testid="ytd-card-skeleton">
+        <CardHeader>
+          <CardTitle>{t("yearSummary.ytd", { year })}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Skeleton rows={YTD_SKELETON_ROWS} />
         </CardContent>
       </Card>
     );
@@ -31,107 +45,96 @@ export function YearToDateCard({ data, isLoading }: YearToDateCardProps) {
 
   const hasExpenses = (data?.total_spent_cents ?? 0) > 0;
 
-  if (!hasExpenses) {
+  // The whole card is one focusable link with one accessible name — never a card with competing
+  // inner click targets.
+  if (!hasExpenses || !data) {
     return (
-      <Link to="/year-summary" className="block">
-        <Card
-          className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
-          data-testid="ytd-card-empty"
-          role="link"
-        >
-          <CardContent className="p-6 text-center">
-            <p className="text-sm font-medium text-muted-foreground mb-1">
-              {t("yearSummary.ytd", { year })}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {t("yearSummary.noData")}
-            </p>
-            <p className="text-xs text-primary mt-2">{t("yearSummary.viewFull")}</p>
-          </CardContent>
-        </Card>
-      </Link>
+      <Card
+        interactive
+        render={<Link to="/insights/year-summary" />}
+        data-testid="ytd-card-empty"
+      >
+        <CardHeader>
+          <CardTitle>{t("yearSummary.ytd", { year })}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-caption text-ink-dim">{t("yearSummary.noData")}</p>
+          <ViewFullLine label={t("yearSummary.viewFull")} className="mt-3" />
+        </CardContent>
+      </Card>
     );
   }
 
-  const gainCents = data?.net_worth_gain_cents ?? null;
-  const gainAvailable = data?.net_worth_gain_available ?? false;
-  const gainPositive = gainAvailable && gainCents !== null && gainCents >= 0;
+  const gainCents = data.net_worth_gain_cents;
+  const gainAvailable = data.net_worth_gain_available;
 
   return (
-    <Link to="/year-summary" className="block">
-      <Card
-        className="shadow-sm rounded-lg hover:ring-1 hover:ring-primary/20 transition-all cursor-pointer"
-        data-testid="ytd-card"
-        role="link"
-      >
-        <CardContent className="p-6">
-          <p className="text-sm font-medium text-muted-foreground mb-4">
-            {t("yearSummary.ytd", { year })}
-          </p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <span className="text-xs text-muted-foreground">
-                {t("yearSummary.spent")}
-              </span>
-              <p
-                className="text-lg font-mono font-medium text-rose-500"
-                data-testid="ytd-spent"
+    <Card
+      interactive
+      render={<Link to="/insights/year-summary" />}
+      data-testid="ytd-card"
+    >
+      <CardHeader>
+        <CardTitle>{t("yearSummary.ytd", { year })}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid grid-cols-1 gap-grid-gap sm:grid-cols-3">
+        <SubStat
+          label={t("yearSummary.spent")}
+          value={formatMoney({ cents: data.total_spent_cents, locale })}
+          {...maskProps}
+          data-testid="ytd-spent"
+        />
+        {gainAvailable && gainCents !== null ? (
+          <SubStat
+            label={t("yearSummary.gained")}
+            value={formatMoney({ cents: gainCents, locale, sign: "always" })}
+            {...maskProps}
+            data-testid="ytd-gain"
+          />
+        ) : (
+          <SubStat
+            label={t("yearSummary.gained")}
+            value={"\u2014"}
+            caption={t("yearSummary.noGainData")}
+            data-testid="ytd-gain-unavailable"
+          />
+        )}
+        <div>
+          <span className="text-caption text-ink-dim">
+            {t("yearSummary.topCategories")}
+          </span>
+          <ul className="mt-1.5 space-y-1" data-testid="ytd-top-categories">
+            {data.top_categories.map((category) => (
+              <li
+                key={category.category_id}
+                className="flex justify-between gap-2 text-caption"
               >
-                {formatCurrency(data!.total_spent_cents)}
-              </p>
-            </div>
+                <span className="truncate text-ink">
+                  {category.category_name}
+                </span>
+                <Money
+                  cents={category.spent_cents}
+                  locale={locale}
+                  className="shrink-0 text-ink-dim"
+                  {...maskProps}
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      </CardContent>
+      <CardContent>
+        <ViewFullLine label={t("yearSummary.viewFull")} />
+      </CardContent>
+    </Card>
+  );
+}
 
-            <div>
-              <span className="text-xs text-muted-foreground">
-                {t("yearSummary.gained")}
-              </span>
-              {gainAvailable && gainCents !== null ? (
-                <p
-                  className={`text-lg font-mono font-medium ${
-                    gainPositive
-                      ? "text-emerald-600 dark:text-emerald-400"
-                      : "text-rose-500"
-                  }`}
-                  data-testid="ytd-gain"
-                >
-                  {gainPositive ? "+" : ""}
-                  {formatCurrency(gainCents)}
-                </p>
-              ) : (
-                <p
-                  className="text-lg font-mono font-medium text-muted-foreground"
-                  title={t("yearSummary.noGainData")}
-                  data-testid="ytd-gain-unavailable"
-                >
-                  —
-                </p>
-              )}
-            </div>
-
-            <div>
-              <span className="text-xs text-muted-foreground">
-                {t("yearSummary.topCategories")}
-              </span>
-              <ul className="mt-1 space-y-0.5" data-testid="ytd-top-categories">
-                {data!.top_categories.map((cat) => (
-                  <li
-                    key={cat.category_id}
-                    className="text-sm flex justify-between gap-2"
-                  >
-                    <span className="truncate">{cat.category_name}</span>
-                    <span className="font-mono text-muted-foreground shrink-0">
-                      {formatCurrency(cat.spent_cents)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <p className="text-xs text-primary mt-4">{t("yearSummary.viewFull")}</p>
-        </CardContent>
-      </Card>
-    </Link>
+function ViewFullLine({ label, className }: { label: string; className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1 text-label text-brand-ink", className)}>
+      {label}
+      <ArrowRightIcon className="size-3.5" aria-hidden="true" />
+    </span>
   );
 }

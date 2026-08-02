@@ -17,7 +17,7 @@ export function MaintenanceTemplateSection({
   const { data: baselines } = useMaintenanceTaskBaselines();
 
   return (
-    <div className="space-y-2" data-testid="maintenance-template-section">
+    <div className="flex flex-col gap-2" data-testid="maintenance-template-section">
       <Label>{t("maintenance.template.label")}</Label>
       <PillTabs
         options={["default", "custom"] as const}
@@ -30,7 +30,7 @@ export function MaintenanceTemplateSection({
         data-testid="maintenance-template-mode"
       />
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-caption text-ink-dim">
         {mode === "default"
           ? t("maintenance.template.defaultDescription", {
               count: baselines?.length ?? 12,

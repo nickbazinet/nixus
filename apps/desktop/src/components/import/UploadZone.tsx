@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Upload, FileCheck } from "lucide-react";
+import { Alert, Card, CardContent, focusRing } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -249,18 +250,20 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
 
   if (validatedFile) {
     return (
-      <div
-        data-testid="upload-zone-success"
-        className="flex flex-col items-center justify-center gap-4 rounded-xl border-2 border-primary/50 bg-primary/5 p-12"
-      >
-        <FileCheck className="h-12 w-12 text-primary" />
-        <p className="text-lg font-medium" data-testid="validated-file-name">
-          {validatedFile.file_name}
-        </p>
-        <p className="text-sm text-muted-foreground">
-          {t("import.fileValidated")}
-        </p>
-      </div>
+      <Card data-testid="upload-zone-success">
+        <CardContent className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+          <span
+            aria-hidden="true"
+            className="grid size-10 place-items-center rounded-lg bg-brand-soft text-brand-ink"
+          >
+            <FileCheck className="size-5" />
+          </span>
+          <p className="text-h2 text-ink" data-testid="validated-file-name">
+            {validatedFile.file_name}
+          </p>
+          <p className="text-caption text-ink-dim">{t("import.fileValidated")}</p>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -269,12 +272,15 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
       <div
         role="button"
         tabIndex={0}
+        aria-label={t("import.dropHere")}
+        aria-describedby="upload-zone-hint"
         data-testid="upload-zone"
         className={cn(
-          "flex cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border-2 border-dashed p-16 transition-colors",
+          "flex min-h-target-min cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-10 text-center transition-colors",
           dragOver
-            ? "border-primary bg-primary/10"
-            : "border-muted-foreground/30 hover:border-muted-foreground/50"
+            ? "border-brand bg-brand-soft"
+            : "border-line-strong bg-card hover:bg-hover",
+          focusRing
         )}
         onClick={handleClick}
         onKeyDown={(e) => {
@@ -284,25 +290,28 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <Upload
+        <span
+          aria-hidden="true"
           className={cn(
-            "h-12 w-12",
-            dragOver ? "text-primary" : "text-muted-foreground"
+            "grid size-10 place-items-center rounded-lg",
+            dragOver ? "bg-card text-brand-ink" : "bg-track text-ink-dim"
           )}
-        />
-        <div className="text-center">
-          <p className="text-lg font-medium">
+        >
+          <Upload className="size-5" />
+        </span>
+        <div>
+          <p className="text-h2 text-ink">
             {validating ? t("import.validating") : t("import.dropHere")}
           </p>
-          <p className="text-sm text-muted-foreground">
+          <p id="upload-zone-hint" className="mt-1 text-caption text-ink-dim">
             {t("import.orClickToBrowse")}
           </p>
         </div>
       </div>
       {error && (
-        <p className="mt-3 text-sm text-destructive" data-testid="upload-error">
+        <Alert variant="over" className="mt-3" data-testid="upload-error">
           {error}
-        </p>
+        </Alert>
       )}
     </div>
   );

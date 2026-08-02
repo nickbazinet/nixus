@@ -1,9 +1,30 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pencil, Trash2 } from "lucide-react";
+import { Repeat, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { SlideOver } from "@nixus/shared";
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  EmptyState,
+  Money,
+  Skeleton,
+  SlideOver,
+  Switch,
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import {
   useDeleteRecurringTemplate,
   useUpdateRecurringTemplate,
@@ -14,21 +35,32 @@ import { EditRecurringTemplateForm } from "./EditRecurringTemplateForm";
 interface RecurringTemplateListProps {
   templates: RecurringExpenseTemplate[];
   categories: BudgetCategory[];
+  isLoading?: boolean;
+  onAddTemplate?: () => void;
 }
 
 export function RecurringTemplateList({
   templates,
   categories,
+  isLoading = false,
+  onAddTemplate,
 }: RecurringTemplateListProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const formatCurrency = useFormatCurrency();
+  const maskProps = useMaskProps();
   const deleteTemplate = useDeleteRecurringTemplate();
   const updateTemplate = useUpdateRecurringTemplate();
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RecurringExpenseTemplate | null>(null);
+
+  const lastRowCount = useRef(3);
+  useEffect(() => {
+    if (!isLoading && templates.length > 0) lastRowCount.current = templates.length;
+  }, [isLoading, templates.length]);
 
   const categoryMap = new Map(categories.map((c) => [c.id, c.name]));
 
-  const handleToggleActive = (template: RecurringExpenseTemplate) => {
+  const handleToggleActive = (template: RecurringExpenseTemplate, isActive: boolean) => {
     updateTemplate.mutate(
       {
         id: template.id,
@@ -36,7 +68,7 @@ export function RecurringTemplateList({
         amount_cents: template.amount_cents,
         budget_category_id: template.budget_category_id,
         day_of_month: template.day_of_month,
-        is_active: !template.is_active,
+        is_active: isActive,
       },
       {
         onError: () => toast.error(t("toast.saveFailed")),
@@ -44,88 +76,148 @@ export function RecurringTemplateList({
     );
   };
 
-  const handleDelete = (id: number) => {
-    deleteTemplate.mutate(id, {
-      onSuccess: () => toast.success(t("toast.deleteSuccess")),
-      onError: () => toast.error(t("toast.deleteFailed")),
+  const handleDelete = () => {
+    if (!deleteTarget) return;
+    deleteTemplate.mutate(deleteTarget.id, {
+      onSuccess: () => {
+        toast.success(t("toast.deleteSuccess"));
+        setDeleteTarget(null);
+      },
+      onError: () => {
+        toast.error(t("toast.deleteFailed"));
+        setDeleteTarget(null);
+      },
     });
   };
 
-  const editingTemplate = templates.find((t) => t.id === editingId);
+  const editingTemplate = templates.find((template) => template.id === editingId);
+  const activeTotalCents = templates
+    .filter((template) => template.is_active)
+    .reduce((sum, template) => sum + template.amount_cents, 0);
+
+  // Chrome resolves first and only the cells are skeletons; the row count is the last real one so
+  // the list does not jump when data lands.
+  if (isLoading) {
+    return (
+      <Table>
+        <caption className="sr-only">{t("common.loading")}</caption>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t("expenses.merchant")}</TableHead>
+            <TableHead>{t("common.category")}</TableHead>
+            <TableHead>{t("recurring.dayColumn")}</TableHead>
+            <TableHead numeric>{t("common.amount")}</TableHead>
+            <TableHead>{t("recurring.activeColumn")}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          <TableRow>
+            <TableCell colSpan={5}>
+              <Skeleton rows={lastRowCount.current} data-testid="recurring-skeleton" />
+            </TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>
+    );
+  }
 
   if (templates.length === 0) {
     return (
-      <p className="text-sm text-muted-foreground py-4 text-center">
-        {t("recurring.noTemplates")}
-      </p>
+      <EmptyState
+        icon={<Repeat />}
+        title={t("recurring.emptyTitle")}
+        description={t("recurring.emptyDescription")}
+        action={
+          onAddTemplate ? (
+            <Button size="sm" onClick={onAddTemplate}>
+              {t("recurring.addBill")}
+            </Button>
+          ) : undefined
+        }
+        data-testid="recurring-empty-state"
+      />
     );
   }
 
   return (
     <>
-      <div className="space-y-0.5">
-        {templates.map((template) => (
-          <div
-            key={template.id}
-            className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-muted/50 transition-colors"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <button
-                onClick={() => handleToggleActive(template)}
-                className={`w-2.5 h-2.5 rounded-full shrink-0 border-2 transition-colors ${
-                  template.is_active
-                    ? "bg-emerald-500 border-emerald-500"
-                    : "bg-transparent border-muted-foreground/40"
-                }`}
-                title={
-                  template.is_active
-                    ? t("recurring.deactivate")
-                    : t("recurring.activate")
-                }
-                aria-label={
-                  template.is_active
-                    ? t("recurring.deactivate")
-                    : t("recurring.activate")
-                }
-              />
-              <div className="min-w-0">
-                <span className="text-sm font-medium truncate block">
-                  {template.merchant}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {categoryMap.get(template.budget_category_id) ?? "—"} &middot;{" "}
-                  {t("recurring.dayLabel", { day: template.day_of_month })}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-sm font-mono text-foreground">
-                {formatCurrency(template.amount_cents)}
-              </span>
-              <button
-                onClick={() => setEditingId(template.id)}
-                className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                aria-label={t("common.edit")}
-              >
-                <Pencil size={14} />
-              </button>
-              <button
-                onClick={() => handleDelete(template.id)}
-                className="text-muted-foreground hover:text-destructive transition-colors p-1"
-                aria-label={t("common.delete")}
-              >
-                <Trash2 size={14} />
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
+      <Table>
+        <caption className="sr-only">{t("recurring.tableCaption")}</caption>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t("expenses.merchant")}</TableHead>
+            <TableHead>{t("common.category")}</TableHead>
+            <TableHead>{t("recurring.dayColumn")}</TableHead>
+            <TableHead numeric>{t("common.amount")}</TableHead>
+            <TableHead>{t("recurring.activeColumn")}</TableHead>
+            <TableHead>
+              <span className="sr-only">{t("common.delete")}</span>
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {templates.map((template) => (
+            <TableRow
+              key={template.id}
+              onActivate={() => setEditingId(template.id)}
+              aria-label={t("recurring.openTemplate", { merchant: template.merchant })}
+              data-testid="recurring-template-row"
+            >
+              <TableCell>{template.merchant}</TableCell>
+              <TableCell dim>{categoryMap.get(template.budget_category_id) ?? "—"}</TableCell>
+              <TableCell dim>
+                {t("recurring.dayLabel", { day: template.day_of_month })}
+              </TableCell>
+              <TableCell numeric>
+                <Money cents={template.amount_cents} locale={i18n.language} {...maskProps} />
+              </TableCell>
+              <TableCell onClick={(event) => event.stopPropagation()}>
+                <Switch
+                  checked={template.is_active}
+                  onCheckedChange={(checked) => handleToggleActive(template, checked)}
+                  aria-label={
+                    template.is_active
+                      ? t("recurring.deactivate")
+                      : t("recurring.activate")
+                  }
+                  data-testid="recurring-toggle"
+                />
+              </TableCell>
+              <TableCell onClick={(event) => event.stopPropagation()}>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setDeleteTarget(template)}
+                  className="text-ink-faint hover:text-over"
+                  aria-label={t("recurring.deleteTemplate", { merchant: template.merchant })}
+                >
+                  <Trash2 aria-hidden="true" />
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+        <TableFooter>
+          <TableRow>
+            <TableCell colSpan={3} className="text-caption">
+              {t("recurring.activeCount", {
+                count: templates.filter((template) => template.is_active).length,
+              })}
+            </TableCell>
+            <TableCell numeric data-testid="recurring-active-total">
+              <Money cents={activeTotalCents} locale={i18n.language} {...maskProps} />
+            </TableCell>
+            <TableCell colSpan={2} />
+          </TableRow>
+        </TableFooter>
+      </Table>
 
       <SlideOver
         open={editingId !== null}
         onClose={() => setEditingId(null)}
         title={t("recurring.editTemplate")}
+        description={t("recurring.editTemplateDescription")}
+        data-testid="edit-recurring-template-slide-over"
       >
         {editingTemplate && (
           <EditRecurringTemplateForm
@@ -134,6 +226,38 @@ export function RecurringTemplateList({
           />
         )}
       </SlideOver>
+
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent data-testid="delete-recurring-template-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              {t("recurring.deleteTemplate", { merchant: deleteTarget?.merchant ?? "" })}
+            </DialogTitle>
+            <DialogDescription>
+              {t("recurring.deleteTemplateExplain", {
+                amount: deleteTarget ? formatCurrency(deleteTarget.amount_cents) : "",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              data-testid="confirm-delete-recurring-button"
+            >
+              {t("common.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
+import { Skeleton, formatMoney } from "@nixus/shared";
 import { useLatestExpense } from "@/hooks/useExpenses";
-import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 
 function formatExpenseDate(dateStr: string, locale: string): string {
   const [year, month, day] = dateStr.split("-").map(Number);
@@ -14,31 +15,32 @@ function formatExpenseDate(dateStr: string, locale: string): string {
 
 export function LastExpenseLine() {
   const { t, i18n } = useTranslation();
-  const formatCurrency = useFormatCurrency();
+  const { hidden } = useValuesHidden();
   const { data, isPending } = useLatestExpense();
 
   if (isPending) {
     return (
-      <div
-        className="mb-3 h-4 w-48 bg-muted animate-pulse rounded"
-        data-testid="last-expense-line"
-      />
+      <Skeleton rows={1} className="mb-3 max-w-64" data-testid="last-expense-line" />
     );
   }
 
   if (!data) {
     return (
-      <p className="text-sm text-muted-foreground mb-3" data-testid="last-expense-line">
+      <p className="mb-3 text-caption text-ink-dim" data-testid="last-expense-line">
         {t("dashboard.noExpensesYet")}
       </p>
     );
   }
 
   const date = formatExpenseDate(data.date, i18n.language);
-  const amount = formatCurrency(data.amount_cents);
+  // The figure is interpolated into a sentence, so the mask is applied to the string and the
+  // `money` utility gives the whole line tabular figures.
+  const amount = hidden
+    ? t("common.amountHidden")
+    : formatMoney({ cents: data.amount_cents, locale: i18n.language });
 
   return (
-    <p className="text-sm text-muted-foreground mb-3" data-testid="last-expense-line">
+    <p className="money mb-3 text-caption text-ink-dim" data-testid="last-expense-line">
       {t("dashboard.lastExpense", { date, merchant: data.merchant, amount })}
     </p>
   );

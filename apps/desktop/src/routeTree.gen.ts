@@ -9,55 +9,38 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as YearSummaryRouteImport } from './routes/year-summary'
-import { Route as SpendingTrendsRouteImport } from './routes/spending-trends'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as RecurringExpensesRouteImport } from './routes/recurring-expenses'
-import { Route as ProjectionRouteImport } from './routes/projection'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
-import { Route as NetWorthRouteImport } from './routes/net-worth'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
-import { Route as IncomeRouteImport } from './routes/income'
 import { Route as ImportRouteImport } from './routes/import'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CarRouteImport } from './routes/car'
-import { Route as BudgetRouteImport } from './routes/budget'
-import { Route as AssetsRouteImport } from './routes/assets'
 import { Route as AiRouteImport } from './routes/ai'
-import { Route as AccountsRouteImport } from './routes/accounts'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WealthIndexRouteImport } from './routes/wealth.index'
+import { Route as SpendingIndexRouteImport } from './routes/spending.index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
-import { Route as NetWorthIndexRouteImport } from './routes/net-worth.index'
+import { Route as InsightsIndexRouteImport } from './routes/insights.index'
 import { Route as CarIndexRouteImport } from './routes/car.index'
 import { Route as AiIndexRouteImport } from './routes/ai.index'
+import { Route as WealthWhereToPutYourMoneyRouteImport } from './routes/wealth.where-to-put-your-money'
+import { Route as WealthNetWorthRouteImport } from './routes/wealth.net-worth'
+import { Route as WealthAssetsRouteImport } from './routes/wealth.assets'
+import { Route as WealthAccountsRouteImport } from './routes/wealth.accounts'
+import { Route as SpendingTransactionsRouteImport } from './routes/spending.transactions'
+import { Route as SpendingRecurringRouteImport } from './routes/spending.recurring'
+import { Route as SpendingIncomeRouteImport } from './routes/spending.income'
+import { Route as SpendingBudgetRouteImport } from './routes/spending.budget'
 import { Route as SettingsAiProviderRouteImport } from './routes/settings.ai-provider'
-import { Route as NetWorthFinancialHealthRouteImport } from './routes/net-worth.financial-health'
+import { Route as InsightsYearSummaryRouteImport } from './routes/insights.year-summary'
+import { Route as InsightsTrendsRouteImport } from './routes/insights.trends'
+import { Route as InsightsProjectionRouteImport } from './routes/insights.projection'
 import { Route as CarGarageRouteImport } from './routes/car.garage'
 import { Route as AiAgentIdRouteImport } from './routes/ai.$agentId'
 
-const YearSummaryRoute = YearSummaryRouteImport.update({
-  id: '/year-summary',
-  path: '/year-summary',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SpendingTrendsRoute = SpendingTrendsRouteImport.update({
-  id: '/spending-trends',
-  path: '/spending-trends',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RecurringExpensesRoute = RecurringExpensesRouteImport.update({
-  id: '/recurring-expenses',
-  path: '/recurring-expenses',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProjectionRoute = ProjectionRouteImport.update({
-  id: '/projection',
-  path: '/projection',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OnboardingRoute = OnboardingRouteImport.update({
@@ -65,19 +48,9 @@ const OnboardingRoute = OnboardingRouteImport.update({
   path: '/onboarding',
   getParentRoute: () => rootRouteImport,
 } as any)
-const NetWorthRoute = NetWorthRouteImport.update({
-  id: '/net-worth',
-  path: '/net-worth',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const MaintenanceRoute = MaintenanceRouteImport.update({
   id: '/maintenance',
   path: '/maintenance',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const IncomeRoute = IncomeRouteImport.update({
-  id: '/income',
-  path: '/income',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ImportRoute = ImportRouteImport.update({
@@ -95,24 +68,9 @@ const CarRoute = CarRouteImport.update({
   path: '/car',
   getParentRoute: () => rootRouteImport,
 } as any)
-const BudgetRoute = BudgetRouteImport.update({
-  id: '/budget',
-  path: '/budget',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AssetsRoute = AssetsRouteImport.update({
-  id: '/assets',
-  path: '/assets',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AiRoute = AiRouteImport.update({
   id: '/ai',
   path: '/ai',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AccountsRoute = AccountsRouteImport.update({
-  id: '/accounts',
-  path: '/accounts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -120,15 +78,25 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WealthIndexRoute = WealthIndexRouteImport.update({
+  id: '/wealth/',
+  path: '/wealth/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpendingIndexRoute = SpendingIndexRouteImport.update({
+  id: '/spending/',
+  path: '/spending/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => SettingsRoute,
 } as any)
-const NetWorthIndexRoute = NetWorthIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => NetWorthRoute,
+const InsightsIndexRoute = InsightsIndexRouteImport.update({
+  id: '/insights/',
+  path: '/insights/',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const CarIndexRoute = CarIndexRouteImport.update({
   id: '/',
@@ -140,15 +108,66 @@ const AiIndexRoute = AiIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AiRoute,
 } as any)
+const WealthWhereToPutYourMoneyRoute =
+  WealthWhereToPutYourMoneyRouteImport.update({
+    id: '/wealth/where-to-put-your-money',
+    path: '/wealth/where-to-put-your-money',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const WealthNetWorthRoute = WealthNetWorthRouteImport.update({
+  id: '/wealth/net-worth',
+  path: '/wealth/net-worth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WealthAssetsRoute = WealthAssetsRouteImport.update({
+  id: '/wealth/assets',
+  path: '/wealth/assets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WealthAccountsRoute = WealthAccountsRouteImport.update({
+  id: '/wealth/accounts',
+  path: '/wealth/accounts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpendingTransactionsRoute = SpendingTransactionsRouteImport.update({
+  id: '/spending/transactions',
+  path: '/spending/transactions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpendingRecurringRoute = SpendingRecurringRouteImport.update({
+  id: '/spending/recurring',
+  path: '/spending/recurring',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpendingIncomeRoute = SpendingIncomeRouteImport.update({
+  id: '/spending/income',
+  path: '/spending/income',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SpendingBudgetRoute = SpendingBudgetRouteImport.update({
+  id: '/spending/budget',
+  path: '/spending/budget',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsAiProviderRoute = SettingsAiProviderRouteImport.update({
   id: '/ai-provider',
   path: '/ai-provider',
   getParentRoute: () => SettingsRoute,
 } as any)
-const NetWorthFinancialHealthRoute = NetWorthFinancialHealthRouteImport.update({
-  id: '/financial-health',
-  path: '/financial-health',
-  getParentRoute: () => NetWorthRoute,
+const InsightsYearSummaryRoute = InsightsYearSummaryRouteImport.update({
+  id: '/insights/year-summary',
+  path: '/insights/year-summary',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InsightsTrendsRoute = InsightsTrendsRouteImport.update({
+  id: '/insights/trends',
+  path: '/insights/trends',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InsightsProjectionRoute = InsightsProjectionRouteImport.update({
+  id: '/insights/projection',
+  path: '/insights/projection',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const CarGarageRoute = CarGarageRouteImport.update({
   id: '/garage',
@@ -163,217 +182,214 @@ const AiAgentIdRoute = AiAgentIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/accounts': typeof AccountsRoute
   '/ai': typeof AiRouteWithChildren
-  '/assets': typeof AssetsRoute
-  '/budget': typeof BudgetRoute
   '/car': typeof CarRouteWithChildren
   '/chat': typeof ChatRoute
   '/import': typeof ImportRoute
-  '/income': typeof IncomeRoute
   '/maintenance': typeof MaintenanceRoute
-  '/net-worth': typeof NetWorthRouteWithChildren
   '/onboarding': typeof OnboardingRoute
-  '/projection': typeof ProjectionRoute
-  '/recurring-expenses': typeof RecurringExpensesRoute
   '/settings': typeof SettingsRouteWithChildren
-  '/spending-trends': typeof SpendingTrendsRoute
-  '/year-summary': typeof YearSummaryRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
-  '/net-worth/financial-health': typeof NetWorthFinancialHealthRoute
+  '/insights/projection': typeof InsightsProjectionRoute
+  '/insights/trends': typeof InsightsTrendsRoute
+  '/insights/year-summary': typeof InsightsYearSummaryRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
+  '/spending/budget': typeof SpendingBudgetRoute
+  '/spending/income': typeof SpendingIncomeRoute
+  '/spending/recurring': typeof SpendingRecurringRoute
+  '/spending/transactions': typeof SpendingTransactionsRoute
+  '/wealth/accounts': typeof WealthAccountsRoute
+  '/wealth/assets': typeof WealthAssetsRoute
+  '/wealth/net-worth': typeof WealthNetWorthRoute
+  '/wealth/where-to-put-your-money': typeof WealthWhereToPutYourMoneyRoute
   '/ai/': typeof AiIndexRoute
   '/car/': typeof CarIndexRoute
-  '/net-worth/': typeof NetWorthIndexRoute
+  '/insights/': typeof InsightsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/spending/': typeof SpendingIndexRoute
+  '/wealth/': typeof WealthIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/accounts': typeof AccountsRoute
-  '/assets': typeof AssetsRoute
-  '/budget': typeof BudgetRoute
   '/chat': typeof ChatRoute
   '/import': typeof ImportRoute
-  '/income': typeof IncomeRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
-  '/projection': typeof ProjectionRoute
-  '/recurring-expenses': typeof RecurringExpensesRoute
-  '/spending-trends': typeof SpendingTrendsRoute
-  '/year-summary': typeof YearSummaryRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
-  '/net-worth/financial-health': typeof NetWorthFinancialHealthRoute
+  '/insights/projection': typeof InsightsProjectionRoute
+  '/insights/trends': typeof InsightsTrendsRoute
+  '/insights/year-summary': typeof InsightsYearSummaryRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
+  '/spending/budget': typeof SpendingBudgetRoute
+  '/spending/income': typeof SpendingIncomeRoute
+  '/spending/recurring': typeof SpendingRecurringRoute
+  '/spending/transactions': typeof SpendingTransactionsRoute
+  '/wealth/accounts': typeof WealthAccountsRoute
+  '/wealth/assets': typeof WealthAssetsRoute
+  '/wealth/net-worth': typeof WealthNetWorthRoute
+  '/wealth/where-to-put-your-money': typeof WealthWhereToPutYourMoneyRoute
   '/ai': typeof AiIndexRoute
   '/car': typeof CarIndexRoute
-  '/net-worth': typeof NetWorthIndexRoute
+  '/insights': typeof InsightsIndexRoute
   '/settings': typeof SettingsIndexRoute
+  '/spending': typeof SpendingIndexRoute
+  '/wealth': typeof WealthIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/accounts': typeof AccountsRoute
   '/ai': typeof AiRouteWithChildren
-  '/assets': typeof AssetsRoute
-  '/budget': typeof BudgetRoute
   '/car': typeof CarRouteWithChildren
   '/chat': typeof ChatRoute
   '/import': typeof ImportRoute
-  '/income': typeof IncomeRoute
   '/maintenance': typeof MaintenanceRoute
-  '/net-worth': typeof NetWorthRouteWithChildren
   '/onboarding': typeof OnboardingRoute
-  '/projection': typeof ProjectionRoute
-  '/recurring-expenses': typeof RecurringExpensesRoute
   '/settings': typeof SettingsRouteWithChildren
-  '/spending-trends': typeof SpendingTrendsRoute
-  '/year-summary': typeof YearSummaryRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
-  '/net-worth/financial-health': typeof NetWorthFinancialHealthRoute
+  '/insights/projection': typeof InsightsProjectionRoute
+  '/insights/trends': typeof InsightsTrendsRoute
+  '/insights/year-summary': typeof InsightsYearSummaryRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
+  '/spending/budget': typeof SpendingBudgetRoute
+  '/spending/income': typeof SpendingIncomeRoute
+  '/spending/recurring': typeof SpendingRecurringRoute
+  '/spending/transactions': typeof SpendingTransactionsRoute
+  '/wealth/accounts': typeof WealthAccountsRoute
+  '/wealth/assets': typeof WealthAssetsRoute
+  '/wealth/net-worth': typeof WealthNetWorthRoute
+  '/wealth/where-to-put-your-money': typeof WealthWhereToPutYourMoneyRoute
   '/ai/': typeof AiIndexRoute
   '/car/': typeof CarIndexRoute
-  '/net-worth/': typeof NetWorthIndexRoute
+  '/insights/': typeof InsightsIndexRoute
   '/settings/': typeof SettingsIndexRoute
+  '/spending/': typeof SpendingIndexRoute
+  '/wealth/': typeof WealthIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/accounts'
     | '/ai'
-    | '/assets'
-    | '/budget'
     | '/car'
     | '/chat'
     | '/import'
-    | '/income'
     | '/maintenance'
-    | '/net-worth'
     | '/onboarding'
-    | '/projection'
-    | '/recurring-expenses'
     | '/settings'
-    | '/spending-trends'
-    | '/year-summary'
     | '/ai/$agentId'
     | '/car/garage'
-    | '/net-worth/financial-health'
+    | '/insights/projection'
+    | '/insights/trends'
+    | '/insights/year-summary'
     | '/settings/ai-provider'
+    | '/spending/budget'
+    | '/spending/income'
+    | '/spending/recurring'
+    | '/spending/transactions'
+    | '/wealth/accounts'
+    | '/wealth/assets'
+    | '/wealth/net-worth'
+    | '/wealth/where-to-put-your-money'
     | '/ai/'
     | '/car/'
-    | '/net-worth/'
+    | '/insights/'
     | '/settings/'
+    | '/spending/'
+    | '/wealth/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/accounts'
-    | '/assets'
-    | '/budget'
     | '/chat'
     | '/import'
-    | '/income'
     | '/maintenance'
     | '/onboarding'
-    | '/projection'
-    | '/recurring-expenses'
-    | '/spending-trends'
-    | '/year-summary'
     | '/ai/$agentId'
     | '/car/garage'
-    | '/net-worth/financial-health'
+    | '/insights/projection'
+    | '/insights/trends'
+    | '/insights/year-summary'
     | '/settings/ai-provider'
+    | '/spending/budget'
+    | '/spending/income'
+    | '/spending/recurring'
+    | '/spending/transactions'
+    | '/wealth/accounts'
+    | '/wealth/assets'
+    | '/wealth/net-worth'
+    | '/wealth/where-to-put-your-money'
     | '/ai'
     | '/car'
-    | '/net-worth'
+    | '/insights'
     | '/settings'
+    | '/spending'
+    | '/wealth'
   id:
     | '__root__'
     | '/'
-    | '/accounts'
     | '/ai'
-    | '/assets'
-    | '/budget'
     | '/car'
     | '/chat'
     | '/import'
-    | '/income'
     | '/maintenance'
-    | '/net-worth'
     | '/onboarding'
-    | '/projection'
-    | '/recurring-expenses'
     | '/settings'
-    | '/spending-trends'
-    | '/year-summary'
     | '/ai/$agentId'
     | '/car/garage'
-    | '/net-worth/financial-health'
+    | '/insights/projection'
+    | '/insights/trends'
+    | '/insights/year-summary'
     | '/settings/ai-provider'
+    | '/spending/budget'
+    | '/spending/income'
+    | '/spending/recurring'
+    | '/spending/transactions'
+    | '/wealth/accounts'
+    | '/wealth/assets'
+    | '/wealth/net-worth'
+    | '/wealth/where-to-put-your-money'
     | '/ai/'
     | '/car/'
-    | '/net-worth/'
+    | '/insights/'
     | '/settings/'
+    | '/spending/'
+    | '/wealth/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AccountsRoute: typeof AccountsRoute
   AiRoute: typeof AiRouteWithChildren
-  AssetsRoute: typeof AssetsRoute
-  BudgetRoute: typeof BudgetRoute
   CarRoute: typeof CarRouteWithChildren
   ChatRoute: typeof ChatRoute
   ImportRoute: typeof ImportRoute
-  IncomeRoute: typeof IncomeRoute
   MaintenanceRoute: typeof MaintenanceRoute
-  NetWorthRoute: typeof NetWorthRouteWithChildren
   OnboardingRoute: typeof OnboardingRoute
-  ProjectionRoute: typeof ProjectionRoute
-  RecurringExpensesRoute: typeof RecurringExpensesRoute
   SettingsRoute: typeof SettingsRouteWithChildren
-  SpendingTrendsRoute: typeof SpendingTrendsRoute
-  YearSummaryRoute: typeof YearSummaryRoute
+  InsightsProjectionRoute: typeof InsightsProjectionRoute
+  InsightsTrendsRoute: typeof InsightsTrendsRoute
+  InsightsYearSummaryRoute: typeof InsightsYearSummaryRoute
+  SpendingBudgetRoute: typeof SpendingBudgetRoute
+  SpendingIncomeRoute: typeof SpendingIncomeRoute
+  SpendingRecurringRoute: typeof SpendingRecurringRoute
+  SpendingTransactionsRoute: typeof SpendingTransactionsRoute
+  WealthAccountsRoute: typeof WealthAccountsRoute
+  WealthAssetsRoute: typeof WealthAssetsRoute
+  WealthNetWorthRoute: typeof WealthNetWorthRoute
+  WealthWhereToPutYourMoneyRoute: typeof WealthWhereToPutYourMoneyRoute
+  InsightsIndexRoute: typeof InsightsIndexRoute
+  SpendingIndexRoute: typeof SpendingIndexRoute
+  WealthIndexRoute: typeof WealthIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/year-summary': {
-      id: '/year-summary'
-      path: '/year-summary'
-      fullPath: '/year-summary'
-      preLoaderRoute: typeof YearSummaryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/spending-trends': {
-      id: '/spending-trends'
-      path: '/spending-trends'
-      fullPath: '/spending-trends'
-      preLoaderRoute: typeof SpendingTrendsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/settings': {
       id: '/settings'
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/recurring-expenses': {
-      id: '/recurring-expenses'
-      path: '/recurring-expenses'
-      fullPath: '/recurring-expenses'
-      preLoaderRoute: typeof RecurringExpensesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/projection': {
-      id: '/projection'
-      path: '/projection'
-      fullPath: '/projection'
-      preLoaderRoute: typeof ProjectionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/onboarding': {
@@ -383,25 +399,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OnboardingRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/net-worth': {
-      id: '/net-worth'
-      path: '/net-worth'
-      fullPath: '/net-worth'
-      preLoaderRoute: typeof NetWorthRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/maintenance': {
       id: '/maintenance'
       path: '/maintenance'
       fullPath: '/maintenance'
       preLoaderRoute: typeof MaintenanceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/income': {
-      id: '/income'
-      path: '/income'
-      fullPath: '/income'
-      preLoaderRoute: typeof IncomeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/import': {
@@ -425,32 +427,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CarRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/budget': {
-      id: '/budget'
-      path: '/budget'
-      fullPath: '/budget'
-      preLoaderRoute: typeof BudgetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/assets': {
-      id: '/assets'
-      path: '/assets'
-      fullPath: '/assets'
-      preLoaderRoute: typeof AssetsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/ai': {
       id: '/ai'
       path: '/ai'
       fullPath: '/ai'
       preLoaderRoute: typeof AiRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/accounts': {
-      id: '/accounts'
-      path: '/accounts'
-      fullPath: '/accounts'
-      preLoaderRoute: typeof AccountsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -460,6 +441,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/wealth/': {
+      id: '/wealth/'
+      path: '/wealth'
+      fullPath: '/wealth/'
+      preLoaderRoute: typeof WealthIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spending/': {
+      id: '/spending/'
+      path: '/spending'
+      fullPath: '/spending/'
+      preLoaderRoute: typeof SpendingIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/': {
       id: '/settings/'
       path: '/'
@@ -467,12 +462,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsIndexRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/net-worth/': {
-      id: '/net-worth/'
-      path: '/'
-      fullPath: '/net-worth/'
-      preLoaderRoute: typeof NetWorthIndexRouteImport
-      parentRoute: typeof NetWorthRoute
+    '/insights/': {
+      id: '/insights/'
+      path: '/insights'
+      fullPath: '/insights/'
+      preLoaderRoute: typeof InsightsIndexRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/car/': {
       id: '/car/'
@@ -488,6 +483,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AiIndexRouteImport
       parentRoute: typeof AiRoute
     }
+    '/wealth/where-to-put-your-money': {
+      id: '/wealth/where-to-put-your-money'
+      path: '/wealth/where-to-put-your-money'
+      fullPath: '/wealth/where-to-put-your-money'
+      preLoaderRoute: typeof WealthWhereToPutYourMoneyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wealth/net-worth': {
+      id: '/wealth/net-worth'
+      path: '/wealth/net-worth'
+      fullPath: '/wealth/net-worth'
+      preLoaderRoute: typeof WealthNetWorthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wealth/assets': {
+      id: '/wealth/assets'
+      path: '/wealth/assets'
+      fullPath: '/wealth/assets'
+      preLoaderRoute: typeof WealthAssetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wealth/accounts': {
+      id: '/wealth/accounts'
+      path: '/wealth/accounts'
+      fullPath: '/wealth/accounts'
+      preLoaderRoute: typeof WealthAccountsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spending/transactions': {
+      id: '/spending/transactions'
+      path: '/spending/transactions'
+      fullPath: '/spending/transactions'
+      preLoaderRoute: typeof SpendingTransactionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spending/recurring': {
+      id: '/spending/recurring'
+      path: '/spending/recurring'
+      fullPath: '/spending/recurring'
+      preLoaderRoute: typeof SpendingRecurringRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spending/income': {
+      id: '/spending/income'
+      path: '/spending/income'
+      fullPath: '/spending/income'
+      preLoaderRoute: typeof SpendingIncomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/spending/budget': {
+      id: '/spending/budget'
+      path: '/spending/budget'
+      fullPath: '/spending/budget'
+      preLoaderRoute: typeof SpendingBudgetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/ai-provider': {
       id: '/settings/ai-provider'
       path: '/ai-provider'
@@ -495,12 +546,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAiProviderRouteImport
       parentRoute: typeof SettingsRoute
     }
-    '/net-worth/financial-health': {
-      id: '/net-worth/financial-health'
-      path: '/financial-health'
-      fullPath: '/net-worth/financial-health'
-      preLoaderRoute: typeof NetWorthFinancialHealthRouteImport
-      parentRoute: typeof NetWorthRoute
+    '/insights/year-summary': {
+      id: '/insights/year-summary'
+      path: '/insights/year-summary'
+      fullPath: '/insights/year-summary'
+      preLoaderRoute: typeof InsightsYearSummaryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/insights/trends': {
+      id: '/insights/trends'
+      path: '/insights/trends'
+      fullPath: '/insights/trends'
+      preLoaderRoute: typeof InsightsTrendsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/insights/projection': {
+      id: '/insights/projection'
+      path: '/insights/projection'
+      fullPath: '/insights/projection'
+      preLoaderRoute: typeof InsightsProjectionRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/car/garage': {
       id: '/car/garage'
@@ -543,20 +608,6 @@ const CarRouteChildren: CarRouteChildren = {
 
 const CarRouteWithChildren = CarRoute._addFileChildren(CarRouteChildren)
 
-interface NetWorthRouteChildren {
-  NetWorthFinancialHealthRoute: typeof NetWorthFinancialHealthRoute
-  NetWorthIndexRoute: typeof NetWorthIndexRoute
-}
-
-const NetWorthRouteChildren: NetWorthRouteChildren = {
-  NetWorthFinancialHealthRoute: NetWorthFinancialHealthRoute,
-  NetWorthIndexRoute: NetWorthIndexRoute,
-}
-
-const NetWorthRouteWithChildren = NetWorthRoute._addFileChildren(
-  NetWorthRouteChildren,
-)
-
 interface SettingsRouteChildren {
   SettingsAiProviderRoute: typeof SettingsAiProviderRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
@@ -573,22 +624,27 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AccountsRoute: AccountsRoute,
   AiRoute: AiRouteWithChildren,
-  AssetsRoute: AssetsRoute,
-  BudgetRoute: BudgetRoute,
   CarRoute: CarRouteWithChildren,
   ChatRoute: ChatRoute,
   ImportRoute: ImportRoute,
-  IncomeRoute: IncomeRoute,
   MaintenanceRoute: MaintenanceRoute,
-  NetWorthRoute: NetWorthRouteWithChildren,
   OnboardingRoute: OnboardingRoute,
-  ProjectionRoute: ProjectionRoute,
-  RecurringExpensesRoute: RecurringExpensesRoute,
   SettingsRoute: SettingsRouteWithChildren,
-  SpendingTrendsRoute: SpendingTrendsRoute,
-  YearSummaryRoute: YearSummaryRoute,
+  InsightsProjectionRoute: InsightsProjectionRoute,
+  InsightsTrendsRoute: InsightsTrendsRoute,
+  InsightsYearSummaryRoute: InsightsYearSummaryRoute,
+  SpendingBudgetRoute: SpendingBudgetRoute,
+  SpendingIncomeRoute: SpendingIncomeRoute,
+  SpendingRecurringRoute: SpendingRecurringRoute,
+  SpendingTransactionsRoute: SpendingTransactionsRoute,
+  WealthAccountsRoute: WealthAccountsRoute,
+  WealthAssetsRoute: WealthAssetsRoute,
+  WealthNetWorthRoute: WealthNetWorthRoute,
+  WealthWhereToPutYourMoneyRoute: WealthWhereToPutYourMoneyRoute,
+  InsightsIndexRoute: InsightsIndexRoute,
+  SpendingIndexRoute: SpendingIndexRoute,
+  WealthIndexRoute: WealthIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -1,10 +1,8 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Button } from "@nixus/shared";
-import { Input } from "@nixus/shared";
-import { Label } from "@nixus/shared";
+import { Button, Input, Label } from "@nixus/shared";
 import {
   MaintenanceTemplateSection,
   type MaintenanceTemplateMode,
@@ -26,6 +24,7 @@ interface AddVehicleFormProps {
 export function AddVehicleForm({ onClose }: AddVehicleFormProps) {
   const { t } = useTranslation();
   const createVehicle = useCreateVehicle();
+  const odometerErrorId = useId();
   const [templateMode, setTemplateMode] =
     useState<MaintenanceTemplateMode>("default");
 
@@ -42,7 +41,7 @@ export function AddVehicleForm({ onClose }: AddVehicleFormProps) {
       year: "",
       odometer_km: "",
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const make = watch("make");
@@ -75,7 +74,8 @@ export function AddVehicleForm({ onClose }: AddVehicleFormProps) {
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3 p-4 rounded-xl ring-1 ring-foreground/10 bg-card"
+      noValidate
+      className="flex flex-col gap-4"
       data-testid="add-vehicle-form"
       autoComplete="off"
     >
@@ -88,8 +88,8 @@ export function AddVehicleForm({ onClose }: AddVehicleFormProps) {
         onYearChange={(value) => setValue("year", value)}
       />
 
-      <div className="space-y-1.5">
-        <Label htmlFor="vehicle-odometer">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="vehicle-odometer" required>
           {t("maintenance.fields.odometer")}
         </Label>
         <Input
@@ -97,7 +97,10 @@ export function AddVehicleForm({ onClose }: AddVehicleFormProps) {
           type="number"
           min={0}
           step={1}
+          money
+          aria-required="true"
           aria-invalid={!!errors.odometer_km}
+          aria-describedby={errors.odometer_km ? odometerErrorId : undefined}
           {...register("odometer_km", {
             required: t("maintenance.validation.odometerRequired"),
             validate: (v) => {
@@ -114,7 +117,7 @@ export function AddVehicleForm({ onClose }: AddVehicleFormProps) {
           })}
         />
         {errors.odometer_km && (
-          <p className="text-xs text-destructive">
+          <p id={odometerErrorId} className="text-caption text-over-ink">
             {errors.odometer_km.message}
           </p>
         )}

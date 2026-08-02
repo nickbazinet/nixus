@@ -1,4 +1,5 @@
 import { cn } from "../lib/cn";
+import { focusRing } from "./focus";
 
 interface PillTabsProps<T extends string> {
   options: readonly T[];
@@ -8,6 +9,8 @@ interface PillTabsProps<T extends string> {
   "data-testid"?: string;
 }
 
+// A single-select filter control, not navigation. `aria-pressed` is what tells a screen reader which
+// pill is the current one — without it the selected state is carried by the brand fill alone.
 export function PillTabs<T extends string>({
   options,
   labels,
@@ -16,17 +19,19 @@ export function PillTabs<T extends string>({
   "data-testid": testId,
 }: PillTabsProps<T>) {
   return (
-    <div className="flex gap-1" data-testid={testId}>
+    <div className="flex gap-1" data-slot="pill-tabs" data-testid={testId}>
       {options.map((option) => (
         <button
           key={option}
           type="button"
+          aria-pressed={value === option}
           onClick={() => onChange(option)}
           className={cn(
-            "px-3 py-1 text-sm rounded-md font-medium transition-colors",
+            "inline-flex min-h-target-min items-center rounded-md px-3 py-1 text-label transition-colors",
             value === option
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-muted"
+              ? "bg-brand text-brand-on"
+              : "text-ink-dim hover:bg-hover hover:text-ink",
+            focusRing
           )}
           data-testid={testId ? `${testId}-${option}` : undefined}
         >

@@ -1,13 +1,8 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
   Button,
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   Input,
   Label,
   PillTabs,
@@ -16,6 +11,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  SlideOver,
 } from "@nixus/shared";
 import {
   useAddMaintenanceTask,
@@ -61,6 +57,9 @@ export function AddScheduleTaskDialog({
   const { data: baselines } = useMaintenanceTaskBaselines();
   const addTask = useAddMaintenanceTask();
   const [mode, setMode] = useState<ScheduleTaskMode>("catalog");
+  const taskTypeErrorId = useId();
+  const customNameErrorId = useId();
+  const intervalErrorId = useId();
 
   const availableBaselines = useMemo(() => {
     const existing = new Set(existingTaskKeys);
@@ -75,7 +74,7 @@ export function AddScheduleTaskDialog({
 
   const catalogForm = useForm<CatalogFormData>({
     defaultValues: { task_type_key: "" },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const customForm = useForm<CustomFormData>({
@@ -84,7 +83,7 @@ export function AddScheduleTaskDialog({
       interval_km: "",
       interval_months: "",
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   const selectedKey = catalogForm.watch("task_type_key");
@@ -157,199 +156,229 @@ export function AddScheduleTaskDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent data-testid="add-schedule-task-dialog">
-        <DialogHeader>
-          <DialogTitle>{t("maintenance.schedule.addServiceTitle")}</DialogTitle>
-        </DialogHeader>
+    <SlideOver
+      open={open}
+      onClose={() => handleOpenChange(false)}
+      title={t("maintenance.schedule.addServiceTitle")}
+      description={t("maintenance.schedule.addServiceDescription")}
+      data-testid="add-schedule-task-dialog"
+    >
+      <div className="flex flex-col gap-4">
+        <PillTabs
+          options={["catalog", "custom"] as const}
+          labels={{
+            catalog: t("maintenance.schedule.catalogOption"),
+            custom: t("maintenance.schedule.customOption"),
+          }}
+          value={mode}
+          onChange={setMode}
+          data-testid="schedule-task-mode"
+        />
 
-        <div className="space-y-3">
-          <PillTabs
-            options={["catalog", "custom"] as const}
-            labels={{
-              catalog: t("maintenance.schedule.catalogOption"),
-              custom: t("maintenance.schedule.customOption"),
-            }}
-            value={mode}
-            onChange={setMode}
-            data-testid="schedule-task-mode"
-          />
-
-          {mode === "catalog" ? (
-            availableBaselines.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                {t("maintenance.schedule.allServicesAdded")}
-              </p>
-            ) : (
-              <form
-                onSubmit={catalogForm.handleSubmit(onSubmitCatalog)}
-                className="space-y-3"
-              >
-                <div className="space-y-1.5">
-                  <Label htmlFor="schedule-task-type">
-                    {t("maintenance.schedule.serviceType")}
-                  </Label>
-                  <Controller
-                    name="task_type_key"
-                    control={catalogForm.control}
-                    rules={{
-                      required: t("maintenance.validation.serviceTypeRequired"),
-                    }}
-                    render={({ field }) => (
-                      <Select
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        items={availableBaselines.map((baseline) => ({
-                          value: baseline.task_type_key,
-                          label: t(
-                            `maintenance.tasks.${baseline.task_type_key}`
-                          ),
-                        }))}
-                      >
-                        <SelectTrigger
-                          id="schedule-task-type"
-                          aria-invalid={
-                            !!catalogForm.formState.errors.task_type_key
-                          }
-                          data-testid="schedule-task-type-select"
-                        >
-                          <SelectValue
-                            placeholder={t("maintenance.schedule.selectService")}
-                          />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {availableBaselines.map((baseline) => (
-                            <SelectItem
-                              key={baseline.task_type_key}
-                              value={baseline.task_type_key}
-                            >
-                              {t(`maintenance.tasks.${baseline.task_type_key}`)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                  {catalogForm.formState.errors.task_type_key && (
-                    <p className="text-xs text-destructive">
-                      {catalogForm.formState.errors.task_type_key.message}
-                    </p>
-                  )}
-                </div>
-
-                {selectedBaseline && (
-                  <p className="text-xs text-muted-foreground">
-                    {t("maintenance.interval.baselineHint", {
-                      km: selectedBaseline.interval_km.toLocaleString("en-US"),
-                      months: selectedBaseline.interval_months,
-                    })}
-                  </p>
-                )}
-
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => handleOpenChange(false)}
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={addTask.isPending}
-                    data-testid="add-schedule-task-save"
-                  >
-                    {t("maintenance.schedule.addService")}
-                  </Button>
-                </DialogFooter>
-              </form>
-            )
+        {mode === "catalog" ? (
+          availableBaselines.length === 0 ? (
+            <p className="text-caption text-ink-dim">
+              {t("maintenance.schedule.allServicesAdded")}
+            </p>
           ) : (
             <form
-              onSubmit={customForm.handleSubmit(onSubmitCustom)}
-              className="space-y-3"
-              data-testid="schedule-custom-task-form"
+              onSubmit={catalogForm.handleSubmit(onSubmitCatalog)}
+              noValidate
+              className="flex flex-col gap-4"
             >
-              <div className="space-y-1.5">
-                <Label htmlFor="schedule-custom-name">
-                  {t("maintenance.schedule.customName")}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="schedule-task-type" required>
+                  {t("maintenance.schedule.serviceType")}
                 </Label>
-                <Input
-                  id="schedule-custom-name"
-                  data-testid="schedule-custom-name-input"
-                  {...customForm.register("custom_task_name", {
-                    required: t("maintenance.validation.serviceNameRequired"),
-                    validate: (value) =>
-                      value.trim().length > 0 ||
-                      t("maintenance.validation.serviceNameRequired"),
-                  })}
+                <Controller
+                  name="task_type_key"
+                  control={catalogForm.control}
+                  rules={{
+                    required: t("maintenance.validation.serviceTypeRequired"),
+                  }}
+                  render={({ field }) => (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      items={availableBaselines.map((baseline) => ({
+                        value: baseline.task_type_key,
+                        label: t(
+                          `maintenance.tasks.${baseline.task_type_key}`
+                        ),
+                      }))}
+                    >
+                      <SelectTrigger
+                        id="schedule-task-type"
+                        aria-required="true"
+                        aria-invalid={
+                          !!catalogForm.formState.errors.task_type_key
+                        }
+                        aria-describedby={
+                          catalogForm.formState.errors.task_type_key
+                            ? taskTypeErrorId
+                            : undefined
+                        }
+                        data-testid="schedule-task-type-select"
+                      >
+                        <SelectValue
+                          placeholder={t("maintenance.schedule.selectService")}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableBaselines.map((baseline) => (
+                          <SelectItem
+                            key={baseline.task_type_key}
+                            value={baseline.task_type_key}
+                          >
+                            {t(`maintenance.tasks.${baseline.task_type_key}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 />
-                {customForm.formState.errors.custom_task_name && (
-                  <p className="text-xs text-destructive">
-                    {customForm.formState.errors.custom_task_name.message}
+                {catalogForm.formState.errors.task_type_key && (
+                  <p id={taskTypeErrorId} className="text-caption text-over-ink">
+                    {catalogForm.formState.errors.task_type_key.message}
                   </p>
                 )}
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="schedule-custom-km">
-                    {t("maintenance.interval.kmLabel")}
-                  </Label>
-                  <Input
-                    id="schedule-custom-km"
-                    type="number"
-                    min={0}
-                    step={1}
-                    data-testid="schedule-custom-km-input"
-                    {...customForm.register("interval_km")}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="schedule-custom-months">
-                    {t("maintenance.interval.monthsLabel")}
-                  </Label>
-                  <Input
-                    id="schedule-custom-months"
-                    type="number"
-                    min={0}
-                    step={1}
-                    data-testid="schedule-custom-months-input"
-                    {...customForm.register("interval_months")}
-                  />
-                </div>
-              </div>
-
-              <p className="text-xs text-muted-foreground">
-                {t("maintenance.schedule.customIntervalHint")}
-              </p>
-
-              {customForm.formState.errors.interval_km && (
-                <p className="text-xs text-destructive">
-                  {customForm.formState.errors.interval_km.message}
+              {selectedBaseline && (
+                <p className="text-caption text-ink-dim">
+                  {t("maintenance.interval.baselineHint", {
+                    km: selectedBaseline.interval_km.toLocaleString("en-US"),
+                    months: selectedBaseline.interval_months,
+                  })}
                 </p>
               )}
 
-              <DialogFooter>
+              <div className="flex justify-end gap-2">
                 <Button
                   type="button"
                   variant="outline"
+                  size="sm"
                   onClick={() => handleOpenChange(false)}
                 >
                   {t("common.cancel")}
                 </Button>
                 <Button
                   type="submit"
+                  size="sm"
                   disabled={addTask.isPending}
-                  data-testid="add-schedule-task-save-custom"
+                  data-testid="add-schedule-task-save"
                 >
                   {t("maintenance.schedule.addService")}
                 </Button>
-              </DialogFooter>
+              </div>
             </form>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+          )
+        ) : (
+          <form
+            onSubmit={customForm.handleSubmit(onSubmitCustom)}
+            noValidate
+            className="flex flex-col gap-4"
+            data-testid="schedule-custom-task-form"
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="schedule-custom-name" required>
+                {t("maintenance.schedule.customName")}
+              </Label>
+              <Input
+                id="schedule-custom-name"
+                aria-required="true"
+                aria-invalid={!!customForm.formState.errors.custom_task_name}
+                aria-describedby={
+                  customForm.formState.errors.custom_task_name
+                    ? customNameErrorId
+                    : undefined
+                }
+                data-testid="schedule-custom-name-input"
+                {...customForm.register("custom_task_name", {
+                  required: t("maintenance.validation.serviceNameRequired"),
+                  validate: (value) =>
+                    value.trim().length > 0 ||
+                    t("maintenance.validation.serviceNameRequired"),
+                })}
+              />
+              {customForm.formState.errors.custom_task_name && (
+                <p
+                  id={customNameErrorId}
+                  className="text-caption text-over-ink"
+                >
+                  {customForm.formState.errors.custom_task_name.message}
+                </p>
+              )}
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="schedule-custom-km">
+                  {t("maintenance.interval.kmLabel")}
+                </Label>
+                <Input
+                  id="schedule-custom-km"
+                  type="number"
+                  min={0}
+                  step={1}
+                  money
+                  aria-invalid={!!customForm.formState.errors.interval_km}
+                  aria-describedby={
+                    customForm.formState.errors.interval_km
+                      ? intervalErrorId
+                      : undefined
+                  }
+                  data-testid="schedule-custom-km-input"
+                  {...customForm.register("interval_km")}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="schedule-custom-months">
+                  {t("maintenance.interval.monthsLabel")}
+                </Label>
+                <Input
+                  id="schedule-custom-months"
+                  type="number"
+                  min={0}
+                  step={1}
+                  money
+                  data-testid="schedule-custom-months-input"
+                  {...customForm.register("interval_months")}
+                />
+              </div>
+            </div>
+
+            <p className="text-caption text-ink-dim">
+              {t("maintenance.schedule.customIntervalHint")}
+            </p>
+
+            {customForm.formState.errors.interval_km && (
+              <p id={intervalErrorId} className="text-caption text-over-ink">
+                {customForm.formState.errors.interval_km.message}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenChange(false)}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={addTask.isPending}
+                data-testid="add-schedule-task-save-custom"
+              >
+                {t("maintenance.schedule.addService")}
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+    </SlideOver>
   );
 }

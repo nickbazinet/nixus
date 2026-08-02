@@ -6,8 +6,6 @@ import { getVersion } from "@tauri-apps/api/app";
 import {
   Wallet,
   Car,
-  Download,
-  FolderUp,
   Eye,
   EyeOff,
   Sun,
@@ -18,39 +16,99 @@ import {
   Bot,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
-import { BuyMeACoffeeIcon, BUY_ME_A_COFFEE_URL, NixusLogo } from "@nixus/shared";
+import {
+  BuyMeACoffeeIcon,
+  BUY_ME_A_COFFEE_URL,
+  NixusLogo,
+  focusRing,
+} from "@nixus/shared";
 
 const themeOrder = ["light", "dark", "system"] as const;
 const themeIcons = { light: Sun, dark: Moon, system: Monitor } as const;
 const themeLabelKeys = { light: "sidebar.light", dark: "sidebar.dark", system: "sidebar.system" } as const;
 
+const RAIL_COLLAPSED_KEY = "rail-collapsed";
+
+// The rail opens LABELLED. Icon-only-by-default asks the least tech-comfortable user to learn
+// navigation by discovery; collapsing to save space is the user's choice, so it is a persisted
+// preference rather than a default.
+function readCollapsedPreference(): boolean {
+  try {
+    return localStorage.getItem(RAIL_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function railItemClass(expanded: boolean, active: boolean) {
+  return cn(
+    "relative flex w-full min-h-target-min items-center rounded-md text-label no-underline transition-colors",
+    expanded ? "gap-3 px-3 py-2" : "justify-center px-2 py-2",
+    active
+      ? "bg-rail-on text-rail-on-ink"
+      : "text-rail-ink hover:bg-hover hover:text-ink",
+    focusRing
+  );
+}
+
+function railLabelClass(expanded: boolean) {
+  return cn(
+    "whitespace-nowrap transition-opacity duration-200",
+    expanded ? "opacity-100" : "w-0 overflow-hidden opacity-0"
+  );
+}
+
+/** 3px brand marker on the active module, per DESIGN.md {components.rail-item-active}. */
+function ActiveMarker() {
+  return (
+    <span
+      aria-hidden="true"
+      className="absolute inset-y-0 right-0 w-[3px] rounded-l-full bg-brand"
+    />
+  );
+}
+
 export function AppSidebar() {
   const [hovered, setHovered] = useState(false);
-  const [pinned, setPinned] = useState(false);
+  const [focusWithin, setFocusWithin] = useState(false);
+  const [collapsed, setCollapsed] = useState(readCollapsedPreference);
   const [version, setVersion] = useState("");
+  const [languageNotice, setLanguageNotice] = useState("");
   const { hidden, toggleHidden } = useValuesHidden();
   const { t, i18n } = useTranslation();
   const { theme, setTheme } = useTheme();
   const asideRef = useRef<HTMLElement>(null);
 
-  const expanded = hovered || pinned;
+  const expanded = !collapsed || hovered || focusWithin;
 
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(RAIL_COLLAPSED_KEY, String(collapsed));
+    } catch {
+      // localStorage unavailable
+    }
+  }, [collapsed]);
+
+  // A screen reader that keeps an English voice on French content is unusable for the whole
+  // session, so the document language follows i18next immediately rather than on reload.
+  useEffect(() => {
+    document.documentElement.lang = i18n.language;
+  }, [i18n.language]);
+
   // Expand on focus-within for keyboard accessibility, collapse on blur-out
   useEffect(() => {
     const el = asideRef.current;
     if (!el) return;
-    const onFocusIn = () => setPinned(true);
+    const onFocusIn = () => setFocusWithin(true);
     const onFocusOut = (e: FocusEvent) => {
-      if (!el.contains(e.relatedTarget as Node)) setPinned(false);
+      if (!el.contains(e.relatedTarget as Node)) setFocusWithin(false);
     };
     el.addEventListener("focusin", onFocusIn);
     el.addEventListener("focusout", onFocusOut);
@@ -71,210 +129,149 @@ export function AppSidebar() {
     setTheme(themeOrder[(idx + 1) % themeOrder.length]);
   };
 
-  const cycleLanguage = () => {
-    i18n.changeLanguage(i18n.language === "en" ? "fr" : "en");
+  const cycleLanguage = async () => {
+    await i18n.changeLanguage(i18n.language === "en" ? "fr" : "en");
+    // Resolved through `i18n.t` rather than the captured `t` so the announcement itself is in the
+    // language just switched to.
+    setLanguageNotice(i18n.t("shell.languageChanged"));
   };
 
   const currentTheme = (theme ?? "system") as keyof typeof themeIcons;
   const ThemeIcon = themeIcons[currentTheme] ?? Monitor;
 
   return (
-      <aside
-        ref={asideRef}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        style={{ scrollbarWidth: "none" }}
+    <aside
+      ref={asideRef}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ scrollbarWidth: "none" }}
+      className={cn(
+        "z-30 flex h-full shrink-0 flex-col border-r border-rail-line bg-rail transition-[width] duration-200 [&::-webkit-scrollbar]:hidden",
+        expanded ? "w-rail-w-expanded" : "w-rail-w"
+      )}
+    >
+      <span role="status" aria-live="polite" className="sr-only">
+        {languageNotice}
+      </span>
+
+      {/* Rail mark — one of only three places the identity gradient is permitted. */}
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
         className={cn(
-          "shrink-0 h-screen sticky top-0 flex flex-col bg-sidebar transition-[width] duration-200 z-30 [&::-webkit-scrollbar]:hidden",
-          expanded ? "w-48" : "w-14"
+          "flex h-14 w-full min-h-target-min items-center px-3 text-left",
+          focusRing
         )}
+        aria-label={collapsed ? t("sidebar.expandSidebar") : t("sidebar.collapseSidebar")}
+        aria-expanded={expanded}
       >
-        {/* Logo — tap to toggle on touch devices */}
-        <button
-          onClick={() => setPinned((p) => !p)}
-          className="flex items-center h-14 px-3 w-full text-left"
-          aria-label={expanded ? t("sidebar.collapseSidebar") : t("sidebar.expandSidebar")}
-          aria-expanded={expanded}
-        >
-          <div className="flex items-end gap-0 min-w-0">
-            <NixusLogo className="w-8 h-8 shrink-0" />
-            <span
-              className={cn(
-                "text-lg font-semibold whitespace-nowrap transition-opacity duration-200 bg-gradient-to-r from-[#A78BFA] to-[#F472B6] bg-clip-text text-transparent leading-none -ml-0.5 mb-px",
-                expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-              )}
-            >
-              ixus
-            </span>
-          </div>
-        </button>
-
-        {/* Module nav */}
-        <nav aria-label={t("sidebar.moduleNav")} className="flex-1 mt-2">
-          <ul className="space-y-1">
-            <li>
-              <Link
-                to="/"
-                className={cn(
-                  "flex items-center text-sm font-medium transition-colors",
-                  expanded ? "gap-3 px-3 py-2.5" : "justify-center px-3 py-2.5",
-                  isFinanceSection
-                    ? "text-sidebar-primary border-r-[3px] border-sidebar-primary"
-                    : "text-sidebar-foreground/70 hover:text-sidebar-foreground"
-                )}
-                title={expanded ? undefined : t("sidebar.finance")}
-                aria-label={t("sidebar.finance")}
-              >
-                <Wallet size={20} />
-                <span
-                  className={cn(
-                    "transition-opacity duration-200",
-                    expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-                  )}
-                >
-                  {t("sidebar.finance")}
-                </span>
-              </Link>
-            </li>
-            <li>
-              <Link
-                to="/car"
-                className={cn(
-                  "flex items-center text-sm font-medium transition-colors",
-                  expanded ? "gap-3 px-3 py-2.5" : "justify-center px-3 py-2.5",
-                  isCarSection
-                    ? "text-sidebar-primary border-r-[3px] border-sidebar-primary"
-                    : "text-sidebar-foreground/70 hover:text-sidebar-foreground"
-                )}
-                title={expanded ? undefined : t("sidebar.car")}
-                aria-label={t("sidebar.car")}
-              >
-                <Car size={20} />
-                <span
-                  className={cn(
-                    "transition-opacity duration-200",
-                    expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-                  )}
-                >
-                  {t("sidebar.car")}
-                </span>
-              </Link>
-            </li>
-            <li>
-              <Link
-                to="/ai"
-                className={cn(
-                  "flex items-center text-sm font-medium transition-colors",
-                  expanded ? "gap-3 px-3 py-2.5" : "justify-center px-3 py-2.5",
-                  isAiSection
-                    ? "text-sidebar-primary border-r-[3px] border-sidebar-primary"
-                    : "text-sidebar-foreground/70 hover:text-sidebar-foreground"
-                )}
-                title={expanded ? undefined : t("sidebar.ai")}
-                aria-label={t("sidebar.ai")}
-              >
-                <Bot size={20} />
-                <span
-                  className={cn(
-                    "transition-opacity duration-200",
-                    expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-                  )}
-                >
-                  {t("sidebar.ai")}
-                </span>
-              </Link>
-            </li>
-          </ul>
-        </nav>
-
-        {/* Utility actions */}
-        <div className={cn("border-t border-sidebar-border py-3", expanded ? "px-3" : "px-2")}>
-          <SidebarButton
-            onClick={toggleHidden}
-            icon={hidden ? EyeOff : Eye}
-            label={hidden ? t("sidebar.showValues") : t("sidebar.hideValues")}
-            expanded={expanded}
-            testId="toggle-values-button"
-          />
-          <SidebarButton
-            onClick={async () => {
-              try {
-                const result = await invoke<{ path: string } | null>("export_backup");
-                if (result) toast.success(t("sidebar.backupSaved", { path: result.path }));
-              } catch {
-                toast.error(t("sidebar.backupFailed"));
-              }
-            }}
-            icon={Download}
-            label={t("sidebar.backup")}
-            expanded={expanded}
-            testId="backup-button"
-          />
-          <SidebarButton
-            onClick={async () => {
-              try {
-                const restored = await invoke<boolean>("import_backup");
-                if (restored) {
-                  toast.success(t("sidebar.restoreSuccess"));
-                  window.location.reload();
-                }
-              } catch (err: unknown) {
-                const error = err as { message?: string };
-                if (error?.message?.includes("Invalid backup file")) {
-                  toast.error(t("sidebar.invalidBackup"));
-                } else {
-                  toast.error(t("sidebar.restoreFailed"));
-                }
-              }
-            }}
-            icon={FolderUp}
-            label={t("sidebar.restore")}
-            expanded={expanded}
-            testId="restore-button"
-          />
-          <SidebarButton
-            onClick={cycleTheme}
-            icon={ThemeIcon}
-            label={t(themeLabelKeys[currentTheme])}
-            expanded={expanded}
-            testId="theme-toggle"
-          />
-          <SidebarButton
-            onClick={cycleLanguage}
-            icon={Globe}
-            label={i18n.language === "en" ? t("sidebar.french") : t("sidebar.english")}
-            expanded={expanded}
-            testId="language-toggle"
-          />
-          <SidebarLink
-            to="/settings"
-            activeOptions={{ exact: false }}
-            icon={Settings}
-            label={t("sidebar.settings")}
-            expanded={expanded}
-            testId="settings-link"
-          />
-          <SidebarExternalButton
-            onClick={() => openUrl(BUY_ME_A_COFFEE_URL)}
-            icon={BuyMeACoffeeIcon}
-            label={t("sidebar.buyMeACoffee")}
-            expanded={expanded}
-            testId="buy-me-a-coffee-link"
-          />
+        <span className="flex min-w-0 items-end">
+          <NixusLogo className="h-8 w-8 shrink-0" />
           <span
             className={cn(
-              "block text-[10px] text-sidebar-foreground/40 pt-2 px-2 transition-opacity duration-200",
-              expanded && version ? "opacity-100" : "opacity-0 h-0 overflow-hidden"
+              "-ml-0.5 mb-px bg-logo-gradient bg-clip-text text-h2 leading-none text-transparent",
+              railLabelClass(expanded)
             )}
           >
-            v{version}
+            ixus
           </span>
-        </div>
+        </span>
+      </button>
+
+      {/* Module nav */}
+      <nav aria-label={t("sidebar.moduleNav")} className="mt-2 flex-1 px-2">
+        <ul className="space-y-1">
+          <li>
+            <Link
+              to="/"
+              className={railItemClass(expanded, isFinanceSection)}
+              aria-label={t("sidebar.finance")}
+            >
+              <Wallet className="size-5 shrink-0" />
+              <span className={railLabelClass(expanded)}>{t("sidebar.finance")}</span>
+              {isFinanceSection && <ActiveMarker />}
+            </Link>
+          </li>
+          <li>
+            <Link
+              to="/car"
+              className={railItemClass(expanded, isCarSection)}
+              aria-label={t("sidebar.car")}
+            >
+              <Car className="size-5 shrink-0" />
+              <span className={railLabelClass(expanded)}>{t("sidebar.car")}</span>
+              {isCarSection && <ActiveMarker />}
+            </Link>
+          </li>
+          <li>
+            <Link
+              to="/ai"
+              className={railItemClass(expanded, isAiSection)}
+              aria-label={t("sidebar.ai")}
+            >
+              <Bot className="size-5 shrink-0" />
+              <span className={railLabelClass(expanded)}>{t("sidebar.ai")}</span>
+              {isAiSection && <ActiveMarker />}
+            </Link>
+          </li>
+        </ul>
+      </nav>
+
+      {/* Utility actions */}
+      <div className="space-y-1 border-t border-rail-line px-2 py-3">
+        <RailButton
+          onClick={toggleHidden}
+          icon={hidden ? EyeOff : Eye}
+          label={hidden ? t("sidebar.showValues") : t("sidebar.hideValues")}
+          expanded={expanded}
+          testId="toggle-values-button"
+        />
+        <RailButton
+          onClick={cycleTheme}
+          icon={ThemeIcon}
+          label={t(themeLabelKeys[currentTheme])}
+          expanded={expanded}
+          testId="theme-toggle"
+        />
+        <RailButton
+          onClick={cycleLanguage}
+          icon={Globe}
+          label={i18n.language === "en" ? t("sidebar.french") : t("sidebar.english")}
+          expanded={expanded}
+          testId="language-toggle"
+        />
+        <Link
+          to="/settings"
+          activeOptions={{ exact: false }}
+          className={railItemClass(expanded, isSettingsSection)}
+          aria-label={t("sidebar.settings")}
+          data-testid="settings-link"
+        >
+          <Settings className="size-4 shrink-0" />
+          <span className={railLabelClass(expanded)}>{t("sidebar.settings")}</span>
+          {isSettingsSection && <ActiveMarker />}
+        </Link>
+        <RailButton
+          onClick={() => openUrl(BUY_ME_A_COFFEE_URL)}
+          icon={BuyMeACoffeeIcon}
+          label={t("sidebar.buyMeACoffee")}
+          expanded={expanded}
+          testId="buy-me-a-coffee-link"
+        />
+        <span
+          className={cn(
+            "block px-3 pt-2 text-caption text-ink-faint transition-opacity duration-200",
+            expanded && version ? "opacity-100" : "h-0 overflow-hidden opacity-0"
+          )}
+        >
+          v{version}
+        </span>
+      </div>
     </aside>
   );
 }
 
-function SidebarExternalButton({
+function RailButton({
   onClick,
   icon: Icon,
   label,
@@ -291,106 +288,12 @@ function SidebarExternalButton({
     <button
       type="button"
       onClick={onClick}
-      className={cn(
-        "flex items-center text-xs text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors w-full rounded py-1.5",
-        expanded ? "gap-2 px-2" : "justify-center px-1"
-      )}
-      title={expanded ? undefined : label}
+      className={railItemClass(expanded, false)}
       data-testid={testId}
       aria-label={label}
     >
-      <Icon className="size-4" />
-      <span
-        className={cn(
-          "transition-opacity duration-200 whitespace-nowrap",
-          expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-        )}
-      >
-        {label}
-      </span>
+      <Icon className="size-4 shrink-0" />
+      <span className={railLabelClass(expanded)}>{label}</span>
     </button>
-  );
-}
-
-function SidebarButton({
-  onClick,
-  icon: Icon,
-  label,
-  expanded,
-  testId,
-}: {
-  onClick: () => void;
-  icon: React.ComponentType<{ size?: number }>;
-  label: string;
-  expanded: boolean;
-  testId?: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "flex items-center text-xs text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors w-full rounded py-1.5",
-        expanded ? "gap-2 px-2" : "justify-center px-1"
-      )}
-      title={expanded ? undefined : label}
-      data-testid={testId}
-      aria-label={label}
-    >
-      <Icon size={16} />
-      <span
-        className={cn(
-          "transition-opacity duration-200 whitespace-nowrap",
-          expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-        )}
-      >
-        {label}
-      </span>
-    </button>
-  );
-}
-
-function SidebarLink({
-  to,
-  icon: Icon,
-  label,
-  expanded,
-  testId,
-  activeOptions,
-}: {
-  to: string;
-  icon: React.ComponentType<{ size?: number }>;
-  label: string;
-  expanded: boolean;
-  testId?: string;
-  activeOptions?: { exact?: boolean };
-}) {
-  return (
-    <Link
-      to={to}
-      activeOptions={activeOptions}
-      className={cn(
-        "flex items-center text-xs text-sidebar-foreground/70 hover:text-sidebar-foreground transition-colors w-full rounded py-1.5",
-        expanded ? "gap-2 px-2" : "justify-center px-1"
-      )}
-      activeProps={{
-        className: cn(
-          "flex items-center text-xs text-sidebar-foreground transition-colors w-full rounded py-1.5",
-          expanded ? "gap-2 px-2" : "justify-center px-1"
-        ),
-      }}
-      title={expanded ? undefined : label}
-      data-testid={testId}
-      aria-label={label}
-    >
-      <Icon size={16} />
-      <span
-        className={cn(
-          "transition-opacity duration-200 whitespace-nowrap",
-          expanded ? "opacity-100" : "opacity-0 w-0 overflow-hidden"
-        )}
-      >
-        {label}
-      </span>
-    </Link>
   );
 }

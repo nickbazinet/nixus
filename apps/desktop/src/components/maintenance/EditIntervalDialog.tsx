@@ -1,17 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useId } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  Input,
-  Label,
-} from "@nixus/shared";
+import { Button, Input, Label, SlideOver } from "@nixus/shared";
 import { useUpdateMaintenanceTask } from "@/hooks/useMaintenance";
 import type { MaintenanceTaskWithStatus } from "@/lib/types";
 
@@ -43,6 +34,8 @@ export function EditIntervalDialog({
 }: EditIntervalDialogProps) {
   const { t } = useTranslation();
   const updateTask = useUpdateMaintenanceTask();
+  const kmErrorId = useId();
+  const monthsErrorId = useId();
 
   const {
     register,
@@ -55,7 +48,7 @@ export function EditIntervalDialog({
       interval_km: String(task.interval_km),
       interval_months: String(task.interval_months),
     },
-    mode: "onSubmit",
+    mode: "onBlur",
   });
 
   useEffect(() => {
@@ -117,63 +110,80 @@ export function EditIntervalDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="edit-interval-dialog">
-        <DialogHeader>
-          <DialogTitle>{t("maintenance.dialog.editIntervalTitle")}</DialogTitle>
-        </DialogHeader>
+    <SlideOver
+      open={open}
+      onClose={() => onOpenChange(false)}
+      title={t("maintenance.dialog.editIntervalTitle")}
+      description={t("maintenance.dialog.editIntervalDescription")}
+      data-testid="edit-interval-dialog"
+    >
+      <form
+        onSubmit={handleSubmit(onSubmit)}
+        noValidate
+        className="flex flex-col gap-4"
+      >
+        <p className="text-caption text-ink-dim">{baselineHint}</p>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-          <p className="text-sm text-muted-foreground">{baselineHint}</p>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="interval-km" required>
+            {t("maintenance.interval.kmLabel")}
+          </Label>
+          <Input
+            id="interval-km"
+            type="number"
+            min={0}
+            step={1}
+            money
+            aria-required="true"
+            aria-invalid={!!errors.interval_km}
+            aria-describedby={errors.interval_km ? kmErrorId : undefined}
+            {...register("interval_km")}
+          />
+          {errors.interval_km && (
+            <p id={kmErrorId} className="text-caption text-over-ink">
+              {errors.interval_km.message}
+            </p>
+          )}
+        </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="interval-km">{t("maintenance.interval.kmLabel")}</Label>
-            <Input
-              id="interval-km"
-              type="number"
-              min={0}
-              step={1}
-              aria-invalid={!!errors.interval_km}
-              {...register("interval_km")}
-            />
-            {errors.interval_km && (
-              <p className="text-xs text-destructive">{errors.interval_km.message}</p>
-            )}
-          </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="interval-months" required>
+            {t("maintenance.interval.monthsLabel")}
+          </Label>
+          <Input
+            id="interval-months"
+            type="number"
+            min={0}
+            step={1}
+            money
+            aria-required="true"
+            aria-invalid={!!errors.interval_months}
+            aria-describedby={
+              errors.interval_months ? monthsErrorId : undefined
+            }
+            {...register("interval_months")}
+          />
+          {errors.interval_months && (
+            <p id={monthsErrorId} className="text-caption text-over-ink">
+              {errors.interval_months.message}
+            </p>
+          )}
+        </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="interval-months">
-              {t("maintenance.interval.monthsLabel")}
-            </Label>
-            <Input
-              id="interval-months"
-              type="number"
-              min={0}
-              step={1}
-              aria-invalid={!!errors.interval_months}
-              {...register("interval_months")}
-            />
-            {errors.interval_months && (
-              <p className="text-xs text-destructive">
-                {errors.interval_months.message}
-              </p>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => onOpenChange(false)}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button type="submit" data-testid="edit-interval-save">
-              {t("common.save")}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+          >
+            {t("common.cancel")}
+          </Button>
+          <Button type="submit" size="sm" data-testid="edit-interval-save">
+            {t("common.save")}
+          </Button>
+        </div>
+      </form>
+    </SlideOver>
   );
 }

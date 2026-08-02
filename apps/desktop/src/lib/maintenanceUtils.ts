@@ -1,5 +1,6 @@
 import { format, parseISO } from "date-fns";
 import type { TFunction } from "i18next";
+import type { AttentionStatus } from "@nixus/shared";
 import type {
   MaintenanceTaskStatus,
   MaintenanceTaskWithStatus,
@@ -29,6 +30,12 @@ export function formatVehicleDisplayName(vehicle: Pick<
 
 export function formatOdometerKm(km: number): string {
   return `${Math.round(km).toLocaleString("en-US")} km`;
+}
+
+// The user's calendar day, not UTC's: `toISOString()` rolls over mid-evening in western zones and
+// defaulted a service log to tomorrow.
+export function todayIsoDate(): string {
+  return format(new Date(), "yyyy-MM-dd");
 }
 
 export function getStatusSortOrder(status: MaintenanceTaskStatus): number {
@@ -196,6 +203,20 @@ export function formatNextDueLine(
   return "";
 }
 
+// One coherent sentence for the row wrapper's accessible name. Everything inside an AttentionRow is
+// aria-hidden, so without this the row announces nothing at all.
+export function formatTaskAccessibleName(
+  task: MaintenanceTaskWithStatus,
+  t: TFunction
+): string {
+  const detail =
+    formatNextDueLine(task, t) || t(getMaintenanceStatusLabelKey(task.status));
+  return t("maintenance.a11y.taskRow", {
+    task: getMaintenanceTaskLabel(task, t),
+    detail,
+  });
+}
+
 export function flattenInboxItems(
   vehicles: VehicleWithTasks[],
   t: TFunction
@@ -263,16 +284,40 @@ export function summarizeMaintenanceFleet(
   };
 }
 
-export function getFleetStatusRingClass(
+// Shape carries status as well as hue: `over` is a filled dot, `caution` a ring. Amber against
+// crimson is the most confusable pair under deuteranopia, and the dot column is the fastest scan
+// path in a stacked list. AttentionRow draws both shapes — prefer it over a hand-rolled dot.
+export function getMaintenanceStatusTone(
+  status: MaintenanceTaskStatus
+): AttentionStatus {
+  switch (status) {
+    case "overdue":
+      return "over";
+    case "due":
+    case "upcoming":
+      return "caution";
+    case "ok":
+      return "good";
+  }
+}
+
+export function getMaintenanceStatusLabelKey(
+  status: MaintenanceTaskStatus
+): string {
+  return `maintenance.status.${status}`;
+}
+
+// Recolours the card's existing hairline rather than adding a ring around it: depth in this system
+// is the hairline plus the page-to-card tonal step, and a second ring reads as a banned shadow.
+export function getMaintenanceStatusAccentClass(
   status: MaintenanceTaskStatus
 ): string | undefined {
   switch (status) {
-    case "upcoming":
-      return "ring-1 ring-amber-500/30";
-    case "due":
-      return "ring-1 ring-rose-500/40";
     case "overdue":
-      return "ring-1 ring-rose-500/60";
+      return "border-over";
+    case "due":
+    case "upcoming":
+      return "border-caution";
     case "ok":
       return undefined;
   }
@@ -300,13 +345,18 @@ export function getMostUrgentNonOkTask(
   )[0];
 }
 
-export function formatVehicleMakeModel(
-  vehicle: Pick<Vehicle, "make" | "model">
+// Null when the display name already says it: "2020 Toyota Camry" above "Toyota Camry" is the same
+// content twice, and a screen reader reads the model out both times.
+export function formatVehicleSubtitle(
+  vehicle: Pick<Vehicle, "nickname" | "make" | "model" | "year">
 ): string | null {
   const parts: string[] = [];
   if (vehicle.make?.trim()) parts.push(vehicle.make.trim());
   if (vehicle.model?.trim()) parts.push(vehicle.model.trim());
-  return parts.length > 0 ? parts.join(" ") : null;
+  if (parts.length === 0) return null;
+
+  const subtitle = parts.join(" ");
+  return formatVehicleDisplayName(vehicle).includes(subtitle) ? null : subtitle;
 }
 
 export function formatServiceEntryLabel(
