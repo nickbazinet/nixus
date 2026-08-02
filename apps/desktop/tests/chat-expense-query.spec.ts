@@ -28,7 +28,9 @@ async function setupTauriMock(page: Page) {
           if (cb) eventListeners[event].push(cb);
           return Promise.resolve(handlerId);
         }
-        if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+        // Every other plugin command resolves null on purpose: a truthy updater check makes
+        // UpdateChecker render an always-open dialog that aria-hides the entire app.
+        if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
         switch (cmd) {
           case "send_chat_message": {
@@ -54,7 +56,7 @@ async function setupTauriMock(page: Page) {
 
               // 3. Stream final answer with table
               const finalResponse =
-                'Your most recent expense was `$45.00` at Costco on 2026-03-20 in the Groceries category.\n\n' +
+                'Your most recent expense was $45.00 at Costco on 2026-03-20 in the Groceries category.\n\n' +
                 '| Date | Merchant | Amount | Category |\n' +
                 '|------|----------|--------|----------|\n' +
                 '| 2026-03-20 | Costco | $45.00 | Groceries |\n';
@@ -109,7 +111,8 @@ async function setupTauriMock(page: Page) {
                 emitEvent("chat:response-chunk", { chunk: "", done: true });
               }, 100);
             } else {
-              const response = "You spent `$125.50` on dining out this month across 5 transactions.";
+              // Money is plain text, never backticked: a figure must not land in a <code> run.
+              const response = "You spent $125.50 on dining out this month across 5 transactions.";
               setTimeout(() => {
                 emitEvent("chat:response-chunk", { chunk: response, done: false });
               }, 50);
@@ -123,6 +126,12 @@ async function setupTauriMock(page: Page) {
 
           case "execute_chat_action":
             return Promise.resolve({ success: true, message: "Done. $45.00 expense added for Costco." });
+
+          case "list_conversations":
+            return Promise.resolve([]);
+
+          case "get_chat_messages":
+            return Promise.resolve([]);
 
           case "get_db_status":
             return Promise.resolve({ db_path: "mock.db", wal_mode: true, schema_version: 9, migrations_applied: 9 });
@@ -138,6 +147,10 @@ async function setupTauriMock(page: Page) {
       },
       unregisterCallback: () => {},
       convertFileSrc: (path: string) => path,
+    };
+
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => {},
     };
   });
 }

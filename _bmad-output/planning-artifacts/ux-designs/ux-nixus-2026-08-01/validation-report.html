@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UX Design Validation: Nixus</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .title h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .title .subtitle { color: var(--muted); font-size: 13px; margin-top: 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .synthesis {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--muted);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+    font-size: 15.5px;
+  }
+  .synthesis p { margin: 0 0 10px; }
+  .synthesis p:last-child { margin-bottom: 0; }
+
+  .dimension-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .dim-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .dim-card .dim-name { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .dim-card .dim-verdict { font-size: 14px; font-weight: 600; }
+
+  section.dimension, section.reviewer-section { margin-bottom: 14px; }
+  section.dimension details, section.reviewer-section details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  section summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  section summary::-webkit-details-marker { display: none; }
+  section summary::before {
+    content: "▸";
+    display: inline-block;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+  }
+  section details[open] summary::before { transform: rotate(90deg); }
+  section summary h2 {
+    display: inline;
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    flex: 1;
+  }
+  .verdict-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: white;
+  }
+  .verdict-strong { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+  .verdict-thin { background: var(--verdict-thin); }
+  .verdict-broken { background: var(--verdict-broken); }
+
+  .dim-body { padding: 4px 20px 18px; }
+  .dim-judgment { color: var(--text); font-size: 14.5px; }
+  .dim-judgment p { margin: 0 0 10px; }
+
+  .findings-list { padding: 0 20px 4px; }
+  article.finding {
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  article.finding:first-child { border-top: none; }
+  article.finding header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .badge {
+    font-size: 10.5px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+  }
+  .badge-sev-low { background: rgba(100, 116, 139, 0.12); color: var(--sev-low); }
+  .badge-sev-medium { background: rgba(202, 138, 4, 0.14); color: var(--sev-medium); }
+  .badge-sev-high { background: rgba(234, 88, 12, 0.14); color: var(--sev-high); }
+  .badge-sev-critical { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical); }
+  .finding-title { margin: 0; font-size: 15px; font-weight: 500; flex: 1; min-width: 200px; }
+  .finding-location { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+  .finding-note, .finding-fix { margin-top: 6px; font-size: 14px; }
+  .finding-fix strong { color: var(--muted); font-weight: 500; }
+
+  .reviewer-source {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  .mechanical {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-top: 24px;
+    font-size: 14px;
+  }
+  .mechanical h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .mechanical ul { margin: 0; padding-left: 20px; }
+  .mechanical li { margin-bottom: 4px; color: var(--text); }
+
+  footer.report-footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  footer .meta { display: flex; gap: 24px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header class="report-header">
+      <div class="title">
+        <h1>Nixus &mdash; UX Design Validation Report</h1>
+        <div class="subtitle">_bmad-output/planning-artifacts/ux-designs/ux-nixus-2026-08-01/</div>
+      </div>
+    </header>
+
+    <div class="synthesis">
+<p>Three lenses ran in parallel against the first draft of the spine pair: a rubric walker, an
+adversarial accessibility audit that independently recomputed every contrast ratio, and a persona lens reading the
+spec as Marie. Between them they produced <strong>72 findings — 9 critical, 21 high</strong>. All three
+independently confirmed the same strength (the token layer's contrast engineering is sound and verified) and all
+three found the same class of weakness: the spine committed load-bearing decisions in prose without committing them
+in structure.</p>
+<p>The most serious finding was not a token or an ARIA gap but a <strong>self-contradiction</strong>. Flow 1's
+walkthrough had the dashboard greet a first-time user with &ldquo;3.2 months of expenses covered&rdquo; six minutes
+after a single statement import and zero entered balances &mdash; a figure the app cannot know, and precisely the
+&ldquo;appearing to know something it has not earned&rdquo; failure this spine indicts the old onboarding for, two
+sections after defining <code>data_sufficient: false</code> to prevent it. The persona lens named it as the single
+most likely close-the-app moment. It is fixed: on day one the insufficient-data state is now the correct and only
+honest state.</p>
+<p>Two reviewer recommendations were <strong>rejected on evidence</strong> after being tested computationally, and
+replaced with structural alternatives. &ldquo;Remove the same-luminance chart collision&rdquo; is impossible at
+n=8 &mdash; an alternating ramp has four steps per luminance band, so repairing 3-vs-7 only relocates the collision
+to 2-vs-8. And no single focus-ring hex exists that clears 3:1 against both <code>card-dark</code> and
+<code>brand-dark</code>; the solution sets are disjoint. Rank-order assignment plus a 1px segment divider, and a
+ring-plus-surface-offset, replace them.</p>
+<p>Of 72 findings, <strong>61 are resolved in the spines</strong>, 8 are carried into Open Items as explicit
+research or scope decisions (most notably: the &ldquo;Wealth&rdquo; destination label needs user validation, not a
+desk ruling), and 3 required no change. Two whole capabilities were added that no prior artifact mentioned:
+<strong>CSV export</strong> &mdash; the deepest trust prerequisite for a spreadsheet user, distinct from
+backup/restore &mdash; and <strong>Windows High Contrast Mode</strong>, on a first-class platform whose elevation
+model is hairline-only.</p>
+    </div>
+
+    <div class="dimension-summary">
+      <div class="dim-card">
+        <div class="dim-name">Flow coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-thin)">thin</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Token completeness</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Component coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-thin)">thin</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">State coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Visual reference coverage</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Bloat & overspecification</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Inheritance discipline</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+      <div class="dim-card">
+        <div class="dim-name">Shape fit</div>
+        <div class="dim-verdict" style="color: var(--verdict-adequate)">adequate</div>
+      </div>
+    </div>
+
+    <section class="dimension">
+      <details open>
+        <summary>
+          <h2>Flow coverage</h2>
+          <span class="verdict-pill verdict-thin">thin</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>Two of eight in-scope PRD journeys had a Key Flow. The flagship Financial Health feature, AI chat, and Income had none.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">J9 Financial Health had no Key Flow</h3>
+              <span class="finding-location">EXPERIENCE.md &sect; Key Flows</span>
+            </header>
+            <div class="finding-note">The product's differentiator had a full worked example in the PRD and an entire Data Honesty Contract built around it, but no protagonist ever opened the view.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added Flow 3 &mdash; Marie asks &ldquo;am I saving enough?&rdquo;, with the greyed-out step 4 answering the question she actually arrived with as the climax, and a <code>data_sufficient: false</code> failure path. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">Flow 1 step 7 contradicted the spine's own state machine</h3>
+              <span class="finding-location">EXPERIENCE.md Flow 1 vs State Patterns</span>
+            </header>
+            <div class="finding-note">A populated savings-cushion figure rendered for a user with one imported statement and no entered balances.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Step 7 now lands on the insufficient-data state with a 1-of-3 progress indicator and no figure, plus an explicit note in the flow explaining why. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">J5 AI chat had no Key Flow</h3>
+              <span class="finding-location">EXPERIENCE.md &sect; Key Flows</span>
+            </header>
+            <div class="finding-note">An entire AI Contract of behavioural rules with no worked conversation.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added Flow 4 &mdash; Dev via <code>&#8984;K</code>, with the write-confirmation card as the climax. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">J6 Income entry was uncovered entirely</h3>
+              <span class="finding-location">EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">Thinnest-covered in-scope journey; present only as a table cell in the IA.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added an Income empty state; income also now appears in the CSV export set and the Transactions reserved shape. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">J3 Today had no walkthrough</h3>
+              <span class="finding-location">EXPERIENCE.md &sect; Key Flows</span>
+            </header>
+            <div class="finding-note">The literal landing surface was behaviourally specified but never dramatised.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Covered as the closing beat of Flow 1 step 7 rather than a separate flow. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Flow 2 is not a PRD journey</h3>
+              <span class="finding-location">EXPERIENCE.md Flow 2</span>
+            </header>
+            <div class="finding-note">Justified by decision-log Entry 15, but a reader cross-checking against sources would not find it named.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Provenance is recorded in the decision log; left as-is deliberately &mdash; the surface is net-new. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Token completeness</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>All 73 original tokens carried complete light/dark pairs and the stated contrast targets held. One frontmatter reference was genuinely broken.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title"><code>colors.rail-on</code> / <code>rail-on-ink</code> referenced but never defined</h3>
+              <span class="finding-location">DESIGN.md components.rail-item-active</span>
+            </header>
+            <div class="finding-note">A broken reference inside the machine-readable frontmatter, on the primary navigation rail. A resolver would fail; an implementer would invent a value &mdash; the exact failure mode this spine blames for the existing raw-palette mess.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added <code>rail-ink</code>, <code>rail-on</code>, <code>rail-on-ink</code> in both modes, verified at 4.5:1 as text because the rail expands to 192px and renders real labels. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">No disabled-state token existed anywhere</h3>
+              <span class="finding-location">DESIGN.md components</span>
+            </header>
+            <div class="finding-note">Zero hits for &ldquo;disabled&rdquo; across both files, yet the spine specifies bulk bars and forms that require it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added <code>ink-disabled</code> (3:1 verified) plus <code>components.disabled</code>, with <code>aria-disabled</code> mandatory &mdash; a dim alone is not a state. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Focus ring colour unspecified; the obvious candidate self-cancels</h3>
+              <span class="finding-location">EXPERIENCE.md Accessibility Floor</span>
+            </header>
+            <div class="finding-note">A brand-coloured ring on a brand-filled button is 1.00:1 &mdash; invisible on the highest-traffic focusable element in onboarding.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Proved computationally that no single dark-mode hex can clear 3:1 against both card and brand (required L &ge; 0.140 and &le; 0.098 &mdash; disjoint). Specified ring plus surface-coloured offset instead. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">192px rail-expanded width was hardcoded in prose</h3>
+              <span class="finding-location">EXPERIENCE.md IA</span>
+            </header>
+            <div class="finding-note">Contradicted DESIGN.md's own &ldquo;reach for a token&rdquo; rule.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added <code>spacing.rail-w-expanded</code>, plus <code>target-min</code>, <code>focus-ring-w</code>, <code>focus-offset-w</code>. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Contrast margins had no headroom and no regression guard</h3>
+              <span class="finding-location">DESIGN.md colors</span>
+            </header>
+            <div class="finding-note"><code>ink-faint</code> sat 0.01 from the 4.5:1 cliff; a 1% warm-up would silently break AA with no test to catch it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Re-solved to &ge;4.6:1 on all four surfaces and added a CI contrast-regression requirement to the spine. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Component coverage</h2>
+          <span class="verdict-pill verdict-thin">thin</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>Nine components had behavioural rules in EXPERIENCE.md with no visual counterpart in DESIGN.md &mdash; roughly a third of those named.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Nine components had behaviour but no visual spec</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns vs DESIGN.md Components</span>
+            </header>
+            <div class="finding-note">Segmented sub-nav, bulk bar, attention list, inline edit, slide-over, dialog, chart, empty state, and template picker.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added all nine to the frontmatter plus <code>checkbox</code>, <code>toast</code>, <code>focus-ring</code>, <code>disabled</code>. Components went 15 &rarr; 28. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Toast was used repeatedly but never specified</h3>
+              <span class="finding-location">both files</span>
+            </header>
+            <div class="finding-note">Referenced as a behaviour in inline-edit confirmation and aria-live rules; specified nowhere.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added as both a visual token and a behavioural row, with the rule that it never carries the only copy of an actionable error. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Card, buttons, and badges had visual specs but no behavioural rows</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns</span>
+            </header>
+            <div class="finding-note">No statement of whether a card is ever clickable, or whether a badge is interactive.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added rows: cards are presentational unless they are a whole-card link; badges are labels, never filter controls. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>State coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>Import and insufficient-data states were unusually rigorous. Four in-scope surfaces had no state row and were not flagged as gaps.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No empty state for Income, Recurring, or Assets</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note">Named in-scope surfaces with neither a state row nor an acknowledged gap &mdash; reading as oversight rather than decision.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added all three, each explaining why the data matters rather than just naming the absence. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No state for zero net-worth snapshots</h3>
+              <span class="finding-location">EXPERIENCE.md State Patterns</span>
+            </header>
+            <div class="finding-note">The contract says snapshots are discrete events but never said what the chart shows at zero or one event.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added both states; a one-point chart never renders as a trend line and is never interpolated. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No state for an AI import running long</h3>
+              <span class="finding-location">review-accessibility &sect;7</span>
+            </header>
+            <div class="finding-note">A 30s NFR ceiling with no mid-process signal; draft persistence covers commit failure only, so a force-quit at 25s loses everything.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added a reassurance past ~15s and a documented degradation to the AI-unavailable state on hard timeout. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Visual reference coverage</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>No orphans; both exploratory artifacts were linked and carried the superseded-values notice. Citations sat in the wrong sections.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Scope-comparison mock cited only at the IA section</h3>
+              <span class="finding-location">EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">Its findings land on the Transaction table and the Data Honesty rules, not on information architecture.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Re-cited inline on the Transaction table, next-action card, and template-picker rows; four new key-screen mocks added and linked. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">&ldquo;Spine wins on conflict&rdquo; stated four times across the pair</h3>
+              <span class="finding-location">both files</span>
+            </header>
+            <div class="finding-note">Expected once.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Consolidated into one composition-reference block per file. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Bloat &amp; overspecification</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>No source restatement and disciplined FR citation. EXPERIENCE.md carried argumentation where a behavioural contract should carry rules.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">EXPERIENCE.md was rhetorical outside Key Flows</h3>
+              <span class="finding-location">EXPERIENCE.md &sect;&sect; Onboarding, IA, Data Honesty</span>
+            </header>
+            <div class="finding-note">A story-dev consumer had to separate persuasion from contract.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Trimmed the justification sentences; the reasoning already lives in the decision log. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Inheritance discipline</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>All 12 source files resolve on disk. FR quotations verbatim. Glossary consistent. One broken token reference, counted under Token completeness.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Component row labels don't match token names</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns</span>
+            </header>
+            <div class="finding-note">&ldquo;Transaction table&rdquo; vs <code>table-head</code>/<code>table-row</code> &mdash; a grep-based cross-reference would miss the pairing.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Every behavioural row now names its token inline, e.g. &ldquo;Transaction table (<code>components.table-head</code>)&rdquo;. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+    <section class="dimension">
+      <details>
+        <summary>
+          <h2>Shape fit</h2>
+          <span class="verdict-pill verdict-adequate">adequate</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>DESIGN.md sections in canonical order; all eight EXPERIENCE.md defaults present; invented sections all earn their place. One expected section was missing.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">&ldquo;Inspiration &amp; Anti-patterns&rdquo; was missing entirely</h3>
+              <span class="finding-location">EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">The decision log records rejected directions and the retired UX spec carried a full anti-patterns section that was never carried forward or explicitly retired. A consumer had no single place to see what not to build.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added the section: carried-forward patterns, a retired table of eleven rejected decisions, and five rejected-on-principle items (scores, gamification, generative advice, nagging notifications, bank sync). <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="reviewer-section">
+      <details>
+        <summary>
+          <h2>Accessibility review</h2>
+          <span class="reviewer-source">review-accessibility.md</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>Independent WCAG luminance recomputation plus deuteranopia/protanopia simulation. Verdict on the first draft: not ready as written &mdash; 6 critical, 9 high, 8 medium, 4 low. It independently confirmed the chart-ramp and badge contrast engineering as accurate, and found seven categories unaddressed entirely.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">Masked money figures had no screen-reader behaviour</h3>
+              <span class="finding-location">EXPERIENCE.md Money &amp; Number Rules</span>
+            </header>
+            <div class="finding-note">Two live failure modes: a CSS blur leaves the real amount readable aloud &mdash; worst in exactly the public-space scenario the toggle exists for &mdash; or a bullet replacement announces &ldquo;dollar sign bullet bullet bullet&rdquo;.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Masked elements carry a localized &ldquo;Amount hidden&rdquo; label and the true value must not remain in the DOM text or accessible name. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">Streaming chat bound to a plain live region</h3>
+              <span class="finding-location">EXPERIENCE.md Accessibility Floor</span>
+            </header>
+            <div class="finding-note">Lumped with toasts, stepper, and counts. A live region on a token-by-token LLM stream announces every mutation &mdash; partial words, a firehose per response.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Given its own rule: renders per-token visually, announces only at sentence boundaries or completion. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">Inline edit had no keyboard entry trigger</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns</span>
+            </header>
+            <div class="finding-note">Contradicted the section's own &ldquo;keyboard-complete&rdquo; principle two lines above. The highest-traffic interaction in the app was mouse-only.</div>
+            <div class="finding-fix"><strong>Fix:</strong> The value is a focusable control; <code>Enter</code>/<code>Space</code> enters edit mode. The dotted underline is now the required resting affordance, not an alternative to a hover pencil. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title"><code>caution</code> and <code>over</code> collapse under CVD simulation</h3>
+              <span class="finding-location">EXPERIENCE.md Status Vocabulary</span>
+            </header>
+            <div class="finding-note">Amber against crimson is the most confusable pair for red-green colour blindness, and these are the two states a user most needs to separate. Badge text made it WCAG-sufficient, but the dot column &mdash; the fastest scan path &mdash; carried hue alone.</div>
+            <div class="finding-fix"><strong>Fix:</strong> <code>over</code> is a filled dot, <code>caution</code> is a ring. Shape carries status alongside hue. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">Windows High Contrast Mode unaddressed</h3>
+              <span class="finding-location">absent from both files</span>
+            </header>
+            <div class="finding-note">Hairline-only elevation, tint-based badges, and flat-fill chart segments are precisely what <code>forced-colors</code> overrides. HCM users skew older and low-vision &mdash; the primary persona.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added a forced-colors section: system-colour-mapped borders, scoped opt-outs, and verification in a real Windows session rather than DevTools emulation. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title"><code>ink-faint</code> failed on chrome and rail</h3>
+              <span class="finding-location">DESIGN.md colors</span>
+            </header>
+            <div class="finding-note">The spine claimed 4.5:1 in both modes, but had only checked card and page. On chrome and rail it measured 4.06&ndash;4.29:1.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Re-solved against all four surfaces at &ge;4.6:1, with an explicit scope rule attached to the token. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">12px uppercase on scan-heavy content</h3>
+              <span class="finding-location">DESIGN.md typography</span>
+            </header>
+            <div class="finding-note">Column heads and axis ticks stacked small size, all-caps letter-shape loss, and a rapid-scan pattern &mdash; on the exact content a presbyopia-range user scans most. The spine bans 10px for this reason and gave 12px a pass.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added <code>typography.column-head</code> at 13px sentence case; axis ticks moved to <code>caption</code>; 12px uppercase is now badges only. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">No <code>aria-sort</code> on sortable headers</h3>
+              <span class="finding-location">EXPERIENCE.md Component Patterns</span>
+            </header>
+            <div class="finding-note">Sort state was purely a coloured glyph. Zero-cost to add on a real table, which the spine already commits to.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Required on every sortable <code>&lt;th&gt;</code>. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">No focus restoration after overlay close</h3>
+              <span class="finding-location">EXPERIENCE.md Accessibility Floor</span>
+            </header>
+            <div class="finding-note">Slide-overs are the mechanism for every create/edit flow and dialogs gate every delete.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Focus returns to the element that opened the overlay, never to <code>&lt;body&gt;</code>. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Language switch didn't sync <code>lang</code></h3>
+              <span class="finding-location">EXPERIENCE.md Foundation</span>
+            </header>
+            <div class="finding-note">In a genuinely bilingual SPA, a stale <code>lang</code> means a screen reader reads French with an English voice for the rest of the session.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Updates <code>document.documentElement.lang</code> immediately and announces the change. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">OS text scaling at the minimum window untested</h3>
+              <span class="finding-location">EXPERIENCE.md Foundation</span>
+            </header>
+            <div class="finding-note">1024&times;680 was treated as a physical floor with no consideration of 125&ndash;200% system scaling layered on top &mdash; the realistic case for the named persona.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Testing at 125/150/200% at the minimum window is now a stated requirement; if the layout cannot hold, the minimum window is wrong, not the user. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Segmented sub-nav mixed link semantics with tablist keyboard behaviour</h3>
+              <span class="finding-location">EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">Arrow-key movement is the tablist convention; applying it to real anchors yields something a screen reader still announces as &ldquo;link&rdquo;.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Chose plain navigation links. Arrow keys unbound; Tab and Enter only. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">15px checkbox with no stated hit area</h3>
+              <span class="finding-location">transactions-compare.html</span>
+            </header>
+            <div class="finding-note">The primary interaction for reviewing a 40&ndash;80 row import, for a low-tech-comfort user.</div>
+            <div class="finding-fix"><strong>Fix:</strong> 15px visual box inside a 24px hit area, plus a general target-size policy. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">No route-change focus management or skip link</h3>
+              <span class="finding-location">EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">A persistent shell meant a keyboard user was left on the nav item they just activated.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Focus moves to the new surface's <code>&lt;h1&gt;</code>; a skip link precedes the rail. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Attention rows announced as four disconnected fragments</h3>
+              <span class="finding-location">EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">Ordering and pauses vary across NVDA, JAWS, and VoiceOver.</div>
+            <div class="finding-fix"><strong>Fix:</strong> The row wrapper carries one accessible name; dot, figure, and badge are presentational. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Icon-only rail by default</h3>
+              <span class="finding-location">EXPERIENCE.md IA</span>
+            </header>
+            <div class="finding-note">Gates labels behind hover for the user the spine describes as least tolerant of confusing UI &mdash; the same &ldquo;figure it out yourself&rdquo; pattern it bans elsewhere.</div>
+            <div class="finding-fix"><strong>Fix:</strong> The rail opens labelled on first run; collapsing becomes a preference. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title"><code>prefers-reduced-motion</code> claimed but not enumerated</h3>
+              <span class="finding-location">EXPERIENCE.md</span>
+            </header>
+            <div class="finding-note">The one cross-cutting rule with no checklist, unlike states and ARIA.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Restated as a blanket rule with no carve-outs and an explicit component list. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Hairline separators are near-invisible by design</h3>
+              <span class="finding-location">DESIGN.md Elevation</span>
+            </header>
+            <div class="finding-note">Not a violation, but undocumented &mdash; someone could &ldquo;fix&rdquo; it into the <code>shadow-sm</code> the spine bans.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Stated: the hairline is reinforcement, the tonal step is the actual boundary. <em>— resolved in this run</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <section class="reviewer-section">
+      <details>
+        <summary>
+          <h2>Marie &mdash; persona lens</h2>
+          <span class="reviewer-source">review-marie.md</span>
+        </summary>
+        <div class="dim-body"><div class="dim-judgment"><p>The spec read by its own named primary user: 42, eleven years in a spreadsheet, fifteen minutes of patience, will not file a bug. Verdict: the best-argued UX document for this product, written in the vocabulary of someone who is not Marie &mdash; and its own honesty mechanisms risk reading as the app hedging about whether it works. 2 critical, 5 high, 2 medium-high, 3 medium, 2 low-medium, 2 low.</p></div></div>
+        <div class="findings-list">
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">A figure the app could not know, six minutes in</h3>
+              <span class="finding-location">EXPERIENCE.md Flow 1 step 7</span>
+            </header>
+            <div class="finding-note">&ldquo;It told me how many months of savings I had and I hadn't even told it what my savings were, so I wasn't sure if I believed the rest of it after that.&rdquo; Named as the single most likely close-the-app moment.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Flow 1 now lands on the insufficient-data state. Cross-referenced under Flow coverage. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-critical">critical</span>
+              <h3 class="finding-title">&ldquo;Net for June&rdquo; would be read as a balance change</h3>
+              <span class="finding-location">transactions-compare.html</span>
+            </header>
+            <div class="finding-note">Eleven years of spreadsheet habit is a running balance. The caveat existed only as a note to the builder, never as user-facing copy.</div>
+            <div class="finding-fix"><strong>Fix:</strong> A net figure is now always labelled against what it is not: &ldquo;money in &minus; money out &mdash; not your account balance.&rdquo; <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">No data export mentioned anywhere</h3>
+              <span class="finding-location">absent from both files</span>
+            </header>
+            <div class="finding-note">&ldquo;The data is mine, in a format I can always open&rdquo; is the deepest habit of a spreadsheet user. Switching in without a guaranteed way out is a bigger commitment than she agreed to. Distinct from backup/restore, which is disaster recovery for a binary file.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added a &ldquo;Getting Your Data Out&rdquo; section: per-surface CSV export honouring active filters, no AI, no account, no network. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">&ldquo;Variable spending&rdquo; and &ldquo;fixed commitments&rdquo; as user-facing labels</h3>
+              <span class="finding-location">EXPERIENCE.md Status Vocabulary</span>
+            </header>
+            <div class="finding-note">&ldquo;Variable&rdquo; is statistics-class language, not money language &mdash; and a better rendering already existed one line away in the same document.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Renamed on screen to &ldquo;Bills you can't easily change&rdquo; and &ldquo;What you can change&rdquo;. A list of words that stay engineering-only was added: fixed/variable, trailing, net flow, allocation, discretionary, liquid. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">&ldquo;Duplicates excluded&rdquo; vs &ldquo;auto-deselected&rdquo;</h3>
+              <span class="finding-location">Flow 1 vs State Patterns</span>
+            </header>
+            <div class="finding-note">&ldquo;Excluded from what? Did it drop three of my transactions?&rdquo; The scarier word was the one in the narrative, and inconsistency between flow and rule means the wrong string could ship.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Standardised everywhere on &ldquo;3 likely duplicates found &mdash; unchecked. Review if you want them.&rdquo; The word &ldquo;excluded&rdquo; is retired. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Bare &ldquo;Stale&rdquo; badge beside an unexplained age</h3>
+              <span class="finding-location">directions-3.html vs State Patterns</span>
+            </header>
+            <div class="finding-note">&ldquo;TFSA balance &middot; 6 wks &middot; Stale&rdquo; makes the reader reconstruct the sentence. The rule said the right thing; the mock said a shorter, ambiguous thing.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Badges never render a bare adjective. <code>stale</code> reads &ldquo;Updated 6 weeks ago&rdquo;. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-high">high</span>
+              <h3 class="finding-title">Acronym wall on the allocation card</h3>
+              <span class="finding-location">directions-3.html vs Voice and Tone</span>
+            </header>
+            <div class="finding-note">RRSP / TFSA / FHSA / Non-Registered with no expansion &mdash; the mock violated the spine's own first-mention rule, which has nothing to attach to on a bar chart.</div>
+            <div class="finding-fix"><strong>Fix:</strong> The expansion rule now covers charts explicitly: it goes in the row label or a persistent note, because there is no &ldquo;first mention&rdquo; on a bar. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium-high">medium-high</span>
+              <h3 class="finding-title">&ldquo;Wealth&rdquo; may exclude the person it is for</h3>
+              <span class="finding-location">EXPERIENCE.md IA</span>
+            </header>
+            <div class="finding-note">&ldquo;Wealth is Warren Buffett. I have a mortgage and a car loan.&rdquo; A credit-card balance is the opposite of wealth, and that is where she must look for it.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Carried to Open Items as a research task, not a desk decision. The four-destination <em>structure</em> is evidenced by the existing nav clusters; the <em>labels</em> are evidenced by nothing. <em>— carried to Open Items</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium-high">medium-high</span>
+              <h3 class="finding-title">Two trust hedges stacked in one session</h3>
+              <span class="finding-location">EXPERIENCE.md Data Honesty</span>
+            </header>
+            <div class="finding-note">A full not-advice disclaimer beside her first-ever recommendation, in the same ten minutes she is asked to trust an AI-categorized statement she didn't verify, reads as the app retracting itself.</div>
+            <div class="finding-fix"><strong>Fix:</strong> The disclaimer's weight is now calibrated: full sentence on the Financial Health surface, compact expandable affordance on Today. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Card headers read as parental</h3>
+              <span class="finding-location">directions-3.html</span>
+            </header>
+            <div class="finding-note">&ldquo;What needs attention&rdquo; &mdash; attention from whom? &ldquo;What should I do?&rdquo; &mdash; I came to see my numbers. The badges underneath are already neutral; the headers carried the judgement.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Neutral nouns: &ldquo;Needs a look&rdquo; and &ldquo;Suggested next step&rdquo;. &ldquo;Can I spend?&rdquo; survives &mdash; it is her question, not the app's verdict. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">Welcome screen introduced an unexplained concept</h3>
+              <span class="finding-location">EXPERIENCE.md Onboarding</span>
+            </header>
+            <div class="finding-note">&ldquo;AI needs your own key&rdquo; &mdash; what key? &mdash; and a background-process announcement with no reassurance attached.</div>
+            <div class="finding-fix"><strong>Fix:</strong> API keys removed from welcome entirely. The tray line leads with the reason: &ldquo;that's what lets it remind you about bills when the window is closed. Nothing leaves your computer.&rdquo; <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-medium">medium</span>
+              <h3 class="finding-title">&ldquo;Projected due&rdquo; is indistinguishable from &ldquo;due soon&rdquo;</h3>
+              <span class="finding-location">EXPERIENCE.md Status Vocabulary</span>
+            </header>
+            <div class="finding-note">&ldquo;Forecast to come due&rdquo; explains a forecasting word with another forecasting word.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Needs a clarifier on first appearance; prefer keeping it backend-only where <code>due_soon</code> serves. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low-medium">low-medium</span>
+              <h3 class="finding-title">Template names don't map to every household</h3>
+              <span class="finding-location">EXPERIENCE.md Onboarding</span>
+            </header>
+            <div class="finding-note">&ldquo;None of these are quite me.&rdquo; Nothing on the screen said everything was editable afterwards.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Added a &ldquo;Bending It To Fit&rdquo; section &mdash; categories are freely renameable, mergeable, and deletable, stated at first contact on the picker. <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low-medium">low-medium</span>
+              <h3 class="finding-title">&ldquo;from import&rdquo; badge required an inference</h3>
+              <span class="finding-location">EXPERIENCE.md Data Honesty</span>
+            </header>
+            <div class="finding-note">The spec asserted she wouldn't be confused; the badge stated a fact and left her to derive the causal link.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Paired with a tooltip that states it outright: &ldquo;imports can't be linked to an account yet.&rdquo; <em>— resolved in this run</em></div>
+          </article>
+          <article class="finding">
+            <header>
+              <span class="badge badge-sev-low">low</span>
+              <h3 class="finding-title">Multi-year comparison and ad-hoc side-tabs unmentioned</h3>
+              <span class="finding-location">absent</span>
+            </header>
+            <div class="finding-note">Eleven years of rows means scrolling back to 2019. A spreadsheet also accretes a big-purchases tab, a who-owes-me tab.</div>
+            <div class="finding-fix"><strong>Fix:</strong> Named as known gaps in &ldquo;Bending It To Fit&rdquo; rather than left silent. <em>— carried to Open Items</em></div>
+          </article>
+        </div>
+      </details>
+    </section>
+
+    <div class="mechanical">
+      <h3>Mechanical notes</h3>
+      <ul>
+        <li><strong>Verified computationally, not asserted:</strong> all 83 colour tokens pass &mdash; text &ge;4.5:1 on card, page, chrome, and rail in both modes; badge ink &ge;4.5:1; button fill &ge;4.5:1; disabled and focus ring &ge;3:1; chart steps &ge;3:1 on card with &ge;1.35:1 adjacent separation.</li>
+        <li><strong>246 token references</strong> across both files resolve. Zero broken.</li>
+        <li><strong>Light/dark pairing complete</strong> &mdash; 40 base tokens, zero missing dark counterparts.</li>
+        <li>Frontmatter grew 73&rarr;83 colours, 10&rarr;11 type roles, 14&rarr;18 spacing tokens, 15&rarr;28 components.</li>
+        <li>Two reviewer fixes rejected on computational evidence and replaced structurally: the n=8 luminance collision and the single-hex focus ring.</li>
+        <li>Four key-screen mocks added at final token values: onboarding, transactions, financial health, settings. The two exploratory artifacts carry a superseded-values notice.</li>
+        <li>The Settings mock forced a decision into the log that no reviewer raised: <strong>template export must be amount-free by construction</strong>, or the first shared community template leaks someone's mortgage payment.</li>
+      </ul>
+    </div>
+
+    <footer class="report-footer">
+      <div class="meta">
+        <span>Reviewers: review-rubric.md &middot; review-accessibility.md &middot; review-marie.md</span>
+        <span>Generated: 2026-08-01</span>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

@@ -68,13 +68,21 @@ async function setupYearSummaryMock(page: Page, yearlyOverrides: Record<string, 
   );
 }
 
+// The mock's data is the 2026 calendar year, and the average depends on which months have finished,
+// so the clock is pinned rather than left to whichever day the suite happens to run on.
+const FIXED_NOW = new Date("2026-08-15T12:00:00");
+
 test.describe("Year Summary Page", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(FIXED_NOW);
+  });
+
   test("renders metrics and chart with seeded data", async ({ page }) => {
     await setupYearSummaryMock(page);
     await page.goto("/insights/year-summary");
 
     await expect(
-      page.getByRole("heading", { name: "Year Summary" })
+      page.getByRole("heading", { name: "Year summary", exact: true })
     ).toBeVisible();
 
     await expect(page.getByTestId("year-metric-spent")).toContainText("$4,500.00");
@@ -84,14 +92,20 @@ test.describe("Year Summary Page", () => {
     await expect(page.getByTestId("spending-trend-chart")).toBeVisible();
     await expect(page.getByTestId("yearly-category-table")).toBeVisible();
 
-    const monthsElapsed = new Date().getMonth() + 1;
-    const ytdAvgCents = Math.round(450000 / monthsElapsed);
+    // Completed months only: $4,500.00 over January–July, with August excluded because a part
+    // month folded into a monthly average drags it below any number the user would recognise.
+    const completedMonths = 7;
+    const ytdAvgCents = Math.round(450000 / completedMonths);
     const ytdAvgFormatted = `$${(ytdAvgCents / 100).toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
+    const ytdAvg = page.getByTestId("spending-trend-avg");
     await expect(page.getByText("Year to Date Average Monthly Spend")).toBeVisible();
-    await expect(page.getByTestId("spending-trend-avg")).toContainText(ytdAvgFormatted);
+    await expect(ytdAvg).toContainText(ytdAvgFormatted);
+    await expect(ytdAvg).toContainText(
+      "Based on your completed months, January to July. August isn't finished, so it isn't counted."
+    );
   });
 
   test("past year uses full-year monthly average", async ({ page }) => {

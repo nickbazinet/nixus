@@ -146,24 +146,45 @@ async function setupSpendingTrendsMock(
 }
 
 test.describe("Spending Trends — budget compare + AI insight", () => {
-  test("renders compare table columns from category_compare", async ({ page }) => {
+  test("renders compare table rows from category_compare, biggest average first", async ({
+    page,
+  }) => {
     await setupSpendingTrendsMock(page);
     await page.goto("/insights/trends");
 
-    await expect(page.getByRole("heading", { name: "Trends" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Spending trends", exact: true }),
+    ).toBeVisible();
     await expect(page.getByTestId("category-spend-table")).toBeVisible();
+
+    const avgHead = page.getByRole("columnheader", {
+      name: "Average a month",
+    });
+    await expect(avgHead).toHaveAttribute("aria-sort", "descending");
 
     const rows = page.getByTestId("category-compare-row");
     await expect(rows).toHaveCount(2);
-    await expect(rows.first()).toContainText("Food");
-    await expect(rows.first()).toContainText("$450.00");
-    await expect(rows.first()).toContainText("$500.00");
+
+    await expect(rows.first()).toContainText("Transport");
+    await expect(rows.first()).toContainText("$620.00");
+    await expect(rows.first()).toContainText("$400.00");
+    await expect(rows.first().getByTestId("category-delta")).toHaveText("+55%");
     await expect(rows.first().getByTestId("category-status-badge")).toContainText(
-      "On track",
-    );
-    await expect(rows.nth(1).getByTestId("category-status-badge")).toContainText(
       "Over",
     );
+
+    await expect(rows.nth(1)).toContainText("Food");
+    await expect(rows.nth(1)).toContainText("$450.00");
+    await expect(rows.nth(1)).toContainText("$500.00");
+    await expect(rows.nth(1).getByTestId("category-status-badge")).toContainText(
+      "On track",
+    );
+
+    const categoryHead = page.getByRole("columnheader", { name: "Category" });
+    await categoryHead.getByRole("button").click();
+    await expect(categoryHead).toHaveAttribute("aria-sort", "ascending");
+    await expect(avgHead).toHaveAttribute("aria-sort", "none");
+    await expect(rows.first()).toContainText("Food");
   });
 
   test("shows AI insight after load without blocking chart and table", async ({

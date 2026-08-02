@@ -2,6 +2,10 @@ import { test, expect, type Page } from "@playwright/test";
 
 /**
  * Sets up Tauri IPC mocks with sample data for accessibility testing.
+ *
+ * `plugin:` commands MUST resolve null. A truthy updater response makes UpdateChecker render an
+ * always-open Dialog, and Base UI's focus trap then puts aria-hidden="true" on the whole app —
+ * every getByRole in this file would resolve zero elements for an unrelated reason.
  */
 async function setupTauriMock(page: Page) {
   await page.addInitScript(() => {
@@ -18,8 +22,16 @@ async function setupTauriMock(page: Page) {
       { id: 1, name: "Family Home", asset_type: "real_estate", value_cents: 50000000, created_at: "2026-01-01", updated_at: "2026-01-01" },
     ];
 
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => {},
+    };
+
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      // Without this, every event.listen() throws and the listeners the shell registers on mount
+      // take the whole surface down with them.
+      transformCallback: () => 1,
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
           case "check_onboarding_status":
             return Promise.resolve({ needs_onboarding: false });
@@ -55,6 +67,13 @@ async function setupTauriMock(page: Page) {
             return Promise.resolve({ absolute_change_cents: 0, percentage_change: 0, direction: "flat" });
           case "get_db_status":
             return Promise.resolve({ db_path: "mock.db", wal_mode: true, schema_version: 10, migrations_applied: 10 });
+          case "list_conversations":
+            return Promise.resolve([{ id: 1, title: "Budget check-in", agent_id: "budget-helper", created_at: "2026-03-01", updated_at: "2026-03-01" }]);
+          case "get_chat_messages":
+            return Promise.resolve([
+              { role: "user", content: "How am I tracking this month?" },
+              { role: "assistant", content: "You have spent $350.00 of your $700.00 Groceries target." },
+            ]);
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
         }
@@ -62,6 +81,18 @@ async function setupTauriMock(page: Page) {
       convertFileSrc: (path: string) => path,
     };
   });
+}
+
+/** Resolves a spine token to the same computed colour string the browser reports for an element. */
+async function resolveToken(page: Page, token: string): Promise<string> {
+  return page.evaluate((name) => {
+    const probe = document.createElement("div");
+    probe.style.color = `var(${name})`;
+    document.body.append(probe);
+    const value = getComputedStyle(probe).color;
+    probe.remove();
+    return value;
+  }, token);
 }
 
 test.describe("Accessibility", () => {
@@ -81,20 +112,69 @@ test.describe("Accessibility", () => {
     const main = page.locator("main");
     await expect(main).toBeVisible();
 
-    // Page has a single h1
+    // Page has a single h1. "Dashboard" retired as the Finance landing title — it is now "Today",
+    // and it carries the id the skip link and the route-change focus move both target.
     const h1 = page.locator("h1");
-    await expect(h1).toHaveText("Dashboard");
+    await expect(h1).toHaveCount(1);
+    await expect(h1).toHaveText("Today");
+    await expect(h1).toHaveAttribute("id", "surface-heading");
   });
 
-  test("all interactive elements reachable via Tab in tab nav", async ({ page }) => {
+  test("the skip link is the first tab stop, ahead of the rail", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/");
 
-    // Tab through tab nav items — first tab stop is the first nav link
     await page.keyboard.press("Tab");
 
-    const focused = page.locator(':focus');
-    await expect(focused).toBeVisible();
+    const skip = page.getByTestId("skip-to-content");
+    await expect(skip).toBeFocused();
+    await expect(skip).toHaveText("Skip to content");
+
+    // The rail is the second stop, never the first.
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeFocused();
+  });
+
+  test("activating the skip link moves focus to the surface heading", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/");
+
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator("#surface-heading")).toBeFocused();
+  });
+
+  test("keyboard navigation moves focus to the new surface heading", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/");
+
+    const spending = page
+      .locator('nav[aria-label="Finance navigation"]')
+      .getByRole("link", { name: "Spending", exact: true });
+    await spending.focus();
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator("h1")).toHaveText("Budget");
+    // The shell persists across navigation, so without an explicit focus move a keyboard user
+    // stays on the nav and has to tab through the whole chrome to reach the new surface.
+    await expect(page.locator("#surface-heading")).toBeFocused();
+  });
+
+  test("switching language updates the document language and announces it", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/");
+
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+
+    await page.getByTestId("language-toggle").click();
+
+    // A screen reader that keeps an English voice on French content is unusable for the session.
+    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+
+    const status = page.locator('aside [role="status"]');
+    await expect(status).toHaveAttribute("aria-live", "polite");
+    await expect(status).toHaveText("La langue est maintenant le français");
   });
 
   test("Escape closes the floating chat bar overlay", async ({ page }) => {
@@ -114,18 +194,17 @@ test.describe("Accessibility", () => {
     await setupTauriMock(page);
     await page.goto("/spending/budget");
 
-    // Focus the add group button
+    const expected = await resolveToken(page, "--focus-ring");
     const addGroupBtn = page.getByTestId("add-group-button");
     await addGroupBtn.focus();
 
-    // Check that it has a visible outline/ring
-    const outlineStyle = await addGroupBtn.evaluate((el) => {
-      const style = getComputedStyle(el);
-      return style.outlineStyle;
-    });
-    // The button should have some form of focus indicator (outline, ring, or box-shadow)
-    // Tailwind uses outline by default for focus-visible
-    expect(["solid", "auto", "none"]).toContain(outlineStyle);
+    // Ring PLUS a surface-coloured offset, per the exported `focusRing`. Read from computed style
+    // so a token rename cannot pass while the user sees no ring, and asserted with the retrying
+    // matcher because `transition-colors` animates outline-color from the element's own ink.
+    await expect(addGroupBtn).toHaveCSS("outline-style", "solid");
+    await expect(addGroupBtn).toHaveCSS("outline-width", "2px");
+    await expect(addGroupBtn).toHaveCSS("outline-color", expected);
+    await expect(addGroupBtn).toHaveCSS("outline-offset", "2px");
   });
 
   test("DashboardMetricCard has descriptive aria-label", async ({ page }) => {
@@ -142,27 +221,56 @@ test.describe("Accessibility", () => {
     expect(ariaLabel).toContain("$");
   });
 
-  test("DashboardBudgetCategoryRow has aria-label with name and amounts", async ({ page }) => {
+  test("DashboardBudgetCategoryRow announces one sentence, not four fragments", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/");
 
     const categoryRow = page.getByTestId("dashboard-category-row").first();
     await expect(categoryRow).toBeVisible();
 
-    const ariaLabel = await categoryRow.getAttribute("aria-label");
-    expect(ariaLabel).toBeTruthy();
-    expect(ariaLabel).toContain("Groceries");
-    expect(ariaLabel).toContain("$");
-    expect(ariaLabel).toContain("% used");
+    // aria-label on a generic div is ignored by assistive tech, so the row now carries a
+    // visually-hidden sentence and hides every visual part from the accessible tree instead.
+    expect(await categoryRow.getAttribute("aria-label")).toBeNull();
+
+    const announced = await categoryRow.evaluate((el) => {
+      const hidden = el.querySelector(":scope > .sr-only");
+      return {
+        sentence: hidden?.textContent?.trim() ?? "",
+        visualPartsHiddenFromAt: [...el.children]
+          .filter((child) => !child.classList.contains("sr-only"))
+          .every((child) => child.getAttribute("aria-hidden") === "true"),
+      };
+    });
+
+    expect(announced.sentence).toContain("Groceries");
+    expect(announced.sentence).toContain("$");
+    expect(announced.sentence).toContain("spent");
+    expect(announced.visualPartsHiddenFromAt).toBe(true);
   });
 
-  test("chat message container has role=log and aria-live=polite", async ({ page }) => {
+  test("chat streaming is announced at sentence boundaries, not as a raw live region", async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/chat");
+    await page.goto("/ai/budget-helper?conversation=1");
 
-    const container = page.locator('[role="log"]');
-    await expect(container).toBeVisible();
-    await expect(container).toHaveAttribute("aria-live", "polite");
+    // Deliberately NOT a live region: bound to a token-by-token LLM stream it would announce every
+    // DOM mutation, turning one reply into a firehose of partial words.
+    const log = page.locator('[role="log"]');
+    await expect(log).toBeVisible();
+    expect(await log.getAttribute("aria-live")).toBeNull();
+
+    // The announcement is published separately, per completed sentence.
+    const announcer = page.getByTestId("chat-live-region");
+    await expect(announcer).toHaveCount(1);
+    await expect(announcer).toHaveAttribute("aria-live", "polite");
+
+    const announced = (await announcer.textContent())?.trim() ?? "";
+    expect(announced).not.toBe("");
+    // A whole sentence, never a partial token.
+    expect(announced).toMatch(/[.!?]$/);
+
+    // The announcer is for assistive tech only; it must not duplicate the reply on screen.
+    const width = await announcer.evaluate((el) => getComputedStyle(el).width);
+    expect(Number.parseFloat(width)).toBeLessThanOrEqual(1);
   });
 
   test("import progress stepper has aria-live for stage announcements", async ({ page }) => {
@@ -186,30 +294,46 @@ test.describe("Accessibility", () => {
     await expect(dialog).toHaveAttribute("aria-label", "Quick chat");
   });
 
-  test("account row has aria-label with name, type, and balance", async ({ page }) => {
+  test("account rows are table rows described by their column headers", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/wealth/accounts");
 
-    const accountRow = page.getByTestId("account-row").first();
-    await expect(accountRow).toBeVisible();
+    // The account list is a real table now, so a row's meaning comes from its cells plus the
+    // column headers — ARIA forbids naming a row with aria-label, which is what this used to assert.
+    const table = page.getByRole("table");
+    await expect(table).toBeVisible();
+    for (const head of ["Account", "Last updated", "Balance"]) {
+      await expect(table.getByRole("columnheader", { name: head, exact: true })).toBeVisible();
+    }
 
-    const ariaLabel = await accountRow.getAttribute("aria-label");
-    expect(ariaLabel).toBeTruthy();
-    expect(ariaLabel).toContain("Main Chequing");
-    expect(ariaLabel).toContain("$");
+    const row = page.getByTestId("account-row");
+    await expect(row).toHaveCount(1);
+    await expect(row).toHaveRole("row");
+    expect(await row.getAttribute("aria-label")).toBeNull();
+
+    const nameCell = row.getByRole("cell").first();
+    await expect(nameCell).toContainText("Main Chequing");
+    await expect(nameCell).toContainText("TD Bank");
+    await expect(row.getByTestId("account-balance")).toContainText("$");
   });
 
-  test("asset row has aria-label with name, type, and value", async ({ page }) => {
+  test("asset rows are table rows described by their column headers", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/wealth/assets");
 
-    const assetRow = page.getByTestId("asset-row").first();
-    await expect(assetRow).toBeVisible();
+    const table = page.getByRole("table");
+    await expect(table).toBeVisible();
+    for (const head of ["Asset", "Last updated", "Value"]) {
+      await expect(table.getByRole("columnheader", { name: head, exact: true })).toBeVisible();
+    }
 
-    const ariaLabel = await assetRow.getAttribute("aria-label");
-    expect(ariaLabel).toBeTruthy();
-    expect(ariaLabel).toContain("Family Home");
-    expect(ariaLabel).toContain("$");
+    const row = page.getByTestId("asset-row");
+    await expect(row).toHaveCount(1);
+    await expect(row).toHaveRole("row");
+    expect(await row.getAttribute("aria-label")).toBeNull();
+
+    await expect(row.getByRole("cell").first()).toContainText("Family Home");
+    await expect(row.getByTestId("asset-value")).toContainText("$");
   });
 
   test("prefers-reduced-motion CSS rule exists", async ({ page }) => {

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nixus — Key screen: Onboarding fork</title>
+<style>
+/* ============================================================
+   KEY SCREEN — ONBOARDING
+   Governed by: EXPERIENCE.md § Onboarding & Seeding
+                EXPERIENCE.md § Voice and Tone
+                EXPERIENCE.md § State Patterns (first launch, AI unavailable)
+                EXPERIENCE.md § Key Flows / Flow 1
+                DESIGN.md — Direction A "Quiet Ledger", verified tokens
+   Spine wins on conflict. Token values below are the FINAL verified set
+   (all pairs >=4.5:1 text / >=3.0:1 graphical, both modes).
+   ============================================================ */
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --bg:#FAF8F5; --card:#FFFFFF; --chrome:#F5F2EC;
+  --ink:#1C1917; --ink-dim:#6B635A; --ink-faint:#7A7167;
+  --line:#E8E3DA; --line-strong:#D8D1C5; --track:#EFEAE1; --hover:#FBF9F6;
+  --brand:#5B54D6; --brand-ink:#4A43BE; --brand-on:#FFFFFF; --brand-soft:#EFEDFB;
+  --good:#15803D; --good-bg:#E8F3EA; --good-ink:#14672F;
+  --caution:#B45309; --caution-bg:#FBF0DF; --caution-ink:#8F4208;
+  --over:#BE123C; --over-bg:#FBE9ED; --over-ink:#9D0F33;
+  --neutral-bg:#EFEAE1; --neutral-ink:#6B635A;
+  --c1:#5A54D7; --c2:#AB7DD9; --c3:#B54AB5; --c4:#DB6D9B;
+  --c5:#368580; --c6:#BA8741; --c7:#7F773F; --c8:#9B8F85;
+  --r-sm:4px; --r-md:5px; --r-lg:7px; --r-xl:10px;
+}
+body{margin:0;background:#0e1116;color:#e6e9ef;line-height:1.5;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+.page{max-width:1420px;margin:0 auto;padding:36px 26px 80px}
+.mh{border-bottom:1px solid #262c36;padding-bottom:22px;margin-bottom:32px}
+.mh h1{font-size:25px;margin:0 0 9px;font-weight:650;letter-spacing:-.02em}
+.mh p{margin:0 0 7px;color:#98a2b3;font-size:13.5px;max-width:88ch}
+.mh code{background:#1a1f27;padding:1px 5px;border-radius:4px;font-size:12.5px}
+.step-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#6b7583;font-weight:700;margin:0 0 8px}
+.caption{color:#98a2b3;font-size:13px;margin:10px 0 0;max-width:70ch}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+@media(max-width:1150px){.grid{grid-template-columns:1fr}}
+.block{margin-bottom:40px}
+.win{border-radius:10px;overflow:hidden;border:1px solid #262c36}
+.wb{display:flex;align-items:center;gap:6px;padding:9px 12px;background:#1a1f27;border-bottom:1px solid #262c36}
+.wb i{width:10px;height:10px;border-radius:50%;background:#3a4250}
+.wb span{margin-left:8px;font-size:11px;color:#6b7583}
+
+/* ---------- app surface ---------- */
+.app{background:var(--bg);color:var(--ink);min-height:520px;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;font-size:14px;
+  display:flex;flex-direction:column}
+.ob{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:34px 28px}
+.ob-inner{width:100%;max-width:560px}
+.mark{width:38px;height:38px;border-radius:9px;margin:0 auto 20px;
+  background:linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6)}
+h2.t{font-size:20px;font-weight:650;letter-spacing:-.02em;margin:0 0 8px;text-align:center}
+p.s{font-size:14px;color:var(--ink-dim);margin:0 0 22px;text-align:center;line-height:1.55}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px;box-shadow:none}
+
+/* honest limits list */
+.limits{list-style:none;margin:0 0 20px;padding:0;display:flex;flex-direction:column;gap:9px}
+.limits li{display:flex;gap:10px;font-size:13px;color:var(--ink-dim);align-items:flex-start}
+.limits b{color:var(--ink);font-weight:600}
+.limits .g{color:var(--ink-faint);font-weight:700;flex-shrink:0;width:13px;text-align:center}
+
+/* fork options */
+.forks{display:flex;flex-direction:column;gap:10px;margin-bottom:8px}
+.fork{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:15px 16px;display:flex;gap:13px;align-items:flex-start;cursor:pointer}
+.fork.primary{border-color:var(--brand);box-shadow:inset 3px 0 0 var(--brand)}
+.fork .ico{width:32px;height:32px;border-radius:var(--r-md);background:var(--brand-soft);
+  color:var(--brand-ink);display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.fork .body{flex:1;min-width:0}
+.fork h4{margin:0 0 3px;font-size:14px;font-weight:650;letter-spacing:-.012em}
+.fork p{margin:0;font-size:13px;color:var(--ink-dim)}
+.fork .chev{color:var(--ink-faint);font-size:14px;align-self:center}
+.fork.ghost{border-style:dashed;background:transparent}
+.fork.ghost .ico{background:var(--neutral-bg);color:var(--neutral-ink)}
+
+.btn{font-size:13.5px;font-weight:650;padding:9px 15px;border-radius:var(--r-md);
+  border:1px solid var(--line-strong);background:var(--card);color:var(--ink);display:inline-block}
+.btn.pri{background:var(--brand);color:var(--brand-on);border-color:var(--brand)}
+.btn.lg{padding:11px 20px;font-size:14px}
+.row{display:flex;align-items:center;gap:9px}
+.grow{flex:1}
+.link{color:var(--brand-ink);font-weight:600;font-size:13px}
+
+/* progress dots */
+.dots{display:flex;gap:6px;justify-content:center;margin-bottom:22px}
+.dots i{width:6px;height:6px;border-radius:50%;background:var(--line-strong)}
+.dots i.on{background:var(--brand);width:18px;border-radius:99px}
+
+/* template picker */
+.tpls{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.tpl{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px;text-align:left}
+.tpl.on{border-color:var(--brand);box-shadow:inset 0 0 0 1px var(--brand)}
+.tpl h5{margin:0 0 4px;font-size:13.5px;font-weight:650}
+.tpl p{margin:0;font-size:12px;color:var(--ink-dim)}
+.tpl .n{font-size:12px;font-weight:650;color:var(--brand-ink);margin-top:8px;display:block}
+
+/* budget confirm table */
+.bt{width:100%;border-collapse:collapse;font-size:13.5px}
+.bt thead th{text-align:left;font-size:12px;letter-spacing:.045em;text-transform:uppercase;
+  font-weight:650;color:var(--ink-faint);padding:8px 0;border-bottom:1px solid var(--line)}
+.bt thead th.n{text-align:right}
+.bt td{padding:8px 0;border-bottom:1px solid var(--line)}
+.bt tr:last-child td{border-bottom:none}
+.bt td.n{text-align:right;font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;font-weight:600}
+.bt td.n .ed{border-bottom:1px dotted var(--line-strong);padding-bottom:1px}
+.grp{font-size:12px;letter-spacing:.045em;text-transform:uppercase;font-weight:650;
+  color:var(--ink-faint);padding-top:14px!important}
+.money{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.pill{font-size:12px;font-weight:650;padding:3px 7px;border-radius:var(--r-md);letter-spacing:.02em}
+.p-good{background:var(--good-bg);color:var(--good-ink)}
+.p-neu{background:var(--neutral-bg);color:var(--neutral-ink)}
+.note{font-size:13px;color:var(--ink-dim);margin:14px 0 0;padding:11px 13px;
+  background:var(--brand-soft);border-radius:var(--r-md);border-left:3px solid var(--brand)}
+.note b{color:var(--ink)}
+.foot{border-top:1px solid #262c36;margin-top:36px;padding-top:20px;color:#6b7583;font-size:12.5px}
+.foot b{color:#98a2b3}
+.foot code{background:#1a1f27;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="mh">
+  <h1>Key screen — Onboarding: one fork, then done</h1>
+  <p>Replaces the shipped 5-step wizard (Budget → Accounts → Assets → Income → Import), whose step 1 asks for a budget from absolute zero at roughly <b>60–80 clicks</b>. This is the fix for the north-star question, <i>"what almost made you close it in the first 10 minutes?"</i></p>
+  <p>Governed by <code>EXPERIENCE.md § Onboarding &amp; Seeding</code>, <code>§ Voice and Tone</code>, <code>§ Key Flows / Flow 1</code>. Final verified Direction A tokens.</p>
+</div>
+
+<!-- ============ STEP 1 + STEP 2 ============ -->
+<div class="block">
+  <div class="grid">
+    <div>
+      <p class="step-label">Step 1 — Welcome</p>
+      <div class="win">
+        <div class="wb"><i></i><i></i><i></i><span>Nixus — 1024 × 680 (minimum window)</span></div>
+        <div class="app">
+          <div class="ob">
+            <div class="ob-inner">
+              <div class="mark"></div>
+              <h2 class="t">Let's get your money in one place</h2>
+              <p class="s">This takes about two minutes. Before you start, here's what Nixus does and doesn't do.</p>
+              <div class="card">
+                <ul class="limits">
+                  <li><span class="g">·</span><span><b>Your data stays on this computer.</b> There's no account and nothing to sign up for.</span></li>
+                  <li><span class="g">·</span><span><b>Nixus doesn't connect to your bank.</b> You'll upload statements yourself — a photo or a PDF is fine.</span></li>
+                  <li><span class="g">·</span><span><b>Nixus stays in your menu bar</b> after you close the window, so reminders keep working. Quit it from there any time.</span></li>
+                  <li><span class="g">·</span><span><b>It's early days.</b> Things will change and some things will break. Telling me what confused you is the most useful thing you can do.</span></li>
+                </ul>
+                <div class="row">
+                  <span class="btn pri lg">Get started</span>
+                  <span class="grow"></span>
+                  <span class="link">Read this later</span>
+                </div>
+              </div>
+              <p class="s" style="margin:18px 0 0;font-size:13px;color:var(--ink-faint)">Nixus 0.9 · pre-alpha</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="caption"><b>Why the limitations come first:</b> the market research names "acknowledge limitations first" as a trust rule, and the tray behaviour is a <i>required</i> onboarding message per the alerts architecture — the app not quitting on window close is otherwise alarming.</p>
+    </div>
+
+    <div>
+      <p class="step-label">Step 2 — The fork</p>
+      <div class="win">
+        <div class="wb"><i></i><i></i><i></i><span>Nixus — 1024 × 680</span></div>
+        <div class="app">
+          <div class="ob">
+            <div class="ob-inner">
+              <div class="dots"><i class="on"></i><i></i><i></i></div>
+              <h2 class="t">Do you have a statement handy?</h2>
+              <p class="s">If you do, Nixus can read it and build your budget from what you actually spent. If not, pick a starting point instead.</p>
+              <div class="forks">
+                <div class="fork primary">
+                  <span class="ico">↑</span>
+                  <span class="body">
+                    <h4>Upload a statement</h4>
+                    <p>A photo, screenshot, or PDF. Nixus sorts the transactions and suggests a budget from them.</p>
+                  </span>
+                  <span class="chev">›</span>
+                </div>
+                <div class="fork">
+                  <span class="ico">▤</span>
+                  <span class="body">
+                    <h4>Pick a starting point</h4>
+                    <p>Start from a ready-made budget and adjust the numbers. No upload needed.</p>
+                  </span>
+                  <span class="chev">›</span>
+                </div>
+                <div class="fork ghost">
+                  <span class="ico">+</span>
+                  <span class="body">
+                    <h4>Build it myself</h4>
+                    <p>Start with an empty budget and add your own categories.</p>
+                  </span>
+                  <span class="chev">›</span>
+                </div>
+              </div>
+              <p class="s" style="margin:16px 0 0;font-size:12.5px;color:var(--ink-faint)">Reading statements needs an AI key you provide. Haven't set one up? Pick a starting point — you can upload later.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="caption"><b>Three paths, one screen.</b> The template path is not optional: AI is bring-your-own-key, so a user with no credentials must still reach a budget in about two clicks. The AI caveat sits at the bottom as a quiet aside, not a blocking dialog.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TEMPLATE PICKER + BUDGET CONFIRM ============ -->
+<div class="block">
+  <div class="grid">
+    <div>
+      <p class="step-label">Step 2b — Template path (no AI needed)</p>
+      <div class="win">
+        <div class="wb"><i></i><i></i><i></i><span>Nixus — 1024 × 680</span></div>
+        <div class="app">
+          <div class="ob">
+            <div class="ob-inner">
+              <div class="dots"><i></i><i class="on"></i><i></i></div>
+              <h2 class="t">Which sounds most like you?</h2>
+              <p class="s">Every number is editable afterwards. This just saves you typing.</p>
+              <div class="tpls">
+                <div class="tpl on">
+                  <h5>Renting</h5>
+                  <p>Rent, groceries, transit, phone, and the usual monthly bills.</p>
+                  <span class="n">11 categories</span>
+                </div>
+                <div class="tpl">
+                  <h5>Own a home</h5>
+                  <p>Mortgage, property tax, utilities, home upkeep, insurance.</p>
+                  <span class="n">13 categories</span>
+                </div>
+                <div class="tpl">
+                  <h5>Home and a car</h5>
+                  <p>Everything above, plus fuel, car insurance, and maintenance.</p>
+                  <span class="n">16 categories</span>
+                </div>
+              </div>
+              <div class="row">
+                <span class="btn pri">Use this one</span>
+                <span class="btn">Open a template file…</span>
+                <span class="grow"></span>
+                <span class="link">Back</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="caption"><b>"Open a template file…" is load-bearing.</b> Templates are versioned portable documents, not hardcoded seed constants — so community sharing later is a format that already exists rather than a rewrite of the seeding path. File-based only: no account, no server.</p>
+    </div>
+
+    <div>
+      <p class="step-label">Step 3 — Confirm (the climax beat)</p>
+      <div class="win">
+        <div class="wb"><i></i><i></i><i></i><span>Nixus — 1024 × 680</span></div>
+        <div class="app">
+          <div class="ob" style="align-items:stretch;justify-content:flex-start;padding:26px 28px">
+            <div class="ob-inner" style="max-width:600px;margin:0 auto">
+              <div class="dots"><i></i><i></i><i class="on"></i></div>
+              <h2 class="t">Here's a budget based on what you actually spent</h2>
+              <p class="s">From the 44 transactions in your June statement. Change anything that looks off.</p>
+              <div class="card">
+                <table class="bt">
+                  <thead><tr><th>Category</th><th class="n">You spent</th><th class="n">Monthly target</th></tr></thead>
+                  <tbody>
+                    <tr><td colspan="3" class="grp" style="padding-top:0!important">Home</td></tr>
+                    <tr><td>Mortgage</td><td class="n money">$1,650.00</td><td class="n money"><span class="ed">$1,650.00</span></td></tr>
+                    <tr><td>Utilities</td><td class="n money">$92.00</td><td class="n money"><span class="ed">$100.00</span></td></tr>
+                    <tr><td>Insurance</td><td class="n money">$186.00</td><td class="n money"><span class="ed">$186.00</span></td></tr>
+                    <tr><td colspan="3" class="grp">Everyday</td></tr>
+                    <tr><td>Groceries</td><td class="n money">$512.40</td><td class="n money"><span class="ed">$550.00</span></td></tr>
+                    <tr><td>Restaurants</td><td class="n money">$286.00</td><td class="n money"><span class="ed">$250.00</span></td></tr>
+                    <tr><td>Fuel</td><td class="n money">$71.40</td><td class="n money"><span class="ed">$90.00</span></td></tr>
+                    <tr><td>Health</td><td class="n money">$64.18</td><td class="n money"><span class="ed">$75.00</span></td></tr>
+                  </tbody>
+                </table>
+                <div class="note">
+                  <b>Two more categories were added empty</b> — Savings and Gifts — because most budgets need them and your statement didn't show any. Delete them if you'd rather not.
+                </div>
+                <div class="row" style="margin-top:16px">
+                  <span class="btn pri lg">Looks good</span>
+                  <span class="btn">Add a category</span>
+                  <span class="grow"></span>
+                  <span class="link">Start over</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="caption"><b>She has not typed a single category name.</b> Targets are pre-filled and inline-editable (dotted underline = the visible affordance the spine requires — never explained in helper text). Numbers are tabular Inter, not a code font.</p>
+    </div>
+  </div>
+</div>
+
+<div class="foot">
+  <p><b>What this mock illustrates:</b> <code>EXPERIENCE.md § Onboarding &amp; Seeding</code> steps 1–4 · <code>§ Voice and Tone</code> (plain language, no ÷, honest limitations, no manufactured enthusiasm) · <code>§ State Patterns</code> → "AI unavailable / no credentials" as a quiet aside rather than a blocker · <code>§ Component Patterns</code> → inline edit with visible affordance, starter-template picker rendering template documents · <code>§ Key Flows / Flow 1</code> steps 1–6 including the climax beat.</p>
+  <p><b>Not shown:</b> the import stepper and review screen (already mocked in <code>transactions-compare.html</code> and <code>directions-3.html</code>), and the Today surface the flow lands on.</p>
+  <p style="margin-bottom:0"><b>Nixus · key screen · onboarding · 2026-08-01</b> — spine wins on conflict.</p>
+</div>
+
+</div>
+</body>
+</html>

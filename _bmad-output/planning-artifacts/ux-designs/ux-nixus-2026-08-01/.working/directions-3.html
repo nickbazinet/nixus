@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nixus — Design Directions (3) · 2026-08-01</title>
+<style>
+/* ============================================================
+   NIXUS DESIGN DIRECTIONS — 2026-08-01
+   Three complete visual personalities applied to the same
+   redesigned Finance dashboard. All three keep the Nixus logo
+   gradient (#818CF8 -> #A78BFA -> #F472B6) as the identity.
+   Light AND dark shown for each: defaultTheme="system" means
+   both modes ship to every user.
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  background: #0e1116;
+  color: #e6e9ef;
+  line-height: 1.5;
+}
+.page { max-width: 1500px; margin: 0 auto; padding: 40px 28px 96px; }
+
+.masthead { border-bottom: 1px solid #262c36; padding-bottom: 28px; margin-bottom: 40px; }
+.masthead h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.02em; font-weight: 650; }
+.masthead p { margin: 0 0 6px; color: #98a2b3; font-size: 14px; max-width: 78ch; }
+.masthead .logo-strip {
+  display: inline-flex; align-items: center; gap: 10px; margin-bottom: 18px;
+  font-size: 13px; color: #98a2b3;
+}
+.logo-chip { display: flex; height: 22px; border-radius: 4px; overflow: hidden; width: 96px; }
+.logo-chip i { flex: 1; }
+
+.howto {
+  margin: 26px 0 0; padding: 14px 18px; border-left: 3px solid #818CF8;
+  background: #151a21; border-radius: 0 8px 8px 0; font-size: 13.5px; color: #b6bfcc;
+}
+.howto b { color: #e6e9ef; }
+
+/* ---- direction shell ---- */
+.direction { margin-bottom: 72px; }
+.dir-head { margin-bottom: 20px; }
+.dir-head .tag {
+  display: inline-block; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: #6b7583; margin-bottom: 8px; font-weight: 650;
+}
+.dir-head h2 { font-size: 22px; margin: 0 0 10px; letter-spacing: -0.015em; font-weight: 650; }
+.dir-head .rationale { color: #98a2b3; font-size: 14px; max-width: 88ch; margin: 0 0 14px; }
+.dir-head .verdict { font-size: 13.5px; color: #cdd5e0; max-width: 88ch; margin: 0; }
+.dir-head .verdict strong { color: #fff; }
+
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 22px; }
+.sw { font-size: 10.5px; padding: 5px 9px; border-radius: 5px; font-weight: 600; letter-spacing: 0.01em; border: 1px solid rgba(255,255,255,.08); }
+
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+@media (max-width: 1180px) { .modes { grid-template-columns: 1fr; } }
+.mode-label {
+  font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase; color: #6b7583;
+  margin-bottom: 8px; font-weight: 650;
+}
+
+/* window chrome */
+.win { border-radius: 10px; overflow: hidden; border: 1px solid #262c36; }
+.win-bar { display: flex; align-items: center; gap: 6px; padding: 9px 12px; background: #1a1f27; border-bottom: 1px solid #262c36; }
+.win-bar i { width: 10px; height: 10px; border-radius: 50%; background: #3a4250; }
+.win-bar span { margin-left: 8px; font-size: 11px; color: #6b7583; }
+
+/* ============================================================
+   SHARED APP SKELETON — themed entirely by CSS vars per direction
+   ============================================================ */
+.app {
+  display: flex; min-height: 560px;
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--body);
+}
+.rail {
+  width: 52px; flex-shrink: 0; background: var(--rail); border-right: 1px solid var(--rail-line);
+  display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 4px;
+}
+.rail .mark { width: 24px; height: 24px; border-radius: 6px; background: var(--brand-grad); margin-bottom: 12px; }
+.rail .ico {
+  width: 32px; height: 32px; border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: var(--rail-ink); position: relative;
+}
+.rail .ico.on { background: var(--rail-on); color: var(--rail-on-ink); }
+.rail .ico.on::after { content: ""; position: absolute; right: -10px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--brand); }
+.rail .spacer { flex: 1; }
+
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* destination nav — 4 promoted clusters */
+.dest {
+  display: flex; align-items: center; gap: 2px; padding: 0 18px;
+  background: var(--chrome); border-bottom: 1px solid var(--line);
+}
+.dest a {
+  padding: 13px 14px 12px; font-size: var(--label); font-weight: 550; color: var(--ink-dim);
+  text-decoration: none; border-bottom: 2px solid transparent; letter-spacing: -0.005em;
+}
+.dest a.on { color: var(--brand-ink); border-bottom-color: var(--brand); font-weight: 650; }
+.dest .grow { flex: 1; }
+.dest .period {
+  display: inline-flex; align-items: center; gap: 7px; font-size: var(--label); font-weight: 600;
+  padding: 6px 11px; border-radius: var(--r-sm); border: 1px solid var(--line-strong);
+  background: var(--card); color: var(--ink); margin-left: 8px;
+}
+.dest .period small { color: var(--ink-dim); font-weight: 500; }
+
+.body { padding: 20px 18px 24px; overflow: hidden; }
+
+/* the three questions */
+.qrow { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: var(--gap); margin-bottom: var(--gap); }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg);
+  padding: var(--pad); box-shadow: var(--shadow);
+}
+.card.flush { padding: 0; overflow: hidden; }
+.q {
+  font-size: var(--cap); text-transform: none; color: var(--ink-dim); font-weight: 600;
+  margin: 0 0 10px; letter-spacing: 0.005em;
+}
+.big {
+  font-size: var(--display); font-weight: var(--display-w); letter-spacing: -0.03em; line-height: 1.05;
+  font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; margin: 0;
+}
+.sub { font-size: var(--cap); color: var(--ink-dim); margin: 7px 0 0; }
+.sub b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.meter { height: 7px; border-radius: 99px; background: var(--track); overflow: hidden; margin-top: 13px; }
+.meter i { display: block; height: 100%; border-radius: 99px; background: var(--brand); }
+
+/* attention list */
+.att { display: flex; flex-direction: column; gap: 9px; margin-top: 2px; }
+.att-row { display: flex; align-items: center; gap: 9px; font-size: var(--cap); }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.att-row .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-row .amt { font-variant-numeric: tabular-nums; font-weight: 650; }
+
+.pill {
+  font-size: var(--micro); font-weight: 700; padding: 3px 7px; border-radius: var(--r-sm);
+  letter-spacing: 0.02em; white-space: nowrap;
+}
+.p-over { background: var(--over-bg); color: var(--over-ink); }
+.p-due  { background: var(--caution-bg); color: var(--caution-ink); }
+.p-ok   { background: var(--good-bg); color: var(--good-ink); }
+.p-paid { background: var(--neutral-bg); color: var(--neutral-ink); }
+
+/* next action */
+.action { border-left: 3px solid var(--brand); }
+.action h4 { margin: 0 0 5px; font-size: var(--h4); font-weight: 650; letter-spacing: -0.01em; }
+.action p { margin: 0; font-size: var(--cap); color: var(--ink-dim); }
+.action .cta {
+  display: inline-block; margin-top: 12px; font-size: var(--cap); font-weight: 650;
+  padding: 7px 13px; border-radius: var(--r-sm); background: var(--brand); color: var(--brand-on);
+}
+.lag { font-size: var(--micro); color: var(--ink-faint); margin-top: 10px; display: block; }
+
+/* chart */
+.chart-wrap { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--gap); }
+.bars { display: flex; align-items: flex-end; gap: var(--bargap); height: 118px; margin-top: 14px; }
+.bars .b { flex: 1; border-radius: var(--r-sm) var(--r-sm) 2px 2px; min-height: 3px; }
+.xax { display: flex; gap: var(--bargap); margin-top: 7px; }
+.xax span { flex: 1; text-align: center; font-size: var(--micro); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.toggle {
+  font-size: var(--micro); font-weight: 650; padding: 4px 8px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong); color: var(--ink-dim); background: var(--card);
+}
+
+/* allocation — 8-step palette, direct labels, no legend */
+.alloc { display: flex; height: 26px; border-radius: var(--r-sm); overflow: hidden; margin-top: 14px; }
+.alloc i { display: block; }
+.alloc-keys { margin-top: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.alloc-keys div { display: flex; align-items: center; gap: 7px; font-size: var(--micro); color: var(--ink-dim); }
+.alloc-keys b { margin-left: auto; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.head-row { display: flex; align-items: baseline; gap: 10px; }
+.head-row h3 { margin: 0; font-size: var(--h3); font-weight: 650; letter-spacing: -0.012em; }
+.head-row .grow { flex: 1; }
+
+/* state variant strip */
+.states { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); margin-top: var(--gap); }
+.empty { text-align: center; padding: 22px 18px; }
+.empty .glyph {
+  width: 34px; height: 34px; border-radius: var(--r-lg); background: var(--track);
+  margin: 0 auto 11px; display: flex; align-items: center; justify-content: center; font-size: 15px; color: var(--ink-dim);
+}
+.empty h5 { margin: 0 0 5px; font-size: var(--h4); font-weight: 650; }
+.empty p { margin: 0 0 13px; font-size: var(--cap); color: var(--ink-dim); }
+.btn-ghost {
+  font-size: var(--cap); font-weight: 650; padding: 7px 13px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong); color: var(--ink); display: inline-block;
+}
+
+/* money always tabular */
+.money { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+
+/* ============================================================
+   DIRECTION A — "QUIET LEDGER"
+   Warm paper, print-credible, hairlines not shadows.
+   LIGHT  bg #FAF8F5 · card #FFFFFF · ink #1C1917 · line #E8E3DA
+   brand #5B54D6 (logo periwinkle darkened for AA on paper)
+   good #15803D (5.4:1) · caution #B45309 (4.8:1) · over #BE123C (5.9:1)
+   DARK   bg #17150F · card #211E18 · ink #EDE9E1 · line #332E25
+   brand #A5A0F0 · good #4ADE80 · caution #FBBF24 · over #FB7185
+   ============================================================ */
+.A-light {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --bg:#FAF8F5; --card:#FFFFFF; --chrome:#F5F2EC; --rail:#F0ECE4; --rail-line:#E3DDD2;
+  --ink:#1C1917; --ink-dim:#6B635A; --ink-faint:#9A9186;
+  --line:#E8E3DA; --line-strong:#D8D1C5; --track:#EFEAE1;
+  --rail-ink:#8A8177; --rail-on:#EAE4F5; --rail-on-ink:#4A43BE;
+  --brand:#5B54D6; --brand-ink:#4A43BE; --brand-on:#FFFFFF;
+  --brand-grad: linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6);
+  --good:#15803D; --good-bg:#E8F3EA; --good-ink:#14672F;
+  --caution:#B45309; --caution-bg:#FBF0DF; --caution-ink:#8F4208;
+  --over:#BE123C; --over-bg:#FBE9ED; --over-ink:#9D0F33;
+  --neutral-bg:#EFEAE1; --neutral-ink:#6B635A;
+  --c1:#5B54D6; --c2:#7C6BD8; --c3:#9C7FD4; --c4:#B98BC9;
+  --c5:#D18BB4; --c6:#3F8F87; --c7:#8A7A5C; --c8:#A9A096;
+  --display:34px; --display-w:600; --h3:14px; --h4:13.5px;
+  --body:14px; --label:13.5px; --cap:13px; --micro:11.5px;
+  --r-sm:5px; --r-lg:7px; --pad:16px; --gap:13px; --bargap:5px;
+  --shadow:none;
+}
+.A-dark {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --bg:#17150F; --card:#211E18; --chrome:#1D1A14; --rail:#141209; --rail-line:#302A21;
+  --ink:#EDE9E1; --ink-dim:#A79E91; --ink-faint:#7A7267;
+  --line:#332E25; --line-strong:#413A2E; --track:#2C2721;
+  --rail-ink:#8C8474; --rail-on:#2E2A3F; --rail-on-ink:#BDB8F5;
+  --brand:#A5A0F0; --brand-ink:#BDB8F5; --brand-on:#1E1B36;
+  --brand-grad: linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6);
+  --good:#4ADE80; --good-bg:#1B2E20; --good-ink:#6EE79A;
+  --caution:#FBBF24; --caution-bg:#332813; --caution-ink:#FCD34D;
+  --over:#FB7185; --over-bg:#3A1B22; --over-ink:#FDA4AF;
+  --neutral-bg:#2C2721; --neutral-ink:#A79E91;
+  --c1:#A5A0F0; --c2:#B99BF0; --c3:#C99BE8; --c4:#DDA0D8;
+  --c5:#EFA3C4; --c6:#5FBFB2; --c7:#BCA982; --c8:#8C8474;
+  --display:34px; --display-w:600; --h3:14px; --h4:13.5px;
+  --body:14px; --label:13.5px; --cap:13px; --micro:11.5px;
+  --r-sm:5px; --r-lg:7px; --pad:16px; --gap:13px; --bargap:5px;
+  --shadow:none;
+}
+
+/* ============================================================
+   DIRECTION B — "SOFT FOCUS"  (logo-native)
+   Palette derived straight from the logo gradient. Soft elevation,
+   larger radii, warmest register. Pink is DECORATIVE ONLY — never
+   a status color, so it can't be confused with over-budget.
+   LIGHT bg #F6F5FC · card #FFFFFF · ink #1E1B34 · line #E6E3F2
+   brand #5D52D9 · good #047857 (4.9:1) · caution #B45309 · over #E11D48
+   DARK  bg #131024 · card #1F1B38 · ink #EAE7F7 · line #322C52
+   ============================================================ */
+.B-light {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --bg:#F6F5FC; --card:#FFFFFF; --chrome:#FFFFFF; --rail:#FFFFFF; --rail-line:#E6E3F2;
+  --ink:#1E1B34; --ink-dim:#6A6588; --ink-faint:#9994B2;
+  --line:#E6E3F2; --line-strong:#D6D1EA; --track:#EDEBF8;
+  --rail-ink:#8B86A8; --rail-on:#EEEBFC; --rail-on-ink:#4F45C4;
+  --brand:#5D52D9; --brand-ink:#4F45C4; --brand-on:#FFFFFF;
+  --brand-grad: linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6);
+  --good:#047857; --good-bg:#E3F4EE; --good-ink:#046249;
+  --caution:#B45309; --caution-bg:#FCF0E2; --caution-ink:#92450A;
+  --over:#E11D48; --over-bg:#FDEBEF; --over-ink:#B31239;
+  --neutral-bg:#EDEBF8; --neutral-ink:#6A6588;
+  --c1:#6366F1; --c2:#8B5CF6; --c3:#A78BFA; --c4:#C084FC;
+  --c5:#E879B9; --c6:#0D9488; --c7:#F59E0B; --c8:#94A0B8;
+  --display:38px; --display-w:650; --h3:14.5px; --h4:14px;
+  --body:14.5px; --label:13.5px; --cap:13px; --micro:11.5px;
+  --r-sm:8px; --r-lg:14px; --pad:18px; --gap:14px; --bargap:6px;
+  --shadow: 0 1px 2px rgba(30,27,52,.04), 0 6px 18px -6px rgba(30,27,52,.10);
+}
+.B-dark {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --bg:#131024; --card:#1F1B38; --chrome:#1A1730; --rail:#100E1F; --rail-line:#2C2749;
+  --ink:#EAE7F7; --ink-dim:#A6A0C4; --ink-faint:#7B7699;
+  --line:#322C52; --line-strong:#413A66; --track:#2A2547;
+  --rail-ink:#8B86A8; --rail-on:#2B2551; --rail-on-ink:#C3BCFF;
+  --brand:#A5A0F5; --brand-ink:#C3BCFF; --brand-on:#1B1734;
+  --brand-grad: linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6);
+  --good:#34D399; --good-bg:#12352C; --good-ink:#6EE7B7;
+  --caution:#FBBF24; --caution-bg:#382B12; --caution-ink:#FCD34D;
+  --over:#FB7185; --over-bg:#3B1B2A; --over-ink:#FDA4AF;
+  --neutral-bg:#2A2547; --neutral-ink:#A6A0C4;
+  --c1:#818CF8; --c2:#A78BFA; --c3:#C4A6FD; --c4:#D8A5F5;
+  --c5:#F0A0CE; --c6:#2DD4BF; --c7:#FBBF24; --c8:#94A0B8;
+  --display:38px; --display-w:650; --h3:14.5px; --h4:14px;
+  --body:14.5px; --label:13.5px; --cap:13px; --micro:11.5px;
+  --r-sm:8px; --r-lg:14px; --pad:18px; --gap:14px; --bargap:6px;
+  --shadow: 0 1px 2px rgba(0,0,0,.28), 0 8px 22px -8px rgba(0,0,0,.5);
+}
+
+/* ============================================================
+   DIRECTION C — "CLEAR SLATE"  (the conservative repair)
+   Keeps your cool slate family and #4F46E5 actions. Fixes only
+   what is broken: real surface layering, a true type scale, and
+   status colors split out of the brand/chart family.
+   LIGHT bg #F1F5F9 · card #FFFFFF · ink #0F172A · line #E2E8F0
+   DARK  bg #080D18 (now DARKER than card) · card #172033 · line #2A3547
+   good #047857 · caution #A16207 · over #BE123C  (all AA both modes)
+   ============================================================ */
+.C-light {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --bg:#F1F5F9; --card:#FFFFFF; --chrome:#FFFFFF; --rail:#FFFFFF; --rail-line:#E2E8F0;
+  --ink:#0F172A; --ink-dim:#576578; --ink-faint:#8A97A8;
+  --line:#E2E8F0; --line-strong:#CBD5E1; --track:#EDF1F6;
+  --rail-ink:#7C8899; --rail-on:#EEF0FE; --rail-on-ink:#4338CA;
+  --brand:#4F46E5; --brand-ink:#4338CA; --brand-on:#FFFFFF;
+  --brand-grad: linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6);
+  --good:#047857; --good-bg:#E6F4EF; --good-ink:#03624A;
+  --caution:#A16207; --caution-bg:#FBF2DE; --caution-ink:#834F06;
+  --over:#BE123C; --over-bg:#FCEAEE; --over-ink:#9C0F33;
+  --neutral-bg:#EDF1F6; --neutral-ink:#576578;
+  --c1:#4F46E5; --c2:#7C3AED; --c3:#A855F7; --c4:#DB2777;
+  --c5:#0E7490; --c6:#0D9488; --c7:#B45309; --c8:#64748B;
+  --display:32px; --display-w:650; --h3:14px; --h4:13.5px;
+  --body:14px; --label:13px; --cap:13px; --micro:11.5px;
+  --r-sm:6px; --r-lg:10px; --pad:15px; --gap:12px; --bargap:5px;
+  --shadow: 0 1px 2px rgba(15,23,42,.05), 0 4px 12px -4px rgba(15,23,42,.08);
+}
+.C-dark {
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --bg:#080D18; --card:#172033; --chrome:#111A2B; --rail:#050912; --rail-line:#232E42;
+  --ink:#E8EDF5; --ink-dim:#94A3B8; --ink-faint:#6B7A90;
+  --line:#2A3547; --line-strong:#374357; --track:#212C3E;
+  --rail-ink:#7C8899; --rail-on:#1E2547; --rail-on-ink:#A5B4FC;
+  --brand:#818CF8; --brand-ink:#A5B4FC; --brand-on:#1E1B4B;
+  --brand-grad: linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6);
+  --good:#34D399; --good-bg:#0F3328; --good-ink:#6EE7B7;
+  --caution:#FBBF24; --caution-bg:#33290F; --caution-ink:#FCD34D;
+  --over:#FB7185; --over-bg:#3A1A24; --over-ink:#FDA4AF;
+  --neutral-bg:#212C3E; --neutral-ink:#94A3B8;
+  --c1:#818CF8; --c2:#A78BFA; --c3:#C084FC; --c4:#F472B6;
+  --c5:#38BDF8; --c6:#2DD4BF; --c7:#FBBF24; --c8:#94A3B8;
+  --display:32px; --display-w:650; --h3:14px; --h4:13.5px;
+  --body:14px; --label:13px; --cap:13px; --micro:11.5px;
+  --r-sm:6px; --r-lg:10px; --pad:15px; --gap:12px; --bargap:5px;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 16px -6px rgba(0,0,0,.55);
+}
+
+.foot { border-top: 1px solid #262c36; margin-top: 40px; padding-top: 22px; color: #6b7583; font-size: 12.5px; }
+.foot b { color: #98a2b3; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="masthead">
+    <div class="logo-strip">
+      <span class="logo-chip"><i style="background:#818CF8"></i><i style="background:#A78BFA"></i><i style="background:#F472B6"></i></span>
+      the identity all three directions are built from
+    </div>
+    <h1>Nixus — three design directions</h1>
+    <p>Same screen, same real content, three complete visual personalities. Every direction keeps the Nixus logo and derives its accent from the logo's own gradient rather than the default indigo it currently ships.</p>
+    <p>Light <em>and</em> dark are shown for each, because <code>defaultTheme="system"</code> means both modes ship to every user — a direction that only works in one mode isn't a direction.</p>
+    <div class="howto">
+      <b>⚠ Historical artifact.</b> Rendered before the computational contrast pass. The chart ramp, <code>ink-faint</code>, and micro-label sizes here were <b>superseded</b> — the light ramp originally walked the logo gradient smoothly, which gave adjacent segments near-identical luminance (as low as 1.00:1) and reproduced the very problem it was meant to fix. <code>DESIGN.md</code> carries the corrected alternating-luminance ramp. <b>The spine wins on conflict; read token values from DESIGN.md, never from this file.</b> Kept as the record of why Direction A was chosen.
+    </div>
+    <div class="howto">
+      <b>What you're looking at:</b> the Finance dashboard rebuilt to answer three questions instead of showing 29 numbers — <b>Can I spend? · What needs attention? · What should I do?</b> — plus the promoted four-destination nav, an 8-step chart palette with direct labels, and one state variant per direction. <b>Pick a direction</b> and it gets locked into <code>DESIGN.md</code> as the token layer.
+    </div>
+  </div>
+
+  <!-- =========================================================
+       DIRECTION A
+       ========================================================= -->
+  <section class="direction">
+    <div class="dir-head">
+      <span class="tag">Direction A</span>
+      <h2>Quiet Ledger</h2>
+      <p class="rationale">Warm paper instead of cold slate. Separation comes from hairlines and tone, never shadows — the visual language of a well-set financial statement rather than a dashboard. Numbers are the loudest thing on screen and nothing competes with them.</p>
+      <p class="verdict"><strong>Register:</strong> calm, credible, quiet. Reads as <em>trustworthy institution</em>. Best fit for Marie's "in control, relieved, confident" — and the furthest from what you ship today.</p>
+      <div class="swatches">
+        <span class="sw" style="background:#FAF8F5;color:#1C1917">bg #FAF8F5</span>
+        <span class="sw" style="background:#FFFFFF;color:#1C1917">card #FFFFFF</span>
+        <span class="sw" style="background:#1C1917;color:#FAF8F5">ink #1C1917</span>
+        <span class="sw" style="background:#5B54D6;color:#fff">brand #5B54D6</span>
+        <span class="sw" style="background:#15803D;color:#fff">good #15803D</span>
+        <span class="sw" style="background:#B45309;color:#fff">caution #B45309</span>
+        <span class="sw" style="background:#BE123C;color:#fff">over #BE123C</span>
+      </div>
+    </div>
+
+    <div class="modes">
+      <!-- A LIGHT -->
+      <div>
+        <div class="mode-label">A · Light</div>
+        <div class="win">
+          <div class="win-bar"><i></i><i></i><i></i><span>Nixus — 1280 × 800</span></div>
+          <div class="app A-light">
+            <div class="rail">
+              <div class="mark"></div>
+              <div class="ico on">◧</div><div class="ico">⛁</div><div class="ico">✳</div>
+              <div class="spacer"></div>
+              <div class="ico">◐</div><div class="ico">⚙</div>
+            </div>
+            <div class="main">
+              <nav class="dest">
+                <a href="#" class="on">Today</a><a href="#">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+                <span class="grow"></span>
+                <span class="period">June 2026 <small>▾</small></span>
+              </nav>
+              <div class="body">
+                <div class="qrow">
+                  <div class="card">
+                    <p class="q">Can I spend?</p>
+                    <p class="big money" style="color:var(--ink)">$1,038.77</p>
+                    <p class="sub">left for the next <b>12 days</b> — after <b class="money">$415.00</b> of bills still to come</p>
+                    <div class="meter"><i style="width:72%"></i></div>
+                  </div>
+                  <div class="card">
+                    <p class="q">What needs attention?</p>
+                    <div class="att">
+                      <div class="att-row"><span class="dot" style="background:var(--over)"></span><span class="who">Restaurants</span><span class="amt money" style="color:var(--over-ink)">+$86</span><span class="pill p-over">Over</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">Groceries</span><span class="amt money">$512</span><span class="pill p-due">Due soon</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--neutral-ink)"></span><span class="who">Mortgage</span><span class="amt money">$1,650</span><span class="pill p-paid">Paid</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">TFSA balance</span><span class="amt" style="font-weight:500;color:var(--ink-dim)">6 wks</span><span class="pill p-due">Stale</span></div>
+                    </div>
+                  </div>
+                  <div class="card action">
+                    <p class="q">What should I do?</p>
+                    <h4>Build your emergency fund</h4>
+                    <p>You have <b class="money">3.2 months</b> of expenses covered. Six is your target.</p>
+                    <span class="cta">See the plan</span>
+                    <span class="lag">Based on your completed months, Jan–May</span>
+                  </div>
+                </div>
+
+                <div class="chart-wrap">
+                  <div class="card">
+                    <div class="head-row">
+                      <h3>Variable spending</h3><span class="grow"></span>
+                      <span class="toggle">Fixed costs hidden</span>
+                    </div>
+                    <p class="sub" style="margin-top:4px">The part you can actually change — <b class="money">$1,534</b> this month, down 8% from your 6-month average</p>
+                    <div class="bars">
+                      <div class="b" style="height:52%;background:var(--c1)"></div>
+                      <div class="b" style="height:64%;background:var(--c1)"></div>
+                      <div class="b" style="height:47%;background:var(--c1)"></div>
+                      <div class="b" style="height:71%;background:var(--c1)"></div>
+                      <div class="b" style="height:58%;background:var(--c1)"></div>
+                      <div class="b" style="height:44%;background:var(--brand)"></div>
+                    </div>
+                    <div class="xax"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span></div>
+                  </div>
+                  <div class="card">
+                    <div class="head-row"><h3>Where it sits</h3></div>
+                    <div class="alloc">
+                      <i style="flex:31;background:var(--c1)"></i><i style="flex:22;background:var(--c2)"></i>
+                      <i style="flex:15;background:var(--c3)"></i><i style="flex:11;background:var(--c4)"></i>
+                      <i style="flex:9;background:var(--c5)"></i><i style="flex:7;background:var(--c6)"></i>
+                      <i style="flex:5;background:var(--c7)"></i>
+                    </div>
+                    <div class="alloc-keys">
+                      <div><span class="dot" style="background:var(--c1)"></span>RRSP <b class="money">$38.7k</b></div>
+                      <div><span class="dot" style="background:var(--c2)"></span>TFSA <b class="money">$27.5k</b></div>
+                      <div><span class="dot" style="background:var(--c3)"></span>Non-reg. <b class="money">$18.7k</b></div>
+                      <div><span class="dot" style="background:var(--c4)"></span>Savings <b class="money">$13.7k</b></div>
+                      <div><span class="dot" style="background:var(--c5)"></span>FHSA <b class="money">$11.2k</b></div>
+                      <div><span class="dot" style="background:var(--c6)"></span>Chequing <b class="money">$8.7k</b></div>
+                      <div><span class="dot" style="background:var(--c7)"></span>Crypto <b class="money">$6.2k</b></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- A DARK -->
+      <div>
+        <div class="mode-label">A · Dark — plus the “not enough data yet” state</div>
+        <div class="win">
+          <div class="win-bar"><i></i><i></i><i></i><span>Nixus — 1024 × 680 (minimum window)</span></div>
+          <div class="app A-dark">
+            <div class="rail">
+              <div class="mark"></div>
+              <div class="ico on">◧</div><div class="ico">⛁</div><div class="ico">✳</div>
+              <div class="spacer"></div>
+              <div class="ico">◐</div><div class="ico">⚙</div>
+            </div>
+            <div class="main">
+              <nav class="dest">
+                <a href="#" class="on">Today</a><a href="#">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+                <span class="grow"></span>
+                <span class="period">June 2026 <small>▾</small></span>
+              </nav>
+              <div class="body">
+                <div class="qrow">
+                  <div class="card">
+                    <p class="q">Can I spend?</p>
+                    <p class="big money">$1,038.77</p>
+                    <p class="sub">left for the next <b>12 days</b> — after <b class="money">$415.00</b> of bills still to come</p>
+                    <div class="meter"><i style="width:72%"></i></div>
+                  </div>
+                  <div class="card">
+                    <p class="q">What needs attention?</p>
+                    <div class="att">
+                      <div class="att-row"><span class="dot" style="background:var(--over)"></span><span class="who">Restaurants</span><span class="amt money" style="color:var(--over-ink)">+$86</span><span class="pill p-over">Over</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">Groceries</span><span class="amt money">$512</span><span class="pill p-due">Due soon</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--neutral-ink)"></span><span class="who">Mortgage</span><span class="amt money">$1,650</span><span class="pill p-paid">Paid</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">TFSA balance</span><span class="amt" style="font-weight:500;color:var(--ink-dim)">6 wks</span><span class="pill p-due">Stale</span></div>
+                    </div>
+                  </div>
+                  <div class="card action">
+                    <p class="q">What should I do?</p>
+                    <h4>Build your emergency fund</h4>
+                    <p>You have <b class="money">3.2 months</b> of expenses covered. Six is your target.</p>
+                    <span class="cta">See the plan</span>
+                    <span class="lag">Based on your completed months, Jan–May</span>
+                  </div>
+                </div>
+                <div class="states">
+                  <div class="card empty">
+                    <div class="glyph">◔</div>
+                    <h5>Not enough history yet</h5>
+                    <p>Your next action needs about three months of completed expenses. You have one.</p>
+                    <span class="btn-ghost">Import a statement</span>
+                  </div>
+                  <div class="card">
+                    <div class="head-row"><h3>Committed each month</h3></div>
+                    <p class="big money" style="font-size:26px;margin-top:6px">$2,065.00</p>
+                    <p class="sub">across <b>8 recurring bills</b> — next is <b>Maple Grove</b> at <b class="money">$1,650.00</b> on Jul 1</p>
+                    <div class="att" style="margin-top:13px">
+                      <div class="att-row"><span class="dot" style="background:var(--c1)"></span><span class="who">Maple Grove — 1st</span><span class="amt money">$1,650.00</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--c2)"></span><span class="who">Bell Internet — 8th</span><span class="amt money">$92.00</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--c3)"></span><span class="who">Insurance — 15th</span><span class="amt money">$186.00</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       DIRECTION B
+       ========================================================= -->
+  <section class="direction">
+    <div class="dir-head">
+      <span class="tag">Direction B</span>
+      <h2>Soft Focus</h2>
+      <p class="rationale">The logo's own palette, taken seriously. Periwinkle through violet through pink becomes the chart ramp; neutrals pick up a violet cast so the brand feels native rather than applied. Soft elevation and 14px radii make it the friendliest of the three.</p>
+      <p class="verdict"><strong>Register:</strong> warm, approachable, consumer-grade. The only direction that looks like your logo. <strong>Watch:</strong> pink is decorative only — never a status — so it can't be mistaken for over-budget.</p>
+      <div class="swatches">
+        <span class="sw" style="background:#F6F5FC;color:#1E1B34">bg #F6F5FC</span>
+        <span class="sw" style="background:#1E1B34;color:#EAE7F7">ink #1E1B34</span>
+        <span class="sw" style="background:#5D52D9;color:#fff">brand #5D52D9</span>
+        <span class="sw" style="background:#818CF8;color:#1E1B34">c1 #818CF8</span>
+        <span class="sw" style="background:#A78BFA;color:#1E1B34">c3 #A78BFA</span>
+        <span class="sw" style="background:#E879B9;color:#1E1B34">c5 #E879B9</span>
+        <span class="sw" style="background:#047857;color:#fff">good #047857</span>
+        <span class="sw" style="background:#E11D48;color:#fff">over #E11D48</span>
+      </div>
+    </div>
+
+    <div class="modes">
+      <!-- B LIGHT -->
+      <div>
+        <div class="mode-label">B · Light</div>
+        <div class="win">
+          <div class="win-bar"><i></i><i></i><i></i><span>Nixus — 1280 × 800</span></div>
+          <div class="app B-light">
+            <div class="rail">
+              <div class="mark"></div>
+              <div class="ico on">◧</div><div class="ico">⛁</div><div class="ico">✳</div>
+              <div class="spacer"></div>
+              <div class="ico">◐</div><div class="ico">⚙</div>
+            </div>
+            <div class="main">
+              <nav class="dest">
+                <a href="#" class="on">Today</a><a href="#">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+                <span class="grow"></span>
+                <span class="period">June 2026 <small>▾</small></span>
+              </nav>
+              <div class="body">
+                <div class="qrow">
+                  <div class="card">
+                    <p class="q">Can I spend?</p>
+                    <p class="big money">$1,038.77</p>
+                    <p class="sub">left for the next <b>12 days</b> — after <b class="money">$415.00</b> of bills still to come</p>
+                    <div class="meter"><i style="width:72%;background:linear-gradient(90deg,#818CF8,#A78BFA)"></i></div>
+                  </div>
+                  <div class="card">
+                    <p class="q">What needs attention?</p>
+                    <div class="att">
+                      <div class="att-row"><span class="dot" style="background:var(--over)"></span><span class="who">Restaurants</span><span class="amt money" style="color:var(--over-ink)">+$86</span><span class="pill p-over">Over</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">Groceries</span><span class="amt money">$512</span><span class="pill p-due">Due soon</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--neutral-ink)"></span><span class="who">Mortgage</span><span class="amt money">$1,650</span><span class="pill p-paid">Paid</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">TFSA balance</span><span class="amt" style="font-weight:500;color:var(--ink-dim)">6 wks</span><span class="pill p-due">Stale</span></div>
+                    </div>
+                  </div>
+                  <div class="card action">
+                    <p class="q">What should I do?</p>
+                    <h4>Build your emergency fund</h4>
+                    <p>You have <b class="money">3.2 months</b> of expenses covered. Six is your target.</p>
+                    <span class="cta">See the plan</span>
+                    <span class="lag">Based on your completed months, Jan–May</span>
+                  </div>
+                </div>
+
+                <div class="chart-wrap">
+                  <div class="card">
+                    <div class="head-row">
+                      <h3>Variable spending</h3><span class="grow"></span>
+                      <span class="toggle">Fixed costs hidden</span>
+                    </div>
+                    <p class="sub" style="margin-top:4px">The part you can actually change — <b class="money">$1,534</b> this month, down 8% from your 6-month average</p>
+                    <div class="bars">
+                      <div class="b" style="height:52%;background:var(--c3)"></div>
+                      <div class="b" style="height:64%;background:var(--c3)"></div>
+                      <div class="b" style="height:47%;background:var(--c3)"></div>
+                      <div class="b" style="height:71%;background:var(--c3)"></div>
+                      <div class="b" style="height:58%;background:var(--c3)"></div>
+                      <div class="b" style="height:44%;background:linear-gradient(180deg,#818CF8,#A78BFA)"></div>
+                    </div>
+                    <div class="xax"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span></div>
+                  </div>
+                  <div class="card">
+                    <div class="head-row"><h3>Where it sits</h3></div>
+                    <div class="alloc">
+                      <i style="flex:31;background:var(--c1)"></i><i style="flex:22;background:var(--c2)"></i>
+                      <i style="flex:15;background:var(--c3)"></i><i style="flex:11;background:var(--c4)"></i>
+                      <i style="flex:9;background:var(--c5)"></i><i style="flex:7;background:var(--c6)"></i>
+                      <i style="flex:5;background:var(--c7)"></i>
+                    </div>
+                    <div class="alloc-keys">
+                      <div><span class="dot" style="background:var(--c1)"></span>RRSP <b class="money">$38.7k</b></div>
+                      <div><span class="dot" style="background:var(--c2)"></span>TFSA <b class="money">$27.5k</b></div>
+                      <div><span class="dot" style="background:var(--c3)"></span>Non-reg. <b class="money">$18.7k</b></div>
+                      <div><span class="dot" style="background:var(--c4)"></span>Savings <b class="money">$13.7k</b></div>
+                      <div><span class="dot" style="background:var(--c5)"></span>FHSA <b class="money">$11.2k</b></div>
+                      <div><span class="dot" style="background:var(--c6)"></span>Chequing <b class="money">$8.7k</b></div>
+                      <div><span class="dot" style="background:var(--c7)"></span>Crypto <b class="money">$6.2k</b></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- B DARK -->
+      <div>
+        <div class="mode-label">B · Dark — plus the import-review moment</div>
+        <div class="win">
+          <div class="win-bar"><i></i><i></i><i></i><span>Nixus — 1024 × 680 (minimum window)</span></div>
+          <div class="app B-dark">
+            <div class="rail">
+              <div class="mark"></div>
+              <div class="ico on">◧</div><div class="ico">⛁</div><div class="ico">✳</div>
+              <div class="spacer"></div>
+              <div class="ico">◐</div><div class="ico">⚙</div>
+            </div>
+            <div class="main">
+              <nav class="dest">
+                <a href="#">Today</a><a href="#" class="on">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+                <span class="grow"></span>
+                <span class="period">June 2026 <small>▾</small></span>
+              </nav>
+              <div class="body">
+                <div class="card" style="margin-bottom:var(--gap)">
+                  <div class="head-row">
+                    <h3>Review 47 transactions</h3><span class="grow"></span>
+                    <span class="pill p-ok">41 sorted for you</span>
+                  </div>
+                  <p class="sub" style="margin-top:5px">Six need a quick look. <b>3 likely duplicates</b> were excluded — <span style="color:var(--brand-ink);font-weight:650">review them</span>.</p>
+                  <div class="att" style="margin-top:14px">
+                    <div class="att-row">
+                      <span class="pill p-due">Not sure</span>
+                      <span class="who">4 × TIM HORTONS</span>
+                      <span class="amt money">$38.40</span>
+                      <span class="pill p-paid">Categorize once ▾</span>
+                    </div>
+                    <div class="att-row">
+                      <span class="pill p-due">Not sure</span>
+                      <span class="who">PHARMAPRIX 2241</span>
+                      <span class="amt money">$64.18</span>
+                      <span class="pill p-paid">Health ▾</span>
+                    </div>
+                    <div class="att-row">
+                      <span class="pill p-over">Unreadable</span>
+                      <span class="who" style="color:var(--ink-faint)">Couldn't read this line — add it yourself?</span>
+                      <span class="amt money" style="color:var(--ink-faint)">—</span>
+                    </div>
+                  </div>
+                  <div style="margin-top:15px;display:flex;gap:8px;align-items:center">
+                    <span class="cta" style="background:var(--brand);color:var(--brand-on);font-size:var(--cap);font-weight:650;padding:8px 14px;border-radius:var(--r-sm)">Add 44 transactions</span>
+                    <span class="btn-ghost">Select all</span>
+                    <span class="lag" style="margin:0 0 0 auto">We'll remember these for next month</span>
+                  </div>
+                </div>
+                <div class="states">
+                  <div class="card empty">
+                    <div class="glyph">◔</div>
+                    <h5>Not enough history yet</h5>
+                    <p>Your next action needs about three months of completed expenses. You have one.</p>
+                    <span class="btn-ghost">Import a statement</span>
+                  </div>
+                  <div class="card">
+                    <div class="head-row"><h3>Committed each month</h3></div>
+                    <p class="big money" style="font-size:28px;margin-top:6px">$2,065.00</p>
+                    <p class="sub">across <b>8 recurring bills</b> — next is <b>Maple Grove</b> at <b class="money">$1,650.00</b> on Jul 1</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       DIRECTION C
+       ========================================================= -->
+  <section class="direction">
+    <div class="dir-head">
+      <span class="tag">Direction C</span>
+      <h2>Clear Slate</h2>
+      <p class="rationale">The conservative repair. Keeps your slate family and <code>#4F46E5</code> for actions, and changes only what's provably broken: the page background now sits <em>darker</em> than cards so surfaces actually layer, status colours are split out of the brand and chart families, and a real type scale replaces the 12/14px wall.</p>
+      <p class="verdict"><strong>Register:</strong> familiar, denser, competent. Smallest diff, lowest risk, least differentiated — it still reads as a developer tool, just a well-built one.</p>
+      <div class="swatches">
+        <span class="sw" style="background:#F1F5F9;color:#0F172A">bg #F1F5F9</span>
+        <span class="sw" style="background:#0F172A;color:#E8EDF5">ink #0F172A</span>
+        <span class="sw" style="background:#080D18;color:#E8EDF5">dark bg #080D18</span>
+        <span class="sw" style="background:#172033;color:#E8EDF5">dark card #172033</span>
+        <span class="sw" style="background:#4F46E5;color:#fff">brand #4F46E5</span>
+        <span class="sw" style="background:#047857;color:#fff">good #047857</span>
+        <span class="sw" style="background:#A16207;color:#fff">caution #A16207</span>
+        <span class="sw" style="background:#BE123C;color:#fff">over #BE123C</span>
+      </div>
+    </div>
+
+    <div class="modes">
+      <!-- C LIGHT -->
+      <div>
+        <div class="mode-label">C · Light</div>
+        <div class="win">
+          <div class="win-bar"><i></i><i></i><i></i><span>Nixus — 1280 × 800</span></div>
+          <div class="app C-light">
+            <div class="rail">
+              <div class="mark"></div>
+              <div class="ico on">◧</div><div class="ico">⛁</div><div class="ico">✳</div>
+              <div class="spacer"></div>
+              <div class="ico">◐</div><div class="ico">⚙</div>
+            </div>
+            <div class="main">
+              <nav class="dest">
+                <a href="#" class="on">Today</a><a href="#">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+                <span class="grow"></span>
+                <span class="period">June 2026 <small>▾</small></span>
+              </nav>
+              <div class="body">
+                <div class="qrow">
+                  <div class="card">
+                    <p class="q">Can I spend?</p>
+                    <p class="big money">$1,038.77</p>
+                    <p class="sub">left for the next <b>12 days</b> — after <b class="money">$415.00</b> of bills still to come</p>
+                    <div class="meter"><i style="width:72%"></i></div>
+                  </div>
+                  <div class="card">
+                    <p class="q">What needs attention?</p>
+                    <div class="att">
+                      <div class="att-row"><span class="dot" style="background:var(--over)"></span><span class="who">Restaurants</span><span class="amt money" style="color:var(--over-ink)">+$86</span><span class="pill p-over">Over</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">Groceries</span><span class="amt money">$512</span><span class="pill p-due">Due soon</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--neutral-ink)"></span><span class="who">Mortgage</span><span class="amt money">$1,650</span><span class="pill p-paid">Paid</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">TFSA balance</span><span class="amt" style="font-weight:500;color:var(--ink-dim)">6 wks</span><span class="pill p-due">Stale</span></div>
+                    </div>
+                  </div>
+                  <div class="card action">
+                    <p class="q">What should I do?</p>
+                    <h4>Build your emergency fund</h4>
+                    <p>You have <b class="money">3.2 months</b> of expenses covered. Six is your target.</p>
+                    <span class="cta">See the plan</span>
+                    <span class="lag">Based on your completed months, Jan–May</span>
+                  </div>
+                </div>
+
+                <div class="chart-wrap">
+                  <div class="card">
+                    <div class="head-row">
+                      <h3>Variable spending</h3><span class="grow"></span>
+                      <span class="toggle">Fixed costs hidden</span>
+                    </div>
+                    <p class="sub" style="margin-top:4px">The part you can actually change — <b class="money">$1,534</b> this month, down 8% from your 6-month average</p>
+                    <div class="bars">
+                      <div class="b" style="height:52%;background:var(--c1);opacity:.42"></div>
+                      <div class="b" style="height:64%;background:var(--c1);opacity:.42"></div>
+                      <div class="b" style="height:47%;background:var(--c1);opacity:.42"></div>
+                      <div class="b" style="height:71%;background:var(--c1);opacity:.42"></div>
+                      <div class="b" style="height:58%;background:var(--c1);opacity:.42"></div>
+                      <div class="b" style="height:44%;background:var(--c1)"></div>
+                    </div>
+                    <div class="xax"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span></div>
+                  </div>
+                  <div class="card">
+                    <div class="head-row"><h3>Where it sits</h3></div>
+                    <div class="alloc">
+                      <i style="flex:31;background:var(--c1)"></i><i style="flex:22;background:var(--c2)"></i>
+                      <i style="flex:15;background:var(--c3)"></i><i style="flex:11;background:var(--c4)"></i>
+                      <i style="flex:9;background:var(--c5)"></i><i style="flex:7;background:var(--c6)"></i>
+                      <i style="flex:5;background:var(--c7)"></i>
+                    </div>
+                    <div class="alloc-keys">
+                      <div><span class="dot" style="background:var(--c1)"></span>RRSP <b class="money">$38.7k</b></div>
+                      <div><span class="dot" style="background:var(--c2)"></span>TFSA <b class="money">$27.5k</b></div>
+                      <div><span class="dot" style="background:var(--c3)"></span>Non-reg. <b class="money">$18.7k</b></div>
+                      <div><span class="dot" style="background:var(--c4)"></span>Savings <b class="money">$13.7k</b></div>
+                      <div><span class="dot" style="background:var(--c5)"></span>FHSA <b class="money">$11.2k</b></div>
+                      <div><span class="dot" style="background:var(--c6)"></span>Chequing <b class="money">$8.7k</b></div>
+                      <div><span class="dot" style="background:var(--c7)"></span>Crypto <b class="money">$6.2k</b></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- C DARK -->
+      <div>
+        <div class="mode-label">C · Dark — note the page now sits darker than the cards</div>
+        <div class="win">
+          <div class="win-bar"><i></i><i></i><i></i><span>Nixus — 1024 × 680 (minimum window)</span></div>
+          <div class="app C-dark">
+            <div class="rail">
+              <div class="mark"></div>
+              <div class="ico on">◧</div><div class="ico">⛁</div><div class="ico">✳</div>
+              <div class="spacer"></div>
+              <div class="ico">◐</div><div class="ico">⚙</div>
+            </div>
+            <div class="main">
+              <nav class="dest">
+                <a href="#" class="on">Today</a><a href="#">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+                <span class="grow"></span>
+                <span class="period">June 2026 <small>▾</small></span>
+              </nav>
+              <div class="body">
+                <div class="qrow">
+                  <div class="card">
+                    <p class="q">Can I spend?</p>
+                    <p class="big money">$1,038.77</p>
+                    <p class="sub">left for the next <b>12 days</b> — after <b class="money">$415.00</b> of bills still to come</p>
+                    <div class="meter"><i style="width:72%"></i></div>
+                  </div>
+                  <div class="card">
+                    <p class="q">What needs attention?</p>
+                    <div class="att">
+                      <div class="att-row"><span class="dot" style="background:var(--over)"></span><span class="who">Restaurants</span><span class="amt money" style="color:var(--over-ink)">+$86</span><span class="pill p-over">Over</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">Groceries</span><span class="amt money">$512</span><span class="pill p-due">Due soon</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--neutral-ink)"></span><span class="who">Mortgage</span><span class="amt money">$1,650</span><span class="pill p-paid">Paid</span></div>
+                      <div class="att-row"><span class="dot" style="background:var(--caution)"></span><span class="who">TFSA balance</span><span class="amt" style="font-weight:500;color:var(--ink-dim)">6 wks</span><span class="pill p-due">Stale</span></div>
+                    </div>
+                  </div>
+                  <div class="card action">
+                    <p class="q">What should I do?</p>
+                    <h4>Build your emergency fund</h4>
+                    <p>You have <b class="money">3.2 months</b> of expenses covered. Six is your target.</p>
+                    <span class="cta">See the plan</span>
+                    <span class="lag">Based on your completed months, Jan–May</span>
+                  </div>
+                </div>
+                <div class="states">
+                  <div class="card empty">
+                    <div class="glyph">◔</div>
+                    <h5>Not enough history yet</h5>
+                    <p>Your next action needs about three months of completed expenses. You have one.</p>
+                    <span class="btn-ghost">Import a statement</span>
+                  </div>
+                  <div class="card">
+                    <div class="head-row"><h3>Committed each month</h3></div>
+                    <p class="big money" style="font-size:26px;margin-top:6px">$2,065.00</p>
+                    <p class="sub">across <b>8 recurring bills</b> — next is <b>Maple Grove</b> at <b class="money">$1,650.00</b> on Jul 1</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    <p><b>Constraints honoured in all three:</b> 1024 × 680 minimum window · money in tabular figures, never a code font · 13px type floor · status colour never the only signal (pill text always present) · every figure maskable by the hide-values toggle · financial-health figures labelled as trailing/lagging · <code>overdue → due_soon → projected_due → stale</code> vocabulary reused rather than reinvented · per-card skeletons, inline errors.</p>
+    <p><b>Not shown here:</b> Transactions list, onboarding, Settings, Insights detail, AI chat. Those are specified in <code>EXPERIENCE.md</code> and only get mocked if layout drives behaviour.</p>
+    <p style="margin-bottom:0"><b>Nixus · design directions · 2026-08-01</b> — generated for the UX spec run at <code>_bmad-output/planning-artifacts/ux-designs/ux-nixus-2026-08-01/</code></p>
+  </div>
+
+</div>
+</body>
+</html>

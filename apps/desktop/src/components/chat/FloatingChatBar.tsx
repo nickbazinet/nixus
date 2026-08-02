@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { format, subMonths } from "date-fns";
 import { fr as frLocale } from "date-fns/locale";
 import { MessageSquare } from "lucide-react";
@@ -17,7 +17,6 @@ interface FloatingChatBarProps {
 
 export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
   const { t, i18n } = useTranslation();
-  const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<Element | null>(null);
   const [input, setInput] = useState("");
@@ -71,11 +70,6 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
     },
     [streaming, sendMessage]
   );
-
-  const handleOpenFullChat = useCallback(() => {
-    onClose();
-    navigate({ to: "/ai/$agentId", params: { agentId: lastUsedAgentId } });
-  }, [onClose, navigate, lastUsedAgentId]);
 
   if (!open) return null;
 
@@ -187,10 +181,19 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
         )}
 
         <div className="flex items-center justify-between gap-3 border-t border-line px-card-pad py-2">
+          {/* Changing the URL is a link, not a button: it has to survive cmd-click and
+            * "copy link address", and assistive tech must announce it as navigation. */}
           <Button
             variant="link"
             size="sm"
-            onClick={handleOpenFullChat}
+            role="link"
+            render={
+              <Link
+                to="/ai/$agentId"
+                params={{ agentId: lastUsedAgentId }}
+                onClick={onClose}
+              />
+            }
             data-testid="open-full-chat-link"
           >
             {t("chat.openFullChat")}

@@ -46,11 +46,16 @@ export function parseActionFromContent(content: string): ActionPayload | null {
   return null;
 }
 
-/** Index just past the last sentence terminator at or after `from`, or `from` if there is none. */
+/** Index just past the last sentence terminator at or after `from`, or `from` if there is none.
+ * A period closes a sentence only when whitespace or the end of the buffer follows it, so the
+ * decimal point in `$125.50` is never mistaken for one — money is most of what this app streams. */
 function lastSentenceBoundary(text: string, from: number): number {
   for (let i = text.length - 1; i >= from; i--) {
     const char = text[i];
-    if (char === "." || char === "!" || char === "?" || char === "\n") return i + 1;
+    if (char === "\n") return i + 1;
+    if (char !== "." && char !== "!" && char !== "?") continue;
+    const next = text[i + 1];
+    if (next === undefined || /\s/.test(next)) return i + 1;
   }
   return from;
 }
@@ -196,11 +201,14 @@ export function ChatMessageBubble({
             </CardContent>
           </Card>
         ) : isStreaming ? (
-          <div className="whitespace-pre-wrap">{content}</div>
+          <div className="money whitespace-pre-wrap">{content}</div>
         ) : (
-          <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
-            {content}
-          </ReactMarkdown>
+          // Figures in an answer are tabular Inter; `font-mono` stays scoped to real code below.
+          <div className="money">
+            <ReactMarkdown remarkPlugins={remarkPlugins} components={markdownComponents}>
+              {content}
+            </ReactMarkdown>
+          </div>
         )}
       </div>
     </div>

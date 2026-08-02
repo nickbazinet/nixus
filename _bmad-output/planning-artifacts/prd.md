@@ -2,6 +2,8 @@
 stepsCompleted: ['step-01-init', 'step-02-discovery', 'step-02b-vision', 'step-02c-executive-summary', 'step-03-success', 'step-04-journeys', 'step-05-domain', 'step-06-innovation', 'step-07-project-type', 'step-08-scoping', 'step-09-functional', 'step-10-nonfunctional', 'step-11-polish', 'step-e-01-discovery', 'step-e-02-review', 'step-e-03-edit', 'step-e-04-complete']
 lastEdited: '2026-06-10'
 editHistory:
+  - date: '2026-08-01'
+    changes: 'Amended per final UX spec (ux-nixus-2026-08-01), which superseded three prior decisions (primary user, money typography, onboarding wizard shape): FR70 rewritten — retired 5-step wizard replaced with single-fork onboarding (import → AI-proposed budget, or starter template, or scratch), Accounts/Assets/Income moved out of the wizard to optional Today prompt cards, beforeLoad gating, tray-explanation requirement; FR71 confirmed as-is; FR8 given its missing confidence threshold (0.8); FR29 bounded from "any data in the system" to an enumerated capability list, with the deterministic/backend-owned waterfall clarified; added FR95 (per-surface CSV export), FR96 (portable versioned budget templates with amount-stripped export), FR97 (cross-category transaction list with bulk actions)'
   - date: '2026-06-10'
     changes: 'Added Transaction-Account Linking (FR90-FR94, NFR23): optional account selection when recording expenses or income with automatic liability-aware balance adjustment on create, edit, and delete; updated Executive Summary, Journey 2/5/6, Journey Requirements Summary, Product Scope (capabilities 3, 4, 10), FR12/FR35, Phase 3 deferrals; architecture in architecture-expense-income-account-linking.md'
   - date: '2026-03-16'
@@ -454,7 +456,7 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR5: User can upload a credit card statement as a screenshot (image) or PDF
 - FR6: System can extract individual transactions from an uploaded CC statement using Strand SDK + AWS Bedrock
 - FR7: System can auto-categorize extracted transactions into the user's budget categories
-- FR8: System can flag transactions it is uncertain about for user review
+- FR8: System flags transactions with categorization confidence below 0.8 for user review; transactions at or above 0.8 confidence are auto-categorized, collapsed, and shown as a count (amended 2026-08-01 per UX spec ux-nixus-2026-08-01)
 - FR9: User can review and correct AI-categorized transactions before confirming
 - FR10: System can report real-time progress of the import process (uploading → extracting → categorizing → done)
 - FR72: System can detect potential duplicate transactions during import when merchant, date, and amount match an existing expense
@@ -527,12 +529,12 @@ Not required for account/asset balance updates (manual entry, standard request/r
 
 ### Onboarding
 
-- FR70: System guides new users through a multi-step onboarding wizard (budget, accounts, assets, income, import)
-- FR71: System redirects users to onboarding when no budget groups exist
+- ~~FR70: System guides new users through a multi-step onboarding wizard (budget, accounts, assets, income, import)~~ — **superseded 2026-08-01 per UX spec ux-nixus-2026-08-01.** The 5-step sequential wizard is retired. FR70: Onboarding presents a welcome screen (explaining no bank sync, AI is bring-your-own-key, and that the app remains in the system tray after the window closes), followed by a single fork: (1) upload a statement, from which the system proposes a budget derived from the user's actual spending; (2) pick a starter template (~12 pre-filled Canadian categories with editable targets); or (3) start from scratch. Accounts, Assets, and Income are removed from the wizard and surface instead as optional prompt cards on the Today surface. The onboarding gate runs in the router's `beforeLoad`, not a post-render `useEffect`, so no empty dashboard is ever painted before the redirect. The "never show an empty dashboard" rule and the "a budget is mandatory" rule both survive unchanged from the original FR70 intent — but mandatory is now satisfied in approximately two clicks (starter template path) rather than the 60–80 clicks the multi-step wizard required.
+- FR71: System redirects users to onboarding when no budget groups exist (confirmed 2026-08-01 per UX spec ux-nixus-2026-08-01 — redirect condition unchanged)
 
 ### AI Chat
 
-- FR29: User can ask natural language questions about any data in the system (budgets, expenses, income, accounts, assets, net worth history, vehicle maintenance schedules)
+- FR29: User can ask natural language questions about the following data only: budget categories and targets, expenses, income entries, accounts and balances, passive assets, net worth snapshots, recurring expense templates, and the deterministic financial-health metrics (emergency fund coverage, savings rate, priority-waterfall next-best-action). The AI does not decide recommendations — the financial-decision waterfall (FR86) is deterministic and backend-owned; the frontend renders the backend-computed `current_step` only and never re-derives or overrides it (amended 2026-08-01 per UX spec ux-nixus-2026-08-01)
 - FR30: System can answer data queries with accurate, up-to-date information from the database
 - FR31: User can perform actions through chat (e.g., add expenses, update balances, modify budget categories)
 - FR32: System can confirm actions with the user before executing write operations
@@ -589,6 +591,14 @@ Not required for account/asset balance updates (manual entry, standard request/r
 - FR89: User can view a Financial Health summary card on the dashboard showing emergency fund coverage, savings rate, and the current next-best action; card appears above Top Categories by Spending and links to Net Worth ▸ Financial Health
 
 **Guardrail:** FR86 ships generic registered-vs-non-registered guidance only; contribution-room awareness (user-entered or tracked TFSA/RRSP/FHSA limits) is deferred to Phase 3. Step 3 remains the current recommendation while trailing monthly surplus > 0 — the app cannot detect when registered room is fully used. Step 4 ("invest surplus") applies when steps 1–2 are complete and trailing surplus ≤ 0. Liability owed balances use `ABS(balance_cents)` so users may enter positive or negative amounts in the Accounts UI. The conversational AI advisor that reasons over these metrics in chat is Phase 3 — MVP delivers the deterministic engine plus dashboard card and Financial Health section.
+
+### Data Portability
+
+*(added 2026-08-01 per UX spec ux-nixus-2026-08-01)*
+
+- FR95: User can export data to CSV from its own surface — transactions, income, budget, accounts, assets, and net-worth history each support a per-surface export honouring the surface's active filters. Export requires no AI, no account, and no network connection. Exported monetary values render as a plain unformatted decimal, unmasked (independent of the values-privacy toggle in FR76), because the destination is a spreadsheet. This is distinct from database backup/restore (FR74, FR75): backup is disaster recovery for a binary database file, export is the user's data in a format she can open in her own tool.
+- FR96: System ships starter budgets as versioned, human-readable template documents (a defined schema plus a `version` field), not hardcoded application constants. User can import a budget template from a file. User can export a budget as a shareable template; template export strips every dollar amount by construction, keeping only category and group names, so a shared template cannot leak the exporting user's financial figures. Template exchange is file-based only — no account, no server, ever.
+- FR97: User can view a searchable, filterable, sortable list of expenses spanning all categories and months, with bulk category (re)assignment and bulk delete across the selected rows. Search matches merchant name only (no full-text index exists over categories or notes). This list never displays a running-balance column, because no balance-history table exists (`accounts.balance_cents` is current-value only).
 
 ## Non-Functional Requirements
 

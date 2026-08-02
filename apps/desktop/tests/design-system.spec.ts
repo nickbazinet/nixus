@@ -1,4 +1,94 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+/* Seeds enough of the Finance dashboard for the money-treatment sweep below to have figures to
+ * look at. Every `plugin:` command must resolve null: a truthy updater response renders an
+ * always-open Dialog, whose focus trap puts aria-hidden on the whole app. */
+async function setupSeededDashboard(page: Page) {
+  await page.addInitScript(() => {
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => {},
+    };
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
+      convertFileSrc: (path: string) => path,
+      invoke: (cmd: string) => {
+        if (cmd.startsWith('plugin:')) return Promise.resolve(null);
+        switch (cmd) {
+          case 'check_onboarding_status':
+            return Promise.resolve({ needs_onboarding: false });
+          case 'get_budget_summary':
+            return Promise.resolve({
+              total_target_cents: 250000,
+              total_spent_cents: 118350,
+              remaining_cents: 131650,
+              month: '2026-08',
+            });
+          case 'get_top_budget_categories':
+            return Promise.resolve([
+              { id: 1, name: 'Groceries', group_name: 'Essentials', target_cents: 70000, spent_cents: 35125, percentage: 50 },
+              { id: 2, name: 'Restaurants', group_name: 'Lifestyle', target_cents: 20000, spent_cents: 28640, percentage: 143 },
+            ]);
+          case 'get_current_net_worth':
+            return Promise.resolve({
+              total_cents: 50150000,
+              cash_cents: 150000,
+              investments_cents: 0,
+              assets_cents: 50000000,
+            });
+          case 'get_spending_breakdown':
+            return Promise.resolve([
+              { category_id: 1, category_name: 'Groceries', spent_cents: 35125 },
+            ]);
+          case 'get_income_total':
+            return Promise.resolve(720000);
+          case 'get_latest_expense':
+            return Promise.resolve({
+              id: 9,
+              merchant: 'Costco',
+              amount_cents: 4512,
+              budget_category_id: 1,
+              account_id: null,
+              date: '2026-08-01',
+              source: 'manual',
+            });
+          case 'get_yearly_summary':
+            return Promise.resolve({
+              year: 2026,
+              is_current_year: true,
+              total_spent_cents: 450000,
+              total_income_cents: 600000,
+              cash_flow_net_cents: 150000,
+              net_worth_gain_cents: 2500000,
+              net_worth_gain_available: true,
+              top_categories: [],
+              monthly_totals: [],
+              all_categories: [],
+              available_years: [2026],
+            });
+          case 'get_financial_health_summary':
+            return Promise.resolve({
+              data_sufficient: false,
+              emergency_fund: null,
+              savings: null,
+              waterfall: {
+                current_step: 'build_emergency_fund',
+                action_line_key: 'build_emergency_fund',
+              },
+            });
+          // A command that resolves null where an array is expected crashes on `.map` and shows the
+          // error boundary, which fails every locator in this file for an unrelated reason.
+          case 'get_recent_net_worth_snapshots':
+          case 'get_net_worth_history':
+          case 'get_expenses':
+          case 'get_all_budget_categories':
+            return Promise.resolve([]);
+          default:
+            return Promise.resolve(null);
+        }
+      },
+    };
+  });
+}
 
 /* The values asserted here are the Direction A spine tokens defined in
  * packages/shared/src/styles/tokens.css. Their CONTRAST MARGINS are guarded
@@ -87,21 +177,44 @@ test('body text uses Inter and no monospace family is loaded for money', async (
 });
 
 test('no element renders a monospace font on a money figure', async ({ page }) => {
+  await setupSeededDashboard(page);
   await page.goto('/');
   await page.waitForLoadState('networkidle');
+  await expect(page.getByTestId('metric-card').first()).toBeVisible();
 
-  const offenders = await page.evaluate(() =>
-    [...document.querySelectorAll('*')]
-      .filter((el) => {
-        const text = el.textContent ?? '';
-        if (!/\$\s?[\d,]/.test(text)) return false;
-        if (el.children.length > 0) return false;
-        return /mono/i.test(getComputedStyle(el).fontFamily);
-      })
-      .map((el) => el.textContent?.trim().slice(0, 40) ?? '')
-  );
+  const figures = await page.evaluate(() => {
+    const leaves = [...document.querySelectorAll('*')].filter(
+      (el) => el.children.length === 0 && /\$\s?[\d,]/.test(el.textContent ?? '')
+    );
+    const slots = [
+      ...document.querySelectorAll('[data-slot="money"], [data-slot="masked-figure"]'),
+    ];
+    const describe = (el: Element) => el.textContent?.trim().slice(0, 40) ?? '';
+    return {
+      dollarLeafCount: leaves.length,
+      moneySlotCount: slots.length,
+      monospace: leaves
+        .filter((el) => /mono/i.test(getComputedStyle(el).fontFamily))
+        .map(describe),
+      notInter: slots
+        .filter((el) => !getComputedStyle(el).fontFamily.includes('Inter'))
+        .map(describe),
+      // Tabular figures are what buy the column alignment a monospace family used to be used for,
+      // so "not monospace" is only half the rule.
+      notTabular: slots
+        .filter((el) => !getComputedStyle(el).fontVariantNumeric.includes('tabular-nums'))
+        .map(describe),
+    };
+  });
 
-  expect(offenders).toEqual([]);
+  // Vacuity guard. Unseeded, `/` renders skeletons and zero money figures, so every assertion
+  // below passed for the wrong reason and the rule was in practice unguarded.
+  expect(figures.dollarLeafCount).toBeGreaterThan(0);
+  expect(figures.moneySlotCount).toBeGreaterThan(0);
+
+  expect(figures.monospace).toEqual([]);
+  expect(figures.notInter).toEqual([]);
+  expect(figures.notTabular).toEqual([]);
 });
 
 test('no surface renders banned 10px or 11px text', async ({ page }) => {
@@ -158,6 +271,6 @@ test('app renders without console errors', async ({ page }) => {
 test('app renders content with design system', async ({ page }) => {
   await page.goto('/');
 
-  await expect(page.locator('h1')).toContainText('Dashboard');
+  await expect(page.locator('h1')).toHaveText('Today');
   await expect(page.locator('body')).not.toBeEmpty();
 });

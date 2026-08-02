@@ -45,17 +45,24 @@ function FinanceNav() {
           subSurfaces.length === 0 && "border-b border-line"
         )}
       >
-        {DESTINATIONS.map((destination) => (
-          <Link
-            key={destination.to}
-            // Deep-link straight to the first sub-surface so the destination index redirect never
-            // has to run, which would otherwise show a frame of the wrong surface.
-            to={destination.children[0]?.to ?? destination.to}
-            className={destinationClass(isDestinationActive(destination, pathname))}
-          >
-            {t(destination.labelKey)}
-          </Link>
-        ))}
+        {DESTINATIONS.map((destination) => {
+          const isActive = isDestinationActive(destination, pathname);
+          return (
+            <Link
+              key={destination.to}
+              // Deep-link straight to the first sub-surface so the destination index redirect never
+              // has to run, which would otherwise show a frame of the wrong surface.
+              to={destination.children[0]?.to ?? destination.to}
+              // Router-derived `activeProps` cannot express this: the link points at the first
+              // sub-surface, so it would read as inactive on every sibling sub-surface while the
+              // underline says otherwise. Without it the active destination is sighted-only.
+              aria-current={isActive ? "page" : undefined}
+              className={destinationClass(isActive)}
+            >
+              {t(destination.labelKey)}
+            </Link>
+          );
+        })}
 
         <span className="flex-1" />
 

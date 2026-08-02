@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nixus — Transactions: expenses-only vs unified · 2026-08-01</title>
+<style>
+/* ============================================================
+   TRANSACTIONS SURFACE — SCOPE COMPARISON
+   Both variants rendered in Direction A "Quiet Ledger" tokens
+   (locked 2026-08-01) so the only difference you're judging is
+   SCOPE, not style.
+   LIGHT bg #FAF8F5 · card #FFFFFF · ink #1C1917 · line #E8E3DA
+   brand #5B54D6 · good #15803D · caution #B45309 · over #BE123C
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; background: #0e1116; color: #e6e9ef; line-height: 1.5;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+}
+.page { max-width: 1400px; margin: 0 auto; padding: 40px 28px 90px; }
+.masthead { border-bottom: 1px solid #262c36; padding-bottom: 26px; margin-bottom: 36px; }
+.masthead h1 { font-size: 27px; margin: 0 0 10px; letter-spacing: -0.02em; font-weight: 650; }
+.masthead p { margin: 0 0 8px; color: #98a2b3; font-size: 14px; max-width: 82ch; }
+.masthead code { background: #1a1f27; padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+
+.variant { margin-bottom: 64px; }
+.v-head { margin-bottom: 18px; }
+.v-head .tag { display:inline-block; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:#6b7583; font-weight:650; margin-bottom:7px; }
+.v-head h2 { font-size: 21px; margin: 0 0 9px; letter-spacing: -0.015em; font-weight: 650; }
+.v-head p { color: #98a2b3; font-size: 14px; max-width: 88ch; margin: 0; }
+
+.cost {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 20px 0 22px;
+}
+@media (max-width: 1000px) { .cost { grid-template-columns: 1fr; } }
+.cost > div { background: #151a21; border: 1px solid #232a34; border-radius: 9px; padding: 14px 16px; }
+.cost h4 { margin: 0 0 9px; font-size: 12px; letter-spacing: .07em; text-transform: uppercase; font-weight: 700; }
+.cost.ok h4, .cost div.ok h4 { color: #6ee79a; }
+.cost div.warn h4 { color: #fcd34d; }
+.cost div.stop h4 { color: #fda4af; }
+.cost ul { margin: 0; padding-left: 17px; font-size: 12.8px; color: #b6bfcc; }
+.cost li { margin-bottom: 5px; }
+.cost li:last-child { margin-bottom: 0; }
+
+.win { border-radius: 10px; overflow: hidden; border: 1px solid #262c36; }
+.win-bar { display:flex; align-items:center; gap:6px; padding:9px 12px; background:#1a1f27; border-bottom:1px solid #262c36; }
+.win-bar i { width:10px; height:10px; border-radius:50%; background:#3a4250; }
+.win-bar span { margin-left:8px; font-size:11px; color:#6b7583; }
+
+/* ---------- Direction A tokens ---------- */
+.app {
+  --bg:#FAF8F5; --card:#FFFFFF; --chrome:#F5F2EC; --rail:#F0ECE4; --rail-line:#E3DDD2;
+  --ink:#1C1917; --ink-dim:#6B635A; --ink-faint:#9A9186;
+  --line:#E8E3DA; --line-strong:#D8D1C5; --track:#EFEAE1; --hover:#FBF9F6;
+  --rail-ink:#8A8177; --rail-on:#EAE4F5; --rail-on-ink:#4A43BE;
+  --brand:#5B54D6; --brand-ink:#4A43BE; --brand-on:#FFFFFF; --brand-soft:#EFEDFB;
+  --good:#15803D; --good-bg:#E8F3EA; --good-ink:#14672F;
+  --caution:#B45309; --caution-bg:#FBF0DF; --caution-ink:#8F4208;
+  --over:#BE123C; --over-bg:#FBE9ED; --over-ink:#9D0F33;
+  --neutral-bg:#EFEAE1; --neutral-ink:#6B635A;
+  --c1:#5B54D6; --c2:#7C6BD8; --c3:#9C7FD4; --c4:#B98BC9; --c5:#D18BB4;
+  display: flex; min-height: 540px; background: var(--bg); color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; font-size: 14px;
+}
+.app.dark {
+  --bg:#17150F; --card:#211E18; --chrome:#1D1A14; --rail:#141209; --rail-line:#302A21;
+  --ink:#EDE9E1; --ink-dim:#A79E91; --ink-faint:#7A7267;
+  --line:#332E25; --line-strong:#413A2E; --track:#2C2721; --hover:#282419;
+  --rail-ink:#8C8474; --rail-on:#2E2A3F; --rail-on-ink:#BDB8F5;
+  --brand:#A5A0F0; --brand-ink:#BDB8F5; --brand-on:#1E1B36; --brand-soft:#2A2640;
+  --good:#4ADE80; --good-bg:#1B2E20; --good-ink:#6EE79A;
+  --caution:#FBBF24; --caution-bg:#332813; --caution-ink:#FCD34D;
+  --over:#FB7185; --over-bg:#3A1B22; --over-ink:#FDA4AF;
+  --neutral-bg:#2C2721; --neutral-ink:#A79E91;
+  --c1:#A5A0F0; --c2:#B99BF0; --c3:#C99BE8; --c4:#DDA0D8; --c5:#EFA3C4;
+}
+
+.rail { width:52px; flex-shrink:0; background:var(--rail); border-right:1px solid var(--rail-line);
+  display:flex; flex-direction:column; align-items:center; padding:12px 0; gap:4px; }
+.rail .mark { width:24px; height:24px; border-radius:6px; margin-bottom:12px;
+  background: linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6); }
+.rail .ico { width:32px; height:32px; border-radius:5px; display:flex; align-items:center; justify-content:center;
+  font-size:13px; color:var(--rail-ink); position:relative; }
+.rail .ico.on { background:var(--rail-on); color:var(--rail-on-ink); }
+.rail .ico.on::after { content:""; position:absolute; right:-10px; top:6px; bottom:6px; width:3px; border-radius:2px; background:var(--brand); }
+.rail .spacer { flex:1; }
+
+.main { flex:1; min-width:0; display:flex; flex-direction:column; }
+.dest { display:flex; align-items:center; gap:2px; padding:0 18px; background:var(--chrome); border-bottom:1px solid var(--line); }
+.dest a { padding:13px 14px 12px; font-size:13.5px; font-weight:550; color:var(--ink-dim); text-decoration:none; border-bottom:2px solid transparent; }
+.dest a.on { color:var(--brand-ink); border-bottom-color:var(--brand); font-weight:650; }
+.dest .grow { flex:1; }
+.dest .period { display:inline-flex; align-items:center; gap:7px; font-size:13.5px; font-weight:600;
+  padding:6px 11px; border-radius:5px; border:1px solid var(--line-strong); background:var(--card); }
+.dest .period small { color:var(--ink-dim); font-weight:500; }
+
+/* segmented sub-nav — architecture D8: nest, never add a tab */
+.subnav { display:flex; gap:3px; padding:11px 18px 0; background:var(--chrome); }
+.subnav a { font-size:13px; font-weight:600; padding:6px 12px; border-radius:5px 5px 0 0;
+  color:var(--ink-dim); text-decoration:none; }
+.subnav a.on { background:var(--bg); color:var(--ink); box-shadow: inset 0 1px 0 var(--line), inset 1px 0 0 var(--line), inset -1px 0 0 var(--line); }
+
+.body { padding:18px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:7px; }
+
+/* toolbar */
+.toolbar { display:flex; align-items:center; gap:8px; padding:13px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+.search { flex:1; min-width:190px; display:flex; align-items:center; gap:8px; padding:7px 11px;
+  border:1px solid var(--line-strong); border-radius:5px; background:var(--bg); font-size:13px; color:var(--ink-faint); }
+.chip { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600;
+  padding:7px 11px; border-radius:5px; border:1px solid var(--line-strong); color:var(--ink-dim); background:var(--card); white-space:nowrap; }
+.chip.on { border-color:var(--brand); color:var(--brand-ink); background:var(--brand-soft); }
+.chip small { color:var(--ink-faint); font-weight:500; }
+.seg { display:inline-flex; border:1px solid var(--line-strong); border-radius:5px; overflow:hidden; }
+.seg span { font-size:12.5px; font-weight:600; padding:7px 11px; color:var(--ink-dim); border-right:1px solid var(--line-strong); }
+.seg span:last-child { border-right:none; }
+.seg span.on { background:var(--brand-soft); color:var(--brand-ink); }
+
+/* bulk bar */
+.bulk { display:flex; align-items:center; gap:9px; padding:10px 14px; background:var(--brand-soft);
+  border-bottom:1px solid var(--line); font-size:13px; }
+.bulk b { color:var(--brand-ink); }
+.bulk .grow { flex:1; }
+.btn { font-size:12.5px; font-weight:650; padding:6px 11px; border-radius:5px; border:1px solid var(--line-strong); background:var(--card); color:var(--ink); }
+.btn.pri { background:var(--brand); color:var(--brand-on); border-color:var(--brand); }
+
+/* table */
+table { width:100%; border-collapse:collapse; font-size:13.5px; }
+thead th {
+  text-align:left; font-size:11.5px; letter-spacing:.045em; text-transform:uppercase; font-weight:700;
+  color:var(--ink-faint); padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap;
+}
+thead th.num { text-align:right; }
+thead th .sortable { color:var(--ink-dim); }
+thead th .arrow { color:var(--brand-ink); }
+tbody td { padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:middle; }
+tbody tr:last-child td { border-bottom:none; }
+tbody tr:hover td { background:var(--hover); }
+td.num { text-align:right; font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1; font-weight:600; }
+td.date { color:var(--ink-dim); font-variant-numeric:tabular-nums; white-space:nowrap; }
+td.who { font-weight:550; }
+.cbx { width:15px; height:15px; border:1.5px solid var(--line-strong); border-radius:3px; display:inline-block; vertical-align:middle; }
+.cbx.on { background:var(--brand); border-color:var(--brand); position:relative; }
+.cbx.on::after { content:"✓"; position:absolute; inset:0; color:#fff; font-size:10px; display:flex; align-items:center; justify-content:center; }
+.tag2 { font-size:11.5px; font-weight:650; padding:3px 7px; border-radius:5px; background:var(--neutral-bg); color:var(--neutral-ink); white-space:nowrap; }
+.tag2.cat { background:var(--brand-soft); color:var(--brand-ink); }
+.tag2.src { background:var(--good-bg); color:var(--good-ink); }
+.nolink { color:var(--ink-faint); font-size:12.5px; }
+.cant { font-size:11px; font-weight:650; padding:2px 6px; border-radius:4px; background:var(--caution-bg); color:var(--caution-ink); }
+.inflow { color:var(--good-ink); }
+.dir { font-size:11px; font-weight:700; width:16px; display:inline-block; text-align:center; }
+.dir.out { color:var(--ink-faint); }
+.dir.in { color:var(--good-ink); }
+
+.tfoot { display:flex; align-items:center; gap:10px; padding:12px 14px; border-top:1px solid var(--line); font-size:12.5px; color:var(--ink-dim); }
+.tfoot .grow { flex:1; }
+.sum { display:flex; gap:20px; padding:12px 14px; border-top:1px solid var(--line); font-size:12.5px; }
+.sum div { color:var(--ink-dim); }
+.sum b { color:var(--ink); font-variant-numeric:tabular-nums; display:block; font-size:15px; font-weight:650; margin-top:2px; }
+
+/* annotation pins */
+.pin {
+  display:inline-flex; align-items:center; justify-content:center; width:17px; height:17px; border-radius:50%;
+  background:#5B54D6; color:#fff; font-size:10.5px; font-weight:700; margin-left:6px; vertical-align:middle;
+}
+.app.dark .pin { background:#A5A0F0; color:#1E1B36; }
+.notes { margin-top:16px; font-size:13px; color:#b6bfcc; }
+.notes ol { margin:0; padding-left:22px; }
+.notes li { margin-bottom:7px; }
+.notes b { color:#e6e9ef; }
+.notes code { background:#1a1f27; padding:1px 5px; border-radius:4px; font-size:12px; }
+
+.verdict { margin-top:34px; background:#151a21; border-left:3px solid #818CF8; border-radius:0 9px 9px 0; padding:18px 22px; }
+.verdict h3 { margin:0 0 10px; font-size:16px; font-weight:650; }
+.verdict p { margin:0 0 9px; font-size:13.5px; color:#b6bfcc; max-width:90ch; }
+.verdict p:last-child { margin-bottom:0; }
+.verdict b { color:#e6e9ef; }
+.foot { border-top:1px solid #262c36; margin-top:40px; padding-top:20px; color:#6b7583; font-size:12.5px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="masthead">
+    <h1>Transactions — expenses only vs unified</h1>
+    <p>Both rendered in <b>Direction A "Quiet Ledger"</b> so the only variable you're judging is <b>scope</b>, not style. Both sit at <code>Spending ▸ Transactions</code> as a segmented sub-nav, never as an 11th tab — architecture rule D8.</p>
+    <p>This is the surface your spreadsheet refugees will look for first. Today it does not exist: <code>ExpenseList</code> only renders nested inside an expanded Budget category row, scoped to one category × one month, with no search, filter, sort, or table markup.</p>
+    <p style="color:#fcd34d;margin-top:14px"><b>⚠ Historical artifact.</b> Rendered before the computational contrast pass; <code>ink-faint</code> and micro-label sizes here were superseded. <b><code>DESIGN.md</code> wins on conflict</b> — read token values from the spine, never from this file. Kept as the record of why Variant 1 was chosen.</p>
+  </div>
+
+  <!-- ============================ VARIANT 1 ============================ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="tag">Variant 1</span>
+      <h2>Expenses only</h2>
+      <p>One row per expense, across every category and every month. Everything a spreadsheet user reaches for — scan, search, sort, filter, bulk-fix — over the data you already have.</p>
+    </div>
+
+    <div class="cost">
+      <div class="ok">
+        <h4>✓ Works today</h4>
+        <ul>
+          <li>Date-range filter</li>
+          <li>Merchant search (<code>LIKE</code>, escaped)</li>
+          <li>Single-category filter</li>
+          <li>Date sort, both directions</li>
+          <li>Limit 1–100 per query</li>
+        </ul>
+      </div>
+      <div class="warn">
+        <h4>⚑ Small backend adds</h4>
+        <ul>
+          <li><code>offset</code> param → real paging</li>
+          <li>Sort by amount / merchant</li>
+          <li><code>category_id IN (…)</code> multi-select</li>
+          <li><code>account_id</code> as a filter</li>
+        </ul>
+      </div>
+      <div class="stop">
+        <h4>✗ Still can't</h4>
+        <ul>
+          <li>Search notes or category names — merchant field only, no FTS index</li>
+          <li>Show income alongside</li>
+          <li>Show a running balance — no balance history table exists</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="win">
+      <div class="win-bar"><i></i><i></i><i></i><span>Nixus — Spending ▸ Transactions — 1280 × 800</span></div>
+      <div class="app">
+        <div class="rail">
+          <div class="mark"></div>
+          <div class="ico">◧</div><div class="ico on">⛁</div><div class="ico">✳</div>
+          <div class="spacer"></div><div class="ico">◐</div><div class="ico">⚙</div>
+        </div>
+        <div class="main">
+          <nav class="dest">
+            <a href="#">Today</a><a href="#" class="on">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+            <span class="grow"></span>
+            <span class="period">June 2026 <small>▾</small></span>
+          </nav>
+          <div class="subnav">
+            <a href="#">Budget</a><a href="#" class="on">Transactions</a><a href="#">Income</a><a href="#">Recurring</a>
+          </div>
+          <div class="body">
+            <div class="card">
+              <div class="toolbar">
+                <span class="search">⌕ Search merchants<span class="pin">1</span></span>
+                <span class="chip on">Jan 1 – Jun 30, 2026 <small>▾</small></span>
+                <span class="chip">All categories <small>▾</small><span class="pin">2</span></span>
+                <span class="chip">Any account <small>▾</small></span>
+              </div>
+
+              <div class="bulk">
+                <span class="cbx on"></span>
+                <b>4 selected</b>
+                <span class="grow"></span>
+                <span class="btn pri">Change category</span>
+                <span class="btn">Move to account</span>
+                <span class="btn">Delete</span>
+              </div>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:34px"><span class="cbx on"></span></th>
+                    <th style="width:96px"><span class="arrow">Date ↓</span></th>
+                    <th><span class="sortable">Merchant</span><span class="pin">3</span></th>
+                    <th style="width:150px">Category</th>
+                    <th style="width:132px">Account<span class="pin">4</span></th>
+                    <th class="num" style="width:112px"><span class="sortable">Amount</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td><span class="cbx on"></span></td><td class="date">Jun 28</td><td class="who">METRO PLUS 4471</td><td><span class="tag2 cat">Groceries</span></td><td><span class="nolink">Visa ···4021</span></td><td class="num">$142.83</td></tr>
+                  <tr><td><span class="cbx on"></span></td><td class="date">Jun 27</td><td class="who">TIM HORTONS #1182</td><td><span class="tag2 cat">Restaurants</span></td><td><span class="nolink">Visa ···4021</span></td><td class="num">$9.60</td></tr>
+                  <tr><td><span class="cbx on"></span></td><td class="date">Jun 26</td><td class="who">TIM HORTONS #1182</td><td><span class="tag2 cat">Restaurants</span></td><td><span class="nolink">Visa ···4021</span></td><td class="num">$9.60</td></tr>
+                  <tr><td><span class="cbx on"></span></td><td class="date">Jun 24</td><td class="who">PHARMAPRIX 2241</td><td><span class="tag2 cat">Health</span></td><td><span class="nolink">Visa ···4021</span></td><td class="num">$64.18</td></tr>
+                  <tr><td><span class="cbx"></span></td><td class="date">Jun 22</td><td class="who">ESSO CIRCLE K</td><td><span class="tag2 cat">Fuel</span></td><td><span class="nolink">—</span> <span class="cant">from import</span></td><td class="num">$71.40</td></tr>
+                  <tr><td><span class="cbx"></span></td><td class="date">Jun 15</td><td class="who">Intact Assurance</td><td><span class="tag2 cat">Insurance</span></td><td><span class="nolink">—</span> <span class="cant">recurring</span></td><td class="num">$186.00</td></tr>
+                  <tr><td><span class="cbx"></span></td><td class="date">Jun 8</td><td class="who">Bell Internet</td><td><span class="tag2 cat">Utilities</span></td><td><span class="nolink">—</span> <span class="cant">recurring</span></td><td class="num">$92.00</td></tr>
+                  <tr><td><span class="cbx"></span></td><td class="date">Jun 1</td><td class="who">Maple Grove Property</td><td><span class="tag2 cat">Mortgage</span></td><td><span class="nolink">Chequing ···8830</span></td><td class="num">$1,650.00</td></tr>
+                </tbody>
+              </table>
+
+              <div class="sum">
+                <div>Shown<b class="money">$2,225.61</b></div>
+                <div>Variable only<b class="money">$389.61</b></div>
+                <div>Fixed commitments<b class="money">$1,836.00</b></div>
+              </div>
+              <div class="tfoot">
+                <span>Showing <b>8</b> of <b>214</b> matching</span>
+                <span class="grow"></span>
+                <span class="btn">Load 50 more<span class="pin">5</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <ol>
+        <li><b>Search is merchant-only.</b> Honest placeholder — "Search merchants", not "Search". It will not find a category name or a note, and there's no FTS index to make it.</li>
+        <li><b>Multi-category needs a trivial <code>IN</code> clause</b> the query doesn't have yet.</li>
+        <li><b>Sortable amount and merchant</b> are the two columns a spreadsheet user reaches for first. Neither exists in <code>search_expenses</code> today.</li>
+        <li><b>The honest empty-account cell.</b> Import- and recurring-generated expenses carry no <code>account_id</code> at all. "—" plus a quiet reason badge distinguishes <em>"you didn't pick one"</em> from <em>"this source can't link yet"</em> — otherwise it reads as data loss.</li>
+        <li><b>"Load 50 more" is blocked today</b> — <code>limit</code> is clamped 1–100 with no <code>offset</code>. Without it, a spreadsheet user with two years of history can only ever see their most recent 100 rows.</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- ============================ VARIANT 2 ============================ -->
+  <section class="variant">
+    <div class="v-head">
+      <span class="tag">Variant 2</span>
+      <h2>Unified — money out and money in</h2>
+      <p>One list for everything that moved. Closer to how a spreadsheet actually looks, and the only version that can answer <em>"what happened in March?"</em> in a single view.</p>
+    </div>
+
+    <div class="cost">
+      <div class="ok">
+        <h4>✓ Reuses from Variant 1</h4>
+        <ul>
+          <li>Every expense-side filter and sort</li>
+          <li>Same table, same bulk actions</li>
+          <li>Same segmented placement</li>
+        </ul>
+      </div>
+      <div class="warn">
+        <h4>⚑ Design work it adds</h4>
+        <ul>
+          <li>Direction filter — All / Out / In</li>
+          <li>A heterogeneous 3rd column: Category for expenses, <b>Source</b> for income</li>
+          <li>Signed amounts, and a real net figure in the footer</li>
+        </ul>
+      </div>
+      <div class="stop">
+        <h4>✗ Real backend cost</h4>
+        <ul>
+          <li><code>search_income</code> <b>does not exist at all</b> — built from scratch</li>
+          <li>Cross-table paging and sorting over two tables with different shapes</li>
+          <li>Bulk actions can't apply uniformly — no "change category" for income</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="win">
+      <div class="win-bar"><i></i><i></i><i></i><span>Nixus — Spending ▸ Transactions — 1024 × 680 (minimum window, dark)</span></div>
+      <div class="app dark">
+        <div class="rail">
+          <div class="mark"></div>
+          <div class="ico">◧</div><div class="ico on">⛁</div><div class="ico">✳</div>
+          <div class="spacer"></div><div class="ico">◐</div><div class="ico">⚙</div>
+        </div>
+        <div class="main">
+          <nav class="dest">
+            <a href="#">Today</a><a href="#" class="on">Spending</a><a href="#">Wealth</a><a href="#">Insights</a>
+            <span class="grow"></span>
+            <span class="period">June 2026 <small>▾</small></span>
+          </nav>
+          <div class="subnav">
+            <a href="#">Budget</a><a href="#" class="on">Transactions</a><a href="#">Recurring</a>
+          </div>
+          <div class="body">
+            <div class="card">
+              <div class="toolbar">
+                <span class="search">⌕ Search merchants and sources</span>
+                <span class="seg"><span class="on">All</span><span>Money out</span><span>Money in</span></span>
+                <span class="chip on">Jan 1 – Jun 30 <small>▾</small></span>
+                <span class="chip">All categories <small>▾</small></span>
+              </div>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width:34px"><span class="cbx"></span></th>
+                    <th style="width:22px"></th>
+                    <th style="width:92px"><span class="arrow">Date ↓</span></th>
+                    <th><span class="sortable">Description</span></th>
+                    <th style="width:172px">Category or source<span class="pin">6</span></th>
+                    <th style="width:126px">Account</th>
+                    <th class="num" style="width:118px"><span class="sortable">Amount</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir in">↓</span></td><td class="date">Jun 28</td><td class="who">Payroll — Desjardins</td><td><span class="tag2 src">Employment income</span></td><td><span class="nolink">Chequing ···8830</span></td><td class="num inflow">+$2,600.00</td></tr>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir out">↑</span></td><td class="date">Jun 28</td><td class="who">METRO PLUS 4471</td><td><span class="tag2 cat">Groceries</span></td><td><span class="nolink">Visa ···4021</span></td><td class="num">−$142.83</td></tr>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir out">↑</span></td><td class="date">Jun 27</td><td class="who">TIM HORTONS #1182</td><td><span class="tag2 cat">Restaurants</span></td><td><span class="nolink">Visa ···4021</span></td><td class="num">−$9.60</td></tr>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir out">↑</span></td><td class="date">Jun 24</td><td class="who">PHARMAPRIX 2241</td><td><span class="tag2 cat">Health</span></td><td><span class="nolink">Visa ···4021</span></td><td class="num">−$64.18</td></tr>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir in">↓</span></td><td class="date">Jun 20</td><td class="who">Freelance — Atelier B</td><td><span class="tag2 src">Side income</span></td><td><span class="nolink">Chequing ···8830</span></td><td class="num inflow">+$850.00</td></tr>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir out">↑</span></td><td class="date">Jun 15</td><td class="who">Intact Assurance</td><td><span class="tag2 cat">Insurance</span></td><td><span class="nolink">—</span> <span class="cant">recurring</span></td><td class="num">−$186.00</td></tr>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir in">↓</span></td><td class="date">Jun 14</td><td class="who">Payroll — Desjardins</td><td><span class="tag2 src">Employment income</span></td><td><span class="nolink">Chequing ···8830</span></td><td class="num inflow">+$2,600.00</td></tr>
+                  <tr><td><span class="cbx"></span></td><td><span class="dir out">↑</span></td><td class="date">Jun 1</td><td class="who">Maple Grove Property</td><td><span class="tag2 cat">Mortgage</span></td><td><span class="nolink">Chequing ···8830</span></td><td class="num">−$1,650.00</td></tr>
+                </tbody>
+              </table>
+
+              <div class="sum">
+                <div>Money in<b class="inflow">+$6,050.00</b></div>
+                <div>Money out<b>−$2,225.61</b></div>
+                <div>Net for June<b class="inflow">+$3,824.39</b><span class="pin">7</span></div>
+              </div>
+              <div class="tfoot">
+                <span>Showing <b>8</b> of <b>247</b> matching</span>
+                <span class="grow"></span>
+                <span class="btn">Load 50 more</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <ol start="6">
+        <li><b>The heterogeneous column is the real design cost.</b> Expenses have a <code>budget_category_id</code>; income has a <code>source_id</code>. They are not the same kind of thing, so one column has to mean two things. The direction glyph plus different tag colours carry it — but it's a compromise, and a purist would say it's two lists wearing one costume.</li>
+        <li><b>A net figure is the payoff.</b> This is the one number a spreadsheet actually gives you and Nixus currently doesn't: <em>did more come in than went out?</em> Variant 1 structurally cannot show it. Note this is <b>net flow, not a running balance</b> — no balance-history table exists, so a per-row balance column is impossible in either variant.</li>
+      </ol>
+    </div>
+
+    <div class="verdict">
+      <h3>My recommendation: ship Variant 1, spec Variant 2's shape now</h3>
+      <p><b>Variant 1 buys ~90% of the value for ~20% of the work.</b> Four small query params and your spreadsheet refugees get the screen they're looking for. "Where are my transactions?" stops having no answer.</p>
+      <p><b>But design the table for Variant 2 from day one</b> — reserve the direction glyph column, name the third column <em>"Category or source"</em> in the spine even while only categories appear, and build the footer as a summary strip rather than a single total. Then unified is a data change, not a redesign. Retrofitting a signed, two-source table onto a single-source layout is exactly the kind of rework that makes people ship neither.</p>
+      <p><b>The honest caveat:</b> Variant 1 leaves income visible only on its own Income page, so "what happened in March?" still takes two screens. If a beta tester's first friction report is about that, you'll know Variant 2 is worth the <code>search_income</code> build.</p>
+    </div>
+  </section>
+
+  <div class="foot">
+    <p><b>Both variants honour:</b> 1024px minimum width · tabular figures, no code font · 13px floor · Direction A hairline elevation (<code>--shadow: none</code>) · every figure maskable by the hide-values toggle · bulk-select present from the start (the thing the current import review completely lacks).</p>
+    <p style="margin-bottom:0"><b>Nixus · transactions scope comparison · 2026-08-01</b> — <code>_bmad-output/planning-artifacts/ux-designs/ux-nixus-2026-08-01/.working/</code></p>
+  </div>
+
+</div>
+</body>
+</html>

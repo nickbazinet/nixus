@@ -2,24 +2,35 @@ import { test, expect } from '@playwright/test';
 
 test.describe('AI Section Navigation', () => {
 
-  test('sidebar shows AI section label', async ({ page }) => {
+  test('the rail shows the AI module label without needing hover', async ({ page }) => {
     await page.goto('/');
-    // Hover to expand sidebar
-    await page.locator('aside').hover();
-    await expect(page.locator('aside').getByText('AI')).toBeVisible();
+    // The rail opens LABELLED — icon-only-by-default was retired, so no hover is required.
+    // Scoped to the link role because `getByText('AI')` is a case-insensitive substring match and
+    // also hits the language toggle's "Français".
+    await expect(
+      page.locator('aside').getByRole('link', { name: 'AI', exact: true })
+    ).toBeVisible();
   });
 
   test('agent landing page shows agent cards', async ({ page }) => {
     await page.goto('/ai');
     await expect(page.locator('h1')).toBeVisible();
-    // At least one agent card with "Budget Helper" text
-    await expect(page.getByText('Budget Helper')).toBeVisible();
+    // The card heading, not the sub-nav link of the same name: each agent is now reachable from
+    // both, so an unscoped text match is ambiguous.
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Budget Helper', exact: true })
+    ).toBeVisible();
   });
 
   test('clicking agent card navigates to agent route', async ({ page }) => {
     await page.goto('/ai');
-    await page.getByText('Budget Helper').click();
-    await expect(page).toHaveURL(/\/ai\/spending\/budget-helper/);
+    // The whole card is one link with one accessible name, so clicking the card IS clicking the
+    // link. Scoped to the card so this cannot silently start testing the sub-nav instead.
+    await page
+      .locator('a[data-slot="card"]')
+      .filter({ hasText: 'Budget Helper' })
+      .click();
+    await expect(page).toHaveURL(/\/ai\/budget-helper/);
   });
 
   test('legacy /chat redirects to /ai/budget-helper', async ({ page }) => {
@@ -31,21 +42,24 @@ test.describe('AI Section Navigation', () => {
 
   test('legacy /chat?conversation=42 redirects preserving param', async ({ page }) => {
     await page.goto('/chat?conversation=42');
-    await expect(page).toHaveURL(/\/ai\/spending\/budget-helper\?conversation=42/);
+    await expect(page).toHaveURL(/\/ai\/budget-helper\?conversation=42/);
   });
 
-  test('InnerTabNav shows AI tabs on /ai/* routes', async ({ page }) => {
+  test('DestinationNav shows AI sub-nav on /ai/* routes', async ({ page }) => {
     await page.goto('/ai/budget-helper');
     const nav = page.locator('nav[aria-label="AI navigation"]');
-    await expect(nav.getByText('Budget Helper')).toBeVisible();
-    // Finance-specific tab should not appear in AI nav
-    await expect(nav.getByText('Dashboard')).not.toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Budget Helper', exact: true })).toBeVisible();
+    // A Finance destination must never leak into the AI sub-nav.
+    await expect(nav.getByRole('link', { name: 'Today', exact: true })).toHaveCount(0);
   });
 
-  test('InnerTabNav shows Finance tabs on Finance routes', async ({ page }) => {
+  test('DestinationNav shows the Finance destinations on Finance routes', async ({ page }) => {
     await page.goto('/');
     const nav = page.locator('nav[aria-label="Finance navigation"]');
-    await expect(nav.getByText('Dashboard')).toBeVisible();
+    // "Dashboard" retired as a Finance label — the first destination is "Today". It survives only
+    // as the CAR module's sub-nav item, which must not appear here.
+    await expect(nav.getByRole('link', { name: 'Today', exact: true })).toBeVisible();
+    await expect(nav.getByRole('link', { name: 'Dashboard', exact: true })).toHaveCount(0);
   });
 
   test('Settings routes render no destination nav', async ({ page }) => {
@@ -59,6 +73,12 @@ test.describe('AI Section Navigation', () => {
   test('/settings redirects to AI Provider', async ({ page }) => {
     await page.goto('/settings');
     await expect(page).toHaveURL(/\/settings\/ai-provider/);
+  });
+
+  test('"Dashboard" is still the Car module sub-nav label', async ({ page }) => {
+    await page.goto('/car');
+    const nav = page.locator('nav[aria-label="Car navigation"]');
+    await expect(nav.getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible();
   });
 
 });

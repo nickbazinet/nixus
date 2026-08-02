@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nixus — Key screen: Wealth ▸ Financial Health</title>
+<style>
+/* ============================================================
+   KEY SCREEN — WEALTH ▸ FINANCIAL HEALTH (the waterfall)
+   Governed by: EXPERIENCE.md § Data Honesty Contract
+                EXPERIENCE.md § Voice and Tone (plain language, no ÷)
+                EXPERIENCE.md § Component Patterns → next-action card
+                EXPERIENCE.md § State Patterns → "Not enough history"
+                EXPERIENCE.md § Information Architecture (segmented sub-nav, D8)
+                DESIGN.md — Direction A, final verified tokens
+   Backend contract: deterministic 4-rung waterfall. Frontend renders
+   current_step ONLY and never re-derives a recommendation.
+   ============================================================ */
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --bg:#FAF8F5; --card:#FFFFFF; --chrome:#F5F2EC; --rail:#F0ECE4; --rail-line:#E3DDD2;
+  --ink:#1C1917; --ink-dim:#6B635A; --ink-faint:#7A7167;
+  --line:#E8E3DA; --line-strong:#D8D1C5; --track:#EFEAE1; --hover:#FBF9F6;
+  --brand:#5B54D6; --brand-ink:#4A43BE; --brand-on:#FFFFFF; --brand-soft:#EFEDFB;
+  --good:#15803D; --good-bg:#E8F3EA; --good-ink:#14672F;
+  --caution:#B45309; --caution-bg:#FBF0DF; --caution-ink:#8F4208;
+  --over:#BE123C; --over-bg:#FBE9ED; --over-ink:#9D0F33;
+  --neutral-bg:#EFEAE1; --neutral-ink:#6B635A;
+  --c1:#5A54D7; --c2:#AB7DD9; --c5:#368580;
+  --r-sm:4px; --r-md:5px; --r-lg:7px;
+}
+body{margin:0;background:#0e1116;color:#e6e9ef;line-height:1.5;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+.page{max-width:1300px;margin:0 auto;padding:36px 26px 80px}
+.mh{border-bottom:1px solid #262c36;padding-bottom:22px;margin-bottom:30px}
+.mh h1{font-size:25px;margin:0 0 9px;font-weight:650;letter-spacing:-.02em}
+.mh p{margin:0 0 7px;color:#98a2b3;font-size:13.5px;max-width:90ch}
+.mh code{background:#1a1f27;padding:1px 5px;border-radius:4px;font-size:12.5px}
+.step-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#6b7583;font-weight:700;margin:0 0 8px}
+.caption{color:#98a2b3;font-size:13px;margin:11px 0 34px;max-width:95ch}
+.caption b{color:#cdd5e0}
+.win{border-radius:10px;overflow:hidden;border:1px solid #262c36}
+.wb{display:flex;align-items:center;gap:6px;padding:9px 12px;background:#1a1f27;border-bottom:1px solid #262c36}
+.wb i{width:10px;height:10px;border-radius:50%;background:#3a4250}
+.wb span{margin-left:8px;font-size:11px;color:#6b7583}
+
+.app{background:var(--bg);color:var(--ink);min-height:600px;font-size:14px;display:flex;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+.rail{width:52px;flex-shrink:0;background:var(--rail);border-right:1px solid var(--rail-line);
+  display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail .mk{width:24px;height:24px;border-radius:6px;margin-bottom:12px;
+  background:linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6)}
+.rail .ic{width:32px;height:32px;border-radius:var(--r-md);display:flex;align-items:center;
+  justify-content:center;font-size:13px;color:var(--ink-faint);position:relative}
+.rail .ic.on{background:var(--brand-soft);color:var(--brand-ink)}
+.rail .ic.on::after{content:"";position:absolute;right:-10px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--brand)}
+.rail .sp{flex:1}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.dest{display:flex;align-items:center;gap:2px;padding:0 20px;background:var(--chrome);border-bottom:1px solid var(--line)}
+.dest a{padding:13px 14px 12px;font-size:13.5px;font-weight:550;color:var(--ink-dim);text-decoration:none;border-bottom:2px solid transparent}
+.dest a.on{color:var(--brand-ink);border-bottom-color:var(--brand);font-weight:650}
+.dest .grow{flex:1}
+.sub{display:flex;gap:3px;padding:11px 20px 0;background:var(--chrome)}
+.sub a{font-size:13px;font-weight:600;padding:6px 12px;border-radius:var(--r-md) var(--r-md) 0 0;color:var(--ink-dim);text-decoration:none}
+.sub a.on{background:var(--bg);color:var(--ink);box-shadow:inset 0 1px 0 var(--line),inset 1px 0 0 var(--line),inset -1px 0 0 var(--line)}
+.body{padding:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px;box-shadow:none}
+.two{display:grid;grid-template-columns:1.1fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:1050px){.two{grid-template-columns:1fr}}
+
+h1.pt{font-size:20px;font-weight:650;letter-spacing:-.02em;margin:0 0 3px}
+p.pd{font-size:13px;color:var(--ink-dim);margin:0 0 16px}
+h3{font-size:14px;font-weight:650;letter-spacing:-.012em;margin:0}
+.q{font-size:13px;color:var(--ink-dim);font-weight:600;margin:0 0 9px}
+.big{font-size:34px;font-weight:600;letter-spacing:-.03em;line-height:1.05;margin:0;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.stat{font-size:26px;font-weight:600;letter-spacing:-.025em;line-height:1.1;margin:0;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.sb{font-size:13px;color:var(--ink-dim);margin:7px 0 0}
+.sb b{color:var(--ink);font-variant-numeric:tabular-nums}
+.money{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.meter{height:7px;border-radius:99px;background:var(--track);overflow:hidden;margin-top:13px}
+.meter i{display:block;height:100%;border-radius:99px;background:var(--brand)}
+.pill{font-size:12px;font-weight:650;padding:3px 7px;border-radius:var(--r-md);letter-spacing:.02em;white-space:nowrap}
+.p-good{background:var(--good-bg);color:var(--good-ink)}
+.p-caut{background:var(--caution-bg);color:var(--caution-ink)}
+.p-neu{background:var(--neutral-bg);color:var(--neutral-ink)}
+.lag{font-size:12px;color:var(--ink-faint);margin-top:11px;display:block;letter-spacing:.01em}
+.hr{display:flex;align-items:baseline;gap:10px;margin-bottom:2px}
+.hr .grow{flex:1}
+.tog{font-size:12px;font-weight:650;padding:4px 8px;border-radius:var(--r-md);
+  border:1px solid var(--line-strong);color:var(--ink-dim)}
+
+/* ---------- the ladder ---------- */
+.ladder{display:flex;flex-direction:column;margin-top:4px}
+.rung{display:flex;gap:13px;padding:14px 0;border-bottom:1px solid var(--line);position:relative}
+.rung:last-child{border-bottom:none;padding-bottom:2px}
+.rung .num{width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;
+  justify-content:center;font-size:12px;font-weight:700;letter-spacing:0}
+.rung.done .num{background:var(--good-bg);color:var(--good-ink)}
+.rung.now  .num{background:var(--brand);color:var(--brand-on)}
+.rung.todo .num{background:var(--neutral-bg);color:var(--ink-faint)}
+.rung .bd{flex:1;min-width:0}
+.rung h4{margin:0 0 3px;font-size:14px;font-weight:650;letter-spacing:-.012em;display:flex;align-items:center;gap:8px}
+.rung.todo h4{color:var(--ink-dim)}
+.rung p{margin:0;font-size:13px;color:var(--ink-dim)}
+.rung.now{background:var(--brand-soft);margin:0 -16px;padding-left:16px;padding-right:16px;
+  border-left:3px solid var(--brand)}
+.rung.now .bd h4{color:var(--ink)}
+.why{font-size:12.5px;color:var(--brand-ink);font-weight:600;margin-top:8px;display:inline-block;
+  border-bottom:1px dotted var(--brand)}
+.cta{display:inline-block;margin-top:11px;font-size:13.5px;font-weight:650;padding:8px 14px;
+  border-radius:var(--r-md);background:var(--brand);color:var(--brand-on)}
+
+/* discretionary rows */
+.dl{display:flex;flex-direction:column;gap:9px;margin-top:11px}
+.dr{display:flex;align-items:center;gap:9px;font-size:13px}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dr .w{flex:1}
+.dr .a{font-variant-numeric:tabular-nums;font-weight:650}
+
+/* sparkline */
+.spark{display:flex;align-items:flex-end;gap:5px;height:52px;margin-top:12px}
+.spark i{flex:1;border-radius:2px 2px 0 0;background:var(--c2);min-height:3px}
+.spark i.neg{background:var(--over)}
+.spark i.now{background:var(--brand)}
+.sx{display:flex;gap:5px;margin-top:6px}
+.sx span{flex:1;text-align:center;font-size:12px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
+
+/* figures traceability */
+.figs{display:grid;grid-template-columns:1fr 1fr;gap:7px 18px;margin-top:11px}
+.figs div{display:flex;font-size:13px;color:var(--ink-dim);border-bottom:1px solid var(--line);padding-bottom:5px}
+.figs b{margin-left:auto;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
+
+/* permanent disclaimer */
+.disc{margin-top:12px;padding:11px 14px;background:var(--neutral-bg);border-radius:var(--r-md);
+  font-size:12.5px;color:var(--ink-dim);display:flex;gap:9px;align-items:flex-start}
+.disc b{color:var(--ink)}
+
+/* insufficient data */
+.empty{text-align:center;padding:34px 20px;max-width:420px;margin:0 auto}
+.empty .g{width:38px;height:38px;border-radius:var(--r-lg);background:var(--track);margin:0 auto 13px;
+  display:flex;align-items:center;justify-content:center;font-size:17px;color:var(--ink-dim)}
+.empty h5{margin:0 0 6px;font-size:16px;font-weight:650;letter-spacing:-.015em}
+.empty p{margin:0 0 15px;font-size:13.5px;color:var(--ink-dim);line-height:1.55}
+.btn{font-size:13.5px;font-weight:650;padding:9px 15px;border-radius:var(--r-md);
+  border:1px solid var(--line-strong);background:var(--card);color:var(--ink);display:inline-block}
+.btn.pri{background:var(--brand);color:var(--brand-on);border-color:var(--brand)}
+.prog{display:flex;gap:6px;justify-content:center;margin-top:18px}
+.prog i{width:34px;height:5px;border-radius:99px;background:var(--line-strong)}
+.prog i.on{background:var(--brand)}
+.foot{border-top:1px solid #262c36;margin-top:34px;padding-top:20px;color:#6b7583;font-size:12.5px}
+.foot b{color:#98a2b3}
+.foot code{background:#1a1f27;padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="mh">
+  <h1>Key screen — Wealth ▸ Financial Health</h1>
+  <p>The "so what should I actually do?" surface. It reaches the user as a <b>segmented sub-nav inside Wealth</b>, never as its own destination — architecture rule D8 forbids a new top-level item, and the four-destination model has no room for a fifth.</p>
+  <p>Governed by <code>§ Data Honesty Contract</code>, <code>§ Voice and Tone</code>, <code>§ Component Patterns → next-action card</code>, <code>§ State Patterns</code>. The waterfall is deterministic and backend-owned: the frontend renders <code>current_step</code> and never re-derives a recommendation.</p>
+</div>
+
+<p class="step-label">Canonical state — enough history, emergency fund underfunded</p>
+<div class="win">
+  <div class="wb"><i></i><i></i><i></i><span>Nixus — Wealth ▸ Financial Health — 1280 × 800</span></div>
+  <div class="app">
+    <div class="rail">
+      <div class="mk"></div>
+      <div class="ic">◧</div><div class="ic">⛁</div><div class="ic on">✳</div>
+      <div class="sp"></div><div class="ic">◐</div><div class="ic">⚙</div>
+    </div>
+    <div class="main">
+      <nav class="dest">
+        <a href="#">Today</a><a href="#">Spending</a><a href="#" class="on">Wealth</a><a href="#">Insights</a>
+        <span class="grow"></span>
+      </nav>
+      <div class="sub">
+        <a href="#">Accounts</a><a href="#">What you own</a><a href="#">Net worth</a><a href="#" class="on">Where to put your money</a>
+      </div>
+      <div class="body">
+        <h1 class="pt">Where to put your money next</h1>
+        <p class="pd">One thing at a time, in the order that helps most.</p>
+
+        <div class="two">
+          <!-- THE LADDER -->
+          <div class="card">
+            <div class="hr"><h3>Your order of operations</h3></div>
+            <div class="ladder">
+              <div class="rung done">
+                <span class="num">✓</span>
+                <span class="bd">
+                  <h4>Cover one month of expenses <span class="pill p-good">Done</span></h4>
+                  <p>You have more than one month of spending set aside.</p>
+                </span>
+              </div>
+              <div class="rung now">
+                <span class="num">2</span>
+                <span class="bd">
+                  <h4>Build up to six months <span class="pill p-caut">You're here</span></h4>
+                  <p>You have <b class="money">3.2 months</b> of spending covered. Getting to six means about <b class="money">$8,940</b> more in savings — roughly <b class="money">$745</b> a month for a year.</p>
+                  <span class="why">Why this before investing?</span>
+                  <span class="cta">Set a monthly savings target</span>
+                </span>
+              </div>
+              <div class="rung todo">
+                <span class="num">3</span>
+                <span class="bd">
+                  <h4>Pay down your credit card</h4>
+                  <p>Nothing to do right now — your card balance is small relative to your monthly spending.</p>
+                </span>
+              </div>
+              <div class="rung todo">
+                <span class="num">4</span>
+                <span class="bd">
+                  <h4>Put money into tax-sheltered accounts</h4>
+                  <p>Your TFSA, RRSP, or FHSA. Comes after your savings cushion is full.</p>
+                </span>
+              </div>
+              <div class="rung todo">
+                <span class="num">5</span>
+                <span class="bd">
+                  <h4>Invest what's left over</h4>
+                  <p>Once the four steps above are handled.</p>
+                </span>
+              </div>
+            </div>
+            <div class="disc">
+              <span>ⓘ</span>
+              <span><b>This isn't financial advice.</b> Nixus points at general categories of account, never at specific investments, and it doesn't know your tax situation.</span>
+            </div>
+          </div>
+
+          <!-- RIGHT COLUMN -->
+          <div>
+            <div class="card" style="margin-bottom:12px">
+              <p class="q">Your savings cushion</p>
+              <p class="big">3.2 months</p>
+              <p class="sb">of spending covered — you're aiming for <b>6 months</b></p>
+              <div class="meter"><i style="width:53%"></i></div>
+              <p class="sb" style="margin-top:9px"><b class="money">$14,320</b> in chequing and savings, against <b class="money">$4,455</b> of spending in a typical month</p>
+              <span class="lag">Worked out from your completed months, January to May. This month isn't finished, so it isn't counted.</span>
+            </div>
+
+            <div class="card">
+              <div class="hr"><h3>What you're able to save</h3><span class="grow"></span><span class="tog">Last 6 months</span></div>
+              <p class="stat" style="margin-top:9px">18%</p>
+              <p class="sb">of what you earn — about <b class="money">$745</b> left over in a typical month</p>
+              <div class="spark">
+                <i style="height:48%"></i><i style="height:62%"></i><i class="neg" style="height:18%"></i>
+                <i style="height:71%"></i><i style="height:55%"></i><i class="now" style="height:66%"></i>
+              </div>
+              <div class="sx"><span>Jan</span><span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span></div>
+              <p class="sb" style="margin-top:11px">March was a shortfall — you spent more than came in.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- discretionary + figures -->
+        <div class="two" style="margin-bottom:0">
+          <div class="card">
+            <div class="hr"><h3>Where you'd find the money</h3></div>
+            <p class="sb" style="margin-top:2px">Your three biggest flexible costs, averaged over the last six months.</p>
+            <div class="dl">
+              <div class="dr"><span class="dot" style="background:var(--c1)"></span><span class="w">Restaurants</span><span class="a money">$268 / mo</span></div>
+              <div class="dr"><span class="dot" style="background:var(--c2)"></span><span class="w">Shopping</span><span class="a money">$194 / mo</span></div>
+              <div class="dr"><span class="dot" style="background:var(--c5)"></span><span class="w">Subscriptions</span><span class="a money">$87 / mo</span></div>
+            </div>
+            <p class="sb" style="margin-top:12px">Trimming these by a third would cover about <b class="money">$183</b> of your <b class="money">$745</b> monthly goal.</p>
+          </div>
+          <div class="card">
+            <div class="hr"><h3>The numbers behind this</h3><span class="grow"></span><span class="tog">Hide</span></div>
+            <div class="figs">
+              <div>Chequing <b class="money">$8,720</b></div>
+              <div>Savings <b class="money">$5,600</b></div>
+              <div>Typical month's spending <b class="money">$4,455</b></div>
+              <div>Typical month's income <b class="money">$5,200</b></div>
+              <div>Left over, typical month <b class="money">$745</b></div>
+              <div>Credit card balance <b class="money">$412</b></div>
+              <div>Months counted <b>5</b></div>
+              <div>Six-month goal <b class="money">$26,730</b></div>
+            </div>
+            <p class="sb" style="margin-top:12px">Savings accounts only. Money in a TFSA, RRSP, or FHSA isn't counted as your cushion, because pulling it out has consequences.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="caption"><b>Design notes.</b> Every formula is prose — "$14,320 in chequing and savings, against $4,455 of spending in a typical month" instead of <code>liquid ÷ average monthly expenses</code>. The trailing-average caveat is stated in words a person would use, not as "based on completed months." Only <b>one</b> rung is highlighted, and it's the only place the brand-tinted <code>action-card</code> treatment appears on the surface — which is what makes it read as <i>do this</i>. "Where you'd find the money" turns the abstract savings target into three concrete numbers, and the sub-nav label is "Where to put your money" rather than "Financial Health," because Marie isn't looking for a health score.</p>
+
+<p class="step-label">Required alternate state — <code>data_sufficient: false</code></p>
+<div class="win">
+  <div class="wb"><i></i><i></i><i></i><span>Nixus — Wealth ▸ Where to put your money — 1024 × 680</span></div>
+  <div class="app">
+    <div class="rail">
+      <div class="mk"></div>
+      <div class="ic">◧</div><div class="ic">⛁</div><div class="ic on">✳</div>
+      <div class="sp"></div><div class="ic">◐</div><div class="ic">⚙</div>
+    </div>
+    <div class="main">
+      <nav class="dest">
+        <a href="#">Today</a><a href="#">Spending</a><a href="#" class="on">Wealth</a><a href="#">Insights</a>
+        <span class="grow"></span>
+      </nav>
+      <div class="sub">
+        <a href="#">Accounts</a><a href="#">What you own</a><a href="#">Net worth</a><a href="#" class="on">Where to put your money</a>
+      </div>
+      <div class="body">
+        <div class="card" style="margin-top:40px">
+          <div class="empty">
+            <div class="g">◔</div>
+            <h5>Come back in a couple of months</h5>
+            <p>To suggest what to do next, Nixus needs about three finished months of spending to see a pattern. You have one so far — June.</p>
+            <span class="btn pri">Import another statement</span>
+            <div class="prog"><i class="on"></i><i></i><i></i></div>
+            <p style="font-size:12.5px;color:var(--ink-faint);margin:11px 0 0">1 of 3 months</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<p class="caption"><b>This is a first-class state, not an error.</b> It says what's missing, why it's needed, how far along she is, and what to do about it — and it never implies the app is broken. The progress indicator turns "not enough data" into something with an end date.</p>
+
+<div class="foot">
+  <p><b>What this mock illustrates:</b> <code>§ Component Patterns</code> → next-action card (one per surface), segmented sub-nav, meter never the sole indicator · <code>§ State Patterns</code> → "Not enough history" as a first-class state · <code>§ Data Honesty Contract</code> → trailing-average disclosure in plain words, permanent not-advice disclaimer, savings-only cushion definition · <code>§ Voice and Tone</code> → every ÷ removed, acronyms expanded, no health "score" · <code>§ IA</code> → nests under Wealth per rule D8.</p>
+  <p><b>Open question surfaced by this mock:</b> the sub-nav label "Where to put your money" departs from the codebase's <code>financialHealth.*</code> i18n namespace. The namespace can stay; the user-facing string should not say "Financial Health."</p>
+  <p style="margin-bottom:0"><b>Nixus · key screen · financial health · 2026-08-01</b> — spine wins on conflict.</p>
+</div>
+
+</div>
+</body>
+</html>
