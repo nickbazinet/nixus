@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus } from "lucide-react";
 import { Button, Card, CardContent, Input, Label, Money } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
+import { OnboardingStarterTemplate } from "@/components/onboarding/OnboardingStarterTemplate";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import {
   useCreateBudgetGroup,
@@ -12,6 +13,7 @@ import {
   useBudgetGroups,
   useBudgetCategories,
 } from "@/hooks/useBudget";
+import { useSystemTemplates } from "@/hooks/useBudgetTemplates";
 import type { BudgetGroup } from "@/lib/types";
 
 interface GroupFormData {
@@ -164,7 +166,18 @@ export function OnboardingBudgetStep() {
   const { t } = useTranslation();
   const { data: groups = [] } = useBudgetGroups();
   const createGroup = useCreateBudgetGroup();
+  const starterTemplates = useSystemTemplates();
   const [showGroupForm, setShowGroupForm] = useState(false);
+  const [showManualPath, setShowManualPath] = useState(false);
+
+  const starterTemplateId = starterTemplates.data?.[0]?.id;
+  // Hidden only while the starter choice is still unknown: once there is no template to
+  // offer, or the user already has groups, the manual path is the whole step and must not
+  // sit behind a click.
+  const manualPathVisible =
+    showManualPath ||
+    groups.length > 0 ||
+    (!starterTemplates.isPending && starterTemplateId === undefined);
 
   const {
     register,
@@ -197,70 +210,95 @@ export function OnboardingBudgetStep() {
         <p className="mt-1 text-caption text-ink-faint">{t("onboarding.editableLater")}</p>
       </div>
 
-      {groups.map((group) => (
-        <Card key={group.id}>
-          <CardContent>
-            <h3 className="mb-2 text-h3 text-ink">{group.name}</h3>
-            <GroupCategoryList group={group} />
-          </CardContent>
-        </Card>
-      ))}
+      {starterTemplateId !== undefined && (
+        <OnboardingStarterTemplate templateId={starterTemplateId} />
+      )}
 
-      {showGroupForm ? (
-        <Card>
-          <CardContent>
-            <form onSubmit={handleSubmit(onSubmitGroup)} className="space-y-2">
-              <div className="space-y-1">
-                <Label htmlFor="onboarding-group-name" required>
-                  {t("budget.groupName")}
-                </Label>
-                <Input
-                  id="onboarding-group-name"
-                  placeholder={t("budget.groupNamePlaceholder")}
-                  autoFocus
-                  required
-                  aria-required="true"
-                  aria-invalid={errors.name !== undefined || undefined}
-                  aria-describedby={errors.name ? "onboarding-group-name-error" : undefined}
-                  {...register("name", { required: t("budget.groupNameRequired") })}
-                />
-                {errors.name && (
-                  <p
-                    id="onboarding-group-name-error"
-                    className="text-caption text-over-ink"
-                    role="alert"
-                  >
-                    {errors.name.message}
-                  </p>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button type="submit" size="sm">
-                  {t("budget.saveGroup")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    reset();
-                    setShowGroupForm(false);
-                  }}
-                >
-                  {t("common.cancel")}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-      ) : (
-        <Button
-          variant="outline"
-          onClick={() => setShowGroupForm(true)}
-          data-testid="add-group-button"
-        >
-          <Plus className="size-4" aria-hidden="true" /> {t("budget.addGroup")}
-        </Button>
+      {!manualPathVisible && (
+        <div data-testid="onboarding-budget-scratch-choice">
+          <Button
+            variant="outline"
+            onClick={() => setShowManualPath(true)}
+            data-testid="onboarding-start-from-scratch"
+          >
+            {t("onboarding.starterTemplateScratchAction")}
+          </Button>
+          <p className="mt-1 text-caption text-ink-faint">
+            {t("onboarding.starterTemplateScratchHint")}
+          </p>
+        </div>
+      )}
+
+      {manualPathVisible && (
+        <>
+          {groups.map((group) => (
+            <Card key={group.id}>
+              <CardContent>
+                <h3 className="mb-2 text-h3 text-ink">{group.name}</h3>
+                <GroupCategoryList group={group} />
+              </CardContent>
+            </Card>
+          ))}
+
+          {showGroupForm ? (
+            <Card>
+              <CardContent>
+                <form onSubmit={handleSubmit(onSubmitGroup)} className="space-y-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="onboarding-group-name" required>
+                      {t("budget.groupName")}
+                    </Label>
+                    <Input
+                      id="onboarding-group-name"
+                      placeholder={t("budget.groupNamePlaceholder")}
+                      autoFocus
+                      required
+                      aria-required="true"
+                      aria-invalid={errors.name !== undefined || undefined}
+                      aria-describedby={
+                        errors.name ? "onboarding-group-name-error" : undefined
+                      }
+                      {...register("name", { required: t("budget.groupNameRequired") })}
+                    />
+                    {errors.name && (
+                      <p
+                        id="onboarding-group-name-error"
+                        className="text-caption text-over-ink"
+                        role="alert"
+                      >
+                        {errors.name.message}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="submit" size="sm">
+                      {t("budget.saveGroup")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        reset();
+                        setShowGroupForm(false);
+                      }}
+                    >
+                      {t("common.cancel")}
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => setShowGroupForm(true)}
+              data-testid="add-group-button"
+            >
+              <Plus className="size-4" aria-hidden="true" /> {t("budget.addGroup")}
+            </Button>
+          )}
+        </>
       )}
     </div>
   );

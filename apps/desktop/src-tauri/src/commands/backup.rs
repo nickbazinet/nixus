@@ -89,8 +89,6 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
     // Validate the backup file
     validate_backup_file(&selected_path)?;
 
-    let db_state = app_handle.state::<DbState>();
-
     // Get database file path
     let app_data_dir = app_handle
         .path()
@@ -99,71 +97,17 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
             message: format!("Failed to resolve app data dir: {}", e),
         })?;
     let db_path = app_data_dir.join("nkbaz-finance.db");
-    let pre_restore_path = app_data_dir.join("nkbaz-finance.db.pre-restore");
 
-    // Checkpoint WAL before backup
-    {
-        let conn = db_state.0.lock().map_err(|e| AppError::Database {
-            message: e.to_string(),
-        })?;
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
-    }
-
-    // Create safety copy of current database
-    std::fs::copy(&db_path, &pre_restore_path).map_err(|e| AppError::File {
-        message: format!("Failed to create safety copy: {}", e),
+    let db_state = app_handle.state::<DbState>();
+    let mut conn = db_state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
     })?;
 
-    // Replace database file with backup
-    let restore_result = std::fs::copy(&selected_path, &db_path);
+    crate::db::backup::restore_from_file(&mut *conn, &db_path, &selected_path)?;
 
-    match restore_result {
-        Ok(_) => {
-            // Reopen connection with restored database
-            let mut conn = db_state.0.lock().map_err(|e| AppError::Database {
-                message: e.to_string(),
-            })?;
+    info!("Database restored from {}", selected_path.display());
 
-            let new_conn = Connection::open(&db_path).map_err(|e| {
-                // Restore from safety copy on failure
-                let _ = std::fs::copy(&pre_restore_path, &db_path);
-                AppError::Database {
-                    message: format!("Failed to open restored database: {}", e),
-                }
-            })?;
-
-            new_conn
-                .execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-                .map_err(|e| {
-                    let _ = std::fs::copy(&pre_restore_path, &db_path);
-                    AppError::Database {
-                        message: format!("Failed to configure restored database: {}", e),
-                    }
-                })?;
-
-            *conn = new_conn;
-
-            // Clean up safety copy
-            let _ = std::fs::remove_file(&pre_restore_path);
-
-            // Also clean up WAL/SHM files from the old database
-            let wal_path = app_data_dir.join("nkbaz-finance.db-wal");
-            let shm_path = app_data_dir.join("nkbaz-finance.db-shm");
-            let _ = std::fs::remove_file(&wal_path);
-            let _ = std::fs::remove_file(&shm_path);
-
-            info!("Database restored from {}", selected_path.display());
-            Ok(true)
-        }
-        Err(e) => {
-            // Restore from safety copy
-            let _ = std::fs::copy(&pre_restore_path, &db_path);
-            let _ = std::fs::remove_file(&pre_restore_path);
-            Err(AppError::File {
-                message: format!("Failed to restore database: {}", e),
-            })
-        }
-    }
+    Ok(true)
 }
 
 pub fn validate_backup_file(path: &PathBuf) -> Result<(), AppError> {

@@ -5,6 +5,9 @@ export const queryKeys = {
   budgetStatus: (year: number, month: number) =>
     ["budget-status", year, month] as const,
   allBudgetCategories: ["all-budget-categories"] as const,
+  systemBudgetTemplates: ["system-budget-templates"] as const,
+  systemBudgetTemplateDetail: (templateId: string) =>
+    ["system-budget-templates", templateId] as const,
   expenses: ["expenses"] as const,
   latestExpense: ["expenses", "latest"] as const,
   expensesByMonth: (year: number, month: number) =>

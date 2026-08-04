@@ -10,7 +10,9 @@ pub mod account;
 pub mod aggregates;
 pub mod asset;
 pub mod audit;
+pub mod backup;
 pub mod budget;
+pub mod budget_template;
 pub mod chat;
 pub mod config;
 pub mod danger_zone;
@@ -59,7 +61,14 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
     })?;
 
     let db_path = app_data_dir.join("nkbaz-finance.db");
-    let conn = Connection::open(&db_path)?;
+
+    open_configured(&db_path)
+}
+
+/// Shared by startup and backup restore so a restored database can never end up
+/// configured differently from one opened at launch.
+pub(crate) fn open_configured(db_path: &Path) -> Result<Connection, AppError> {
+    let conn = Connection::open(db_path)?;
 
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 

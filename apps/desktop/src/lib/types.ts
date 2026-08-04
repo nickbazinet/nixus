@@ -23,6 +23,43 @@ export interface BudgetCategoryStatus {
   is_deleted: boolean;
 }
 
+export interface ApplyBudgetTemplateResult {
+  groups_created: number;
+  categories_created: number;
+  skipped_groups: string[];
+}
+
+export interface SystemBudgetTemplateSummary {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface TemplateCategoryDetail {
+  name: string;
+  target_cents: number | null;
+}
+
+export interface TemplateGroupDetail {
+  name: string;
+  categories: TemplateCategoryDetail[];
+}
+
+export interface SystemBudgetTemplateDetail {
+  id: string;
+  name: string;
+  description: string | null;
+  groups: TemplateGroupDetail[];
+}
+
+// camelCase, unlike the wire shapes above: useApplySystemTemplate maps this to
+// the Rust struct's snake_case fields at the IPC boundary.
+export interface TemplateTargetOverride {
+  groupName: string;
+  categoryName: string;
+  targetCents: number;
+}
+
 export interface Expense {
   id: number;
   merchant: string;

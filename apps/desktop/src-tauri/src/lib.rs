@@ -1,4 +1,5 @@
 mod ai;
+mod budget;
 mod commands;
 mod credentials;
 mod db;
@@ -100,6 +101,11 @@ pub fn run() {
             commands::budget::delete_budget_group,
             commands::budget::get_budget_status,
             commands::budget::get_all_budget_categories,
+            commands::budget_template::import_budget_template,
+            commands::budget_template::export_budget_template,
+            commands::budget_template::list_system_templates,
+            commands::budget_template::get_system_template_detail,
+            commands::budget_template::apply_system_template,
             commands::expense::create_expense,
             commands::expense::get_expenses,
             commands::expense::get_latest_expense,

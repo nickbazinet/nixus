@@ -79,3 +79,124 @@ There are no tests for `ChatMessageBubble.tsx` (thinking indicator, tool-searchi
 
 Both the "thinking" dots and the "tool-searching" spinner in `ChatMessageBubble.tsx` animate unconditionally. Users with a reduced-motion preference still see the animation. Systemic accessibility gap, not introduced by any single change — consider a `motion-reduce:animate-none` (or equivalent) treatment across all chat indicators.
 
+## In-flight commands can hit FK errors after a Danger Zone wipe
+
+`DbState` is a single `Mutex<Connection>`, and several commands release the lock across
+`.await` boundaries (e.g. `send_chat_message` at `commands/chat.rs:170-294`, which re-locks
+to insert the assistant reply at `chat.rs:288`). If `delete_all_data` commits between those
+lock releases, the queued write references a parent row that no longer exists and fails with
+a raw `FOREIGN KEY constraint failed` `AppError::Database`. The window is small (the wipe is
+immediately followed by `relaunch()`), and the same exposure predates the Danger Zone for any
+frontend state holding stale ids. Fixing it properly means graceful "record was deleted"
+handling across all mutation commands, not a Danger Zone patch.
+
+## `SetupIncompleteBanner` copy misattributes a Danger Zone wipe to skipped onboarding
+
+Because the wipe preserves `config.onboarding_completed` by design, `check_onboarding_status`
+(`commands/onboarding.rs:20,24-25`) returns `setup_incomplete: true` after a wipe, so the
+dashboard shows `dashboard.setupIncompleteBody` — "You skipped setup, so there's no budget
+data yet." The user did not skip setup. The Danger Zone flow now clears the banner's
+`finance.onboarding.dismissed` localStorage flag so the banner reliably reappears as the
+recovery path, but the wording is still wrong for this case. Needs a product copy decision:
+either neutral copy ("No budget data yet — set one up") or a distinct post-wipe variant.
+
+## No component test coverage for `DangerZone.tsx`
+
+Double-click guarding, Esc/overlay dismissal mid-delete, dialog reopened after an error,
+whitespace-padded paste into the confirm input, and `relaunch()` failure are all unverified by
+automated tests. `apps/desktop` has no React component test infrastructure (no
+`@testing-library/react`), so bootstrapping it is a new dependency decision, not part of this
+change.
+
+## Post-wipe `VACUUM` failure is invisible to the user
+
+`commands/danger_zone.rs` logs a `warn!` and returns `Ok(())` when
+`db::danger_zone::reclaim_space` fails. The rows are gone, so this is deliberate, but a
+systematically failing `VACUUM` (e.g. too little free disk for its temp copy — plausible for a
+user wiping data specifically to reclaim space) leaves the file un-shrunk with no UI signal.
+
+## Deferred from: code review of 24-2-import-validation-for-untrusted-template-files (2026-08-04)
+
+- **TOCTOU between the size guard and the read in `import_budget_template_from_path`**
+  (`apps/desktop/src-tauri/src/db/budget_template.rs`): the 1 MiB cap is checked via
+  `std::fs::metadata(path).len()`, then the file is read via a separate `std::fs::read_to_string(path)`
+  call. A file grown/replaced/symlink-swapped between the two syscalls bypasses the size guard for the
+  actual read. Fixing this properly means switching to `File::open` + `file.metadata()` (fstat on the open
+  handle) + a length-capped `Read` adapter instead of two independent path-based operations — a
+  read-strategy change, not a one-line patch. Low real-world risk on a local-first, single-user desktop app
+  (requires a concurrent local process racing the exact file the user just picked via the OS dialog).
+- **No `is_file()` guard before reading the selected path**
+  (`apps/desktop/src-tauri/src/db/budget_template.rs`, `import_budget_template_from_path`): a symlink to a
+  FIFO or special device file could report a misleading size via `metadata()` and then hang
+  `read_to_string` indefinitely (FIFO with no writer) or stream unbounded data (device node). Not currently
+  reachable through the actual UI flow (the native file-picker dialog only lets the user select regular
+  files), but worth closing as defense-in-depth alongside the TOCTOU item above in the same follow-up pass.
+
+## Deferred from: code review of 24-3-export-current-budget-as-shareable-template (2026-08-04)
+
+- **`ensure_json_extension` post-dialog rename can bypass the OS save dialog's own overwrite confirmation**
+  (`apps/desktop/src-tauri/src/commands/budget_template.rs::export_budget_template`,
+  `apps/desktop/src-tauri/src/db/budget_template.rs::ensure_json_extension`): the `.json` extension is
+  appended *after* `blocking_save_file()` has already resolved, so any overwrite confirmation the native
+  dialog shows runs against the name the user actually typed (e.g. `foo`), not the final normalized name
+  (`foo.json`). If `foo` doesn't exist but `foo.json` already does (e.g. a prior export), `std::fs::write`
+  silently overwrites `foo.json` with no confirmation shown for that name.
+  **Decision: accept as-is.** Impact is bounded to overwriting a previously-exported **template file**
+  (never live budget data — the DB is untouched by export), and the behavior matches the existing
+  `commands/backup.rs` save-dialog precedent (no post-dialog rename step, but the same
+  "OS confirms the typed name, not any name the app might still transform" class of gap in spirit). Fixing
+  it here alone, ahead of `backup.rs`, would introduce an inconsistency between the two save-dialog flows.
+  A proper fix belongs with a broader save-dialog UX pass across both commands, not a single-story patch.
+
+## Deferred from: code review of 24-4-import-a-community-template-file (2026-08-04)
+
+- **Playwright canned-error-string duplication** (`apps/desktop/tests/budget-templates.spec.ts`): 2 of the 4
+  canned Rust messages from `db/budget_template.rs:40-46` (`MSG_INVALID_FILE`, `MSG_NOTHING_TO_EXPORT`) are
+  hardcoded verbatim as mock reject payloads instead of shared from one source of truth. If the Rust copy
+  changes, this E2E suite keeps passing against the stale string while the live app shows the new one.
+  **Not introduced by this story** — every Rust-backed Playwright spec in this repo already mocks IPC this
+  way (`tests/import.spec.ts`, `tests/accessibility.spec.ts`). Fixing it means a repo-wide shared-fixtures
+  pass (e.g. a generated constants module bridging `db/budget_template.rs`'s consts into a TS fixture), not
+  a one-file patch.
+- **`budgetSummary`/`topBudgetCategories` query keys are never invalidated by any budget mutation**
+  (`apps/desktop/src/hooks/useDashboard.ts` defines the queries; `apps/desktop/src/hooks/useBudget.ts` and
+  the new `useBudgetTemplates.ts` both omit them from every `onSuccess`): a user sitting on the Dashboard or
+  Budget page when a template import completes can see a stale summary/top-categories card until the next
+  window focus or route remount (TanStack Query default `staleTime: 0` covers the remount case, but not a
+  same-page redraw). **Not introduced by this story** — `useCreateBudgetCategory`/`useUpdateBudgetCategory`/
+  `useDeleteBudgetCategory` have the identical gap today, predating this story by several epics. A fix
+  belongs to a systemic invalidation-set review across all budget-mutating hooks, not a single-story patch.
+
+## Deferred from: code review of 25-3-settings-templates-section-wiring (2026-08-04)
+
+- **A previously-undocumented flaky-under-parallelism Playwright test surfaced during full-suite review:**
+  `tests/maintenance.spec.ts:1290 › Maintenance Page › adding a vehicle starts schedules from current
+  odometer and shows success toast` failed once during a full-suite run (`322 passed, 2 failed` alongside
+  the documented `chat.spec.ts:250`) but passed 1/1 in isolation. It shares zero surface with story 25-3
+  (Settings/budget-templates) and was not on the story's own carried-forward flaky list
+  (`accounts.spec.ts:333`, `accounts.spec.ts:472`, `expenses.spec.ts:426`, `maintenance.spec.ts:1561`,
+  `maintenance.spec.ts:1436`) — a different flaky test manifested this run, which means that list is
+  illustrative of a general parallelism-contention class in this suite, not exhaustive. **Not introduced
+  by this story.** A fix belongs to a suite-wide test-isolation pass (likely a shared fixture/DB-state race
+  between vehicle/maintenance specs under parallel workers), not a single-story patch. Re-run the full suite
+  a few times before attributing any future maintenance/vehicle-slide-over failure to a specific story.
+
+## Deferred from: code review of 25-4-starter-template-path-in-onboarding-fork (2026-08-04)
+
+- **Duplicate override entries for the same (group, category) pair are silently resolved first-wins, not
+  rejected** (`apps/desktop/src-tauri/src/budget/template_defaults.rs::merge_target_overrides`/
+  `find_override`, lines 68-76): `find_override` resolves via `.find()`, so if a caller's `overrides` list
+  contained two entries addressing the identical `(group_name, category_name)` pair, the first one wins and
+  the second is silently discarded — no validation rejects the duplicate.
+  **Decision: accept as-is, defer.** The case is unreachable through the shipped UI — `buildOverrides` in
+  `apps/desktop/src/components/onboarding/OnboardingStarterTemplate.tsx` builds its overrides array from a
+  `Map` keyed by category, so it can structurally emit at most one entry per category and can never produce
+  a duplicate pair. The first-entry-wins behavior is now locked by a regression test
+  (`merge_with_duplicate_overrides_for_the_same_pair_uses_the_first_entry` in `template_defaults.rs`) added
+  during this story's code review, so a future refactor toward last-wins (or outright rejection) would be a
+  deliberate, reviewed change rather than an accidental one. Adding a defensive rejection at the Rust
+  boundary today would be speculative hardening against a caller that does not exist.
+  **Revisit if:** a future caller can construct raw override lists outside the shipped UI's diffing logic —
+  e.g. a public API, a scripted/bulk-import apply path, or an AI-driven apply flow — at which point duplicate
+  (group, category) pairs in a single request should be rejected with `AppError::Validation` rather than
+  silently resolved.

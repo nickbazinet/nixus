@@ -1,4 +1,15 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
+
+/**
+ * MoneyInput reformats its own display on focus, and only when it already holds an amount.
+ * A bare fill() focuses and writes in one action, so that reformat lands on top of the typed
+ * value. Clicking first lets it settle — which is also what a human does.
+ */
+async function fillMoneyInput(input: Locator, dollars: string) {
+  await input.click();
+  await input.fill(dollars);
+}
+
 
 /**
  * Sets up Tauri IPC mocks for the onboarding wizard tests.
@@ -6,13 +17,20 @@ import { test, expect, type Page } from "@playwright/test";
  */
 async function setupTauriMock(
   page: Page,
-  options?: { hasData?: boolean; completed?: boolean }
+  options?: {
+    hasData?: boolean;
+    completed?: boolean;
+    starterUnavailable?: boolean;
+    applyFails?: boolean;
+  }
 ) {
   const hasData = options?.hasData ?? false;
   const completed = options?.completed ?? false;
+  const starterUnavailable = options?.starterUnavailable ?? false;
+  const applyFails = options?.applyFails ?? false;
 
   await page.addInitScript(
-    ({ hasData, completed }) => {
+    ({ hasData, completed, starterUnavailable, applyFails }) => {
       interface MockGroup {
         id: number;
         name: string;
@@ -58,6 +76,32 @@ async function setupTauriMock(
       let nextAssetId = 1;
       let onboardingCompleted = completed;
 
+      // Mirrors the Rust const closely enough to exercise the real preview/override path
+      // without shipping all twelve categories into the assertions.
+      const STARTER_DETAIL = {
+        id: "canadian-starter",
+        name: "Canadian Starter Budget",
+        description: "Common Canadian household categories.",
+        groups: [
+          {
+            name: "Housing",
+            categories: [
+              { name: "Rent / Mortgage", target_cents: 180_000 },
+              { name: "Utilities", target_cents: 20_000 },
+            ],
+          },
+          {
+            name: "Savings",
+            categories: [{ name: "TFSA Contribution", target_cents: 50_000 }],
+          },
+        ],
+      };
+
+      // Read back by the tests: the override payload is the whole contract of an edited apply.
+      const appliedTemplateCalls: Record<string, unknown>[] = [];
+      (window as unknown as Record<string, unknown>).__APPLIED_TEMPLATE_CALLS =
+        appliedTemplateCalls;
+
       (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
         unregisterListener: () => {},
       };
@@ -102,6 +146,95 @@ async function setupTauriMock(
             case "get_budget_categories": {
               const groupId = args.group_id as number;
               return Promise.resolve(categories.filter((c) => c.group_id === groupId));
+            }
+
+            case "list_system_templates":
+              return Promise.resolve(
+                starterUnavailable
+                  ? []
+                  : [
+                      {
+                        id: STARTER_DETAIL.id,
+                        name: STARTER_DETAIL.name,
+                        description: STARTER_DETAIL.description,
+                      },
+                    ]
+              );
+
+            case "get_system_template_detail": {
+              if (args.template_id !== STARTER_DETAIL.id) {
+                return Promise.reject({
+                  type: "validation",
+                  message: "That starter template is not available.",
+                  field: "template_id",
+                });
+              }
+              return Promise.resolve(STARTER_DETAIL);
+            }
+
+            case "apply_system_template": {
+              appliedTemplateCalls.push({
+                template_id: args.template_id,
+                overrides: args.overrides ?? null,
+              });
+
+              if (applyFails) {
+                return Promise.reject({
+                  type: "database",
+                  message: "Could not write to the database.",
+                });
+              }
+
+              const overrides = (args.overrides ?? []) as {
+                group_name: string;
+                category_name: string;
+                target_cents: number;
+              }[];
+              const taken = groups.map((g) => g.name.trim().toLowerCase());
+              const skipped: string[] = [];
+              let groupsCreated = 0;
+              let categoriesCreated = 0;
+
+              for (const templateGroup of STARTER_DETAIL.groups) {
+                if (taken.includes(templateGroup.name.trim().toLowerCase())) {
+                  skipped.push(templateGroup.name);
+                  continue;
+                }
+                const created: MockGroup = {
+                  id: nextGroupId++,
+                  name: templateGroup.name,
+                  sort_order: groups.length,
+                  created_at: new Date().toISOString(),
+                };
+                groups.push(created);
+                taken.push(created.name.trim().toLowerCase());
+                groupsCreated += 1;
+
+                for (const templateCategory of templateGroup.categories) {
+                  const edited = overrides.find(
+                    (o) =>
+                      o.group_name.trim().toLowerCase() ===
+                        templateGroup.name.trim().toLowerCase() &&
+                      o.category_name.trim().toLowerCase() ===
+                        templateCategory.name.trim().toLowerCase()
+                  );
+                  categories.push({
+                    id: nextCategoryId++,
+                    group_id: created.id,
+                    name: templateCategory.name,
+                    target_cents: edited?.target_cents ?? templateCategory.target_cents,
+                    sort_order: categories.filter((c) => c.group_id === created.id).length,
+                    created_at: new Date().toISOString(),
+                  });
+                  categoriesCreated += 1;
+                }
+              }
+
+              return Promise.resolve({
+                groups_created: groupsCreated,
+                categories_created: categoriesCreated,
+                skipped_groups: skipped,
+              });
             }
 
             case "create_budget_category": {
@@ -195,7 +328,7 @@ async function setupTauriMock(
         convertFileSrc: (path: string) => path,
       };
     },
-    { hasData, completed }
+    { hasData, completed, starterUnavailable, applyFails }
   );
 }
 
@@ -241,6 +374,10 @@ test.describe("Onboarding Wizard", () => {
 
     // Verify budget step is shown
     await expect(page.getByTestId("onboarding-budget-step")).toBeVisible();
+
+    // The starter template is now the step's primary choice, so the manual path is one
+    // click behind "Start from scratch instead".
+    await page.getByTestId("onboarding-start-from-scratch").click();
 
     // Create a budget group
     await page.getByTestId("add-group-button").click();
@@ -311,6 +448,7 @@ test.describe("Onboarding Wizard", () => {
     await page.goto("/onboarding");
 
     // Step 1: Create a budget group (required — budget data prevents re-redirect)
+    await page.getByTestId("onboarding-start-from-scratch").click();
     await page.getByTestId("add-group-button").click();
     await page.getByLabel("Group Name").fill("Essentials");
     await page.getByRole("button", { name: "Save Group" }).click();
@@ -387,5 +525,182 @@ test.describe("Onboarding Wizard", () => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("setup-incomplete-banner")).not.toBeVisible();
     await expect(page.getByTestId("empty-budget")).toBeVisible();
+  });
+
+  test("Step 1 presents the starter template with pre-filled, editable targets", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    const starter = page.getByTestId("onboarding-starter-template");
+    await expect(starter).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Start with a ready-made budget" })
+    ).toBeVisible();
+
+    // Every authored target arrives pre-filled and writable — not read-only text.
+    const rent = page.getByLabel("Rent / Mortgage");
+    await expect(rent).toHaveValue("1,800.00");
+    await expect(rent).toBeEditable();
+    await expect(page.getByLabel("Utilities")).toHaveValue("200.00");
+    await expect(page.getByLabel("TFSA Contribution")).toHaveValue("500.00");
+
+    // The manual path is available, but secondary
+    await expect(page.getByTestId("onboarding-start-from-scratch")).toBeVisible();
+    await expect(page.getByTestId("add-group-button")).not.toBeVisible();
+  });
+  test("editing a target sends only that override and lands on the dashboard", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    await expect(page.getByTestId("onboarding-starter-template")).toBeVisible();
+
+    const rent = page.getByLabel("Rent / Mortgage");
+    await fillMoneyInput(rent, "2200");
+    await rent.blur();
+    await expect(rent).toHaveValue("2,200.00");
+
+    await page.getByTestId("onboarding-starter-confirm").click();
+
+    // Two clicks total (edit aside): the user is on the dashboard with a budget
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
+    await expect(page.getByTestId("onboarding-wizard")).not.toBeVisible();
+
+    const calls = await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__APPLIED_TEMPLATE_CALLS
+    );
+    expect(calls).toEqual([
+      {
+        template_id: "canadian-starter",
+        overrides: [
+          {
+            group_name: "Housing",
+            category_name: "Rent / Mortgage",
+            target_cents: 220_000,
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("confirming without edits sends no overrides at all", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    await expect(page.getByTestId("onboarding-starter-template")).toBeVisible();
+    await page.getByTestId("onboarding-starter-confirm").click();
+
+    await expect(page).toHaveURL(/\/$/);
+
+    const calls = await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__APPLIED_TEMPLATE_CALLS
+    );
+    // null, not []: Rust reads a missing argument as "apply the authored defaults".
+    expect(calls).toEqual([{ template_id: "canadian-starter", overrides: null }]);
+  });
+
+  test("re-typing a target's own default is not sent as an override", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    await expect(page.getByTestId("onboarding-starter-template")).toBeVisible();
+
+    const rent = page.getByLabel("Rent / Mortgage");
+    await fillMoneyInput(rent, "1800");
+    await rent.blur();
+
+    await page.getByTestId("onboarding-starter-confirm").click();
+    await expect(page).toHaveURL(/\/$/);
+
+    const calls = await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__APPLIED_TEMPLATE_CALLS
+    );
+    expect(calls).toEqual([{ template_id: "canadian-starter", overrides: null }]);
+  });
+
+  test("an all-collided apply says nothing was added instead of reading as success", async ({ page }) => {
+    // Creating both of the starter's groups by hand is what makes every group a duplicate,
+    // which is the only way to reach the zero-created branch.
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    await page.getByTestId("onboarding-start-from-scratch").click();
+    for (const name of ["Housing", "Savings"]) {
+      await page.getByTestId("add-group-button").click();
+      await page.getByLabel("Group Name").fill(name);
+      await page.getByRole("button", { name: "Save Group" }).click();
+      await expect(page.getByText(`"${name}" created`)).toBeVisible();
+    }
+
+    await page.getByTestId("onboarding-starter-confirm").click();
+
+    // Zero created is not a silent success: it names every group it refused to duplicate
+    await expect(
+      page.getByText(
+        "Nothing was added — you already have every one of these groups: Housing, Savings"
+      )
+    ).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test("a partially collided apply names what it skipped", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    await page.getByTestId("onboarding-start-from-scratch").click();
+    await page.getByTestId("add-group-button").click();
+    await page.getByLabel("Group Name").fill("Housing");
+    await page.getByRole("button", { name: "Save Group" }).click();
+    await expect(page.getByText('"Housing" created')).toBeVisible();
+
+    await page.getByTestId("onboarding-starter-confirm").click();
+
+    // A partial apply must name what it skipped rather than claim a clean success
+    await expect(
+      page.getByText("Skipped, because you already have them: Housing")
+    ).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+  });
+
+  test("when the starter template is unavailable the manual path is immediately usable", async ({ page }) => {
+    await setupTauriMock(page, { starterUnavailable: true });
+    await page.goto("/onboarding");
+
+    await expect(page.getByTestId("onboarding-budget-step")).toBeVisible();
+    await expect(page.getByTestId("onboarding-starter-template")).not.toBeVisible();
+    await expect(page.getByTestId("onboarding-start-from-scratch")).not.toBeVisible();
+
+    // Onboarding is a first-run gate: no starter must never mean no way forward
+    await expect(page.getByTestId("add-group-button")).toBeVisible();
+    await page.getByTestId("add-group-button").click();
+    await page.getByLabel("Group Name").fill("Essentials");
+    await page.getByRole("button", { name: "Save Group" }).click();
+    await expect(page.getByText('"Essentials" created')).toBeVisible();
+  });
+
+  test("a failed apply keeps the user on the step with the reason shown", async ({ page }) => {
+    await setupTauriMock(page, { applyFails: true });
+    await page.goto("/onboarding");
+
+    await expect(page.getByTestId("onboarding-starter-template")).toBeVisible();
+    await page.getByTestId("onboarding-starter-confirm").click();
+
+    await expect(page.getByText("Could not write to the database.")).toBeVisible();
+    await expect(page).toHaveURL(/\/onboarding/);
+
+    // The fallback survives the failure
+    await page.getByTestId("onboarding-start-from-scratch").click();
+    await expect(page.getByTestId("add-group-button")).toBeVisible();
+  });
+
+  test("the skip path still works while the starter template is offered", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/onboarding");
+
+    await expect(page.getByTestId("onboarding-starter-template")).toBeVisible();
+    await page.getByTestId("skip-onboarding-button").click();
+
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId("setup-incomplete-banner")).toBeVisible();
   });
 });

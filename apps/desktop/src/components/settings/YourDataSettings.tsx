@@ -4,6 +4,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Alert, AlertTitle, AlertDescription, Button, Card } from "@nixus/shared";
+import {
+  useApplySystemTemplate,
+  useExportBudgetTemplate,
+  useImportBudgetTemplate,
+  useSystemTemplates,
+} from "@/hooks/useBudgetTemplates";
 import { DangerZone } from "./DangerZone";
 import { SettingRow, SettingsSection } from "./SettingRow";
 
@@ -12,12 +18,35 @@ function getErrorMessage(err: unknown): string {
   return e?.message ?? (typeof err === "string" ? err : "");
 }
 
+// Rust ships every system template's name and description as English-only consts, so the id slug
+// is the only stable i18n anchor. An unmapped id falls back to the backend strings.
+const STARTER_TEMPLATE_COPY: Record<string, { nameKey: string; bodyKey: string }> = {
+  "canadian-starter": {
+    nameKey: "settings.templateStarterCanadianName",
+    bodyKey: "settings.templateStarterCanadianBody",
+  },
+};
+
 export function YourDataSettings() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const exportTemplate = useExportBudgetTemplate();
+  const importTemplate = useImportBudgetTemplate();
+  const starterTemplates = useSystemTemplates();
+  const applyStarterTemplate = useApplySystemTemplate();
+  const busy =
+    saving ||
+    restoring ||
+    exportTemplate.isPending ||
+    importTemplate.isPending ||
+    applyStarterTemplate.isPending;
+  const starters = starterTemplates.data ?? [];
+  const applyingId = applyStarterTemplate.isPending
+    ? applyStarterTemplate.variables?.templateId
+    : undefined;
 
   const handleSaveCopy = async () => {
     setSaving(true);
@@ -48,6 +77,74 @@ export function YourDataSettings() {
     }
   };
 
+  const handleExportTemplate = async () => {
+    setError(null);
+    try {
+      const result = await exportTemplate.mutateAsync();
+      if (result) toast.success(t("settings.templateSaved", { path: result.path }));
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || t("settings.templateSaveFailed"));
+    }
+  };
+
+  const handleImportTemplate = async () => {
+    setError(null);
+    try {
+      const result = await importTemplate.mutateAsync();
+      if (!result) return; // User cancelled the native dialog
+      const skipped = result.skipped_groups.join(", ");
+      if (result.groups_created === 0) {
+        toast.info(t("settings.templateImportAllSkipped", { skipped }));
+      } else if (result.skipped_groups.length > 0) {
+        toast.success(
+          t("settings.templateImportedSkipped", {
+            groups: result.groups_created,
+            categories: result.categories_created,
+            skipped,
+          })
+        );
+      } else {
+        toast.success(
+          t("settings.templateImported", {
+            groups: result.groups_created,
+            categories: result.categories_created,
+          })
+        );
+      }
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || t("settings.templateImportFailed"));
+    }
+  };
+
+  const handleApplyStarterTemplate = async (templateId: string) => {
+    setError(null);
+    try {
+      const result = await applyStarterTemplate.mutateAsync({ templateId });
+      const skipped = result.skipped_groups.join(", ");
+      // Checked first: every group collided, so "added 0 groups" would read as a success.
+      if (result.groups_created === 0) {
+        toast.info(t("settings.templateApplyAllSkipped", { skipped }));
+      } else if (result.skipped_groups.length > 0) {
+        toast.success(
+          t("settings.templateAppliedSkipped", {
+            groups: result.groups_created,
+            categories: result.categories_created,
+            skipped,
+          })
+        );
+      } else {
+        toast.success(
+          t("settings.templateApplied", {
+            groups: result.groups_created,
+            categories: result.categories_created,
+          })
+        );
+      }
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || t("settings.templateApplyFailed"));
+    }
+  };
+
   return (
     <div className="space-y-section-gap" data-testid="settings-your-data">
       <div>
@@ -71,8 +168,8 @@ export function YourDataSettings() {
             control={
               <Button
                 onClick={handleSaveCopy}
-                disabled={saving || restoring}
-                aria-disabled={saving || restoring || undefined}
+                disabled={busy}
+                aria-disabled={busy || undefined}
                 data-testid="your-data-save-copy"
               >
                 {saving ? t("settings.backupSaving") : t("settings.backupSaveAction")}
@@ -103,8 +200,8 @@ export function YourDataSettings() {
               <Button
                 variant="outline"
                 onClick={handleRestore}
-                disabled={saving || restoring}
-                aria-disabled={saving || restoring || undefined}
+                disabled={busy}
+                aria-disabled={busy || undefined}
                 data-testid="your-data-restore"
               >
                 {restoring ? t("settings.restoring") : t("settings.restoreAction")}
@@ -132,15 +229,81 @@ export function YourDataSettings() {
         </Card>
       </SettingsSection>
 
-      {/* Template import/export needs a versioned document format and an amount-stripping export
-        * the backend does not have. Shipping the button first would leak a mortgage payment into
-        * the first shared template. */}
       <SettingsSection heading={t("settings.sectionTemplates")}>
         <Card flush>
+          {starterTemplates.isPending ? (
+            <SettingRow
+              title={t("settings.templateStarterLoading")}
+              data-testid="setting-template-starter-loading"
+            />
+          ) : starters.length === 0 ? (
+            <SettingRow
+              title={t("settings.templateStarterUnavailable")}
+              data-testid="setting-template-starter-empty"
+            />
+          ) : (
+            starters.map((template) => {
+              const copy = STARTER_TEMPLATE_COPY[template.id];
+              return (
+                <SettingRow
+                  key={template.id}
+                  title={copy === undefined ? template.name : t(copy.nameKey)}
+                  description={
+                    copy === undefined
+                      ? (template.description ?? undefined)
+                      : t(copy.bodyKey)
+                  }
+                  control={
+                    <Button
+                      onClick={() => handleApplyStarterTemplate(template.id)}
+                      disabled={busy}
+                      aria-disabled={busy || undefined}
+                      data-testid={`your-data-template-apply-${template.id}`}
+                    >
+                      {applyingId === template.id
+                        ? t("settings.templateStarterApplying")
+                        : t("settings.templateStarterApplyAction")}
+                    </Button>
+                  }
+                  data-testid={`setting-template-starter-${template.id}`}
+                />
+              );
+            })
+          )}
           <SettingRow
-            title={t("settings.templatesUnavailableTitle")}
-            description={t("settings.templatesUnavailableBody")}
-            data-testid="setting-templates-unavailable"
+            title={t("settings.templateExportTitle")}
+            description={t("settings.templateExportBody")}
+            control={
+              <Button
+                onClick={handleExportTemplate}
+                disabled={busy}
+                aria-disabled={busy || undefined}
+                data-testid="your-data-template-export"
+              >
+                {exportTemplate.isPending
+                  ? t("settings.templateExporting")
+                  : t("settings.templateExportAction")}
+              </Button>
+            }
+            data-testid="setting-template-export"
+          />
+          <SettingRow
+            title={t("settings.templateImportTitle")}
+            description={t("settings.templateImportBody")}
+            control={
+              <Button
+                variant="outline"
+                onClick={handleImportTemplate}
+                disabled={busy}
+                aria-disabled={busy || undefined}
+                data-testid="your-data-template-import"
+              >
+                {importTemplate.isPending
+                  ? t("settings.templateImporting")
+                  : t("settings.templateImportAction")}
+              </Button>
+            }
+            data-testid="setting-template-import"
           />
         </Card>
       </SettingsSection>

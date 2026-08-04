@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetGroup {
@@ -38,6 +39,75 @@ pub struct BudgetCategoryStatus {
     pub target_cents: i64,
     pub spent_cents: i64,
     pub is_deleted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemBudgetTemplate {
+    pub format_version: i32,
+    pub id: Option<Cow<'static, str>>,
+    pub name: Cow<'static, str>,
+    pub description: Option<Cow<'static, str>>,
+    // Cow (not String/Vec) so SYSTEM_TEMPLATES can be a `pub const` while the
+    // same type still deserializes owned data from an imported JSON file.
+    pub groups: Cow<'static, [TemplateGroupDef]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateGroupDef {
+    pub name: Cow<'static, str>,
+    pub categories: Cow<'static, [TemplateCategoryDef]>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateCategoryDef {
+    pub name: Cow<'static, str>,
+    pub target_cents: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyBudgetTemplateResult {
+    pub groups_created: i32,
+    pub categories_created: i32,
+    pub skipped_groups: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemBudgetTemplateSummary {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// A user's edit to one authored target, addressed by name because a compiled
+/// template has no row ids to reference.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateTargetOverride {
+    pub group_name: String,
+    pub category_name: String,
+    pub target_cents: i64,
+}
+
+/// Owned projection of [`SystemBudgetTemplate`] for the IPC boundary. Separate
+/// from `SystemBudgetTemplateSummary` because a preview screen needs the targets
+/// the list response deliberately omits.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemBudgetTemplateDetail {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub groups: Vec<TemplateGroupDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateGroupDetail {
+    pub name: String,
+    pub categories: Vec<TemplateCategoryDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateCategoryDetail {
+    pub name: String,
+    pub target_cents: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

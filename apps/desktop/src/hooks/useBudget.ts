@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
 import type { BudgetGroup, BudgetCategory, BudgetCategoryStatus } from "@/lib/types";
 
-function invalidateTrendsQueries(queryClient: QueryClient) {
+export function invalidateTrendsQueries(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ["spending-trends"] });
   queryClient.invalidateQueries({ queryKey: ["trends-insight"] });
   queryClient.invalidateQueries({ queryKey: queryKeys.allBudgetCategories });

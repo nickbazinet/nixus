@@ -47,6 +47,7 @@ _bmad-output/*
 .claude/projects/
 .playwright-mcp/
 .superpowers/
+.omo/
 
 .claude/worktrees
 

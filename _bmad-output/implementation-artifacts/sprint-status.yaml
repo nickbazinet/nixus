@@ -1,5 +1,5 @@
 # generated: 2026-03-14
-# last_updated: 2026-06-10
+# last_updated: 2026-08-04
 # project: nkbaz-finance
 # project_key: NOKEY
 # tracking_system: file-system
@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-03-14
-last_updated: 2026-06-10
+last_updated: 2026-08-04
 project: nkbaz-finance
 project_key: NOKEY
 tracking_system: file-system
@@ -200,3 +200,19 @@ development_status:
   23-1-transaction-account-linking-backend: review
   23-2-transaction-account-linking-frontend: review
   epic-23-retrospective: optional
+
+  # Epic 24: Budget Template Import & Export (budget templates)
+  epic-24: in-progress
+  24-1-template-schema-models-core-apply-function: done
+  24-2-import-validation-for-untrusted-template-files: done
+  24-3-export-current-budget-as-shareable-template: done
+  24-4-import-a-community-template-file: done
+  epic-24-retrospective: optional
+
+  # Epic 25: System Starter Templates & Onboarding/Settings Integration (budget templates)
+  epic-25: in-progress
+  25-1-canadian-starter-template-definition-list-apply-commands: done
+  25-2-frontend-hook-for-budget-templates: done
+  25-3-settings-templates-section-wiring: done
+  25-4-starter-template-path-in-onboarding-fork: done
+  epic-25-retrospective: optional
