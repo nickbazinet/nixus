@@ -1,10 +1,9 @@
 /* ============================================================================
- * Nixus design tokens — Direction A "Quiet Ledger"
+ * Nixus design tokens — Direction C "Clear Slate" colors
  *
- * Source of truth: _bmad-output/planning-artifacts/ux-designs/ux-nixus-2026-08-01/DESIGN.md
- * The spine wins on conflict with any mock, wireframe, or screenshot. Where the
- * .working/*.html mocks disagree with DESIGN.md (--ink-faint, uppercase column
- * heads) the values here follow DESIGN.md.
+ * Source of truth: _bmad-output/planning-artifacts/ux-designs/ux-nixus-2026-08-01/.working/directions-3.html
+ * Color values only — layout, typography, radius, spacing, and shadow rules
+ * below are unchanged from the prior token set.
  *
  * Consumers import this AFTER `@import "tailwindcss"` (and any tailwind plugins
  * like tw-animate-css / shadcn) so the @theme blocks register against the
@@ -52,127 +51,128 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ---------------------------------------------------------------------------
- * Light — the default surface. Warm paper, not white.
+ * Light — the default surface. Cool slate, cards white on it.
  * ------------------------------------------------------------------------- */
 :root {
   /* Surfaces */
-  --bg: #FAF8F5;
+  --bg: #F1F5F9;
   --card: #FFFFFF;
-  --chrome: #F5F2EC;
-  --rail: #F0ECE4;
-  --rail-line: #E3DDD2;
-  --track: #EFEAE1;
-  --hover: #FBF9F6;
+  --chrome: #FFFFFF;
+  --rail: #FFFFFF;
+  --rail-line: #E2E8F0;
+  --track: #EDF1F6;
+  --hover: #F8FAFC;
 
   /* Ink */
-  --ink: #1C1917;
-  --ink-dim: #6B635A;
-  --ink-faint: #71685F;
-  --ink-disabled: #9C938A;
+  --ink: #0F172A;
+  --ink-dim: #576578;
+  --ink-faint: #5B6B80;
+  --ink-disabled: #7B8798;
 
   /* Hairlines */
-  --line: #E8E3DA;
-  --line-strong: #D8D1C5;
+  --line: #E2E8F0;
+  --line-strong: #CBD5E1;
 
   /* Rail — its own inks, because the rail expands to 192px and renders
    * real text labels, so it needs 4.5:1 rather than icon-level 3:1. */
-  --rail-ink: #71685F;
-  --rail-on: #E7E2F7;
-  --rail-on-ink: #5D56C5;
+  --rail-ink: #647188;
+  --rail-on: #EEF0FE;
+  --rail-on-ink: #4338CA;
 
   /* Brand and action. Nothing else. */
-  --brand: #5B54D6;
-  --brand-ink: #4A43BE;
+  --brand: #4F46E5;
+  --brand-ink: #4338CA;
   --brand-on: #FFFFFF;
-  --brand-soft: #EFEDFB;
-  --focus-ring: #5B54D6;
+  --brand-soft: #EEF0FE;
+  --focus-ring: #4F46E5;
 
   /* Status — a separate family, and never the sole signal. */
-  --good: #15803D;
-  --good-bg: #E8F3EA;
-  --good-ink: #14672F;
-  --caution: #B45309;
-  --caution-bg: #FBF0DF;
-  --caution-ink: #8F4208;
+  --good: #047857;
+  --good-bg: #E6F4EF;
+  --good-ink: #03624A;
+  --caution: #A16207;
+  --caution-bg: #FBF2DE;
+  --caution-ink: #834F06;
   --over: #BE123C;
-  --over-bg: #FBE9ED;
-  --over-ink: #9D0F33;
+  --over-bg: #FCEAEE;
+  --over-ink: #9C0F33;
   --over-on: #FFFFFF;
-  --neutral-bg: #EFEAE1;
-  --neutral-ink: #6B635A;
+  --neutral-bg: #EDF1F6;
+  --neutral-ink: #576578;
 
-  /* Charts — eight steps, alternating luminance, walking the logo's hue
-   * journey then picking up a teal, gold, olive, and warm neutral.
-   * chart-3 and chart-7 share luminance: never let them end up adjacent. */
-  --chart-1: #5A54D7;
-  --chart-2: #AB7DD9;
-  --chart-3: #B54AB5;
-  --chart-4: #DB6D9B;
-  --chart-5: #368580;
-  --chart-6: #BA8741;
-  --chart-7: #7F773F;
-  --chart-8: #9B8F85;
+  /* Charts — eight steps, walking brand indigo through violet/orchid/pink
+   * then teal, teal-green, warm amber, and cool slate for the long tail.
+   * Luminance alternates (odd steps dark, even steps light) so adjacent
+   * pairs stay separable — see contrast.test.ts. */
+  --chart-1: #4F46E5;
+  --chart-2: #9270F0;
+  --chart-3: #9333EA;
+  --chart-4: #EC4899;
+  --chart-5: #0E7490;
+  --chart-6: #0D9488;
+  --chart-7: #A8500A;
+  --chart-8: #7C8DA3;
 
   /* Floating layers only: slide-over, dialog, toast, popover. */
-  --shadow-float-value: 0 2px 10px rgba(28, 25, 23, 0.10);
+  --shadow-float-value: 0 2px 10px rgba(15, 23, 42, 0.10);
 
   /* The scrim behind a floating layer. Deliberately not derived from an ink
    * token: a backdrop must darken in BOTH modes, and `--ink` inverts to a
    * near-white in dark, which would wash the page out instead. */
-  --scrim: rgba(28, 25, 23, 0.32);
+  --scrim: rgba(15, 23, 42, 0.32);
 }
 
 /* ---------------------------------------------------------------------------
- * Dark — warm charcoal, not blue-black. Cards are LIGHTER than the page.
+ * Dark — page sits darker than cards so surfaces actually layer.
  * ------------------------------------------------------------------------- */
 .dark {
-  --bg: #17150F;
-  --card: #211E18;
-  --chrome: #1D1A14;
-  --rail: #141209;
-  --rail-line: #302A21;
-  --track: #2C2721;
-  --hover: #282419;
+  --bg: #080D18;
+  --card: #172033;
+  --chrome: #111A2B;
+  --rail: #111A2B;
+  --rail-line: #232E42;
+  --track: #212C3E;
+  --hover: #1C2740;
 
-  --ink: #EDE9E1;
-  --ink-dim: #A79E91;
-  --ink-faint: #8E867A;
-  --ink-disabled: #6F685E;
+  --ink: #E8EDF5;
+  --ink-dim: #94A3B8;
+  --ink-faint: #7E8CA0;
+  --ink-disabled: #63738C;
 
-  --line: #332E25;
-  --line-strong: #413A2E;
+  --line: #2A3547;
+  --line-strong: #374357;
 
-  --rail-ink: #8E8271;
-  --rail-on: #2E2A44;
-  --rail-on-ink: #928AEF;
+  --rail-ink: #7C8899;
+  --rail-on: #1E2547;
+  --rail-on-ink: #A5B4FC;
 
-  --brand: #A5A0F0;
-  --brand-ink: #BDB8F5;
-  --brand-on: #1E1B36;
-  --brand-soft: #2A2640;
-  --focus-ring: #BDB8F5;
+  --brand: #818CF8;
+  --brand-ink: #A5B4FC;
+  --brand-on: #1E1B4B;
+  --brand-soft: #1E2547;
+  --focus-ring: #A5B4FC;
 
-  --good: #4ADE80;
-  --good-bg: #1B2E20;
-  --good-ink: #6EE79A;
+  --good: #34D399;
+  --good-bg: #0F3328;
+  --good-ink: #6EE7B7;
   --caution: #FBBF24;
-  --caution-bg: #332813;
+  --caution-bg: #33290F;
   --caution-ink: #FCD34D;
   --over: #FB7185;
-  --over-bg: #3A1B22;
+  --over-bg: #3A1A24;
   --over-ink: #FDA4AF;
-  --over-on: #3A1B22;
-  --neutral-bg: #2C2721;
-  --neutral-ink: #A79E91;
+  --over-on: #3A1A24;
+  --neutral-bg: #212C3E;
+  --neutral-ink: #94A3B8;
 
-  --chart-1: #A4A0F0;
-  --chart-2: #A56DDD;
-  --chart-3: #DE8FDE;
-  --chart-4: #E1528E;
-  --chart-5: #41B9B1;
-  --chart-6: #B47B2A;
-  --chart-7: #B7AA50;
-  --chart-8: #968373;
+  --chart-1: #818CF8;
+  --chart-2: #8074B0;
+  --chart-3: #C084FC;
+  --chart-4: #AE6E8D;
+  --chart-5: #38BDF8;
+  --chart-6: #469B90;
+  --chart-7: #FBBF24;
+  --chart-8: #7688A0;
 
   --shadow-float-value: 0 2px 12px rgba(0, 0, 0, 0.45);
   --scrim: rgba(0, 0, 0, 0.55);

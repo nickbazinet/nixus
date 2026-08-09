@@ -128,7 +128,7 @@ function RootLayout() {
             id={MAIN_ID}
             tabIndex={-1}
             className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col overscroll-contain bg-page",
+              "flex min-h-0 min-w-0 flex-1 flex-col overscroll-contain border-l border-rail-line bg-page",
               isAiChat ? "overflow-hidden" : "overflow-y-auto"
             )}
           >

@@ -146,7 +146,7 @@ export function AppSidebar() {
       onMouseLeave={() => setHovered(false)}
       style={{ scrollbarWidth: "none" }}
       className={cn(
-        "z-30 flex h-full shrink-0 flex-col border-r border-rail-line bg-rail transition-[width] duration-200 [&::-webkit-scrollbar]:hidden",
+        "z-30 flex h-full shrink-0 flex-col bg-rail transition-[width] duration-200 [&::-webkit-scrollbar]:hidden",
         expanded ? "w-rail-w-expanded" : "w-rail-w"
       )}
     >
