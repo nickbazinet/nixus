@@ -255,7 +255,16 @@ test.describe("AI Chat Page — Story 7.1", () => {
     await expect(aiMsg).toContainText("$125.50", { timeout: 5000 });
 
     const figure = await aiMsg.evaluate((root) => {
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      // Skip the `sr-only` aria-live region (ChatMessageBubble renders it BEFORE
+      // the visible answer and duplicates the same text). It is outside the
+      // `.money` wrapper, so walking into it reports font-variant-numeric
+      // "normal" and fails a passing implementation. Assert on visible text only.
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) =>
+          node.parentElement?.closest('.sr-only')
+            ? NodeFilter.FILTER_REJECT
+            : NodeFilter.FILTER_ACCEPT,
+      });
       let node = walker.nextNode();
       while (node !== null) {
         if (node.textContent?.includes("$125.50") && node.parentElement) {

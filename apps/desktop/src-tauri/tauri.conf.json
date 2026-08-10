@@ -24,6 +24,11 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["nixus"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4RjlEQTU2MDUxOERCQjAKUldTdzJ4Z0ZWdHI1S0JHMDJMUEgvbEFMaVk0eHB5WitvbGNJYWpVTlE5MGNJUVZNTDdqeE9RMGQK",
       "endpoints": [

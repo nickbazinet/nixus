@@ -30,6 +30,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-dialog = "2.7.0"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-deep-link = "2"
 tempfile = "3"
 base64 = "0.22"
 aws-config = "1.8.15"
@@ -41,4 +42,12 @@ keyring-core = "1"
 async-openai = "0.27"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 urlencoding = "2"
+sha2 = "0.10"
+rand = "0.9"
+
+# Must remain the LAST table in this file: bare keys after a [target...] table would
+# be silently absorbed into it. The "deep-link" feature is required so a forwarded
+# nixus:// argv re-triggers the deep-link event in the already-running instance.
+[target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 

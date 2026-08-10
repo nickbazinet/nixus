@@ -18,10 +18,10 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 
 ### Monorepo
 - **Package manager:** pnpm with workspaces (`pnpm-workspace.yaml`)
-- **Package scope:** `@nkbaz/` for all npm packages
+- **Package scope:** `@nixus/` for all npm packages
 - **Workspace packages:** `apps/desktop`, `apps/web`, `packages/shared`
 
-### Desktop App (`@nkbaz/desktop` — `apps/desktop/`)
+### Desktop App (`@nixus/desktop` — `apps/desktop/`)
 - React 19.1.0
 - TypeScript ~5.8.3 (strict mode)
 - Vite 7.x
@@ -34,7 +34,7 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - react-hook-form 7.71.2
 - recharts 3.8.0
 - Playwright 1.58.2 (E2E tests)
-- `@nkbaz/shared` (via `workspace:*`)
+- `@nixus/shared` (via `workspace:*`)
 
 ### Rust Backend (`apps/desktop/src-tauri/`)
 - Rust edition 2021
@@ -46,9 +46,9 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - aws-sdk-bedrockruntime 1.127.0
 - async-openai 0.27
 - tokio 1.50.0 (full features)
-- keyring 4 (OS credential store for AI keys)
+- keyring 4 + keyring-core 1 (OS credential store for AI keys and auth sessions) — actual entry API used in code is `keyring_core::Entry`, not `keyring::Entry`; `keyring` v4 is only used once, in `lib.rs`, to call `use_native_store(false)`
 
-### Web App (`@nkbaz/web` — `apps/web/`)
+### Web App (`@nixus/web` — `apps/web/`)
 - React 19.1.0
 - TypeScript ~5.8.3 (strict mode)
 - Vite 7.x
@@ -59,12 +59,12 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - i18next 26.0.3 + react-i18next 17.0.2
 - Vitest 3.2.4 + @testing-library/react 16.1.0 (unit tests)
 - Playwright 1.58.2 (E2E tests)
-- `@nkbaz/shared` (via `workspace:*`)
+- `@nixus/shared` (via `workspace:*`)
 
-### Shared Package (`@nkbaz/shared` — `packages/shared/`)
+### Shared Package (`@nixus/shared` — `packages/shared/`)
 - TypeScript ~5.8.3
 - `@base-ui/react ^1.3.0` — underlying primitive for all shared UI components
-- Exports: `@nkbaz/shared` (types + index), `@nkbaz/shared/ui` (components), `@nkbaz/shared/lib/cn`, `@nkbaz/shared/styles/tokens.css`
+- Exports: `@nixus/shared` (types + index), `@nixus/shared/ui` (components), `@nixus/shared/lib/cn`, `@nixus/shared/styles/tokens.css`
 
 ---
 
@@ -116,9 +116,9 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - `moduleResolution: "bundler"`, `isolatedModules: true`
 
 ### 8. Shared UI Components
-- Check `@nkbaz/shared/ui` FIRST before creating any new UI component
+- Check `@nixus/shared/ui` FIRST before creating any new UI component
 - Shared components use `@base-ui/react` as the primitive layer (NOT Radix UI directly)
-- Import with: `import { Button } from "@nkbaz/shared/ui"`
+- Import with: `import { Button } from "@nixus/shared/ui"`
 - Desktop can add shadcn components locally, but prefer shared package for cross-app reuse
 - Never duplicate a component that exists in `packages/shared/src/ui/`
 
@@ -194,7 +194,7 @@ apps/web/src/
 | Rust modules | snake_case | `expense_db`, `audit_db` |
 | JSON / IPC fields | snake_case | `amount_cents`, `budget_category_id` |
 | Query keys | kebab-case strings | `"budget-status"`, `"net-worth-history"` |
-| pnpm workspace packages | `@nkbaz/` scope | `@nkbaz/desktop` |
+| pnpm workspace packages | `@nixus/` scope | `@nixus/desktop` |
 
 ---
 
@@ -202,7 +202,7 @@ apps/web/src/
 
 ### TanStack Router (Both Apps)
 - File-based routing auto-generates `routeTree.gen.ts` — **never edit this file manually**
-- Run `pnpm --filter @nkbaz/desktop dev` (or build) to regenerate routeTree
+- Run `pnpm --filter @nixus/desktop dev` (or build) to regenerate routeTree
 - Web app: `createRootRoute({ shellComponent: RootDocument })` pattern — `shellComponent` renders the full HTML shell
 
 ### TanStack Start (Web Only)
@@ -235,7 +235,7 @@ export function useCreateExpense() {
 ### Web Test Co-location
 - Unit test files sit next to the component: `Component.tsx` + `Component.test.tsx`
 - No separate `__tests__/` directories
-- Run with: `pnpm --filter @nkbaz/web test`
+- Run with: `pnpm --filter @nixus/web test`
 
 ---
 
@@ -287,15 +287,18 @@ export function useCreateExpense() {
 
 ## Testing Rules
 
-### Desktop (Playwright E2E Only)
-- No unit test framework in desktop — all testing is Playwright E2E
-- Tests live in `apps/desktop/tests/`
+### Desktop (Vitest Unit + Playwright E2E)
+- Vitest + jsdom for unit tests: i18n locale-parity specs (`src/locales/__tests__/*.test.ts`) and hook tests (`src/hooks/__tests__/*.test.ts`) — no `@testing-library/react` dependency, tests use `createRoot`/`act` directly
+- Run: `pnpm --filter @nixus/desktop test`
+- Playwright E2E for everything user-flow-shaped — tests live in `apps/desktop/tests/`
+- **E2E runs against the plain Vite dev server (port 1420), not a built Tauri binary** — `window.__TAURI_INTERNALS__.invoke` is stubbed per-spec via `page.addInitScript`; there is no real IPC layer in this suite
+- **When adding any always-mounted root-level component that calls `invoke()` on load** (e.g. an app-shell dialog, header widget) — every existing spec's Tauri mock must add a case for the new command(s), or that spec's mock falls through to `Promise.reject("Unknown command")` and the new component renders in its error state. Audit all existing specs' mock switch statements before merging, not after.
 
 ### Web (Vitest Unit + Playwright E2E)
 - Unit test files co-located with components: `Component.tsx` + `Component.test.tsx`
 - No `__tests__/` directories — keep tests next to the source file
 - Use `@testing-library/react` for component tests
-- Run: `pnpm --filter @nkbaz/web test`
+- Run: `pnpm --filter @nixus/web test`
 
 ---
 
@@ -312,9 +315,9 @@ export function useCreateExpense() {
 
 - **Version bumps require 3 files:** `apps/desktop/package.json` + `apps/desktop/src-tauri/tauri.conf.json` + `apps/desktop/src-tauri/Cargo.toml` (CI reads version from tauri.conf.json)
 - **Build commands:**
-  - Desktop dev: `pnpm --filter @nkbaz/desktop tauri dev`
-  - Web dev: `pnpm --filter @nkbaz/web dev`
-  - Desktop build: `pnpm --filter @nkbaz/desktop tauri build`
+  - Desktop dev: `pnpm --filter @nixus/desktop tauri dev`
+  - Web dev: `pnpm --filter @nixus/web dev`
+  - Desktop build: `pnpm --filter @nixus/desktop tauri build`
 
 ---
 
@@ -324,7 +327,7 @@ export function useCreateExpense() {
 - SQL queries inside `commands/` — belongs in `db/` layer
 - Hardcoded query keys as strings in hooks — use `queryKeys` from `constants.ts`
 - Editing `routeTree.gen.ts` manually — it will be overwritten on next dev/build
-- Creating UI components that already exist in `@nkbaz/shared/ui`
+- Creating UI components that already exist in `@nixus/shared/ui`
 - Leaving TypeScript or Rust compilation warnings — CI will fail
 - Ignoring `noUnusedLocals`/`noUnusedParameters` — remove unused code or use `_` prefix
 - Partial version bumps (updating only 1-2 of the 3 required version files)

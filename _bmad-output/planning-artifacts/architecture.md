@@ -217,6 +217,10 @@ sam init --runtime rust --app-template hello-world --name api
 
 ### Authentication & Security
 
+> **Superseded (2026-08-09):** The rows below describe the original, never-implemented Cognito+DynamoDB+Stripe design. Licensing/subscription rows (API authorization, Stripe webhooks, the `/users/me/license*` and `/subscriptions/*` routes) are superseded by [architecture-entitlements-licensing.md](architecture-entitlements-licensing.md), which uses Keygen + LemonSqueezy instead and explicitly has **no login**. The `Auth provider`, `Auth UI`, `Desktop auth flow`, and `Token storage (desktop)` rows are superseded by a separate, later, and unrelated login/identity feature in [architecture-login.md](architecture-login.md) — notably: **no localhost redirect** (uses `tauri-plugin-deep-link` with a custom URI scheme instead) and **no tauri-plugin-stronghold** (uses the OS keyring via the existing `credentials.rs` pattern instead). This table is retained for historical record only.
+>
+> **This section is not authoritative for login.** [architecture-login.md](architecture-login.md) is the **sole** reference for every login and user-identity question; [architecture-entitlements-licensing.md](architecture-entitlements-licensing.md) is the reference for every entitlements and licensing question. Two rows below are wrong for the shipped feature and must not be copied from here: **`Desktop auth flow` — "System browser OAuth → localhost redirect"** is not what ships (the shipped flow is the `nixus://auth/callback` custom URI scheme via `tauri-plugin-deep-link`, with no localhost listener at all), and **`Token storage (desktop)` — "tauri-plugin-stronghold"** is not what ships (tokens live in the OS keyring under service `nixus-auth`, written through the existing `credentials.rs` sole-accessor module; `tauri-plugin-stronghold` is not a dependency of this project).
+
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Auth provider | AWS Cognito User Pool | 50K MAU free tier; native API Gateway JWT authorizer; handles registration, login, password reset, MFA |

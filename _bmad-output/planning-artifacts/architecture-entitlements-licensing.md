@@ -147,6 +147,8 @@ sam init --runtime nodejs22.x --architecture arm64 --name nixus-licensing-bridge
 - **Secrets:** Keygen Admin API token + LemonSqueezy webhook signing secret in **AWS SSM Parameter Store (SecureString)** — cheaper than Secrets Manager for one function with two secrets.
 - License file is already Ed25519-signed by Keygen and stored in the OS-encrypted keychain — no extra app-level encryption needed.
 
+> **Amendment (2026-08-09):** The "No traditional login" statement above describes the licensing/entitlement model specifically and is unchanged — entitlement checks still key off the LemonSqueezy email + Keygen license/machine activation, with no dependency on user identity. A separate, unrelated **login/user-identity feature** (AWS Cognito, email/password + Google federation) has since been architected in [`architecture-login.md`](architecture-login.md) to support future features (notifications, sync, community). The two systems share no code, no data model, and no "account" concept — a user may be logged in via Cognito, licensed via Keygen, both, or neither, independently.
+
 ### API & Communication Patterns
 
 - Inbound events handled: `order_created` (lifetime), `subscription_created/updated/cancelled/expired/resumed`.

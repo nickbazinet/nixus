@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { Search } from "lucide-react";
 import { focusRing } from "@nixus/shared";
+import { ProfileMenu } from "@/components/auth/ProfileMenu";
 import { cn } from "@/lib/utils";
 
 interface TopBarProps {
@@ -10,10 +11,8 @@ interface TopBarProps {
 export function TopBar({ onSearchClick }: TopBarProps) {
   const { t } = useTranslation();
 
-  // No account avatar: this is one user, one machine, no login, and a person-shaped glyph in the
-  // chrome implies an account the product does not have.
   return (
-    <header className="flex h-14 shrink-0 items-center justify-center bg-chrome px-page-x">
+    <header className="relative flex h-14 shrink-0 items-center justify-center bg-chrome px-page-x">
       <button
         type="button"
         onClick={onSearchClick}
@@ -33,6 +32,13 @@ export function TopBar({ onSearchClick }: TopBarProps) {
           ⌘K
         </kbd>
       </button>
+
+      {/* Pinned absolutely rather than laid out as a flex sibling: the search field is
+       * `w-full max-w-[480px]` inside a `justify-center` row, so any second participant in that
+       * distribution shifts or resizes it on every route. */}
+      <div className="absolute inset-y-0 right-page-x flex items-center">
+        <ProfileMenu />
+      </div>
     </header>
   );
 }

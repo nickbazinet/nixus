@@ -58,4 +58,7 @@ export const queryKeys = {
   financialHealth: ["financial-health"] as const,
   financialHealthSummary: ["financial-health", "summary"] as const,
   financialHealthDetail: ["financial-health", "detail"] as const,
+  auth: {
+    session: ["auth", "session"] as const,
+  },
 };

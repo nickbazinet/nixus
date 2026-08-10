@@ -631,3 +631,8 @@ export interface AiConfig {
   configured: boolean;
   region: string;
 }
+
+export type AuthState =
+  | { status: "LoggedOut" }
+  | { status: "LoggedIn"; email: string; name: string | null }
+  | { status: "SessionExpired" };

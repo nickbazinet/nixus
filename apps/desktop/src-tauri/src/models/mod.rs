@@ -732,3 +732,70 @@ pub struct MaintenanceAlertSummary {
     pub worst_status: crate::maintenance::evaluator::TaskStatus,
     pub vehicles: Vec<VehicleAlertRow>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitoSession {
+    pub access_token: String,
+    pub id_token: String,
+    pub refresh_token: String,
+    // WHY: Unix epoch seconds as i64, not the project's ISO-8601 String date convention. This
+    // value is compared against `now` to decide whether to refresh (Story 26.5), so it must be
+    // numeric arithmetic input rather than a user-facing date.
+    pub expires_at: i64,
+}
+
+// Variants stay PascalCase on purpose: Story 27.1's TypeScript union discriminates on the
+// literals "LoggedOut" | "LoggedIn" | "SessionExpired", so `rename_all` must NOT be applied.
+// `name` intentionally has no `skip_serializing_if`: the wire shape is `name: string | null`.
+// WHY: constructed by get_auth_session in Story 26.5. Remove the allow then.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status")]
+pub enum AuthState {
+    LoggedOut,
+    LoggedIn { email: String, name: Option<String> },
+    SessionExpired,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_state_logged_out_serializes_with_status_tag() {
+        let json = serde_json::to_string(&AuthState::LoggedOut).unwrap();
+        assert_eq!(json, r#"{"status":"LoggedOut"}"#);
+    }
+
+    #[test]
+    fn auth_state_logged_in_serializes_with_name() {
+        let json = serde_json::to_string(&AuthState::LoggedIn {
+            email: "user@example.com".to_string(),
+            name: Some("Nick".to_string()),
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"status":"LoggedIn","email":"user@example.com","name":"Nick"}"#
+        );
+    }
+
+    #[test]
+    fn auth_state_logged_in_serializes_absent_name_as_null() {
+        let json = serde_json::to_string(&AuthState::LoggedIn {
+            email: "user@example.com".to_string(),
+            name: None,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"status":"LoggedIn","email":"user@example.com","name":null}"#
+        );
+    }
+
+    #[test]
+    fn auth_state_session_expired_serializes_with_status_tag() {
+        let json = serde_json::to_string(&AuthState::SessionExpired).unwrap();
+        assert_eq!(json, r#"{"status":"SessionExpired"}"#);
+    }
+}

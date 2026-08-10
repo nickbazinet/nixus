@@ -16,7 +16,29 @@ use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // Single-instance must precede deep-link so a Windows nixus:// launch is
+    // forwarded into the running process instead of spawning a second window.
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Log the argv count only: argv carries the callback URL, which contains
+            // the single-use authorization code and the CSRF state.
+            info!(
+                "Second instance intercepted ({} argv entries); focusing main window",
+                argv.len()
+            );
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }));
+    }
+
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -56,6 +78,7 @@ pub fn run() {
 
             app.manage(DbState(Mutex::new(conn)));
             app.manage(Mutex::new(ai_state));
+            app.manage(commands::auth::PendingLogin::default());
 
             let catalog_data_dir = app_data_dir.clone();
             maintenance::catalog::spawn_background_catalog_refresh(catalog_data_dir);
@@ -86,6 +109,39 @@ pub fn run() {
                     Err(e) => tracing::error!("Background recurring apply failed: {}", e),
                 }
             });
+
+            // Placed after the tracing subscriber is initialized above, so deep-link
+            // log lines actually reach the log file.
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+
+                #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+                if let Err(e) = app.deep_link().register_all() {
+                    tracing::warn!("Runtime deep link scheme registration failed: {}", e);
+                }
+
+                let deep_link_handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        commands::auth::dispatch_deep_link_url(
+                            &deep_link_handle,
+                            url.as_str(),
+                            "on_open_url",
+                        );
+                    }
+                });
+
+                if let Ok(Some(urls)) = app.deep_link().get_current() {
+                    let cold_start_handle = app.handle().clone();
+                    for url in urls {
+                        commands::auth::dispatch_deep_link_url(
+                            &cold_start_handle,
+                            url.as_str(),
+                            "cold_start",
+                        );
+                    }
+                }
+            }
 
             Ok(())
         })
@@ -185,6 +241,10 @@ pub fn run() {
             commands::financial_health::get_financial_health_summary,
             commands::financial_health::get_financial_health_detail,
             commands::financial_health::set_emergency_fund_target,
+            commands::auth::start_login,
+            commands::auth::handle_auth_callback,
+            commands::auth::get_auth_session,
+            commands::auth::sign_out,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

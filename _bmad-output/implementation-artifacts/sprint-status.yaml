@@ -35,7 +35,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-03-14
-last_updated: 2026-08-04
+last_updated: 2026-08-09
 project: nkbaz-finance
 project_key: NOKEY
 tracking_system: file-system
@@ -216,3 +216,20 @@ development_status:
   25-3-settings-templates-section-wiring: done
   25-4-starter-template-path-in-onboarding-fork: done
   epic-25-retrospective: optional
+
+  # Epic 26: Cognito Account Sign-In (login / user identity)
+  epic-26: done
+  26-1-cognito-user-pool-and-public-app-client-setup: done
+  26-2-auth-models-error-variant-and-secure-session-storage: done
+  26-3-deep-link-and-single-instance-plugin-registration: done
+  26-4-pkce-login-launch-and-callback-token-exchange: done
+  26-5-session-read-launch-refresh-and-sign-out-commands: done
+  epic-26-retrospective: optional
+
+  # Epic 27: Account Prompt & Minimalist Profile (login / user identity)
+  epic-27: done
+  27-1-frontend-auth-session-hook-and-query-key: done
+  27-2-account-prompt-dialog-with-continue-offline: done
+  27-3-header-profile-menu-and-minimalist-profile-view: done
+  27-4-auth-e2e-coverage-and-licensing-independence-amendment: done
+  epic-27-retrospective: optional

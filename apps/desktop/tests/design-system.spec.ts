@@ -90,20 +90,23 @@ async function setupSeededDashboard(page: Page) {
   });
 }
 
-/* The values asserted here are the Direction A spine tokens defined in
- * packages/shared/src/styles/tokens.css. Their CONTRAST MARGINS are guarded
- * separately and computationally by packages/shared's contrast.test.ts — this
- * spec only proves the tokens actually reach the running app. */
+/* The values asserted here are the Direction C "Clear Slate" spine tokens
+ * defined in packages/shared/src/styles/tokens.css. Their CONTRAST MARGINS are
+ * guarded separately and computationally by packages/shared's contrast.test.ts,
+ * which parses tokens.css at run time — this spec only proves the tokens
+ * actually reach the running app. Because these are literals, a palette change
+ * lands here as a failure by design: re-copy from tokens.css :root, do not
+ * relax the assertion. */
 const SPINE_LIGHT = {
-  bg: '#FAF8F5',
+  bg: '#F1F5F9',
   card: '#FFFFFF',
-  ink: '#1C1917',
-  'ink-dim': '#6B635A',
-  line: '#E8E3DA',
-  brand: '#5B54D6',
+  ink: '#0F172A',
+  'ink-dim': '#576578',
+  line: '#E2E8F0',
+  brand: '#4F46E5',
   'brand-on': '#FFFFFF',
-  good: '#15803D',
-  caution: '#B45309',
+  good: '#047857',
+  caution: '#A16207',
   over: '#BE123C',
 } as const;
 

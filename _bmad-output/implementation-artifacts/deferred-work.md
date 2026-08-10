@@ -200,3 +200,50 @@ user wiping data specifically to reclaim space) leaves the file un-shrunk with n
   e.g. a public API, a scripted/bulk-import apply path, or an AI-driven apply flow — at which point duplicate
   (group, category) pairs in a single request should be rejected with `AppError::Validation` rather than
   silently resolved.
+
+## Deferred from: code review of 26-3-deep-link-and-single-instance-plugin-registration (2026-08-09)
+
+- **`chat.spec.ts:250` font-family assertion fails** (`apps/desktop/tests/chat.spec.ts:250`): genuine Playwright
+  failure, but **pre-existing on `master`** and not caused by Story 26.3.
+  **Evidence:** Story 26.3 modifies zero frontend source files — `git status --porcelain` filtered to
+  `\.(css|ts|tsx|js|jsx)$` returns nothing, and `git status --porcelain -- 'apps/desktop/src/' 'packages/'`
+  returns nothing (the only non-Rust changes are `apps/desktop/package.json` and `pnpm-lock.yaml`).
+  Playwright also never compiles or launches the Rust binary (`playwright.config.ts` runs `pnpm run dev`
+  against Vite on port 1420 with `window.__TAURI_INTERNALS__.invoke` stubbed per spec), so the plugin
+  registration this story adds is structurally unreachable from these specs.
+  **Most plausible origin:** commit `9b45411 "UI: Implement new color scheme"`.
+  **Revisit if/when:** triaged as its own bug against the color-scheme change — it is not a gate Story 26.3
+  can clear or has affected.
+
+- **`design-system.spec.ts:110` CSS custom-property assertion fails**
+  (`apps/desktop/tests/design-system.spec.ts:110`): same classification, same evidence, and same most-plausible
+  origin (`9b45411`) as the item above. Should be triaged together with it.
+  Note: the other two failures in the same run (`expenses.spec.ts:666`, `maintenance.spec.ts:1318`) pass when
+  re-run in isolation and are flaky timing, not defects — they are deliberately **not** recorded here.
+
+## Deferred from: 26-1-cognito-user-pool-and-public-app-client-setup (2026-08-09)
+
+- **Google social identity provider (federated sign-in) is deferred — Story 26.1 AC 4 and AC 10 are NOT met.**
+  **Decision: deferred by explicit user decision during provisioning.** A Google Cloud OAuth 2.0 Web
+  application client was **never created**, so no Google IdP could be registered on the Cognito user pool.
+  **Evidence / why:** `Google` was briefly ticked in the app client's supported identity providers, which
+  rendered a "Continue with Google" button on the managed login page, but clicking it failed with
+  `errorMessage="Login option is not available. Please try another one"` — the expected Cognito response when
+  an app client lists an identity provider that does not exist on the pool. `Google` is therefore being
+  un-ticked on the app client: shipping a visible button that always errors is a worse user experience than
+  shipping no button at all.
+  **Consequences to carry forward:**
+  - AC 5's `SupportedIdentityProviders` is `COGNITO` only, not `COGNITO` + `Google`.
+  - Story 26.1 AC 9 (email/password end-to-end) passed; AC 10 (Google end-to-end) is untested and unmet.
+  - Story 26.1 AC 6's "`name` and `email` are in the app client's read attributes" could not be positively
+    confirmed, because with `email` as the only required attribute and no federated user in existence, no
+    user carrying a `name` attribute exists — so the `name` claim's absence from the `id_token` cannot
+    distinguish "no name stored" from "read attribute not granted". Moot for v1.
+  - Story 27.3 AC 5's email-only degradation path (no `name` claim) is now the **only** path exercised in
+    v1, not an edge case.
+  **Revisit if/when:** Google federation is wanted. The work is then: create the Google Cloud OAuth Web
+  client (authorized JS origin `https://auth.nixusapp.com`, redirect URI
+  `https://auth.nixusapp.com/oauth2/idpresponse`), add Google as a Cognito social IdP with scopes
+  `profile email openid` and attribute mapping `email`→`email` / `name`→`name`, re-tick `Google` on the app
+  client, **re-verify the `name`/`email` read attributes**, and note that account linking is not automatic
+  (an email/password user and a Google user with the same address become two distinct `sub`s).

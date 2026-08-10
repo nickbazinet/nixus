@@ -282,6 +282,18 @@ The AI client initializes asynchronously on app startup. If credentials are unav
 
 ---
 
+## Account sign-in (Cognito)
+
+Nixus supports an optional account (email/password) backed by an **AWS Cognito user pool**. Sign-in is entirely optional: **no feature is gated by it**, and the app is fully functional offline with no account. Google sign-in is **deferred** — it is not available yet.
+
+The user pool, its hosted domain (`auth.nixusapp.com`), and the public app client are **provisioned out-of-band in the AWS Console — there is no infrastructure-as-code in this repo**, the same way AWS Bedrock is treated. The non-secret configuration (region, domain, app client id) is committed as build-time constants in `apps/desktop/src-tauri/src/commands/auth.rs`; a public OAuth client id and a hosted domain are public by design, since both travel in the browser's address bar on every authorization request.
+
+**Contributors need no AWS credentials** to build or run the desktop app. Sign-in opens the Cognito hosted page in your system browser; tokens are stored in the OS keyring, never in the webview.
+
+See `_bmad-output/planning-artifacts/architecture-login.md` for the full design — it is the **sole** authority on login. The Cognito + DynamoDB + Stripe design in `_bmad-output/planning-artifacts/architecture.md` (April 2026) is **superseded and must not be used as a reference**.
+
+---
+
 ## Project structure
 
 ```

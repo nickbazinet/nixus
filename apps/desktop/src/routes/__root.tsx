@@ -11,6 +11,7 @@ import { DestinationNav } from "../components/shared/DestinationNav";
 import { FloatingChatBar } from "../components/chat/FloatingChatBar";
 import { UpdateChecker } from "../components/shared/UpdateChecker";
 import { RecurringApplyListener } from "../components/shared/RecurringApplyListener";
+import { AccountPromptDialog } from "../components/auth/AccountPromptDialog";
 import { ValuesVisibilityProvider } from "../contexts/ValuesVisibilityContext";
 import { SURFACE_HEADING_ID } from "../components/shared/PageHeader";
 import { normalizePeriodParam } from "../hooks/usePeriod";
@@ -151,6 +152,7 @@ function RootLayout() {
         <FloatingChatBar open={chatOpen} onClose={handleClose} />
         <UpdateChecker />
         <RecurringApplyListener />
+        <AccountPromptDialog />
       </div>
     </ValuesVisibilityProvider>
   );

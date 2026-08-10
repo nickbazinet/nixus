@@ -242,7 +242,7 @@ src/
 ### Architectural Boundaries
 
 **`credentials.rs` module — sole keyring interface:**
-- Only module permitted to call `keyring::Entry`
+- Only module permitted to call `keyring_core::Entry`
 - Exports: `store_aws_credentials()`, `load_aws_credentials()`, `store_openai_key()`, `load_openai_key()`, `clear_credentials()`
 - Called by `commands/settings.rs` and `lib.rs` only — never by `ai/` directly
 
@@ -320,7 +320,7 @@ const KEYRING_SERVICE: &str = "nkbaz-finance";
 // "openai_api_key"
 ```
 
-**Anti-pattern:** Accessing `keyring::Entry::new("nkbaz", "key")` inline in a command handler — always go through `credentials.rs`.
+**Anti-pattern:** Accessing `keyring_core::Entry::new("nkbaz-finance", "key")` inline in a command handler — always go through `credentials.rs`.
 
 ### AiState Mutation Pattern
 

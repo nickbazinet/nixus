@@ -6,6 +6,7 @@ pub enum AppError {
     Validation { message: String, field: Option<String> },
     Database { message: String },
     AiService { message: String, recoverable: bool },
+    Auth { message: String, recoverable: bool },
     File { message: String },
     NotConfigured,
     InvalidCredentials,
@@ -18,6 +19,7 @@ impl fmt::Display for AppError {
             AppError::Validation { message, .. } => write!(f, "Validation error: {}", message),
             AppError::Database { message } => write!(f, "Database error: {}", message),
             AppError::AiService { message, .. } => write!(f, "AI service error: {}", message),
+            AppError::Auth { message, .. } => write!(f, "Authentication error: {}", message),
             AppError::File { message } => write!(f, "File error: {}", message),
             AppError::NotConfigured => write!(f, "AI provider not configured"),
             AppError::InvalidCredentials => write!(f, "AI credentials are invalid"),
@@ -59,6 +61,13 @@ impl Serialize for AppError {
                 map.serialize_entry("recoverable", recoverable)?;
                 map.end()
             }
+            AppError::Auth { message, recoverable } => {
+                let mut map = serializer.serialize_map(Some(3))?;
+                map.serialize_entry("type", "auth")?;
+                map.serialize_entry("message", message)?;
+                map.serialize_entry("recoverable", recoverable)?;
+                map.end()
+            }
             AppError::File { message } => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("type", "file")?;
@@ -94,5 +103,39 @@ impl From<rusqlite::Error> for AppError {
         AppError::Database {
             message: err.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_error_serializes_with_type_message_and_recoverable() {
+        let json = serde_json::to_string(&AppError::Auth {
+            message: "x".to_string(),
+            recoverable: true,
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"type":"auth","message":"x","recoverable":true}"#);
+    }
+
+    #[test]
+    fn auth_error_serializes_unrecoverable_flag() {
+        let json = serde_json::to_string(&AppError::Auth {
+            message: "x".to_string(),
+            recoverable: false,
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"type":"auth","message":"x","recoverable":false}"#);
+    }
+
+    #[test]
+    fn auth_error_displays_with_authentication_prefix() {
+        let error = AppError::Auth {
+            message: "session missing".to_string(),
+            recoverable: true,
+        };
+        assert_eq!(error.to_string(), "Authentication error: session missing");
     }
 }
