@@ -43,6 +43,7 @@ export const queryKeys = {
   yearlySummary: (year: number) => ["yearly-summary", year] as const,
   projectionInput: ["projection-input"] as const,
   recurringTemplates: ["recurring-templates"] as const,
+  recurringIncomeTemplates: ["recurring-income-templates"] as const,
   chatConversations: (agentId: string) =>
     ["chat-conversations", agentId] as const,
   maintenance: ["maintenance"] as const,

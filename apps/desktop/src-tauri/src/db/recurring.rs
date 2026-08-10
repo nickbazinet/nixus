@@ -227,14 +227,14 @@ fn recurring_expense_exists(
     .map_err(AppError::from)
 }
 
-fn parse_template_start_date(created_at: &str) -> Result<NaiveDate, AppError> {
+pub(crate) fn parse_template_start_date(created_at: &str) -> Result<NaiveDate, AppError> {
     let date_part = created_at.split([' ', 'T']).next().unwrap_or(created_at);
     NaiveDate::parse_from_str(date_part, "%Y-%m-%d").map_err(|e| AppError::Database {
         message: format!("Invalid template created_at date: {e}"),
     })
 }
 
-fn next_month(year: i32, month: u32) -> (i32, u32) {
+pub(crate) fn next_month(year: i32, month: u32) -> (i32, u32) {
     if month == 12 {
         (year + 1, 1)
     } else {
@@ -290,12 +290,12 @@ fn get_template_by_id(conn: &Connection, id: i64) -> Result<RecurringExpenseTemp
     .map_err(AppError::from)
 }
 
-fn clamp_day_to_month(year: i32, month: u32, day: i32) -> i32 {
+pub(crate) fn clamp_day_to_month(year: i32, month: u32, day: i32) -> i32 {
     let last_day = last_day_of_month(year, month);
     std::cmp::min(day, last_day as i32)
 }
 
-fn last_day_of_month(year: i32, month: u32) -> u32 {
+pub(crate) fn last_day_of_month(year: i32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,

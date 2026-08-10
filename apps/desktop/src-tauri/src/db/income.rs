@@ -124,6 +124,16 @@ pub fn insert_income_entry(
     conn: &Connection,
     input: &CreateIncomeEntryInput,
 ) -> Result<LinkedIncomeEntryMutation, AppError> {
+    insert_income_entry_from_template(conn, input, None)
+}
+
+/// `recurring_income_template_id` stamps which template produced the row, so a later backfill can
+/// recognise the occurrence as already applied even if the template's amount or day has changed.
+pub(crate) fn insert_income_entry_from_template(
+    conn: &Connection,
+    input: &CreateIncomeEntryInput,
+    recurring_income_template_id: Option<i64>,
+) -> Result<LinkedIncomeEntryMutation, AppError> {
     if input.amount_cents <= 0 {
         return Err(AppError::Validation {
             message: "Amount must be greater than $0".to_string(),
@@ -154,9 +164,16 @@ pub fn insert_income_entry(
     let tx = conn.unchecked_transaction()?;
     validate_account_id(&tx, input.account_id)?;
     tx.execute(
-        "INSERT INTO income_entries (source_id, amount_cents, date, month, account_id)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![input.source_id, input.amount_cents, input.date, month, input.account_id],
+        "INSERT INTO income_entries (source_id, amount_cents, date, month, account_id, recurring_income_template_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            input.source_id,
+            input.amount_cents,
+            input.date,
+            month,
+            input.account_id,
+            recurring_income_template_id
+        ],
     )?;
 
     let id = tx.last_insert_rowid();
@@ -398,7 +415,7 @@ fn row_to_income_entry(row: &rusqlite::Row) -> rusqlite::Result<IncomeEntry> {
     })
 }
 
-fn validate_account_id(conn: &Connection, account_id: Option<i64>) -> Result<(), AppError> {
+pub(crate) fn validate_account_id(conn: &Connection, account_id: Option<i64>) -> Result<(), AppError> {
     let Some(account_id) = account_id else {
         return Ok(());
     };
@@ -518,6 +535,7 @@ mod tests {
                 date TEXT NOT NULL,
                 month TEXT NOT NULL,
                 account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL,
+                recurring_income_template_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );

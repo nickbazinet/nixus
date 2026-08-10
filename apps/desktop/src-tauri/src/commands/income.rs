@@ -284,7 +284,7 @@ fn get_entry_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
     .and_then(|e| serde_json::to_string(&e).ok())
 }
 
-fn record_account_balance_changes(conn: &rusqlite::Connection, changes: &[BalanceChange]) {
+pub(crate) fn record_account_balance_changes(conn: &rusqlite::Connection, changes: &[BalanceChange]) {
     let mut summaries: Vec<(i64, i64, i64)> = Vec::new();
     for change in changes {
         if change.old_balance_cents == change.new_balance_cents {

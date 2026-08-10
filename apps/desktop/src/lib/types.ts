@@ -453,6 +453,35 @@ export interface UpdateRecurringExpenseTemplateInput {
   is_active: boolean;
 }
 
+export interface RecurringIncomeTemplate {
+  id: number;
+  source_id: number;
+  source_name: string;
+  income_type: string;
+  amount_cents: number;
+  day_of_month: number;
+  account_id: number | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateRecurringIncomeTemplateInput {
+  source_id: number;
+  amount_cents: number;
+  day_of_month: number;
+  account_id: number | null;
+}
+
+export interface UpdateRecurringIncomeTemplateInput {
+  id: number;
+  source_id: number;
+  amount_cents: number;
+  day_of_month: number;
+  account_id: number | null;
+  is_active: boolean;
+}
+
 export interface ChatConversation {
   id: number;
   title: string | null;

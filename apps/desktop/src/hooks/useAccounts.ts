@@ -82,6 +82,11 @@ export function useDeleteAccount() {
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
       queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
       queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      // Deleting an account nulls the link on recurring income templates, so a cached row would
+      // keep sending the dead account_id on its next toggle.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.recurringIncomeTemplates,
+      });
     },
   });
 }

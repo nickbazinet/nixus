@@ -447,6 +447,37 @@ pub struct UpdateRecurringExpenseTemplateInput {
     pub is_active: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringIncomeTemplate {
+    pub id: i64,
+    pub source_id: i64,
+    pub source_name: String,
+    pub income_type: String,
+    pub amount_cents: i64,
+    pub day_of_month: i32,
+    pub account_id: Option<i64>,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRecurringIncomeTemplateInput {
+    pub source_id: i64,
+    pub amount_cents: i64,
+    pub day_of_month: i32,
+    pub account_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateRecurringIncomeTemplateInput {
+    pub source_id: i64,
+    pub amount_cents: i64,
+    pub day_of_month: i32,
+    pub account_id: Option<i64>,
+    pub is_active: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscretionaryCategory {
     pub category_id: i64,

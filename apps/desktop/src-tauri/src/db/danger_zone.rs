@@ -21,6 +21,7 @@ pub const WIPE_TABLES: &[&str] = &[
     "maintenance_tasks",
     "vehicles",
     "income_entries",
+    "recurring_income_templates",
     "income_sources",
     "recurring_expense_templates",
     "merchant_category_hints",
@@ -100,6 +101,8 @@ mod tests {
             INSERT INTO income_sources (id, name, income_type) VALUES (1, 'Job', 'employment');
             INSERT INTO income_entries (source_id, amount_cents, date, month)
                 VALUES (1, 500000, '2026-08-01', '2026-08');
+            INSERT INTO recurring_income_templates (source_id, amount_cents, day_of_month)
+                VALUES (1, 500000, 1);
             INSERT INTO chat_conversations (id, title) VALUES (1, 'Chat');
             INSERT INTO chat_messages (conversation_id, role, content)
                 VALUES (1, 'user', 'hello');

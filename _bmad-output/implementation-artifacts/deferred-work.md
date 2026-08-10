@@ -247,3 +247,67 @@ user wiping data specifically to reclaim space) leaves the file un-shrunk with n
   `profile email openid` and attribute mapping `email`→`email` / `name`→`name`, re-tick `Google` on the app
   client, **re-verify the `name`/`email` read attributes**, and note that account linking is not automatic
   (an email/password user and a Google user with the same address become two distinct `sub`s).
+
+## Parking lot: AI Access Proxy — Bedrock access included in paid tiers, quota-capped by subscription (2026-08-10)
+
+**Not yet architected** — this is a captured first-pass discussion + decision, to be turned into a full `bmad-create-architecture` pass (alongside `architecture-entitlements-licensing.md` and `architecture-login.md`) when picked back up.
+
+**Context:** With Cognito login (`architecture-login.md`) and LemonSqueezy/Keygen entitlements (`architecture-entitlements-licensing.md`) both shipped independently, the question came up: could paying users get AWS Bedrock access without entering their own AI API key (today's model — see README, "AI import requires your own API credentials")?
+
+**Decision made so far:** Rather than vending raw Cognito Identity Pool + IAM credentials directly to the desktop app (which has no per-user request quota — IAM is allow/deny, not a metering engine, and a user or extracted credential could call Bedrock directly outside the app), the chosen shape is a **thin Lambda proxy in front of Bedrock**, gated by subscription tier, giving an actual enforcement point for usage caps. Feels "unlimited" to the user in normal use, but is capped per tier under the hood — sized to make an abusive/outlier user's cost bounded rather than open-ended.
+
+**Cost grounding (checked 2026-08-10):** app currently uses `us.anthropic.claude-sonnet-4-6` on Bedrock, priced at $3/MTok input, $15/MTok output (standard on-demand, global cross-region). Estimated light-user cost ~$0.90/month, heavy-user ~$5-15/month — average is absorbable in a subscription price, but *outlier* usage (not the average) is the real risk a flat unmetered plan can't bound, which is why the proxy/quota shape was chosen over raw IAM vending.
+
+**Architectural implications identified, not yet resolved:**
+- Cognito Groups become the tier signal for this feature specifically (read from the verified JWT's `cognito:groups` claim at the proxy) — this is a deliberate, narrow use of Cognito Groups for authorization, limited to already-online/already-logged-in features. It should **not** be extended to gate the offline-first Finance/Car modules (those stay on Keygen per `architecture-entitlements-licensing.md`'s local-first requirement).
+- `apps/api-licensing` (the LemonSqueezy → Keygen webhook bridge) would gain a second responsibility: syncing Cognito group membership (`AdminAddUserToGroup`/`AdminRemoveUserFromGroup`) when a subscription's tier changes, in addition to its existing Keygen entitlement sync.
+- **Unresolved identity-linking problem:** the proxy needs to know which Cognito `sub` corresponds to which LemonSqueezy subscription. Today, login (Cognito) and purchase (LemonSqueezy) are two independent flows with no guaranteed matching email. Needs a decision: require login with the purchase email, or an explicit "link my subscription" step (e.g., enter license key while logged in).
+- Unresolved: quota numbers per tier, proxy request/response shape, and where rate-limit counters live (a single Lambda invocation has no memory across requests — needs a store, e.g. DynamoDB per-user/per-period counters, not an in-process counter).
+
+**Revisit if/when:** ready to formalize — run `bmad-create-architecture` scoped to this feature (working title: `architecture-ai-access-proxy.md`), resolving the identity-linking approach and quota tiers as part of that pass.
+
+## Deferred from spec-recurring-income review (2026-08-10)
+
+Findings from the three-reviewer pass on `spec-recurring-income.md` that were classified **defer** —
+pre-existing patterns or enhancements, not defects introduced by that story. Patch-class findings were
+fixed in the story itself; the one intent-level finding is tracked separately in that spec.
+
+**Pre-existing patterns the recurring-expense feature shares (fix both together, or neither):**
+- **Template edit re-runs history.** `recurring_expense_templates` dedupes on `merchant + date + amount_cents`
+  and always replays from `created_at`, so editing a template's amount or day re-creates every past
+  occurrence. Identical shape in recurring income (see that spec's change log). A shared fix would add a
+  `template_id` column to `expenses` / `income_entries` and dedupe on `(template_id, year-month)`.
+- **Reactivation backfills the pause window.** Toggling a template off then on re-creates every month
+  missed while it was off, because nothing records the deactivation date. Affects expenses and income.
+- **UTC `created_at` vs local `today`.** Templates default `created_at` to `datetime('now')` (UTC) while
+  the apply loop compares against `chrono::Local::now()`, so a template created near midnight in a
+  non-UTC zone can gain or lose its first occurrence. Affects expenses and income.
+- **`amount_cents` has no upper bound.** Only `> 0` is enforced. A value near `i64::MAX` added to
+  `accounts.balance_cents` would overflow into SQLite REAL and permanently lose cents precision.
+  Applies to expenses, income entries, and both template tables.
+- **Row toggles send the whole cached record.** The active switch in `RecurringTemplateList` resends every
+  field from the React Query cache, so a concurrent edit elsewhere can be silently reverted. A partial
+  `set_active` command would remove the lost-update window. Affects both kinds.
+- **Empty numeric input yields `NaN`.** `register("day_of_month", { valueAsNumber: true })` produces `NaN`
+  on an emptied field, which `min`/`max` rules do not reject, so the user gets a generic save-failed toast
+  instead of a field error. Same code in the expense and income template forms.
+- **Not-found returned as `AppError::Database`.** `update_template` / `delete_template` report a missing id
+  as a database fault in both the expense and income modules, so callers cannot distinguish "gone" from
+  "broken".
+- **Failed template query looks like an empty list.** The recurring hooks expose no `isError`, and the page
+  defaults to `[]`, so a failed `invoke` renders "$0.00" and an empty table rather than an error state.
+  Matches the prevailing pattern across the app's hooks.
+
+**Enhancements, not defects:**
+- **No on-demand apply for recurring income.** Expenses expose `apply_recurring_expenses`; income applies
+  only at launch (as the spec scoped it). A template created after its due day therefore does nothing until
+  the next app start. Registering an `apply_recurring_income` command and calling it after create/activate
+  would close the gap.
+- **Startup holds the DB mutex across both backfills.** `lib.rs` evaluates the expense and income applies
+  in one `match` arm, so the single connection mutex is held for both. Persisting a `last_applied_month`
+  per template (instead of always walking from `created_at`) would bound the work and shorten the hold.
+- **Deleting a linked account silently unlinks templates.** `ON DELETE SET NULL` leaves the template active
+  but no longer crediting anything, and the recurring table shows no account column, so the change is
+  invisible to the user.
+- **Pre-existing clippy warning.** `commands/backup.rs:106` `explicit_auto_deref`. Present at baseline
+  `50cb155`, untouched by the recurring-income story, and the only warning the workspace emits.

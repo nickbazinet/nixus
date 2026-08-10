@@ -86,15 +86,18 @@ pub fn run() {
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<DbState>();
-                let result = match state.0.lock() {
-                    Ok(conn) => commands::recurring::apply_due_recurring_expenses(&conn),
+                let (expense_result, income_result) = match state.0.lock() {
+                    Ok(conn) => (
+                        commands::recurring::apply_due_recurring_expenses(&conn),
+                        commands::recurring_income::apply_due_recurring_income(&conn),
+                    ),
                     Err(e) => {
                         tracing::error!("Failed to lock database for recurring apply: {}", e);
                         return;
                     }
                 };
 
-                match result {
+                match expense_result {
                     Ok(created) => {
                         if created.is_empty() {
                             info!("Background recurring apply: no missing expenses");
@@ -107,6 +110,23 @@ pub fn run() {
                         }
                     }
                     Err(e) => tracing::error!("Background recurring apply failed: {}", e),
+                }
+
+                match income_result {
+                    Ok(created) => {
+                        if created.is_empty() {
+                            info!("Background recurring apply: no missing income");
+                        } else {
+                            info!(
+                                "Background recurring apply: created {} income entry(ies)",
+                                created.len()
+                            );
+                            let _ = app_handle.emit("recurring-income:applied", created.len());
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Background recurring income apply failed: {}", e)
+                    }
                 }
             });
 
@@ -210,6 +230,10 @@ pub fn run() {
             commands::recurring::update_recurring_template,
             commands::recurring::delete_recurring_template,
             commands::recurring::apply_recurring_expenses,
+            commands::recurring_income::create_recurring_income_template,
+            commands::recurring_income::get_recurring_income_templates,
+            commands::recurring_income::update_recurring_income_template,
+            commands::recurring_income::delete_recurring_income_template,
             commands::backup::export_backup,
             commands::backup::import_backup,
             commands::danger_zone::delete_all_data,
