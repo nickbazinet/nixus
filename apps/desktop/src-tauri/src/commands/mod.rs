@@ -14,6 +14,7 @@ pub mod income;
 pub mod maintenance;
 pub mod net_worth;
 pub mod onboarding;
+pub mod profile;
 pub mod projection;
 pub mod recurring;
 pub mod recurring_income;

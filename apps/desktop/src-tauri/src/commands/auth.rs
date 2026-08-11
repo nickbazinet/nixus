@@ -474,10 +474,6 @@ struct IdTokenClaims {
     // This pool's only required attribute is `email` and Google federation is
     // deferred, so `name` is legitimately absent for email/password users.
     name: Option<String>,
-    // WHY the allowance: parsed per NFR4 as the durable identity key, but
-    // `AuthState` does not surface it yet (no cloud/sync/notification consumer
-    // exists). Remove the allow when a consumer lands.
-    #[allow(dead_code)]
     sub: String,
 }
 
@@ -666,6 +662,44 @@ async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSess
     }
 }
 
+/// The outcome of the keyring-load-and-refresh path, extracted so
+/// `get_auth_session` and `current_subject` cannot disagree about what "signed
+/// in" means.
+enum ResolvedSession {
+    None,
+    Live(CognitoSession),
+    Refreshed(CognitoSession),
+    Expired,
+}
+
+async fn resolve_session() -> Result<ResolvedSession, AppError> {
+    // A malformed keyring blob propagates as a recoverable error (AC 12) rather
+    // than being smoothed into `LoggedOut`, which would hide the real problem.
+    let session = match credentials::load_cognito_session()? {
+        Some(session) => session,
+        None => return Ok(ResolvedSession::None),
+    };
+
+    if !is_session_expired(session.expires_at, Utc::now().timestamp()) {
+        return Ok(ResolvedSession::Live(session));
+    }
+
+    let refreshed = match refresh_session(&session).await? {
+        Some(refreshed) => refreshed,
+        // The keyring entry is left in place on purpose: an offline launch must
+        // still be able to refresh successfully on a later online launch.
+        // `sign_out` is the only path that removes the entry.
+        None => return Ok(ResolvedSession::Expired),
+    };
+
+    // Same keyring service and account as the original entry, so this overwrites
+    // it rather than creating a second one (AC 3's "in place"), and it goes
+    // through the sole accessor.
+    credentials::store_cognito_session(&refreshed)?;
+
+    Ok(ResolvedSession::Refreshed(refreshed))
+}
+
 /// Resolves the session for the frontend. The network is touched only when the
 /// stored token has already expired, which is what makes "refresh once on
 /// launch" emergent rather than flag-driven: later invalidations (Story 26.4's
@@ -675,41 +709,61 @@ async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSess
 /// audit-log row: auth performs no financial-data mutation.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_auth_session() -> Result<AuthState, AppError> {
-    // A malformed keyring blob propagates as a recoverable error (AC 12) rather
-    // than being smoothed into `LoggedOut`, which would hide the real problem.
-    let session = match credentials::load_cognito_session()? {
-        Some(session) => session,
-        None => {
+    match resolve_session().await? {
+        ResolvedSession::None => {
             info!("Auth session resolved: LoggedOut");
-            return Ok(AuthState::LoggedOut);
+            Ok(AuthState::LoggedOut)
+        }
+        ResolvedSession::Live(session) => {
+            let state = logged_in_from_id_token(&session.id_token)?;
+            info!("Auth session resolved: LoggedIn");
+            Ok(state)
+        }
+        ResolvedSession::Expired => {
+            info!("Auth session resolved: SessionExpired");
+            Ok(AuthState::SessionExpired)
+        }
+        ResolvedSession::Refreshed(session) => {
+            let state = logged_in_from_id_token(&session.id_token)?;
+            info!("Auth session resolved: LoggedIn (session refreshed)");
+            Ok(state)
+        }
+    }
+}
+
+/// The durable identity key of the active account, resolved server-side so the
+/// `sub` never crosses IPC as a parameter and account isolation stays an
+/// invariant rather than a convention the webview could bypass.
+///
+/// The charset check deliberately lives in `profile_store`, not here, so there
+/// is exactly one validation point regardless of caller.
+pub(crate) async fn current_subject() -> Result<String, AppError> {
+    subject_from_resolved(resolve_session().await?)
+}
+
+/// Split from `current_subject` so the mapping is unit-testable without a
+/// keyring: every branch that decides "signed in" is pure once the session is
+/// in hand.
+fn subject_from_resolved(resolved: ResolvedSession) -> Result<String, AppError> {
+    let session = match resolved {
+        ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => session,
+        ResolvedSession::None | ResolvedSession::Expired => {
+            return Err(AppError::Auth {
+                message: "You need to be signed in to view your profile.".to_string(),
+                recoverable: true,
+            })
         }
     };
 
-    if !is_session_expired(session.expires_at, Utc::now().timestamp()) {
-        let state = logged_in_from_id_token(&session.id_token)?;
-        info!("Auth session resolved: LoggedIn");
-        return Ok(state);
+    let claims = decode_id_token_claims(&session.id_token)?;
+
+    // An empty claim is a session defect, not user input, so it reuses the
+    // unreadable-session error rather than surfacing as a validation failure.
+    if claims.sub.is_empty() {
+        return Err(unreadable_session_error());
     }
 
-    let refreshed = match refresh_session(&session).await? {
-        Some(refreshed) => refreshed,
-        None => {
-            // The keyring entry is left in place on purpose: an offline launch
-            // must still be able to refresh successfully on a later online
-            // launch. `sign_out` is the only path that removes the entry.
-            info!("Auth session resolved: SessionExpired");
-            return Ok(AuthState::SessionExpired);
-        }
-    };
-
-    // Same keyring service and account as the original entry, so this overwrites
-    // it rather than creating a second one (AC 3's "in place"), and it goes
-    // through the sole accessor.
-    credentials::store_cognito_session(&refreshed)?;
-
-    let state = logged_in_from_id_token(&refreshed.id_token)?;
-    info!("Auth session resolved: LoggedIn (session refreshed)");
-    Ok(state)
+    Ok(claims.sub)
 }
 
 /// Local-only by design: Cognito's `/oauth2/revoke` is deferred for v1 and
@@ -1255,6 +1309,67 @@ mod tests {
         assert_eq!(
             format!("{}/oauth2/token", COGNITO_HOSTED_UI_BASE_URL),
             "https://auth.nixusapp.com/oauth2/token"
+        );
+    }
+
+    fn session_with_claims(payload: &str) -> CognitoSession {
+        CognitoSession {
+            id_token: id_token_with_payload(payload),
+            ..sample_session()
+        }
+    }
+
+    #[test]
+    fn current_subject_returns_the_sub_claim_of_a_live_session() {        let resolved = ResolvedSession::Live(session_with_claims(
+            r#"{"sub":"a1b2c3","email":"user@example.com"}"#,
+        ));
+
+        assert_eq!(subject_from_resolved(resolved).expect("resolves"), "a1b2c3");
+    }
+
+    #[test]
+    fn current_subject_returns_the_sub_claim_of_a_refreshed_session() {
+        let resolved = ResolvedSession::Refreshed(session_with_claims(
+            r#"{"sub":"refreshed-sub","email":"user@example.com"}"#,
+        ));
+
+        assert_eq!(
+            subject_from_resolved(resolved).expect("resolves"),
+            "refreshed-sub"
+        );
+    }
+
+    #[test]
+    fn current_subject_maps_logged_out_to_a_recoverable_auth_error() {
+        let error = subject_from_resolved(ResolvedSession::None).expect_err("rejects");
+        assert!(recoverable_of(&error));
+    }
+
+    #[test]
+    fn current_subject_maps_session_expired_to_a_recoverable_auth_error() {
+        let error = subject_from_resolved(ResolvedSession::Expired).expect_err("rejects");
+        assert!(recoverable_of(&error));
+    }
+
+    #[test]
+    fn current_subject_rejects_an_empty_sub_claim_as_an_unreadable_session() {
+        let resolved = ResolvedSession::Live(session_with_claims(
+            r#"{"sub":"","email":"user@example.com"}"#,
+        ));
+
+        let error = subject_from_resolved(resolved).expect_err("rejects");
+        assert!(recoverable_of(&error));
+    }
+
+    #[test]
+    fn current_subject_does_not_require_the_email_claim() {
+        // The `sub` is the identity key; `logged_in_from_id_token`'s email guard
+        // is a display concern and must not gate profile storage.
+        let resolved = ResolvedSession::Live(session_with_claims(r#"{"sub":"only-sub"}"#));
+
+        assert_eq!(
+            subject_from_resolved(resolved).expect("resolves"),
+            "only-sub"
         );
     }
 }

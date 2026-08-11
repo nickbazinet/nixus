@@ -5,8 +5,11 @@ mod credentials;
 mod db;
 mod error;
 mod financial_health;
+mod json_store;
 mod maintenance;
 mod models;
+mod profile_store;
+mod tfsa;
 
 use db::{init_db, DbState};
 use std::sync::Mutex;
@@ -269,6 +272,11 @@ pub fn run() {
             commands::auth::handle_auth_callback,
             commands::auth::get_auth_session,
             commands::auth::sign_out,
+            commands::profile::get_user_profile,
+            commands::profile::save_user_profile,
+            commands::profile::get_countries,
+            commands::profile::get_subdivisions,
+            commands::profile::get_tfsa_accumulated_limit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

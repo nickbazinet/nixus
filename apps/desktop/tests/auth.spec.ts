@@ -456,7 +456,7 @@ test.describe("header profile entry point", () => {
     // Asserted with the prompt still open, because that is the real logged-out launch state.
     await expect(trigger).toBeVisible();
     await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
-    await expect(trigger).toHaveAttribute("aria-label", "Sign in");
+    await expect(trigger).toHaveAttribute("aria-label", "Sign In with Nixus Cloud");
 
     // The prompt is modal, so it aria-hides the rest of the shell. Dismiss before the sweep below
     // so the clean-profile assertions are measuring the header and not the focus trap.
@@ -515,7 +515,8 @@ test.describe("profile panel and sign out", () => {
     await expect(page.getByTestId("profile-menu-name")).toHaveText("Test User");
     await expect(page.getByTestId("profile-menu-sign-out")).toBeVisible();
 
-    // A popover anchored to the icon, not a route: there is no routes/profile.tsx to land on.
+    // Merely opening the panel navigates nowhere: `/profile` now exists as a route, but it is
+    // reached by activating the Profile item, not by revealing the popover.
     await expect(page).toHaveURL(/localhost:1420\/$/);
     await expect(panel).not.toContainText("auth.");
     await expect(panel).not.toContainText("profile.");
@@ -557,7 +558,7 @@ test.describe("profile panel and sign out", () => {
 
     await expect(panel).toHaveCount(0);
     await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
-    await expect(trigger).toHaveAttribute("aria-label", "Sign in");
+    await expect(trigger).toHaveAttribute("aria-label", "Sign In with Nixus Cloud");
 
     // The load-bearing assertion: the account prompt reappearing means it re-read the same
     // ["auth", "session"] cache entry the profile menu invalidated, rather than holding a private

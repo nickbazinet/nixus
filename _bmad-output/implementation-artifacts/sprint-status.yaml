@@ -233,3 +233,25 @@ development_status:
   27-3-header-profile-menu-and-minimalist-profile-view: done
   27-4-auth-e2e-coverage-and-licensing-independence-amendment: done
   epic-27-retrospective: optional
+
+  # Epic 28: Your Nixus Cloud Profile (user profile)
+  epic-28: in-progress
+  28-1-reach-my-profile-from-the-account-menu: review
+  28-2-record-my-name-so-its-remembered-next-time: review
+  28-3-record-my-date-of-birth-without-fighting-the-calendar: review
+  28-4-wiping-my-data-removes-my-profile-too: review
+  28-5-understand-that-an-account-means-nixus-cloud: review
+  epic-28-retrospective: optional
+
+  # Epic 29: Location & Income Context (user profile)
+  epic-29: in-progress
+  29-1-tell-nixus-which-country-i-live-in: review
+  29-2-tell-nixus-which-state-or-province-im-in: review
+  29-3-give-nixus-a-rough-sense-of-my-income: review
+  epic-29-retrospective: optional
+
+  # Epic 30: TFSA Room Visibility (user profile)
+  epic-30: in-progress
+  30-1-see-how-much-tfsa-room-ive-accumulated: review
+  30-2-never-be-shown-a-misleading-tfsa-number: review
+  epic-30-retrospective: optional

@@ -75,6 +75,17 @@ describe("auth i18n", () => {
     expect(fr["accounts.continueOffline"]).toBeUndefined();
   });
 
+  it("labels account creation with the Nixus Cloud brand term in both locales (D14)", () => {
+    // D14 relabels this key so the dialog's primary action names the same brand term as the
+    // header affordance. The exact string is the requirement, not a paraphrase.
+    expect(en["auth.createAccount"]).toBe("Create Nixus Cloud Account");
+    expect(fr["auth.createAccount"]).toBe("Créer un compte Nixus Cloud");
+  });
+
+  it("does not translate the Nixus Cloud brand term in fr.json (NFR8)", () => {
+    expect(fr["auth.createAccount"]).toContain("Nixus Cloud");
+  });
+
   it("states in both locales that no feature requires an account today", () => {
     // AC 4: the prompt must not read as a gate. Copy that drops this reassurance turns an
     // invitation into a paywall, which NFR1 forbids.

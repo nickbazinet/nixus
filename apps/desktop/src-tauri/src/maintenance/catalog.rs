@@ -4,6 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::json_store::write_json_atomic;
 
 pub const CATALOG_TTL_DAYS: i64 = 180;
 pub const NHTSA_BASE: &str = "https://vpic.nhtsa.dot.gov/api/vehicles/";
@@ -145,27 +146,6 @@ fn write_models(dir: &Path, cached: &CachedModels) -> Result<(), AppError> {
         message: format!("Failed to create models dir: {}", e),
     })?;
     write_json_atomic(&models_path(dir, &cached.make, cached.year), cached)
-}
-
-fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
-    let parent = path.parent().ok_or_else(|| AppError::File {
-        message: "Invalid catalog file path".to_string(),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|e| AppError::File {
-        message: format!("Failed to create parent dir: {}", e),
-    })?;
-
-    let tmp_path = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(value).map_err(|e| AppError::File {
-        message: format!("Failed to serialize catalog data: {}", e),
-    })?;
-    std::fs::write(&tmp_path, json).map_err(|e| AppError::File {
-        message: format!("Failed to write catalog temp file: {}", e),
-    })?;
-    std::fs::rename(&tmp_path, path).map_err(|e| AppError::File {
-        message: format!("Failed to finalize catalog file: {}", e),
-    })?;
-    Ok(())
 }
 
 pub fn is_cache_stale(meta: &CatalogMeta) -> bool {

@@ -15,6 +15,50 @@ const REQUIRED_KEYS = [
   "profile.signOut",
   "profile.sessionExpired",
   "profile.sessionExpiredAction",
+  "profile.menuItem",
+  "profile.title",
+  "profile.email",
+  "profile.signInRequiredTitle",
+  "profile.signInRequiredBody",
+  "profile.firstName",
+  "profile.lastName",
+  "profile.birthDate",
+  "profile.birthDatePlaceholder",
+  "profile.birthDateClear",
+  "profile.country",
+  "profile.countryPlaceholder",
+  "profile.countryUnset",
+  "profile.subdivision",
+  "profile.subdivisionPlaceholder",
+  "profile.subdivisionUnset",
+  "profile.incomeBracket",
+  "profile.incomeBracketPlaceholder",
+  "profile.incomeBracketUnset",
+  "profile.incomeBracketCurrency",
+  "profile.incomeBracketCurrencyPlaceholder",
+  "profile.incomeBracketCurrencyUnset",
+  "profile.incomeBracketCurrencyRequired",
+  "profile.bracketUnder50k",
+  "profile.bracket50k99k",
+  "profile.bracket100k149k",
+  "profile.bracket150k249k",
+  "profile.bracket250kPlus",
+  "profile.saving",
+  "profile.tfsaAccumulatedLimit",
+  "profile.tfsaAccumulatedLimitCaption",
+  "profile.tfsaAccumulatedLimitNote",
+] as const;
+
+/**
+ * The bracket is a range label, not a monetary amount, and the currency is a separate field — a
+ * symbol baked into a label would contradict whatever the user picked in the currency select.
+ */
+const BRACKET_LABEL_KEYS = [
+  "profile.bracketUnder50k",
+  "profile.bracket50k99k",
+  "profile.bracket100k149k",
+  "profile.bracket150k249k",
+  "profile.bracket250kPlus",
 ] as const;
 
 /**
@@ -28,13 +72,16 @@ const ARIA_LABEL_KEYS = [
   "profile.sessionExpiredAction",
 ] as const;
 
-const PLACEHOLDER_KEYS = [["profile.accountMenu", ["{{email}}"]]] as const;
+const PLACEHOLDER_KEYS = [
+  ["profile.accountMenu", ["{{email}}"]],
+  ["profile.tfsaAccumulatedLimitCaption", ["{{year}}"]],
+] as const;
 
 /**
  * Pending-state copy uses the single-character ellipsis, not three periods. A mixed convention is
  * invisible in review and permanent once shipped.
  */
-const ELLIPSIS_KEYS = ["profile.loading"] as const;
+const ELLIPSIS_KEYS = ["profile.loading", "profile.saving"] as const;
 
 function profileKeys(locale: Record<string, string>): string[] {
   return Object.keys(locale).filter((key) => key.startsWith(PROFILE_PREFIX));
@@ -56,8 +103,12 @@ describe("profile menu i18n", () => {
   });
 
   it("declares every profile key it ships", () => {
-    // ProfileMenu is the only consumer, so an orphaned key here is copy the UI can never show —
-    // and an undeclared one escapes every assertion above.
+    // ProfileMenu, routes/profile.tsx, components/profile/SignInRequired.tsx, and
+    // components/profile/ProfileForm.tsx are the consumers — plus
+    // components/financial-health/TfsaRoomPanel.tsx, which reuses the three
+    // profile.tfsa* keys verbatim now that the figure lives on the guidance surfaces,
+    // so an orphaned key here is copy the UI can never show — and an undeclared one escapes every
+    // assertion above.
     const declared = [...REQUIRED_KEYS].sort();
 
     expect(profileKeys(en).sort()).toEqual(declared);
@@ -99,8 +150,77 @@ describe("profile menu i18n", () => {
     }
   });
 
-  it("leaves the neighbouring auth.* block intact", () => {
-    // These keys sit immediately after the insertion point. A JSON edit that clobbered one would
+  it("labels sign-in with the Nixus Cloud brand term in both locales (D14)", () => {
+    // D14 relabels this key so an account reads as the gateway to Nixus Cloud, before any
+    // networked feature exists. The exact string is the requirement, not a paraphrase.
+    expect(en["profile.signIn"]).toBe("Sign In with Nixus Cloud");
+    expect(fr["profile.signIn"]).toBe("Se connecter avec Nixus Cloud");
+  });
+
+  it("does not translate the Nixus Cloud brand term in fr.json (NFR8)", () => {
+    expect(fr["profile.signIn"]).toContain("Nixus Cloud");
+  });
+
+  it.each(BRACKET_LABEL_KEYS)("gives %s a currency-free label in both locales", (key) => {
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      expect(locale[key], `${key} missing in ${name}`).toBeTruthy();
+      for (const symbol of ["$", "€", "£", "¥", "CAD", "USD"]) {
+        expect(locale[key], `${key} embeds ${symbol} in ${name}`).not.toContain(
+          symbol,
+        );
+      }
+    }
+  });
+
+  it("ships exactly the five allow-listed bracket labels", () => {
+    const bracketKeys = profileKeys(en).filter((key) =>
+      key.startsWith("profile.bracket"),
+    );
+    expect(bracketKeys.sort()).toEqual([...BRACKET_LABEL_KEYS].sort());
+  });
+
+  it("labels the TFSA figure as accumulated room, never as available or remaining (AC #2)", () => {
+    // Nixus tracks balances, not contributions, so remaining room is not
+    // computable. The label is the one place a user could misread the figure as
+    // spendable headroom, so the forbidden words are asserted, not reviewed.
+    expect(en["profile.tfsaAccumulatedLimit"]).toContain("accumulated");
+    expect(fr["profile.tfsaAccumulatedLimit"]).toContain("accumulés");
+
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      const label = locale["profile.tfsaAccumulatedLimit"].toLowerCase();
+      for (const word of [
+        "available",
+        "remaining",
+        "restants",
+        "disponibles",
+      ]) {
+        expect(label, `label says "${word}" in ${name}`).not.toContain(word);
+      }
+    }
+  });
+
+  it("negates remaining room in the caption and disclaims tracking in the note (AC #2)", () => {
+    expect(en["profile.tfsaAccumulatedLimitCaption"]).toContain(
+      "not your remaining room",
+    );
+    expect(fr["profile.tfsaAccumulatedLimitCaption"]).toContain(
+      "droits restants",
+    );
+    expect(en["profile.tfsaAccumulatedLimitNote"]).toContain(
+      "does not track your contributions or withdrawals",
+    );
+    expect(fr["profile.tfsaAccumulatedLimitNote"]).toContain(
+      "ne suit pas vos cotisations ni vos retraits",
+    );
+  });
+
+  it("leaves the neighbouring auth.* block intact", () => {    // These keys sit immediately after the insertion point. A JSON edit that clobbered one would
     // still parse, still pass every assertion above, and only surface as a raw key in the dialog.
     for (const key of [
       "auth.promptTitle",

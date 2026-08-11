@@ -13,6 +13,7 @@ import { ActionWaterfall } from "@/components/financial-health/ActionWaterfall";
 import { EmergencyFundPanel } from "@/components/financial-health/EmergencyFundPanel";
 import { FinancialHealthDisclaimer } from "@/components/financial-health/FinancialHealthDisclaimer";
 import { SavingsCapacityPanel } from "@/components/financial-health/SavingsCapacityPanel";
+import { TfsaRoomPanel } from "@/components/financial-health/TfsaRoomPanel";
 import { useFinancialHealthDetail } from "@/hooks/useFinancialHealth";
 
 export const Route = createFileRoute("/wealth/where-to-put-your-money")({
@@ -103,6 +104,7 @@ function FinancialHealthSectionPage() {
         <div className="flex flex-col gap-grid-gap">
           <EmergencyFundPanel />
           <SavingsCapacityPanel />
+          <TfsaRoomPanel />
         </div>
       </div>
       <FinancialHealthDisclaimer testId="financial-health-section-disclaimer" />

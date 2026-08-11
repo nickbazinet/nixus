@@ -114,6 +114,20 @@ pub fn get_total_liabilities_cents(conn: &Connection) -> Result<i64, AppError> {
     Ok(total)
 }
 
+/// The currency filter is mandatory, not incidental: Nixus never converts between currencies, and
+/// `db/net_worth.rs`'s `tfsa_cents` must NOT be reused here because it sums TFSA balances ignoring
+/// `currency` and would mix CAD with USD.
+pub fn get_cad_tfsa_balance_cents(conn: &Connection) -> Result<i64, AppError> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(balance_cents), 0)
+         FROM accounts
+         WHERE account_type = 'tfsa' AND currency = 'CAD'",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
+}
+
 pub fn insert_account(conn: &Connection, input: &CreateAccountInput) -> Result<Account, AppError> {
     let name = input.name.trim();
     if name.is_empty() {
@@ -384,6 +398,67 @@ mod tests {
 
         assert_eq!(change.old_balance_cents, 7_500);
         assert_eq!(change.new_balance_cents, 10_000);
+    }
+
+    fn insert_test_account(
+        conn: &Connection,
+        name: &str,
+        account_type: &str,
+        currency: &str,
+        balance_cents: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO accounts (name, institution, account_type, currency, balance_cents)
+             VALUES (?1, 'Bank', ?2, ?3, ?4)",
+            params![name, account_type, currency, balance_cents],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn cad_tfsa_balance_is_zero_when_there_are_no_accounts_at_all() {
+        let conn = account_test_db();
+        assert_eq!(get_cad_tfsa_balance_cents(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn cad_tfsa_balance_sums_every_cad_tfsa_account() {
+        let conn = account_test_db();
+        insert_test_account(&conn, "TFSA A", "tfsa", "CAD", 2_000_000);
+        insert_test_account(&conn, "TFSA B", "tfsa", "CAD", 1_500_000);
+
+        assert_eq!(get_cad_tfsa_balance_cents(&conn).unwrap(), 3_500_000);
+    }
+
+    // A USD TFSA is the failure this query exists to prevent: Nixus never converts currencies, so
+    // adding a USD balance to a CAD-denominated CRA limit would compare two different units.
+    #[test]
+    fn cad_tfsa_balance_excludes_usd_tfsa_accounts() {
+        let conn = account_test_db();
+        insert_test_account(&conn, "TFSA CAD", "tfsa", "CAD", 2_000_000);
+        insert_test_account(&conn, "TFSA USD", "tfsa", "USD", 9_900_000);
+
+        assert_eq!(get_cad_tfsa_balance_cents(&conn).unwrap(), 2_000_000);
+    }
+
+    #[test]
+    fn cad_tfsa_balance_is_zero_when_only_usd_tfsa_accounts_exist() {
+        let conn = account_test_db();
+        insert_test_account(&conn, "TFSA USD", "tfsa", "USD", 9_900_000);
+
+        assert_eq!(get_cad_tfsa_balance_cents(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn cad_tfsa_balance_excludes_every_other_account_type() {
+        let conn = account_test_db();
+        insert_test_account(&conn, "Chequing", "chequing", "CAD", 500_000);
+        insert_test_account(&conn, "RRSP", "rrsp", "CAD", 4_000_000);
+        insert_test_account(&conn, "FHSA", "fhsa", "CAD", 800_000);
+        insert_test_account(&conn, "Crypto", "crypto", "CAD", 100_000);
+        insert_test_account(&conn, "TFSA", "tfsa", "CAD", 1_000_000);
+
+        assert_eq!(get_cad_tfsa_balance_cents(&conn).unwrap(), 1_000_000);
     }
 
     fn account_test_db() -> Connection {

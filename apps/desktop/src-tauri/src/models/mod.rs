@@ -788,6 +788,87 @@ pub enum AuthState {
     SessionExpired,
 }
 
+// WHY the in-document `cognito_sub`: it is the integrity guard that makes a
+// filename/content mismatch read as "no profile" rather than leak another
+// account's data. Serde-default casing on purpose — `rename_all = "camelCase"`
+// on `catalog.rs::VehicleCatalogStatus` is a local exception, not the convention.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserProfile {
+    pub schema_version: u32,
+    pub cognito_sub: String,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub birth_date: Option<String>,
+    pub income_bracket: Option<String>,
+    pub income_bracket_currency: Option<String>,
+    pub country_code: Option<String>,
+    pub subdivision_code: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// WHY no `skip_serializing_if`: an unset field must serialize as `null` so `""`
+// and `null` never both mean "unset".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateUserProfileInput {
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub birth_date: Option<String>,
+    pub income_bracket: Option<String>,
+    pub income_bracket_currency: Option<String>,
+    pub country_code: Option<String>,
+    pub subdivision_code: Option<String>,
+}
+
+// `eligible_from_year` is returned rather than only the total because the UI
+// interpolates it into the caption, and `known_through_year` is returned so
+// support can tell "withheld because past the table bound" from "withheld
+// because ineligible" without reading the binary. There is deliberately no
+// remaining-room field: Nixus tracks balances, not contributions, so remaining
+// room is not computable from available data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TfsaAccumulatedLimit {
+    pub total_cents: i64,
+    pub eligible_from_year: i32,
+    pub known_through_year: i32,
+}
+
+// The IPC shape of a country: `subdivisions` is deliberately absent so
+// `get_countries` never ships 5,000 rows to populate a 250-row select.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Country {
+    pub code: String,
+    pub name_en: String,
+    pub name_fr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subdivision {
+    pub code: String,
+    pub name_en: String,
+    pub name_fr: Option<String>,
+}
+
+// The file shape of a country, which nests its subdivisions so a lookup by
+// country code is an index hit rather than a filter over a flat list.
+// `#[serde(default)]` is what lets the dataset omit the key entirely for the
+// countries that have none. The dataset's `_source*` / `_generated_by` metadata
+// keys are deliberately unmodelled: serde ignores unknown fields, and an unread
+// struct field is a dead-code warning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CountryEntry {
+    pub code: String,
+    pub name_en: String,
+    pub name_fr: Option<String>,
+    #[serde(default)]
+    pub subdivisions: Vec<Subdivision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Iso3166Dataset {
+    pub countries: Vec<CountryEntry>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,6 +5,7 @@ import { CalendarIcon } from "lucide-react"
 import { cn } from "../lib/cn"
 import { Button } from "./button"
 import { Calendar } from "./calendar"
+import type { CalendarProps } from "./calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "./popover"
 
 interface DatePickerProps {
@@ -15,6 +16,12 @@ interface DatePickerProps {
   "aria-invalid"?: boolean
   disabled?: boolean
   className?: string
+  // Indexed access so these never drift from react-day-picker's own types. All
+  // three must stay optional and forward `undefined` untouched: existing callers
+  // omit them and their rendering has to remain identical.
+  captionLayout?: CalendarProps["captionLayout"]
+  startMonth?: CalendarProps["startMonth"]
+  endMonth?: CalendarProps["endMonth"]
 }
 
 function DatePicker({
@@ -25,6 +32,9 @@ function DatePicker({
   "aria-invalid": ariaInvalid,
   disabled,
   className,
+  captionLayout,
+  startMonth,
+  endMonth,
 }: DatePickerProps) {
   const [open, setOpen] = useState(false)
 
@@ -69,6 +79,9 @@ function DatePicker({
           selected={dateValue}
           onSelect={handleSelect}
           defaultMonth={dateValue}
+          captionLayout={captionLayout}
+          startMonth={startMonth}
+          endMonth={endMonth}
           autoFocus
         />
       </PopoverContent>

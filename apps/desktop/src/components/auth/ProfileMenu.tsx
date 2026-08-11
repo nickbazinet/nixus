@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { CircleUser, LogIn, LogOut, User } from "lucide-react";
@@ -141,6 +142,15 @@ export function ProfileMenu() {
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
+
+          {/* `render` rather than a nested anchor: Base UI's menu item owns roving focus and
+           * typeahead, and an anchor child would take the tab stop away from it. */}
+          <DropdownMenuItem
+            render={<Link to="/profile" data-testid="profile-menu-profile" />}
+          >
+            <User aria-hidden="true" />
+            {t("profile.menuItem")}
+          </DropdownMenuItem>
 
           <DropdownMenuItem
             // Closed unconditionally rather than in onSuccess: sign-out can fail, and a panel

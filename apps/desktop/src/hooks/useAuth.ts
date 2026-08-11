@@ -15,6 +15,13 @@ export function useAuthSession() {
     const setup = async () => {
       const unlisten = await listen("auth:callback-received", () => {
         queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
+        // `removeQueries`, never `invalidateQueries`: invalidation keeps the
+        // previous account's profile rendered while refetching, which is a
+        // visible cross-account leak.
+        queryClient.removeQueries({ queryKey: queryKeys.profile });
+        queryClient.removeQueries({
+          queryKey: queryKeys.tfsaAccumulatedLimit,
+        });
       });
 
       if (cleaned) {
@@ -54,6 +61,10 @@ export function useSignOut() {
     mutationFn: () => invoke<void>("sign_out"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
+      // Removed, not invalidated: the previous account's profile must not stay
+      // rendered while a refetch is in flight.
+      queryClient.removeQueries({ queryKey: queryKeys.profile });
+      queryClient.removeQueries({ queryKey: queryKeys.tfsaAccumulatedLimit });
     },
   });
 }

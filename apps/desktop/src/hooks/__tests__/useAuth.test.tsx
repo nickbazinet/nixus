@@ -53,6 +53,7 @@ describe("useAuth", () => {
   let unmounted: boolean;
   let queryClient: QueryClient;
   let invalidateSpy: MockInstance<QueryClient["invalidateQueries"]>;
+  let removeSpy: MockInstance<QueryClient["removeQueries"]>;
   let unlistenMocks: Mock[];
 
   function render(node: ReactNode) {
@@ -65,6 +66,10 @@ describe("useAuth", () => {
 
   function invalidatedKeys(): unknown[] {
     return invalidateSpy.mock.calls.map((call) => call[0]?.queryKey);
+  }
+
+  function removedKeys(): unknown[] {
+    return removeSpy.mock.calls.map((call) => call[0]?.queryKey);
   }
 
   // React's scheduler can defer the re-render triggered by a resolved query across more
@@ -105,6 +110,7 @@ describe("useAuth", () => {
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
     invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    removeSpy = vi.spyOn(queryClient, "removeQueries");
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -119,6 +125,7 @@ describe("useAuth", () => {
     container.remove();
     queryClient.clear();
     invalidateSpy.mockRestore();
+    removeSpy.mockRestore();
   });
 
   it("reads the session through the zero-arg command", async () => {
@@ -188,6 +195,38 @@ describe("useAuth", () => {
 
     // Then the UI refreshes with no manual reload
     expect(invalidatedKeys()).toEqual([["auth", "session"]]);
+  });
+
+  // Row 10 of Story 30.2's degradation matrix, and the only test of it anywhere.
+  // TanStack Query removes by key PREFIX, and ["tfsa-accumulated-limit"] shares no
+  // prefix with ["profile"], so the Story 28.2 removal does not reach it. A dev
+  // reasoning "the profile cache is cleared, so the derived figure is too" ships
+  // the previous account's dollar amount — a wrong number and a privacy leak at once.
+  it("removes the accumulated TFSA figure after signing out", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await act(async () => {
+      await signOut.mutateAsync();
+    });
+
+    // removeQueries, never invalidateQueries: invalidation leaves the previous
+    // account's figure rendered while the refetch is in flight.
+    expect(removedKeys()).toContainEqual(["tfsa-accumulated-limit"]);
+    expect(invalidatedKeys()).not.toContainEqual(["tfsa-accumulated-limit"]);
+  });
+
+  it("removes the accumulated TFSA figure when a different account signs in", async () => {
+    invokeMock.mockResolvedValue({ status: "LoggedOut" });
+
+    render(<SessionHarness />);
+    await settleQueries(() => listenMock.mock.calls.length > 0);
+
+    act(() => {
+      fireCallbackEvent();
+    });
+
+    expect(removedKeys()).toContainEqual(["tfsa-accumulated-limit"]);
+    expect(invalidatedKeys()).not.toContainEqual(["tfsa-accumulated-limit"]);
   });
 
   it("unsubscribes the callback listener on unmount", async () => {

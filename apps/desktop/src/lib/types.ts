@@ -665,3 +665,50 @@ export type AuthState =
   | { status: "LoggedOut" }
   | { status: "LoggedIn"; email: string; name: string | null }
   | { status: "SessionExpired" };
+
+export interface UserProfile {
+  schema_version: number;
+  cognito_sub: string;
+  first_name: string | null;
+  last_name: string | null;
+  birth_date: string | null;
+  income_bracket: string | null;
+  income_bracket_currency: string | null;
+  country_code: string | null;
+  subdivision_code: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateUserProfileInput {
+  first_name: string | null;
+  last_name: string | null;
+  birth_date: string | null;
+  income_bracket: string | null;
+  income_bracket_currency: string | null;
+  country_code: string | null;
+  subdivision_code: string | null;
+}
+
+// name_fr is optional by design: FR coverage of the bundled ISO 3166 dataset is
+// incomplete, so the UI falls back to the always-present name_en.
+export interface Country {
+  code: string;
+  name_en: string;
+  name_fr?: string;
+}
+
+export interface Subdivision {
+  code: string;
+  name_en: string;
+  name_fr?: string;
+}
+
+// Mirrors `models::TfsaAccumulatedLimit`. Total room ACCUMULATED, never
+// remaining room: the frontend renders this figure or renders nothing, and
+// performs no arithmetic on it.
+export interface TfsaAccumulatedLimit {
+  total_cents: number;
+  eligible_from_year: number;
+  known_through_year: number;
+}

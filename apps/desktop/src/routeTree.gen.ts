@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as ImportRouteImport } from './routes/import'
@@ -41,6 +42,11 @@ import { Route as AiAgentIdRouteImport } from './routes/ai.$agentId'
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OnboardingRoute = OnboardingRouteImport.update({
@@ -188,6 +194,7 @@ export interface FileRoutesByFullPath {
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
+  '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRouteWithChildren
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
@@ -216,6 +223,7 @@ export interface FileRoutesByTo {
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
+  '/profile': typeof ProfileRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
   '/insights/projection': typeof InsightsProjectionRoute
@@ -246,6 +254,7 @@ export interface FileRoutesById {
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
+  '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRouteWithChildren
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
@@ -278,6 +287,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/maintenance'
     | '/onboarding'
+    | '/profile'
     | '/settings'
     | '/ai/$agentId'
     | '/car/garage'
@@ -306,6 +316,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/maintenance'
     | '/onboarding'
+    | '/profile'
     | '/ai/$agentId'
     | '/car/garage'
     | '/insights/projection'
@@ -335,6 +346,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/maintenance'
     | '/onboarding'
+    | '/profile'
     | '/settings'
     | '/ai/$agentId'
     | '/car/garage'
@@ -366,6 +378,7 @@ export interface RootRouteChildren {
   ImportRoute: typeof ImportRoute
   MaintenanceRoute: typeof MaintenanceRoute
   OnboardingRoute: typeof OnboardingRoute
+  ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   InsightsProjectionRoute: typeof InsightsProjectionRoute
   InsightsTrendsRoute: typeof InsightsTrendsRoute
@@ -390,6 +403,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/onboarding': {
@@ -630,6 +650,7 @@ const rootRouteChildren: RootRouteChildren = {
   ImportRoute: ImportRoute,
   MaintenanceRoute: MaintenanceRoute,
   OnboardingRoute: OnboardingRoute,
+  ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRouteWithChildren,
   InsightsProjectionRoute: InsightsProjectionRoute,
   InsightsTrendsRoute: InsightsTrendsRoute,

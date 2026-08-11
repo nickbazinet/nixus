@@ -62,4 +62,9 @@ export const queryKeys = {
   auth: {
     session: ["auth", "session"] as const,
   },
+  profile: ["profile"] as const,
+  countries: ["countries"] as const,
+  subdivisions: (countryCode: string) =>
+    ["subdivisions", countryCode] as const,
+  tfsaAccumulatedLimit: ["tfsa-accumulated-limit"] as const,
 };

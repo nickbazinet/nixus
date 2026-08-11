@@ -86,6 +86,10 @@ async function mock(page: Page) {
           case "get_spending_trends":
           case "get_category_compare":
             return Promise.resolve([]);
+          // Withheld, which is this spec's designed state: the array default would otherwise be a
+          // truthy payload with no total_cents, and the TFSA figure would render as NaN.
+          case "get_tfsa_accumulated_limit":
+            return Promise.resolve(null);
           default:
             return Promise.resolve([]);
         }
