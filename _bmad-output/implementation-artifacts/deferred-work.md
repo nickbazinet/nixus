@@ -311,3 +311,37 @@ fixed in the story itself; the one intent-level finding is tracked separately in
   invisible to the user.
 - **Pre-existing clippy warning.** `commands/backup.rs:106` `explicit_auto_deref`. Present at baseline
   `50cb155`, untouched by the recurring-income story, and the only warning the workspace emits.
+
+## Deferred from spec-ai-import-propose-category review (2026-08-12)
+
+Three-reviewer pass (blind hunter, edge case hunter, acceptance auditor) on the AI-proposed-category
+import feature. Patch-class findings (confidence gating, malformed-proposal deserialization, empty-groups
+prompt section, retry/race conditions, hallucinated `group_id`/`group_name` sanitization, Alert layout,
+proposal hidden on resolved/deselected rows) were fixed in the story itself. The following are out of
+scope for this story:
+
+- **No dedupe against existing categories/groups by name.** The AI can propose a name that already exists
+  (e.g. "Groceries") because it wasn't confident enough to pick it; nothing checks for a case-insensitive
+  match before creating. `budget_template.rs` (lines ~151-171) already solved this exact problem for the
+  template-importer feature — a shared dedupe helper reused by both paths would close this properly.
+  Neither `budget_groups` nor `budget_categories` has a `UNIQUE` constraint at the DB layer either.
+- **No "apply to all" wiring for same-merchant flagged rows.** `flaggedGroups` already buckets rows by
+  merchant for the existing "apply to all" affordance, but the propose-category button is per-card only —
+  N rows with the identical AI-generated proposal (same merchant, multiple statement lines) create N
+  duplicate categories/groups instead of one. Wiring the created category id back into the whole merchant
+  group is a reasonable follow-up, not a one-line patch.
+- **Group/category creation is two non-atomic Tauri calls, not a DB transaction.** The spec's frozen intent
+  explicitly requires reusing the existing `create_budget_group`/`create_budget_category` commands with no
+  new DB write path. A local group-id cache (added in this story) prevents a duplicate group on *retry*,
+  but a user who creates the group then abandons the row entirely can still be left with an empty orphan
+  group. A fully atomic fix means a new backend command wrapping both inserts in one
+  `conn.unchecked_transaction()` (mirroring `apply_template_inner`) — an architecture change beyond this
+  spec's boundaries.
+- **No merchant-hint recording for AI-created categories.** Confirming an import records merchant hints for
+  transactions with a `suggested_category_id`, but the new create-from-proposal path never calls the
+  hint-recording path for the newly created category, so next month's statement re-proposes the same
+  category for the same merchant instead of matching it via the hint system.
+- **No Playwright coverage for the retry/race/dedupe edge cases** — a happy-path test was added in this
+  story (`tests/import.spec.ts`), but the concurrent-click race, retry-after-failure group reuse, and
+  cross-row duplicate-proposal scenarios above remain unverified by automation.
+

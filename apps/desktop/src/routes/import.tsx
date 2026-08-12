@@ -41,6 +41,7 @@ import {
 } from "../components/import/importDraft";
 import { useImport, type ParsedTransaction, type ImportError } from "../hooks/useImport";
 import { useFormatCurrency } from "../hooks/useFormatCurrency";
+import { useCreateBudgetGroup, useCreateBudgetCategory } from "../hooks/useBudget";
 import { useMaskProps } from "../contexts/ValuesVisibilityContext";
 import { queryKeys } from "../lib/constants";
 
@@ -209,6 +210,15 @@ function ReviewScreen({
     queryFn: () => invoke<BudgetCategory[]>("get_all_budget_categories"),
   });
 
+  const createGroup = useCreateBudgetGroup();
+  const createCategory = useCreateBudgetCategory();
+  const [creatingProposalIndices, setCreatingProposalIndices] = useState<Set<number>>(
+    () => new Set()
+  );
+  // Keyed by transaction index: reuses a group created on a previous failed attempt
+  // instead of creating a duplicate group on every retry.
+  const [createdGroupIdFor, setCreatedGroupIdFor] = useState<Record<number, number>>({});
+
   const autoGlobalIndices = useMemo(
     () =>
       transactions.reduce<number[]>((acc, tx, i) => {
@@ -317,6 +327,58 @@ function ReviewScreen({
       }));
     },
     []
+  );
+
+  const PROPOSED_CATEGORY_PLACEHOLDER_TARGET_CENTS = 100;
+
+  const handleCreateProposedCategory = useCallback(
+    async (globalIndex: number) => {
+      const proposal = transactions[globalIndex]?.propose_category;
+      const name = proposal?.name.trim();
+      if (!proposal || !name || creatingProposalIndices.has(globalIndex)) return;
+
+      setCreatingProposalIndices((prev) => new Set(prev).add(globalIndex));
+      try {
+        const validGroupId =
+          proposal.group_id != null && proposal.group_id > 0 ? proposal.group_id : null;
+        const groupName = proposal.group_name?.trim() || name;
+
+        const groupId =
+          createdGroupIdFor[globalIndex] ??
+          validGroupId ??
+          (await createGroup.mutateAsync(groupName)).id;
+
+        if (validGroupId == null && !createdGroupIdFor[globalIndex]) {
+          setCreatedGroupIdFor((prev) => ({ ...prev, [globalIndex]: groupId }));
+        }
+
+        const category = await createCategory.mutateAsync({
+          group_id: groupId,
+          name,
+          target_cents: PROPOSED_CATEGORY_PLACEHOLDER_TARGET_CENTS,
+        });
+
+        handleFlaggedCategoryChange(globalIndex, category.id);
+        toast.success(t("import.createCategorySuccess", { name }));
+      } catch {
+        toast.error(t("import.createCategoryError"));
+      } finally {
+        setCreatingProposalIndices((prev) => {
+          const next = new Set(prev);
+          next.delete(globalIndex);
+          return next;
+        });
+      }
+    },
+    [
+      transactions,
+      creatingProposalIndices,
+      createdGroupIdFor,
+      createGroup,
+      createCategory,
+      handleFlaggedCategoryChange,
+      t,
+    ]
   );
 
   const handleAutoCategoryChange = useCallback(
@@ -598,6 +660,13 @@ function ReviewScreen({
                   }
                   onDateChange={(value) => handleFieldChange(globalIndex, "date", value)}
                   isDuplicate={duplicateIndices.has(globalIndex)}
+                  proposedCategory={
+                    deselected.has(globalIndex) ? null : tx.propose_category
+                  }
+                  onCreateProposedCategory={() =>
+                    handleCreateProposedCategory(globalIndex)
+                  }
+                  creatingProposedCategory={creatingProposalIndices.has(globalIndex)}
                 />
               );
             });

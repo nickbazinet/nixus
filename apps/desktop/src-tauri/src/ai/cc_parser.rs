@@ -7,10 +7,17 @@ use std::path::Path;
 use tracing::info;
 
 use crate::error::AppError;
-use crate::models::{BudgetCategory, MerchantHint};
+use crate::models::{BudgetCategory, BudgetGroup, MerchantHint};
 
 const MODEL_ID: &str = "us.anthropic.claude-sonnet-4-6";
 const CONFIDENCE_THRESHOLD: f64 = 0.8;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProposedCategory {
+    pub name: String,
+    pub group_id: Option<i64>,
+    pub group_name: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedTransaction {
@@ -19,6 +26,8 @@ pub struct ParsedTransaction {
     pub date: String,
     pub suggested_category_id: Option<i64>,
     pub confidence: f64,
+    #[serde(default)]
+    pub propose_category: Option<ProposedCategory>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,12 +39,26 @@ pub struct ParseResult {
 }
 
 #[derive(Debug, Deserialize)]
+struct AiProposedCategory {
+    name: String,
+    #[serde(default)]
+    group_id: Option<i64>,
+    #[serde(default)]
+    group_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AiTransaction {
     merchant: String,
     amount_cents: i64,
     date: String,
     suggested_category_id: Option<i64>,
     confidence: f64,
+    // Deserialized as a raw JSON value first (see `parse_proposed_category`) so a
+    // malformed `propose_category` from the model degrades to "no proposal"
+    // instead of failing the whole batch of transactions.
+    #[serde(default)]
+    propose_category: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,11 +68,22 @@ struct AiResponse {
     unreadable: Vec<String>,
 }
 
-fn build_system_prompt(today: &str, categories: &[BudgetCategory], hints: &[MerchantHint]) -> String {
+fn build_system_prompt(today: &str, categories: &[BudgetCategory], groups: &[BudgetGroup], hints: &[MerchantHint]) -> String {
     let cat_list: Vec<String> = categories
         .iter()
         .map(|c| format!("  - id: {}, name: \"{}\"", c.id, c.name))
         .collect();
+
+    let group_list: Vec<String> = groups
+        .iter()
+        .map(|g| format!("  - id: {}, name: \"{}\"", g.id, g.name))
+        .collect();
+
+    let groups_section = if groups.is_empty() {
+        String::new()
+    } else {
+        format!("\nAvailable budget groups:\n{}\n", group_list.join("\n"))
+    };
 
     let hints_section = if hints.is_empty() {
         String::new()
@@ -82,8 +116,10 @@ For each transaction, return:
 - date: the transaction date in YYYY-MM-DD format
 - suggested_category_id: the best matching budget category ID from the list below, or null if no good match
 - confidence: your confidence in the category assignment (0.0 to 1.0)
+- propose_category: OMIT this field when suggested_category_id is set. When NO existing category is a reasonable fit, instead of forcing a bad match, set suggested_category_id to null, confidence to 0.0, and provide propose_category with a short, sensible category name for this merchant. If an existing group fits, set group_id to that group's ID and omit group_name. If no existing group fits either, set group_name to a short new group name and omit group_id.
 
 Available budget categories:
+{}
 {}
 {}
 If some transactions are unreadable (blurry, cut off, etc.), list them in the "unreadable" array with a description.
@@ -91,13 +127,38 @@ If some transactions are unreadable (blurry, cut off, etc.), list them in the "u
 Respond with ONLY valid JSON in this exact format:
 {{
   "transactions": [
-    {{ "merchant": "...", "amount_cents": 1234, "date": "2026-01-15", "suggested_category_id": 5, "confidence": 0.95 }}
+    {{ "merchant": "...", "amount_cents": 1234, "date": "2026-01-15", "suggested_category_id": 5, "confidence": 0.95 }},
+    {{ "merchant": "...", "amount_cents": 2500, "date": "2026-01-16", "suggested_category_id": null, "confidence": 0.0, "propose_category": {{ "name": "Pet Supplies", "group_id": 3 }} }}
   ],
   "unreadable": ["Row 3: partially cut off, amount not visible"]
 }}"#,
         cat_list.join("\n"),
+        groups_section,
         hints_section
     )
+}
+
+// A malformed `propose_category` (wrong shape, missing name, etc.) must not fail the
+// whole batch of transactions the way a top-level `AiResponse` parse failure would.
+fn parse_proposed_category(value: Option<serde_json::Value>) -> Option<ProposedCategory> {
+    let raw: AiProposedCategory = serde_json::from_value(value?).ok()?;
+
+    let name = raw.name.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+
+    let group_id = raw.group_id.filter(|id| *id > 0);
+    let group_name = raw
+        .group_name
+        .map(|g| g.trim().to_string())
+        .filter(|g| !g.is_empty());
+
+    Some(ProposedCategory {
+        name,
+        group_id,
+        group_name,
+    })
 }
 
 fn media_type_for_extension(ext: &str) -> &'static str {
@@ -113,6 +174,7 @@ pub async fn parse_cc_statement(
     client: &Client,
     file_path: &str,
     categories: &[BudgetCategory],
+    groups: &[BudgetGroup],
     hints: &[MerchantHint],
 ) -> Result<ParseResult, AppError> {
     let path = Path::new(file_path);
@@ -173,7 +235,7 @@ pub async fn parse_cc_statement(
     };
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let system_prompt = build_system_prompt(&today, categories, hints);
+    let system_prompt = build_system_prompt(&today, categories, groups, hints);
 
     let message = Message::builder()
         .role(ConversationRole::User)
@@ -226,12 +288,17 @@ pub async fn parse_cc_statement(
     let transactions: Vec<ParsedTransaction> = ai_response
         .transactions
         .into_iter()
-        .map(|t| ParsedTransaction {
-            merchant: t.merchant,
-            amount_cents: t.amount_cents,
-            date: t.date,
-            suggested_category_id: t.suggested_category_id,
-            confidence: t.confidence,
+        .map(|t| {
+            let propose_category = parse_proposed_category(t.propose_category);
+            let confidence = if propose_category.is_some() { 0.0 } else { t.confidence };
+            ParsedTransaction {
+                merchant: t.merchant,
+                amount_cents: t.amount_cents,
+                date: t.date,
+                suggested_category_id: t.suggested_category_id,
+                confidence,
+                propose_category,
+            }
         })
         .collect();
 

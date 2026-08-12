@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nixus — Concept mock: Health module</title>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<style>
+/* ============================================================
+   CONCEPT MOCK v2 — HEALTH MODULE (timeline ribbon, restrained execution)
+   v1 feedback: emoji nodes read as gimmicky/twee for sensitive data.
+   Fix keeps the ribbon structure but uses lucide line icons + the
+   same muted-until-focused treatment, no cartoon glyphs.
+   ============================================================ */
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --bg:#FAF8F5; --card:#FFFFFF; --chrome:#F5F2EC; --rail:#F0ECE4; --rail-line:#E3DDD2;
+  --ink:#1C1917; --ink-dim:#6B635A; --ink-faint:#7A7167;
+  --line:#E8E3DA; --line-strong:#D8D1C5; --track:#EFEAE1; --hover:#FBF9F6;
+  --brand:#5B54D6; --brand-ink:#4A43BE; --brand-on:#FFFFFF; --brand-soft:#EFEDFB;
+  --good:#15803D; --good-bg:#E8F3EA; --good-ink:#14672F;
+  --caution:#B45309; --caution-bg:#FBF0DF; --caution-ink:#8F4208;
+  --over:#BE123C; --over-bg:#FBE9ED; --over-ink:#9D0F33;
+  --neutral-bg:#EFEAE1; --neutral-ink:#6B635A;
+  --r-sm:4px; --r-md:5px; --r-lg:7px;
+}
+body{margin:0;background:#0e1116;color:#e6e9ef;line-height:1.5;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+.page{max-width:1300px;margin:0 auto;padding:36px 26px 80px}
+.mh{border-bottom:1px solid #262c36;padding-bottom:22px;margin-bottom:30px}
+.mh h1{font-size:25px;margin:0 0 9px;font-weight:650;letter-spacing:-.02em}
+.mh p{margin:0 0 7px;color:#98a2b3;font-size:13.5px;max-width:90ch}
+.win{border-radius:10px;overflow:hidden;border:1px solid #262c36}
+.wb{display:flex;align-items:center;gap:6px;padding:9px 12px;background:#1a1f27;border-bottom:1px solid #262c36}
+.wb i{width:10px;height:10px;border-radius:50%;background:#3a4250}
+.wb span{margin-left:8px;font-size:11px;color:#6b7583}
+.app{background:var(--bg);color:var(--ink);min-height:640px;font-size:14px;display:flex;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+.rail{width:52px;flex-shrink:0;background:var(--rail);border-right:1px solid var(--rail-line);
+  display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail .mk{width:24px;height:24px;border-radius:6px;margin-bottom:12px;
+  background:linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6)}
+.rail .ic{width:32px;height:32px;border-radius:var(--r-md);display:flex;align-items:center;
+  justify-content:center;color:var(--ink-faint);position:relative}
+.rail .ic svg{width:17px;height:17px}
+.rail .ic.on{background:var(--brand-soft);color:var(--brand-ink)}
+.rail .ic.on::after{content:"";position:absolute;right:-10px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--brand)}
+.rail .sp{flex:1}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.dest{display:flex;align-items:center;gap:2px;padding:0 20px;background:var(--chrome);border-bottom:1px solid var(--line)}
+.dest a{padding:13px 14px 12px;font-size:13.5px;font-weight:550;color:var(--ink-dim);text-decoration:none;border-bottom:2px solid transparent;display:flex;align-items:center;gap:6px}
+.dest a svg{width:14px;height:14px}
+.dest a.on{color:var(--brand-ink);border-bottom-color:var(--brand);font-weight:650}
+.dest .grow{flex:1}
+.body{padding:22px}
+h1.pt{font-size:20px;font-weight:650;letter-spacing:-.02em;margin:0 0 3px}
+p.pd{font-size:13px;color:var(--ink-dim);margin:0 0 20px}
+
+/* ---------- timeline ribbon (flat, line icons) ---------- */
+.ribbon-wrap{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:28px 24px 18px;margin-bottom:16px;overflow-x:auto}
+.ribbon{position:relative;min-width:640px;height:112px;padding:0 20px}
+.ribbon .line{position:absolute;left:20px;right:20px;top:56px;height:2px;background:var(--line-strong)}
+.ribbon .today{position:absolute;left:50%;top:14px;bottom:26px;width:0;border-left:2px dashed var(--brand)}
+.ribbon .today-lbl{position:absolute;left:50%;top:0;transform:translateX(-50%);font-size:10.5px;
+  font-weight:650;color:var(--brand-ink);background:var(--brand-soft);padding:2px 6px;border-radius:99px}
+.node{position:absolute;top:40px;width:34px;height:34px;transform:translateX(-50%);cursor:pointer}
+.node .dot{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  border:2px solid var(--card);box-shadow:0 0 0 1.5px var(--line-strong);transition:transform .15s;color:var(--ink-dim)}
+.node .dot svg{width:14px;height:14px}
+.node:hover .dot{transform:scale(1.12)}
+.node.past .dot{background:var(--neutral-bg);opacity:.7}
+.node.good .dot{background:var(--good-bg);color:var(--good-ink)}
+.node.caution .dot{background:var(--caution-bg);color:var(--caution-ink)}
+.node.over .dot{background:var(--over-bg);color:var(--over-ink)}
+.node .lbl{position:absolute;top:36px;left:50%;transform:translateX(-50%);font-size:10.5px;color:var(--ink-dim);
+  white-space:nowrap;text-align:center}
+.node.sel .dot{outline:2px solid var(--brand);outline-offset:2px}
+
+/* ---------- detail card ---------- */
+.detail{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:16px 18px;border-left:3px solid var(--brand)}
+.detail .hd{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.detail .hd .ic{width:30px;height:30px;border-radius:var(--r-md);background:var(--track);
+  display:flex;align-items:center;justify-content:center;color:var(--ink-dim)}
+.detail .hd .ic svg{width:15px;height:15px}
+.detail h3{margin:0;font-size:15px;font-weight:650}
+.pill{font-size:11.5px;font-weight:650;padding:3px 8px;border-radius:var(--r-md);margin-left:auto}
+.p-caut{background:var(--caution-bg);color:var(--caution-ink)}
+.p-good{background:var(--good-bg);color:var(--good-ink)}
+.p-over{background:var(--over-bg);color:var(--over-ink)}
+.detail p{margin:0 0 10px;font-size:13px;color:var(--ink-dim)}
+.detail .row{display:flex;gap:24px;font-size:12.5px;color:var(--ink-dim);margin-bottom:12px}
+.detail .row b{color:var(--ink);display:block;font-size:14px;margin-top:2px}
+.cta{display:inline-block;font-size:13px;font-weight:650;padding:8px 14px;
+  border-radius:var(--r-md);background:var(--brand);color:var(--brand-on);cursor:pointer}
+.note{margin-top:16px;padding:11px 14px;background:var(--neutral-bg);border-radius:var(--r-md);
+  font-size:12.5px;color:var(--ink-dim)}
+.foot{border-top:1px solid #262c36;margin-top:34px;padding-top:20px;color:#6b7583;font-size:12.5px}
+.foot b{color:#98a2b3}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="mh">
+    <h1>Concept mock v2 — Health module</h1>
+    <p><b>Revised after feedback:</b> v1's tooth/eye emoji nodes felt twee for sensitive data. Fix keeps the chronological ribbon structure but swaps in lucide line icons and keeps the muted-until-focused treatment for past entries.</p>
+  </div>
+
+  <div class="win">
+    <div class="wb"><i></i><i></i><i></i><span>Nixus — Health — concept v2</span></div>
+    <div class="app">
+      <div class="rail">
+        <div class="mk"></div>
+        <div class="ic"><svg data-lucide="layout-dashboard"></svg></div>
+        <div class="ic"><svg data-lucide="wallet"></svg></div>
+        <div class="ic"><svg data-lucide="trending-up"></svg></div>
+        <div class="ic"><svg data-lucide="car"></svg></div>
+        <div class="ic"><svg data-lucide="home"></svg></div>
+        <div class="ic on"><svg data-lucide="heart-pulse"></svg></div>
+        <div class="sp"></div>
+        <div class="ic"><svg data-lucide="user"></svg></div>
+        <div class="ic"><svg data-lucide="settings"></svg></div>
+      </div>
+      <div class="main">
+        <nav class="dest">
+          <a href="#"><svg data-lucide="layout-dashboard"></svg>Today</a>
+          <a href="#"><svg data-lucide="wallet"></svg>Spending</a>
+          <a href="#"><svg data-lucide="trending-up"></svg>Wealth</a>
+          <a href="#"><svg data-lucide="car"></svg>Car</a>
+          <a href="#"><svg data-lucide="home"></svg>House</a>
+          <a href="#" class="on"><svg data-lucide="heart-pulse"></svg>Health</a>
+          <span class="grow"></span>
+        </nav>
+        <div class="body">
+          <h1 class="pt">Your health ledger</h1>
+          <p class="pd">Click a point on the timeline for details.</p>
+
+          <div class="ribbon-wrap">
+            <div class="ribbon">
+              <div class="line"></div>
+              <div class="today"></div>
+              <div class="today-lbl">Today</div>
+
+              <div class="node past" style="left:12%" onclick="show('dentist-past',event)"><div class="dot"><svg data-lucide="smile"></svg></div><div class="lbl">Dentist<br>Mar '26</div></div>
+              <div class="node past" style="left:28%" onclick="show('eye-past',event)"><div class="dot"><svg data-lucide="eye"></svg></div><div class="lbl">Optometrist<br>Apr '26</div></div>
+              <div class="node past" style="left:42%" onclick="show('doctor-past',event)"><div class="dot"><svg data-lucide="stethoscope"></svg></div><div class="lbl">Doctor<br>Jun '26</div></div>
+
+              <div class="node caution sel" style="left:58%" onclick="show('dentist-next',event)"><div class="dot"><svg data-lucide="smile"></svg></div><div class="lbl">Dentist<br>Due in 3 wks</div></div>
+              <div class="node good" style="left:75%" onclick="show('eye-next',event)"><div class="dot"><svg data-lucide="eye"></svg></div><div class="lbl">Optometrist<br>Due in 5 mo</div></div>
+              <div class="node over" style="left:90%" onclick="show('doctor-next',event)"><div class="dot"><svg data-lucide="stethoscope"></svg></div><div class="lbl">Annual physical<br>Overdue 2 mo</div></div>
+            </div>
+          </div>
+
+          <div class="detail" id="detail">
+            <div class="hd"><span class="ic"><svg data-lucide="smile"></svg></span><h3>Dentist checkup</h3><span class="pill p-caut">Due in 3 weeks</span></div>
+            <p>Last cleaning 2026-03-11. Typical cadence: every 6 months.</p>
+            <div class="row">
+              <div>Usual cost<b>$120–180</b></div>
+              <div>Coverage<b>80% via benefits</b></div>
+              <div>Last 3 visits<b>on-schedule</b></div>
+            </div>
+            <span class="cta">Log appointment</span>
+          </div>
+
+          <div class="note">Same due-date/history engine as Car and House — the ribbon and muted-past treatment distinguish Health, executed with the same line-icon language rather than illustrative glyphs.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><b>Concept mock, not implementation-ready.</b> Icons via lucide. See <code>product-brief-addendum-mobile-cloud-differentiation-2026-08-12.md</code>.</div>
+</div>
+<script>
+lucide.createIcons();
+const details = {
+  'dentist-past': {icon:'smile', title:'Dentist checkup', pill:'Completed', pillClass:'p-good',
+    body:'Visited 2026-03-11. Routine cleaning, no issues found.', cost:'$150', cov:'80% via benefits', hist:'on-schedule'},
+  'eye-past': {icon:'eye', title:'Optometrist', pill:'Completed', pillClass:'p-good',
+    body:'Visited 2026-04-02. Prescription unchanged.', cost:'$95', cov:'70% via benefits', hist:'on-schedule'},
+  'doctor-past': {icon:'stethoscope', title:'Doctor visit', pill:'Completed', pillClass:'p-good',
+    body:'Visited 2026-06-18. Routine check, bloodwork normal.', cost:'$0', cov:'covered', hist:'on-schedule'},
+  'dentist-next': {icon:'smile', title:'Dentist checkup', pill:'Due in 3 weeks', pillClass:'p-caut',
+    body:'Last cleaning 2026-03-11. Typical cadence: every 6 months.', cost:'$120–180', cov:'80% via benefits', hist:'on-schedule'},
+  'eye-next': {icon:'eye', title:'Optometrist', pill:'Due in 5 months', pillClass:'p-good',
+    body:'Last exam 2026-04-02. Typical cadence: every 12 months.', cost:'$95–140', cov:'70% via benefits', hist:'on-schedule'},
+  'doctor-next': {icon:'stethoscope', title:'Annual physical', pill:'Overdue by 2 months', pillClass:'p-over',
+    body:'Last physical 2026-06-18. Recommended annually.', cost:'$0', cov:'covered', hist:'1 missed cycle'}
+};
+function show(key,ev){
+  const d = details[key];
+  const el = document.getElementById('detail');
+  el.querySelector('.hd .ic').innerHTML = '<svg data-lucide="'+d.icon+'"></svg>';
+  el.querySelector('h3').textContent = d.title;
+  const pill = el.querySelector('.pill');
+  pill.textContent = d.pill; pill.className = 'pill ' + d.pillClass;
+  el.querySelector('p').textContent = d.body;
+  const b = el.querySelectorAll('.row b');
+  b[0].textContent = d.cost; b[1].textContent = d.cov; b[2].textContent = d.hist;
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('sel'));
+  ev.currentTarget.classList.add('sel');
+  lucide.createIcons();
+}
+</script>
+</body>
+</html>

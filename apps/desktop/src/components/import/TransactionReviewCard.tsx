@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import {
   Alert,
   Badge,
+  Button,
   Card,
   CardContent,
   Checkbox,
@@ -17,6 +18,7 @@ import {
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { cn } from "@/lib/utils";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import type { ProposedCategory } from "@/hooks/useImport";
 
 interface BudgetCategory {
   id: number;
@@ -40,6 +42,9 @@ interface TransactionReviewCardProps {
   onAmountChange: (value: number) => void;
   onDateChange: (value: string) => void;
   isDuplicate?: boolean;
+  proposedCategory?: ProposedCategory | null;
+  onCreateProposedCategory?: () => void;
+  creatingProposedCategory?: boolean;
 }
 
 export function TransactionReviewCard({
@@ -58,6 +63,9 @@ export function TransactionReviewCard({
   onAmountChange,
   onDateChange,
   isDuplicate,
+  proposedCategory,
+  onCreateProposedCategory,
+  creatingProposedCategory,
 }: TransactionReviewCardProps) {
   const { t } = useTranslation();
   const formatCurrency = useFormatCurrency();
@@ -161,6 +169,30 @@ export function TransactionReviewCard({
                   : t("import.rowNeedsCategory")}
               </Badge>
             </div>
+
+            {!isResolved && proposedCategory && (
+              <Alert
+                variant="caution"
+                className="mt-2"
+                data-testid="propose-category-alert"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span>
+                    {t("import.proposedCategory", { name: proposedCategory.name })}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={onCreateProposedCategory}
+                    disabled={creatingProposedCategory || !onCreateProposedCategory}
+                    data-testid="create-category-button"
+                  >
+                    {t("import.createCategoryButton")}
+                  </Button>
+                </div>
+              </Alert>
+            )}
           </div>
         </div>
       </CardContent>

@@ -211,14 +211,15 @@ pub async fn import_cc_statement(
         },
     );
 
-    // Fetch budget categories and merchant hints for AI context
-    let (categories, hints) = {
+    // Fetch budget categories, groups, and merchant hints for AI context
+    let (categories, groups, hints) = {
         let conn = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
         let cats = budget_db::get_all_budget_categories(&conn)?;
+        let groups = budget_db::get_budget_groups(&conn)?;
         let hints = expense_db::get_merchant_category_hints(&conn)?;
-        (cats, hints)
+        (cats, groups, hints)
     };
 
     // Extract the Bedrock client before any await points
@@ -245,7 +246,7 @@ pub async fn import_cc_statement(
     info!("Starting AI extraction for file: {}", file_path);
 
     // Call AI parser
-    let result = cc_parser::parse_cc_statement(&bedrock_client, &file_path, &categories, &hints).await;
+    let result = cc_parser::parse_cc_statement(&bedrock_client, &file_path, &categories, &groups, &hints).await;
 
     match result {
         Ok(parse_result) => {

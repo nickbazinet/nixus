@@ -3,12 +3,19 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ImportStage } from "@/components/import/ImportProgressStepper";
 
+export interface ProposedCategory {
+  name: string;
+  group_id: number | null;
+  group_name: string | null;
+}
+
 export interface ParsedTransaction {
   merchant: string;
   amount_cents: number;
   date: string;
   suggested_category_id: number | null;
   confidence: number;
+  propose_category?: ProposedCategory | null;
 }
 
 interface ImportCompletePayload {

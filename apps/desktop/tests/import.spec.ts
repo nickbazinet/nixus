@@ -6,12 +6,16 @@ const MOCK_CATEGORIES = [
   { id: 3, group_id: 2, name: "Shopping", target_cents: 20000, sort_order: 1, created_at: "2026-01-01" },
 ];
 
-async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDates?: boolean }) {
+async function setupTauriMock(
+  page: Page,
+  options?: { aiError?: boolean; badDates?: boolean; proposeCategory?: "existingGroup" | "newGroup" }
+) {
   const aiError = options?.aiError ?? false;
   const badDates = options?.badDates ?? false;
+  const proposeCategory = options?.proposeCategory ?? null;
 
   await page.addInitScript(
-    ({ aiError, badDates, categories }) => {
+    ({ aiError, badDates, proposeCategory, categories }) => {
       type EventCallback = (event: { event: string; payload: unknown; id: number }) => void;
       const eventListeners: Record<string, EventCallback[]> = {};
       const callbacks: Record<number, EventCallback> = {};
@@ -95,10 +99,25 @@ async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDate
                       { merchant: "Coffee Shop", amount_cents: 550, date: "14 MAR", suggested_category_id: 1, confidence: 0.95 },
                       { merchant: "Gas Station", amount_cents: 4200, date: "2026-03-15", suggested_category_id: 2, confidence: 0.95 },
                     ]
-                  : [
-                      { merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
-                      { merchant: "Uber Eats", amount_cents: 2150, date: "2026-03-11", suggested_category_id: 2, confidence: 0.6 },
-                    ];
+                  : proposeCategory
+                    ? [
+                        { merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
+                        {
+                          merchant: "Petsmart",
+                          amount_cents: 3200,
+                          date: "2026-03-12",
+                          suggested_category_id: null,
+                          confidence: 0.0,
+                          propose_category:
+                            proposeCategory === "existingGroup"
+                              ? { name: "Pet Supplies", group_id: 1, group_name: null }
+                              : { name: "Pet Supplies", group_id: null, group_name: "Pets" },
+                        },
+                      ]
+                    : [
+                        { merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
+                        { merchant: "Uber Eats", amount_cents: 2150, date: "2026-03-11", suggested_category_id: 2, confidence: 0.6 },
+                      ];
                 emitEvent("import:complete", {
                   transactions,
                   flagged_count: badDates ? 0 : 1,
@@ -111,6 +130,24 @@ async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDate
 
             case "get_all_budget_categories":
               return Promise.resolve(categories);
+
+            case "create_budget_group": {
+              const newGroup = { id: 100, name: args.name, sort_order: 99, created_at: "2026-01-01" };
+              return Promise.resolve(newGroup);
+            }
+
+            case "create_budget_category": {
+              const newCategory = {
+                id: 200,
+                group_id: args.group_id,
+                name: args.name,
+                target_cents: args.target_cents,
+                sort_order: 99,
+                created_at: "2026-01-01",
+              };
+              categories.push(newCategory);
+              return Promise.resolve(newCategory);
+            }
 
             case "confirm_import":
               (window as unknown as Record<string, unknown>).__LAST_CONFIRM_IMPORT_ARGS__ = args;
@@ -132,7 +169,7 @@ async function setupTauriMock(page: Page, options?: { aiError?: boolean; badDate
         convertFileSrc: (path: string) => path,
       };
     },
-    { aiError, badDates, categories: MOCK_CATEGORIES }
+    { aiError, badDates, proposeCategory, categories: MOCK_CATEGORIES }
   );
 }
 
@@ -393,6 +430,79 @@ test.describe("Import Page — Story 6.3", () => {
     await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
     await page.getByTestId("view-dashboard-button").click();
     await expect(page).toHaveURL("/");
+  });
+});
+
+test.describe("Import Page — AI Category Proposals", () => {
+  test("shows a create-category proposal when the AI finds no matching category", async ({ page }) => {
+    await setupTauriMock(page, { proposeCategory: "existingGroup" });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await expect(card.getByTestId("propose-category-alert")).toContainText("Pet Supplies");
+    await expect(card.getByTestId("review-row-status")).toHaveText("Needs a category");
+  });
+
+  test("confirming a proposal with an existing group id creates only the category [AC3]", async ({ page }) => {
+    await setupTauriMock(page, { proposeCategory: "existingGroup" });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await card.getByTestId("create-category-button").click();
+
+    await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
+
+    const invokeLog = await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__
+    );
+    const calls = invokeLog as { cmd: string; args: Record<string, unknown> }[];
+    expect(calls.some((c) => c.cmd === "create_budget_group")).toBe(false);
+    expect(calls).toContainEqual({
+      cmd: "create_budget_category",
+      args: { group_id: 1, name: "Pet Supplies", target_cents: 100 },
+    });
+  });
+
+  test("confirming a proposal with no existing group creates the group first, then the category [AC2]", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { proposeCategory: "newGroup" });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await card.getByTestId("create-category-button").click();
+
+    await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
+
+    const invokeLog = await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__
+    );
+    const calls = invokeLog as { cmd: string; args: Record<string, unknown> }[];
+    expect(calls).toContainEqual({ cmd: "create_budget_group", args: { name: "Pets" } });
+    expect(calls).toContainEqual({
+      cmd: "create_budget_category",
+      args: { group_id: 100, name: "Pet Supplies", target_cents: 100 },
+    });
+  });
+
+  test("ignoring the proposal and picking a category manually still works [AC4]", async ({ page }) => {
+    await setupTauriMock(page, { proposeCategory: "existingGroup" });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await card.getByTestId("category-select").click();
+    await page.getByRole("option", { name: "Shopping" }).click();
+
+    await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
+    await expect(card.getByTestId("create-category-button")).toHaveCount(0);
   });
 });
 
