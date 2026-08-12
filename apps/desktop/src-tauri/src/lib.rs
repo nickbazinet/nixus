@@ -9,6 +9,7 @@ mod json_store;
 mod maintenance;
 mod models;
 mod profile_store;
+mod projects;
 mod tfsa;
 
 use db::{init_db, DbState};
@@ -277,6 +278,23 @@ pub fn run() {
             commands::profile::get_countries,
             commands::profile::get_subdivisions,
             commands::profile::get_tfsa_accumulated_limit,
+            commands::projects::create_project,
+            commands::projects::update_project,
+            commands::projects::reorder_projects,
+            commands::projects::archive_project,
+            commands::projects::get_projects,
+            commands::projects::create_project_contribution,
+            commands::projects::confirm_project_allocations,
+            commands::projects::delete_project_contribution,
+            commands::projects::get_project_contributions,
+            commands::projects::get_project_saved_totals,
+            commands::projects::get_account_earmark_breakdown,
+            commands::projects::get_savings_projects_summary,
+            commands::projects::get_suggested_allocation,
+            commands::projects::get_project_pace,
+            commands::projects::generate_project_advice,
+            commands::projects::skip_suggested_allocation_for_month,
+            commands::projects::clear_suggested_allocation_skip,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

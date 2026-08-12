@@ -1,7 +1,35 @@
 import { test, expect, type Page } from "@playwright/test";
 
-async function setupTauriMock(page: Page) {
-  await page.addInitScript(() => {
+interface EarmarkFixture {
+  account_id: number;
+  balance_cents: number;
+  earmarked_cents: number;
+  unallocated_cents: number;
+  segments: {
+    project_id: number;
+    project_name: string;
+    earmarked_cents: number;
+  }[];
+}
+
+interface BlockedDeleteFixture {
+  account_name: string;
+  project_names: string[];
+}
+
+interface MockOptions {
+  earmarks: EarmarkFixture[];
+  blockedDeletes: BlockedDeleteFixture[];
+}
+
+async function setupTauriMock(
+  page: Page,
+  earmarks: EarmarkFixture[] = [],
+  blockedDeletes: BlockedDeleteFixture[] = []
+) {
+  await page.addInitScript(
+    ({ earmarks: earmarkFixtures, blockedDeletes: blockedDeleteFixtures }: MockOptions) => {
+
     interface MockAccount {
       id: number;
       name: string;
@@ -128,6 +156,19 @@ async function setupTauriMock(page: Page) {
                 type: "database",
                 message: "Account not found",
               });
+            // Stands in for the Rust guard: shaped like the serialized `AppError::Validation`, not a
+            // bare string, or the component's readError would take its `typeof err === "string"` path.
+            const blocked = blockedDeleteFixtures.find(
+              (candidate) => candidate.account_name === accounts[idx].name
+            );
+            if (blocked)
+              return Promise.reject({
+                type: "validation",
+                message: `This account still holds money set aside for: ${blocked.project_names.join(
+                  ", "
+                )}. Delete those contributions first.`,
+                field: "id",
+              });
             accounts.splice(idx, 1);
             return Promise.resolve(null);
           }
@@ -148,13 +189,29 @@ async function setupTauriMock(page: Page) {
               assets_cents: 46500000,
             });
 
+          case "get_account_earmark_breakdown": {
+            const earmarkAccountId = args.account_id as number;
+            const fixture = earmarkFixtures.find(
+              (candidate) => candidate.account_id === earmarkAccountId
+            );
+            return Promise.resolve(
+              fixture ?? {
+                account_id: earmarkAccountId,
+                balance_cents: 0,
+                earmarked_cents: 0,
+                unallocated_cents: 0,
+                segments: [],
+              }
+            );
+          }
+
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
         }
       },
       convertFileSrc: (path: string) => path,
     };
-  });
+  }, { earmarks, blockedDeletes });
 }
 
 /** Helper: create an account via the UI form */
@@ -524,5 +581,113 @@ test.describe("Accounts Page", () => {
     await createAccount(page, "USD Account", "Chase", "Chequing", "USD");
 
     await expect(page.getByTestId("accounts-mixed-currency")).toBeVisible();
+  });
+});
+
+test.describe("Account earmark breakdown", () => {
+  test("splits a funded account's balance into project rows, collapsed by default", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, [
+      {
+        account_id: 1,
+        balance_cents: 1000000,
+        earmarked_cents: 400000,
+        unallocated_cents: 600000,
+        segments: [
+          { project_id: 1, project_name: "Kitchen", earmarked_cents: 300000 },
+          { project_id: 2, project_name: "Trip", earmarked_cents: 100000 },
+        ],
+      },
+    ]);
+    await page.goto("/wealth/accounts");
+    await createAccount(page, "Main Chequing", "TD Bank", "Chequing");
+
+    const row = page.getByTestId("account-row").filter({ hasText: "Main Chequing" });
+    const toggle = row.getByTestId("account-earmark-toggle");
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(row.getByTestId("account-earmark-summary")).toContainText("$4,000.00");
+    await expect(page.getByTestId("account-earmark-project-row")).toHaveCount(0);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    // No standalone earmarks section exists anywhere — the breakdown lives only in the row.
+    await expect(page.getByTestId("accounts-earmarks")).toHaveCount(0);
+
+    // Unallocated leads the expanded rows so "what's mine" reads before "what's set aside".
+    await expect(page.getByTestId("account-earmark-unallocated-amount")).toContainText(
+      "$6,000.00"
+    );
+
+    const projectRows = page.getByTestId("account-earmark-project-row");
+    await expect(projectRows).toHaveCount(2);
+    await expect(projectRows.nth(0)).toContainText("Kitchen");
+    await expect(projectRows.nth(0).getByTestId("account-earmark-amount")).toContainText(
+      "$3,000.00"
+    );
+    await expect(projectRows.nth(1)).toContainText("Trip");
+
+    // Share moved into a tooltip rather than a legend column.
+    await projectRows.nth(0).getByTestId("account-earmark-share-tooltip").hover();
+    await expect(page.getByText("30% of Main Chequing's balance")).toBeVisible();
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("account-earmark-project-row")).toHaveCount(0);
+    await expect(page.getByTestId("account-earmark-unallocated-row")).toHaveCount(0);
+  });
+
+  test("shows no expand toggle for an account with no contributions", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/wealth/accounts");
+    await createAccount(page, "Main Chequing", "TD Bank", "Chequing");
+
+    const row = page.getByTestId("account-row").filter({ hasText: "Main Chequing" });
+    await expect(row.getByTestId("account-earmark-toggle")).toHaveCount(0);
+    await expect(row.getByTestId("account-earmark-summary")).toHaveCount(0);
+    await expect(page.getByTestId("accounts-earmarks")).toHaveCount(0);
+  });
+});
+
+test.describe("Deleting an account that funds a project", () => {
+  test("is refused with a toast naming the project, and the account stays listed", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, [], [
+      { account_name: "Main Chequing", project_names: ["Car"] },
+    ]);
+    await page.goto("/wealth/accounts");
+    await createAccount(page, "Main Chequing", "TD Bank", "Chequing");
+
+    await page.getByTestId("account-row-menu").click();
+    await page.getByTestId("delete-account-button").click();
+    await page.getByTestId("confirm-delete-account-button").click();
+
+    await expect(
+      page.getByText(
+        "This account still holds money set aside for: Car. Delete those contributions first."
+      )
+    ).toBeVisible();
+    await expect(page.getByText("Failed to delete")).toHaveCount(0);
+    await expect(
+      page.getByTestId("account-row").filter({ hasText: "Main Chequing" })
+    ).toBeVisible();
+  });
+
+  test("still deletes an account that funds nothing", async ({ page }) => {
+    await setupTauriMock(page, [], [
+      { account_name: "Funding Account", project_names: ["Car"] },
+    ]);
+    await page.goto("/wealth/accounts");
+    await createAccount(page, "Free Account", "TD Bank", "Chequing");
+
+    await page.getByTestId("account-row-menu").click();
+    await page.getByTestId("delete-account-button").click();
+    await page.getByTestId("confirm-delete-account-button").click();
+
+    await expect(page.getByText("Successfully deleted")).toBeVisible();
+    await expect(page.getByTestId("accounts-empty-state")).toBeVisible();
   });
 });

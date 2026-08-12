@@ -25,6 +25,7 @@ import { Route as InsightsIndexRouteImport } from './routes/insights.index'
 import { Route as CarIndexRouteImport } from './routes/car.index'
 import { Route as AiIndexRouteImport } from './routes/ai.index'
 import { Route as WealthWhereToPutYourMoneyRouteImport } from './routes/wealth.where-to-put-your-money'
+import { Route as WealthProjectsRouteImport } from './routes/wealth.projects'
 import { Route as WealthNetWorthRouteImport } from './routes/wealth.net-worth'
 import { Route as WealthAssetsRouteImport } from './routes/wealth.assets'
 import { Route as WealthAccountsRouteImport } from './routes/wealth.accounts'
@@ -120,6 +121,11 @@ const WealthWhereToPutYourMoneyRoute =
     path: '/wealth/where-to-put-your-money',
     getParentRoute: () => rootRouteImport,
   } as any)
+const WealthProjectsRoute = WealthProjectsRouteImport.update({
+  id: '/wealth/projects',
+  path: '/wealth/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WealthNetWorthRoute = WealthNetWorthRouteImport.update({
   id: '/wealth/net-worth',
   path: '/wealth/net-worth',
@@ -209,6 +215,7 @@ export interface FileRoutesByFullPath {
   '/wealth/accounts': typeof WealthAccountsRoute
   '/wealth/assets': typeof WealthAssetsRoute
   '/wealth/net-worth': typeof WealthNetWorthRoute
+  '/wealth/projects': typeof WealthProjectsRoute
   '/wealth/where-to-put-your-money': typeof WealthWhereToPutYourMoneyRoute
   '/ai/': typeof AiIndexRoute
   '/car/': typeof CarIndexRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/wealth/accounts': typeof WealthAccountsRoute
   '/wealth/assets': typeof WealthAssetsRoute
   '/wealth/net-worth': typeof WealthNetWorthRoute
+  '/wealth/projects': typeof WealthProjectsRoute
   '/wealth/where-to-put-your-money': typeof WealthWhereToPutYourMoneyRoute
   '/ai': typeof AiIndexRoute
   '/car': typeof CarIndexRoute
@@ -269,6 +277,7 @@ export interface FileRoutesById {
   '/wealth/accounts': typeof WealthAccountsRoute
   '/wealth/assets': typeof WealthAssetsRoute
   '/wealth/net-worth': typeof WealthNetWorthRoute
+  '/wealth/projects': typeof WealthProjectsRoute
   '/wealth/where-to-put-your-money': typeof WealthWhereToPutYourMoneyRoute
   '/ai/': typeof AiIndexRoute
   '/car/': typeof CarIndexRoute
@@ -302,6 +311,7 @@ export interface FileRouteTypes {
     | '/wealth/accounts'
     | '/wealth/assets'
     | '/wealth/net-worth'
+    | '/wealth/projects'
     | '/wealth/where-to-put-your-money'
     | '/ai/'
     | '/car/'
@@ -330,6 +340,7 @@ export interface FileRouteTypes {
     | '/wealth/accounts'
     | '/wealth/assets'
     | '/wealth/net-worth'
+    | '/wealth/projects'
     | '/wealth/where-to-put-your-money'
     | '/ai'
     | '/car'
@@ -361,6 +372,7 @@ export interface FileRouteTypes {
     | '/wealth/accounts'
     | '/wealth/assets'
     | '/wealth/net-worth'
+    | '/wealth/projects'
     | '/wealth/where-to-put-your-money'
     | '/ai/'
     | '/car/'
@@ -390,6 +402,7 @@ export interface RootRouteChildren {
   WealthAccountsRoute: typeof WealthAccountsRoute
   WealthAssetsRoute: typeof WealthAssetsRoute
   WealthNetWorthRoute: typeof WealthNetWorthRoute
+  WealthProjectsRoute: typeof WealthProjectsRoute
   WealthWhereToPutYourMoneyRoute: typeof WealthWhereToPutYourMoneyRoute
   InsightsIndexRoute: typeof InsightsIndexRoute
   SpendingIndexRoute: typeof SpendingIndexRoute
@@ -508,6 +521,13 @@ declare module '@tanstack/react-router' {
       path: '/wealth/where-to-put-your-money'
       fullPath: '/wealth/where-to-put-your-money'
       preLoaderRoute: typeof WealthWhereToPutYourMoneyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wealth/projects': {
+      id: '/wealth/projects'
+      path: '/wealth/projects'
+      fullPath: '/wealth/projects'
+      preLoaderRoute: typeof WealthProjectsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/wealth/net-worth': {
@@ -662,6 +682,7 @@ const rootRouteChildren: RootRouteChildren = {
   WealthAccountsRoute: WealthAccountsRoute,
   WealthAssetsRoute: WealthAssetsRoute,
   WealthNetWorthRoute: WealthNetWorthRoute,
+  WealthProjectsRoute: WealthProjectsRoute,
   WealthWhereToPutYourMoneyRoute: WealthWhereToPutYourMoneyRoute,
   InsightsIndexRoute: InsightsIndexRoute,
   SpendingIndexRoute: SpendingIndexRoute,

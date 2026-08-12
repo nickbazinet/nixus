@@ -1,5 +1,6 @@
 pub mod cc_parser;
 pub mod chat;
+pub mod project_advice;
 pub mod trends_insight;
 
 use aws_config::BehaviorVersion;

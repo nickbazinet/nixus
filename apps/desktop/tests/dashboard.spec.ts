@@ -95,6 +95,12 @@ async function setupEmptyDashboardMock(page: Page) {
               return Promise.resolve(healthMock);
             case "get_latest_expense":
               return Promise.resolve(null);
+            case "get_savings_projects_summary":
+              return Promise.resolve({
+                active_project_count: 0,
+                total_saved_cents: 0,
+                total_target_cents: 0,
+              });
             default:
               return Promise.resolve(null);
           }
@@ -222,6 +228,12 @@ async function setupSeededDashboardMock(page: Page) {
             });
           case "get_latest_expense":
             return Promise.resolve(latestExpense);
+          case "get_savings_projects_summary":
+            return Promise.resolve({
+              active_project_count: 0,
+              total_saved_cents: 0,
+              total_target_cents: 0,
+            });
           default:
             return Promise.resolve(null);
         }
@@ -290,6 +302,12 @@ async function setupPacingDashboardMock(page: Page) {
             return Promise.resolve(null);
           case "get_latest_expense":
             return Promise.resolve(null);
+          case "get_savings_projects_summary":
+            return Promise.resolve({
+              active_project_count: 0,
+              total_saved_cents: 0,
+              total_target_cents: 0,
+            });
           default:
             return Promise.resolve(null);
         }
@@ -434,6 +452,12 @@ test.describe("Dashboard — Story 5.1", () => {
               return new Promise((resolve) =>
                 setTimeout(() => resolve(null), 500)
               );
+            case "get_savings_projects_summary":
+              return Promise.resolve({
+                active_project_count: 0,
+                total_saved_cents: 0,
+                total_target_cents: 0,
+              });
             default:
               return Promise.resolve(null);
           }
@@ -709,6 +733,12 @@ test.describe("Dashboard — Suggested Next Step Card", () => {
               return Promise.resolve(yearlyMock);
             case "get_latest_expense":
               return Promise.resolve(null);
+            case "get_savings_projects_summary":
+              return Promise.resolve({
+                active_project_count: 0,
+                total_saved_cents: 0,
+                total_target_cents: 0,
+              });
             default:
               return Promise.resolve(null);
           }
@@ -811,5 +841,124 @@ test.describe("Dashboard — Last Expense Line", () => {
     await expect(line).toBeVisible();
     await expect(line).not.toHaveRole("link");
     await expect(line).not.toHaveRole("button");
+  });
+});
+
+async function setupSavingsDashboardMock(
+  page: Page,
+  savingsMock: {
+    active_project_count: number;
+    total_saved_cents: number;
+    total_target_cents: number;
+  }
+) {
+  // Single-object argument for the same reason as setupEmptyDashboardMock: a second addInitScript
+  // argument is silently dropped.
+  await page.addInitScript(
+    ({ yearlyMock, healthMock, savings }) => {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+        invoke: (cmd: string) => {
+          switch (cmd) {
+            case "get_budget_summary":
+              return Promise.resolve({
+                total_target_cents: 0,
+                total_spent_cents: 0,
+                remaining_cents: 0,
+                month: "2026-03",
+              });
+            case "get_top_budget_categories":
+              return Promise.resolve([]);
+            case "get_current_net_worth":
+              return Promise.resolve({
+                total_cents: 0,
+                cash_cents: 0,
+                investments_cents: 0,
+                assets_cents: 0,
+              });
+            case "get_recent_net_worth_snapshots":
+              return Promise.resolve([]);
+            case "get_spending_breakdown":
+              return Promise.resolve([]);
+            case "get_yearly_summary":
+              return Promise.resolve(yearlyMock);
+            case "get_financial_health_summary":
+              return Promise.resolve(healthMock);
+            case "get_latest_expense":
+              return Promise.resolve(null);
+            case "get_savings_projects_summary":
+              return Promise.resolve(savings);
+            default:
+              return Promise.resolve(null);
+          }
+        },
+      };
+    },
+    {
+      yearlyMock: emptyYearlySummaryMock,
+      healthMock: financialHealthInsufficientMock,
+      savings: savingsMock,
+    }
+  );
+}
+
+test.describe("Dashboard — Saved toward goals card", () => {
+  const label = "Saved toward goals";
+
+  test("card shows the total saved across active projects", async ({ page }) => {
+    await setupSavingsDashboardMock(page, {
+      active_project_count: 2,
+      total_saved_cents: 450000,
+      total_target_cents: 1000000,
+    });
+    await page.goto("/");
+
+    const card = metricCard(page, label);
+    await expect(card).toBeVisible();
+    await expect(card).toContainText("$4,500.00");
+    // A secondary figure, never the surface's single text-display one.
+    const hero = metricCard(page, "Budget remaining");
+    await expect(hero).toHaveCount(0);
+    await expect(card.getByTestId("savings-projects-progress")).toHaveAttribute(
+      "aria-valuetext",
+      "$4,500.00 of $10,000.00 across 2 goals"
+    );
+  });
+
+  test("card links to the projects surface", async ({ page }) => {
+    await setupSavingsDashboardMock(page, {
+      active_project_count: 1,
+      total_saved_cents: 25000,
+      total_target_cents: 100000,
+    });
+    await page.goto("/");
+
+    await metricCard(page, label).click();
+    await expect(page).toHaveURL(/\/wealth\/projects/);
+  });
+
+  test("card still renders at zero saved when a goal exists", async ({
+    page,
+  }) => {
+    await setupSavingsDashboardMock(page, {
+      active_project_count: 1,
+      total_saved_cents: 0,
+      total_target_cents: 500000,
+    });
+    await page.goto("/");
+
+    await expect(metricCard(page, label)).toContainText("$0.00");
+  });
+
+  test("no card at all when there are no active projects", async ({ page }) => {
+    await setupSavingsDashboardMock(page, {
+      active_project_count: 0,
+      total_saved_cents: 0,
+      total_target_cents: 0,
+    });
+    await page.goto("/");
+
+    // The other secondary cards prove the surface rendered before asserting an absence.
+    await expect(metricCard(page, "Cash")).toBeVisible();
+    await expect(metricCard(page, label)).toHaveCount(0);
   });
 });

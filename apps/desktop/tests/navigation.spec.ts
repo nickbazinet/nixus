@@ -25,7 +25,7 @@ const subNavs = [
   },
   {
     landing: '/wealth/accounts',
-    items: ['Accounts', 'What you own', 'Net worth', 'Where to put your money'],
+    items: ['Accounts', 'Projects', 'What you own', 'Net worth', 'Where to put your money'],
   },
   {
     landing: '/insights/trends',

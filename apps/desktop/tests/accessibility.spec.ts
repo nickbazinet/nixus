@@ -47,6 +47,10 @@ async function setupTauriMock(page: Page) {
             return Promise.resolve([{ id: 1, name: "Groceries", group_name: "Essentials", target_cents: 70000, spent_cents: 35000, percentage: 50 }]);
           case "get_accounts":
             return Promise.resolve(accounts);
+          // The accounts surface mounts one of these per account; without a case the section
+          // renders its error state and drags unrelated assertions down with it.
+          case "get_account_earmark_breakdown":
+            return Promise.resolve({ account_id: args.account_id as number, balance_cents: 0, earmarked_cents: 0, unallocated_cents: 0, segments: [] });
           case "get_assets":
             return Promise.resolve(assets);
           case "get_current_net_worth":
@@ -74,6 +78,12 @@ async function setupTauriMock(page: Page) {
               { role: "user", content: "How am I tracking this month?" },
               { role: "assistant", content: "You have spent $350.00 of your $700.00 Groceries target." },
             ]);
+          case "get_savings_projects_summary":
+            return Promise.resolve({
+              active_project_count: 0,
+              total_saved_cents: 0,
+              total_target_cents: 0,
+            });
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
         }

@@ -3,6 +3,7 @@ use tauri::State;
 use crate::db::account as account_db;
 use crate::db::audit as audit_db;
 use crate::db::net_worth as net_worth_db;
+use crate::db::projects as projects_db;
 use crate::db::DbState;
 use crate::error::AppError;
 use crate::models::{Account, CreateAccountInput, UpdateAccountInput};
@@ -118,6 +119,21 @@ pub fn delete_account(
     })?;
 
     let old_json = get_account_json(&conn, id);
+
+    // Two layers, one behaviour: `project_contributions.account_id ON DELETE RESTRICT` is the
+    // invariant, this guard is its voice. Their predicates must stay identical — the guard is not
+    // filtered to active projects — or an unguarded case reaches the user as a raw
+    // "FOREIGN KEY constraint failed" from the global `From<rusqlite::Error>` impl.
+    let funded_projects = projects_db::get_project_names_funded_by_account(&conn, id)?;
+    if !funded_projects.is_empty() {
+        return Err(AppError::Validation {
+            message: format!(
+                "This account still holds money set aside for: {}. Delete those contributions first.",
+                funded_projects.join(", ")
+            ),
+            field: Some("id".to_string()),
+        });
+    }
 
     account_db::delete_account(&conn, id)?;
 

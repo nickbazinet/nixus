@@ -25,6 +25,7 @@ import { fetchOnboardingStatus, useOnboardingStatus } from "@/hooks/useOnboardin
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { CashFlowSummaryCard } from "@/components/dashboard/CashFlowSummaryCard";
 import { FinancialHealthCard } from "@/components/dashboard/FinancialHealthCard";
+import { SavingsProjectsCard } from "@/components/dashboard/SavingsProjectsCard";
 import { YearToDateCard } from "@/components/yearly-summary/YearToDateCard";
 import { useIncomeTotal } from "@/hooks/useIncome";
 import { useYearlySummary } from "@/hooks/useYearlySummary";
@@ -241,6 +242,9 @@ function IndexPage() {
           variant="secondary"
           isLoading={netWorth.isPending}
         />
+
+        {/* Renders `null` when there are no active goals; the grid then simply leaves no cell. */}
+        <SavingsProjectsCard />
       </div>
 
       <YearToDateCard data={yearlySummary.data} isLoading={yearlySummary.isPending} />

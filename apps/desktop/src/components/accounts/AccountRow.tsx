@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge,
@@ -15,14 +15,18 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Money,
   TableCell,
   TableRow,
 } from "@nixus/shared";
 import { InlineEditMoney } from "@/components/shared/InlineEdit";
+import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
+import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import {
   useUpdateAccountBalance,
   useDeleteAccount,
 } from "@/hooks/useAccounts";
+import { useAccountEarmarkBreakdown } from "@/hooks/useProjects";
 import {
   ACCOUNT_TYPE_ICONS,
   ACCOUNT_TYPE_KEYS,
@@ -55,8 +59,26 @@ function relativeAge(days: number, locale: string): string {
   return relative.format(-days, "day");
 }
 
+interface InvokeError {
+  type?: string;
+  message?: string;
+  field?: string;
+}
+
+function readError(err: unknown): { type: string; message: string; field?: string } {
+  const e = err as InvokeError;
+  const message =
+    e?.message ?? (typeof err === "string" ? err : JSON.stringify(err, null, 2));
+  return {
+    type: e?.type ?? "unknown",
+    message: message ?? "An unexpected error occurred",
+    field: e?.field,
+  };
+}
+
 export function AccountRow({ account, onEdit }: AccountRowProps) {
   const { t, i18n } = useTranslation();
+  const maskProps = useMaskProps();
   const typeLabel = ACCOUNT_TYPE_KEYS[account.account_type]
     ? t(ACCOUNT_TYPE_KEYS[account.account_type])
     : account.account_type;
@@ -72,9 +94,27 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
       : t("accounts.updatedAge", { age: relativeAge(days, i18n.language) });
 
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const updateBalance = useUpdateAccountBalance();
   const deleteAccount = useDeleteAccount();
+  const { data: earmarkData } = useAccountEarmarkBreakdown(account.id);
+
+  // Ranked the same way the standalone bar used to: largest earmark first, so the sub-rows read as
+  // "biggest commitment first" rather than in arbitrary DB order.
+  const segments = useMemo(() => {
+    if (!earmarkData || earmarkData.segments.length === 0) return [];
+    return [...earmarkData.segments]
+      .sort((first, second) => second.earmarked_cents - first.earmarked_cents)
+      .map((segment) => ({
+        ...segment,
+        share:
+          earmarkData.balance_cents > 0
+            ? (segment.earmarked_cents / earmarkData.balance_cents) * 100
+            : 0,
+      }));
+  }, [earmarkData]);
+  const hasEarmarks = segments.length > 0;
 
   // A liability is entered and shown as a positive amount owed, but the stored sign is whatever the
   // backend already holds — so the user's edit is written back with the original sign preserved
@@ -103,7 +143,14 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
         toast.success(t("toast.deleteSuccess"));
         setShowDeleteDialog(false);
       },
-      onError: () => {
+      onError: (err) => {
+        // A backend validation message names the projects still holding this account's money, so it
+        // is shown verbatim. A `database` message carries an internal SQLite string and must not be.
+        const { type, message } = readError(err);
+        if (type === "validation") {
+          toast.error(message);
+          return;
+        }
         toast.error(t("toast.deleteFailed"));
         setShowDeleteDialog(false);
       },
@@ -115,6 +162,27 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
       <TableRow data-testid="account-row">
         <TableCell>
           <div className="flex items-start gap-2">
+            {hasEarmarks && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="mt-0.5"
+                onClick={() => setExpanded((current) => !current)}
+                aria-expanded={expanded}
+                aria-label={
+                  expanded
+                    ? t("projects.collapseAccountBreakdown", { name: account.name })
+                    : t("projects.expandAccountBreakdown", { name: account.name })
+                }
+                data-testid="account-earmark-toggle"
+              >
+                {expanded ? (
+                  <ChevronDown className="text-ink-dim" aria-hidden="true" />
+                ) : (
+                  <ChevronRight className="text-ink-dim" aria-hidden="true" />
+                )}
+              </Button>
+            )}
             <TypeIcon
               className="mt-0.5 size-4 shrink-0 text-ink-faint"
               aria-hidden="true"
@@ -124,6 +192,19 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
               <p className="text-caption text-ink-dim">
                 {account.institution} · {typeLabel} · {account.currency}
               </p>
+              {hasEarmarks && (
+                <p
+                  className="text-caption text-ink-dim"
+                  data-testid="account-earmark-summary"
+                >
+                  <Money
+                    cents={earmarkData?.earmarked_cents ?? 0}
+                    locale={i18n.language}
+                    {...maskProps}
+                  />{" "}
+                  {t("projects.accountEarmarkSetAsideSuffix")}
+                </p>
+              )}
             </div>
           </div>
         </TableCell>
@@ -187,6 +268,59 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
           </DropdownMenu>
         </TableCell>
       </TableRow>
+
+      {expanded && hasEarmarks && (
+        <TableRow data-testid="account-earmark-unallocated-row">
+          <TableCell colSpan={2}>
+            <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
+              <span className="min-w-0 truncate">
+                {t("projects.accountEarmarkUnallocatedLabel")}
+              </span>
+            </div>
+          </TableCell>
+          <TableCell numeric dim data-testid="account-earmark-unallocated-amount">
+            <Money
+              cents={earmarkData?.unallocated_cents ?? 0}
+              locale={i18n.language}
+              {...maskProps}
+            />
+          </TableCell>
+          <TableCell />
+        </TableRow>
+      )}
+
+      {expanded &&
+        hasEarmarks &&
+        segments.map((segment) => (
+          <TableRow
+            key={segment.project_id}
+            data-testid="account-earmark-project-row"
+          >
+            <TableCell colSpan={2}>
+              <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
+                <span aria-hidden="true">↳</span>
+                <span className="min-w-0 truncate">{segment.project_name}</span>
+                <MetricInfoTooltip
+                  ariaLabel={t("projects.accountEarmarkShareTooltipLabel", {
+                    project: segment.project_name,
+                  })}
+                  content={t("projects.accountEarmarkShareTooltip", {
+                    share: new Intl.NumberFormat(i18n.language, {
+                      style: "percent",
+                      maximumFractionDigits: 1,
+                    }).format(segment.share / 100),
+                    account: account.name,
+                  })}
+                  testId="account-earmark-share-tooltip"
+                />
+              </div>
+            </TableCell>
+            <TableCell numeric dim data-testid="account-earmark-amount">
+              <Money cents={segment.earmarked_cents} locale={i18n.language} {...maskProps} />
+            </TableCell>
+            <TableCell />
+          </TableRow>
+        ))}
 
       <Dialog
         open={showDeleteDialog}

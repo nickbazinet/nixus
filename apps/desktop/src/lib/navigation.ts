@@ -46,6 +46,7 @@ export const DESTINATIONS = [
     labelKey: "nav.wealth",
     children: [
       { to: "/wealth/accounts", labelKey: "nav.accounts" },
+      { to: "/wealth/projects", labelKey: "nav.projects" },
       { to: "/wealth/assets", labelKey: "nav.whatYouOwn" },
       { to: "/wealth/net-worth", labelKey: "nav.netWorth" },
       {

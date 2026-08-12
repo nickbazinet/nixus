@@ -30,6 +30,8 @@ pub const WIPE_TABLES: &[&str] = &[
     "budget_groups",
     "passive_assets",
     "net_worth_snapshots",
+    "project_contributions",
+    "projects",
     "accounts",
     "audit_log",
 ];
@@ -113,6 +115,9 @@ mod tests {
                 VALUES (1, 1, '2026-08-01', 1000);
             INSERT INTO audit_log (entity_type, entity_id, action)
                 VALUES ('expense', 1, 'create');
+            INSERT INTO projects (id, name, target_cents) VALUES (1, 'Car', 500000);
+            INSERT INTO project_contributions (project_id, account_id, amount_cents, source, date)
+                VALUES (1, 1, 25000, 'manual', '2026-08-01');
             INSERT INTO config (key, value) VALUES ('onboarding_completed', 'true');
             ",
         )

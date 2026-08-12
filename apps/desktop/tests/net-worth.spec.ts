@@ -343,7 +343,7 @@ test.describe("Net Worth Page", () => {
     await expect(page.getByTestId("add-asset-btn")).toHaveCount(0);
   });
 
-  test("Wealth sub-nav lists its four surfaces and marks the current one", async ({
+  test("Wealth sub-nav lists its five surfaces and marks the current one", async ({
     page,
   }) => {
     await setupSeededNetWorthMock(page);
@@ -354,6 +354,7 @@ test.describe("Net Worth Page", () => {
     await expect(subNav).toBeVisible();
     await expect(subNav.getByRole("link")).toHaveText([
       "Accounts",
+      "Projects",
       "What you own",
       "Net worth",
       "Where to put your money",

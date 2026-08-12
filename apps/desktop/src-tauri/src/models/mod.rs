@@ -376,6 +376,31 @@ pub struct TrendsInsightResponse {
     pub window_label: String,
 }
 
+// The advisory prompt's entire numeric vocabulary. Every field is a figure something else already
+// computed — the pace command for the rates, `get_budget_status` for the categories the command
+// attaches separately — so the model has nothing left to derive and no reason to invent.
+// `actual_monthly_cents` and `months_to_target` are nullable for the same reason as in `ProjectPace`:
+// absent is not zero, and "you save $0/mo" is a claim the data does not support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectAdviceRequest {
+    pub project_name: String,
+    pub remaining_cents: i64,
+    pub required_monthly_cents: i64,
+    pub actual_monthly_cents: Option<i64>,
+    pub months_to_target: Option<i64>,
+    pub locale: String,
+}
+
+// Read-only text plus the machine tone enum, echoing back the project it describes so a late
+// response cannot be painted onto a different row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectAdviceResponse {
+    pub headline: String,
+    pub body: String,
+    pub tone: String,
+    pub project_name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct YearlyCategorySpend {
     pub category_id: i64,
@@ -867,6 +892,195 @@ pub struct CountryEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Iso3166Dataset {
     pub countries: Vec<CountryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Project {
+    pub id: i64,
+    pub name: String,
+    pub target_cents: i64,
+    pub target_date: Option<String>,
+    pub priority: i32,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    pub archived_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateProjectInput {
+    pub name: String,
+    pub target_cents: i64,
+    pub target_date: Option<String>,
+    pub priority: Option<i32>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateProjectInput {
+    pub name: String,
+    pub target_cents: i64,
+    pub target_date: Option<String>,
+    pub priority: Option<i32>,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectContribution {
+    pub id: i64,
+    pub project_id: i64,
+    pub account_id: i64,
+    pub amount_cents: i64,
+    pub source: String,
+    pub date: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateProjectContributionInput {
+    pub project_id: i64,
+    pub account_id: i64,
+    pub amount_cents: i64,
+    pub source: String,
+    pub date: String,
+}
+
+// Structurally `CreateProjectContributionInput` minus `source`, and that omission is the control:
+// the confirm path writes `'suggested'` as a SQL literal in `db/projects.rs`, so no caller can name
+// its own source value through the IPC boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectAllocationInput {
+    pub project_id: i64,
+    pub account_id: i64,
+    pub amount_cents: i64,
+    pub date: String,
+}
+
+// Saved totals are aggregated on read (`SUM(amount_cents)`), never stored on `projects`: a stored
+// column would drift the moment a contribution is deleted outside the path that maintains it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectSavedTotal {
+    pub project_id: i64,
+    pub saved_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountEarmarkSegment {
+    pub project_id: i64,
+    pub project_name: String,
+    pub earmarked_cents: i64,
+}
+
+// `unallocated_cents` is a signed difference, never clamped: segments plus unallocated must account
+// for every cent of `balance_cents`, so an over-earmarked account reports a negative remainder
+// instead of hiding the over-commitment behind a floor of zero.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountEarmarkBreakdown {
+    pub account_id: i64,
+    pub balance_cents: i64,
+    pub earmarked_cents: i64,
+    pub unallocated_cents: i64,
+    pub segments: Vec<AccountEarmarkSegment>,
+}
+
+// Backend-internal grounding input for the advisory prompt, like `BudgetCategoryStatus`: it never
+// crosses to the frontend. `account_type` is carried even though only `chequing`/`savings` can ever
+// populate it, so the filter that produced the row stays auditable at the point the prompt is built
+// rather than being an invisible promise of the SQL. `unallocated_cents` is the same difference
+// `AccountEarmarkBreakdown` reports, but aggregated across every project rather than one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountHeadroom {
+    pub account_id: i64,
+    pub account_name: String,
+    pub account_type: String,
+    pub unallocated_cents: i64,
+}
+
+// `active_project_count` is what lets the dashboard card distinguish "no goals yet" (render nothing)
+// from "goals with nothing saved yet" (render zero) — a total alone cannot tell those apart.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavingsProjectsSummary {
+    pub active_project_count: i64,
+    pub total_saved_cents: i64,
+    pub total_target_cents: i64,
+}
+
+// `remaining_cents`, `months_to_target`, `priority_rank` and `weight` are carried on the wire so the
+// suggestion is auditable rather than a black box: the panel bounds its editable field by
+// `remaining_cents` and explains *why* a project got more from the urgency and rank figures.
+// `PartialEq` is what lets the determinism test compare two runs directly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectAllocationSuggestion {
+    pub project_id: i64,
+    pub project_name: String,
+    pub suggested_cents: i64,
+    pub remaining_cents: i64,
+    pub target_cents: i64,
+    pub saved_cents: i64,
+    pub target_date: Option<String>,
+    pub months_to_target: Option<i64>,
+    pub priority_rank: i32,
+    pub weight: i64,
+}
+
+// The two rates are nullable together and separately from `status`: a `neutral` project has no
+// definable required rate (no deadline, or too new to average), and sending `0` instead of `null`
+// would render as "you need $0/mo", which is a claim rather than an absence. `PartialEq` is what lets
+// the determinism test compare two runs directly.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProjectPace {
+    pub project_id: i64,
+    pub required_monthly_cents: Option<i64>,
+    pub actual_monthly_cents: Option<i64>,
+    /// One of `good`, `caution`, `over`, `neutral` — the `Badge` variants the row may use.
+    pub status: String,
+}
+
+// How the current calendar month was settled. A tagged enum rather than a `settled: bool` plus
+// nullable columns because the two outcomes carry different facts: a confirmation has a receipt
+// (a date, a total, a project count) and a skip has nothing but the month it applies to.
+// `settled_by` is the discriminant so the frontend switches on one field.
+//
+// `Confirm` is never stored: it is derived from the `project_contributions` ledger itself
+// (`source = 'suggested'` rows dated inside the month), which is why there is no "confirmed" flag
+// anywhere in the schema. `Skip` is the only stored half, and it lives in the `config` table.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "settled_by", rename_all = "snake_case")]
+pub enum SuggestionSettlement {
+    Confirm {
+        /// ISO 8601 `YYYY-MM-DD`: the newest suggested contribution date inside the month.
+        settled_date: String,
+        /// `YYYY-MM`.
+        settled_month: String,
+        confirmed_total_cents: i64,
+        confirmed_project_count: i64,
+    },
+    Skip {
+        /// `YYYY-MM`.
+        settled_month: String,
+    },
+}
+
+// The suggestion surface's whole state in one read. `suggestions` is carried even when the month is
+// settled: "Adjust this month's split" re-opens the live panel without a second round trip, and the
+// panel needs the same rows it would have got unsettled.
+//
+// `remaining_surplus_cents` is `available_surplus_cents` minus whatever the month already confirmed,
+// so the settled card can say how much of the surplus is still unspoken for without redoing the
+// arithmetic in TypeScript.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SuggestedAllocationResponse {
+    pub suggestions: Vec<ProjectAllocationSuggestion>,
+    pub available_surplus_cents: i64,
+    pub remaining_surplus_cents: i64,
+    /// `YYYY-MM`, the month the cadence is currently asking about.
+    pub current_month: String,
+    /// ISO 8601 `YYYY-MM-DD` of the 1st of next month: when the panel reopens on its own.
+    pub next_suggestion_date: String,
+    pub settlement: Option<SuggestionSettlement>,
 }
 
 #[cfg(test)]

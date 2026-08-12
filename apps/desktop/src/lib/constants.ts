@@ -67,4 +67,16 @@ export const queryKeys = {
   subdivisions: (countryCode: string) =>
     ["subdivisions", countryCode] as const,
   tfsaAccumulatedLimit: ["tfsa-accumulated-limit"] as const,
+  projects: ["projects"] as const,
+  project: (id: number) => ["projects", id] as const,
+  projectContributions: (projectId: number) =>
+    ["project-contributions", projectId] as const,
+  projectAdvice: (projectId: number) =>
+    ["project-advice", projectId] as const,
+  projectSavedTotals: ["project-saved-totals"] as const,
+  accountEarmarks: (accountId: number) =>
+    ["account-earmarks", accountId] as const,
+  savingsProjectsSummary: ["savings-projects-summary"] as const,
+  suggestedAllocation: ["suggested-allocation"] as const,
+  projectPace: ["project-pace"] as const,
 };

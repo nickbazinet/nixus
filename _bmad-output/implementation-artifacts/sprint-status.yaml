@@ -255,3 +255,20 @@ development_status:
   30-1-see-how-much-tfsa-room-ive-accumulated: review
   30-2-never-be-shown-a-misleading-tfsa-number: review
   epic-30-retrospective: optional
+
+  # Epic 31: Savings Projects Foundation
+  epic-31: in-progress
+  31-1-create-and-manage-savings-projects: review
+  31-2-log-and-remove-contributions-to-a-project: review
+  31-3-see-how-a-projects-contributions-split-an-accounts-balance: review
+  31-4-see-total-saved-toward-goals-on-the-dashboard: review
+  31-5-account-deletion-is-blocked-while-it-funds-an-active-project: review
+  epic-31-retrospective: optional
+
+  # Epic 32: Smart Allocation Suggestions
+  epic-32: in-progress
+  32-1-reorder-project-priority: review
+  32-2-get-a-suggested-monthly-allocation-across-active-projects: review
+  32-3-review-and-edit-a-suggested-allocation-before-confirming: review
+  32-4-confirm-or-skip-a-suggested-allocation: review
+  epic-32-retrospective: optional

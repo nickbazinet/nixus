@@ -24,6 +24,7 @@ pub mod maintenance;
 pub mod net_worth;
 pub mod onboarding;
 pub mod projection;
+pub mod projects;
 pub mod recurring;
 pub mod recurring_income;
 pub mod spending_trends;
@@ -59,6 +60,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         24,
         include_str!("../../migrations/024_income_entry_recurring_template.sql"),
     ),
+    (25, include_str!("../../migrations/025_projects.sql")),
 ];
 
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {

@@ -82,6 +82,12 @@ async function setupSeededDashboard(page: Page) {
           case 'get_expenses':
           case 'get_all_budget_categories':
             return Promise.resolve([]);
+          case 'get_savings_projects_summary':
+            return Promise.resolve({
+              active_project_count: 0,
+              total_saved_cents: 0,
+              total_target_cents: 0,
+            });
           default:
             return Promise.resolve(null);
         }

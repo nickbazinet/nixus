@@ -121,6 +121,12 @@ async function setupTauriMock(page: Page) {
           case "get_db_status":
             return Promise.resolve({ db_path: "mock.db", wal_mode: true, schema_version: 9, migrations_applied: 9 });
 
+          case "get_savings_projects_summary":
+            return Promise.resolve({
+              active_project_count: 0,
+              total_saved_cents: 0,
+              total_target_cents: 0,
+            });
           default:
             return Promise.resolve(null);
         }

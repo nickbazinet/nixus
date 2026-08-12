@@ -245,6 +245,12 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               schema_version: 10,
               migrations_applied: 10,
             });
+          case "get_savings_projects_summary":
+            return Promise.resolve({
+              active_project_count: 0,
+              total_saved_cents: 0,
+              total_target_cents: 0,
+            });
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
         }

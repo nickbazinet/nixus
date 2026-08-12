@@ -29,7 +29,7 @@ async function mock(page: Page) {
         (window as unknown as Record<string, unknown>)[`_${id}`] = cb;
         return id;
       },
-      invoke: (cmd: string) => {
+      invoke: (cmd: string, args: Record<string, unknown>) => {
         // Tauri plugins must answer with their real contract. The updater returning a truthy
         // value opens an always-modal dialog that aria-hidden()s the entire app.
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
@@ -90,6 +90,30 @@ async function mock(page: Page) {
           // truthy payload with no total_cents, and the TFSA figure would render as NaN.
           case "get_tfsa_accumulated_limit":
             return Promise.resolve(null);
+          case "get_projects":
+            return Promise.resolve([]);
+          case "get_project_saved_totals":
+          case "get_project_contributions":
+          case "get_project_pace":
+          case "get_suggested_allocation":
+            return Promise.resolve([]);
+          // The expanded project detail reads the AI config and may ask for advice. Neither fires on
+          // this spec's surfaces (no projects exist), and both are stated so the array default below
+          // can never stand in for an object contract.
+          case "get_ai_config":
+            return Promise.resolve({ provider: null, configured: false, region: "us-east-1" });
+          case "generate_project_advice":
+            return Promise.reject({ type: "not_configured", message: "AI is not configured" });
+          // Explicit despite the array default below: this command returns an object, and `[]` would
+          // make `data.segments` undefined and throw inside the bar.
+          case "get_account_earmark_breakdown":
+            return Promise.resolve({ account_id: args.account_id as number, balance_cents: 0, earmarked_cents: 0, unallocated_cents: 0, segments: [] });
+          case "get_savings_projects_summary":
+            return Promise.resolve({
+              active_project_count: 0,
+              total_saved_cents: 0,
+              total_target_cents: 0,
+            });
           default:
             return Promise.resolve([]);
         }
@@ -108,6 +132,7 @@ const SURFACES = [
   ["wealth-assets", "/wealth/assets"],
   ["wealth-networth", "/wealth/net-worth"],
   ["wealth-where", "/wealth/where-to-put-your-money"],
+  ["wealth-projects", "/wealth/projects"],
   ["insights-trends", "/insights/trends"],
   ["insights-year", "/insights/year-summary"],
   ["insights-projection", "/insights/projection"],
@@ -170,7 +195,7 @@ test("sub-nav is a real link list, not a tablist", async ({ page }) => {
   await page.goto("/wealth/accounts");
   const sub = page.locator('[data-slot="segmented-nav"]');
   await expect(sub).toBeVisible();
-  await expect(sub.getByRole("link")).toHaveCount(4);
+  await expect(sub.getByRole("link")).toHaveCount(5);
   await expect(sub.locator('[role="tab"]')).toHaveCount(0);
   await expect(sub.getByRole("link", { name: "Accounts" })).toHaveAttribute("aria-current", "page");
 });

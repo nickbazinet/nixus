@@ -319,6 +319,12 @@ async function setupTauriMock(
             case "get_db_status":
               return Promise.resolve({ db_path: "mock.db", wal_mode: true, schema_version: 3, migrations_applied: 3 });
 
+            case "get_savings_projects_summary":
+              return Promise.resolve({
+                active_project_count: 0,
+                total_saved_cents: 0,
+                total_target_cents: 0,
+              });
             default:
               return Promise.reject(`Unknown command: ${cmd}`);
           }

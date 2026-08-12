@@ -712,3 +712,152 @@ export interface TfsaAccumulatedLimit {
   eligible_from_year: number;
   known_through_year: number;
 }
+
+export interface Project {
+  id: number;
+  name: string;
+  target_cents: number;
+  target_date: string | null;
+  priority: number;
+  icon: string | null;
+  color: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateProjectInput {
+  name: string;
+  target_cents: number;
+  target_date: string | null;
+  priority: number | null;
+  icon: string | null;
+  color: string | null;
+}
+
+export interface UpdateProjectInput {
+  id: number;
+  name: string;
+  target_cents: number;
+  target_date: string | null;
+  priority: number | null;
+  icon: string | null;
+  color: string | null;
+}
+
+export interface ProjectContribution {
+  id: number;
+  project_id: number;
+  account_id: number;
+  amount_cents: number;
+  source: string;
+  date: string;
+  created_at: string;
+}
+
+export interface CreateProjectContributionInput {
+  project_id: number;
+  account_id: number;
+  amount_cents: number;
+  date: string;
+}
+
+// No `source`: the Rust command writes `"suggested"` itself, so the wire shape cannot name one.
+export interface ProjectAllocationInput {
+  project_id: number;
+  account_id: number;
+  amount_cents: number;
+  date: string;
+}
+
+export interface ProjectSavedTotal {
+  project_id: number;
+  saved_cents: number;
+}
+
+export interface AccountEarmarkSegment {
+  project_id: number;
+  project_name: string;
+  earmarked_cents: number;
+}
+
+export interface AccountEarmarkBreakdown {
+  account_id: number;
+  balance_cents: number;
+  earmarked_cents: number;
+  unallocated_cents: number;
+  segments: AccountEarmarkSegment[];
+}
+
+export interface SavingsProjectsSummary {
+  active_project_count: number;
+  total_saved_cents: number;
+  total_target_cents: number;
+}
+
+// Mirrors `models::ProjectPace`. `status` is the `Badge` variant the row renders, so the union is
+// exhaustive by contract: Rust emits exactly these four strings and nothing else. Both rates are
+// nullable because a `neutral` project has no definable required rate — `null` is "no rate", never 0.
+export interface ProjectPace {
+  project_id: number;
+  required_monthly_cents: number | null;
+  actual_monthly_cents: number | null;
+  status: "good" | "caution" | "over" | "neutral";
+}
+
+// Mirrors `models::ProjectAdviceRequest`. Deliberately carries no budget data: the command reads the
+// month's over-target categories itself, so nothing the frontend sends can name a category.
+export interface ProjectAdviceRequest {
+  project_name: string;
+  remaining_cents: number;
+  required_monthly_cents: number;
+  actual_monthly_cents: number | null;
+  months_to_target: number | null;
+  locale: string;
+}
+
+// Mirrors `models::ProjectAdviceResponse`. `tone` is the same machine enum `TrendsInsightResponse`
+// uses, so the two panels can share the Badge variant mapping without sharing a component.
+export interface ProjectAdviceResponse {
+  headline: string;
+  body: string;
+  tone: "calm" | "caution" | "positive";
+  project_name: string;
+}
+
+export interface ProjectAllocationSuggestion {
+  project_id: number;
+  project_name: string;
+  suggested_cents: number;
+  remaining_cents: number;
+  target_cents: number;
+  saved_cents: number;
+  target_date: string | null;
+  months_to_target: number | null;
+  priority_rank: number;
+  weight: number;
+}
+
+// Mirrors `models::SuggestionSettlement`, tagged on `settled_by`. `confirm` is derived from the
+// contribution ledger and `skip` is the stored `config` marker, so a settlement is never both.
+export type SuggestionSettlement =
+  | {
+      settled_by: "confirm";
+      settled_date: string;
+      settled_month: string;
+      confirmed_total_cents: number;
+      confirmed_project_count: number;
+    }
+  | {
+      settled_by: "skip";
+      settled_month: string;
+    };
+
+export interface SuggestedAllocationResponse {
+  suggestions: ProjectAllocationSuggestion[];
+  available_surplus_cents: number;
+  remaining_surplus_cents: number;
+  current_month: string;
+  next_suggestion_date: string;
+  settlement: SuggestionSettlement | null;
+}
