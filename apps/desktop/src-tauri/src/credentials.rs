@@ -6,27 +6,38 @@ use crate::models::CognitoSession;
 const KEYRING_SERVICE: &str = "nkbaz-finance";
 const KEYRING_AUTH_SERVICE: &str = "nixus-auth";
 
-// WHY four entries instead of one combined JSON blob (the original design):
-// Windows Credential Manager caps a single generic credential's password blob
-// at 2560 UTF-16 code units. A combined `{access_token, id_token,
-// refresh_token, expires_at}` JSON blob for a Cognito session routinely
-// exceeds that (three JWTs plus JSON punctuation), so `store_cognito_session`
-// failed on every real Windows login with "Value of 'password encoded as
-// UTF-16' is longer than the platform limit of 2560 chars" while working
-// fine on macOS Keychain, which has no such limit. Splitting into one entry
-// per field keeps each individual blob (a single JWT, or a short integer)
-// well under the Windows limit. macOS/Linux are unaffected either way.
+// WHY chunked entries instead of one entry per field (the prior fix):
+// Windows Credential Manager caps a single generic credential's password
+// blob at 2560 UTF-16 code units. Splitting the combined session JSON into
+// one entry per field (access_token, id_token, refresh_token, expires_at)
+// was not enough: Cognito refresh tokens are opaque tokens, not compact
+// JWTs, and can individually exceed 2560 chars on their own, so
+// `store_cognito_session` still failed on real Windows logins with "Value
+// of 'password encoded as UTF-16' is longer than the platform limit of
+// 2560 chars" even after that fix. Each field is now split into fixed-size
+// chunks, each its own entry (`<field>-0`, `<field>-1`, ...), so no single
+// write ever approaches the limit regardless of token size. macOS/Linux
+// have no such limit and are unaffected either way.
 const KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN: &str = "cognito-session-access-token";
 const KEYRING_AUTH_ACCOUNT_ID_TOKEN: &str = "cognito-session-id-token";
 const KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN: &str = "cognito-session-refresh-token";
 const KEYRING_AUTH_ACCOUNT_EXPIRES_AT: &str = "cognito-session-expires-at";
 
-const COGNITO_SESSION_ACCOUNTS: [&str; 4] = [
+const COGNITO_SESSION_FIELDS: [&str; 4] = [
     KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN,
     KEYRING_AUTH_ACCOUNT_ID_TOKEN,
     KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN,
     KEYRING_AUTH_ACCOUNT_EXPIRES_AT,
 ];
+
+// Comfortably under the real 2560 UTF-16 code unit Windows limit — tokens are
+// ASCII (JWT / base64url), so char count and UTF-16 code unit count match.
+const CHUNK_MAX_CHARS: usize = 2_000;
+
+// Bounds the read/clear loops below so a persistent backend fault (a delete
+// that never resolves to `NoEntry`) cannot spin forever; 500 chunks is far
+// beyond any realistic token size (1,000,000 chars at `CHUNK_MAX_CHARS`).
+const MAX_CHUNKS_PER_FIELD: usize = 500;
 
 pub fn store_aws_credentials(
     access_key: &str,
@@ -88,14 +99,65 @@ fn auth_entry(account: &str) -> Result<Entry, AppError> {
     })
 }
 
-/// Best-effort delete of every session account, ignoring `NoEntry`. Used both
-/// by `clear_cognito_session` and as store-failure/load-corruption cleanup so
-/// a partial write or a partial read never leaves stale fields behind.
-fn clear_all_session_accounts() -> Result<(), AppError> {
+fn chunk_account(field: &str, index: usize) -> String {
+    format!("{field}-{index}")
+}
+
+fn chunk_str(value: &str, max_chars: usize) -> Vec<String> {
+    // A field is only ever `None` when every chunk is absent (see
+    // `read_field`), so an empty string still needs exactly one chunk to
+    // remain distinguishable from "not stored at all".
+    if value.is_empty() {
+        return vec![String::new()];
+    }
+    let chars: Vec<char> = value.chars().collect();
+    chars
+        .chunks(max_chars)
+        .map(|c| c.iter().collect())
+        .collect()
+}
+
+fn write_field(field: &str, value: &str) -> Result<(), AppError> {
+    // A shrinking value (e.g. a shorter token on re-login) must not leave the
+    // previous write's trailing chunks behind — `read_field` would otherwise
+    // concatenate stale data onto the end of the new value.
+    delete_field(field)?;
+
+    for (index, chunk) in chunk_str(value, CHUNK_MAX_CHARS).iter().enumerate() {
+        auth_entry(&chunk_account(field, index))?
+            .set_password(chunk)
+            .map_err(|e| AppError::Auth {
+                message: format!("Failed to save session to secure storage: {}", e),
+                recoverable: false,
+            })?;
+    }
+    Ok(())
+}
+
+fn read_field(field: &str) -> Result<Option<String>, AppError> {
+    let mut value = String::new();
+    for index in 0..MAX_CHUNKS_PER_FIELD {
+        match auth_entry(&chunk_account(field, index))?.get_password() {
+            Ok(chunk) => value.push_str(&chunk),
+            Err(Error::NoEntry) if index == 0 => return Ok(None),
+            Err(Error::NoEntry) => return Ok(Some(value)),
+            Err(e) => {
+                return Err(AppError::Auth {
+                    message: format!("Failed to read session from secure storage: {}", e),
+                    recoverable: true,
+                })
+            }
+        }
+    }
+    Ok(Some(value))
+}
+
+fn delete_field(field: &str) -> Result<(), AppError> {
     let mut first_error = None;
-    for account in COGNITO_SESSION_ACCOUNTS {
-        match auth_entry(account)?.delete_credential() {
-            Ok(()) | Err(Error::NoEntry) => {}
+    for index in 0..MAX_CHUNKS_PER_FIELD {
+        match auth_entry(&chunk_account(field, index))?.delete_credential() {
+            Ok(()) => {}
+            Err(Error::NoEntry) => break,
             Err(e) if first_error.is_none() => first_error = Some(e),
             Err(_) => {}
         }
@@ -109,50 +171,50 @@ fn clear_all_session_accounts() -> Result<(), AppError> {
     }
 }
 
+/// Best-effort delete of every session field, ignoring `NoEntry`. Used both
+/// by `clear_cognito_session` and as store-failure/load-corruption cleanup so
+/// a partial write or a partial read never leaves stale chunks behind.
+fn clear_all_session_fields() -> Result<(), AppError> {
+    let mut first_error = None;
+    for field in COGNITO_SESSION_FIELDS {
+        if let Err(e) = delete_field(field) {
+            if first_error.is_none() {
+                first_error = Some(e);
+            }
+        }
+    }
+    match first_error {
+        None => Ok(()),
+        Some(e) => Err(e),
+    }
+}
+
 pub fn store_cognito_session(session: &CognitoSession) -> Result<(), AppError> {
+    let expires_at = session.expires_at.to_string();
     let fields = [
         (KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN, session.access_token.as_str()),
         (KEYRING_AUTH_ACCOUNT_ID_TOKEN, session.id_token.as_str()),
         (KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN, session.refresh_token.as_str()),
+        (KEYRING_AUTH_ACCOUNT_EXPIRES_AT, expires_at.as_str()),
     ];
-    let expires_at = session.expires_at.to_string();
 
-    for (account, value) in fields {
-        if let Err(e) = auth_entry(account)?.set_password(value) {
-            let _ = clear_all_session_accounts();
-            return Err(AppError::Auth {
-                message: format!("Failed to save session to secure storage: {}", e),
-                recoverable: false,
-            });
+    for (field, value) in fields {
+        if let Err(e) = write_field(field, value) {
+            let _ = clear_all_session_fields();
+            return Err(e);
         }
-    }
-    if let Err(e) = auth_entry(KEYRING_AUTH_ACCOUNT_EXPIRES_AT)?.set_password(&expires_at) {
-        let _ = clear_all_session_accounts();
-        return Err(AppError::Auth {
-            message: format!("Failed to save session to secure storage: {}", e),
-            recoverable: false,
-        });
     }
 
     Ok(())
 }
 
 pub fn load_cognito_session() -> Result<Option<CognitoSession>, AppError> {
-    let read = |account: &str| match auth_entry(account)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(Error::NoEntry) => Ok(None),
-        Err(e) => Err(AppError::Auth {
-            message: format!("Failed to read session from secure storage: {}", e),
-            recoverable: true,
-        }),
-    };
+    let access_token = read_field(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN)?;
+    let id_token = read_field(KEYRING_AUTH_ACCOUNT_ID_TOKEN)?;
+    let refresh_token = read_field(KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN)?;
+    let expires_at_raw = read_field(KEYRING_AUTH_ACCOUNT_EXPIRES_AT)?;
 
-    let access_token = read(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN)?;
-    let id_token = read(KEYRING_AUTH_ACCOUNT_ID_TOKEN)?;
-    let refresh_token = read(KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN)?;
-    let expires_at_raw = read(KEYRING_AUTH_ACCOUNT_EXPIRES_AT)?;
-
-    // A prior single-blob session (pre-fix) or a corrupted partial write both
+    // A prior storage design's leftovers or a corrupted partial write both
     // land here: some fields present, some absent. Neither is a usable
     // session, so every field is cleared and the caller is asked to sign in
     // again rather than risk resolving to a session with an empty token.
@@ -169,7 +231,7 @@ pub fn load_cognito_session() -> Result<Option<CognitoSession>, AppError> {
         return Ok(None);
     }
     if !all_present {
-        clear_all_session_accounts()?;
+        clear_all_session_fields()?;
         return Err(AppError::Auth {
             message: "Stored session could not be read. Please sign in again.".to_string(),
             recoverable: true,
@@ -195,7 +257,7 @@ pub fn load_cognito_session() -> Result<Option<CognitoSession>, AppError> {
 }
 
 pub fn clear_cognito_session() -> Result<(), AppError> {
-    clear_all_session_accounts()
+    clear_all_session_fields()
 }
 
 #[cfg(test)]
@@ -265,15 +327,35 @@ mod tests {
     }
 
     #[test]
+    fn overwriting_with_a_shorter_multi_chunk_value_drops_the_stale_trailing_chunk() {
+        let _g = guard();
+        store_cognito_session(&CognitoSession {
+            access_token: "a".repeat(6_000),
+            id_token: "it".to_string(),
+            refresh_token: "rt".to_string(),
+            expires_at: 1_800_000_000,
+        })
+        .unwrap();
+
+        let shorter = "short-token".to_string();
+        store_cognito_session(&CognitoSession {
+            access_token: shorter.clone(),
+            id_token: "it".to_string(),
+            refresh_token: "rt".to_string(),
+            expires_at: 1_800_000_000,
+        })
+        .unwrap();
+
+        let loaded = load_cognito_session().unwrap().expect("session stored");
+        assert_eq!(loaded.access_token, shorter);
+    }
+
+    #[test]
     fn load_with_a_partial_session_clears_it_and_returns_a_recoverable_auth_error() {
         let _g = guard();
         // Simulates a corrupted or half-written session: only one of the four
-        // accounts present. No single-blob JSON exists to malform anymore, so
-        // this is the realistic corruption shape under the split-entry design.
-        auth_entry(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN)
-            .unwrap()
-            .set_password("at")
-            .unwrap();
+        // fields present.
+        write_field(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN, "at").unwrap();
 
         match load_cognito_session() {
             Err(AppError::Auth {
@@ -291,13 +373,12 @@ mod tests {
     }
 
     #[test]
-    fn store_rejects_no_single_field_over_the_windows_credential_manager_limit() {
+    fn a_token_larger_than_the_windows_credential_manager_limit_round_trips_via_chunking() {
         let _g = guard();
-        // Windows Credential Manager's real limit is 2560 UTF-16 code units per
-        // credential; the mock store has no such cap, so this exercises the
-        // split-entry design's intent (each field stored and read back
-        // independently) rather than the platform limit itself.
-        let large_token = "a".repeat(3_000);
+        // Larger than the real 2560 UTF-16 code unit Windows limit that this
+        // chunking exists to stay under — proves a single oversized token (the
+        // real-world failure was a Cognito refresh token) still round-trips.
+        let large_token = "a".repeat(6_000);
         let session = CognitoSession {
             access_token: large_token.clone(),
             id_token: large_token.clone(),
@@ -311,6 +392,27 @@ mod tests {
         assert_eq!(loaded.access_token, large_token);
         assert_eq!(loaded.id_token, large_token);
         assert_eq!(loaded.refresh_token, large_token);
+    }
+
+    #[test]
+    fn no_single_chunk_exceeds_the_configured_maximum() {
+        let _g = guard();
+        let large_token = "b".repeat(6_000);
+        store_cognito_session(&CognitoSession {
+            access_token: large_token,
+            id_token: "it".to_string(),
+            refresh_token: "rt".to_string(),
+            expires_at: 1_800_000_000,
+        })
+        .unwrap();
+
+        for index in 0..3 {
+            let chunk = auth_entry(&chunk_account(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN, index))
+                .unwrap()
+                .get_password()
+                .unwrap();
+            assert!(chunk.chars().count() <= CHUNK_MAX_CHARS);
+        }
     }
 
     #[test]
