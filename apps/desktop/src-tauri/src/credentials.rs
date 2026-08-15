@@ -5,7 +5,28 @@ use crate::models::CognitoSession;
 
 const KEYRING_SERVICE: &str = "nkbaz-finance";
 const KEYRING_AUTH_SERVICE: &str = "nixus-auth";
-const KEYRING_AUTH_ACCOUNT: &str = "cognito-session";
+
+// WHY four entries instead of one combined JSON blob (the original design):
+// Windows Credential Manager caps a single generic credential's password blob
+// at 2560 UTF-16 code units. A combined `{access_token, id_token,
+// refresh_token, expires_at}` JSON blob for a Cognito session routinely
+// exceeds that (three JWTs plus JSON punctuation), so `store_cognito_session`
+// failed on every real Windows login with "Value of 'password encoded as
+// UTF-16' is longer than the platform limit of 2560 chars" while working
+// fine on macOS Keychain, which has no such limit. Splitting into one entry
+// per field keeps each individual blob (a single JWT, or a short integer)
+// well under the Windows limit. macOS/Linux are unaffected either way.
+const KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN: &str = "cognito-session-access-token";
+const KEYRING_AUTH_ACCOUNT_ID_TOKEN: &str = "cognito-session-id-token";
+const KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN: &str = "cognito-session-refresh-token";
+const KEYRING_AUTH_ACCOUNT_EXPIRES_AT: &str = "cognito-session-expires-at";
+
+const COGNITO_SESSION_ACCOUNTS: [&str; 4] = [
+    KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN,
+    KEYRING_AUTH_ACCOUNT_ID_TOKEN,
+    KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN,
+    KEYRING_AUTH_ACCOUNT_EXPIRES_AT,
+];
 
 pub fn store_aws_credentials(
     access_key: &str,
@@ -60,61 +81,121 @@ pub fn clear_credentials() {
     }
 }
 
-fn auth_entry() -> Result<Entry, AppError> {
-    Entry::new(KEYRING_AUTH_SERVICE, KEYRING_AUTH_ACCOUNT).map_err(|e| AppError::Auth {
+fn auth_entry(account: &str) -> Result<Entry, AppError> {
+    Entry::new(KEYRING_AUTH_SERVICE, account).map_err(|e| AppError::Auth {
         message: format!("Secure storage is unavailable: {}", e),
         recoverable: false,
     })
 }
 
-// WHY: no caller until commands/auth.rs lands in Stories 26.4/26.5. Remove the allow then.
-#[allow(dead_code)]
-pub fn store_cognito_session(session: &CognitoSession) -> Result<(), AppError> {
-    let json = serde_json::to_string(session).map_err(|_| AppError::Auth {
-        message: "Failed to encode session for secure storage.".to_string(),
-        recoverable: false,
-    })?;
-    auth_entry()?
-        .set_password(&json)
-        .map_err(|e| AppError::Auth {
-            message: format!("Failed to save session to secure storage: {}", e),
-            recoverable: false,
-        })
-}
-
-// WHY: no caller until commands/auth.rs lands in Stories 26.4/26.5. Remove the allow then.
-#[allow(dead_code)]
-pub fn load_cognito_session() -> Result<Option<CognitoSession>, AppError> {
-    let json = match auth_entry()?.get_password() {
-        Ok(json) => json,
-        Err(Error::NoEntry) => return Ok(None),
-        Err(e) => {
-            return Err(AppError::Auth {
-                message: format!("Failed to read session from secure storage: {}", e),
-                recoverable: true,
-            })
+/// Best-effort delete of every session account, ignoring `NoEntry`. Used both
+/// by `clear_cognito_session` and as store-failure/load-corruption cleanup so
+/// a partial write or a partial read never leaves stale fields behind.
+fn clear_all_session_accounts() -> Result<(), AppError> {
+    let mut first_error = None;
+    for account in COGNITO_SESSION_ACCOUNTS {
+        match auth_entry(account)?.delete_credential() {
+            Ok(()) | Err(Error::NoEntry) => {}
+            Err(e) if first_error.is_none() => first_error = Some(e),
+            Err(_) => {}
         }
-    };
-
-    // The blob and the serde error are deliberately never interpolated: the blob holds tokens.
-    serde_json::from_str::<CognitoSession>(&json)
-        .map(Some)
-        .map_err(|_| AppError::Auth {
-            message: "Stored session could not be read. Please sign in again.".to_string(),
-            recoverable: true,
-        })
-}
-
-// WHY: no caller until commands/auth.rs lands in Stories 26.4/26.5. Remove the allow then.
-#[allow(dead_code)]
-pub fn clear_cognito_session() -> Result<(), AppError> {
-    match auth_entry()?.delete_credential() {
-        Ok(()) | Err(Error::NoEntry) => Ok(()),
-        Err(e) => Err(AppError::Auth {
+    }
+    match first_error {
+        None => Ok(()),
+        Some(e) => Err(AppError::Auth {
             message: format!("Failed to clear session from secure storage: {}", e),
             recoverable: false,
         }),
     }
+}
+
+pub fn store_cognito_session(session: &CognitoSession) -> Result<(), AppError> {
+    let fields = [
+        (KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN, session.access_token.as_str()),
+        (KEYRING_AUTH_ACCOUNT_ID_TOKEN, session.id_token.as_str()),
+        (KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN, session.refresh_token.as_str()),
+    ];
+    let expires_at = session.expires_at.to_string();
+
+    for (account, value) in fields {
+        if let Err(e) = auth_entry(account)?.set_password(value) {
+            let _ = clear_all_session_accounts();
+            return Err(AppError::Auth {
+                message: format!("Failed to save session to secure storage: {}", e),
+                recoverable: false,
+            });
+        }
+    }
+    if let Err(e) = auth_entry(KEYRING_AUTH_ACCOUNT_EXPIRES_AT)?.set_password(&expires_at) {
+        let _ = clear_all_session_accounts();
+        return Err(AppError::Auth {
+            message: format!("Failed to save session to secure storage: {}", e),
+            recoverable: false,
+        });
+    }
+
+    Ok(())
+}
+
+pub fn load_cognito_session() -> Result<Option<CognitoSession>, AppError> {
+    let read = |account: &str| match auth_entry(account)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(Error::NoEntry) => Ok(None),
+        Err(e) => Err(AppError::Auth {
+            message: format!("Failed to read session from secure storage: {}", e),
+            recoverable: true,
+        }),
+    };
+
+    let access_token = read(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN)?;
+    let id_token = read(KEYRING_AUTH_ACCOUNT_ID_TOKEN)?;
+    let refresh_token = read(KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN)?;
+    let expires_at_raw = read(KEYRING_AUTH_ACCOUNT_EXPIRES_AT)?;
+
+    // A prior single-blob session (pre-fix) or a corrupted partial write both
+    // land here: some fields present, some absent. Neither is a usable
+    // session, so every field is cleared and the caller is asked to sign in
+    // again rather than risk resolving to a session with an empty token.
+    let all_present = access_token.is_some()
+        && id_token.is_some()
+        && refresh_token.is_some()
+        && expires_at_raw.is_some();
+    let all_absent = access_token.is_none()
+        && id_token.is_none()
+        && refresh_token.is_none()
+        && expires_at_raw.is_none();
+
+    if all_absent {
+        return Ok(None);
+    }
+    if !all_present {
+        clear_all_session_accounts()?;
+        return Err(AppError::Auth {
+            message: "Stored session could not be read. Please sign in again.".to_string(),
+            recoverable: true,
+        });
+    }
+
+    // Every value is `Some` here by the `all_present` check above, and the
+    // expires_at digits were written by `store_cognito_session` itself.
+    let expires_at = expires_at_raw
+        .expect("checked present above")
+        .parse::<i64>()
+        .map_err(|_| AppError::Auth {
+            message: "Stored session could not be read. Please sign in again.".to_string(),
+            recoverable: true,
+        })?;
+
+    Ok(Some(CognitoSession {
+        access_token: access_token.expect("checked present above"),
+        id_token: id_token.expect("checked present above"),
+        refresh_token: refresh_token.expect("checked present above"),
+        expires_at,
+    }))
+}
+
+pub fn clear_cognito_session() -> Result<(), AppError> {
+    clear_all_session_accounts()
 }
 
 #[cfg(test)]
@@ -184,11 +265,14 @@ mod tests {
     }
 
     #[test]
-    fn load_malformed_json_returns_recoverable_auth_error() {
+    fn load_with_a_partial_session_clears_it_and_returns_a_recoverable_auth_error() {
         let _g = guard();
-        Entry::new(KEYRING_AUTH_SERVICE, KEYRING_AUTH_ACCOUNT)
+        // Simulates a corrupted or half-written session: only one of the four
+        // accounts present. No single-blob JSON exists to malform anymore, so
+        // this is the realistic corruption shape under the split-entry design.
+        auth_entry(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN)
             .unwrap()
-            .set_password("not-json-at-all")
+            .set_password("at")
             .unwrap();
 
         match load_cognito_session() {
@@ -197,10 +281,36 @@ mod tests {
                 recoverable,
             }) => {
                 assert!(recoverable);
-                assert!(!message.contains("not-json-at-all"));
+                assert!(!message.contains("at"));
             }
             other => panic!("expected recoverable AppError::Auth, got {:?}", other),
         }
+
+        // The partial remnant must not resurface on a later load.
+        assert!(load_cognito_session().unwrap().is_none());
+    }
+
+    #[test]
+    fn store_rejects_no_single_field_over_the_windows_credential_manager_limit() {
+        let _g = guard();
+        // Windows Credential Manager's real limit is 2560 UTF-16 code units per
+        // credential; the mock store has no such cap, so this exercises the
+        // split-entry design's intent (each field stored and read back
+        // independently) rather than the platform limit itself.
+        let large_token = "a".repeat(3_000);
+        let session = CognitoSession {
+            access_token: large_token.clone(),
+            id_token: large_token.clone(),
+            refresh_token: large_token.clone(),
+            expires_at: 1_800_000_000,
+        };
+
+        store_cognito_session(&session).unwrap();
+
+        let loaded = load_cognito_session().unwrap().expect("session stored");
+        assert_eq!(loaded.access_token, large_token);
+        assert_eq!(loaded.id_token, large_token);
+        assert_eq!(loaded.refresh_token, large_token);
     }
 
     #[test]
