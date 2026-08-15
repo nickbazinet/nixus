@@ -30,13 +30,18 @@ const COGNITO_SESSION_FIELDS: [&str; 4] = [
     KEYRING_AUTH_ACCOUNT_EXPIRES_AT,
 ];
 
-// Comfortably under the real 2560 UTF-16 code unit Windows limit — tokens are
-// ASCII (JWT / base64url), so char count and UTF-16 code unit count match.
-const CHUNK_MAX_CHARS: usize = 2_000;
+// `CRED_MAX_CREDENTIAL_BLOB_SIZE` (the real Win32 constant behind the "2560"
+// in the error message) is a limit of 2560 BYTES, not characters. The Windows
+// keyring backend UTF-16-encodes the password before checking that limit (2
+// bytes per ASCII char), so the real usable capacity for `set_password` is
+// 2560 / 2 = 1280 chars, not 2560 - the previous `2_000` value here still
+// exceeded it (4000 UTF-16 bytes per chunk) and failed identically to the
+// unchunked version. 1000 leaves headroom below that real 1280-char ceiling.
+const CHUNK_MAX_CHARS: usize = 1_000;
 
 // Bounds the read/clear loops below so a persistent backend fault (a delete
 // that never resolves to `NoEntry`) cannot spin forever; 500 chunks is far
-// beyond any realistic token size (1,000,000 chars at `CHUNK_MAX_CHARS`).
+// beyond any realistic token size (500,000 chars at `CHUNK_MAX_CHARS`).
 const MAX_CHUNKS_PER_FIELD: usize = 500;
 
 pub fn store_aws_credentials(
@@ -406,13 +411,28 @@ mod tests {
         })
         .unwrap();
 
-        for index in 0..3 {
+        for index in 0..6 {
             let chunk = auth_entry(&chunk_account(KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN, index))
                 .unwrap()
                 .get_password()
                 .unwrap();
             assert!(chunk.chars().count() <= CHUNK_MAX_CHARS);
         }
+    }
+
+    /// The mock store used by every other test in this module has no size
+    /// cap, so it cannot catch a `CHUNK_MAX_CHARS` regression toward the real
+    /// Windows limit - this is exactly how the `2_000` value shipped in an
+    /// earlier fix despite passing every round-trip test here. This test
+    /// checks the real Win32 constraint directly: `set_password` UTF-16-encodes
+    /// the string (2 bytes/ASCII char) before Windows compares it against
+    /// `CRED_MAX_CREDENTIAL_BLOB_SIZE` (2560 bytes), so the chunk size must
+    /// leave headroom under 2560 / 2 = 1280 chars, not just under 2560.
+    #[test]
+    fn chunk_max_chars_stays_under_the_real_windows_utf16_byte_limit() {
+        const CRED_MAX_CREDENTIAL_BLOB_SIZE_BYTES: usize = 2_560;
+        let worst_case_utf16_bytes = CHUNK_MAX_CHARS * 2;
+        assert!(worst_case_utf16_bytes <= CRED_MAX_CREDENTIAL_BLOB_SIZE_BYTES);
     }
 
     #[test]
