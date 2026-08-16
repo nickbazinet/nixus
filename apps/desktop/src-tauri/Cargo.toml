@@ -44,6 +44,7 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 urlencoding = "2"
 sha2 = "0.10"
 rand = "0.9"
+tiny_http = "0.12.0"
 
 # Must remain the LAST table in this file: bare keys after a [target...] table would
 # be silently absorbed into it. The "deep-link" feature is required so a forwarded

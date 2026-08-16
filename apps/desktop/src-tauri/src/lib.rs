@@ -83,6 +83,7 @@ pub fn run() {
             app.manage(DbState(Mutex::new(conn)));
             app.manage(Mutex::new(ai_state));
             app.manage(commands::auth::PendingLogin::default());
+            app.manage(commands::auth_listener::LoopbackListener::default());
 
             let catalog_data_dir = app_data_dir.clone();
             maintenance::catalog::spawn_background_catalog_refresh(catalog_data_dir);

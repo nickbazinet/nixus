@@ -373,3 +373,22 @@ Both important gaps (CSRF `state` parameter, Windows single-instance handling) w
 
 **First Implementation Priority:**
 AWS-side Cognito setup (User Pool, public app client with PKCE, Google social IdP, callback/sign-out URLs) — this has no code dependency and unblocks everything else.
+
+---
+
+## Amendment (2026-08-15): loopback HTTP redirect replaces the custom-scheme redirect
+
+This document's Authentication & Security section states: "No localhost redirect server needed since Cognito (not Google) is the direct OAuth party and accepts custom-scheme callback URLs." That statement is superseded.
+
+**Amended:** the OAuth redirect target is now `http://127.0.0.1:52847/callback` (RFC 8252 §7.3's loopback interface pattern), not `nixus://auth/callback`. Two problems with the direct custom-scheme redirect motivated this, both discovered in production after Windows users reported sign-in appearing to hang:
+
+1. **The browser tab never reflects completion.** Cognito's Managed Login page is AWS-hosted UI with no supported way to inject a "you can close this tab" page or a `window.close()` call. Once it redirects to a custom scheme, the tab is left on that last page indefinitely — there is no page transition to control.
+2. **Windows shows an OS-level "Open Nixus?" confirmation prompt** for the custom-scheme handoff, which a plain HTTP navigation does not trigger.
+
+**What changed:**
+- `COGNITO_REDIRECT_URI` (`commands/auth.rs`) is now `http://127.0.0.1:52847/callback`, sourced from a new `commands/auth_listener.rs` module.
+- `commands/auth_listener.rs` binds a short-lived, single-request local HTTP listener (the `tiny_http` crate) during `start_login`, torn down after one request or a 5-minute timeout. It serves a static success page (`window.close()` plus a visible fallback message) and hands the captured `code`/`state` to the existing `complete_auth_callback` via the same `dispatch_deep_link_url` entry point the deep-link path already used.
+- **AWS-side change required:** the Cognito app client's allowed callback URLs must include `http://127.0.0.1:52847/callback`. The port is fixed (not OS-assigned) because Cognito's callback allow-list requires an exact string match with no loopback wildcard support.
+- `tauri-plugin-deep-link` and the single-instance wiring in `lib.rs` remain registered and functional — `nixus://auth/callback` is still recognized by `is_auth_callback_url` as a fallback shape, even though Cognito is no longer configured to send one. Retiring that plumbing entirely is a possible future follow-up, not done in this pass.
+
+**Unaffected:** PKCE, the `state` CSRF check, the token exchange, `credentials.rs`'s keyring storage, and every frontend surface (`useAuth.ts`, `ProfileMenu.tsx`, `AccountPromptDialog.tsx`) are unchanged — this amendment is scoped entirely to how the authorization code reaches the app, not what happens once it does.

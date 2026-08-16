@@ -30,7 +30,19 @@ pub const COGNITO_CLIENT_ID: &str = "6525109r95las7odvuesf13joj";
 // about the shape; the test below guarantees it stays in sync with the parts.
 pub const COGNITO_HOSTED_UI_BASE_URL: &str = "https://auth.nixusapp.com";
 
-pub const COGNITO_REDIRECT_URI: &str = "nixus://auth/callback";
+// WHY changed from `nixus://auth/callback` (Story 26.3/26.4): a direct
+// custom-scheme redirect leaves the browser tab stuck on Cognito's own page
+// forever (we cannot inject a "you can close this tab" page into Cognito's
+// Managed Login UI) and triggers an OS "Open Nixus?" prompt on Windows. The
+// loopback redirect (RFC 8252 §7.3) is a plain HTTP navigation, so neither
+// happens, and `auth_listener` can serve our own success page.
+pub const COGNITO_REDIRECT_URI: &str = crate::commands::auth_listener::LOOPBACK_REDIRECT_URI;
+
+// WHY kept: `tauri-plugin-deep-link` and the single-instance wiring in
+// `lib.rs` stay registered as a fallback path, so a `nixus://auth/callback`
+// URL is still recognized by `is_auth_callback_url` below even though Cognito
+// is no longer configured to send one.
+const LEGACY_DEEP_LINK_REDIRECT_URI: &str = "nixus://auth/callback";
 
 #[allow(dead_code)] // WHY: registered on the app client, unused in v1 (sign-out is local-only, Story 26.5)
 pub const COGNITO_SIGNOUT_URI: &str = "nixus://auth/signout";
@@ -241,8 +253,9 @@ fn verify_state(pending_state: &str, callback_state: Option<&str>) -> Result<(),
 /// (Story 26.5) and any future scheme path must not reach it.
 fn is_auth_callback_url(url: &str) -> bool {
     let path = url.split_once('?').map(|(path, _)| path).unwrap_or(url);
-    path.trim_end_matches('/')
-        .eq_ignore_ascii_case(COGNITO_REDIRECT_URI)
+    let path = path.trim_end_matches('/');
+    path.eq_ignore_ascii_case(COGNITO_REDIRECT_URI)
+        || path.eq_ignore_ascii_case(LEGACY_DEEP_LINK_REDIRECT_URI)
 }
 
 /// `try_state` rather than `state` so a wiring mistake surfaces as a handled
@@ -263,7 +276,10 @@ fn lock_poisoned() -> AppError {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub async fn start_login(app: AppHandle) -> Result<(), AppError> {
+pub async fn start_login(
+    app: AppHandle,
+    listener: State<'_, crate::commands::auth_listener::LoopbackListener>,
+) -> Result<(), AppError> {
     let attempt = generate_pkce();
     let authorize_url = build_authorize_url(&attempt.code_challenge, &attempt.state);
 
@@ -273,6 +289,18 @@ pub async fn start_login(app: AppHandle) -> Result<(), AppError> {
         // A second sign-in click supersedes the first: only the newest verifier
         // can complete an exchange.
         *slot = Some(attempt);
+    }
+
+    // Must be bound before the browser opens: Cognito redirects here as soon
+    // as the user finishes signing in, which can be faster than this function
+    // returning if the listener started after `open_url`.
+    if let Err(e) = crate::commands::auth_listener::start(app.clone(), &listener) {
+        if let Ok(pending) = pending_login_state(&app) {
+            if let Ok(mut slot) = pending.0.lock() {
+                *slot = None;
+            }
+        }
+        return Err(e);
     }
 
     info!("Opening the Cognito Hosted UI in the system browser");
@@ -804,8 +832,12 @@ mod tests {
     }
 
     #[test]
-    fn redirect_and_signout_uris_use_the_nixus_scheme() {
-        assert_eq!(COGNITO_REDIRECT_URI, "nixus://auth/callback");
+    fn redirect_uris_match_the_loopback_and_legacy_deep_link_constants() {
+        assert_eq!(
+            COGNITO_REDIRECT_URI,
+            crate::commands::auth_listener::LOOPBACK_REDIRECT_URI
+        );
+        assert_eq!(LEGACY_DEEP_LINK_REDIRECT_URI, "nixus://auth/callback");
         assert_eq!(COGNITO_SIGNOUT_URI, "nixus://auth/signout");
     }
 
@@ -889,15 +921,17 @@ mod tests {
         assert!(url.starts_with("https://auth.nixusapp.com/oauth2/authorize?"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains(&format!("client_id={}", COGNITO_CLIENT_ID)));
-        assert!(url.contains("redirect_uri=nixus%3A%2F%2Fauth%2Fcallback"));
+        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback"));
         assert!(url.contains("scope=openid%20email%20profile"));
         assert!(url.contains("code_challenge=test-challenge"));
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains("state=test-state"));
     }
 
-    /// Byte-exact guard: this literal is the URL that was verified live against
-    /// the pool (302 to Managed Login, all seven params preserved).
+    /// Byte-exact guard: locks the URL shape so a future edit can't silently
+    /// change a param. The `redirect_uri` here requires
+    /// `http://127.0.0.1:52847/callback` to be added to the Cognito app
+    /// client's allowed callback URLs before a live sign-in can complete.
     #[test]
     fn authorize_url_is_byte_exact() {
         assert_eq!(
@@ -905,7 +939,7 @@ mod tests {
             "https://auth.nixusapp.com/oauth2/authorize\
              ?response_type=code\
              &client_id=6525109r95las7odvuesf13joj\
-             &redirect_uri=nixus%3A%2F%2Fauth%2Fcallback\
+             &redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback\
              &scope=openid%20email%20profile\
              &code_challenge=CHALLENGE\
              &code_challenge_method=S256\
@@ -1023,11 +1057,17 @@ mod tests {
 
     #[test]
     fn only_the_callback_path_is_treated_as_an_auth_callback() {
+        assert!(is_auth_callback_url(
+            "http://127.0.0.1:52847/callback?code=a&state=b"
+        ));
+        assert!(is_auth_callback_url("http://127.0.0.1:52847/callback"));
+        assert!(is_auth_callback_url("http://127.0.0.1:52847/callback/"));
+        // The legacy deep-link shape is still recognized (fallback path).
         assert!(is_auth_callback_url("nixus://auth/callback?code=a&state=b"));
         assert!(is_auth_callback_url("nixus://auth/callback"));
-        assert!(is_auth_callback_url("nixus://auth/callback/"));
         assert!(!is_auth_callback_url(COGNITO_SIGNOUT_URI));
         assert!(!is_auth_callback_url("nixus://something/else?code=a"));
+        assert!(!is_auth_callback_url("http://127.0.0.1:52847/other-path"));
     }
 
     #[test]
