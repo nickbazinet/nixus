@@ -27,6 +27,7 @@ pub mod projection;
 pub mod projects;
 pub mod recurring;
 pub mod recurring_income;
+pub mod retirement;
 pub mod spending_trends;
 pub mod yearly_summary;
 

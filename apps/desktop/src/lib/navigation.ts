@@ -63,6 +63,7 @@ export const DESTINATIONS = [
       { to: "/insights/trends", labelKey: "nav.trends" },
       { to: "/insights/year-summary", labelKey: "nav.yearSummary" },
       { to: "/insights/projection", labelKey: "nav.projection" },
+      { to: "/insights/retirement", labelKey: "nav.retirement" },
     ],
   },
 ] as const satisfies FourDestinations;

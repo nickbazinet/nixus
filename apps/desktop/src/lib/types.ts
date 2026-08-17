@@ -426,6 +426,16 @@ export interface ProjectionInput {
   expense_month_count: number;
 }
 
+// Deliberately not `ProjectionInput`: averages here are a 12-month trailing window, not the
+// unbounded lifetime average `ProjectionInput` uses — see `RetirementInput` in `models/mod.rs`.
+export interface RetirementInput {
+  account_balances: AccountBalanceByType[];
+  avg_monthly_income_cents: number;
+  avg_monthly_expense_cents: number;
+  income_month_count: number;
+  expense_month_count: number;
+}
+
 export interface RecurringExpenseTemplate {
   id: number;
   merchant: string;

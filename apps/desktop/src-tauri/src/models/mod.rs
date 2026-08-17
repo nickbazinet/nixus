@@ -594,6 +594,19 @@ pub struct ProjectionInput {
     pub expense_month_count: i64,
 }
 
+// Deliberately its own struct rather than reusing `ProjectionInput`: the two share the account
+// balances query, but averages here are a 12-month trailing window (recent spending), not the
+// unbounded lifetime average `ProjectionInput` uses — reusing the type would make that distinction
+// invisible at every call site.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetirementInput {
+    pub account_balances: Vec<AccountBalanceByType>,
+    pub avg_monthly_income_cents: i64,
+    pub avg_monthly_expense_cents: i64,
+    pub income_month_count: i64,
+    pub expense_month_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vehicle {
     pub id: i64,

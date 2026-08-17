@@ -36,6 +36,7 @@ import { Route as SpendingBudgetRouteImport } from './routes/spending.budget'
 import { Route as SettingsAiProviderRouteImport } from './routes/settings.ai-provider'
 import { Route as InsightsYearSummaryRouteImport } from './routes/insights.year-summary'
 import { Route as InsightsTrendsRouteImport } from './routes/insights.trends'
+import { Route as InsightsRetirementRouteImport } from './routes/insights.retirement'
 import { Route as InsightsProjectionRouteImport } from './routes/insights.projection'
 import { Route as CarGarageRouteImport } from './routes/car.garage'
 import { Route as AiAgentIdRouteImport } from './routes/ai.$agentId'
@@ -176,6 +177,11 @@ const InsightsTrendsRoute = InsightsTrendsRouteImport.update({
   path: '/insights/trends',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InsightsRetirementRoute = InsightsRetirementRouteImport.update({
+  id: '/insights/retirement',
+  path: '/insights/retirement',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InsightsProjectionRoute = InsightsProjectionRouteImport.update({
   id: '/insights/projection',
   path: '/insights/projection',
@@ -205,6 +211,7 @@ export interface FileRoutesByFullPath {
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
   '/insights/projection': typeof InsightsProjectionRoute
+  '/insights/retirement': typeof InsightsRetirementRoute
   '/insights/trends': typeof InsightsTrendsRoute
   '/insights/year-summary': typeof InsightsYearSummaryRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
@@ -234,6 +241,7 @@ export interface FileRoutesByTo {
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
   '/insights/projection': typeof InsightsProjectionRoute
+  '/insights/retirement': typeof InsightsRetirementRoute
   '/insights/trends': typeof InsightsTrendsRoute
   '/insights/year-summary': typeof InsightsYearSummaryRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
@@ -267,6 +275,7 @@ export interface FileRoutesById {
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
   '/insights/projection': typeof InsightsProjectionRoute
+  '/insights/retirement': typeof InsightsRetirementRoute
   '/insights/trends': typeof InsightsTrendsRoute
   '/insights/year-summary': typeof InsightsYearSummaryRoute
   '/settings/ai-provider': typeof SettingsAiProviderRoute
@@ -301,6 +310,7 @@ export interface FileRouteTypes {
     | '/ai/$agentId'
     | '/car/garage'
     | '/insights/projection'
+    | '/insights/retirement'
     | '/insights/trends'
     | '/insights/year-summary'
     | '/settings/ai-provider'
@@ -330,6 +340,7 @@ export interface FileRouteTypes {
     | '/ai/$agentId'
     | '/car/garage'
     | '/insights/projection'
+    | '/insights/retirement'
     | '/insights/trends'
     | '/insights/year-summary'
     | '/settings/ai-provider'
@@ -362,6 +373,7 @@ export interface FileRouteTypes {
     | '/ai/$agentId'
     | '/car/garage'
     | '/insights/projection'
+    | '/insights/retirement'
     | '/insights/trends'
     | '/insights/year-summary'
     | '/settings/ai-provider'
@@ -393,6 +405,7 @@ export interface RootRouteChildren {
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   InsightsProjectionRoute: typeof InsightsProjectionRoute
+  InsightsRetirementRoute: typeof InsightsRetirementRoute
   InsightsTrendsRoute: typeof InsightsTrendsRoute
   InsightsYearSummaryRoute: typeof InsightsYearSummaryRoute
   SpendingBudgetRoute: typeof SpendingBudgetRoute
@@ -600,6 +613,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InsightsTrendsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/insights/retirement': {
+      id: '/insights/retirement'
+      path: '/insights/retirement'
+      fullPath: '/insights/retirement'
+      preLoaderRoute: typeof InsightsRetirementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/insights/projection': {
       id: '/insights/projection'
       path: '/insights/projection'
@@ -673,6 +693,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRouteWithChildren,
   InsightsProjectionRoute: InsightsProjectionRoute,
+  InsightsRetirementRoute: InsightsRetirementRoute,
   InsightsTrendsRoute: InsightsTrendsRoute,
   InsightsYearSummaryRoute: InsightsYearSummaryRoute,
   SpendingBudgetRoute: SpendingBudgetRoute,
