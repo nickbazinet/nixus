@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nixus — Concept mock: Today tab</title>
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+<style>
+/* ============================================================
+   CONCEPT MOCK v1 — TODAY TAB (cross-module landing screen)
+   Same restrained language as House/Health/Renewals v2: lucide
+   icons, flat muted cards, no illustration/gradients.
+   Purpose: this is where cross-module intelligence (product-brief
+   addendum §1.1) becomes a real, demoable screen — not just a claim.
+   ============================================================ */
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --bg:#FAF8F5; --card:#FFFFFF; --chrome:#F5F2EC; --rail:#F0ECE4; --rail-line:#E3DDD2;
+  --ink:#1C1917; --ink-dim:#6B635A; --ink-faint:#7A7167;
+  --line:#E8E3DA; --line-strong:#D8D1C5; --track:#EFEAE1; --hover:#FBF9F6;
+  --brand:#5B54D6; --brand-ink:#4A43BE; --brand-on:#FFFFFF; --brand-soft:#EFEDFB;
+  --good:#15803D; --good-bg:#E8F3EA; --good-ink:#14672F;
+  --caution:#B45309; --caution-bg:#FBF0DF; --caution-ink:#8F4208;
+  --over:#BE123C; --over-bg:#FBE9ED; --over-ink:#9D0F33;
+  --neutral-bg:#EFEAE1; --neutral-ink:#6B635A;
+  --c1:#5A54D7; --c2:#AB7DD9; --c5:#368580;
+  --r-sm:4px; --r-md:5px; --r-lg:7px;
+}
+body{margin:0;background:#0e1116;color:#e6e9ef;line-height:1.5;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+.page{max-width:1300px;margin:0 auto;padding:36px 26px 80px}
+.mh{border-bottom:1px solid #262c36;padding-bottom:22px;margin-bottom:30px}
+.mh h1{font-size:25px;margin:0 0 9px;font-weight:650;letter-spacing:-.02em}
+.mh p{margin:0 0 7px;color:#98a2b3;font-size:13.5px;max-width:90ch}
+.mh code{background:#1a1f27;padding:1px 5px;border-radius:4px;font-size:12.5px}
+.win{border-radius:10px;overflow:hidden;border:1px solid #262c36}
+.wb{display:flex;align-items:center;gap:6px;padding:9px 12px;background:#1a1f27;border-bottom:1px solid #262c36}
+.wb i{width:10px;height:10px;border-radius:50%;background:#3a4250}
+.wb span{margin-left:8px;font-size:11px;color:#6b7583}
+.app{background:var(--bg);color:var(--ink);min-height:640px;font-size:14px;display:flex;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+.rail{width:52px;flex-shrink:0;background:var(--rail);border-right:1px solid var(--rail-line);
+  display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail .mk{width:24px;height:24px;border-radius:6px;margin-bottom:12px;
+  background:linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6)}
+.rail .ic{width:32px;height:32px;border-radius:var(--r-md);display:flex;align-items:center;
+  justify-content:center;color:var(--ink-faint);position:relative}
+.rail .ic svg{width:17px;height:17px}
+.rail .ic.on{background:var(--brand-soft);color:var(--brand-ink)}
+.rail .ic.on::after{content:"";position:absolute;right:-10px;top:6px;bottom:6px;width:3px;border-radius:2px;background:var(--brand)}
+.rail .sp{flex:1}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.dest{display:flex;align-items:center;gap:2px;padding:0 20px;background:var(--chrome);border-bottom:1px solid var(--line)}
+.dest a{padding:13px 14px 12px;font-size:13.5px;font-weight:550;color:var(--ink-dim);text-decoration:none;border-bottom:2px solid transparent;display:flex;align-items:center;gap:6px}
+.dest a svg{width:14px;height:14px}
+.dest a.on{color:var(--brand-ink);border-bottom-color:var(--brand);font-weight:650}
+.dest .grow{flex:1}
+.body{padding:22px}
+h1.pt{font-size:20px;font-weight:650;letter-spacing:-.02em;margin:0 0 3px}
+p.pd{font-size:13px;color:var(--ink-dim);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px}
+.two{display:grid;grid-template-columns:1.15fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:1050px){.two{grid-template-columns:1fr}}
+
+/* ---------- top stat row ---------- */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
+.stat-card p.q{font-size:12.5px;color:var(--ink-dim);font-weight:600;margin:0 0 6px}
+.stat{font-size:26px;font-weight:600;letter-spacing:-.025em;line-height:1.1;margin:0;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.sb{font-size:12.5px;color:var(--ink-dim);margin:6px 0 0}
+.sb b{color:var(--ink);font-variant-numeric:tabular-nums}
+.meter{height:6px;border-radius:99px;background:var(--track);overflow:hidden;margin-top:10px}
+.meter i{display:block;height:100%;border-radius:99px;background:var(--brand)}
+.spark{display:flex;align-items:flex-end;gap:4px;height:34px;margin-top:10px}
+.spark i{flex:1;border-radius:2px 2px 0 0;background:var(--c2);min-height:3px}
+.spark i.now{background:var(--brand)}
+
+/* ---------- unified attention feed ---------- */
+.hr{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}
+.hr h3{margin:0;font-size:14px;font-weight:650}
+.hr .grow{flex:1}
+.hr .cnt{font-size:12px;color:var(--ink-dim);font-weight:600}
+.feed{display:flex;flex-direction:column}
+.fitem{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--line)}
+.fitem:last-child{border-bottom:none}
+.fitem .ic{width:30px;height:30px;border-radius:var(--r-md);background:var(--track);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;color:var(--ink-dim)}
+.fitem .ic svg{width:14px;height:14px}
+.fitem .mid{flex:1;min-width:0}
+.fitem h4{margin:0 0 1px;font-size:13px;font-weight:650}
+.fitem p{margin:0;font-size:11.5px;color:var(--ink-dim)}
+.fitem .src{font-size:10.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.04em;font-weight:650;margin-right:2px}
+.pill{font-size:11px;font-weight:650;padding:3px 8px;border-radius:99px;white-space:nowrap}
+.p-caut{background:var(--caution-bg);color:var(--caution-ink)}
+.p-over{background:var(--over-bg);color:var(--over-ink)}
+.p-good{background:var(--good-bg);color:var(--good-ink)}
+
+/* ---------- cross-module intelligence highlight ---------- */
+.insight{background:var(--brand-soft);border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:16px 18px;border-left:3px solid var(--brand);margin-bottom:12px}
+.insight .hd{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.insight .ic{width:30px;height:30px;border-radius:var(--r-md);background:var(--card);
+  display:flex;align-items:center;justify-content:center;color:var(--brand-ink);flex-shrink:0}
+.insight .ic svg{width:15px;height:15px}
+.insight h3{margin:0;font-size:14.5px;font-weight:650}
+.insight p{margin:0 0 10px;font-size:13px;color:var(--ink-dim);line-height:1.5}
+.insight p b{color:var(--ink)}
+.insight .tag{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--brand-ink);margin-bottom:6px;display:block}
+.cta{display:inline-block;font-size:13px;font-weight:650;padding:8px 14px;
+  border-radius:var(--r-md);background:var(--brand);color:var(--brand-on);cursor:pointer}
+.note{margin-top:16px;padding:11px 14px;background:var(--neutral-bg);border-radius:var(--r-md);
+  font-size:12.5px;color:var(--ink-dim)}
+.foot{border-top:1px solid #262c36;margin-top:34px;padding-top:20px;color:#6b7583;font-size:12.5px}
+.foot b{color:#98a2b3}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="mh">
+    <h1>Concept mock — Today tab</h1>
+    <p>This is where cross-module intelligence (addendum §1.1) stops being a slide and becomes a real screen: one unified "needs your attention" feed pulling from Car/House/Health/Renewals, plus a highlighted insight connecting an upcoming module cost to overall financial health.</p>
+    <p>Same restrained language as the House/Health/Renewals v2 mocks — lucide icons, flat cards, no illustration.</p>
+  </div>
+
+  <div class="win">
+    <div class="wb"><i></i><i></i><i></i><span>Nixus — Today — concept</span></div>
+    <div class="app">
+      <div class="rail">
+        <div class="mk"></div>
+        <div class="ic on"><svg data-lucide="layout-dashboard"></svg></div>
+        <div class="ic"><svg data-lucide="wallet"></svg></div>
+        <div class="ic"><svg data-lucide="trending-up"></svg></div>
+        <div class="ic"><svg data-lucide="car"></svg></div>
+        <div class="ic"><svg data-lucide="home"></svg></div>
+        <div class="ic"><svg data-lucide="heart-pulse"></svg></div>
+        <div class="ic"><svg data-lucide="badge-check"></svg></div>
+        <div class="sp"></div>
+        <div class="ic"><svg data-lucide="user"></svg></div>
+        <div class="ic"><svg data-lucide="settings"></svg></div>
+      </div>
+      <div class="main">
+        <nav class="dest">
+          <a href="#" class="on"><svg data-lucide="layout-dashboard"></svg>Today</a>
+          <a href="#"><svg data-lucide="wallet"></svg>Spending</a>
+          <a href="#"><svg data-lucide="trending-up"></svg>Wealth</a>
+          <a href="#"><svg data-lucide="car"></svg>Car</a>
+          <a href="#"><svg data-lucide="home"></svg>House</a>
+          <a href="#"><svg data-lucide="heart-pulse"></svg>Health</a>
+          <a href="#"><svg data-lucide="badge-check"></svg>Renewals</a>
+          <span class="grow"></span>
+        </nav>
+        <div class="body">
+          <h1 class="pt">Good morning, Nicolas</h1>
+          <p class="pd">Tuesday, August 12 — here's where everything stands.</p>
+
+          <div class="stats">
+            <div class="card stat-card">
+              <p class="q">Net worth</p>
+              <p class="stat money">$142,880</p>
+              <div class="spark">
+                <i style="height:48%"></i><i style="height:52%"></i><i style="height:58%"></i>
+                <i style="height:55%"></i><i style="height:63%"></i><i class="now" style="height:70%"></i>
+              </div>
+              <p class="sb">up <b>2.1%</b> this month</p>
+            </div>
+            <div class="card stat-card">
+              <p class="q">This month's cash flow</p>
+              <p class="stat money">+$745</p>
+              <p class="sb"><b>$4,250</b> in, <b>$3,505</b> out</p>
+              <div class="meter"><i style="width:82%"></i></div>
+              <p class="sb" style="margin-top:6px">18% savings rate</p>
+            </div>
+            <div class="card stat-card">
+              <p class="q">Budget remaining</p>
+              <p class="stat money">$612</p>
+              <p class="sb">of <b>$2,100</b> discretionary — 12 days left</p>
+              <div class="meter"><i style="width:71%;background:var(--caution)"></i></div>
+              <p class="sb" style="margin-top:6px">Dining is running hot this month</p>
+            </div>
+          </div>
+
+          <div class="two">
+            <div class="card">
+              <div class="hr"><h3>Needs your attention</h3><span class="grow"></span><span class="cnt">6 items</span></div>
+              <div class="feed">
+                <div class="fitem">
+                  <span class="ic"><svg data-lucide="home"></svg></span>
+                  <span class="mid"><h4><span class="src">House</span>Roof inspection</h4><p>Overdue by 1 month</p></span>
+                  <span class="pill p-caut">Overdue</span>
+                </div>
+                <div class="fitem">
+                  <span class="ic"><svg data-lucide="car"></svg></span>
+                  <span class="mid"><h4><span class="src">Car</span>Timing belt service</h4><p>Due in 3 weeks · ~$800</p></span>
+                  <span class="pill p-caut">Due soon</span>
+                </div>
+                <div class="fitem">
+                  <span class="ic"><svg data-lucide="badge-check"></svg></span>
+                  <span class="mid"><h4><span class="src">Renewals</span>Car insurance</h4><p>Expires in 9 days</p></span>
+                  <span class="pill p-over">Urgent</span>
+                </div>
+                <div class="fitem">
+                  <span class="ic"><svg data-lucide="heart-pulse"></svg></span>
+                  <span class="mid"><h4><span class="src">Health</span>Dentist checkup</h4><p>Due in 3 weeks</p></span>
+                  <span class="pill p-caut">Due soon</span>
+                </div>
+                <div class="fitem">
+                  <span class="ic"><svg data-lucide="wind"></svg></span>
+                  <span class="mid"><h4><span class="src">House</span>HVAC filter</h4><p>Due in 12 days</p></span>
+                  <span class="pill p-caut">Due soon</span>
+                </div>
+                <div class="fitem">
+                  <span class="ic"><svg data-lucide="badge-check"></svg></span>
+                  <span class="mid"><h4><span class="src">Renewals</span>Passport</h4><p>Expires in 6 weeks</p></span>
+                  <span class="pill p-good">On radar</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="insight">
+                <span class="tag">Cross-module insight</span>
+                <div class="hd"><span class="ic"><svg data-lucide="lightbulb"></svg></span><h3>Your car service will dent your safety net</h3></div>
+                <p>The timing belt due in 3 weeks runs <b>~$800</b>. Paying it from savings would drop your emergency-fund coverage from <b>2.4 to 1.6 months</b> — still above your last "danger" threshold, but worth planning for rather than absorbing as a surprise.</p>
+                <span class="cta">See the impact in Wealth</span>
+              </div>
+              <div class="card">
+                <div class="hr"><h3>Next best action</h3></div>
+                <p class="sb" style="margin:0 0 4px">You're on step 2 of 5: <b>build your emergency fund to 6 months</b>.</p>
+                <div class="meter"><i style="width:53%"></i></div>
+                <p class="sb" style="margin-top:8px">3.2 months covered — about <b>$745/mo</b> gets you there in a year.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="note">This screen is the actual payoff of owning Finance + Car + House + Health + Renewals in one app — no competitor in any of those categories can connect an upcoming maintenance cost to emergency-fund coverage, because none of them span more than one of these domains.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot"><b>Concept mock, not implementation-ready.</b> Figures illustrative. Reuses existing Financial Health / Cash Flow / Net Worth components conceptually — this is a synthesis layer on top of them, not a new data source. See <code>product-brief-addendum-mobile-cloud-differentiation-2026-08-12.md</code>.</div>
+</div>
+<script>lucide.createIcons();</script>
+</body>
+</html>

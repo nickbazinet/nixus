@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Input } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +37,13 @@ export function MoneyInput({
 
   const [displayValue, setDisplayValue] = useState(() => formatDisplay(value));
   const [isFocused, setIsFocused] = useState(false);
+
+  // Focused: the user owns the text (reformatting mid-keystroke would fight them). Unfocused: the
+  // `value` prop owns it — the same invariant `handleBlur` asserts. Without this, an asynchronously
+  // resolved `value` never reaches the field; it stays frozen at the first render's value.
+  useEffect(() => {
+    if (!isFocused) setDisplayValue(formatDisplay(value));
+  }, [value, isFocused, formatDisplay]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value.replace(/[^0-9.]/g, "");

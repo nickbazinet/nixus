@@ -85,6 +85,8 @@ export { Separator } from "./separator";
 export { Skeleton } from "./skeleton";
 export type { SkeletonProps } from "./skeleton";
 export { SlideOver } from "./slide-over";
+export { Slider } from "./slider";
+export type { SliderProps } from "./slider";
 export { Toaster } from "./sonner";
 export { Stat, SubStat } from "./stat";
 export type { StatProps } from "./stat";

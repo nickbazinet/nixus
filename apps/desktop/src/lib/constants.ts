@@ -60,6 +60,11 @@ export const queryKeys = {
   financialHealthSummary: ["financial-health", "summary"] as const,
   financialHealthDetail: ["financial-health", "detail"] as const,
   retirementPension: ["retirement-pension"] as const,
+  retirementEmployerPension: ["retirement-employer-pension"] as const,
+  retirementEmployerPensionStartAge: [
+    "retirement-employer-pension-start-age",
+  ] as const,
+  retirementPensionTaxRate: ["retirement-pension-tax-rate"] as const,
   retirementAgeOverride: ["retirement-age-override"] as const,
   retirementInput: ["retirement-input"] as const,
   auth: {

@@ -13,12 +13,15 @@ interface MetricInfoTooltipProps {
   ariaLabel: string;
   /** Tooltip body copy. Plain language — the arithmetic lives here, never on the surface. */
   content: string;
+  /** Widens or otherwise adjusts the popup for copy the default `max-w-xs` would make a column of. */
+  contentClassName?: string;
   testId?: string;
 }
 
 export function MetricInfoTooltip({
   ariaLabel,
   content,
+  contentClassName,
   testId = "metric-info-trigger",
 }: MetricInfoTooltipProps) {
   return (
@@ -35,7 +38,10 @@ export function MetricInfoTooltip({
         >
           <Info className="size-3.5" aria-hidden="true" />
         </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs text-caption">
+        <TooltipContent
+          side="top"
+          className={cn("max-w-xs text-caption", contentClassName)}
+        >
           {content}
         </TooltipContent>
       </Tooltip>

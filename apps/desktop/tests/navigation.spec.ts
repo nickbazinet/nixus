@@ -29,7 +29,7 @@ const subNavs = [
   },
   {
     landing: '/insights/trends',
-    items: ['Spending trends', 'Year summary', 'Projection'],
+    items: ['Spending trends', 'Year summary', 'Projection', 'Retirement'],
   },
 ] as const;
 
