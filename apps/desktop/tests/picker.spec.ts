@@ -33,6 +33,10 @@ interface PickerOptions {
   selectDatasetFails?: boolean;
   /** Delays `select_dataset` so the in-flight window — and the disabled rows — are assertable. */
   selectDatasetDelayMs?: number;
+  /** Makes `create_dataset` reject, standing in for a failed directory create or migrate. */
+  createDatasetFails?: boolean;
+  /** Delays `create_dataset` so the in-flight window — and the disabled rows — are assertable. */
+  createDatasetDelayMs?: number;
   /** What the freshly-selected dataset's `check_onboarding_status` reports. */
   needsOnboarding?: boolean;
   /**
@@ -97,6 +101,11 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
     // answer with another dataset's figures.
     let openDatasetId: string | null = null;
 
+    // The registry `list_datasets` reads, mutable because `create_dataset` genuinely appends to it.
+    // A stubbed create that returned an entry without growing this list would let the picker pass
+    // on nothing but an optimistic render.
+    const registry = opts.datasets === undefined ? undefined : [...opts.datasets];
+
     (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: () => {},
     };
@@ -115,9 +124,46 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
               : Promise.resolve({ needs_picker: needsPicker });
 
           case "list_datasets":
-            return opts.datasets === undefined
+            return registry === undefined
               ? Promise.reject(`Unknown command: ${cmd}`)
-              : Promise.resolve(opts.datasets);
+              // A copy, not the array itself: react-query's structural sharing compares the new
+              // payload against the stored one, and handing back the same mutated reference twice
+              // would make the appended entry invisible to it.
+              : Promise.resolve(registry.slice());
+
+          case "create_dataset": {
+            const settle = () => {
+              if (opts.createDatasetFails === true || registry === undefined) {
+                return Promise.reject({
+                  type: "File",
+                  message: "Failed to create dataset directory",
+                });
+              }
+              // The real `next_local_label`: a count of the existing local, non-default entries,
+              // so Default and any cloud-linked entry are excluded exactly as Rust excludes them.
+              const n =
+                registry.filter((entry) => !entry.is_default && entry.kind === "local")
+                  .length + 1;
+              const created: MockDataset = {
+                id: `00000000-0000-4000-8000-00000000000${n}`,
+                label: `Local Profile ${n}`,
+                kind: "local",
+                cognito_sub: null,
+                linked_from: null,
+                is_default: false,
+                created_at: "2026-08-19T00:00:00+00:00",
+              };
+              registry.push(created);
+              return Promise.resolve(created);
+            };
+            if (opts.createDatasetDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(
+                () => settle().then(resolve, reject),
+                opts.createDatasetDelayMs,
+              );
+            });
+          }
 
           case "select_dataset": {
             const requestedId = String(args?.dataset_id);
@@ -539,6 +585,176 @@ test.describe("choosing a profile", () => {
 
     await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
     expect(await callsTo(page, "select_dataset")).toHaveLength(1);
+  });
+});
+
+test.describe("creating a local profile", () => {
+  test("creating adds a row without navigating or opening it", async ({ page }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(1);
+
+    await page.getByTestId("picker-new-profile-button").click();
+
+    // The list genuinely grew, and the label is the one the Rust label rule derives.
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(1)).toHaveText("Local Profile 1");
+
+    // Creating and opening are separate actions: still on the picker, and nothing was selected or
+    // latched, so the active dataset is exactly what it was.
+    await expect(page).toHaveURL(/\/picker$/);
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+    const commands = await readIpcCommands(page);
+    expect(commands).toContain("create_dataset");
+    expect(commands).not.toContain("select_dataset");
+    expect(commands).not.toContain("mark_picker_passed");
+  });
+
+  test("a freshly created profile opens into the onboarding wizard", async ({ page }) => {
+    // `needs_onboarding: true` stands in for what a genuinely empty dataset reports: the wizard is
+    // reached through the existing, unmodified `check_onboarding_status` gate on `/`.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      needsOnboarding: true,
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-new-profile-button").click();
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(2);
+    await rows.nth(1).click();
+
+    await expect(page).toHaveURL(/\/onboarding$/);
+    await expect(page.getByTestId("onboarding-wizard")).toBeVisible();
+    await expect(page.getByTestId("dataset-picker")).toHaveCount(0);
+
+    // The new entry's own id, not Default's — the row the user actually clicked.
+    const selections = await callsTo(page, "select_dataset");
+    expect(selections).toHaveLength(1);
+    expect(selections[0].args).toEqual({
+      dataset_id: "00000000-0000-4000-8000-000000000001",
+    });
+  });
+
+  test("labels keep advancing across repeated creates", async ({ page }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    const create = page.getByTestId("picker-new-profile-button");
+    const rows = page.getByTestId("picker-dataset-row");
+
+    await create.click();
+    await expect(rows).toHaveCount(2);
+    await create.click();
+    await expect(rows).toHaveCount(3);
+
+    await expect(rows.nth(1)).toHaveText("Local Profile 1");
+    await expect(rows.nth(2)).toHaveText("Local Profile 2");
+  });
+
+  test("a failed create says so and leaves the list alone", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      createDatasetFails: true,
+    });
+    await page.goto("/picker");
+
+    const create = page.getByTestId("picker-new-profile-button");
+    await create.click();
+
+    await expect(page.locator("[data-sonner-toast]")).toContainText(
+      "That profile could not be created. Please try again.",
+    );
+    await expect(page).toHaveURL(/\/picker$/);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
+
+    // Not a dead end: a failure must leave the only actionable control on this screen usable.
+    await expect(create).toBeEnabled();
+  });
+
+  test("the create control disables itself while its own create is in flight", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      createDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    const create = page.getByTestId("picker-new-profile-button");
+    await create.click();
+
+    // Both spellings, so a dim is never the only signal.
+    await expect(create).toBeDisabled();
+    await expect(create).toHaveAttribute("aria-disabled", "true");
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2, {
+      timeout: 20_000,
+    });
+
+    // The point of the guard: Playwright's click() waits for enabled, so a disabled control cannot
+    // be clicked at all — and with no delete affordance, a double-click would permanently mint a
+    // second profile the user cannot remove.
+    expect(await callsTo(page, "create_dataset")).toHaveLength(1);
+  });
+
+  test("a create in flight disables the rows, so the two mutations cannot interleave", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      createDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    const row = page.getByTestId("picker-dataset-row");
+    await page.getByTestId("picker-new-profile-button").click();
+
+    // Both spellings, matching the rows' own in-flight treatment, so a dim is never the only signal.
+    await expect(row).toBeDisabled();
+    await expect(row).toHaveAttribute("aria-disabled", "true");
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2, {
+      timeout: 20_000,
+    });
+    expect(await readIpcCommands(page)).not.toContain("select_dataset");
+  });
+
+  test("a selection in flight disables the create control", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      selectDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    const create = page.getByTestId("picker-new-profile-button");
+    await page.getByTestId("picker-dataset-row").click();
+
+    await expect(create).toBeDisabled();
+    await expect(create).toHaveAttribute("aria-disabled", "true");
+
+    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    expect(await readIpcCommands(page)).not.toContain("create_dataset");
+  });
+
+  test("no free-text label input exists anywhere on the picker", async ({ page }) => {
+    // Naming and renaming are explicit non-goals: the label is auto-generated, so an input here
+    // would be the affordance the epic forbids.
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-new-profile-button").click();
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+
+    await expect(page.locator("input")).toHaveCount(0);
+    await expect(page.locator("textarea")).toHaveCount(0);
   });
 });
 

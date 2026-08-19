@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { TriangleAlertIcon } from "lucide-react";
+import { Plus, TriangleAlertIcon } from "lucide-react";
 import {
   Alert,
   AlertTitle,
@@ -12,7 +12,11 @@ import {
   focusRing,
 } from "@nixus/shared";
 import { SURFACE_HEADING_ID } from "@/components/shared/PageHeader";
-import { useDatasets, useSelectDataset } from "@/hooks/useDatasets";
+import {
+  useCreateDataset,
+  useDatasets,
+  useSelectDataset,
+} from "@/hooks/useDatasets";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,6 +32,7 @@ export function DatasetPicker() {
   const navigate = useNavigate();
   const datasets = useDatasets();
   const selectDataset = useSelectDataset();
+  const createDataset = useCreateDataset();
   const entries = datasets.data ?? [];
 
   // Navigating to `/` rather than reloading is what makes the picker's own gate the thing that
@@ -45,6 +50,17 @@ export function DatasetPicker() {
       // Mandatory: select_dataset can fail on an unknown id or a failed open/migrate. Without this
       // the rejection is an unhandled promise and the row just looks dead. The user stays here.
       toast.error(t("datasets.selectFailed"));
+    }
+  };
+
+  // No navigation and no auto-select on purpose: creating and opening are separate user actions,
+  // so the new row simply appears — `useCreateDataset` invalidates the list — and the user stays
+  // here to choose it (or not).
+  const createEntry = async () => {
+    try {
+      await createDataset.mutateAsync();
+    } catch {
+      toast.error(t("datasets.createFailed"));
     }
   };
 
@@ -115,11 +131,15 @@ export function DatasetPicker() {
                     <button
                       type="button"
                       // Every row, not only the clicked one, so a second row cannot race the first.
-                      // Both spellings, matching the Cloud button below: the native attribute takes
-                      // the row out of the tab order, `aria-disabled` is what assistive tech reports,
+                      // A create in flight disables them too: the two mutations both rewrite the
+                      // registry, so letting them interleave is what has to be impossible. Both
+                      // spellings, matching the Cloud button below: the native attribute takes the
+                      // row out of the tab order, `aria-disabled` is what assistive tech reports,
                       // so a dim is never the only signal.
-                      disabled={selectDataset.isPending}
-                      aria-disabled={selectDataset.isPending || undefined}
+                      disabled={selectDataset.isPending || createDataset.isPending}
+                      aria-disabled={
+                        selectDataset.isPending || createDataset.isPending || undefined
+                      }
                       onClick={() => void selectEntry(entry.id)}
                     />
                   }
@@ -137,6 +157,23 @@ export function DatasetPicker() {
             ))}
           </ul>
         ) : null}
+
+        {/* `variant="outline"` so it carries the same `border-line-strong bg-card` surface the rows
+          * do — it belongs to the local-profile group above it, not to the branded Cloud CTA below.
+          * Disabled while a selection is in flight for the same reason the rows are disabled while a
+          * create is: both mutations rewrite the same registry. Both spellings of disabled, matching
+          * the rows and the Cloud button. */}
+        <Button
+          variant="outline"
+          className="mt-section-gap"
+          disabled={createDataset.isPending || selectDataset.isPending}
+          aria-disabled={createDataset.isPending || selectDataset.isPending || undefined}
+          onClick={() => void createEntry()}
+          data-testid="picker-new-profile-button"
+        >
+          <Plus aria-hidden="true" />
+          {t("datasets.newLocalProfile")}
+        </Button>
 
         {/* Present but inert until Epic 35 wires it. Both spellings of disabled: the native
           * attribute takes it out of the tab order, `aria-disabled` is what the shared Button's
