@@ -494,11 +494,6 @@ test.describe("/profile session guard", () => {
     await setupTauriMock(page, { session: { status: "LoggedOut" } });
     await page.goto("/profile");
 
-    // The account prompt is modal and aria-hides the shell, so anything measured while it is open
-    // measures the focus trap rather than the page.
-    await page.getByTestId("continue-offline-button").click();
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
-
     const guard = page.getByTestId("profile-sign-in-required");
     await expect(guard).toBeVisible();
     await expect(guard).toHaveAttribute("data-auth-state", "logged-out");
@@ -518,7 +513,6 @@ test.describe("/profile session guard", () => {
     await expect(page.getByTestId("profile-sign-in-action")).toHaveText(
       /Session expired/,
     );
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
   });
 
   test("an unusable session payload fails closed and stays silent", async ({

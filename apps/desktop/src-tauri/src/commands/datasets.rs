@@ -119,11 +119,14 @@ pub fn list_datasets(app: AppHandle) -> Result<Vec<Dataset>, AppError> {
 static PICKER_PASSED: AtomicBool = AtomicBool::new(false);
 
 /// Latches the picker as passed for the remainder of this run.
-// No caller yet: Story 33.5 turns the picker's rows into working buttons and calls
-// this from the one that is chosen. Built here so the flag's write half lands with
-// its read half instead of the pair being split across two stories.
-#[allow(dead_code)]
-pub(crate) fn mark_picker_passed() {
+///
+/// A separate command from `select_dataset` on purpose: `lib.rs`'s `.setup()` also
+/// calls `select_dataset_now` to auto-select Default before any UI exists, and that
+/// call must never mark the gate passed or the picker would never appear at all.
+/// Only the picker's own click path may latch it, so the frontend issues this as a
+/// second invoke after `select_dataset` resolves.
+#[tauri::command(rename_all = "snake_case")]
+pub fn mark_picker_passed() {
     PICKER_PASSED.store(true, Ordering::SeqCst);
 }
 

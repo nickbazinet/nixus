@@ -12,7 +12,7 @@ type MockAuthState =
 
 /**
  * Outcome of one auth command. `delayMs` is what makes the pending window observable, which is the
- * only honest way to prove the account prompt never flashes while `get_auth_session` is in flight.
+ * only honest way to prove the header's loading affordance is real rather than assumed.
  */
 type CommandOutcome =
   | { kind: "resolve"; value: unknown; delayMs?: number }
@@ -67,13 +67,12 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
       });
     };
 
-    // Mutable on purpose: sign-out flips the answer mid-test, which is what proves both auth
-    // surfaces re-read the one ["auth", "session"] cache entry after the invalidation.
+    // Mutable on purpose: sign-out flips the answer mid-test, which is what proves the header
+    // re-reads the one ["auth", "session"] cache entry rather than holding a private copy.
     let session = opts.session;
 
-    // The whole command surface is recorded, not just the auth commands. Recording everything is
-    // what makes the "Continue Offline persisted nothing" assertion possible — auth-specific counts
-    // are derived by filtering. Mirrors the `__APPLIED_TEMPLATE_CALLS` idiom in onboarding.spec.ts.
+    // The whole command surface is recorded, not just the auth commands, so per-command counts are
+    // derived by filtering. Mirrors the `__APPLIED_TEMPLATE_CALLS` idiom in onboarding.spec.ts.
     const ipcCalls: IpcCall[] = [];
     (window as unknown as Record<string, unknown>).__IPC_CALLS = ipcCalls;
 
@@ -260,15 +259,6 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
   }, options);
 }
 
-/** Every command the page has invoked so far, in order. */
-function readIpcCommands(page: Page): Promise<string[]> {
-  return page.evaluate(() =>
-    (
-      (window as unknown as { __IPC_CALLS?: { cmd: string }[] }).__IPC_CALLS ?? []
-    ).map((call) => call.cmd),
-  );
-}
-
 function countIpcCalls(page: Page, command: string): Promise<number> {
   return page.evaluate(
     (target) =>
@@ -278,10 +268,6 @@ function countIpcCalls(page: Page, command: string): Promise<number> {
       ).filter((call) => call.cmd === target).length,
     command,
   );
-}
-
-function readLocalStorageKeys(page: Page): Promise<string[]> {
-  return page.evaluate(() => Object.keys(localStorage));
 }
 
 async function centreX(locator: Locator): Promise<number> {
@@ -325,85 +311,8 @@ const LOGGED_IN: MockAuthState = {
   name: "Test User",
 };
 
-test.describe("account prompt on launch", () => {
-  test("a launch with no session shows the prompt with both actions", async ({
-    page,
-  }) => {
-    await setupTauriMock(page, { session: { status: "LoggedOut" } });
-    await page.goto("/");
-
-    const dialog = page.getByTestId("account-prompt-dialog");
-    await expect(dialog).toBeVisible();
-    await expect(page.getByTestId("create-account-button")).toBeVisible();
-    await expect(page.getByTestId("continue-offline-button")).toBeVisible();
-    await expect(dialog).not.toContainText("auth.");
-  });
-
-  test("Continue Offline closes it, persists nothing, and the prompt returns next launch", async ({
-    page,
-  }) => {
-    await setupTauriMock(page, { session: { status: "LoggedOut" } });
-    await page.goto("/");
-
-    const dialog = page.getByTestId("account-prompt-dialog");
-    await expect(dialog).toBeVisible();
-
-    const keysBefore = await readLocalStorageKeys(page);
-    const commandsBefore = await readIpcCommands(page);
-
-    await page.getByTestId("continue-offline-button").click();
-    await expect(dialog).toHaveCount(0);
-
-    // Never assert an empty storage: the app legitimately owns `i18nextLng`, `theme`,
-    // `values-hidden`, and `finance.onboarding.dismissed`. The contract is that dismissal adds
-    // nothing, on either axis.
-    const keysAfter = await readLocalStorageKeys(page);
-    expect(keysAfter.filter((key) => !keysBefore.includes(key))).toEqual([]);
-    expect(keysAfter.filter((key) => /auth|cognito|offline|session/i.test(key))).toEqual(
-      [],
-    );
-
-    const commandsAfter = await readIpcCommands(page);
-    const writesFromDismissal = commandsAfter
-      .slice(commandsBefore.length)
-      .filter((cmd) => /^(set|save|create|update|complete|delete)_/.test(cmd));
-    expect(writesFromDismissal).toEqual([]);
-
-    // "Relaunch" in the Vite harness is a reload: addInitScript re-runs, the component's dismissal
-    // state is discarded, and the every-launch cadence reproduces faithfully.
-    await page.reload();
-    await expect(page.getByTestId("account-prompt-dialog")).toBeVisible();
-  });
-
-  test("after dismissing, the app is fully usable with no gating", async ({
-    page,
-  }) => {
-    await setupTauriMock(page, { session: { status: "LoggedOut" } });
-    await page.goto("/");
-
-    await page.getByTestId("continue-offline-button").click();
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
-
-    await expect(page.getByTestId("budget-overall-progress")).toBeVisible();
-    await expectNoGating(page);
-
-    // Client-side navigation, not page.goto: a reload would re-show the prompt (that is the
-    // every-launch cadence, asserted above) and this test is about life after dismissal.
-    await spendingLink(page).click();
-    await expect(page.getByTestId("add-group-button")).toBeVisible();
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
-    await expectNoGating(page);
-  });
-
-  test("the prompt is absent for a signed-in user", async ({ page }) => {
-    await setupTauriMock(page, { session: LOGGED_IN });
-    await page.goto("/");
-
-    await expect(page.getByTestId("budget-overall-progress")).toBeVisible();
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
-  });
-
-  test("the prompt never flashes while the session query is pending", async ({
+test.describe("header profile entry point", () => {
+  test("the trigger reports loading while the session query is in flight, then logged out", async ({
     page,
   }) => {
     await setupTauriMock(page, {
@@ -413,30 +322,26 @@ test.describe("account prompt on launch", () => {
     await page.goto("/");
 
     // The loading affordance is the proof the pending window was real — a bare waitForTimeout would
-    // assert nothing about whether the query had settled.
+    // assert nothing about whether the query had settled. ProfileMenu disables the trigger in this
+    // state, so the launch cannot start a sign-in before the session is even known.
     const trigger = page.getByTestId("profile-menu-trigger");
     await expect(trigger).toHaveAttribute("data-auth-state", "loading");
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
+    await expect(trigger).toBeDisabled();
     expect(await countIpcCalls(page, "get_auth_session")).toBeGreaterThan(0);
 
     await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
-    await expect(page.getByTestId("account-prompt-dialog")).toBeVisible();
+    await expect(trigger).toBeEnabled();
   });
-});
 
-test.describe("sign-in launch", () => {
-  test("Create Account invokes start_login exactly once and goes no further", async ({
+  test("the logged-out trigger invokes start_login exactly once and goes no further", async ({
     page,
   }) => {
     await setupTauriMock(page, { session: { status: "LoggedOut" } });
     await page.goto("/");
 
-    const dialog = page.getByTestId("account-prompt-dialog");
-    await expect(dialog).toBeVisible();
-
-    await page.getByTestId("create-account-button").click();
-    // The dialog closes on the mutation's success, so its absence means start_login has settled.
-    await expect(dialog).toHaveCount(0);
+    const trigger = page.getByTestId("profile-menu-trigger");
+    await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
+    await trigger.click();
 
     expect(await countIpcCalls(page, "start_login")).toBe(1);
 
@@ -447,9 +352,7 @@ test.describe("sign-in launch", () => {
     expect(await countIpcCalls(page, "handle_auth_callback")).toBe(0);
     await expect(page).toHaveURL(/localhost:1420\/$/);
   });
-});
 
-test.describe("header profile entry point", () => {
   test("the logged-out header icon renders a sign-in affordance with no error state", async ({
     page,
   }) => {
@@ -459,15 +362,9 @@ test.describe("header profile entry point", () => {
     const header = page.locator("header");
     const trigger = page.getByTestId("profile-menu-trigger");
 
-    // Asserted with the prompt still open, because that is the real logged-out launch state.
     await expect(trigger).toBeVisible();
     await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
     await expect(trigger).toHaveAttribute("aria-label", "Sign In with Nixus Cloud");
-
-    // The prompt is modal, so it aria-hides the rest of the shell. Dismiss before the sweep below
-    // so the clean-profile assertions are measuring the header and not the focus trap.
-    await page.getByTestId("continue-offline-button").click();
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
 
     await expect(page.locator('[data-auth-state="session-expired"]')).toHaveCount(0);
     await expect(header).not.toContainText(/expired|error|failed/i);
@@ -481,9 +378,6 @@ test.describe("header profile entry point", () => {
   }) => {
     await setupTauriMock(page, { session: { status: "LoggedOut" } });
     await page.goto("/");
-
-    await page.getByTestId("continue-offline-button").click();
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
 
     const search = page.getByTestId("topbar-search-trigger");
     await expect(search).toBeVisible();
@@ -545,7 +439,7 @@ test.describe("profile panel and sign out", () => {
     await expect(page.getByTestId("profile-menu-name")).toHaveCount(0);
   });
 
-  test("sign-out invokes sign_out once and returns both surfaces to logged out", async ({
+  test("sign-out invokes sign_out once and returns the header to logged out", async ({
     page,
   }) => {
     await setupTauriMock(page, {
@@ -566,11 +460,6 @@ test.describe("profile panel and sign out", () => {
     await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
     await expect(trigger).toHaveAttribute("aria-label", "Sign In with Nixus Cloud");
 
-    // The load-bearing assertion: the account prompt reappearing means it re-read the same
-    // ["auth", "session"] cache entry the profile menu invalidated, rather than holding a private
-    // copy of the session.
-    await expect(page.getByTestId("account-prompt-dialog")).toBeVisible();
-
     expect(await countIpcCalls(page, "sign_out")).toBe(1);
   });
 });
@@ -589,9 +478,6 @@ test.describe("expired session", () => {
     const trigger = page.getByTestId("profile-menu-trigger");
     await expect(trigger).toHaveAttribute("data-auth-state", "session-expired");
     await expect(trigger).toHaveAttribute("aria-label", /Session expired/);
-
-    // The invitation to create an account is for users who have none. This user has one.
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
   });
 
   test("an expired session does not break the app", async ({ page }) => {

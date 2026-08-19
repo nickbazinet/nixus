@@ -60,8 +60,8 @@ function deriveState(
  * Propless and self-contained, mirroring UpdateChecker — the header mounts it unconditionally and
  * the component decides what it has to show.
  *
- * It owns no auth state. `AccountPromptDialog` reads the same `["auth", "session"]` cache entry and
- * the two share nothing else, so neither can drift from the other.
+ * It owns no auth state of its own: every reader of the account goes through the same
+ * `["auth", "session"]` cache entry, so no two surfaces can drift from each other.
  */
 export function ProfileMenu() {
   const { t } = useTranslation();

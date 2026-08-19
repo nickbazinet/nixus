@@ -19,12 +19,27 @@ interface PickerOptions {
   /**
    * What `check_picker_gate` answers. Omit to leave the command unstubbed so it falls through to the
    * reject fallback — the state every pre-existing spec in this directory runs in.
+   *
+   * Latching, not static: `mark_picker_passed` flips this to `false` for the rest of the run, the
+   * same way the real `AtomicBool` does. Without that, navigating to `/` after a selection would be
+   * bounced straight back to `/picker` by the root gate and no click test could ever pass.
    */
   needsPicker?: boolean;
   /** What `list_datasets` answers. Omit for the reject fallback. */
   datasets?: MockDataset[];
-  /** What `get_auth_session` answers. `LoggedOut` is what makes AccountPromptDialog try to open. */
+  /** What `get_auth_session` answers. */
   loggedOut?: boolean;
+  /** Makes `select_dataset` reject, standing in for an unknown id or a failed open/migrate. */
+  selectDatasetFails?: boolean;
+  /** Delays `select_dataset` so the in-flight window — and the disabled rows — are assertable. */
+  selectDatasetDelayMs?: number;
+  /** What the freshly-selected dataset's `check_onboarding_status` reports. */
+  needsOnboarding?: boolean;
+}
+
+interface IpcCall {
+  cmd: string;
+  args: unknown;
 }
 
 const DEFAULT_ENTRY: MockDataset = {
@@ -52,8 +67,12 @@ const DEFAULT_ENTRY: MockDataset = {
  */
 async function setupTauriMock(page: Page, options: PickerOptions = {}) {
   await page.addInitScript((opts: PickerOptions) => {
-    const ipcCalls: string[] = [];
+    const ipcCalls: IpcCall[] = [];
     (window as unknown as Record<string, unknown>).__IPC_CALLS = ipcCalls;
+
+    // Mirrors the real `PICKER_PASSED` AtomicBool: in-memory, latching, and only ever set by the
+    // picker's own click path.
+    let needsPicker = opts.needsPicker;
 
     (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: () => {},
@@ -61,21 +80,42 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
 
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       transformCallback: () => 1,
-      invoke: (cmd: string) => {
+      invoke: (cmd: string, args?: Record<string, unknown>) => {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
-        ipcCalls.push(cmd);
+        ipcCalls.push({ cmd, args: args ?? null });
 
         switch (cmd) {
           case "check_picker_gate":
-            return opts.needsPicker === undefined
+            return needsPicker === undefined
               ? Promise.reject(`Unknown command: ${cmd}`)
-              : Promise.resolve({ needs_picker: opts.needsPicker });
+              : Promise.resolve({ needs_picker: needsPicker });
 
           case "list_datasets":
             return opts.datasets === undefined
               ? Promise.reject(`Unknown command: ${cmd}`)
               : Promise.resolve(opts.datasets);
+
+          case "select_dataset": {
+            const settle = () =>
+              opts.selectDatasetFails === true
+                ? Promise.reject({
+                    type: "Validation",
+                    message: `Unknown dataset: ${String(args?.dataset_id)}`,
+                  })
+                : Promise.resolve(null);
+            if (opts.selectDatasetDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(
+                () => settle().then(resolve, reject),
+                opts.selectDatasetDelayMs,
+              );
+            });
+          }
+
+          case "mark_picker_passed":
+            needsPicker = false;
+            return Promise.resolve(null);
 
           case "get_auth_session":
             return opts.loggedOut === true
@@ -85,7 +125,10 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
           // The dashboard's own surface, so a gate that fails to fire lands somewhere assertable
           // rather than on an error card.
           case "check_onboarding_status":
-            return Promise.resolve({ needs_onboarding: false, setup_incomplete: false });
+            return Promise.resolve({
+              needs_onboarding: opts.needsOnboarding === true,
+              setup_incomplete: false,
+            });
           case "get_budget_groups":
             return Promise.resolve([]);
           case "get_budget_summary":
@@ -158,10 +201,18 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
   }, options);
 }
 
-function readIpcCommands(page: Page): Promise<string[]> {
+function readIpcCalls(page: Page): Promise<IpcCall[]> {
   return page.evaluate(
-    () => (window as unknown as { __IPC_CALLS?: string[] }).__IPC_CALLS ?? [],
+    () => (window as unknown as { __IPC_CALLS?: IpcCall[] }).__IPC_CALLS ?? [],
   );
+}
+
+async function readIpcCommands(page: Page): Promise<string[]> {
+  return (await readIpcCalls(page)).map((call) => call.cmd);
+}
+
+async function callsTo(page: Page, command: string): Promise<IpcCall[]> {
+  return (await readIpcCalls(page)).filter((call) => call.cmd === command);
 }
 
 test.describe("launch-time picker gate", () => {
@@ -236,10 +287,6 @@ test.describe("picker chrome", () => {
     await expect(page.locator("header")).toHaveCount(0);
     await expect(page.getByTestId("topbar-search-trigger")).toHaveCount(0);
     await expect(page.getByTestId("profile-menu-trigger")).toHaveCount(0);
-
-    // A LoggedOut session is exactly what opens this dialog on every other surface, and its focus
-    // trap would aria-hide the picker underneath it.
-    await expect(page.getByTestId("account-prompt-dialog")).toHaveCount(0);
   });
 
   test("the chat bar is unreachable from the picker", async ({ page }) => {
@@ -269,9 +316,15 @@ test.describe("picker contents", () => {
     await expect(rows.nth(0)).toHaveText("Default");
     await expect(rows.nth(1)).toHaveText("Work");
 
-    // Story 33.5 turns the rows into buttons. Until then they must not advertise an interaction
-    // they do not have.
-    await expect(page.getByTestId("picker-dataset-list").getByRole("button")).toHaveCount(0);
+    // Every row is a real button, not a div with a click handler: the Card's own root element is
+    // rendered as one, so the row is a single native focusable target.
+    await expect(page.getByTestId("picker-dataset-list").getByRole("button")).toHaveCount(
+      2,
+    );
+    for (const row of await rows.all()) {
+      expect(await row.evaluate((el) => el.tagName)).toBe("BUTTON");
+      await expect(row).toBeEnabled();
+    }
   });
 
   test("an empty registry is not an error state", async ({ page }) => {
@@ -325,5 +378,134 @@ test.describe("picker contents", () => {
     // first, so a half-finished rename shows up here rather than as raw key text in the product.
     await expect(picker).not.toContainText("datasets.");
     await expect(picker).not.toContainText("picker.");
+  });
+});
+
+const WORK_ENTRY: MockDataset = {
+  ...DEFAULT_ENTRY,
+  id: "work-1",
+  label: "Work",
+  is_default: false,
+};
+
+test.describe("choosing a profile", () => {
+  test("clicking a profile opens it, latches the gate, and lands on the dashboard", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-dataset-row").nth(1).click();
+
+    // Client-side navigation, never a reload: `/` resolving to the dashboard is what proves the
+    // root gate re-asked and got `needs_picker: false` from the latch.
+    await expect(page).toHaveURL(/localhost:1420\/$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
+    await expect(page.getByTestId("dataset-picker")).toHaveCount(0);
+
+    // The clicked row's id, snake_case on the wire — not the first entry's, and not camelCase.
+    const selections = await callsTo(page, "select_dataset");
+    expect(selections).toHaveLength(1);
+    expect(selections[0].args).toEqual({ dataset_id: "work-1" });
+
+    // Order is the contract: the gate may only be latched once the open has actually succeeded.
+    const commands = await readIpcCommands(page);
+    expect(commands).toContain("mark_picker_passed");
+    expect(commands.indexOf("select_dataset")).toBeLessThan(
+      commands.indexOf("mark_picker_passed"),
+    );
+  });
+
+  test("a failed selection keeps the user on the picker and never latches the gate", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      selectDatasetFails: true,
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-dataset-row").click();
+
+    await expect(page.locator("[data-sonner-toast]")).toContainText(
+      "That profile could not be opened. Please try again.",
+    );
+
+    // Still here, and the gate is still up: the flow stopped at the rejection.
+    await expect(page).toHaveURL(/\/picker$/);
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+
+    const commands = await readIpcCommands(page);
+    expect(commands).toContain("select_dataset");
+    expect(commands).not.toContain("mark_picker_passed");
+  });
+
+  test("a failed selection leaves the rows usable for a second attempt", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      selectDatasetFails: true,
+    });
+    await page.goto("/picker");
+
+    const row = page.getByTestId("picker-dataset-row");
+    await row.click();
+    await expect(page.locator("[data-sonner-toast]")).toBeVisible();
+
+    // A row left permanently disabled by a failure would be a dead end on a screen with no other
+    // way forward.
+    await expect(row).toBeEnabled();
+    await row.click();
+    expect(await callsTo(page, "select_dataset")).toHaveLength(2);
+  });
+
+  test("an unonboarded profile lands on the wizard, not the dashboard", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      needsOnboarding: true,
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-dataset-row").click();
+
+    // The existing, unmodified `check_onboarding_status` gate on `/` makes this call — the picker
+    // knows nothing about onboarding.
+    await expect(page).toHaveURL(/\/onboarding$/);
+    await expect(page.getByTestId("onboarding-wizard")).toBeVisible();
+    await expect(page.getByTestId("dataset-picker")).toHaveCount(0);
+  });
+
+  test("every row is disabled while a selection is in flight, so a second click cannot race", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      selectDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await rows.nth(0).click();
+
+    // Both rows, not just the clicked one: a second selection must be unreachable, and Playwright's
+    // own click() waits for enabled, so a disabled row cannot be clicked at all. Both spellings of
+    // disabled, so a dim is never the only signal.
+    await expect(rows.nth(0)).toBeDisabled();
+    await expect(rows.nth(1)).toBeDisabled();
+    await expect(rows.nth(0)).toHaveAttribute("aria-disabled", "true");
+    await expect(rows.nth(1)).toHaveAttribute("aria-disabled", "true");
+
+    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    expect(await callsTo(page, "select_dataset")).toHaveLength(1);
   });
 });

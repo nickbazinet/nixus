@@ -46,8 +46,9 @@ async function setupRetirementMock(page: Page, opts: RetirementMockOptions = {})
               income_month_count: 12,
               expense_month_count: 12,
             });
-          // Left rejecting when signed out, matching the rest of the suite: a *resolved* LoggedOut
-          // session opens the modal account prompt, whose focus trap aria-hides the whole page.
+          // Left rejecting when signed out, matching the rest of the suite: these specs assert on
+          // retirement copy, and a resolved session pulls the header's account affordances into
+          // every text sweep for no benefit here.
           case "get_auth_session":
             return options.loggedIn
               ? Promise.resolve({

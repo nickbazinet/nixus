@@ -19,6 +19,7 @@ const REQUIRED_KEYS = [
   "datasets.subtitle",
   "datasets.loginWithCloud",
   "datasets.loadError",
+  "datasets.selectFailed",
 ] as const;
 
 function datasetsKeys(locale: Record<string, string>): string[] {
@@ -91,6 +92,15 @@ describe("datasets i18n", () => {
     expect(en["datasets.loadError"]).not.toBe(en["datasets.subtitle"]);
   });
 
+  it("distinguishes a failed selection from a failed read", () => {
+    // Two different failures on the same screen: the list could not be read at all, versus one
+    // chosen profile could not be opened. Identical copy would make them indistinguishable.
+    expect(en["datasets.selectFailed"]).toBeTruthy();
+    expect(fr["datasets.selectFailed"]).toBeTruthy();
+    expect(en["datasets.selectFailed"]).not.toBe(en["datasets.loadError"]);
+    expect(fr["datasets.selectFailed"]).not.toBe(fr["datasets.loadError"]);
+  });
+
   it("speaks of profiles, never datasets, in user-facing copy", () => {
     // Epic 33's naming rule runs both ways: identifiers say dataset, copy says profile. A value
     // leaking the internal noun is the failure this guards.
@@ -101,9 +111,17 @@ describe("datasets i18n", () => {
   });
 
   it("keeps the picker's copy out of the auth.* namespace", () => {
-    // auth.* is the account-prompt dialog's namespace and Story 33.5 deletes it. A picker string
-    // parked there would be deleted with it.
+    // auth.* was the account-prompt dialog's namespace and Story 33.5 deleted it outright. A picker
+    // string parked there would have been deleted with it.
     expect(en["auth.loginWithCloud"]).toBeUndefined();
     expect(fr["auth.loginWithCloud"]).toBeUndefined();
+  });
+
+  it("retires the auth.* namespace entirely", () => {
+    // Story 33.5 deleted the account-prompt dialog and every key it read. A survivor here is copy
+    // no component can ever render, and the dedicated auth i18n test that would have caught it is
+    // gone with the dialog.
+    expect(Object.keys(en).filter((k) => k.startsWith("auth."))).toEqual([]);
+    expect(Object.keys(fr).filter((k) => k.startsWith("auth."))).toEqual([]);
   });
 });

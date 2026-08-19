@@ -6,8 +6,8 @@ const en = enLocale as Record<string, string>;
 const fr = frLocale as Record<string, string>;
 
 // NFR8 reserves "Nixus Cloud" and forbids these synonyms. The sweep is case-sensitive on these
-// exact brand-cased forms; a case-insensitive sweep would also flag auth.promptTitle's
-// "Nixus accounts", which is a separate flagged decision (Story 28.5, Task 4), not a regression.
+// exact brand-cased forms; a case-insensitive sweep would also flag profile.signInRequiredBody's
+// lowercase "Nixus account", which is prose rather than a competing product name.
 const FORBIDDEN_SYNONYMS = ["Nixus Sync", "Nixus Account", "Nixus Online"] as const;
 
 describe("brand i18n", () => {

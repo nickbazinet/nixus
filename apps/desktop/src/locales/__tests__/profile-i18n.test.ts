@@ -220,16 +220,18 @@ describe("profile menu i18n", () => {
     );
   });
 
-  it("leaves the neighbouring auth.* block intact", () => {    // These keys sit immediately after the insertion point. A JSON edit that clobbered one would
-    // still parse, still pass every assertion above, and only surface as a raw key in the dialog.
+  it("leaves the neighbouring update.* block intact", () => {
+    // These keys sit immediately after the insertion point. A JSON edit that clobbered one would
+    // still parse, still pass every assertion above, and only surface as a raw key in the UI.
+    // Was the auth.* block until Story 33.5 deleted it outright; update.* is what neighbours the
+    // insertion point now.
     for (const key of [
-      "auth.promptTitle",
-      "auth.promptBody",
-      "auth.promptFutureFeatures",
-      "auth.createAccount",
-      "auth.continueOffline",
-      "auth.openingBrowser",
-      "auth.signInFailed",
+      "update.available",
+      "update.downloading",
+      "update.restarting",
+      "update.notNow",
+      "update.updateRestart",
+      "update.failed",
     ]) {
       expect(en[key], `${key} missing in en.json`).toBeTruthy();
       expect(fr[key], `${key} missing in fr.json`).toBeTruthy();

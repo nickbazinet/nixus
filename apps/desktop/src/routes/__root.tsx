@@ -12,7 +12,6 @@ import { DestinationNav } from "../components/shared/DestinationNav";
 import { FloatingChatBar } from "../components/chat/FloatingChatBar";
 import { UpdateChecker } from "../components/shared/UpdateChecker";
 import { RecurringApplyListener } from "../components/shared/RecurringApplyListener";
-import { AccountPromptDialog } from "../components/auth/AccountPromptDialog";
 import { ValuesVisibilityProvider } from "../contexts/ValuesVisibilityContext";
 import { SURFACE_HEADING_ID } from "../components/shared/PageHeader";
 import { normalizePeriodParam } from "../hooks/usePeriod";
@@ -185,12 +184,10 @@ function RootLayout() {
         </div>
         {!isPicker && <FloatingChatBar open={chatOpen} onClose={handleClose} />}
         {/* UpdateChecker is not the non-visual listener it looks like: it opens a modal Dialog when
-          * an update is waiting, and Base UI's focus trap would aria-hide the picker underneath it —
-          * the same failure AccountPromptDialog is skipped here to avoid. RecurringApplyListener
-          * genuinely renders nothing, so it stays mounted. */}
+          * an update is waiting, and Base UI's focus trap would aria-hide the picker underneath it.
+          * RecurringApplyListener genuinely renders nothing, so it stays mounted. */}
         {!isPicker && <UpdateChecker />}
         <RecurringApplyListener />
-        {!isPicker && <AccountPromptDialog />}
       </div>
     </ValuesVisibilityProvider>
   );

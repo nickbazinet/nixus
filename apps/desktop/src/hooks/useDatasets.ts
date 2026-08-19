@@ -1,4 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
 
@@ -30,4 +35,33 @@ export function useDatasets() {
     queryKey: queryKeys.datasets,
     queryFn: fetchDatasets,
   });
+}
+
+/**
+ * Two invokes rather than one, and strictly in this order. `select_dataset` is also `lib.rs`'s
+ * startup auto-selector for the Default dataset, so the gate's flag cannot be folded into it —
+ * only this path may mark the picker passed. Latching second is what leaves the gate up (and the
+ * user on the picker) when the open fails, instead of stranding them in an app pointed at nothing.
+ *
+ * `clear()`, never `invalidateQueries()`: every cached entry belongs to the *previous* dataset, and
+ * invalidation would keep serving it while refetching — a cross-dataset leak, not a stale render.
+ *
+ * Navigation and error toasting stay with the caller, matching `useCompleteOnboarding`.
+ *
+ * Split out of the hook so the ordering and the clear are unit-testable against a real QueryClient
+ * without rendering a component — the picker unmounts on navigation, which makes the clear
+ * unobservable from an E2E test.
+ */
+export function selectDatasetMutationOptions(queryClient: QueryClient) {
+  return {
+    mutationFn: async (datasetId: string) => {
+      await invoke<void>("select_dataset", { dataset_id: datasetId });
+      await invoke<void>("mark_picker_passed");
+    },
+    onSuccess: () => queryClient.clear(),
+  };
+}
+
+export function useSelectDataset() {
+  return useMutation(selectDatasetMutationOptions(useQueryClient()));
 }
