@@ -71,6 +71,14 @@ pub fn run() {
                 .with_ansi(false)
                 .init();
 
+            // AD-4: the registry must exist, or hard-fail visibly, before any UI
+            // renders. A corrupt file crashes here rather than being recreated,
+            // which would orphan every non-default dataset it recorded.
+            // Placed after the tracing subscriber is initialized above, so a
+            // warning about a skipped registry entry actually reaches the log file.
+            datasets::bootstrap_registry(&app_handle)
+                .expect("dataset registry is corrupt or unreadable");
+
             // Initialize OS keychain store (must happen before any credential access)
             keyring::use_native_store(false)
                 .expect("failed to initialize keychain store");

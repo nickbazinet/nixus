@@ -1096,6 +1096,31 @@ pub struct SuggestedAllocationResponse {
     pub settlement: Option<SuggestionSettlement>,
 }
 
+// WHY kebab-case: the serialized form is a file format, not an internal detail —
+// the dataset registry is specified to carry exactly `"local"` / `"cloud-linked"`,
+// so renaming a variant must not change the file.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DatasetKind {
+    Local,
+    CloudLinked,
+}
+
+// One entry in the dataset registry, the sole source of truth for which datasets
+// exist (AD-3). WHY `id` is re-validated on every read rather than trusted: it
+// doubles as a filesystem path component (`datasets::dataset_dir_from_root`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Dataset {
+    pub id: String,
+    pub label: String,
+    pub kind: DatasetKind,
+    pub cognito_sub: Option<String>,
+    pub linked_from: Option<String>,
+    pub is_default: bool,
+    /// RFC 3339 timestamp.
+    pub created_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
