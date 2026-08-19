@@ -209,6 +209,8 @@ async function setupTauriMock(
           if (cmd.startsWith("plugin:")) return Promise.resolve(null);
           invokeLog.push(cmd);
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
             case "get_projects":
               return Promise.resolve(
                 projects

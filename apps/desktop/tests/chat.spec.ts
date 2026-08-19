@@ -70,6 +70,9 @@ async function setupTauriMock(page: Page) {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
+
           case "send_chat_message": {
             if (nextResponseType === "manual") {
               return Promise.resolve({ conversation_id: 1, user_message_id: 1 });

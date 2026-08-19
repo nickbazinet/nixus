@@ -38,6 +38,8 @@ async function setupRetirementMock(page: Page, opts: RetirementMockOptions = {})
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "get_retirement_input":
             return Promise.resolve({
               account_balances: [{ account_type: "tfsa", total_cents: 5_000_000 }],

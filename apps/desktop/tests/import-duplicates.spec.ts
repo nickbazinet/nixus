@@ -37,6 +37,9 @@ async function setupTauriMock(page: Page, duplicateIndices: number[]) {
           if (cmd === "plugin:dialog|open") return Promise.resolve("/tmp/statement.png");
 
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
+
             case "validate_cc_file":
               return Promise.resolve({ file_name: "statement.png", file_path: "/tmp/statement.png", file_size: 1024 });
 

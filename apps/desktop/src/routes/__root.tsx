@@ -41,9 +41,11 @@ export const Route = createRootRoute({
     // every navigation the picker itself makes.
     if (location.pathname === PICKER_PATH) return;
 
-    // A failed or unstubbed call degrades to "no redirect", exactly like `fetchOnboardingStatus`'s
-    // fallback. This is also what keeps every pre-existing Playwright spec green: none of them mock
-    // `check_picker_gate`, the promise rejects, and the app renders as it always did.
+    // A failed call degrades to "no redirect", mirroring `fetchOnboardingStatus`'s own fallback in
+    // `index.tsx`: a genuine IPC failure at launch must not strand the user on a picker they never
+    // asked for. The fallback is also load-bearing for three Playwright specs — `navigation`,
+    // `app-launch`, and `ai-navigation` — which deliberately mock no Tauri at all, so every invoke
+    // rejects there. Every other spec answers `check_picker_gate` explicitly.
     const gate = await fetchPickerGateStatus().catch(() => null);
     if (gate?.needs_picker) {
       throw redirect({ to: PICKER_PATH });

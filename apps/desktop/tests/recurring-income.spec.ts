@@ -52,6 +52,8 @@ async function setupTauriMock(page: Page) {
         // modal that aria-hidden()s the whole app.
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           // Deep-copied on read: real IPC hands back fresh JSON, and returning the cached
           // object identity would suppress the re-render React Query would normally do.
           case "get_recurring_templates":
@@ -176,8 +178,12 @@ test("recurring income form explains itself when no income source exists", async
   await page.addInitScript(() => {
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       transformCallback: (cb: unknown) => cb,
-      invoke: (cmd: string) =>
-        cmd.startsWith("plugin:") ? Promise.resolve(null) : Promise.resolve([]),
+      invoke: (cmd: string) => {
+        // The root gate runs before this route and cannot read its answer out of the blanket `[]`
+        // below, so it is stated here rather than left to degrade through `__root.tsx`'s catch.
+        if (cmd === "check_picker_gate") return Promise.resolve({ needs_picker: false });
+        return cmd.startsWith("plugin:") ? Promise.resolve(null) : Promise.resolve([]);
+      },
     };
   });
   await page.goto("/spending/recurring");

@@ -55,6 +55,8 @@ async function setupYearSummaryMock(page: Page, yearlyOverrides: Record<string, 
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string, args?: { year?: number }) => {
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
             case "get_yearly_summary":
               if (args?.year === 2025) return Promise.resolve(s2025);
               return Promise.resolve(s2026);

@@ -54,6 +54,9 @@ async function setupTauriMock(
           if (cmd === "plugin:dialog|open") return Promise.resolve("/tmp/statement.png");
 
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
+
             case "validate_cc_file": {
               const filePath = args.file_path as string;
               if (!filePath) return Promise.reject({ type: "file", message: "File not found" });

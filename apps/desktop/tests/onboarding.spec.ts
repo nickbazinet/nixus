@@ -113,6 +113,9 @@ async function setupTauriMock(
           if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
+
             case "check_onboarding_status": {
               const hasBudgetData = groups.length > 0;
               return Promise.resolve({

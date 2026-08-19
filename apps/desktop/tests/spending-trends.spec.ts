@@ -28,6 +28,8 @@ async function setupSpendingTrendsMock(
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string, args?: { months?: number }) => {
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
             case "get_spending_trends": {
               currentMonths = args?.months ?? 6;
               const totals = Array.from({ length: currentMonths }, (_, i) => ({

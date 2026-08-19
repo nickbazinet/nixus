@@ -37,6 +37,9 @@ async function setupTauriMock(page: Page) {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
+
           case "send_chat_message": {
             if (nextResponseType === "maintenance_status") {
               const toolCallJson =

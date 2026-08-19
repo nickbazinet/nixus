@@ -56,6 +56,9 @@ async function setupTauriMock(
       invoke: (cmd: string, args: Record<string, unknown>) => {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
+
           case "get_accounts":
             return Promise.resolve(
               [...accounts].sort((a, b) => a.name.localeCompare(b.name))

@@ -27,6 +27,8 @@ async function setupEmptyNetWorthMock(page: Page) {
         // A truthy updater answer opens an always-modal dialog that aria-hidden()s the whole app.
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "get_current_net_worth":
             return Promise.resolve({
               total_cents: 0,
@@ -157,6 +159,8 @@ async function setupSeededNetWorthMock(page: Page) {
       invoke: (cmd: string, args?: { months?: number }) => {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "get_current_net_worth":
             return Promise.resolve({
               total_cents: 77300000,

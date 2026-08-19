@@ -92,6 +92,8 @@ async function setupTauriMock(page: Page, outcomes: TemplateOutcomes = {}) {
               ? Promise.resolve({ groups_created: 4, categories_created: 12, skipped_groups: [] })
               : settle(outcome);
           }
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "check_onboarding_status":
             return Promise.resolve({ needs_onboarding: false });
           case "get_budget_groups":

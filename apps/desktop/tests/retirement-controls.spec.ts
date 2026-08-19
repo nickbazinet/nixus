@@ -78,6 +78,8 @@ async function setupRetirement(page: Page, options: MockOptions = {}) {
               email: "user@example.com",
               name: "Test User",
             });
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "check_onboarding_status":
             return Promise.resolve({
               needs_onboarding: false,

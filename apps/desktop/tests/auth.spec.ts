@@ -177,6 +177,8 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               needs_onboarding: false,
               setup_incomplete: false,
             });
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "get_budget_groups":
             return Promise.resolve(groups);
           case "get_budget_categories":

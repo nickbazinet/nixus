@@ -34,6 +34,8 @@ async function mock(page: Page) {
         // value opens an always-modal dialog that aria-hidden()s the entire app.
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "get_budget_summary":
             return Promise.resolve({ total_target_cents: 300000, total_spent_cents: 249840, remaining_cents: 50160, month: "2026-03" });
           case "get_top_budget_categories":

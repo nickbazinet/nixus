@@ -35,6 +35,24 @@ interface PickerOptions {
   selectDatasetDelayMs?: number;
   /** What the freshly-selected dataset's `check_onboarding_status` reports. */
   needsOnboarding?: boolean;
+  /**
+   * What `get_budget_summary` answers, keyed by the dataset id `select_dataset` was last given.
+   * Nothing else on the dashboard is seeded — the summary is the only surface these tests read.
+   *
+   * Scoping the figures to the id is what makes them evidence: a dataset absent from this map, and
+   * the pre-selection state, both answer the zeroed default, so a click routed to the wrong entry
+   * cannot render the money. Omit it entirely to keep the all-zero answers every other describe
+   * here was written against.
+   */
+  budgetByDataset?: Record<string, MockBudgetSummary>;
+}
+
+/** `get_budget_summary`'s wire shape, as `routes/index.tsx` consumes it. */
+interface MockBudgetSummary {
+  total_target_cents: number;
+  total_spent_cents: number;
+  remaining_cents: number;
+  month: string;
 }
 
 interface IpcCall {
@@ -74,6 +92,11 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
     // picker's own click path.
     let needsPicker = opts.needsPicker;
 
+    // Which dataset the app is pointed at. Only a *successful* `select_dataset` moves it, so a
+    // budget read before any selection — or after a click that opened a different entry — cannot
+    // answer with another dataset's figures.
+    let openDatasetId: string | null = null;
+
     (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: () => {},
     };
@@ -97,13 +120,17 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
               : Promise.resolve(opts.datasets);
 
           case "select_dataset": {
-            const settle = () =>
-              opts.selectDatasetFails === true
-                ? Promise.reject({
-                    type: "Validation",
-                    message: `Unknown dataset: ${String(args?.dataset_id)}`,
-                  })
-                : Promise.resolve(null);
+            const requestedId = String(args?.dataset_id);
+            const settle = () => {
+              if (opts.selectDatasetFails === true) {
+                return Promise.reject({
+                  type: "Validation",
+                  message: `Unknown dataset: ${requestedId}`,
+                });
+              }
+              openDatasetId = requestedId;
+              return Promise.resolve(null);
+            };
             if (opts.selectDatasetDelayMs === undefined) return settle();
             return new Promise((resolve, reject) => {
               setTimeout(
@@ -131,13 +158,18 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
             });
           case "get_budget_groups":
             return Promise.resolve([]);
-          case "get_budget_summary":
-            return Promise.resolve({
-              total_target_cents: 0,
-              total_spent_cents: 0,
-              remaining_cents: 0,
-              month: "2026-08",
-            });
+          case "get_budget_summary": {
+            const seeded =
+              openDatasetId === null ? undefined : opts.budgetByDataset?.[openDatasetId];
+            return Promise.resolve(
+              seeded ?? {
+                total_target_cents: 0,
+                total_spent_cents: 0,
+                remaining_cents: 0,
+                month: "2026-08",
+              },
+            );
+          }
           case "get_top_budget_categories":
             return Promise.resolve([]);
           case "get_current_net_worth":
@@ -507,5 +539,86 @@ test.describe("choosing a profile", () => {
 
     await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
     expect(await callsTo(page, "select_dataset")).toHaveLength(1);
+  });
+});
+
+/**
+ * Only Default holds money. Work is deliberately absent from the map, so it answers the mock's
+ * zeroed default — and that asymmetry is the whole instrument: the two tests below can only both
+ * pass if each click opened the entry it named. The literal expectation in the first test is
+ * `total_spent_cents`/`total_target_cents` below as `routes/index.tsx` formats them.
+ */
+const BUDGET_BY_DATASET: Record<string, MockBudgetSummary> = {
+  default: {
+    total_target_cents: 250000,
+    total_spent_cents: 118350,
+    remaining_cents: 131650,
+    month: "2026-08",
+  },
+};
+
+test.describe("selecting a profile opens that profile's own data", () => {
+  test("choosing Default lands on the dashboard showing Default's own figures", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      budgetByDataset: BUDGET_BY_DATASET,
+    });
+    await page.goto("/picker");
+
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows.nth(0)).toHaveText("Default");
+    await rows.nth(0).click();
+
+    await expect(page).toHaveURL(/localhost:1420\/$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
+
+    // Names the id on the wire, so the figures below are attributable to the row that was clicked
+    // rather than to whichever entry the picker happened to send.
+    const selections = await callsTo(page, "select_dataset");
+    expect(selections).toHaveLength(1);
+    expect(selections[0].args).toEqual({ dataset_id: "default" });
+
+    // `routes/index.tsx` builds this valuetext straight from the summary's spent/target, and the
+    // mock answers with these figures for `default` only — so the assertion is that the dashboard
+    // rendered the *selected* dataset's money. A click that opened `work-1` reads $0.00 here.
+    await expect(page.getByTestId("budget-overall-progress")).toHaveAttribute(
+      "aria-valuetext",
+      "$1,183.50 spent of $2,500.00",
+    );
+
+    // A zeroed target renders `empty-budget` in this hero slot instead of the meter, so its absence
+    // confirms the hero resolved to the seeded branch rather than the empty one.
+    await expect(page.getByTestId("empty-budget")).toHaveCount(0);
+  });
+
+  test("choosing Work lands on Work's own empty budget, never Default's figures", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      budgetByDataset: BUDGET_BY_DATASET,
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows.nth(1)).toHaveText("Work");
+    await rows.nth(1).click();
+
+    await expect(page).toHaveURL(/localhost:1420\/$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
+
+    const selections = await callsTo(page, "select_dataset");
+    expect(selections).toHaveLength(1);
+    expect(selections[0].args).toEqual({ dataset_id: "work-1" });
+
+    // The control for the test above: Default's money must not appear under a profile that has
+    // none. Without this half, a mock — or a picker — that ignored the clicked id would still pass.
+    await expect(page.getByTestId("empty-budget")).toBeVisible();
+    await expect(page.getByTestId("budget-overall-progress")).toHaveCount(0);
   });
 });

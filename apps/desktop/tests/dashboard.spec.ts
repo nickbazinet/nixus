@@ -69,6 +69,8 @@ async function setupEmptyDashboardMock(page: Page) {
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
             case "get_budget_summary":
               return Promise.resolve({
                 total_target_cents: 0,
@@ -194,6 +196,8 @@ async function setupSeededDashboardMock(page: Page) {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: (cmd: string) => {
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "get_budget_summary":
             return Promise.resolve(summary);
           case "get_top_budget_categories":
@@ -276,6 +280,8 @@ async function setupPacingDashboardMock(page: Page) {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: (cmd: string) => {
         switch (cmd) {
+          case "check_picker_gate":
+            return Promise.resolve({ needs_picker: false });
           case "get_budget_summary":
             return Promise.resolve({
               total_target_cents: 225000,
@@ -388,6 +394,8 @@ test.describe("Dashboard — Story 5.1", () => {
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
             case "get_budget_summary":
               return new Promise((resolve) =>
                 setTimeout(
@@ -698,6 +706,8 @@ test.describe("Dashboard — Suggested Next Step Card", () => {
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
             case "get_financial_health_summary":
               return new Promise((resolve) =>
                 setTimeout(
@@ -859,6 +869,8 @@ async function setupSavingsDashboardMock(
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            case "check_picker_gate":
+              return Promise.resolve({ needs_picker: false });
             case "get_budget_summary":
               return Promise.resolve({
                 total_target_cents: 0,
