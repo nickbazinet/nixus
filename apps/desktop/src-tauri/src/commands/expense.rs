@@ -17,9 +17,10 @@ pub fn create_expense(
     date: String,
     account_id: Option<i64>,
 ) -> Result<Expense, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateExpenseInput {
         merchant,
@@ -46,18 +47,20 @@ pub fn get_expenses(
     year: i32,
     month: u32,
 ) -> Result<Vec<Expense>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     expense_db::get_expenses_by_month(&conn, year, month)
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_latest_expense(state: State<DbState>) -> Result<Option<Expense>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     expense_db::get_latest_expense(&conn)
 }
@@ -72,9 +75,10 @@ pub fn update_expense(
     date: String,
     account_id: Option<i64>,
 ) -> Result<Expense, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     // Fetch old value before update
     let old_json = get_expense_json(&conn, id);
@@ -103,9 +107,10 @@ pub fn delete_expense(
     state: State<DbState>,
     id: i64,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     // Fetch old value before delete
     let old_json = get_expense_json(&conn, id);

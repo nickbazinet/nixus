@@ -40,9 +40,10 @@ pub fn create_vehicle(
     use_default_template: Option<bool>,
     custom_tasks: Option<Vec<CreateMaintenanceTaskInput>>,
 ) -> Result<Vehicle, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateVehicleInput {
         odometer_km,
@@ -71,18 +72,20 @@ pub fn create_vehicle(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_vehicles(state: State<DbState>) -> Result<Vec<Vehicle>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     maintenance_db::get_all_vehicles(&conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_vehicle(state: State<DbState>, id: i64) -> Result<VehicleWithTasks, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     maintenance_db::get_vehicle_with_tasks(&conn, id)
 }
@@ -95,9 +98,10 @@ pub fn update_vehicle(
     model: Option<String>,
     year: Option<i32>,
 ) -> Result<Vehicle, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_vehicle_json(&conn, id);
 
@@ -125,9 +129,10 @@ pub fn update_vehicle(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn delete_vehicle(state: State<DbState>, id: i64) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_vehicle_json(&conn, id);
 
@@ -153,9 +158,10 @@ pub fn update_vehicle_odometer(
     vehicle_id: i64,
     odometer_km: i64,
 ) -> Result<VehicleWithTasks, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     maintenance_db::update_vehicle_odometer(&conn, vehicle_id, odometer_km)
 }
@@ -167,9 +173,10 @@ pub fn update_maintenance_task(
     interval_km: i64,
     interval_months: i64,
 ) -> Result<MaintenanceTaskWithStatus, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     maintenance_db::update_maintenance_task_intervals(&conn, task_id, interval_km, interval_months)
 }
@@ -179,9 +186,10 @@ pub fn add_maintenance_task(
     state: State<DbState>,
     input: AddMaintenanceTaskInput,
 ) -> Result<MaintenanceTaskWithStatus, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     maintenance_db::add_maintenance_task(&conn, &input)
 }
@@ -191,9 +199,10 @@ pub fn get_service_history(
     state: State<DbState>,
     vehicle_id: i64,
 ) -> Result<Vec<MaintenanceServiceLogEntry>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     maintenance_db::get_service_history(&conn, vehicle_id)
 }
@@ -203,9 +212,10 @@ pub fn log_maintenance_service(
     state: State<DbState>,
     input: LogMaintenanceServiceInput,
 ) -> Result<LogServiceResult, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let result = maintenance_db::log_maintenance_service(&conn, &input)?;
 
@@ -242,9 +252,10 @@ pub fn log_custom_service(
     state: State<DbState>,
     input: LogCustomServiceInput,
 ) -> Result<LogCustomServiceResult, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let result = maintenance_db::log_custom_service(&conn, &input)?;
 
@@ -280,9 +291,10 @@ pub fn log_custom_service(
 pub fn get_maintenance_alert_summary(
     state: State<DbState>,
 ) -> Result<MaintenanceAlertSummary, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     maintenance_db::get_maintenance_alert_summary(&conn)
 }

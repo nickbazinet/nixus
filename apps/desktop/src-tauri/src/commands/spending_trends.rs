@@ -23,9 +23,10 @@ pub fn get_spending_trends(
     months: i32,
 ) -> Result<SpendingTrendsData, AppError> {
     let months = normalize_months(months);
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let by_category = spending_trends_db::get_monthly_spend_by_category(&conn, months)?;
     let totals = spending_trends_db::get_monthly_spend_totals(&conn, months)?;

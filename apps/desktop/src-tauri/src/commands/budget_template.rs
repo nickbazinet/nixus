@@ -48,9 +48,10 @@ pub async fn import_budget_template(
     };
 
     let db_state = app_handle.state::<DbState>();
-    let conn = db_state.0.lock().map_err(|e| AppError::Database {
+    let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let result = budget_template_db::import_budget_template_from_path(&conn, &selected_path)?;
 
@@ -83,9 +84,10 @@ pub async fn export_budget_template(
     // long as the dialog stays open.
     let json = {
         let db_state = app_handle.state::<DbState>();
-        let conn = db_state.0.lock().map_err(|e| AppError::Database {
+        let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         budget_template_db::build_budget_template_export_json(&conn)?
     };
 
@@ -166,9 +168,10 @@ pub fn apply_system_template(
         _ => None,
     };
 
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     // No insert_audit_log here: db::budget_template's shared primitive writes
     // exactly one row per apply (source: "system"). Adding one here would double

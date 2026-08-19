@@ -21,9 +21,10 @@ pub async fn export_backup(app_handle: AppHandle) -> Result<Option<BackupResult>
 
     // Checkpoint WAL to flush all data to main database file
     {
-        let conn = db_state.0.lock().map_err(|e| AppError::Database {
+        let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
     }
 
@@ -90,9 +91,10 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
     let db_path = app_data_dir.join("nkbaz-finance.db");
 
     let db_state = app_handle.state::<DbState>();
-    let mut conn = db_state.0.lock().map_err(|e| AppError::Database {
+    let mut active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_mut().ok_or(AppError::NotConfigured)?;
 
     crate::db::backup::restore_from_file(&mut *conn, &db_path, &selected_path)?;
 

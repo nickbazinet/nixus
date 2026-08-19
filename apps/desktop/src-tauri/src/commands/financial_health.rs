@@ -9,9 +9,10 @@ use crate::models::{FinancialHealthDetail, FinancialHealthSummary};
 pub fn get_financial_health_summary(
     state: State<DbState>,
 ) -> Result<FinancialHealthSummary, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
     Ok(financial_health_db::build_financial_health_summary(
@@ -24,9 +25,10 @@ pub fn get_financial_health_summary(
 pub fn get_financial_health_detail(
     state: State<DbState>,
 ) -> Result<FinancialHealthDetail, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
     financial_health_db::build_financial_health_detail(&conn, &figures, &evaluation)
@@ -37,9 +39,10 @@ pub fn set_emergency_fund_target(
     state: State<DbState>,
     months: i64,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     financial_health_db::set_emergency_fund_target_months(&conn, months)
 }

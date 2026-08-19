@@ -10,9 +10,10 @@ pub fn get_yearly_summary(
     state: State<DbState>,
     year: i32,
 ) -> Result<YearlySummaryData, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     yearly_summary_db::get_yearly_summary(&conn, year)
 }

@@ -28,9 +28,10 @@ fn build_history_messages(
     db_state: &State<DbState>,
     conv_id: i64,
 ) -> Result<Vec<aws_sdk_bedrockruntime::types::Message>, AppError> {
-    let conn = db_state.0.lock().map_err(|e| AppError::Database {
+    let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     let db_messages = chat_db::get_conversation_messages(&conn, conv_id)?;
 
     let mut messages = Vec::new();
@@ -52,9 +53,10 @@ fn build_history_messages(
 }
 
 fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
-    let conn = db_state.0.lock().map_err(|e| AppError::Database {
+    let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let now = chrono::Local::now();
     let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
@@ -191,9 +193,10 @@ pub async fn send_chat_message(
     let conv_id = if let Some(id) = conversation_id {
         id
     } else {
-        let conn = db_state.0.lock().map_err(|e| AppError::Database {
+        let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         let title: String = message.chars().take(40).collect();
         let title = title.trim().to_string();
         let conv = chat_db::create_conversation(&conn, Some(&title), &agent_id)?;
@@ -202,9 +205,10 @@ pub async fn send_chat_message(
 
     // Insert user message
     let user_msg = {
-        let conn = db_state.0.lock().map_err(|e| AppError::Database {
+        let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         chat_db::insert_message(&conn, conv_id, "user", &message, "chat")?
     };
 
@@ -237,9 +241,10 @@ pub async fn send_chat_message(
 
         // Save tool-call assistant message
         {
-            let conn = db_state.0.lock().map_err(|e| AppError::Database {
+            let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
+            let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
             chat_db::insert_message(&conn, conv_id, "assistant", &first_response, "tool_call")?;
         }
 
@@ -251,9 +256,10 @@ pub async fn send_chat_message(
 
         // Save tool-result user message
         {
-            let conn = db_state.0.lock().map_err(|e| AppError::Database {
+            let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
+            let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
             chat_db::insert_message(&conn, conv_id, "user", &tool_result, "tool_result")?;
         }
 
@@ -282,9 +288,10 @@ pub async fn send_chat_message(
 
     // Save final AI response
     {
-        let conn = db_state.0.lock().map_err(|e| AppError::Database {
+        let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         chat_db::insert_message(&conn, conv_id, "assistant", &final_response, "chat")?;
     }
 
@@ -308,9 +315,10 @@ fn execute_tool_call(
                 limit: tool_call.params.get("limit").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
                 sort: tool_call.params.get("sort").and_then(|v| v.as_str()).map(String::from),
             };
-            let conn = db_state.0.lock().map_err(|e| AppError::Database {
+            let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
+            let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
             let results = expense_db::search_expenses(&conn, &filters)?;
             info!("Tool query_expenses returned {} results", results.len());
             Ok(chat_ai::format_tool_result(&results))
@@ -327,9 +335,10 @@ fn execute_tool_call(
                     .and_then(|v| v.as_str())
                     .map(String::from),
             };
-            let conn = db_state.0.lock().map_err(|e| AppError::Database {
+            let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
+            let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
             let results = maintenance_db::query_maintenance_status(&conn, &filters)?;
             info!(
                 "Tool query_maintenance_status returned {} results",
@@ -358,9 +367,10 @@ fn execute_tool_call(
                     .get("limit")
                     .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
             };
-            let conn = db_state.0.lock().map_err(|e| AppError::Database {
+            let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
+            let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
             let results = maintenance_db::query_maintenance_history(&conn, &filters)?;
             info!(
                 "Tool query_maintenance_history returned {} results",
@@ -377,9 +387,10 @@ pub fn get_chat_messages(
     state: State<DbState>,
     conversation_id: i64,
 ) -> Result<Vec<chat_db::ChatMessage>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     if !chat_db::conversation_exists(&conn, conversation_id)? {
         return Err(AppError::Validation {
             message: "Conversation not found".to_string(),
@@ -394,9 +405,10 @@ pub fn list_conversations(
     state: State<DbState>,
     agent_id: String,
 ) -> Result<Vec<chat_db::ChatConversation>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     chat_db::list_conversations_by_agent(&conn, &agent_id)
 }
 
@@ -413,9 +425,10 @@ pub fn execute_chat_action(
     params: serde_json::Value,
     conversation_id: i64,
 ) -> Result<ActionResult, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let result_msg = match action_type.as_str() {
         "create_expense" => {

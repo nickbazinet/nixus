@@ -13,7 +13,7 @@ mod profile_store;
 mod projects;
 mod tfsa;
 
-use db::{init_db, DbState};
+use db::{ActiveDataset, DbState};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use tracing::info;
@@ -54,10 +54,6 @@ pub fn run() {
             let app_data_dir =
                 datasets::global_root(&app_handle).expect("failed to resolve app data dir");
 
-            // Ordering matters: must precede init_db so every command that later
-            // resolves active_dataset_dir() succeeds.
-            datasets::set_active_dataset_id(datasets::DEFAULT_DATASET_ID);
-
             // Ensure data directory exists before tracing tries to write logs
             std::fs::create_dir_all(&app_data_dir)
                 .expect("failed to create app data dir");
@@ -83,17 +79,32 @@ pub fn run() {
             keyring::use_native_store(false)
                 .expect("failed to initialize keychain store");
 
-            // Initialize database
-            let conn = init_db(&app_data_dir)
-                .expect("failed to initialize database");
+            // Managed empty, then filled by the very same locked hot-swap the
+            // picker will use later: startup gets no privileged path of its own.
+            app.manage(DbState(Mutex::new(ActiveDataset {
+                id: None,
+                conn: None,
+            })));
+
+            // Depends on bootstrap_registry above: select_dataset_now reads the
+            // registry via load_registry, which never creates datasets.json.
+            commands::datasets::select_dataset_now(&app_handle, datasets::DEFAULT_DATASET_ID)
+                .expect("failed to select the default dataset");
 
             info!("nkbaz-finance started, database initialized");
 
-            // Initialize AI client synchronously using the db connection
-            let ai_state = tauri::async_runtime::block_on(ai::init_ai_client(&conn));
+            // Initialize AI client synchronously using the active dataset's connection
+            let ai_state = {
+                let state = app_handle.state::<DbState>();
+                let active = state.0.lock().expect("database lock poisoned");
+                let conn = active
+                    .conn
+                    .as_ref()
+                    .expect("the default dataset was just selected");
+                tauri::async_runtime::block_on(ai::init_ai_client(conn))
+            };
             info!("AI client initialized");
 
-            app.manage(DbState(Mutex::new(conn)));
             app.manage(Mutex::new(ai_state));
             app.manage(commands::auth::PendingLogin::default());
             app.manage(commands::auth_listener::LoopbackListener::default());
@@ -104,10 +115,21 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<DbState>();
                 let (expense_result, income_result) = match state.0.lock() {
-                    Ok(conn) => (
-                        commands::recurring::apply_due_recurring_expenses(&conn),
-                        commands::recurring_income::apply_due_recurring_income(&conn),
-                    ),
+                    Ok(active) => match active.conn.as_ref() {
+                        Some(conn) => (
+                            commands::recurring::apply_due_recurring_expenses(conn),
+                            commands::recurring_income::apply_due_recurring_income(conn),
+                        ),
+                        // Unreachable in practice — .setup() selected a dataset
+                        // before spawning this — but skipping beats panicking in
+                        // a task nobody is awaiting.
+                        None => {
+                            tracing::error!(
+                                "No dataset selected; skipping background recurring apply"
+                            );
+                            return;
+                        }
+                    },
                     Err(e) => {
                         tracing::error!("Failed to lock database for recurring apply: {}", e);
                         return;
@@ -184,6 +206,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_db_status,
+            commands::datasets::select_dataset,
             commands::budget::create_budget_group,
             commands::budget::get_budget_groups,
             commands::budget::create_budget_category,

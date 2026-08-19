@@ -31,7 +31,19 @@ pub mod retirement;
 pub mod spending_trends;
 pub mod yearly_summary;
 
-pub struct DbState(pub Mutex<Connection>);
+/// The dataset active for this run: which one it is, and its open connection.
+///
+/// Both fields live in one struct behind one lock so they swap together and
+/// never independently (AD-6) — no caller can observe an id paired with a
+/// different dataset's connection. `{ id: None, conn: None }` is the
+/// pre-selection state, which call sites surface as `AppError::NotConfigured`
+/// rather than defaulting to a dataset of their own choosing.
+pub struct ActiveDataset {
+    pub id: Option<String>,
+    pub conn: Option<Connection>,
+}
+
+pub struct DbState(pub Mutex<ActiveDataset>);
 
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../../migrations/001_initial_schema.sql")),
@@ -122,4 +134,59 @@ pub(crate) fn run_migrations(conn: &Connection) -> Result<(), AppError> {
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn an_unselected_active_dataset_guards_with_not_configured() {
+        let active = ActiveDataset {
+            id: None,
+            conn: None,
+        };
+
+        let guarded = active.conn.as_ref().ok_or(AppError::NotConfigured);
+
+        assert!(matches!(guarded, Err(AppError::NotConfigured)));
+        assert_eq!(active.id, None);
+    }
+
+    #[test]
+    fn a_selected_active_dataset_guards_into_a_usable_connection() {
+        let active = ActiveDataset {
+            id: Some("default".to_string()),
+            conn: Some(Connection::open_in_memory().expect("in-memory database")),
+        };
+
+        let conn = active
+            .conn
+            .as_ref()
+            .ok_or(AppError::NotConfigured)
+            .expect("a selected dataset has a connection");
+
+        assert_eq!(
+            conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+                .expect("query runs"),
+            1
+        );
+    }
+
+    // `select_dataset` opens and migrates before it acquires DbState's lock, so
+    // this failing is exactly what leaves a previously active dataset untouched.
+    #[test]
+    fn init_db_fails_when_the_datasets_database_file_is_not_sqlite() {
+        let dir = TempDir::new().expect("temp dir");
+        std::fs::write(dir.path().join("nkbaz-finance.db"), b"not a sqlite file at all")
+            .expect("garbage db written");
+
+        let error = init_db(dir.path()).expect_err("opening a non-database must fail");
+
+        assert!(
+            matches!(error, AppError::Database { .. }),
+            "expected AppError::Database, got {error:?}"
+        );
+    }
 }

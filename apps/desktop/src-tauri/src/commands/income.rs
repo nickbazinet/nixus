@@ -17,9 +17,10 @@ pub fn create_income_source(
     name: String,
     income_type: String,
 ) -> Result<IncomeSource, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateIncomeSourceInput { name, income_type };
     let result = income_db::insert_income_source(&conn, &input)?;
@@ -43,9 +44,10 @@ pub fn create_income_source(
 pub fn get_income_sources(
     state: State<DbState>,
 ) -> Result<Vec<IncomeSourceWithLastEntry>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     income_db::get_all_income_sources(&conn)
 }
@@ -57,9 +59,10 @@ pub fn update_income_source(
     name: String,
     income_type: String,
 ) -> Result<IncomeSource, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_source_json(&conn, id);
 
@@ -83,9 +86,10 @@ pub fn update_income_source(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn delete_income_source(state: State<DbState>, id: i64) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_source_json(&conn, id);
 
@@ -113,9 +117,10 @@ pub fn create_income_entry(
     date: String,
     account_id: Option<i64>,
 ) -> Result<IncomeEntry, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateIncomeEntryInput {
         source_id,
@@ -151,9 +156,10 @@ pub fn update_income_entry(
     date: String,
     account_id: Option<i64>,
 ) -> Result<IncomeEntry, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_entry_json(&conn, id);
 
@@ -179,9 +185,10 @@ pub fn update_income_entry(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_entry_json(&conn, id);
 
@@ -207,9 +214,10 @@ pub fn get_income_entries(
     state: State<DbState>,
     source_id: Option<i64>,
 ) -> Result<Vec<IncomeEntry>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     income_db::get_income_entries(&conn, source_id)
 }
@@ -220,9 +228,10 @@ pub fn get_income_entries_by_month(
     year: i32,
     month: u32,
 ) -> Result<Vec<IncomeEntry>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     income_db::get_income_entries_by_month(&conn, year, month)
 }
@@ -233,9 +242,10 @@ pub fn get_income_total(
     year: i32,
     month: u32,
 ) -> Result<IncomeTotal, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     income_db::get_income_total(&conn, year, month)
 }

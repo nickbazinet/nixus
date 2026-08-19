@@ -17,6 +17,7 @@ use chrono::Utc;
 use tauri::{AppHandle, Manager};
 use tracing::warn;
 
+use crate::db::DbState;
 use crate::error::AppError;
 use crate::json_store::write_json_atomic;
 use crate::models::{Dataset, DatasetKind};
@@ -24,30 +25,6 @@ use crate::models::{Dataset, DatasetKind};
 /// Fixed literal id of the Default dataset (AD-2). Its directory *is* the app
 /// data root — no files move on upgrade.
 pub(crate) const DEFAULT_DATASET_ID: &str = "default";
-
-/// Which dataset id is active for this run.
-///
-/// Deliberately minimal, temporary shim: it exists only so `active_dataset_dir`
-/// is genuinely fallible starting now. Story 33.3 replaces it outright by
-/// folding the id into `DbState`'s Tauri-managed `ActiveDataset { id, conn }` —
-/// do not extend it beyond what Story 33.1 needs.
-static ACTIVE_DATASET_ID: Mutex<Option<String>> = Mutex::new(None);
-
-/// Records the dataset id active for this run. Called once from `lib.rs`'s
-/// `.setup()` before `init_db`.
-pub(crate) fn set_active_dataset_id(id: &str) {
-    let mut guard = ACTIVE_DATASET_ID
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = Some(id.to_string());
-}
-
-fn active_dataset_id() -> Option<String> {
-    ACTIVE_DATASET_ID
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-}
 
 /// The app data root: anchors dataset-independent state (the demographic
 /// `profiles/` store per AD-13, the vehicle-catalog cache, logs) and, from
@@ -59,24 +36,31 @@ pub(crate) fn global_root(app: &AppHandle) -> Result<PathBuf, AppError> {
 }
 
 /// Directory owning `id`'s dataset. Pure and lock-free.
-///
-/// `#[allow(dead_code)]`: this is the third of the three functions AD-5
-/// mandates, and Stories 33.2/33.3 (`create_dataset`, `select_dataset`) are its
-/// callers. The repo has no Tauri test harness to exercise an `AppHandle`
-/// wrapper, so a test cannot stand in as a caller either; the pure
-/// `dataset_dir_from_root` it delegates to *is* covered below.
-#[allow(dead_code)]
 pub(crate) fn dataset_dir(app: &AppHandle, id: &str) -> Result<PathBuf, AppError> {
     Ok(dataset_dir_from_root(&global_root(app)?, id))
 }
 
 /// Directory owning the dataset active for this run.
 ///
-/// Fails with `AppError::NotConfigured` when no dataset has been marked active.
+/// The id is read from the same `ActiveDataset` the open connection lives in
+/// (AD-6), so a path can never be resolved for a dataset other than the one
+/// currently connected.
+///
+/// **Never call this while holding `DbState`'s guard** (anything obtained from
+/// `state.0.lock()`): this function re-acquires that same lock, and
+/// `std::sync::Mutex` is not reentrant, so the call would deadlock silently
+/// rather than return an error. Resolve the path *before* locking.
+///
+/// Fails with `AppError::NotConfigured` when no dataset has been selected.
 pub(crate) fn active_dataset_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     let root = global_root(app)?;
 
-    resolve_active_dir(&root, active_dataset_id().as_deref())
+    let state = app.state::<DbState>();
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    resolve_active_dir(&root, active.id.as_deref())
 }
 
 /// Default lives at the root itself; every other dataset under `datasets/<id>/`.
@@ -102,9 +86,9 @@ const DEFAULT_DATASET_LABEL: &str = "Default";
 
 /// Serializes the registry's existence-check → read-or-create sequence.
 ///
-/// Deliberately *not* `ACTIVE_DATASET_ID`: AD-3's registry lock and AD-6's
-/// active-dataset lock guard unrelated invariants, and merging them would make a
-/// future `select_dataset` block registry reads. It guards the sequence, not a
+/// Deliberately *not* `DbState`'s lock: AD-3's registry lock and AD-6's
+/// active-dataset lock guard unrelated invariants, and merging them would make
+/// `select_dataset` block registry reads. It guards the sequence, not a
 /// payload, so a poisoned guard has nothing to recover beyond the unit.
 static REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
@@ -191,6 +175,13 @@ pub(crate) fn bootstrap_registry(app: &AppHandle) -> Result<Vec<Dataset>, AppErr
     bootstrap_registry_at(&global_root(app)?)
 }
 
+/// Every dataset the registry records. Unlike `bootstrap_registry`, this never
+/// creates the file — by the time anything reads it, `.setup()` has already
+/// guaranteed it exists.
+pub(crate) fn load_registry(app: &AppHandle) -> Result<Vec<Dataset>, AppError> {
+    load_registry_entries(&registry_path(&global_root(app)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,18 +247,6 @@ mod tests {
             resolve_active_dir(root, Some(id)).unwrap(),
             root.join("datasets").join(id)
         );
-    }
-
-    // One test, not two: ACTIVE_DATASET_ID is a process-wide static and cargo
-    // runs tests on parallel threads, so separate #[test] functions writing it
-    // would race. Both assertions stay sequential in a single thread.
-    #[test]
-    fn set_active_dataset_id_is_what_the_getter_reports() {
-        set_active_dataset_id(DEFAULT_DATASET_ID);
-        assert_eq!(active_dataset_id().as_deref(), Some(DEFAULT_DATASET_ID));
-
-        set_active_dataset_id("other");
-        assert_eq!(active_dataset_id().as_deref(), Some("other"));
     }
 
     #[test]

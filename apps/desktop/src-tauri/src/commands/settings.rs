@@ -23,9 +23,10 @@ pub struct TestConnectionResponse {
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_ai_config(db: State<'_, DbState>) -> Result<AiConfigResponse, AppError> {
-    let conn = db.0.lock().map_err(|e| AppError::Database {
+    let active = db.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     let provider = config_db::get(&conn, "ai_provider");
     let ai_configured = config_db::get(&conn, "ai_configured");
     let region = config_db::get(&conn, "aws_region")
@@ -76,9 +77,10 @@ pub async fn save_aws_credentials(
 
     // Write config to DB
     {
-        let conn = db.0.lock().map_err(|e| AppError::Database {
+        let active = db.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         config_db::set(&conn, "ai_provider", "bedrock")
             .map_err(|e| AppError::Database { message: e.to_string() })?;
         config_db::set(&conn, "aws_region", &region)
@@ -122,9 +124,10 @@ pub async fn save_openai_credentials(
 
     // Write config to DB
     {
-        let conn = db.0.lock().map_err(|e| AppError::Database {
+        let active = db.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         config_db::set(&conn, "ai_provider", "openai")
             .map_err(|e| AppError::Database { message: e.to_string() })?;
         config_db::set(&conn, "ai_configured", "true")
@@ -148,9 +151,10 @@ pub fn clear_ai_credentials(
     credentials::clear_credentials();
 
     {
-        let conn = db.0.lock().map_err(|e| AppError::Database {
+        let active = db.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         config_db::set(&conn, "ai_configured", "false")
             .map_err(|e| AppError::Database { message: e.to_string() })?;
     }

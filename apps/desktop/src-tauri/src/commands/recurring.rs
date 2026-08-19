@@ -17,9 +17,10 @@ pub fn create_recurring_template(
     budget_category_id: i64,
     day_of_month: i32,
 ) -> Result<RecurringExpenseTemplate, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateRecurringExpenseTemplateInput {
         merchant,
@@ -48,9 +49,10 @@ pub fn create_recurring_template(
 pub fn get_recurring_templates(
     state: State<DbState>,
 ) -> Result<Vec<RecurringExpenseTemplate>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     recurring_db::get_all_templates(&conn)
 }
@@ -65,9 +67,10 @@ pub fn update_recurring_template(
     day_of_month: i32,
     is_active: bool,
 ) -> Result<RecurringExpenseTemplate, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_template_json(&conn, id);
 
@@ -97,9 +100,10 @@ pub fn update_recurring_template(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn delete_recurring_template(state: State<DbState>, id: i64) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_template_json(&conn, id);
 
@@ -125,9 +129,10 @@ pub fn apply_recurring_expenses(
     year: i32,
     month: u32,
 ) -> Result<Vec<Expense>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let created = recurring_db::apply_recurring_for_month(&conn, year, month)?;
     audit_created_expenses(&conn, &created);

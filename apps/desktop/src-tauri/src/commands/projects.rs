@@ -49,9 +49,10 @@ pub fn create_project(
     icon: Option<String>,
     color: Option<String>,
 ) -> Result<Project, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateProjectInput {
         name,
@@ -75,9 +76,10 @@ pub fn create_project(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_projects(state: State<DbState>) -> Result<Vec<Project>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     projects_db::get_active_projects(&conn)
 }
@@ -96,9 +98,10 @@ pub fn update_project(
     icon: Option<String>,
     color: Option<String>,
 ) -> Result<Project, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = serde_json::to_string(&projects_db::get_project_by_id(&conn, id)?).ok();
 
@@ -132,9 +135,10 @@ pub fn reorder_projects(
     state: State<DbState>,
     project_ids: Vec<i64>,
 ) -> Result<Vec<Project>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let changes = projects_db::reorder_projects(&conn, &project_ids)?;
 
@@ -156,9 +160,10 @@ pub fn reorder_projects(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn archive_project(state: State<DbState>, id: i64) -> Result<Project, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = serde_json::to_string(&projects_db::get_project_by_id(&conn, id)?).ok();
 
@@ -187,9 +192,10 @@ pub fn create_project_contribution(
     amount_cents: i64,
     date: String,
 ) -> Result<ProjectContribution, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     // `source` is hard-coded, never a parameter: `confirm_project_allocations` is the only path that
     // may produce a `"suggested"` row (FR8), so this command cannot be used to forge one.
@@ -227,9 +233,10 @@ pub fn confirm_project_allocations(
     state: State<DbState>,
     allocations: Vec<ProjectAllocationInput>,
 ) -> Result<Vec<ProjectContribution>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
 
@@ -271,9 +278,10 @@ pub fn delete_project_contribution(
     state: State<DbState>,
     id: i64,
 ) -> Result<ProjectContribution, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let result = projects_db::delete_project_contribution(&conn, id)?;
 
@@ -297,18 +305,20 @@ pub fn get_project_contributions(
     state: State<DbState>,
     project_id: i64,
 ) -> Result<Vec<ProjectContribution>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     projects_db::get_project_contributions(&conn, project_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_project_saved_totals(state: State<DbState>) -> Result<Vec<ProjectSavedTotal>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     projects_db::get_project_saved_totals(&conn)
 }
@@ -318,9 +328,10 @@ pub fn get_account_earmark_breakdown(
     state: State<DbState>,
     account_id: i64,
 ) -> Result<AccountEarmarkBreakdown, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     projects_db::get_account_earmark_breakdown(&conn, account_id)
 }
@@ -329,9 +340,10 @@ pub fn get_account_earmark_breakdown(
 pub fn get_savings_projects_summary(
     state: State<DbState>,
 ) -> Result<SavingsProjectsSummary, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     projects_db::get_savings_projects_summary(&conn)
 }
@@ -345,9 +357,10 @@ pub fn get_savings_projects_summary(
 pub fn get_suggested_allocation(
     state: State<DbState>,
 ) -> Result<SuggestedAllocationResponse, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
     let projects = projects_db::get_active_allocation_projects(&conn)?;
@@ -393,9 +406,10 @@ pub fn get_suggested_allocation(
 // to `today`, which reduces the window to "contributions dated today" rather than failing the read.
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_project_pace(state: State<DbState>) -> Result<Vec<ProjectPace>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let today = chrono::Local::now().date_naive();
     let window_months = u32::try_from(pace::RECENT_WINDOW_MONTHS).unwrap_or(3);
@@ -424,9 +438,10 @@ pub fn get_project_pace(state: State<DbState>) -> Result<Vec<ProjectPace>, AppEr
 // reconstruct their money.
 #[tauri::command(rename_all = "snake_case")]
 pub fn skip_suggested_allocation_for_month(state: State<DbState>) -> Result<String, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let month = settlement::month_of(chrono::Local::now().date_naive());
     projects_db::set_suggestion_skipped_month(&conn, &month)?;
@@ -438,9 +453,10 @@ pub fn skip_suggested_allocation_for_month(state: State<DbState>) -> Result<Stri
 // so re-opening the panel after a confirm is a frontend toggle with nothing to unwind.
 #[tauri::command(rename_all = "snake_case")]
 pub fn clear_suggested_allocation_skip(state: State<DbState>) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     projects_db::clear_suggestion_skipped_month(&conn)
 }
@@ -454,9 +470,10 @@ fn over_target_categories(state: &State<'_, DbState>) -> Result<Vec<BudgetCatego
     let month = now.format("%m").to_string().parse::<i32>().unwrap_or(0);
 
     let mut categories = {
-        let conn = state.0.lock().map_err(|e| AppError::Database {
+        let active = state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
         budget_db::get_budget_status(&conn, year, month)?
     };
@@ -475,9 +492,10 @@ fn over_target_categories(state: &State<'_, DbState>) -> Result<Vec<BudgetCatego
 // unchanged, so a slack figure the advisory quotes is the same number the Trends screen shows.
 fn slack_categories(state: &State<'_, DbState>) -> Result<Vec<CategoryCompareRow>, AppError> {
     let mut categories = {
-        let conn = state.0.lock().map_err(|e| AppError::Database {
+        let active = state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
         let by_category =
             spending_trends_db::get_monthly_spend_by_category(&conn, SLACK_TREND_MONTHS)?;
@@ -497,9 +515,10 @@ fn slack_categories(state: &State<'_, DbState>) -> Result<Vec<CategoryCompareRow
 
 fn liquid_account_headroom(state: &State<'_, DbState>) -> Result<Vec<AccountHeadroom>, AppError> {
     let mut accounts = {
-        let conn = state.0.lock().map_err(|e| AppError::Database {
+        let active = state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
         projects_db::get_liquid_account_headroom(&conn)?
     };

@@ -10,9 +10,10 @@ pub fn create_budget_group(
     state: State<DbState>,
     name: String,
 ) -> Result<BudgetGroup, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateBudgetGroup { name };
     budget_db::create_budget_group(&conn, &input)
@@ -20,9 +21,10 @@ pub fn create_budget_group(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_budget_groups(state: State<DbState>) -> Result<Vec<BudgetGroup>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::get_budget_groups(&conn)
 }
@@ -34,9 +36,10 @@ pub fn create_budget_category(
     name: String,
     target_cents: i64,
 ) -> Result<BudgetCategory, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateBudgetCategory {
         group_id,
@@ -51,9 +54,10 @@ pub fn get_budget_categories(
     state: State<DbState>,
     group_id: i64,
 ) -> Result<Vec<BudgetCategory>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::get_budget_categories_by_group(&conn, group_id)
 }
@@ -64,9 +68,10 @@ pub fn update_budget_group(
     id: i64,
     name: String,
 ) -> Result<BudgetGroup, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::update_budget_group(&conn, id, name)
 }
@@ -78,9 +83,10 @@ pub fn update_budget_category(
     name: Option<String>,
     target_cents: Option<i64>,
 ) -> Result<BudgetCategory, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::update_budget_category(&conn, id, name, target_cents)
 }
@@ -90,9 +96,10 @@ pub fn delete_budget_category(
     state: State<DbState>,
     id: i64,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::delete_budget_category(&conn, id)
 }
@@ -103,9 +110,10 @@ pub fn get_budget_status(
     year: i32,
     month: i32,
 ) -> Result<Vec<BudgetCategoryStatus>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::get_budget_status(&conn, year, month)
 }
@@ -115,9 +123,10 @@ pub fn delete_budget_group(
     state: State<DbState>,
     id: i64,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::delete_budget_group(&conn, id)
 }
@@ -126,9 +135,10 @@ pub fn delete_budget_group(
 pub fn get_all_budget_categories(
     state: State<DbState>,
 ) -> Result<Vec<BudgetCategory>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     budget_db::get_all_budget_categories(&conn)
 }

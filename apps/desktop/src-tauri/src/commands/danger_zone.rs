@@ -12,11 +12,12 @@ use crate::profile_store;
 /// are preserved.
 #[tauri::command(rename_all = "snake_case")]
 pub fn delete_all_data(app: AppHandle, state: State<DbState>) -> Result<(), AppError> {
-    let mut conn = state.0.lock().map_err(|e| AppError::Database {
+    let mut active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_mut().ok_or(AppError::NotConfigured)?;
 
-    let deleted = danger_zone_db::wipe_all(&mut conn)?;
+    let deleted = danger_zone_db::wipe_all(&mut *conn)?;
     info!("Danger Zone wipe complete: {} rows deleted", deleted);
 
     // Non-fatal: the rows are already gone, this only reclaims disk space.

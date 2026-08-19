@@ -16,9 +16,10 @@ pub fn create_account(
     account_type: String,
     currency: String,
 ) -> Result<Account, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateAccountInput {
         name,
@@ -41,9 +42,10 @@ pub fn create_account(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_accounts(state: State<DbState>) -> Result<Vec<Account>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     account_db::get_all_accounts(&conn)
 }
@@ -54,9 +56,10 @@ pub fn update_account_balance(
     id: i64,
     balance_cents: i64,
 ) -> Result<Account, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let (old_balance, account) = account_db::update_account_balance(&conn, id, balance_cents)?;
 
@@ -87,9 +90,10 @@ pub fn update_account(
     account_type: String,
     currency: String,
 ) -> Result<Account, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_account_json(&conn, id);
 
@@ -114,9 +118,10 @@ pub fn delete_account(
     state: State<DbState>,
     id: i64,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_account_json(&conn, id);
 

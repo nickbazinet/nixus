@@ -9,9 +9,10 @@ use crate::models::ProjectionInput;
 pub fn get_projection_input(
     state: State<DbState>,
 ) -> Result<ProjectionInput, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     projection_db::get_projection_input(&conn)
 }

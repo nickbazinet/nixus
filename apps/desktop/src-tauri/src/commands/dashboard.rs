@@ -11,9 +11,10 @@ pub fn get_budget_summary(
     year: i32,
     month: i32,
 ) -> Result<BudgetSummary, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     dashboard_db::get_budget_summary(&conn, year, month)
 }
@@ -25,9 +26,10 @@ pub fn get_top_budget_categories(
     month: i32,
     limit: usize,
 ) -> Result<Vec<DashboardBudgetCategory>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     dashboard_db::get_top_budget_categories(&conn, year, month, limit)
 }
@@ -38,9 +40,10 @@ pub fn get_spending_breakdown(
     year: i32,
     month: i32,
 ) -> Result<Vec<SpendingByCategory>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     dashboard_db::get_spending_breakdown(&conn, year, month)
 }

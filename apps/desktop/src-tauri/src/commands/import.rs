@@ -212,9 +212,10 @@ pub async fn import_cc_statement(
 
     // Fetch budget categories, groups, and merchant hints for AI context
     let (categories, groups, hints) = {
-        let conn = db_state.0.lock().map_err(|e| AppError::Database {
+        let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         let cats = budget_db::get_all_budget_categories(&conn)?;
         let groups = budget_db::get_budget_groups(&conn)?;
         let hints = expense_db::get_merchant_category_hints(&conn)?;
@@ -263,9 +264,10 @@ pub async fn import_cc_statement(
 
             // Check for duplicates (non-blocking: degrade gracefully on error)
             let duplicate_indices = (|| -> Result<Vec<usize>, AppError> {
-                let conn = db_state.0.lock().map_err(|e| AppError::Database {
+                let active = db_state.0.lock().map_err(|e| AppError::Database {
                     message: e.to_string(),
                 })?;
+                let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
                 let tuples: Vec<(String, String, i64)> = parse_result
                     .transactions
                     .iter()
@@ -391,9 +393,10 @@ pub fn confirm_import(
     state: State<DbState>,
     transactions: Vec<ConfirmTransaction>,
 ) -> Result<ConfirmResult, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let tuples: Vec<(String, i64, i64, String)> = transactions
         .iter()

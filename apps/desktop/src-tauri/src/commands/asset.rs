@@ -14,9 +14,10 @@ pub fn create_asset(
     asset_type: String,
     value_cents: i64,
 ) -> Result<PassiveAsset, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateAssetInput {
         name,
@@ -38,9 +39,10 @@ pub fn create_asset(
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_assets(state: State<DbState>) -> Result<Vec<PassiveAsset>, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     asset_db::get_all_assets(&conn)
 }
@@ -51,9 +53,10 @@ pub fn update_asset_value(
     id: i64,
     value_cents: i64,
 ) -> Result<PassiveAsset, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let (old_value, asset) = asset_db::update_asset_value(&conn, id, value_cents)?;
 
@@ -82,9 +85,10 @@ pub fn update_asset(
     name: String,
     asset_type: String,
 ) -> Result<PassiveAsset, AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_asset_json(&conn, id);
 
@@ -104,9 +108,10 @@ pub fn delete_asset(
     state: State<DbState>,
     id: i64,
 ) -> Result<(), AppError> {
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = get_asset_json(&conn, id);
 

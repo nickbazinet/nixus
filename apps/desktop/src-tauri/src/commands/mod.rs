@@ -8,6 +8,7 @@ pub mod budget_template;
 pub mod chat;
 pub mod danger_zone;
 pub mod dashboard;
+pub mod datasets;
 pub mod expense;
 pub mod financial_health;
 pub mod import;
@@ -28,7 +29,7 @@ pub mod yearly_summary;
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::datasets;
+use crate::datasets::active_dataset_dir;
 use crate::db::DbState;
 use crate::error::AppError;
 
@@ -42,11 +43,12 @@ pub struct DbStatus {
 
 #[tauri::command]
 pub fn get_db_status(app: AppHandle, state: State<DbState>) -> Result<DbStatus, AppError> {
-    let db_path = datasets::active_dataset_dir(&app)?.join("nkbaz-finance.db");
+    let db_path = active_dataset_dir(&app)?.join("nkbaz-finance.db");
 
-    let conn = state.0.lock().map_err(|e| AppError::Database {
+    let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let journal_mode: String =
         conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
