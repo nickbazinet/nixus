@@ -18,8 +18,10 @@ const REQUIRED_KEYS = [
   "datasets.title",
   "datasets.subtitle",
   "datasets.loginWithCloud",
+  "datasets.newLocalProfile",
   "datasets.loadError",
   "datasets.selectFailed",
+  "datasets.createFailed",
 ] as const;
 
 function datasetsKeys(locale: Record<string, string>): string[] {
