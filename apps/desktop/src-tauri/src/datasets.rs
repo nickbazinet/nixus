@@ -76,7 +76,13 @@ pub(crate) fn active_dataset_id(db: &DbState) -> Result<String, AppError> {
 }
 
 /// Default lives at the root itself; every other dataset under `datasets/<id>/`.
-fn dataset_dir_from_root(root: &Path, id: &str) -> PathBuf {
+///
+/// Pure and lock-free, which is why it is exposed: callers already holding
+/// `DbState`'s guard pair it with the id they read off that same guard, instead
+/// of releasing the guard and calling `active_dataset_dir` — the latter would
+/// deadlock on the non-reentrant mutex, and resolving after unlocking would let
+/// a dataset switch slip between the connection and its path.
+pub(crate) fn dataset_dir_from_root(root: &Path, id: &str) -> PathBuf {
     if id == DEFAULT_DATASET_ID {
         root.to_path_buf()
     } else {

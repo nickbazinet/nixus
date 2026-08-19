@@ -42,6 +42,56 @@ fn resolve_import_staging_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     datasets::active_dataset_dir(app)
 }
 
+fn imports_dir(dataset_dir: &Path) -> PathBuf {
+    dataset_dir.join("imports")
+}
+
+/// Whether a file may be handed to the AI parser while `active_imports_dir` is
+/// the active dataset's staging directory.
+///
+/// Staged pastes live under `<dataset>/imports/`, so a candidate resolving
+/// inside the app data root but outside the *active* dataset's staging directory
+/// is another dataset's file — a Profile A draft path replayed after a switch to
+/// Profile B. Candidates outside the root entirely are user-picked statements
+/// (Downloads, Desktop, ...) and stay allowed. All three paths must be
+/// canonicalized against the same root for the prefix test to hold.
+fn is_import_source_in_active_dataset(
+    candidate: &Path,
+    global_root: &Path,
+    active_imports_dir: &Path,
+) -> bool {
+    !candidate.starts_with(global_root) || candidate.starts_with(active_imports_dir)
+}
+
+// The root is canonicalized once and the dataset directory derived from *that*
+// canonical root, rather than canonicalizing the dataset directory too: only the
+// candidate file is guaranteed to exist, and `/var` vs `/private/var`-style
+// symlinks would otherwise make the prefix comparison meaningless.
+fn reject_import_source_outside_active_dataset(
+    global_root: &Path,
+    active_id: &str,
+    file_path: &str,
+) -> Result<(), AppError> {
+    let root = global_root
+        .canonicalize()
+        .unwrap_or_else(|_| global_root.to_path_buf());
+    let active_imports_dir = imports_dir(&datasets::dataset_dir_from_root(&root, active_id));
+
+    let candidate = Path::new(file_path)
+        .canonicalize()
+        .map_err(|e| AppError::File {
+            message: format!("Cannot read file: {}", e),
+        })?;
+
+    if is_import_source_in_active_dataset(&candidate, &root, &active_imports_dir) {
+        Ok(())
+    } else {
+        Err(AppError::File {
+            message: "Import file does not belong to the active profile".to_string(),
+        })
+    }
+}
+
 fn normalize_clipboard_extension(extension: &str) -> Result<String, AppError> {
     let ext = extension.trim().trim_start_matches('.').to_lowercase();
     if !CLIPBOARD_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
@@ -164,7 +214,7 @@ pub fn save_import_clipboard_image(
     validate_clipboard_bytes(&bytes)?;
 
     let app_data_dir = resolve_import_staging_dir(&app)?;
-    let imports_dir = app_data_dir.join("imports");
+    let imports_dir = imports_dir(&app_data_dir);
     std::fs::create_dir_all(&imports_dir).map_err(|e| AppError::File {
         message: format!("Failed to create imports directory: {}", e),
     })?;
@@ -210,17 +260,26 @@ pub async fn import_cc_statement(
         },
     );
 
-    // Fetch budget categories, groups, and merchant hints for AI context
-    let (categories, groups, hints) = {
+    // Fetch budget categories, groups, and merchant hints for AI context. The
+    // active id is read off the same guard as the connection so the staging check
+    // below cannot be validated against a dataset that has since been switched.
+    let (categories, groups, hints, active_id) = {
         let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+        let active_id = active.id.clone().ok_or(AppError::NotConfigured)?;
         let cats = budget_db::get_all_budget_categories(&conn)?;
         let groups = budget_db::get_budget_groups(&conn)?;
         let hints = expense_db::get_merchant_category_hints(&conn)?;
-        (cats, groups, hints)
+        (cats, groups, hints, active_id)
     };
+
+    reject_import_source_outside_active_dataset(
+        &datasets::global_root(&app)?,
+        &active_id,
+        &file_path,
+    )?;
 
     // Extract the Bedrock client before any await points
     let bedrock_client = {
@@ -445,6 +504,103 @@ pub fn confirm_import(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    fn active_imports(root: &Path, id: &str) -> PathBuf {
+        imports_dir(&datasets::dataset_dir_from_root(root, id))
+    }
+
+    // The pure predicate above compares prefixes; this one proves the
+    // canonicalizing wrapper feeds it paths that actually line up on a real
+    // filesystem, symlinked temp roots included.
+    #[test]
+    fn a_file_staged_under_one_dataset_is_rejected_once_another_is_active() {
+        let root = TempDir::new().unwrap();
+        let staged_dir = active_imports(root.path(), "profile-a");
+        std::fs::create_dir_all(&staged_dir).unwrap();
+
+        let staged = staged_dir.join("paste-1.png");
+        std::fs::write(&staged, b"not really a png").unwrap();
+        let staged = staged.to_str().unwrap();
+
+        assert!(
+            reject_import_source_outside_active_dataset(root.path(), "profile-a", staged).is_ok()
+        );
+        assert!(
+            reject_import_source_outside_active_dataset(root.path(), "profile-b", staged).is_err()
+        );
+        assert!(
+            reject_import_source_outside_active_dataset(root.path(), "default", staged).is_err()
+        );
+    }
+
+    #[test]
+    fn a_staged_file_from_another_dataset_is_rejected() {
+        let root = Path::new("/app-data");
+        let staged_by_default = root.join("imports").join("paste-1.png");
+        let staged_by_a = active_imports(root, "profile-a").join("paste-1.png");
+
+        assert!(!is_import_source_in_active_dataset(
+            &staged_by_default,
+            root,
+            &active_imports(root, "profile-b")
+        ));
+        assert!(!is_import_source_in_active_dataset(
+            &staged_by_a,
+            root,
+            &active_imports(root, "profile-b")
+        ));
+        assert!(!is_import_source_in_active_dataset(
+            &staged_by_a,
+            root,
+            &active_imports(root, "default")
+        ));
+    }
+
+    #[test]
+    fn the_active_datasets_own_staged_file_is_accepted() {
+        let root = Path::new("/app-data");
+
+        assert!(is_import_source_in_active_dataset(
+            &active_imports(root, "profile-b").join("paste-1.png"),
+            root,
+            &active_imports(root, "profile-b")
+        ));
+        assert!(is_import_source_in_active_dataset(
+            &root.join("imports").join("paste-1.png"),
+            root,
+            &active_imports(root, "default")
+        ));
+    }
+
+    #[test]
+    fn a_user_picked_file_outside_the_app_data_root_is_accepted() {
+        let root = Path::new("/app-data");
+
+        assert!(is_import_source_in_active_dataset(
+            Path::new("/Users/someone/Downloads/statement.pdf"),
+            root,
+            &active_imports(root, "profile-b")
+        ));
+    }
+
+    // Default's dataset dir *is* the root, so without the `imports/` suffix the
+    // whole app data tree — every sibling dataset included — would qualify.
+    #[test]
+    fn dataset_files_outside_the_staging_directory_are_rejected() {
+        let root = Path::new("/app-data");
+
+        assert!(!is_import_source_in_active_dataset(
+            &root.join("nkbaz-finance.db"),
+            root,
+            &active_imports(root, "default")
+        ));
+        assert!(!is_import_source_in_active_dataset(
+            &root.join("profiles").join("someone.json"),
+            root,
+            &active_imports(root, "default")
+        ));
+    }
 
     #[test]
     fn normalize_clipboard_extension_allows_png_jpg_jpeg() {
