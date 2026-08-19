@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
+use crate::datasets;
 use crate::db::audit as audit_db;
 use crate::db::maintenance as maintenance_db;
 use crate::db::DbState;
@@ -292,23 +293,22 @@ fn get_vehicle_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
         .and_then(|v| serde_json::to_string(&v).ok())
 }
 
-fn resolve_app_data_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
-    app.path()
-        .app_data_dir()
-        .map_err(|e| AppError::File {
-            message: format!("Failed to resolve app data dir: {}", e),
-        })
+// The vehicle catalog is dataset-independent NHTSA reference data written by
+// lib.rs's background refresh at global_root — these readers must match that
+// anchor, or the cache would look permanently empty per non-default dataset.
+fn resolve_catalog_root(app: &AppHandle) -> Result<PathBuf, AppError> {
+    datasets::global_root(app)
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_vehicle_catalog_status(app: AppHandle) -> Result<VehicleCatalogStatus, AppError> {
-    let app_data_dir = resolve_app_data_dir(&app)?;
+    let app_data_dir = resolve_catalog_root(&app)?;
     Ok(catalog::get_catalog_status(&app_data_dir))
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_vehicle_makes(app: AppHandle) -> Result<Vec<VehicleMake>, AppError> {
-    let app_data_dir = resolve_app_data_dir(&app)?;
+    let app_data_dir = resolve_catalog_root(&app)?;
     Ok(catalog::get_cached_makes(&app_data_dir))
 }
 
@@ -320,6 +320,6 @@ pub async fn get_vehicle_models(
 ) -> Result<Vec<VehicleModel>, AppError> {
     catalog::validate_catalog_make(&make)?;
     catalog::validate_catalog_year(year)?;
-    let app_data_dir = resolve_app_data_dir(&app)?;
+    let app_data_dir = resolve_catalog_root(&app)?;
     catalog::get_or_fetch_models(&app_data_dir, &make, year).await
 }

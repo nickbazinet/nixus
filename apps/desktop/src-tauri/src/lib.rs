@@ -2,6 +2,7 @@ mod ai;
 mod budget;
 mod commands;
 mod credentials;
+mod datasets;
 mod db;
 mod error;
 mod financial_health;
@@ -48,10 +49,14 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("failed to resolve app data dir");
+            let app_handle = app.handle().clone();
+
+            let app_data_dir =
+                datasets::global_root(&app_handle).expect("failed to resolve app data dir");
+
+            // Ordering matters: must precede init_db so every command that later
+            // resolves active_dataset_dir() succeeds.
+            datasets::set_active_dataset_id(datasets::DEFAULT_DATASET_ID);
 
             // Ensure data directory exists before tracing tries to write logs
             std::fs::create_dir_all(&app_data_dir)
@@ -88,7 +93,6 @@ pub fn run() {
             let catalog_data_dir = app_data_dir.clone();
             maintenance::catalog::spawn_background_catalog_refresh(catalog_data_dir);
 
-            let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<DbState>();
                 let (expense_result, income_result) = match state.0.lock() {

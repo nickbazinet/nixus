@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use chrono::Datelike;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
+use crate::datasets;
 use crate::db::account as account_db;
 use crate::db::DbState;
 use crate::error::AppError;
@@ -12,11 +13,11 @@ use crate::models::{
 use crate::profile_store;
 use crate::tfsa;
 
+// AD-13: the demographic profile store is dataset-independent — global_root,
+// never active_dataset_dir, or profiles would silently become per-dataset once
+// a non-default dataset can be active.
 fn resolve_profiles_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
-    let app_data_dir = app.path().app_data_dir().map_err(|e| AppError::File {
-        message: format!("Failed to resolve app data dir: {}", e),
-    })?;
-    Ok(profile_store::profiles_dir(&app_data_dir))
+    Ok(profile_store::profiles_dir(&datasets::global_root(app)?))
 }
 
 // Both commands resolve the `sub` BEFORE the directory, so "a no-session call

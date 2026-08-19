@@ -1,6 +1,6 @@
 use chrono::{Datelike, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tracing::{error, info};
 
 use std::path::{Path, PathBuf};
@@ -11,6 +11,7 @@ use base64::Engine;
 
 use crate::ai::cc_parser;
 use crate::ai::{AiProvider, AiState};
+use crate::datasets;
 use crate::db::audit as audit_db;
 use crate::db::budget as budget_db;
 use crate::db::expense as expense_db;
@@ -37,10 +38,8 @@ pub struct ClipboardImageSaveResult {
     pub file_path: String,
 }
 
-fn resolve_app_data_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
-    app.path().app_data_dir().map_err(|e| AppError::File {
-        message: format!("Failed to resolve app data dir: {}", e),
-    })
+fn resolve_import_staging_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
+    datasets::active_dataset_dir(app)
 }
 
 fn normalize_clipboard_extension(extension: &str) -> Result<String, AppError> {
@@ -164,7 +163,7 @@ pub fn save_import_clipboard_image(
     let bytes = decode_clipboard_base64(&bytes_base64)?;
     validate_clipboard_bytes(&bytes)?;
 
-    let app_data_dir = resolve_app_data_dir(&app)?;
+    let app_data_dir = resolve_import_staging_dir(&app)?;
     let imports_dir = app_data_dir.join("imports");
     std::fs::create_dir_all(&imports_dir).map_err(|e| AppError::File {
         message: format!("Failed to create imports directory: {}", e),

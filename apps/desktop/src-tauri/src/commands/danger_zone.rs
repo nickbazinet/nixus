@@ -1,6 +1,7 @@
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 use tracing::{info, warn};
 
+use crate::datasets;
 use crate::db::danger_zone as danger_zone_db;
 use crate::db::DbState;
 use crate::error::AppError;
@@ -23,9 +24,10 @@ pub fn delete_all_data(app: AppHandle, state: State<DbState>) -> Result<(), AppE
         warn!("Post-wipe checkpoint/vacuum failed: {}", e);
     }
 
-    let app_data_dir = app.path().app_data_dir().map_err(|e| AppError::File {
-        message: format!("Failed to resolve app data dir: {}", e),
-    })?;
+    // AD-13: profiles are dataset-independent, so the deletion target is
+    // global_root, not active_dataset_dir — otherwise profile PII could survive
+    // a "delete all data" run from a non-default dataset (NFR4).
+    let app_data_dir = datasets::global_root(&app)?;
 
     // Fatal, unlike reclaim_space: a failure here means profile PII is still on
     // disk after the user asked for everything to be deleted (NFR4).

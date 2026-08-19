@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tracing::info;
 
+use crate::datasets;
 use crate::db::DbState;
 use crate::error::AppError;
 
@@ -27,12 +28,7 @@ pub async fn export_backup(app_handle: AppHandle) -> Result<Option<BackupResult>
     }
 
     // Get database file path
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::File {
-            message: format!("Failed to resolve app data dir: {}", e),
-        })?;
+    let app_data_dir = datasets::active_dataset_dir(&app_handle)?;
     let db_path = app_data_dir.join("nkbaz-finance.db");
 
     // Show native save dialog
@@ -90,12 +86,7 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
     validate_backup_file(&selected_path)?;
 
     // Get database file path
-    let app_data_dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::File {
-            message: format!("Failed to resolve app data dir: {}", e),
-        })?;
+    let app_data_dir = datasets::active_dataset_dir(&app_handle)?;
     let db_path = app_data_dir.join("nkbaz-finance.db");
 
     let db_state = app_handle.state::<DbState>();

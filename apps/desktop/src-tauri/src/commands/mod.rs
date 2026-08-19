@@ -26,8 +26,9 @@ pub mod spending_trends;
 pub mod yearly_summary;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::datasets;
 use crate::db::DbState;
 use crate::error::AppError;
 
@@ -40,7 +41,9 @@ pub struct DbStatus {
 }
 
 #[tauri::command]
-pub fn get_db_status(state: State<DbState>) -> Result<DbStatus, AppError> {
+pub fn get_db_status(app: AppHandle, state: State<DbState>) -> Result<DbStatus, AppError> {
+    let db_path = datasets::active_dataset_dir(&app)?.join("nkbaz-finance.db");
+
     let conn = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
@@ -61,7 +64,7 @@ pub fn get_db_status(state: State<DbState>) -> Result<DbStatus, AppError> {
     )?;
 
     Ok(DbStatus {
-        db_path: "nkbaz-finance.db".to_string(),
+        db_path: db_path.to_string_lossy().to_string(),
         wal_mode: journal_mode == "wal",
         schema_version,
         migrations_applied,
