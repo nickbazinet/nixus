@@ -272,3 +272,32 @@ development_status:
   32-3-review-and-edit-a-suggested-allocation-before-confirming: review
   32-4-confirm-or-skip-a-suggested-allocation: review
   epic-32-retrospective: optional
+
+  # Epic 33: Local Profile Foundation — Picker, Default Migration & Dataset Infrastructure
+  epic-33: backlog
+  33-1-dataset-path-authority-replaces-every-independent-app_data_d: backlog
+  33-2-dataset-registry-with-bootstrap-migration-to-default: backlog
+  33-3-active-dataset-state-and-the-locked-hot-swap-select_dataset: backlog
+  33-4-the-launch-time-picker-screen: backlog
+  33-5-choosing-a-profile-opens-the-app-scoped-to-it: backlog
+  33-6-existing-e2e-suite-keeps-passing-with-the-new-launch-gate: backlog
+  epic-33-retrospective: optional
+
+  # Epic 34: Multiple Isolated Local Profiles
+  epic-34: backlog
+  34-1-create-additional-local-profiles-from-the-picker: backlog
+  34-2-ai-provider-credentials-become-per-profile: backlog
+  34-3-per-dataset-financial-data-stays-isolated-across-backup-impo: backlog
+  34-4-no-frontend-persisted-state-survives-a-profile-switch: backlog
+  34-5-end-to-end-isolation-verification-across-repeated-switching: backlog
+  epic-34-retrospective: optional
+
+  # Epic 35: Nixus Cloud Login & Migration
+  epic-35: backlog
+  35-1-loginintent-carries-login-vs-migrate-across-the-unchanged-oa: backlog
+  35-2-log-in-with-nixus-cloud-from-the-picker: backlog
+  35-3-migrate-to-nixus-cloud-from-within-a-local-profile: backlog
+  35-4-cloud-linked-profiles-show-whether-their-account-is-currentl: backlog
+  35-5-i18n-cleanup-for-the-new-cloud-entry-points: backlog
+  35-6-verify-no-data-leaves-the-machine: backlog
+  epic-35-retrospective: optional
