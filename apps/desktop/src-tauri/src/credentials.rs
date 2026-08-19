@@ -8,6 +8,23 @@ use crate::models::CognitoSession;
 const KEYRING_SERVICE: &str = "nkbaz-finance";
 const KEYRING_AUTH_SERVICE: &str = "nixus-auth";
 
+/// Keyring service owning `dataset_id`'s AI-provider credentials (Story 34.2).
+///
+/// Default keeps the bare `KEYRING_SERVICE` literal byte-for-byte so every
+/// entry written before datasets existed keeps loading with no migration; every
+/// other dataset gets its own suffixed service, which is what keeps one
+/// profile's provider key out of another's.
+///
+/// Deliberately *not* applied to `KEYRING_AUTH_SERVICE`: the Cognito session is
+/// the machine's identity, not a profile's, and stays dataset-independent.
+fn ai_service(dataset_id: &str) -> String {
+    if dataset_id == crate::datasets::DEFAULT_DATASET_ID {
+        KEYRING_SERVICE.to_string()
+    } else {
+        format!("{KEYRING_SERVICE}-{dataset_id}")
+    }
+}
+
 // WHY chunked entries instead of one entry per field (the prior fix):
 // Windows Credential Manager caps a single generic credential's password
 // blob at 2560 UTF-16 code units. Splitting the combined session JSON into
@@ -54,45 +71,49 @@ const CHUNK_MAX_CHARS: usize = 1_000;
 const MAX_CHUNKS_PER_FIELD: usize = 500;
 
 pub fn store_aws_credentials(
+    dataset_id: &str,
     access_key: &str,
     secret_key: &str,
     region: &str,
 ) -> Result<(), Error> {
-    Entry::new(KEYRING_SERVICE, "aws_access_key_id")?.set_password(access_key)?;
-    Entry::new(KEYRING_SERVICE, "aws_secret_access_key")?.set_password(secret_key)?;
-    Entry::new(KEYRING_SERVICE, "aws_region")?.set_password(region)?;
+    let service = ai_service(dataset_id);
+    Entry::new(&service, "aws_access_key_id")?.set_password(access_key)?;
+    Entry::new(&service, "aws_secret_access_key")?.set_password(secret_key)?;
+    Entry::new(&service, "aws_region")?.set_password(region)?;
     Ok(())
 }
 
-pub fn load_aws_credentials() -> Option<(String, String, String)> {
-    let access_key = Entry::new(KEYRING_SERVICE, "aws_access_key_id")
+pub fn load_aws_credentials(dataset_id: &str) -> Option<(String, String, String)> {
+    let service = ai_service(dataset_id);
+    let access_key = Entry::new(&service, "aws_access_key_id")
         .ok()?
         .get_password()
         .ok()?;
-    let secret_key = Entry::new(KEYRING_SERVICE, "aws_secret_access_key")
+    let secret_key = Entry::new(&service, "aws_secret_access_key")
         .ok()?
         .get_password()
         .ok()?;
-    let region = Entry::new(KEYRING_SERVICE, "aws_region")
+    let region = Entry::new(&service, "aws_region")
         .ok()?
         .get_password()
         .ok()?;
     Some((access_key, secret_key, region))
 }
 
-pub fn store_openai_key(api_key: &str) -> Result<(), Error> {
-    Entry::new(KEYRING_SERVICE, "openai_api_key")?.set_password(api_key)?;
+pub fn store_openai_key(dataset_id: &str, api_key: &str) -> Result<(), Error> {
+    Entry::new(&ai_service(dataset_id), "openai_api_key")?.set_password(api_key)?;
     Ok(())
 }
 
-pub fn load_openai_key() -> Option<String> {
-    Entry::new(KEYRING_SERVICE, "openai_api_key")
+pub fn load_openai_key(dataset_id: &str) -> Option<String> {
+    Entry::new(&ai_service(dataset_id), "openai_api_key")
         .ok()?
         .get_password()
         .ok()
 }
 
-pub fn clear_credentials() {
+pub fn clear_credentials(dataset_id: &str) {
+    let service = ai_service(dataset_id);
     let names = [
         "aws_access_key_id",
         "aws_secret_access_key",
@@ -100,7 +121,7 @@ pub fn clear_credentials() {
         "openai_api_key",
     ];
     for name in &names {
-        if let Ok(entry) = Entry::new(KEYRING_SERVICE, name) {
+        if let Ok(entry) = Entry::new(&service, name) {
             let _ = entry.delete_credential();
         }
     }
@@ -398,24 +419,45 @@ fn reset_session_cache_for_test() {
     *cache = None;
 }
 
+/// Installs the process-global mock keyring store once and serializes every test
+/// that touches it — `ai`'s per-profile isolation test included.
+///
+/// Shared rather than per-module on purpose: a second `set_default_store` call
+/// would swap a *fresh* empty store in under an in-flight test in another thread,
+/// so both the store installation and the exclusion have to be process-wide.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Mutex, MutexGuard, Once, OnceLock};
+pub(crate) fn test_keyring_guard() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Once, OnceLock};
 
     static STORE_INIT: Once = Once::new();
     static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-    // Serializes tests: the mock store is process-global and every test targets the same fixed
-    // keyring entry, so concurrent tests would clobber each other.
+    STORE_INIT.call_once(|| {
+        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+    });
+
+    TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::MutexGuard;
+
+    use crate::datasets::DEFAULT_DATASET_ID;
+
+    const DATASET_A: &str = "local-1";
+    const DATASET_B: &str = "local-2";
+
     fn guard() -> MutexGuard<'static, ()> {
-        STORE_INIT.call_once(|| {
-            keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
-        });
-        let lock = TEST_LOCK.get_or_init(|| Mutex::new(()));
-        let g = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let g = test_keyring_guard();
         let _ = clear_cognito_session();
-        clear_credentials();
+        for dataset_id in [DEFAULT_DATASET_ID, DATASET_A, DATASET_B] {
+            clear_credentials(dataset_id);
+        }
         g
     }
 
@@ -638,21 +680,120 @@ mod tests {
     #[test]
     fn clear_cognito_session_leaves_ai_credentials_intact() {
         let _g = guard();
-        store_aws_credentials("access", "secret", "ca-central-1").unwrap();
-        store_openai_key("sk-test").unwrap();
+        store_aws_credentials(DEFAULT_DATASET_ID, "access", "secret", "ca-central-1").unwrap();
+        store_openai_key(DEFAULT_DATASET_ID, "sk-test").unwrap();
         store_cognito_session(&sample()).unwrap();
 
         clear_cognito_session().unwrap();
 
         assert_eq!(
-            load_aws_credentials(),
+            load_aws_credentials(DEFAULT_DATASET_ID),
             Some((
                 "access".to_string(),
                 "secret".to_string(),
                 "ca-central-1".to_string()
             ))
         );
-        assert_eq!(load_openai_key(), Some("sk-test".to_string()));
+        assert_eq!(
+            load_openai_key(DEFAULT_DATASET_ID),
+            Some("sk-test".to_string())
+        );
         assert!(load_cognito_session().unwrap().is_none());
+    }
+
+    /// The zero-migration guarantee: Default's service name is the exact literal
+    /// every pre-dataset build wrote under, so entries already in a user's
+    /// keychain must still load through the dataset-aware readers. Asserted
+    /// against a raw `Entry` write rather than through `store_*` so a change to
+    /// the naming scheme cannot make the test agree with itself.
+    #[test]
+    fn the_default_dataset_reads_the_pre_dataset_service_name_unchanged() {
+        let _g = guard();
+        assert_eq!(ai_service(DEFAULT_DATASET_ID), "nkbaz-finance");
+
+        Entry::new("nkbaz-finance", "openai_api_key")
+            .unwrap()
+            .set_password("sk-legacy")
+            .unwrap();
+        Entry::new("nkbaz-finance", "aws_access_key_id")
+            .unwrap()
+            .set_password("legacy-access")
+            .unwrap();
+        Entry::new("nkbaz-finance", "aws_secret_access_key")
+            .unwrap()
+            .set_password("legacy-secret")
+            .unwrap();
+        Entry::new("nkbaz-finance", "aws_region")
+            .unwrap()
+            .set_password("us-east-1")
+            .unwrap();
+
+        assert_eq!(
+            load_openai_key(DEFAULT_DATASET_ID),
+            Some("sk-legacy".to_string())
+        );
+        assert_eq!(
+            load_aws_credentials(DEFAULT_DATASET_ID),
+            Some((
+                "legacy-access".to_string(),
+                "legacy-secret".to_string(),
+                "us-east-1".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_non_default_dataset_gets_its_own_suffixed_service_name() {
+        assert_eq!(ai_service(DATASET_A), "nkbaz-finance-local-1");
+    }
+
+    #[test]
+    fn two_non_default_datasets_keep_separate_credentials() {
+        let _g = guard();
+        store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+        store_aws_credentials(DATASET_B, "access-b", "secret-b", "us-east-1").unwrap();
+        store_openai_key(DATASET_B, "sk-b").unwrap();
+
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+        assert_eq!(load_openai_key(DATASET_B), Some("sk-b".to_string()));
+        assert_eq!(
+            load_aws_credentials(DATASET_A),
+            Some((
+                "access-a".to_string(),
+                "secret-a".to_string(),
+                "ca-central-1".to_string()
+            ))
+        );
+
+        clear_credentials(DATASET_A);
+
+        assert_eq!(load_openai_key(DATASET_A), None);
+        assert_eq!(load_aws_credentials(DATASET_A), None);
+        assert_eq!(load_openai_key(DATASET_B), Some("sk-b".to_string()));
+        assert_eq!(
+            load_aws_credentials(DATASET_B),
+            Some((
+                "access-b".to_string(),
+                "secret-b".to_string(),
+                "us-east-1".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_non_default_dataset_never_sees_or_clears_defaults_credentials() {
+        let _g = guard();
+        store_openai_key(DEFAULT_DATASET_ID, "sk-default").unwrap();
+
+        assert_eq!(load_openai_key(DATASET_A), None);
+
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+        clear_credentials(DATASET_A);
+
+        assert_eq!(
+            load_openai_key(DEFAULT_DATASET_ID),
+            Some("sk-default".to_string())
+        );
     }
 }

@@ -3,10 +3,11 @@ use std::sync::Mutex;
 use tauri::State;
 
 use crate::ai::{AiProvider, AiState};
+use crate::credentials;
+use crate::datasets;
 use crate::db::config as config_db;
 use crate::db::DbState;
 use crate::error::AppError;
-use crate::credentials;
 
 #[derive(Serialize)]
 pub struct AiConfigResponse {
@@ -52,6 +53,10 @@ pub async fn save_aws_credentials(
     use aws_config::BehaviorVersion;
     use aws_sdk_bedrockruntime::config::Credentials;
 
+    // Resolved before the validation round-trip below so an unselected dataset
+    // fails fast rather than after a network call.
+    let dataset_id = datasets::active_dataset_id(&db)?;
+
     // Build a temporary client to validate credentials before storing
     let creds = Credentials::new(&access_key, &secret_key, None, None, "nkbaz-user");
     let aws_cfg = aws_config::defaults(BehaviorVersion::latest())
@@ -69,7 +74,7 @@ pub async fn save_aws_credentials(
         .map_err(|_| AppError::InvalidCredentials)?;
 
     // Store credentials in keyring
-    credentials::store_aws_credentials(&access_key, &secret_key, &region)
+    credentials::store_aws_credentials(&dataset_id, &access_key, &secret_key, &region)
         .map_err(|e| AppError::AiService {
             message: e.to_string(),
             recoverable: false,
@@ -106,6 +111,8 @@ pub async fn save_openai_credentials(
 ) -> Result<(), AppError> {
     use async_openai::{Client as OpenAIClient, config::OpenAIConfig};
 
+    let dataset_id = datasets::active_dataset_id(&db)?;
+
     // Build and validate the OpenAI client
     let config = OpenAIConfig::new().with_api_key(&api_key);
     let temp_client = OpenAIClient::with_config(config);
@@ -117,7 +124,7 @@ pub async fn save_openai_credentials(
         .map_err(|_| AppError::InvalidCredentials)?;
 
     // Store key in keyring
-    credentials::store_openai_key(&api_key).map_err(|e| AppError::AiService {
+    credentials::store_openai_key(&dataset_id, &api_key).map_err(|e| AppError::AiService {
         message: e.to_string(),
         recoverable: false,
     })?;
@@ -148,7 +155,7 @@ pub fn clear_ai_credentials(
     db: State<'_, DbState>,
     ai_state: State<'_, Mutex<AiState>>,
 ) -> Result<(), AppError> {
-    credentials::clear_credentials();
+    credentials::clear_credentials(&datasets::active_dataset_id(&db)?);
 
     {
         let active = db.0.lock().map_err(|e| AppError::Database {
