@@ -208,6 +208,7 @@ pub fn run() {
             commands::get_db_status,
             commands::datasets::select_dataset,
             commands::datasets::list_datasets,
+            commands::datasets::create_dataset,
             commands::datasets::check_picker_gate,
             commands::datasets::mark_picker_passed,
             commands::budget::create_budget_group,

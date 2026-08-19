@@ -17,7 +17,7 @@ use chrono::Utc;
 use tauri::{AppHandle, Manager};
 use tracing::warn;
 
-use crate::db::DbState;
+use crate::db::{init_db, DbState};
 use crate::error::AppError;
 use crate::json_store::write_json_atomic;
 use crate::models::{Dataset, DatasetKind};
@@ -124,15 +124,7 @@ fn default_dataset_entry() -> Dataset {
 // dataset reachable, where an `Err` would lock the user out of all of them. A
 // parse failure of the *file* stays fatal — see `bootstrap_registry_at`.
 fn load_registry_entries(path: &Path) -> Result<Vec<Dataset>, AppError> {
-    let raw = std::fs::read_to_string(path).map_err(|e| AppError::File {
-        message: format!("Failed to read dataset registry: {}", e),
-    })?;
-
-    let entries: Vec<Dataset> = serde_json::from_str(&raw).map_err(|e| AppError::File {
-        message: format!("Failed to parse dataset registry: {}", e),
-    })?;
-
-    Ok(entries
+    Ok(read_registry_for_update(path)?
         .into_iter()
         .filter(|entry| {
             let valid = is_valid_dataset_id(&entry.id);
@@ -146,6 +138,25 @@ fn load_registry_entries(path: &Path) -> Result<Vec<Dataset>, AppError> {
             valid
         })
         .collect())
+}
+
+/// Parses the registry with **no** id filtering, for the read half of a
+/// read-modify-write.
+///
+/// `load_registry_entries`'s skipping is the right *view* for a reader, but it is
+/// lossy, and writing that view back would permanently delete every skipped entry
+/// — with no delete/restore affordance anywhere in the product to undo it. A
+/// mutator therefore rewrites the file as it actually is, and uses the filtered
+/// view only where "what the user can see" is the question. A file that does not
+/// deserialize at all stays a hard error, exactly as on the read path.
+fn read_registry_for_update(path: &Path) -> Result<Vec<Dataset>, AppError> {
+    let raw = std::fs::read_to_string(path).map_err(|e| AppError::File {
+        message: format!("Failed to read dataset registry: {}", e),
+    })?;
+
+    serde_json::from_str(&raw).map_err(|e| AppError::File {
+        message: format!("Failed to parse dataset registry: {}", e),
+    })
 }
 
 /// Reads `root`'s registry, creating it with the single Default entry when absent.
@@ -180,6 +191,146 @@ pub(crate) fn bootstrap_registry(app: &AppHandle) -> Result<Vec<Dataset>, AppErr
 /// guaranteed it exists.
 pub(crate) fn load_registry(app: &AppHandle) -> Result<Vec<Dataset>, AppError> {
     load_registry_entries(&registry_path(&global_root(app)?))
+}
+
+/// A canonical lowercase hyphenated UUID v4, minted from 16 random bytes.
+///
+/// Hand-rolled rather than taken from the `uuid` crate, which is only a
+/// transitive dependency: this epic adds none, and `rand::random::<[u8; N]>()` is
+/// already this codebase's way of drawing random bytes (`commands/auth.rs`'s PKCE
+/// verifier and state). RFC 4122 §4.4 is entirely "16 random bytes with the
+/// version nibble and the variant bits pinned", which is all that happens here.
+/// Lowercase hex plus `-` is also exactly what `is_valid_dataset_id` accepts, so
+/// the id is usable verbatim as a directory name.
+fn new_dataset_id() -> String {
+    let mut bytes = rand::random::<[u8; 16]>();
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    let mut id = String::with_capacity(36);
+    for (index, byte) in bytes.iter().enumerate() {
+        if matches!(index, 4 | 6 | 8 | 10) {
+            id.push('-');
+        }
+        id.push_str(&format!("{byte:02x}"));
+    }
+
+    id
+}
+
+/// The label the next local profile gets: `"Local Profile <n>"`.
+///
+/// `n` counts the existing local, non-default entries — Default and every
+/// cloud-linked entry are excluded, because neither is a "Local Profile <n>" and
+/// counting them would skip numbers. Counting rather than max-plus-one is what
+/// the story specifies, and it is only sound while removal does not exist:
+/// deleting "Local Profile 1" of two would make the next create collide with
+/// "Local Profile 2". Whenever a delete affordance lands, this has to become
+/// max-plus-one.
+///
+/// Takes an iterator so the caller chooses the view: the label is derived from the
+/// entries the *picker can show*, not from every line in the file.
+fn next_local_label<'a>(entries: impl Iterator<Item = &'a Dataset>) -> String {
+    let existing = entries
+        .filter(|entry| !entry.is_default && entry.kind == DatasetKind::Local)
+        .count();
+
+    format!("Local Profile {}", existing + 1)
+}
+
+/// Refuses an id that any existing dataset already owns.
+///
+/// `create_dir_all` succeeds on a directory that already exists and `init_db` is a
+/// no-op against an already-migrated database, so without this a collision would
+/// silently adopt another dataset's populated data with nothing anywhere noticing.
+/// 122 bits of entropy makes it near-impossible and the consequence unrecoverable.
+///
+/// Split out of `create_dataset_at` so the branch is unit-testable at all — the
+/// minter cannot be steered onto a chosen id — mirroring `resolve_active_dir` and
+/// `commands::datasets::find_registered`.
+fn reject_taken_id(entries: &[Dataset], id: &str, dir: &Path) -> Result<(), AppError> {
+    if entries.iter().any(|entry| entry.id == id) || dir.exists() {
+        return Err(AppError::File {
+            message: format!("Dataset {} already exists", id),
+        });
+    }
+
+    Ok(())
+}
+
+/// Appends a brand-new, empty local dataset to `root`'s registry.
+///
+/// The registry's first mutator. `REGISTRY_LOCK` is held for the *whole*
+/// read-modify-write rather than only the write, so two concurrent creates can
+/// neither derive the same label nor drop each other's entry. The read goes
+/// through the non-locking `read_registry_for_update`, never `load_registry`,
+/// which resolves its own path and would read outside the guard.
+///
+/// The registry entry is written **last**, once the directory and its migrated
+/// database already exist. The registry is the sole source of truth for which
+/// datasets exist (AD-3), so the only failure this ordering can leak is a
+/// directory nothing points at — invisible, and reaped below anyway. The reverse
+/// ordering would leak a picker row pointing at a dataset that cannot open, which
+/// the user has no way to remove.
+pub(crate) fn create_dataset_at(root: &Path) -> Result<Dataset, AppError> {
+    // Same poison recovery, for the same reason, as `bootstrap_registry_at`.
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let path = registry_path(root);
+    // Unfiltered, because this list is written back: an entry whose id fails
+    // `is_valid_dataset_id` is invisible to the picker but must still survive a
+    // create, and nothing in the product could restore it if it did not.
+    let mut entries = read_registry_for_update(&path)?;
+
+    let dataset = Dataset {
+        id: new_dataset_id(),
+        // The filtered view, and only here: the label numbers the profiles the user
+        // can actually see, so a skipped entry must not consume a number.
+        label: next_local_label(
+            entries
+                .iter()
+                .filter(|entry| is_valid_dataset_id(&entry.id)),
+        ),
+        kind: DatasetKind::Local,
+        cognito_sub: None,
+        linked_from: None,
+        is_default: false,
+        created_at: Utc::now().to_rfc3339(),
+    };
+
+    let dir = dataset_dir_from_root(root, &dataset.id);
+
+    // Strictly before anything is created, and strictly before the cleanup below
+    // becomes reachable.
+    reject_taken_id(&entries, &dataset.id, &dir)?;
+
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::File {
+        message: format!("Failed to create dataset directory: {}", e),
+    })?;
+
+    // `init_db`'s connection is dropped immediately: `select_dataset` opens its own
+    // when the user actually chooses this profile, so holding this one would leak a
+    // handle for the life of the process.
+    let provisioned = init_db(&dir).and_then(|conn| {
+        drop(conn);
+        entries.push(dataset.clone());
+        write_json_atomic(&path, &entries)
+    });
+
+    if let Err(error) = provisioned {
+        // Best effort, and correct ONLY because the collision guard above proved
+        // this directory did not exist before this call — so this can only remove
+        // what this call created. Moving that guard after this point turns this
+        // line into a data-loss bug: a collision followed by an error would wipe a
+        // pre-existing dataset's database. Without the cleanup, repeated failures
+        // accumulate migrated databases that nothing will ever reap.
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(error);
+    }
+
+    Ok(dataset)
 }
 
 #[cfg(test)]
@@ -486,5 +637,397 @@ mod tests {
 
         let entries = load_registry_entries(&registry_path(root.path())).expect("load succeeds");
         assert_eq!(entries[0].kind, DatasetKind::CloudLinked);
+    }
+
+    fn bootstrapped_root() -> TempDir {
+        let root = TempDir::new().expect("temp dir");
+        bootstrap_registry_at(root.path()).expect("bootstrap succeeds");
+        root
+    }
+
+    fn recorded(root: &Path) -> Vec<Dataset> {
+        load_registry_entries(&registry_path(root)).expect("load succeeds")
+    }
+
+    #[test]
+    fn the_first_created_profile_is_labelled_local_profile_1() {
+        let root = bootstrapped_root();
+
+        let created = create_dataset_at(root.path()).expect("create succeeds");
+
+        assert_eq!(created.label, "Local Profile 1");
+        assert_eq!(created.kind, DatasetKind::Local);
+        assert!(!created.is_default);
+        assert_eq!(created.cognito_sub, None);
+        assert_eq!(created.linked_from, None);
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&created.created_at).is_ok(),
+            "created_at must be RFC 3339, got {}",
+            created.created_at
+        );
+    }
+
+    #[test]
+    fn a_second_create_advances_the_label_and_gets_its_own_directory() {
+        let root = bootstrapped_root();
+
+        let first = create_dataset_at(root.path()).expect("first create succeeds");
+        let second = create_dataset_at(root.path()).expect("second create succeeds");
+
+        assert_eq!(first.label, "Local Profile 1");
+        assert_eq!(second.label, "Local Profile 2");
+        assert_ne!(first.id, second.id, "each create mints its own id");
+        assert!(dataset_dir_from_root(root.path(), &first.id).is_dir());
+        assert!(dataset_dir_from_root(root.path(), &second.id).is_dir());
+    }
+
+    // Cloud-linked entries are not "Local Profile <n>", so counting them would
+    // leave a gap in the sequence the very first time Epic 35 links one.
+    #[test]
+    fn a_cloud_linked_entry_is_not_counted_when_labelling() {
+        let root = TempDir::new().expect("temp dir");
+        let seeded = vec![
+            default_dataset_entry(),
+            Dataset {
+                label: "Local Profile 1".to_string(),
+                kind: DatasetKind::Local,
+                cognito_sub: None,
+                linked_from: None,
+                ..entry("local-1")
+            },
+            entry("cloud-1"),
+        ];
+        write_registry(
+            root.path(),
+            &serde_json::to_string(&seeded).expect("serialized"),
+        );
+
+        let created = create_dataset_at(root.path()).expect("create succeeds");
+
+        assert_eq!(created.label, "Local Profile 2");
+
+        // The rewrite is the risk, not the label: every seeded entry has to come back
+        // out of the file unchanged and in order, or a create silently edited a
+        // profile it was only supposed to read.
+        let after = recorded(root.path());
+        assert_eq!(after.len(), seeded.len() + 1);
+        assert_eq!(after[..seeded.len()], seeded[..]);
+        assert_eq!(after[seeded.len()], created);
+    }
+
+    #[test]
+    fn a_created_profile_owns_a_migrated_empty_database() {
+        let root = bootstrapped_root();
+
+        let created = create_dataset_at(root.path()).expect("create succeeds");
+
+        let dir = dataset_dir_from_root(root.path(), &created.id);
+        assert!(dir.is_dir(), "the dataset directory must exist at {dir:?}");
+        let db_path = dir.join("nkbaz-finance.db");
+        assert!(db_path.is_file(), "a database must exist at {db_path:?}");
+
+        let conn = rusqlite::Connection::open(&db_path).expect("database opens");
+        let applied: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema_version readable");
+        assert!(applied > 0, "the migrations runner must have run");
+
+        // The gate's *own* inputs, not a proxy: `check_onboarding_status` derives
+        // `needs_onboarding` from exactly these two, so asserting them is what pins
+        // the story's causal claim — a fresh profile is unonboarded because it is
+        // empty. A migration that seeded a budget group would fail here, where a
+        // count of some unrelated table would stay green.
+        assert!(
+            !crate::db::onboarding::has_budget_data(&conn).expect("budget data readable"),
+            "a fresh profile must have no budget data"
+        );
+        assert!(
+            !crate::db::onboarding::is_completed(&conn),
+            "a fresh profile must not be marked onboarded"
+        );
+        let expenses: i64 = conn
+            .query_row("SELECT COUNT(*) FROM expenses", [], |row| row.get(0))
+            .expect("a migrated schema has an expenses table");
+        assert_eq!(expenses, 0);
+    }
+
+    #[test]
+    fn a_minted_id_is_a_canonical_lowercase_uuid_v4() {
+        let root = bootstrapped_root();
+
+        let created = create_dataset_at(root.path()).expect("create succeeds");
+
+        // The id becomes a directory name, so passing the registry's own charset
+        // check is the load-bearing property, not the RFC shape on its own.
+        assert!(
+            is_valid_dataset_id(&created.id),
+            "{} must be a usable dataset id",
+            created.id
+        );
+        assert_eq!(created.id.len(), 36);
+        assert_eq!(
+            created
+                .id
+                .char_indices()
+                .filter(|(_, c)| *c == '-')
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>(),
+            vec![8, 13, 18, 23]
+        );
+        assert_eq!(created.id, created.id.to_lowercase());
+        assert_eq!(
+            created.id.chars().nth(14),
+            Some('4'),
+            "the version nibble must be 4"
+        );
+        assert!(
+            matches!(created.id.chars().nth(19), Some('8' | '9' | 'a' | 'b')),
+            "the variant bits must be 10, got {}",
+            created.id
+        );
+    }
+
+    #[test]
+    fn creating_appends_to_the_registry_and_leaves_default_in_place() {
+        let root = bootstrapped_root();
+
+        let first = create_dataset_at(root.path()).expect("first create succeeds");
+        let second = create_dataset_at(root.path()).expect("second create succeeds");
+
+        let entries = recorded(root.path());
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].id, DEFAULT_DATASET_ID);
+        assert!(entries[0].is_default);
+        assert_eq!(entries[1], first, "the first create is recorded verbatim");
+        assert_eq!(entries[2], second, "appended, never reordered");
+        for created in [&entries[1], &entries[2]] {
+            assert!(!created.is_default);
+            assert_eq!(created.kind, DatasetKind::Local);
+        }
+    }
+
+    // An upgrading user's only profile *is* Default's entry, so the rewrite must
+    // leave it exactly as bootstrap recorded it. Asserted on the *parsed* entry
+    // rather than a substring of the file: a `contains` check passes under
+    // reordering, re-indentation, or a re-render of any other entry.
+    #[test]
+    fn creating_leaves_defaults_own_entry_untouched() {
+        let root = TempDir::new().expect("temp dir");
+        let bootstrapped = bootstrap_registry_at(root.path()).expect("bootstrap succeeds");
+
+        create_dataset_at(root.path()).expect("create succeeds");
+
+        let after = recorded(root.path());
+        assert_eq!(after.len(), 2);
+        assert_eq!(
+            after[0], bootstrapped[0],
+            "Default's recorded entry must survive the rewrite field-for-field"
+        );
+        assert_eq!(
+            after[0].id, DEFAULT_DATASET_ID,
+            "and must still be the first entry, not merely present somewhere"
+        );
+    }
+
+    // The write-last ordering, exercised rather than asserted: `datasets` is a file
+    // here, so the directory creation fails and `?` returns before the registry is
+    // ever rewritten. That is *why* no rollback logic is needed for this window.
+    //
+    // Scoped deliberately to the *pre-provision* failure. The post-provision window
+    // (`init_db` or the registry write failing once the directory exists) is handled
+    // by `create_dataset_at`'s `remove_dir_all` cleanup, and is not reachable from a
+    // test without modifying `init_db` — which this story forbids — so it is not
+    // claimed here.
+    #[test]
+    fn a_failure_before_the_directory_is_provisioned_leaves_the_registry_intact() {
+        let root = bootstrapped_root();
+        std::fs::write(root.path().join("datasets"), b"not a directory")
+            .expect("blocker written");
+        let before = std::fs::read(registry_path(root.path())).expect("file readable");
+
+        let error = create_dataset_at(root.path()).expect_err("create must fail");
+
+        assert!(
+            matches!(error, AppError::File { .. }),
+            "expected AppError::File, got {error:?}"
+        );
+        assert_eq!(
+            std::fs::read(registry_path(root.path())).expect("file readable"),
+            before,
+            "a failed create must not touch the registry"
+        );
+        let entries = recorded(root.path());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, DEFAULT_DATASET_ID);
+    }
+
+    // The regression `load_registry_entries`-as-the-read-half caused: its skipping is
+    // a read-time view, so writing it back deletes the skipped entry from disk for
+    // good — and no affordance in the product can restore a profile. A hand-edited or
+    // corrupted id is exactly the case `is_valid_dataset_id` exists for, so this is
+    // reachable, not theoretical.
+    #[test]
+    fn an_entry_the_reader_skips_still_survives_a_create() {
+        let root = TempDir::new().expect("temp dir");
+        let unusable = entry("a/b");
+        let seeded = vec![default_dataset_entry(), unusable.clone()];
+        write_registry(
+            root.path(),
+            &serde_json::to_string(&seeded).expect("serialized"),
+        );
+
+        let created = create_dataset_at(root.path()).expect("create succeeds");
+
+        // Read unfiltered: the whole point is that the entry is still *on disk*, even
+        // though `load_registry_entries` will go on hiding it from the picker.
+        let on_disk = read_registry_for_update(&registry_path(root.path()))
+            .expect("registry still parses");
+        assert_eq!(on_disk.len(), seeded.len() + 1);
+        assert_eq!(
+            on_disk[..seeded.len()],
+            seeded[..],
+            "a create must never delete an entry the reader merely skips"
+        );
+        assert_eq!(on_disk[seeded.len()], created);
+
+        // And the skipped entry does not consume a label number, because it is not a
+        // profile the user can see.
+        assert_eq!(recorded(root.path()).len(), 2);
+        assert_eq!(created.label, "Local Profile 1");
+    }
+
+    // Near-impossible by construction, but `create_dir_all` succeeding on an existing
+    // directory plus `init_db` being a no-op on an already-migrated database is what
+    // would make a collision silently adopt another profile's populated data.
+    #[test]
+    fn an_id_any_existing_entry_already_owns_is_refused() {
+        let root = TempDir::new().expect("temp dir");
+        let entries = vec![default_dataset_entry(), entry("local-1")];
+
+        for taken in [DEFAULT_DATASET_ID, "local-1"] {
+            let error = reject_taken_id(&entries, taken, &root.path().join("nothing-here"))
+                .expect_err("a registered id must be refused");
+
+            assert!(
+                matches!(error, AppError::File { .. }),
+                "expected AppError::File, got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_id_whose_directory_already_exists_is_refused_even_when_unregistered() {
+        let root = TempDir::new().expect("temp dir");
+        let squatter = dataset_dir_from_root(root.path(), "00000000-0000-4000-8000-000000000001");
+        std::fs::create_dir_all(&squatter).expect("squatter created");
+
+        // The registry does not know about it, so the directory check is the only thing
+        // standing between a collision and adopting whatever database lives in there.
+        let error = reject_taken_id(&[], "00000000-0000-4000-8000-000000000001", &squatter)
+            .expect_err("an occupied directory must be refused");
+
+        assert!(matches!(error, AppError::File { .. }));
+    }
+
+    #[test]
+    fn a_fresh_id_with_no_directory_is_accepted() {
+        let root = TempDir::new().expect("temp dir");
+        let id = new_dataset_id();
+
+        reject_taken_id(
+            &[default_dataset_entry()],
+            &id,
+            &dataset_dir_from_root(root.path(), &id),
+        )
+        .expect("an unclaimed id must be accepted");
+    }
+
+    // Many draws, and no filesystem: the RFC shape was only observable through
+    // `create_dataset_at` before, which does migrations just to inspect a string, and
+    // a single sample cannot tell a real generator from a constant.
+    #[test]
+    fn every_minted_id_is_a_distinct_canonical_uuid_v4() {
+        const DRAWS: usize = 1000;
+
+        let ids: Vec<String> = (0..DRAWS).map(|_| new_dataset_id()).collect();
+
+        let distinct: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(distinct.len(), DRAWS, "ids must not repeat");
+
+        for id in &ids {
+            assert!(is_valid_dataset_id(id), "{id} must be a usable dataset id");
+            assert_eq!(id.len(), 36, "{id} must be 36 characters");
+            assert_eq!(
+                id.char_indices()
+                    .filter(|(_, c)| *c == '-')
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>(),
+                vec![8, 13, 18, 23],
+                "{id} must be hyphenated 8-4-4-4-12"
+            );
+            assert_eq!(*id, id.to_lowercase(), "{id} must be lowercase");
+            assert_eq!(
+                id.chars().nth(14),
+                Some('4'),
+                "{id} must carry version nibble 4"
+            );
+            assert!(
+                matches!(id.chars().nth(19), Some('8' | '9' | 'a' | 'b')),
+                "{id} must carry variant bits 10"
+            );
+        }
+    }
+
+    // AD-3's whole claim, which every sequential test above would satisfy with no lock
+    // at all — or with the read and the write split into separate acquisitions, which
+    // is precisely what the story forbids. Split them and the entry count drops as
+    // creates overwrite each other's appends. Asserted on final state only, never on
+    // timing, so it cannot flake.
+    #[test]
+    fn parallel_creates_all_survive_the_single_writer_lock() {
+        const CREATES: usize = 8;
+        let root = bootstrapped_root();
+
+        let created: Vec<Dataset> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..CREATES)
+                .map(|_| scope.spawn(|| create_dataset_at(root.path()).expect("create succeeds")))
+                .collect();
+
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("thread did not panic"))
+                .collect()
+        });
+
+        let ids: std::collections::HashSet<&str> =
+            created.iter().map(|entry| entry.id.as_str()).collect();
+        assert_eq!(ids.len(), CREATES, "every create must mint its own id");
+
+        let labels: std::collections::HashSet<&str> =
+            created.iter().map(|entry| entry.label.as_str()).collect();
+        assert_eq!(
+            labels.len(),
+            CREATES,
+            "two creates that both read the same registry would share a label"
+        );
+
+        let entries = recorded(root.path());
+        assert_eq!(
+            entries.len(),
+            CREATES + 1,
+            "Default plus every create must be recorded; a lost append means the \
+             read-modify-write was not atomic"
+        );
+        for entry in &created {
+            assert!(
+                entries.contains(entry),
+                "{} is missing from the registry",
+                entry.id
+            );
+        }
     }
 }

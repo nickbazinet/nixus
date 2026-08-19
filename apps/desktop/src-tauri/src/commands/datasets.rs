@@ -105,6 +105,16 @@ pub fn list_datasets(app: AppHandle) -> Result<Vec<Dataset>, AppError> {
     datasets::load_registry(&app)
 }
 
+/// Adds an empty local profile to the registry, and nothing more: creating and
+/// opening are separate user actions, so this neither selects nor activates the
+/// result. Resolving the *global* root rather than the active dataset's directory
+/// is deliberate — a new dataset is a sibling of every existing one, and
+/// `active_dataset_dir` would additionally take `DbState`'s lock for no reason.
+#[tauri::command(rename_all = "snake_case")]
+pub fn create_dataset(app: AppHandle) -> Result<Dataset, AppError> {
+    datasets::create_dataset_at(&datasets::global_root(&app)?)
+}
+
 /// Whether the launch-time picker has been passed during this run (AD-14).
 ///
 /// Deliberately a standalone flag *alongside* `ActiveDataset` rather than derived
