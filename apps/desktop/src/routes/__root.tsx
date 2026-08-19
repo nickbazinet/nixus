@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import {
   createRootRoute,
   Outlet,
+  redirect,
   retainSearchParams,
   useRouterState,
 } from "@tanstack/react-router";
@@ -15,9 +16,12 @@ import { AccountPromptDialog } from "../components/auth/AccountPromptDialog";
 import { ValuesVisibilityProvider } from "../contexts/ValuesVisibilityContext";
 import { SURFACE_HEADING_ID } from "../components/shared/PageHeader";
 import { normalizePeriodParam } from "../hooks/usePeriod";
+import { fetchPickerGateStatus } from "../hooks/useDatasets";
 import { useTranslation } from "react-i18next";
 import { focusRing } from "@nixus/shared";
 import { cn } from "@/lib/utils";
+
+const PICKER_PATH = "/picker";
 
 // The key must be OMITTED rather than set to undefined when absent: retainSearchParams restores a
 // param only `if (!(key in search))`, so returning `{ period: undefined }` looks present and the
@@ -29,6 +33,22 @@ export const Route = createRootRoute({
   },
   search: {
     middlewares: [retainSearchParams(["period"])],
+  },
+  // The gate lives here, not in `index.tsx`, because the root's beforeLoad runs ahead of every
+  // child route's — including `/`'s own onboarding check — so the picker comes first without any
+  // surface needing to know it exists.
+  beforeLoad: async ({ location }) => {
+    // Already on the picker: nothing to redirect to, and re-asking would put an IPC round-trip on
+    // every navigation the picker itself makes.
+    if (location.pathname === PICKER_PATH) return;
+
+    // A failed or unstubbed call degrades to "no redirect", exactly like `fetchOnboardingStatus`'s
+    // fallback. This is also what keeps every pre-existing Playwright spec green: none of them mock
+    // `check_picker_gate`, the promise rejects, and the app renders as it always did.
+    const gate = await fetchPickerGateStatus().catch(() => null);
+    if (gate?.needs_picker) {
+      throw redirect({ to: PICKER_PATH });
+    }
   },
   component: RootLayout,
 });
@@ -72,8 +92,19 @@ function RootLayout() {
 
   useEffect(trackInteractionModality, []);
 
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isAiChat = pathname.startsWith("/ai/");
+  // The picker runs before the user has chosen which dataset the shell would even be showing, so
+  // every shell affordance is omitted rather than rendered disabled.
+  const isPicker = pathname === PICKER_PATH;
+  const isFullBleed = isAiChat || isPicker;
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Inert on the picker, where FloatingChatBar is not mounted. Without this the shortcut would
+      // still flip `chatOpen` in this persistent state with nothing there to consume it, and the
+      // first surface the user reached afterwards would open with the chat bar already up.
+      if (isPicker) return;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setChatOpen((prev) => !prev);
@@ -81,10 +112,7 @@ function RootLayout() {
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
-
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const isAiChat = pathname.startsWith("/ai/");
+  }, [isPicker]);
 
   // Route change moves focus to the new surface's <h1>. Deliberately skipped on first paint —
   // stealing focus at launch would announce the heading before the user has asked for anything.
@@ -119,28 +147,34 @@ function RootLayout() {
         >
           {t("shell.skipToContent")}
         </a>
-        <AppSidebar />
+        {!isPicker && <AppSidebar />}
         <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar onSearchClick={() => setChatOpen(true)} />
-          <DestinationNav />
+          {!isPicker && (
+            <>
+              <TopBar onSearchClick={() => setChatOpen(true)} />
+              <DestinationNav />
+            </>
+          )}
           {/* The scroll container is the main column, never the centred measure below it —
            * scrolling the centred wrapper puts the scrollbar inside the content. */}
           <main
             id={MAIN_ID}
             tabIndex={-1}
             className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col overscroll-contain border-l border-rail-line bg-page",
-              isAiChat ? "overflow-hidden" : "overflow-y-auto"
+              "flex min-h-0 min-w-0 flex-1 flex-col overscroll-contain bg-page",
+              // The hairline is the rail's boundary, so it goes with the rail.
+              !isPicker && "border-l border-rail-line",
+              isFullBleed ? "overflow-hidden" : "overflow-y-auto"
             )}
           >
-            {/* Same centred measure on every surface, except AI chat: its two-pane layout
-             * (history rail + conversation) needs the full main-column width to lay out its
-             * own panels edge-to-edge, and it scrolls internally, so it gets no page padding
-             * or max-width of its own. */}
+            {/* Same centred measure on every surface, except AI chat and the picker: the chat's
+             * two-pane layout (history rail + conversation) needs the full main-column width to lay
+             * out its own panels edge-to-edge, and the picker is chrome-free and centres itself.
+             * Both scroll internally, so neither gets page padding or a max-width of its own. */}
             <div
               className={cn(
                 "flex w-full flex-col",
-                isAiChat
+                isFullBleed
                   ? "min-h-0 flex-1 overflow-hidden"
                   : "mx-auto max-w-[1280px] px-page-x py-page-y"
               )}
@@ -149,10 +183,14 @@ function RootLayout() {
             </div>
           </main>
         </div>
-        <FloatingChatBar open={chatOpen} onClose={handleClose} />
-        <UpdateChecker />
+        {!isPicker && <FloatingChatBar open={chatOpen} onClose={handleClose} />}
+        {/* UpdateChecker is not the non-visual listener it looks like: it opens a modal Dialog when
+          * an update is waiting, and Base UI's focus trap would aria-hide the picker underneath it —
+          * the same failure AccountPromptDialog is skipped here to avoid. RecurringApplyListener
+          * genuinely renders nothing, so it stays mounted. */}
+        {!isPicker && <UpdateChecker />}
         <RecurringApplyListener />
-        <AccountPromptDialog />
+        {!isPicker && <AccountPromptDialog />}
       </div>
     </ValuesVisibilityProvider>
   );

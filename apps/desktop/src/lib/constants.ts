@@ -27,6 +27,7 @@ export const queryKeys = {
   netWorthChange: (period: string) =>
     ["net-worth-change", period] as const,
   onboardingStatus: ["onboarding-status"] as const,
+  datasets: ["datasets"] as const,
   incomeSources: ["income-sources"] as const,
   incomeEntries: (sourceId?: number) =>
     sourceId !== undefined

@@ -6,6 +6,7 @@
 //! leaving the previously active dataset (or "none") provably unchanged with no
 //! rollback logic to get wrong.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use rusqlite::Connection;
@@ -95,6 +96,54 @@ fn find_registered(entries: Vec<Dataset>, dataset_id: &str) -> Result<Dataset, A
 #[tauri::command(rename_all = "snake_case")]
 pub fn select_dataset(app: AppHandle, dataset_id: String) -> Result<(), AppError> {
     select_dataset_now(&app, &dataset_id)
+}
+
+/// A one-line wrapper on purpose: reading the registry is `datasets.rs`'s job
+/// (AD-3), so this adds an IPC entry point and nothing else.
+#[tauri::command(rename_all = "snake_case")]
+pub fn list_datasets(app: AppHandle) -> Result<Vec<Dataset>, AppError> {
+    datasets::load_registry(&app)
+}
+
+/// Whether the launch-time picker has been passed during this run (AD-14).
+///
+/// Deliberately a standalone flag *alongside* `ActiveDataset` rather than derived
+/// from it: `lib.rs`'s `.setup()` auto-selects Default before any UI exists, so
+/// `ActiveDataset.id` is already `Some` on the first frame and can never answer
+/// "has the user chosen yet". Keeping the two separate is what lets the backend go
+/// on auto-selecting Default — and the AI client and recurring-apply code go on
+/// assuming a live connection right after `.setup()` — while the frontend is still
+/// shown the picker first.
+///
+/// In-memory only: a relaunch is a new run and must show the picker again.
+static PICKER_PASSED: AtomicBool = AtomicBool::new(false);
+
+/// Latches the picker as passed for the remainder of this run.
+// No caller yet: Story 33.5 turns the picker's rows into working buttons and calls
+// this from the one that is chosen. Built here so the flag's write half lands with
+// its read half instead of the pair being split across two stories.
+#[allow(dead_code)]
+pub(crate) fn mark_picker_passed() {
+    PICKER_PASSED.store(true, Ordering::SeqCst);
+}
+
+fn picker_passed() -> bool {
+    PICKER_PASSED.load(Ordering::SeqCst)
+}
+
+/// Same `{ needs_X: bool }` shape as `OnboardingStatus`'s primary field — one boolean the frontend's
+/// root `beforeLoad` reads to decide whether to redirect. A wire contract, so the key spelling is
+/// asserted in the tests below rather than left to the derive.
+#[derive(Serialize)]
+pub struct PickerGateStatus {
+    pub needs_picker: bool,
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn check_picker_gate() -> PickerGateStatus {
+    PickerGateStatus {
+        needs_picker: !picker_passed(),
+    }
 }
 
 #[cfg(test)]
@@ -244,5 +293,35 @@ mod tests {
         .expect("payload serializes");
 
         assert_eq!(json, r#"{"dataset_id":"cloud-1","kind":"cloud-linked"}"#);
+    }
+
+    // Same reasoning as the payload above: `needs_picker` is the key the frontend's
+    // root `beforeLoad` reads, so it is asserted as raw JSON.
+    #[test]
+    fn the_gate_status_payload_carries_snake_case_needs_picker() {
+        let json = serde_json::to_string(&PickerGateStatus { needs_picker: true })
+            .expect("payload serializes");
+
+        assert_eq!(json, r#"{"needs_picker":true}"#);
+    }
+
+    // Deliberately ONE test rather than three: `PICKER_PASSED` is a process-global
+    // static and cargo runs a binary's tests in parallel threads, so a second test
+    // touching it would make both order-dependent. This one owns the flag's whole
+    // lifecycle instead.
+    #[test]
+    fn the_gate_asks_for_the_picker_until_it_is_marked_passed() {
+        assert!(
+            check_picker_gate().needs_picker,
+            "a fresh run has not passed the picker yet"
+        );
+
+        mark_picker_passed();
+        assert!(!check_picker_gate().needs_picker);
+
+        // Latching, not toggling: Story 33.5 calls this from a row click, and a
+        // second click must not put the gate back up mid-run.
+        mark_picker_passed();
+        assert!(!check_picker_gate().needs_picker);
     }
 }

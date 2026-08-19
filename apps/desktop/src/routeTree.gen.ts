@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as PickerRouteImport } from './routes/picker'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as ImportRouteImport } from './routes/import'
@@ -49,6 +50,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PickerRoute = PickerRouteImport.update({
+  id: '/picker',
+  path: '/picker',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OnboardingRoute = OnboardingRouteImport.update({
@@ -206,6 +212,7 @@ export interface FileRoutesByFullPath {
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
+  '/picker': typeof PickerRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRouteWithChildren
   '/ai/$agentId': typeof AiAgentIdRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
+  '/picker': typeof PickerRoute
   '/profile': typeof ProfileRoute
   '/ai/$agentId': typeof AiAgentIdRoute
   '/car/garage': typeof CarGarageRoute
@@ -270,6 +278,7 @@ export interface FileRoutesById {
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
+  '/picker': typeof PickerRoute
   '/profile': typeof ProfileRoute
   '/settings': typeof SettingsRouteWithChildren
   '/ai/$agentId': typeof AiAgentIdRoute
@@ -305,6 +314,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/maintenance'
     | '/onboarding'
+    | '/picker'
     | '/profile'
     | '/settings'
     | '/ai/$agentId'
@@ -336,6 +346,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/maintenance'
     | '/onboarding'
+    | '/picker'
     | '/profile'
     | '/ai/$agentId'
     | '/car/garage'
@@ -368,6 +379,7 @@ export interface FileRouteTypes {
     | '/import'
     | '/maintenance'
     | '/onboarding'
+    | '/picker'
     | '/profile'
     | '/settings'
     | '/ai/$agentId'
@@ -402,6 +414,7 @@ export interface RootRouteChildren {
   ImportRoute: typeof ImportRoute
   MaintenanceRoute: typeof MaintenanceRoute
   OnboardingRoute: typeof OnboardingRoute
+  PickerRoute: typeof PickerRoute
   ProfileRoute: typeof ProfileRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   InsightsProjectionRoute: typeof InsightsProjectionRoute
@@ -436,6 +449,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/picker': {
+      id: '/picker'
+      path: '/picker'
+      fullPath: '/picker'
+      preLoaderRoute: typeof PickerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/onboarding': {
@@ -690,6 +710,7 @@ const rootRouteChildren: RootRouteChildren = {
   ImportRoute: ImportRoute,
   MaintenanceRoute: MaintenanceRoute,
   OnboardingRoute: OnboardingRoute,
+  PickerRoute: PickerRoute,
   ProfileRoute: ProfileRoute,
   SettingsRoute: SettingsRouteWithChildren,
   InsightsProjectionRoute: InsightsProjectionRoute,

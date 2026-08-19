@@ -19,8 +19,9 @@ const MAIN_ID = "surface-main";
 
 /**
  * Launch-time invitation to create an account, shown on every launch until one exists. Propless and
- * self-gating, mirroring UpdateChecker: the shell mounts it unconditionally and the component
- * decides whether it has anything to show.
+ * self-gating, mirroring UpdateChecker: the shell mounts it on every surface except `/picker`, whose
+ * own launch-time gate must not be covered by a second modal, and the component decides for itself
+ * whether it has anything to show on the rest.
  *
  * Dismissal lives in component state and nowhere else — no flag is persisted, so a relaunch shows
  * the prompt again while the user still has no account. That cadence is a fixed architectural
@@ -45,13 +46,16 @@ export function AccountPromptDialog() {
   // unrelated getByRole/getByTestId query in the suite rather than failing one assertion.
   //
   // `/onboarding` is suppressed for the same reason: aria-hiding first-run onboarding would make an
-  // existing feature unreachable. Pathname rather than useOnboardingStatus() — that hook adds a
-  // second async dependency whose error fallback is `needs_onboarding: false`.
+  // existing feature unreachable. `/picker` is the same shape of screen — a launch-time gate that
+  // must stay operable — and the shell also skips mounting this dialog there, so the guard is the
+  // belt to that braces. Pathname rather than useOnboardingStatus() — that hook adds a second async
+  // dependency whose error fallback is `needs_onboarding: false`.
   if (
     !session.isSuccess ||
     session.data?.status !== "LoggedOut" ||
     dismissed ||
-    pathname === "/onboarding"
+    pathname === "/onboarding" ||
+    pathname === "/picker"
   ) {
     return null;
   }
