@@ -93,16 +93,22 @@ pub fn run() {
 
             info!("nkbaz-finance started, database initialized");
 
-            // Initialize AI client synchronously using the active dataset's connection
-            let ai_state = {
+            // Initialize AI client synchronously using the active dataset's config.
+            // The snapshot is taken in its own scope so the database lock is
+            // released before the client's async setup runs below.
+            let ai_config = {
                 let state = app_handle.state::<DbState>();
                 let active = state.0.lock().expect("database lock poisoned");
                 let conn = active
                     .conn
                     .as_ref()
                     .expect("the default dataset was just selected");
-                tauri::async_runtime::block_on(ai::init_ai_client(conn))
+                ai::read_ai_config(conn)
             };
+            let ai_state = tauri::async_runtime::block_on(ai::init_ai_client(
+                &ai_config,
+                datasets::DEFAULT_DATASET_ID,
+            ));
             info!("AI client initialized");
 
             app.manage(Mutex::new(ai_state));

@@ -14,6 +14,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tracing::info;
 
+use crate::ai::{self, AiState};
 use crate::datasets;
 use crate::db::{init_db, ActiveDataset, DbState};
 use crate::error::AppError;
@@ -94,8 +95,44 @@ fn find_registered(entries: Vec<Dataset>, dataset_id: &str) -> Result<Dataset, A
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn select_dataset(app: AppHandle, dataset_id: String) -> Result<(), AppError> {
-    select_dataset_now(&app, &dataset_id)
+pub async fn select_dataset(app: AppHandle, dataset_id: String) -> Result<(), AppError> {
+    select_dataset_now(&app, &dataset_id)?;
+    refresh_ai_state(&app, &dataset_id).await;
+    Ok(())
+}
+
+/// Rebuilds `AiState` from the newly selected dataset, so an AI client built
+/// from the previous profile's keyring service cannot survive the switch and
+/// answer with the wrong profile's key.
+///
+/// Every path *replaces* the state — there is no early return that leaves the
+/// old provider in place, because a stale provider is the exact leak this
+/// exists to close. A poisoned guard is recovered with `into_inner()` (the
+/// policy `credentials.rs` already uses) rather than bailing out, and an
+/// unselected connection resolves to no provider.
+///
+/// The config read and the state write are separate short critical sections, so
+/// neither lock is held across the client's async setup.
+async fn refresh_ai_state(app: &AppHandle, dataset_id: &str) {
+    let config = {
+        let state = app.state::<DbState>();
+        let active = state
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        active.conn.as_ref().map(ai::read_ai_config)
+    };
+
+    let rebuilt = match config {
+        Some(config) => ai::init_ai_client(&config, dataset_id).await,
+        None => AiState { provider: None },
+    };
+
+    let ai_state = app.state::<Mutex<AiState>>();
+    let mut ai_state = ai_state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *ai_state = rebuilt;
 }
 
 /// A one-line wrapper on purpose: reading the registry is `datasets.rs`'s job

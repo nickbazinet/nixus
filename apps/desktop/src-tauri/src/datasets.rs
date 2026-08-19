@@ -63,6 +63,18 @@ pub(crate) fn active_dataset_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
     resolve_active_dir(&root, active.id.as_deref())
 }
 
+/// Id of the dataset active for this run, for callers that need to scope
+/// dataset-owned side stores (the AI keyring service, Story 34.2) rather than a
+/// path. Same lock discipline as `active_dataset_dir` above: never call while
+/// holding `DbState`'s guard.
+pub(crate) fn active_dataset_id(db: &DbState) -> Result<String, AppError> {
+    let active = db.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    active.id.clone().ok_or(AppError::NotConfigured)
+}
+
 /// Default lives at the root itself; every other dataset under `datasets/<id>/`.
 fn dataset_dir_from_root(root: &Path, id: &str) -> PathBuf {
     if id == DEFAULT_DATASET_ID {
