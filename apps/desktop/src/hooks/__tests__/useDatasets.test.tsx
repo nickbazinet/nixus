@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createDatasetMutationOptions,
   selectDatasetMutationOptions,
   useSelectDataset,
 } from "@/hooks/useDatasets";
@@ -112,6 +113,48 @@ describe("selectDatasetMutationOptions", () => {
     // onSuccess never runs, so the cache is left alone too.
     expect(invokeMock).toHaveBeenCalledTimes(2);
     expect(queryClient.getQueryCache().getAll()).not.toHaveLength(0);
+  });
+});
+
+const CREATED = {
+  id: "0f9a1d3c-2b4e-4a6f-8c1d-5e7a9b0c2d4e",
+  label: "Local Profile 1",
+  kind: "local",
+  cognito_sub: null,
+  linked_from: null,
+  is_default: false,
+  created_at: "2026-08-19T00:00:00+00:00",
+} as const;
+
+/** Same seam as `runSelection`: the cache decision is the contract, not markup. */
+function runCreate(queryClient: QueryClient) {
+  return new MutationObserver(
+    queryClient,
+    createDatasetMutationOptions(queryClient),
+  ).mutate();
+}
+
+describe("createDatasetMutationOptions", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(CREATED);
+  });
+
+  it("invalidates the datasets list while every other cached entry survives", async () => {
+    const queryClient = newClient();
+    seedPreviousDataset(queryClient);
+
+    await runCreate(queryClient);
+
+    expect(invokeMock.mock.calls).toEqual([["create_dataset"]]);
+    expect(queryClient.getQueryState(["datasets"])?.isInvalidated).toBe(true);
+
+    // The half that fails under `clear()`, and the reason this test exists: creating adds a row and
+    // leaves the active dataset alone, so unrelated cached data must not be dropped. E2E cannot see
+    // this — under `clear()` the list query just refetches and the new row appears anyway.
+    expect(queryClient.getQueryData(["budget", "summary"])).toEqual({
+      total_spent_cents: 999,
+    });
   });
 });
 

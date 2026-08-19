@@ -65,3 +65,28 @@ export function selectDatasetMutationOptions(queryClient: QueryClient) {
 export function useSelectDataset() {
   return useMutation(selectDatasetMutationOptions(useQueryClient()));
 }
+
+/**
+ * `invalidateQueries`, never `clear()` — the deliberate contrast with
+ * `selectDatasetMutationOptions` above. Creating appends a row to one list and leaves the active
+ * dataset exactly where it was, so every other cached entry still belongs to the dataset it was
+ * read from; clearing would blank the app for nothing. Selecting is the case where all of it
+ * really is stale.
+ *
+ * Split out for the same reason its sibling is: the two are indistinguishable at the E2E surface —
+ * under `clear()` the mounted list query simply refetches and the new row still appears — so the
+ * choice is only assertable against a real QueryClient.
+ *
+ * Navigation and error toasting stay with the caller, matching `useSelectDataset`.
+ */
+export function createDatasetMutationOptions(queryClient: QueryClient) {
+  return {
+    mutationFn: () => invoke<Dataset>("create_dataset"),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.datasets }),
+  };
+}
+
+export function useCreateDataset() {
+  return useMutation(createDatasetMutationOptions(useQueryClient()));
+}
