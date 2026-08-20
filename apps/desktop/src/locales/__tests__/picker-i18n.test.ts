@@ -11,17 +11,24 @@ const fr = frLocale as Record<string, string>;
 const DATASETS_PREFIX = "datasets.";
 
 /**
- * DatasetPicker.tsx is the only consumer of these keys, and t() on a missing key renders the raw key
- * string rather than failing — so a typo or an en-only addition ships silently.
+ * DatasetPicker.tsx and ProfileMenu.tsx are the consumers of these keys (plus routes/profile.tsx for
+ * the sign-in label that replaced the retired `profile.signIn`), and t() on a missing key renders
+ * the raw key string rather than failing — so a typo or an en-only addition ships silently.
  */
 const REQUIRED_KEYS = [
   "datasets.title",
   "datasets.subtitle",
   "datasets.loginWithCloud",
   "datasets.newLocalProfile",
+  "datasets.switchProfile",
   "datasets.loadError",
   "datasets.selectFailed",
   "datasets.createFailed",
+  "datasets.migrateToCloud",
+  "datasets.signInWithCloud",
+  "datasets.signedIn",
+  "datasets.signedOut",
+  "datasets.cloudFailed",
 ] as const;
 
 function datasetsKeys(locale: Record<string, string>): string[] {
@@ -57,17 +64,33 @@ describe("datasets i18n", () => {
     expect(Object.keys(fr).filter((k) => k.startsWith("picker."))).toEqual([]);
   });
 
-  it("states the screen's question and what a profile means in both locales", () => {
+  it("greets the user and says what a profile means in both locales", () => {
     // The exact strings are the requirement, not a paraphrase: this is the first screen of every
-    // launch, and it has to say what the user is choosing between before it lists anything.
-    expect(en["datasets.title"]).toBe("Choose a profile");
-    expect(fr["datasets.title"]).toBe("Choisissez un profil");
+    // launch, so it greets first and then says what the user is choosing between.
+    expect(en["datasets.title"]).toBe("Welcome to Nixus");
+    expect(fr["datasets.title"]).toBe("Bienvenue dans Nixus");
     expect(en["datasets.subtitle"]).toBe(
-      "Each profile keeps its own data on this machine. Pick the one you want to work in.",
+      "Choose a profile to open. Each one keeps its own data on this machine, separate from the rest.",
     );
     expect(fr["datasets.subtitle"]).toBe(
-      "Chaque profil conserve ses propres données sur cet appareil. Choisissez celui dans lequel vous voulez travailler.",
+      "Choisissez un profil à ouvrir. Chacun conserve ses propres données sur cet appareil, séparément des autres.",
     );
+  });
+
+  it("still asks the screen's question now that the title is a greeting", () => {
+    // The instruction moved from the title into the subtitle; a greeting alone would leave the list
+    // below it unexplained.
+    expect(en["datasets.subtitle"]).toContain("Choose a profile");
+    expect(fr["datasets.subtitle"]).toContain("Choisissez un profil");
+  });
+
+  it("labels the header's way back to the picker in both locales", () => {
+    // The account trigger's only action while a local profile is open: it must never read as a
+    // cloud action, because a cloud sign-in would switch the profile out from under the user.
+    expect(en["datasets.switchProfile"]).toBe("Switch profile");
+    expect(fr["datasets.switchProfile"]).toBe("Changer de profil");
+    expect(en["datasets.switchProfile"]).not.toContain("Nixus Cloud");
+    expect(fr["datasets.switchProfile"]).not.toContain("Nixus Cloud");
   });
 
   it("names the local-first guarantee in both locales", () => {
@@ -110,6 +133,38 @@ describe("datasets i18n", () => {
       expect(en[key], `${key} leaks "dataset" into en copy`).not.toMatch(/dataset/i);
       expect(fr[key], `${key} leaks "dataset" into fr copy`).not.toMatch(/dataset/i);
     }
+  });
+
+  it("labels the account menu's cloud entry points with the brand term in both locales", () => {
+    // Story 35.3 makes the migrate label unconditional in a local profile, and Story 35.4 adds the
+    // signed-in/out badge. All four are brand-bearing copy, and the brand is never translated.
+    expect(en["datasets.migrateToCloud"]).toBe("Migrate to Nixus Cloud");
+    expect(fr["datasets.migrateToCloud"]).toBe("Migrer vers Nixus Cloud");
+    for (const key of [
+      "datasets.migrateToCloud",
+      "datasets.signInWithCloud",
+      "datasets.signedIn",
+      "datasets.signedOut",
+    ]) {
+      expect(en[key], `${key} lost the brand term in en.json`).toContain("Nixus Cloud");
+      expect(fr[key], `${key} lost the brand term in fr.json`).toContain("Nixus Cloud");
+    }
+  });
+
+  it("distinguishes migrating from signing in, and signed in from signed out", () => {
+    // The two menu actions run the same OAuth flow but produce different profiles, and the two badge
+    // states are the whole point of Story 35.4 — identical copy would make either pair unreadable.
+    expect(en["datasets.migrateToCloud"]).not.toBe(en["datasets.signInWithCloud"]);
+    expect(fr["datasets.migrateToCloud"]).not.toBe(fr["datasets.signInWithCloud"]);
+    expect(en["datasets.signedIn"]).not.toBe(en["datasets.signedOut"]);
+    expect(fr["datasets.signedIn"]).not.toBe(fr["datasets.signedOut"]);
+  });
+
+  it("retires profile.signIn now that the datasets namespace owns the cloud entry points", () => {
+    // Story 35.5's other half: the old label had exactly one caller left, and both it and this key
+    // go in the same change rather than leaving an orphan behind.
+    expect(en["profile.signIn"]).toBeUndefined();
+    expect(fr["profile.signIn"]).toBeUndefined();
   });
 
   it("keeps the picker's copy out of the auth.* namespace", () => {

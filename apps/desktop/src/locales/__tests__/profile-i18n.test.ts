@@ -8,7 +8,6 @@ const fr = frLocale as Record<string, string>;
 const PROFILE_PREFIX = "profile.";
 
 const REQUIRED_KEYS = [
-  "profile.signIn",
   "profile.accountMenu",
   "profile.loading",
   "profile.signedInAs",
@@ -66,7 +65,6 @@ const BRACKET_LABEL_KEYS = [
  * accessible name is invisible in review and in the UI, and only a screen-reader user pays for it.
  */
 const ARIA_LABEL_KEYS = [
-  "profile.signIn",
   "profile.accountMenu",
   "profile.loading",
   "profile.sessionExpiredAction",
@@ -150,15 +148,12 @@ describe("profile menu i18n", () => {
     }
   });
 
-  it("labels sign-in with the Nixus Cloud brand term in both locales (D14)", () => {
-    // D14 relabels this key so an account reads as the gateway to Nixus Cloud, before any
-    // networked feature exists. The exact string is the requirement, not a paraphrase.
-    expect(en["profile.signIn"]).toBe("Sign In with Nixus Cloud");
-    expect(fr["profile.signIn"]).toBe("Se connecter avec Nixus Cloud");
-  });
-
-  it("does not translate the Nixus Cloud brand term in fr.json (NFR8)", () => {
-    expect(fr["profile.signIn"]).toContain("Nixus Cloud");
+  it("retires profile.signIn from both locales (Story 35.5)", () => {
+    // The account menu's cloud entry point moved to the `datasets.*` namespace once Story 35.3 made
+    // it unconditionally "Migrate to Nixus Cloud" in a local profile. A survivor here is copy no
+    // component reads, and the declared-keys assertion above is what would drift with it.
+    expect(en["profile.signIn"]).toBeUndefined();
+    expect(fr["profile.signIn"]).toBeUndefined();
   });
 
   it.each(BRACKET_LABEL_KEYS)("gives %s a currency-free label in both locales", (key) => {
