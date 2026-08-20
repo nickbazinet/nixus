@@ -32,6 +32,14 @@ struct DatasetSwitchedPayload {
 /// which never has a Tauri-injected `State<T>` — selects the Default dataset
 /// through this same path instead of a privileged startup-only one.
 pub(crate) fn select_dataset_now(app: &AppHandle, dataset_id: &str) -> Result<(), AppError> {
+    // Re-selecting the open dataset must not emit `dataset:switched`, or the frontend
+    // would wipe the cache and this profile's own import draft for a change that never
+    // happened. Safe ahead of the registry read: an active id was validated when it was
+    // selected, and startup's id is still None, so the first selection of a run proceeds.
+    if is_already_active(&app.state::<DbState>().0, dataset_id)? {
+        return Ok(());
+    }
+
     let entry = find_registered(datasets::load_registry(app)?, dataset_id)?;
 
     let dir = datasets::dataset_dir(app, &entry.id)?;
@@ -52,6 +60,20 @@ pub(crate) fn select_dataset_now(app: &AppHandle, dataset_id: &str) -> Result<()
     );
 
     Ok(())
+}
+
+/// Whether `dataset_id` is the dataset already open, read under the same lock
+/// `swap_active` writes through. `None` is startup, which has nothing open yet and
+/// so is never a no-op.
+///
+/// Takes the bare `&Mutex<ActiveDataset>` for the same reason `swap_active` does:
+/// the decision is then testable without a Tauri app.
+fn is_already_active(lock: &Mutex<ActiveDataset>, dataset_id: &str) -> Result<bool, AppError> {
+    let active = lock.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    Ok(active.id.as_deref() == Some(dataset_id))
 }
 
 /// The swap itself: one lock acquisition, one whole-struct assignment, so `id`
@@ -297,6 +319,30 @@ mod tests {
         assert_eq!(
             tag_of(active.conn.as_ref().expect("still connected")),
             "tag_previous"
+        );
+    }
+
+    #[test]
+    fn only_a_different_id_than_the_open_one_is_a_switch() {
+        let selected = Mutex::new(active_tagged("work"));
+
+        assert!(
+            is_already_active(&selected, "work").expect("lock is not poisoned"),
+            "re-selecting the open dataset must be a no-op, not a re-emitting switch"
+        );
+        assert!(
+            !is_already_active(&selected, "home").expect("lock is not poisoned"),
+            "a different dataset must still switch"
+        );
+
+        let unselected = Mutex::new(ActiveDataset {
+            id: None,
+            conn: None,
+        });
+
+        assert!(
+            !is_already_active(&unselected, "default").expect("lock is not poisoned"),
+            "startup has nothing open, so its first selection is always a switch"
         );
     }
 
