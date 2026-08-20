@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
+import { clearProfileScopedState } from "@/lib/datasetSwitch";
 
 /** One entry in the Rust-side registry, snake_case straight off the wire. */
 export interface Dataset {
@@ -43,13 +44,16 @@ export function useDatasets() {
  * only this path may mark the picker passed. Latching second is what leaves the gate up (and the
  * user on the picker) when the open fails, instead of stranding them in an app pointed at nothing.
  *
- * `clear()`, never `invalidateQueries()`: every cached entry belongs to the *previous* dataset, and
- * invalidation would keep serving it while refetching — a cross-dataset leak, not a stale render.
+ * `clearProfileScopedState`, never a bare `clear()`: every cached entry belongs to the *previous*
+ * dataset, and invalidation would keep serving it while refetching — a cross-dataset leak, not a
+ * stale render. Sweeping synchronously here, rather than relying on the `dataset:switched` listener
+ * alone, is what guarantees the previous profile's `localStorage` is gone before `mutateAsync`
+ * resolves and the caller navigates. The listener still covers switches the picker never initiated.
  *
  * Navigation and error toasting stay with the caller, matching `useCompleteOnboarding`.
  *
- * Split out of the hook so the ordering and the clear are unit-testable against a real QueryClient
- * without rendering a component — the picker unmounts on navigation, which makes the clear
+ * Split out of the hook so the ordering and the sweep are unit-testable against a real QueryClient
+ * without rendering a component — the picker unmounts on navigation, which makes the sweep
  * unobservable from an E2E test.
  */
 export function selectDatasetMutationOptions(queryClient: QueryClient) {
@@ -58,7 +62,7 @@ export function selectDatasetMutationOptions(queryClient: QueryClient) {
       await invoke<void>("select_dataset", { dataset_id: datasetId });
       await invoke<void>("mark_picker_passed");
     },
-    onSuccess: () => queryClient.clear(),
+    onSuccess: () => clearProfileScopedState(queryClient),
   };
 }
 

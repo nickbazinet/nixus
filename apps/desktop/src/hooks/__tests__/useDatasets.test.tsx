@@ -11,6 +11,28 @@ import {
   selectDatasetMutationOptions,
   useSelectDataset,
 } from "@/hooks/useDatasets";
+import { PROFILE_SCOPED_STORAGE_KEYS } from "@/lib/datasetSwitch";
+import { installLocalStorageMock } from "@/test/localStorageMock";
+
+installLocalStorageMock();
+
+const GLOBAL_PREFERENCE_KEYS = [
+  "theme",
+  "i18nextLng",
+  "rail-collapsed",
+  "values-hidden",
+  "nixus:last_used_agent_id",
+];
+
+function seedPreviousProfileStorage() {
+  localStorage.clear();
+  for (const key of PROFILE_SCOPED_STORAGE_KEYS) {
+    localStorage.setItem(key, "previous-profile");
+  }
+  for (const key of GLOBAL_PREFERENCE_KEYS) {
+    localStorage.setItem(key, "mine");
+  }
+}
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -194,6 +216,7 @@ describe("useSelectDataset", () => {
     act(() => root.unmount());
     container.remove();
     queryClient.clear();
+    localStorage.clear();
   });
 
   // The factory cases above all hand the options a client they built themselves, so they stay green
@@ -211,6 +234,24 @@ describe("useSelectDataset", () => {
     expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
     expect(queryClient.getQueryData(["datasets"])).toBeUndefined();
     expect(queryClient.getQueryData(["budget", "summary"])).toBeUndefined();
+  });
+
+  // Why the sweep is duplicated here and in the `dataset:switched` listener: the listener is
+  // asynchronous, and the caller navigates the moment `mutateAsync` resolves.
+  it("removes the previous profile's storage before mutateAsync resolves, and keeps global preferences", async () => {
+    seedPreviousProfileStorage();
+    render(<SelectHarness />);
+
+    await act(async () => {
+      await selectDataset.mutateAsync("work-1");
+    });
+
+    for (const key of PROFILE_SCOPED_STORAGE_KEYS) {
+      expect(localStorage.getItem(key)).toBeNull();
+    }
+    for (const key of GLOBAL_PREFERENCE_KEYS) {
+      expect(localStorage.getItem(key)).toBe("mine");
+    }
   });
 
   it("issues the two invokes in order through the hook as well", async () => {
