@@ -4,9 +4,10 @@ import { useTranslation } from "react-i18next";
 import { ArrowRight, Check } from "lucide-react";
 import { Button, Card, CardContent, Meter, focusRing } from "@nixus/shared";
 import type { VehicleWithTasks } from "@/lib/types";
+import { CAR_ONBOARDING_DISMISSED_KEY } from "@/lib/datasetSwitch";
 import { cn } from "@/lib/utils";
 
-const DISMISS_STORAGE_KEY = "car.onboarding.dismissed";
+const DISMISS_STORAGE_KEY = CAR_ONBOARDING_DISMISSED_KEY;
 
 interface CarOnboardingChecklistProps {
   vehicles: VehicleWithTasks[];

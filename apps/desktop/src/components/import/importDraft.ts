@@ -1,4 +1,5 @@
 import type { ParsedTransaction } from "@/hooks/useImport";
+import { IMPORT_DRAFT_STORAGE_KEY } from "@/lib/datasetSwitch";
 
 export interface ManualEntry {
   merchant: string;
@@ -23,7 +24,7 @@ interface StoredDraft extends Omit<ImportDraft, "fieldOverrides"> {
   fieldOverrides: Record<string, Partial<ParsedTransaction>>;
 }
 
-const STORAGE_KEY = "nixus:import-draft.v1";
+const STORAGE_KEY = IMPORT_DRAFT_STORAGE_KEY;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

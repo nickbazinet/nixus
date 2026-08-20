@@ -19,6 +19,7 @@ import {
   focusRing,
 } from "@nixus/shared";
 import { toast } from "sonner";
+import { FINANCE_ONBOARDING_DISMISSED_KEY } from "@/lib/datasetSwitch";
 import { cn } from "@/lib/utils";
 
 interface AppError {
@@ -34,7 +35,7 @@ function getErrorMessage(err: unknown): string {
   );
 }
 
-const ONBOARDING_DISMISS_KEY = "finance.onboarding.dismissed";
+const ONBOARDING_DISMISS_KEY = FINANCE_ONBOARDING_DISMISSED_KEY;
 
 export function DangerZone() {
   const { t } = useTranslation();

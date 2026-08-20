@@ -11,9 +11,10 @@ import {
   CardTitle,
   focusRing,
 } from "@nixus/shared";
+import { FINANCE_ONBOARDING_DISMISSED_KEY } from "@/lib/datasetSwitch";
 import { cn } from "@/lib/utils";
 
-const DISMISS_STORAGE_KEY = "finance.onboarding.dismissed";
+const DISMISS_STORAGE_KEY = FINANCE_ONBOARDING_DISMISSED_KEY;
 
 // Deliberately a plain Card, not an Alert: the `info` Alert variant carries a brand left border,
 // and the 3px brand accent is reserved for the one suggested-next-step card on this surface. Its
