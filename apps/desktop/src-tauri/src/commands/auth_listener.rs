@@ -15,7 +15,7 @@ use tauri::AppHandle;
 use tiny_http::{Header, Response, Server};
 use tracing::{info, warn};
 
-use crate::commands::auth::dispatch_deep_link_url;
+use crate::commands::auth::{discard_pending_attempt, dispatch_deep_link_url, CallbackChannel};
 use crate::error::AppError;
 
 // Fixed rather than OS-assigned: Cognito's app client callback URL allow-list
@@ -219,10 +219,21 @@ pub fn start(app: AppHandle, state: &LoopbackListener) -> Result<(), AppError> {
                 if let Err(e) = request.respond(response) {
                     warn!("Failed to respond to the local sign-in callback: {}", e);
                 }
-                dispatch_deep_link_url(&app, &url, "loopback");
+                dispatch_deep_link_url(&app, &url, CallbackChannel::Loopback);
             }
-            Ok(None) => info!("Local sign-in listener timed out with no callback"),
-            Err(_) => info!("Local sign-in listener interrupted"),
+            // No listener means no attempt can ever complete, so the verifier,
+            // CSRF state, and intent are discarded here rather than lingering
+            // past the 5-minute window. Safe for the superseding case only
+            // because `start_login` stores its new attempt *after* this thread
+            // has been unblocked and joined.
+            Ok(None) => {
+                info!("Local sign-in listener timed out or was superseded");
+                discard_pending_attempt(&app);
+            }
+            Err(_) => {
+                info!("Local sign-in listener interrupted");
+                discard_pending_attempt(&app);
+            }
         }
     });
 

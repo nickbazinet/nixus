@@ -59,7 +59,7 @@ use std::time::Duration;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
@@ -69,6 +69,26 @@ use crate::credentials;
 use crate::error::AppError;
 use crate::models::{AuthState, CognitoSession};
 
+/// What the completed sign-in should do with the tokens. Purely a local
+/// instruction: it never reaches Cognito, the authorize URL, the token
+/// exchange, or the keyring, so carrying it changes no OAuth mechanics.
+///
+/// Variants stay PascalCase behind an internal tag, matching `models::AuthState`:
+/// a caller discriminates on the literals "Login" | "Migrate", so `rename_all`
+/// must NOT be applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum LoginIntent {
+    Login,
+    Migrate {
+        // WHY the allowance: Story 35.3's migrate branch reads this id and does
+        // not exist yet; this story only carries the value across the
+        // round-trip. Remove the allow then.
+        #[allow(dead_code)]
+        source_dataset_id: String,
+    },
+}
+
 /// PKCE + CSRF material for one in-flight sign-in. Deliberately does **not**
 /// derive `Debug`: the verifier and state are secrets for the lifetime of the
 /// attempt, so there must be no way to format this into a log line at all.
@@ -76,6 +96,10 @@ pub struct PendingAttempt {
     code_verifier: String,
     code_challenge: String,
     state: String,
+    /// Shares the verifier's lifetime exactly: superseding, failure, completion,
+    /// and sign-out clear the whole attempt, so a stale intent can never outlive
+    /// the sign-in that requested it.
+    intent: LoginIntent,
 }
 
 /// Managed state holding the single in-flight sign-in attempt. Memory only —
@@ -104,7 +128,7 @@ struct TokenErrorResponse {
     error: Option<String>,
 }
 
-fn generate_pkce() -> PendingAttempt {
+fn generate_pkce(intent: LoginIntent) -> PendingAttempt {
     // 32 random bytes -> 43-char base64url-no-pad verifier, inside RFC 7636's
     // 43-128 range and using only PKCE's unreserved alphabet (no '=', '+', '/').
     // rand::random draws from ThreadRng, which implements CryptoRng.
@@ -118,6 +142,7 @@ fn generate_pkce() -> PendingAttempt {
         code_verifier,
         code_challenge,
         state,
+        intent,
     }
 }
 
@@ -258,6 +283,55 @@ fn is_auth_callback_url(url: &str) -> bool {
         || path.eq_ignore_ascii_case(LEGACY_DEEP_LINK_REDIRECT_URI)
 }
 
+/// How a callback reached this process. The *channel* decides whether the
+/// pending intent may be honored, never the URL's shape: a URL is attacker-
+/// supplied text, whereas the channel is chosen by our own call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallbackChannel {
+    /// The RFC 8252 loopback listener this process bound for one specific
+    /// attempt. The only channel tied to the browser round-trip it started.
+    Loopback,
+    /// OS-delivered `nixus://` deep link, app already running.
+    DeepLinkOpenUrl,
+    /// OS-delivered `nixus://` deep link that cold-started the app.
+    DeepLinkColdStart,
+    /// The `handle_auth_callback` IPC command, kept as a legacy seam.
+    LegacyCommand,
+}
+
+impl CallbackChannel {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Loopback => "loopback",
+            Self::DeepLinkOpenUrl => "on_open_url",
+            Self::DeepLinkColdStart => "cold_start",
+            Self::LegacyCommand => "command",
+        }
+    }
+
+    /// Only the loopback listener is bound by this process for the attempt that
+    /// opened the browser, so only it may honor a Migrate intent. Every other
+    /// channel is an externally triggered URL that must degrade to plain Login.
+    fn carries_intent(self) -> bool {
+        matches!(self, Self::Loopback)
+    }
+}
+
+fn resolve_callback_intent(channel: CallbackChannel, pending_intent: LoginIntent) -> LoginIntent {
+    if channel.carries_intent() {
+        pending_intent
+    } else {
+        LoginIntent::Login
+    }
+}
+
+/// Composes the single in-flight attempt `start_login` stores. A caller that
+/// predates the intent sends no argument at all, which Tauri delivers as `None`,
+/// so an absent intent must keep meaning plain Login.
+fn begin_attempt(intent: Option<LoginIntent>) -> PendingAttempt {
+    generate_pkce(intent.unwrap_or(LoginIntent::Login))
+}
+
 /// `try_state` rather than `state` so a wiring mistake surfaces as a handled
 /// error instead of a panic — a deep-link callback must never crash the app.
 fn pending_login_state(app: &AppHandle) -> Result<State<'_, PendingLogin>, AppError> {
@@ -266,6 +340,22 @@ fn pending_login_state(app: &AppHandle) -> Result<State<'_, PendingLogin>, AppEr
             message: "Sign-in is unavailable. Please restart nixus.".to_string(),
             recoverable: false,
         })
+}
+
+/// Drops the in-flight attempt, taking its verifier, CSRF state, and intent with
+/// it. Infallible on purpose: every caller is a cleanup path (sign-out, a failed
+/// launch, the listener's timeout) where there is nothing better to do than
+/// forget the attempt.
+pub(crate) fn discard_pending_attempt(app: &AppHandle) {
+    if let Ok(pending) = pending_login_state(app) {
+        discard_attempt_in(&pending.0);
+    }
+}
+
+fn discard_attempt_in(slot: &Mutex<Option<PendingAttempt>>) {
+    if let Ok(mut slot) = slot.lock() {
+        *slot = None;
+    }
 }
 
 fn lock_poisoned() -> AppError {
@@ -278,29 +368,32 @@ fn lock_poisoned() -> AppError {
 #[tauri::command(rename_all = "snake_case")]
 pub async fn start_login(
     app: AppHandle,
+    intent: Option<LoginIntent>,
     listener: State<'_, crate::commands::auth_listener::LoopbackListener>,
 ) -> Result<(), AppError> {
-    let attempt = generate_pkce();
+    let attempt = begin_attempt(intent);
     let authorize_url = build_authorize_url(&attempt.code_challenge, &attempt.state);
+
+    // ORDER IS LOAD-BEARING: the listener is started (and any previous one
+    // interrupted and joined) *before* the new attempt is stored. A superseded
+    // listener thread discards the pending attempt as it exits, so storing
+    // first would let the outgoing thread wipe the attempt this call just made.
+    // Must also be bound before the browser opens: Cognito redirects here as
+    // soon as the user finishes signing in, which can be faster than this
+    // function returning if the listener started after `open_url`.
+    crate::commands::auth_listener::start(app.clone(), &listener).map_err(|e| {
+        // A listener that never bound cannot complete any attempt, including one
+        // left over from an earlier click.
+        discard_pending_attempt(&app);
+        e
+    })?;
 
     {
         let pending = pending_login_state(&app)?;
         let mut slot = pending.0.lock().map_err(|_| lock_poisoned())?;
         // A second sign-in click supersedes the first: only the newest verifier
-        // can complete an exchange.
+        // and intent can complete an exchange.
         *slot = Some(attempt);
-    }
-
-    // Must be bound before the browser opens: Cognito redirects here as soon
-    // as the user finishes signing in, which can be faster than this function
-    // returning if the listener started after `open_url`.
-    if let Err(e) = crate::commands::auth_listener::start(app.clone(), &listener) {
-        if let Ok(pending) = pending_login_state(&app) {
-            if let Ok(mut slot) = pending.0.lock() {
-                *slot = None;
-            }
-        }
-        return Err(e);
     }
 
     info!("Opening the Cognito Hosted UI in the system browser");
@@ -308,11 +401,7 @@ pub async fn start_login(
         // The opener error is discarded on purpose: `Error::ForbiddenUrl`'s
         // Display embeds the URL, which carries the code_challenge and state.
         tracing::error!("Failed to open the system browser for sign-in");
-        if let Ok(pending) = pending_login_state(&app) {
-            if let Ok(mut slot) = pending.0.lock() {
-                *slot = None;
-            }
-        }
+        discard_pending_attempt(&app);
         return Err(AppError::Auth {
             message: "Could not open your browser to sign in. Please try again.".to_string(),
             recoverable: true,
@@ -395,8 +484,13 @@ async fn exchange_code_for_tokens(
 }
 
 /// The real callback logic, callable from both the Tauri command and Story
-/// 26.3's synchronous deep-link seam.
-pub async fn complete_auth_callback(app: &AppHandle, callback_url: &str) -> Result<(), AppError> {
+/// 26.3's synchronous deep-link seam. Returns the intent the completed attempt
+/// carried, which is the seam Stories 35.2 and 35.3 branch on.
+pub(crate) async fn complete_auth_callback(
+    app: &AppHandle,
+    callback_url: &str,
+    channel: CallbackChannel,
+) -> Result<LoginIntent, AppError> {
     // Taken, not borrowed: every return path below — success and failure — leaves
     // the slot empty, so a replayed callback URL cannot re-run the exchange.
     let pending = {
@@ -447,27 +541,38 @@ pub async fn complete_auth_callback(app: &AppHandle, callback_url: &str) -> Resu
     // Sole accessor: the keyring is only ever reached through credentials.rs.
     credentials::store_cognito_session(&session)?;
 
-    info!("Auth callback completed; session stored");
-    // Success only, and no payload: the frontend re-reads the session over IPC.
-    let _ = app.emit("auth:callback-received", ());
+    let intent = resolve_callback_intent(channel, pending.intent);
 
-    Ok(())
+    info!("Auth callback completed; session stored");
+    // The intent is the payload so Stories 35.2/35.3 can branch on it; the
+    // session itself is still re-read over IPC, and nothing keeps the intent
+    // past this emit. Listeners that ignore the payload stay unaffected.
+    let _ = app.emit("auth:callback-received", &intent);
+
+    Ok(intent)
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn handle_auth_callback(app: AppHandle, callback_url: String) -> Result<(), AppError> {
-    complete_auth_callback(&app, &callback_url).await
+    // `LegacyCommand` forces plain Login regardless of what URL is passed or
+    // which intent is pending, and the `()` return keeps this command's wire
+    // shape unchanged.
+    complete_auth_callback(&app, &callback_url, CallbackChannel::LegacyCommand)
+        .await
+        .map(|_| ())
 }
 
-/// Single entry point for every `nixus://` URL the OS hands to this app.
-pub fn dispatch_deep_link_url(app: &AppHandle, url: &str, source: &str) {
+/// Single entry point for every `nixus://` URL the OS hands to this app, plus
+/// the loopback listener's own callback. `channel` records which of those
+/// delivered it — the URL is never trusted to say so.
+pub(crate) fn dispatch_deep_link_url(app: &AppHandle, url: &str, channel: CallbackChannel) {
     let (path, query) = url.split_once('?').unwrap_or((url, ""));
     let has = |name: &str| query.split('&').any(|p| p.starts_with(&format!("{name}=")));
 
     // Query values carry the single-use authorization code and CSRF state — never log them.
     info!(
         "Deep link received (source={}): {} [code={}, state={}, error={}]",
-        source,
+        channel.label(),
         path,
         has("code"),
         has("state"),
@@ -485,9 +590,12 @@ pub fn dispatch_deep_link_url(app: &AppHandle, url: &str, source: &str) {
     let app = app.clone();
     let url = url.to_string();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = complete_auth_callback(&app, &url).await {
+        match complete_auth_callback(&app, &url, channel).await {
+            // Stories 35.2 and 35.3 branch on this intent; plumbing it is all
+            // Story 35.1 does with it.
+            Ok(_intent) => {}
             // AppError::Auth's message is user-presentable and secret-free by construction.
-            tracing::error!("Deep link auth callback failed: {}", e);
+            Err(e) => tracing::error!("Deep link auth callback failed: {}", e),
         }
     });
 }
@@ -805,11 +913,7 @@ pub fn sign_out(app: AppHandle) -> Result<(), AppError> {
     // memory; signing out must not leave it usable by a late callback. Reuses
     // Story 26.4's single store — there is no second one. Discarded BEFORE the
     // keyring call so a keyring fault cannot leave a usable verifier behind.
-    if let Ok(pending) = pending_login_state(&app) {
-        if let Ok(mut slot) = pending.0.lock() {
-            *slot = None;
-        }
-    }
+    discard_pending_attempt(&app);
 
     // Idempotent per Story 26.2: a missing entry is not an error.
     credentials::clear_cognito_session()?;
@@ -880,7 +984,7 @@ mod tests {
 
     #[test]
     fn verifier_is_43_chars_and_uses_only_the_pkce_alphabet() {
-        let attempt = generate_pkce();
+        let attempt = generate_pkce(LoginIntent::Login);
 
         assert_eq!(attempt.code_verifier.len(), 43);
         assert!(!attempt.code_verifier.contains('='));
@@ -890,7 +994,7 @@ mod tests {
 
     #[test]
     fn challenge_is_base64url_no_pad_sha256_of_the_verifier() {
-        let attempt = generate_pkce();
+        let attempt = generate_pkce(LoginIntent::Login);
 
         let expected = URL_SAFE_NO_PAD.encode(Sha256::digest(attempt.code_verifier.as_bytes()));
         assert_eq!(attempt.code_challenge, expected);
@@ -898,7 +1002,7 @@ mod tests {
 
     #[test]
     fn state_is_generated_independently_of_the_verifier() {
-        let attempt = generate_pkce();
+        let attempt = generate_pkce(LoginIntent::Login);
 
         assert_ne!(attempt.state, attempt.code_verifier);
         assert_eq!(attempt.state.len(), 43);
@@ -906,8 +1010,8 @@ mod tests {
 
     #[test]
     fn two_successive_generations_differ() {
-        let first = generate_pkce();
-        let second = generate_pkce();
+        let first = generate_pkce(LoginIntent::Login);
+        let second = generate_pkce(LoginIntent::Login);
 
         assert_ne!(first.code_verifier, second.code_verifier);
         assert_ne!(first.code_challenge, second.code_challenge);
@@ -1068,6 +1172,163 @@ mod tests {
         assert!(!is_auth_callback_url(COGNITO_SIGNOUT_URI));
         assert!(!is_auth_callback_url("nixus://something/else?code=a"));
         assert!(!is_auth_callback_url("http://127.0.0.1:52847/other-path"));
+    }
+
+    fn migrate_to(source_dataset_id: &str) -> LoginIntent {
+        LoginIntent::Migrate {
+            source_dataset_id: source_dataset_id.to_string(),
+        }
+    }
+
+    /// Drives the same composition `start_login` uses, so rewiring the start
+    /// intent cannot leave these tests passing against a stale copy of it.
+    /// Every caller that predates the intent invokes `start_login` with no
+    /// payload at all, which Tauri delivers as `None`.
+    #[test]
+    fn an_omitted_intent_means_plain_login() {
+        assert_eq!(begin_attempt(None).intent, LoginIntent::Login);
+    }
+
+    #[test]
+    fn a_requested_intent_is_carried_verbatim() {
+        assert_eq!(
+            begin_attempt(Some(LoginIntent::Login)).intent,
+            LoginIntent::Login
+        );
+        assert_eq!(
+            begin_attempt(Some(migrate_to("a1b2c3"))).intent,
+            migrate_to("a1b2c3")
+        );
+    }
+
+    /// The intent must not disturb the OAuth material generated alongside it.
+    #[test]
+    fn an_attempt_carrying_a_migrate_intent_still_generates_valid_pkce() {
+        let attempt = begin_attempt(Some(migrate_to("a1b2c3")));
+
+        assert_eq!(attempt.code_verifier.len(), 43);
+        assert_eq!(
+            attempt.code_challenge,
+            URL_SAFE_NO_PAD.encode(Sha256::digest(attempt.code_verifier.as_bytes()))
+        );
+        assert_ne!(attempt.state, attempt.code_verifier);
+    }
+
+    /// The tag and variant literals are a cross-language contract in both
+    /// directions now that the event payload carries an intent, so the wire
+    /// shape is asserted rather than inferred from the derives.
+    #[test]
+    fn the_intent_wire_shape_is_an_internally_tagged_kind() {
+        assert_eq!(
+            serde_json::from_str::<LoginIntent>(r#"{"kind":"Login"}"#).expect("Login parses"),
+            LoginIntent::Login
+        );
+        assert_eq!(
+            serde_json::from_str::<LoginIntent>(
+                r#"{"kind":"Migrate","source_dataset_id":"a1b2c3"}"#
+            )
+            .expect("Migrate parses"),
+            migrate_to("a1b2c3")
+        );
+        assert_eq!(
+            serde_json::from_str::<Option<LoginIntent>>("null").expect("null parses"),
+            None
+        );
+        assert_eq!(
+            serde_json::to_string(&LoginIntent::Login).expect("Login serializes"),
+            r#"{"kind":"Login"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&migrate_to("a1b2c3")).expect("Migrate serializes"),
+            r#"{"kind":"Migrate","source_dataset_id":"a1b2c3"}"#
+        );
+    }
+
+    #[test]
+    fn only_the_loopback_channel_carries_the_pending_intent() {
+        assert_eq!(
+            resolve_callback_intent(CallbackChannel::Loopback, migrate_to("a1b2c3")),
+            migrate_to("a1b2c3")
+        );
+        assert_eq!(
+            resolve_callback_intent(CallbackChannel::Loopback, LoginIntent::Login),
+            LoginIntent::Login
+        );
+    }
+
+    /// A URL is attacker-supplied text, so the channel decides: every channel
+    /// other than our own loopback listener degrades to plain Login even while
+    /// a Migrate attempt is pending, and even when handed a loopback-shaped URL.
+    #[test]
+    fn every_other_channel_always_resolves_to_login() {
+        for channel in [
+            CallbackChannel::DeepLinkOpenUrl,
+            CallbackChannel::DeepLinkColdStart,
+            CallbackChannel::LegacyCommand,
+        ] {
+            assert_eq!(
+                resolve_callback_intent(channel, migrate_to("a1b2c3")),
+                LoginIntent::Login,
+                "{} must resolve to Login",
+                channel.label()
+            );
+        }
+    }
+
+    #[test]
+    fn channel_labels_stay_stable_for_the_log_line() {
+        assert_eq!(CallbackChannel::Loopback.label(), "loopback");
+        assert_eq!(CallbackChannel::DeepLinkOpenUrl.label(), "on_open_url");
+        assert_eq!(CallbackChannel::DeepLinkColdStart.label(), "cold_start");
+        assert_eq!(CallbackChannel::LegacyCommand.label(), "command");
+    }
+
+    /// Mirrors `start_login`'s single-slot write followed by
+    /// `complete_auth_callback`'s `take`: a second sign-in click must leave only
+    /// the newest attempt, and completing it must leave no intent for a replay.
+    #[test]
+    fn a_superseding_attempt_replaces_the_previous_intent() {
+        let pending = PendingLogin::default();
+        let migrating = begin_attempt(Some(migrate_to("a1b2c3")));
+        let superseding = begin_attempt(None);
+        let superseding_verifier = superseding.code_verifier.clone();
+
+        *pending.0.lock().expect("slot is unpoisoned") = Some(migrating);
+        *pending.0.lock().expect("slot is unpoisoned") = Some(superseding);
+
+        let taken = pending
+            .0
+            .lock()
+            .expect("slot is unpoisoned")
+            .take()
+            .expect("an attempt is pending");
+
+        assert_eq!(taken.code_verifier, superseding_verifier);
+        assert_eq!(taken.intent, LoginIntent::Login);
+        assert!(pending.0.lock().expect("slot is unpoisoned").is_none());
+    }
+
+    /// The seam the loopback listener's timeout branch calls, exercised directly
+    /// so the 5-minute window does not have to elapse: nothing of the attempt —
+    /// verifier, CSRF state, or intent — may survive it.
+    #[test]
+    fn discarding_an_attempt_clears_the_whole_slot() {
+        let pending = PendingLogin::default();
+        *pending.0.lock().expect("slot is unpoisoned") =
+            Some(begin_attempt(Some(migrate_to("a1b2c3"))));
+
+        discard_attempt_in(&pending.0);
+
+        assert!(pending.0.lock().expect("slot is unpoisoned").is_none());
+    }
+
+    #[test]
+    fn discarding_an_empty_slot_is_a_no_op() {
+        let pending = PendingLogin::default();
+
+        discard_attempt_in(&pending.0);
+
+        assert!(pending.0.lock().expect("slot is unpoisoned").is_none());
     }
 
     #[test]

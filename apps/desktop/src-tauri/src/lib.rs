@@ -191,7 +191,7 @@ pub fn run() {
                         commands::auth::dispatch_deep_link_url(
                             &deep_link_handle,
                             url.as_str(),
-                            "on_open_url",
+                            commands::auth::CallbackChannel::DeepLinkOpenUrl,
                         );
                     }
                 });
@@ -202,7 +202,7 @@ pub fn run() {
                         commands::auth::dispatch_deep_link_url(
                             &cold_start_handle,
                             url.as_str(),
-                            "cold_start",
+                            commands::auth::CallbackChannel::DeepLinkColdStart,
                         );
                     }
                 }
