@@ -15,7 +15,7 @@ import {
   Skeleton,
   formatMoney,
 } from "@nixus/shared";
-import { ChevronDown, ChevronRight, PiggyBank, Wallet } from "lucide-react";
+import { ChevronDown, ChevronRight, PiggyBank, Sparkles, Wallet } from "lucide-react";
 import { DashboardMetricCard } from "@/components/dashboard/DashboardMetricCard";
 import { DashboardBudgetCategoryRow } from "@/components/dashboard/BudgetCategoryRow";
 import { NetWorthSparkline } from "@/components/dashboard/NetWorthSparkline";
@@ -111,7 +111,10 @@ function IndexPage() {
         actions={
           <>
             <Link to="/import">
-              <Button data-testid="import-statement-btn">{t("dashboard.importStatement")}</Button>
+              <Button data-testid="import-statement-btn">
+                <Sparkles data-icon="inline-start" aria-hidden="true" />
+                {t("dashboard.importStatement")}
+              </Button>
             </Link>
           </>
         }

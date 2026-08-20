@@ -395,6 +395,30 @@ test.describe("picker chrome", () => {
 });
 
 test.describe("picker contents", () => {
+  test("the welcome screen leads with the shared Nixus mark, not a blank box", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    const mark = page.getByTestId("picker-brand-mark");
+    await expect(mark).toBeVisible();
+
+    // A rendered `<svg>` in the slot is the whole contract: the canonical `NixusLogo`, not a
+    // coloured rectangle. Nothing about the geometry inside it is asserted — that lives in
+    // `packages/shared` and is free to change — only that the mark slot draws one.
+    await expect(mark.locator("svg")).toHaveCount(1);
+
+    // The footprint the placeholder already occupied, so swapping the mark in cannot quietly
+    // resize the header block.
+    const box = await mark.boundingBox();
+    if (box === null) {
+      throw new Error("The brand mark has no bounding box, so it is not laid out.");
+    }
+    expect(box.width).toBeCloseTo(40, 0);
+    expect(box.height).toBeCloseTo(40, 0);
+  });
+
   test("every registry entry is listed by its label", async ({ page }) => {
     await setupTauriMock(page, {
       needsPicker: true,

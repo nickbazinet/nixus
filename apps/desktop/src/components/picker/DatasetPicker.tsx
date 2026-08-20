@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   CardContent,
+  NixusLogo,
   Skeleton,
   focusRing,
 } from "@nixus/shared";
@@ -89,10 +90,9 @@ export function DatasetPicker() {
         * overflowing top unreachable once the list is taller than the window. */}
       <div className="m-auto flex w-full max-w-md flex-col">
         <div className="text-center">
-          <span
-            aria-hidden="true"
-            className="mx-auto mb-5 block size-10 rounded-xl bg-brand"
-          />
+          <span data-testid="picker-brand-mark" className="mx-auto mb-5 block size-10">
+            <NixusLogo className="size-full" />
+          </span>
           {/* The shell's skip link and its route-change focus move both target this id, and this
             * surface renders no PageHeader, so it owns the heading contract itself. */}
           <h1

@@ -385,6 +385,16 @@ test.describe("Dashboard — Story 5.1", () => {
     const importBtn = page.getByTestId("import-statement-btn");
     await expect(importBtn).toBeVisible();
     await expect(importBtn).toContainText("Import Statement");
+
+    // The Sparkles icon is decorative: hidden from assistive tech, leading the label.
+    const icon = importBtn.locator("svg.lucide-sparkles");
+    await expect(icon).toHaveCount(1);
+    await expect(icon).toHaveAttribute("aria-hidden", "true");
+    expect(
+      await importBtn.evaluate(
+        (el) => el.firstElementChild?.matches("svg.lucide-sparkles") ?? false
+      )
+    ).toBe(true);
   });
 
   test("Skeleton loading states appear before data renders", async ({
