@@ -112,19 +112,71 @@ pub fn load_openai_key(dataset_id: &str) -> Option<String> {
         .ok()
 }
 
+/// Every per-dataset AI-provider credential name, enumerated because a keyring
+/// cannot be listed at runtime: `clear_credentials` and `copy_ai_credentials`
+/// both have to know the whole set, and a name missing here is a key that
+/// silently survives a wipe or fails to follow a migration (AD-12).
+const AI_CREDENTIAL_NAMES: [&str; 4] = [
+    "aws_access_key_id",
+    "aws_secret_access_key",
+    "aws_region",
+    "openai_api_key",
+];
+
 pub fn clear_credentials(dataset_id: &str) {
     let service = ai_service(dataset_id);
-    let names = [
-        "aws_access_key_id",
-        "aws_secret_access_key",
-        "aws_region",
-        "openai_api_key",
-    ];
-    for name in &names {
+    for name in AI_CREDENTIAL_NAMES {
         if let Ok(entry) = Entry::new(&service, name) {
             let _ = entry.delete_credential();
         }
     }
+}
+
+/// Copies every AI-provider credential `source_dataset_id` holds into
+/// `destination_dataset_id`'s own service (Story 35.3's Migrate branch).
+///
+/// Lives here because `credentials.rs` is the sole caller of `keyring_core::Entry`
+/// — a copy loop anywhere else would be a second accessor. A credential the
+/// source simply does not have is skipped, which is the normal case for a profile
+/// that only ever configured one provider; every other failure — a read the
+/// keyring refused as much as a write it rejected — is fatal, because silently
+/// dropping a key would leave the migrated profile unable to reach the AI it was
+/// configured for with nothing anywhere reporting why.
+///
+/// Returns how many entries were copied, which is what the caller logs.
+pub fn copy_ai_credentials(
+    source_dataset_id: &str,
+    destination_dataset_id: &str,
+) -> Result<usize, AppError> {
+    let source = ai_service(source_dataset_id);
+    let destination = ai_service(destination_dataset_id);
+    let mut copied = 0;
+
+    for name in AI_CREDENTIAL_NAMES {
+        let value = match Entry::new(&source, name).and_then(|entry| entry.get_password()) {
+            Ok(value) => value,
+            // Genuinely absent: skipped, and the destination is left without it.
+            Err(Error::NoEntry) => continue,
+            // Anything else is the keyring declining to answer — a locked
+            // keychain, a denied access prompt, an unusable store. Skipping it
+            // would be indistinguishable from absence, which is how a migration
+            // reports success and still hands back an AI-keyless profile.
+            Err(e) => {
+                return Err(AppError::File {
+                    message: format!("Failed to read the AI credentials to copy: {}", e),
+                })
+            }
+        };
+
+        Entry::new(&destination, name)
+            .and_then(|entry| entry.set_password(&value))
+            .map_err(|e| AppError::File {
+                message: format!("Failed to copy AI credentials: {}", e),
+            })?;
+        copied += 1;
+    }
+
+    Ok(copied)
 }
 
 fn auth_entry(account: &str) -> Result<Entry, AppError> {
@@ -779,6 +831,98 @@ mod tests {
                 "us-east-1".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn copying_moves_every_configured_key_into_the_destinations_own_service() {
+        let _g = guard();
+        store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+
+        let copied = copy_ai_credentials(DATASET_A, DATASET_B).expect("copy succeeds");
+
+        assert_eq!(copied, AI_CREDENTIAL_NAMES.len());
+        assert_eq!(load_openai_key(DATASET_B), Some("sk-a".to_string()));
+        assert_eq!(
+            load_aws_credentials(DATASET_B),
+            Some((
+                "access-a".to_string(),
+                "secret-a".to_string(),
+                "ca-central-1".to_string()
+            ))
+        );
+        // The source is only ever read: a migration must leave it fully usable.
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+    }
+
+    #[test]
+    fn copying_a_partially_configured_profile_copies_only_what_exists() {
+        let _g = guard();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+
+        let copied = copy_ai_credentials(DATASET_A, DATASET_B).expect("copy succeeds");
+
+        assert_eq!(copied, 1);
+        assert_eq!(load_openai_key(DATASET_B), Some("sk-a".to_string()));
+        assert_eq!(load_aws_credentials(DATASET_B), None);
+    }
+
+    #[test]
+    fn copying_a_profile_with_no_credentials_at_all_is_not_a_failure() {
+        let _g = guard();
+
+        assert_eq!(
+            copy_ai_credentials(DATASET_A, DATASET_B).expect("copy succeeds"),
+            0
+        );
+        assert_eq!(load_openai_key(DATASET_B), None);
+    }
+
+    /// A keyring that refuses to answer is not a profile with nothing configured,
+    /// and a copy that could not tell them apart reported success while handing
+    /// back an AI-keyless migrated profile.
+    ///
+    /// The mock's injected error is consumed by the first call that hits it, which
+    /// is why the key with the error armed is the last name in the loop: the three
+    /// before it are genuinely absent, so this asserts the abort came from the
+    /// fault and not from the absence.
+    #[test]
+    fn a_keyring_that_refuses_a_read_aborts_the_copy_instead_of_skipping_it() {
+        let _g = guard();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+
+        let entry = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
+        let cred: &keyring_core::mock::Cred = entry
+            .as_any()
+            .downcast_ref()
+            .expect("the test store is the mock store");
+        cred.set_error(Error::Invalid(
+            "openai_api_key".to_string(),
+            "the keyring is locked".to_string(),
+        ));
+
+        let error = copy_ai_credentials(DATASET_A, DATASET_B).expect_err("the copy must abort");
+
+        assert!(matches!(error, AppError::File { .. }), "got {error:?}");
+        assert_eq!(
+            load_openai_key(DATASET_B),
+            None,
+            "an aborted copy must not leave a half-migrated key behind"
+        );
+    }
+
+    /// The enumerated list is the whole contract: a name missing from it is a key
+    /// that silently fails to follow a migration and one a wipe leaves behind.
+    #[test]
+    fn the_enumerated_names_cover_every_key_the_writers_can_store() {
+        let _g = guard();
+        store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+
+        clear_credentials(DATASET_A);
+
+        assert_eq!(load_aws_credentials(DATASET_A), None);
+        assert_eq!(load_openai_key(DATASET_A), None);
     }
 
     #[test]

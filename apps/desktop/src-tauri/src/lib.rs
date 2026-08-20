@@ -217,6 +217,7 @@ pub fn run() {
             commands::datasets::create_dataset,
             commands::datasets::check_picker_gate,
             commands::datasets::mark_picker_passed,
+            commands::datasets::get_active_profile,
             commands::budget::create_budget_group,
             commands::budget::get_budget_groups,
             commands::budget::create_budget_category,

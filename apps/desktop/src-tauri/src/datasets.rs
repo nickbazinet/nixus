@@ -296,11 +296,10 @@ pub(crate) fn create_dataset_at(root: &Path) -> Result<Dataset, AppError> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let path = registry_path(root);
     // Unfiltered, because this list is written back: an entry whose id fails
     // `is_valid_dataset_id` is invisible to the picker but must still survive a
     // create, and nothing in the product could restore it if it did not.
-    let mut entries = read_registry_for_update(&path)?;
+    let entries = read_registry_for_update(&registry_path(root))?;
 
     let dataset = Dataset {
         id: new_dataset_id(),
@@ -318,37 +317,162 @@ pub(crate) fn create_dataset_at(root: &Path) -> Result<Dataset, AppError> {
         created_at: Utc::now().to_rfc3339(),
     };
 
-    let dir = dataset_dir_from_root(root, &dataset.id);
+    provision_dataset(root, entries, dataset, |_| Ok(()))
+}
 
-    // Strictly before anything is created, and strictly before the cleanup below
-    // becomes reachable.
+/// The database file every dataset directory owns. Only the main file is ever
+/// copied by a migration: a `-wal`/`-shm` sidecar belongs to the *source's* open
+/// connection, and carrying one across would hand the copy a stale log to replay.
+const DB_FILE_NAME: &str = "nkbaz-finance.db";
+
+/// The database file `id` owns, resolved by explicit id so a caller can name a
+/// dataset other than the active one — which is exactly what Migrate's source is.
+pub(crate) fn dataset_db_path(root: &Path, id: &str) -> PathBuf {
+    dataset_dir_from_root(root, id).join(DB_FILE_NAME)
+}
+
+/// The cloud-linked entry to reopen for `sub`, or `None` when this account has
+/// never been linked here.
+///
+/// Most-recently-created wins. Several cloud-linked profiles sharing one subject
+/// is an accepted, documented edge case (AD-12), so this is a deterministic
+/// tie-break rather than an error. An unparseable `created_at` sorts as the epoch,
+/// which keeps a hand-edited entry from shadowing a real one.
+fn most_recent_for_sub<'a>(entries: &'a [Dataset], sub: &str) -> Option<&'a Dataset> {
+    entries
+        .iter()
+        .filter(|entry| is_valid_dataset_id(&entry.id))
+        .filter(|entry| entry.kind == DatasetKind::CloudLinked)
+        .filter(|entry| entry.cognito_sub.as_deref() == Some(sub))
+        .max_by_key(|entry| {
+            chrono::DateTime::parse_from_rfc3339(&entry.created_at)
+                .map(|at| at.timestamp_millis())
+                .unwrap_or(i64::MIN)
+        })
+}
+
+fn cloud_linked_entry(id: String, label: &str, sub: &str, linked_from: Option<&str>) -> Dataset {
+    Dataset {
+        id,
+        label: label.to_string(),
+        kind: DatasetKind::CloudLinked,
+        cognito_sub: Some(sub.to_string()),
+        linked_from: linked_from.map(str::to_string),
+        is_default: false,
+        created_at: Utc::now().to_rfc3339(),
+    }
+}
+
+/// Provisions `dataset`'s directory and appends it to an already-read registry.
+///
+/// Shared by both cloud branches so "empty new profile" and "copy of a source
+/// profile" differ only in `seed`, which runs after the directory exists and
+/// before `init_db`. Every caller already holds `REGISTRY_LOCK` and passes the
+/// entries it read under it, so this must never take the lock or re-read the file.
+///
+/// The registry entry is written last, and a failure removes the directory this
+/// call created — the same ordering and cleanup `create_dataset_at` documents, and
+/// correct for the same reason: `reject_taken_id` proved the directory was not
+/// there before.
+fn provision_dataset(
+    root: &Path,
+    mut entries: Vec<Dataset>,
+    dataset: Dataset,
+    seed: impl FnOnce(&Path) -> Result<(), AppError>,
+) -> Result<Dataset, AppError> {
+    let dir = dataset_dir_from_root(root, &dataset.id);
     reject_taken_id(&entries, &dataset.id, &dir)?;
 
     std::fs::create_dir_all(&dir).map_err(|e| AppError::File {
         message: format!("Failed to create dataset directory: {}", e),
     })?;
 
-    // `init_db`'s connection is dropped immediately: `select_dataset` opens its own
-    // when the user actually chooses this profile, so holding this one would leak a
-    // handle for the life of the process.
-    let provisioned = init_db(&dir).and_then(|conn| {
-        drop(conn);
-        entries.push(dataset.clone());
-        write_json_atomic(&path, &entries)
-    });
+    let provisioned = seed(&dir)
+        .and_then(|()| init_db(&dir))
+        .and_then(|conn| {
+            drop(conn);
+            entries.push(dataset.clone());
+            write_json_atomic(&registry_path(root), &entries)
+        });
 
     if let Err(error) = provisioned {
-        // Best effort, and correct ONLY because the collision guard above proved
-        // this directory did not exist before this call — so this can only remove
-        // what this call created. Moving that guard after this point turns this
-        // line into a data-loss bug: a collision followed by an error would wipe a
-        // pre-existing dataset's database. Without the cleanup, repeated failures
-        // accumulate migrated databases that nothing will ever reap.
         let _ = std::fs::remove_dir_all(&dir);
         return Err(error);
     }
 
     Ok(dataset)
+}
+
+/// Story 35.2's Login branch: the cloud-linked dataset for `sub`, created the
+/// first time and reopened on every later sign-in.
+///
+/// The whole find-or-create runs under `REGISTRY_LOCK`, so two callbacks racing
+/// with the same account cannot both conclude "none exists" and mint a duplicate.
+/// The lock is released by returning, *before* the caller activates the dataset —
+/// holding it across the switch deadlocks the callback thread (AD-12).
+pub(crate) fn find_or_create_cloud_dataset_at(
+    root: &Path,
+    sub: &str,
+    label: &str,
+) -> Result<Dataset, AppError> {
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let entries = read_registry_for_update(&registry_path(root))?;
+
+    if let Some(existing) = most_recent_for_sub(&entries, sub) {
+        return Ok(existing.clone());
+    }
+
+    let dataset = cloud_linked_entry(new_dataset_id(), label, sub, None);
+    provision_dataset(root, entries, dataset, |_| Ok(()))
+}
+
+/// Story 35.3's Migrate branch: a brand-new cloud-linked dataset holding a copy of
+/// `source_id`'s database and AI-provider keys as of this moment.
+///
+/// `prepare_source` runs *inside* the registry lock and returns the source
+/// database file to copy. It is the story's abort seam: it re-checks that the
+/// source is still the active dataset and checkpoints its connection, so a user
+/// who switched profiles during the browser round-trip gets an error with nothing
+/// created. Injected rather than inlined so the whole copy is testable without a
+/// running Tauri app — the same reason `resolve_active_dir` is split out.
+///
+/// The source is only ever *read*: it is resolved by explicit id (never through
+/// the active-dataset helper), and no step here writes to, converts, or removes
+/// it (FR5).
+pub(crate) fn migrate_to_cloud_dataset_at(
+    root: &Path,
+    source_id: &str,
+    sub: &str,
+    label: &str,
+    prepare_source: impl FnOnce() -> Result<PathBuf, AppError>,
+) -> Result<Dataset, AppError> {
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let entries = read_registry_for_update(&registry_path(root))?;
+    if !entries.iter().any(|entry| entry.id == source_id) {
+        return Err(AppError::Validation {
+            message: format!("Unknown dataset: {}", source_id),
+            field: Some("source_dataset_id".to_string()),
+        });
+    }
+
+    let source_db = prepare_source()?;
+
+    let dataset = cloud_linked_entry(new_dataset_id(), label, sub, Some(source_id));
+    let destination_id = dataset.id.clone();
+
+    provision_dataset(root, entries, dataset, |dir| {
+        std::fs::copy(&source_db, dir.join(DB_FILE_NAME)).map_err(|e| AppError::File {
+            message: format!("Failed to copy the profile database: {}", e),
+        })?;
+        crate::credentials::copy_ai_credentials(source_id, &destination_id).map(|_| ())
+    })
+    .inspect_err(|_| crate::credentials::clear_credentials(&destination_id))
 }
 
 #[cfg(test)]
@@ -1047,5 +1171,313 @@ mod tests {
                 entry.id
             );
         }
+    }
+
+    const SUB: &str = "cognito-sub-1";
+    const EMAIL: &str = "user@example.com";
+
+    fn seed_db(dir: &Path, marker: &str) {
+        std::fs::create_dir_all(dir).expect("dataset dir");
+        let conn = init_db(dir).expect("database opens");
+        conn.execute_batch(&format!("CREATE TABLE marker_{marker} (x)"))
+            .expect("marker table created");
+    }
+
+    fn markers(db_path: &Path) -> Vec<String> {
+        let conn = rusqlite::Connection::open(db_path).expect("database opens");
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'marker_%'")
+            .expect("query prepares");
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("query runs")
+            .map(|name| name.expect("row readable"))
+            .collect();
+        names
+    }
+
+    #[test]
+    fn a_first_sign_in_creates_a_cloud_linked_entry_labelled_with_the_account_email() {
+        let root = bootstrapped_root();
+
+        let created = find_or_create_cloud_dataset_at(root.path(), SUB, EMAIL)
+            .expect("first sign-in succeeds");
+
+        assert_eq!(created.kind, DatasetKind::CloudLinked);
+        assert_eq!(created.cognito_sub.as_deref(), Some(SUB));
+        assert_eq!(created.label, EMAIL);
+        assert_eq!(created.linked_from, None);
+        assert!(!created.is_default);
+        assert!(dataset_db_path(root.path(), &created.id).is_file());
+
+        let entries = recorded(root.path());
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].id, DEFAULT_DATASET_ID, "Default still comes first");
+        assert_eq!(entries[1], created);
+    }
+
+    /// FR4's explicit success criterion: signing in again reopens the same profile.
+    #[test]
+    fn signing_in_again_with_the_same_account_reopens_the_same_dataset() {
+        let root = bootstrapped_root();
+
+        let first = find_or_create_cloud_dataset_at(root.path(), SUB, EMAIL).expect("first");
+        let second = find_or_create_cloud_dataset_at(root.path(), SUB, EMAIL).expect("second");
+
+        assert_eq!(first, second, "a repeat sign-in must not mint a new profile");
+        assert_eq!(
+            recorded(root.path()).len(),
+            2,
+            "a repeat sign-in must not append a registry entry"
+        );
+    }
+
+    #[test]
+    fn a_different_account_gets_its_own_cloud_linked_dataset() {
+        let root = bootstrapped_root();
+
+        let first = find_or_create_cloud_dataset_at(root.path(), SUB, EMAIL).expect("first");
+        let other = find_or_create_cloud_dataset_at(root.path(), "sub-2", "other@example.com")
+            .expect("second account");
+
+        assert_ne!(first.id, other.id);
+        assert_eq!(recorded(root.path()).len(), 3);
+    }
+
+    // Several cloud-linked profiles sharing one subject is accepted, not prevented,
+    // so the tie-break has to be deterministic rather than "whichever is first".
+    #[test]
+    fn the_most_recently_created_match_wins_and_a_local_entry_never_matches() {
+        let older = Dataset {
+            created_at: "2026-01-01T00:00:00+00:00".to_string(),
+            ..entry("cloud-old")
+        };
+        let newer = Dataset {
+            created_at: "2026-06-01T00:00:00+00:00".to_string(),
+            ..entry("cloud-new")
+        };
+        let local_with_a_sub = Dataset {
+            kind: DatasetKind::Local,
+            created_at: "2026-12-01T00:00:00+00:00".to_string(),
+            ..entry("local-1")
+        };
+        let entries = vec![newer.clone(), local_with_a_sub, older];
+
+        assert_eq!(
+            most_recent_for_sub(&entries, "sub-1").map(|found| found.id.as_str()),
+            Some("cloud-new")
+        );
+        assert_eq!(most_recent_for_sub(&entries, "sub-absent"), None);
+        assert_eq!(most_recent_for_sub(&[], "sub-1"), None);
+    }
+
+    #[test]
+    fn an_entry_the_reader_skips_is_never_reopened_as_a_match() {
+        let entries = vec![entry("a/b")];
+
+        assert_eq!(
+            most_recent_for_sub(&entries, "sub-1"),
+            None,
+            "an unusable id must not be reopened; its directory is unreachable"
+        );
+    }
+
+    #[test]
+    fn migrating_copies_the_sources_database_into_a_new_cloud_linked_dataset() {
+        // The copy reaches the keyring, and a read the keyring refuses is now fatal
+        // rather than skipped, so every test that gets as far as the copy has to
+        // install the mock store.
+        let _keyring = crate::credentials::test_keyring_guard();
+        let root = bootstrapped_root();
+        let source = create_dataset_at(root.path()).expect("source created");
+        seed_db(&dataset_dir_from_root(root.path(), &source.id), "source");
+
+        let migrated = migrate_to_cloud_dataset_at(root.path(), &source.id, SUB, EMAIL, || {
+            Ok(dataset_db_path(root.path(), &source.id))
+        })
+        .expect("migration succeeds");
+
+        assert_eq!(migrated.kind, DatasetKind::CloudLinked);
+        assert_eq!(migrated.cognito_sub.as_deref(), Some(SUB));
+        assert_eq!(migrated.label, EMAIL);
+        assert_eq!(migrated.linked_from.as_deref(), Some(source.id.as_str()));
+        assert_eq!(
+            markers(&dataset_db_path(root.path(), &migrated.id)),
+            vec!["marker_source".to_string()],
+            "the destination must hold a copy of the source's data"
+        );
+
+        // FR5: the source is left completely untouched and still listed.
+        let entries = recorded(root.path());
+        assert!(entries.contains(&source));
+        assert_eq!(
+            markers(&dataset_db_path(root.path(), &source.id)),
+            vec!["marker_source".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_migration_copies_only_the_main_database_file_and_no_wal_sidecar() {
+        let _keyring = crate::credentials::test_keyring_guard();
+        let root = bootstrapped_root();
+        let source = create_dataset_at(root.path()).expect("source created");
+        let source_dir = dataset_dir_from_root(root.path(), &source.id);
+        seed_db(&source_dir, "source");
+        std::fs::write(source_dir.join("nkbaz-finance.db-wal"), b"stale wal")
+            .expect("sidecar written");
+        std::fs::write(source_dir.join("nkbaz-finance.db-shm"), b"stale shm")
+            .expect("sidecar written");
+
+        let migrated = migrate_to_cloud_dataset_at(root.path(), &source.id, SUB, EMAIL, || {
+            Ok(dataset_db_path(root.path(), &source.id))
+        })
+        .expect("migration succeeds");
+
+        let dir = dataset_dir_from_root(root.path(), &migrated.id);
+        assert!(dir.join("nkbaz-finance.db").is_file());
+        assert!(
+            !dir.join("nkbaz-finance.db-wal").exists(),
+            "a copied -wal sidecar would be replayed over the copied database"
+        );
+        assert!(!dir.join("nkbaz-finance.db-shm").exists());
+    }
+
+    /// The user switched profiles during the browser round-trip: the abort seam
+    /// fails and nothing at all is created.
+    #[test]
+    fn a_migration_whose_source_is_no_longer_active_creates_nothing() {
+        let root = bootstrapped_root();
+        let source = create_dataset_at(root.path()).expect("source created");
+        let before = recorded(root.path());
+
+        let error = migrate_to_cloud_dataset_at(root.path(), &source.id, SUB, EMAIL, || {
+            Err(AppError::Validation {
+                message: "no longer open".to_string(),
+                field: Some("source_dataset_id".to_string()),
+            })
+        })
+        .expect_err("migration must abort");
+
+        assert!(matches!(error, AppError::Validation { .. }));
+        assert_eq!(recorded(root.path()), before);
+        assert_eq!(
+            std::fs::read_dir(root.path().join("datasets"))
+                .expect("the datasets directory exists")
+                .count(),
+            1,
+            "only the source's directory may exist; an aborted migration creates none"
+        );
+    }
+
+    #[test]
+    fn migrating_from_an_unregistered_source_is_a_validation_error_naming_the_field() {
+        let root = bootstrapped_root();
+
+        let error =
+            migrate_to_cloud_dataset_at(root.path(), "does-not-exist", SUB, EMAIL, || {
+                panic!("the source must be validated before it is prepared")
+            })
+            .expect_err("migration must fail");
+
+        match error {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field.as_deref(), Some("source_dataset_id"))
+            }
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    /// The one migration every single-profile user will actually run, and the only
+    /// one whose source directory is not a dataset directory: Default's *is* the app
+    /// data root, so `datasets.json`, `profiles/` and every other top-level file sit
+    /// right beside the database being copied. The copy takes the database and
+    /// nothing standing next to it.
+    #[test]
+    fn migrating_from_the_default_dataset_copies_no_root_level_sidecar_files() {
+        let _keyring = crate::credentials::test_keyring_guard();
+        let root = bootstrapped_root();
+        let source_dir = dataset_dir_from_root(root.path(), DEFAULT_DATASET_ID);
+        assert_eq!(source_dir, root.path(), "Default's directory is the root itself");
+
+        seed_db(&source_dir, "default");
+        std::fs::create_dir_all(root.path().join("profiles")).expect("profiles directory");
+        std::fs::write(root.path().join("profiles").join("me.json"), b"{}")
+            .expect("profile written");
+        assert!(
+            registry_path(root.path()).is_file(),
+            "the registry has to be sitting beside the source database for this to prove anything"
+        );
+
+        let migrated =
+            migrate_to_cloud_dataset_at(root.path(), DEFAULT_DATASET_ID, SUB, EMAIL, || {
+                // Resolved by the production helper from the source id — the same expression
+                // `checkpoint_active_source` returns — so Default's root-is-the-dataset-dir rule is
+                // exercised, not assumed. Only the WAL checkpoint itself is stubbed out: it needs a
+                // running AppHandle and DbState, which is out of this test's reach.
+                Ok(dataset_db_path(root.path(), DEFAULT_DATASET_ID))
+            })
+            .expect("migration succeeds");
+
+        let dir = dataset_dir_from_root(root.path(), &migrated.id);
+        let mut produced: Vec<String> = std::fs::read_dir(&dir)
+            .expect("the destination directory exists")
+            .map(|entry| {
+                entry
+                    .expect("directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect();
+        produced.sort();
+
+        assert_eq!(
+            produced,
+            vec![DB_FILE_NAME.to_string()],
+            "the destination must hold the copied database and nothing else"
+        );
+        assert_eq!(
+            markers(&dataset_db_path(root.path(), &migrated.id)),
+            vec!["marker_default".to_string()],
+            "and that database must be a copy of Default's own"
+        );
+
+        // FR5: Default keeps everything it had, registry and profiles included.
+        assert!(registry_path(root.path()).is_file());
+        assert!(root.path().join("profiles").join("me.json").is_file());
+        assert_eq!(
+            markers(&dataset_db_path(root.path(), DEFAULT_DATASET_ID)),
+            vec!["marker_default".to_string()]
+        );
+    }
+
+    /// Epic 34's per-profile keyring naming is what Migrate copies: the destination
+    /// gets its own entries, and the source keeps every one of its own.
+    #[test]
+    fn migrating_copies_the_sources_ai_credentials_and_leaves_the_source_keys_intact() {
+        let _keyring = crate::credentials::test_keyring_guard();
+        let root = bootstrapped_root();
+        let source = create_dataset_at(root.path()).expect("source created");
+        seed_db(&dataset_dir_from_root(root.path(), &source.id), "source");
+        crate::credentials::clear_credentials(&source.id);
+        crate::credentials::store_openai_key(&source.id, "sk-source").expect("key stored");
+
+        let migrated = migrate_to_cloud_dataset_at(root.path(), &source.id, SUB, EMAIL, || {
+            Ok(dataset_db_path(root.path(), &source.id))
+        })
+        .expect("migration succeeds");
+
+        assert_eq!(
+            crate::credentials::load_openai_key(&migrated.id),
+            Some("sk-source".to_string())
+        );
+        assert_eq!(
+            crate::credentials::load_openai_key(&source.id),
+            Some("sk-source".to_string()),
+            "the source's keys must survive the migration untouched"
+        );
+
+        crate::credentials::clear_credentials(&source.id);
+        crate::credentials::clear_credentials(&migrated.id);
     }
 }

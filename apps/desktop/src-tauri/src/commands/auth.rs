@@ -81,10 +81,6 @@ use crate::models::{AuthState, CognitoSession};
 pub enum LoginIntent {
     Login,
     Migrate {
-        // WHY the allowance: Story 35.3's migrate branch reads this id and does
-        // not exist yet; this story only carries the value across the
-        // round-trip. Remove the allow then.
-        #[allow(dead_code)]
         source_dataset_id: String,
     },
 }
@@ -543,13 +539,44 @@ pub(crate) async fn complete_auth_callback(
 
     let intent = resolve_callback_intent(channel, pending.intent);
 
+    // Not `?`, deliberately: the session is stored by the time this runs, so the
+    // user IS signed in whatever the branch does, and `auth:callback-received`
+    // below has to be emitted either way.
+    let linked = crate::commands::cloud_link::resolve_intent(app, &intent, &session.id_token).await;
+
     info!("Auth callback completed; session stored");
+    // Emitted either way, and strictly after the branch has run: on success a
+    // listener must already be able to see the dataset it landed on, and on
+    // failure the session is real and every reader of it still has to refresh.
     // The intent is the payload so Stories 35.2/35.3 can branch on it; the
     // session itself is still re-read over IPC, and nothing keeps the intent
     // past this emit. Listeners that ignore the payload stay unaffected.
     let _ = app.emit("auth:callback-received", &intent);
 
+    // The failure is reported by `dispatch_deep_link_url`, not here: it is the one
+    // place that sees *every* way this function can fail, so a single emission
+    // site there covers the pre-session-store stages too.
+    linked?;
+
     Ok(intent)
+}
+
+/// What the UI is told when a callback fails, at any stage.
+///
+/// Only the variants whose `message` is written for a user are passed through:
+/// `Validation` carries Migrate's own abort copy ("the profile you started
+/// migrating is no longer open"), and `Auth`'s messages are user-presentable and
+/// secret-free by construction — which covers every OAuth failure upstream of the
+/// branch. Every other variant carries a path or a backend string, so it is
+/// logged and reported generically.
+fn cloud_link_failure_message(error: &AppError) -> String {
+    match error {
+        AppError::Validation { message, .. } | AppError::Auth { message, .. } => message.clone(),
+        _ => {
+            "You are signed in, but your Nixus Cloud profile could not be prepared. Please try again."
+                .to_string()
+        }
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -585,8 +612,12 @@ pub(crate) fn dispatch_deep_link_url(app: &AppHandle, url: &str, channel: Callba
     }
 
     // The plugin delivers URLs to a synchronous callback, so the exchange runs on
-    // the Tauri runtime. Failures surface in the log only: there is no auth UI
-    // yet (Epic 27) and no failure event is emitted by design.
+    // the Tauri runtime. This is the crate's ONE place that turns "the callback
+    // failed" into a user-visible signal, and it is deliberately at the top level:
+    // emitting from inside the post-session-store branch alone left every upstream
+    // failure — a rejected state, a token exchange that could not reach Cognito, an
+    // incomplete token response, a missing pending attempt — silent, which the
+    // picker's Cloud button made a reachable dead end.
     let app = app.clone();
     let url = url.to_string();
     tauri::async_runtime::spawn(async move {
@@ -594,8 +625,11 @@ pub(crate) fn dispatch_deep_link_url(app: &AppHandle, url: &str, channel: Callba
             // Stories 35.2 and 35.3 branch on this intent; plumbing it is all
             // Story 35.1 does with it.
             Ok(_intent) => {}
-            // AppError::Auth's message is user-presentable and secret-free by construction.
-            Err(e) => tracing::error!("Deep link auth callback failed: {}", e),
+            Err(e) => {
+                // AppError::Auth's message is user-presentable and secret-free by construction.
+                tracing::error!("Deep link auth callback failed: {}", e);
+                let _ = app.emit("auth:cloud-link-failed", cloud_link_failure_message(&e));
+            }
         }
     });
 }
@@ -611,6 +645,34 @@ struct IdTokenClaims {
     // deferred, so `name` is legitimately absent for email/password users.
     name: Option<String>,
     sub: String,
+}
+
+/// The two claims the cloud-profile branches need: the durable subject a
+/// cloud-linked dataset records, and the email it takes its label from.
+///
+/// Read from the token in hand rather than from the keyring, so the branch cannot
+/// resolve a different account than the callback just signed in as.
+pub(crate) struct CloudIdentity {
+    pub sub: String,
+    pub email: String,
+}
+
+pub(crate) fn cloud_identity(id_token: &str) -> Result<CloudIdentity, AppError> {
+    let claims = decode_id_token_claims(id_token)?;
+
+    let email = claims
+        .email
+        .filter(|email| !email.is_empty())
+        .ok_or_else(unreadable_session_error)?;
+
+    if claims.sub.is_empty() {
+        return Err(unreadable_session_error());
+    }
+
+    Ok(CloudIdentity {
+        sub: claims.sub,
+        email,
+    })
 }
 
 /// Refresh-grant response. Deliberately does **not** derive `Debug`, matching
@@ -1511,6 +1573,103 @@ mod tests {
         let error = logged_in_from_id_token(&token).expect_err("rejects");
 
         assert!(recoverable_of(&error));
+    }
+
+    /// `CloudIdentity` has no `Debug` — it holds the Cognito subject — so `expect_err`
+    /// is unavailable here, exactly as for `CallbackParams` above.
+    fn reject_identity(id_token: &str) -> AppError {
+        match cloud_identity(id_token) {
+            Ok(_) => panic!("expected the id_token to be rejected"),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn cloud_identity_reads_the_sub_and_email_claims() {
+        let token =
+            id_token_with_payload(r#"{"sub":"a1b2c3","email":"user@example.com","name":"Nick"}"#);
+
+        let identity = cloud_identity(&token).expect("resolves");
+
+        assert_eq!(identity.sub, "a1b2c3");
+        assert_eq!(identity.email, "user@example.com");
+    }
+
+    #[test]
+    fn cloud_identity_rejects_an_empty_sub_claim() {
+        let error = reject_identity(&id_token_with_payload(
+            r#"{"sub":"","email":"user@example.com"}"#,
+        ));
+
+        assert!(recoverable_of(&error));
+    }
+
+    /// The label a cloud-linked dataset takes comes from `email`, so an absent or
+    /// blank one must abort the branch rather than name a profile after nothing.
+    #[test]
+    fn cloud_identity_rejects_a_missing_or_blank_email_claim() {
+        for payload in [r#"{"sub":"a1b2c3"}"#, r#"{"sub":"a1b2c3","email":""}"#] {
+            let error = reject_identity(&id_token_with_payload(payload));
+            assert!(recoverable_of(&error), "{payload} must be rejected");
+        }
+    }
+
+    /// The failure message crosses IPC and lands in a toast, so a variant that can
+    /// carry a filesystem path must never be the thing the user is shown.
+    #[test]
+    fn a_file_failure_is_reported_generically_rather_than_by_its_own_message() {
+        let message = cloud_link_failure_message(&AppError::File {
+            message: "Failed to copy /Users/someone/Library/nixus/datasets/abc/nixus.db"
+                .to_string(),
+        });
+
+        assert!(!message.contains('/'));
+        assert!(!message.contains("nixus.db"));
+        assert_eq!(
+            message,
+            "You are signed in, but your Nixus Cloud profile could not be prepared. Please try again."
+        );
+    }
+
+    #[test]
+    fn a_validation_or_auth_failure_passes_its_own_message_through_verbatim() {
+        assert_eq!(
+            cloud_link_failure_message(&AppError::Validation {
+                message: "The profile you started migrating is no longer open. Please try again."
+                    .to_string(),
+                field: Some("source_dataset_id".to_string()),
+            }),
+            "The profile you started migrating is no longer open. Please try again."
+        );
+        assert_eq!(
+            cloud_link_failure_message(&AppError::Auth {
+                message: "Could not reach the sign-in service. Check your connection and try again."
+                    .to_string(),
+                recoverable: true,
+            }),
+            "Could not reach the sign-in service. Check your connection and try again."
+        );
+    }
+
+    /// Every stage upstream of the branch fails as `AppError::Auth`, so the
+    /// consolidated top-level emission carries their own copy, not the fallback.
+    #[test]
+    fn a_pre_session_oauth_failure_reports_its_own_recoverable_copy() {
+        let message = cloud_link_failure_message(&oauth_error_to_app_error(Some("invalid_grant")));
+
+        assert_eq!(
+            message,
+            "Your sign-in link expired or was already used. Please sign in again."
+        );
+    }
+
+    #[test]
+    fn a_database_failure_is_reported_generically() {
+        let message = cloud_link_failure_message(&AppError::Database {
+            message: "no such table: expenses".to_string(),
+        });
+
+        assert!(!message.contains("expenses"));
     }
 
     /// Rotation is disabled on this pool, so the live response omits

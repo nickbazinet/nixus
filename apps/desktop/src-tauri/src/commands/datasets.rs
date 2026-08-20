@@ -135,7 +135,7 @@ pub async fn select_dataset(app: AppHandle, dataset_id: String) -> Result<(), Ap
 ///
 /// The config read and the state write are separate short critical sections, so
 /// neither lock is held across the client's async setup.
-async fn refresh_ai_state(app: &AppHandle, dataset_id: &str) {
+pub(crate) async fn refresh_ai_state(app: &AppHandle, dataset_id: &str) {
     let config = {
         let state = app.state::<DbState>();
         let active = state
@@ -216,6 +216,54 @@ pub fn check_picker_gate() -> PickerGateStatus {
     PickerGateStatus {
         needs_picker: !picker_passed(),
     }
+}
+
+/// What the account menu needs to know about the dataset it is rendering inside
+/// (Stories 35.3 and 35.4).
+///
+/// `is_signed_in` is derived entirely here and travels as a bare boolean: the
+/// Cognito subject must never cross IPC (AD-10), and `AuthState`'s wire shape is
+/// deliberately left alone so no second source of truth for "signed in" appears.
+#[derive(Serialize)]
+pub struct ActiveProfile {
+    pub dataset_id: String,
+    pub kind: DatasetKind,
+    pub label: String,
+    pub is_signed_in: bool,
+}
+
+/// Whether this dataset's own cloud account is the one currently signed in.
+///
+/// Local datasets are never auth-aware: a local profile is a purely local concept
+/// (NFR7), so it reads `false` regardless of any machine-wide session. For a
+/// cloud-linked one, a resolver error means "no session", which reads as
+/// signed-out rather than as a failure the user has to act on.
+fn is_signed_in(entry: &Dataset, current_subject: Option<&str>) -> bool {
+    entry.kind == DatasetKind::CloudLinked
+        && entry.cognito_sub.is_some()
+        && entry.cognito_sub.as_deref() == current_subject
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_active_profile(app: AppHandle) -> Result<ActiveProfile, AppError> {
+    let active_id = datasets::active_dataset_id(&app.state::<DbState>())?;
+    let entry = find_registered(datasets::load_registry(&app)?, &active_id)?;
+
+    // Resolved only for a cloud-linked dataset: `current_subject` can refresh an
+    // expired session over the network, and a local profile must never trigger
+    // that just to render its own menu.
+    let subject = if entry.kind == DatasetKind::CloudLinked {
+        crate::commands::auth::current_subject().await.ok()
+    } else {
+        None
+    };
+
+    Ok(ActiveProfile {
+        is_signed_in: is_signed_in(&entry, subject.as_deref()),
+        dataset_id: entry.id,
+        kind: entry.kind,
+        label: entry.label,
+    })
 }
 
 #[cfg(test)]
@@ -399,6 +447,57 @@ mod tests {
             .expect("payload serializes");
 
         assert_eq!(json, r#"{"needs_picker":true}"#);
+    }
+
+    // A cloud-linked profile's badge is the only auth-aware row in the picker's
+    // world, so the local case is asserted alongside it rather than assumed.
+    #[test]
+    fn only_a_cloud_linked_entry_whose_subject_matches_reads_as_signed_in() {
+        let cloud = Dataset {
+            cognito_sub: Some("sub-1".to_string()),
+            ..entry("cloud-1", DatasetKind::CloudLinked)
+        };
+
+        assert!(is_signed_in(&cloud, Some("sub-1")));
+        assert!(!is_signed_in(&cloud, Some("sub-2")));
+        assert!(
+            !is_signed_in(&cloud, None),
+            "a resolver error means no session, which reads as signed-out"
+        );
+
+        let local = Dataset {
+            cognito_sub: Some("sub-1".to_string()),
+            ..entry("local-1", DatasetKind::Local)
+        };
+        assert!(
+            !is_signed_in(&local, Some("sub-1")),
+            "a local profile must never be auth-aware, whatever it records"
+        );
+
+        let unlinked_cloud = entry("cloud-2", DatasetKind::CloudLinked);
+        assert!(
+            !is_signed_in(&unlinked_cloud, None),
+            "two absent subjects must not compare equal"
+        );
+    }
+
+    // The account menu reads these keys, and the subject is deliberately absent
+    // from them (AD-10), so the payload is asserted as raw JSON.
+    #[test]
+    fn the_active_profile_payload_carries_a_bare_signed_in_boolean_and_no_subject() {
+        let json = serde_json::to_string(&ActiveProfile {
+            dataset_id: "cloud-1".to_string(),
+            kind: DatasetKind::CloudLinked,
+            label: "user@example.com".to_string(),
+            is_signed_in: true,
+        })
+        .expect("payload serializes");
+
+        assert_eq!(
+            json,
+            r#"{"dataset_id":"cloud-1","kind":"cloud-linked","label":"user@example.com","is_signed_in":true}"#
+        );
+        assert!(!json.contains("cognito"), "the subject must never cross IPC");
     }
 
     // Deliberately ONE test rather than three: `PICKER_PASSED` is a process-global
