@@ -66,7 +66,7 @@ export function OnboardingWizard() {
         <div className="mb-section-gap text-center">
           <span
             aria-hidden="true"
-            className="mx-auto mb-5 block size-10 rounded-xl bg-logo-gradient"
+            className="mx-auto mb-5 block size-10 rounded-xl bg-brand"
           />
           <h1 className="text-h1 text-ink">{t("onboarding.welcome")}</h1>
           <p className="mx-auto mt-2 max-w-prose text-body text-ink-dim">

@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { CircleUser, LogIn, LogOut, User } from "lucide-react";
+import {
+  ArrowLeftRight,
+  CircleUser,
+  CloudUpload,
+  LogIn,
+  LogOut,
+  User,
+} from "lucide-react";
 import {
   Button,
   DropdownMenu,
@@ -14,7 +21,13 @@ import {
   DropdownMenuTrigger,
 } from "@nixus/shared";
 import { cn } from "@/lib/utils";
-import { useAuthSession, useSignIn, useSignOut } from "@/hooks/useAuth";
+import {
+  useAuthSession,
+  useSignIn,
+  useSignOut,
+  type LoginIntent,
+} from "@/hooks/useAuth";
+import { useActiveProfile } from "@/hooks/useDatasets";
 
 type ProfileState =
   | "loading"
@@ -56,16 +69,42 @@ function deriveState(
 }
 
 /**
+ * The cloud entry point this menu offers, decided by the *active profile* rather than by the
+ * machine-wide auth state (UX-DR3).
+ *
+ * A local profile always offers migration, whatever the global session says — migrating produces a
+ * new, separate profile, so being signed in already changes nothing about the offer. Anything else,
+ * including a profile whose kind is not known yet, offers plain sign-in: a Migrate intent needs a
+ * concrete source id, and inventing one is how the wrong profile would get copied.
+ */
+function cloudAction(
+  kind: "local" | "cloud-linked" | undefined,
+  datasetId: string | undefined,
+): { intent: LoginIntent; labelKey: string } {
+  if (kind === "local" && datasetId !== undefined) {
+    return {
+      intent: { kind: "Migrate", source_dataset_id: datasetId },
+      labelKey: "datasets.migrateToCloud",
+    };
+  }
+  return { intent: { kind: "Login" }, labelKey: "datasets.signInWithCloud" };
+}
+
+/**
  * Top-right header entry point for the Nixus account: identity when signed in, a way in when not.
  * Propless and self-contained, mirroring UpdateChecker — the header mounts it unconditionally and
  * the component decides what it has to show.
  *
  * It owns no auth state of its own: every reader of the account goes through the same
- * `["auth", "session"]` cache entry, so no two surfaces can drift from each other.
+ * `["auth", "session"]` cache entry, so no two surfaces can drift from each other. The signed-in
+ * badge is likewise not computed here — Rust compares the session's subject to the profile's own
+ * and answers with a boolean (AD-10).
  */
 export function ProfileMenu() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const session = useAuthSession();
+  const activeProfile = useActiveProfile();
   const signIn = useSignIn();
   const signOut = useSignOut();
   const [open, setOpen] = useState(false);
@@ -77,6 +116,18 @@ export function ProfileMenu() {
     session.data?.status,
   );
   const account = session.data?.status === "LoggedIn" ? session.data : null;
+  const cloudProfile =
+    activeProfile.data?.kind === "cloud-linked" ? activeProfile.data : null;
+  const cloud = cloudAction(
+    activeProfile.data?.kind,
+    activeProfile.data?.dataset_id,
+  );
+
+  const startCloudFlow = () => {
+    signIn.mutate(cloud.intent, {
+      onError: () => toast.error(t("datasets.cloudFailed")),
+    });
+  };
 
   // Keyed on the derived status rather than on the query result: a refetch that returns the same
   // SessionExpired state must not re-announce it, or a user with a dead refresh token collects a
@@ -92,8 +143,13 @@ export function ProfileMenu() {
     }
   }, [state, t]);
 
-  if (state === "logged-in" && account) {
-    const displayName = account.name?.trim() ?? "";
+  // A cloud-linked profile renders the panel even while signed out: the badge is the whole point of
+  // Story 35.4, and it has to be readable in exactly the state where signing back in is the answer.
+  const showPanel = (state === "logged-in" && account !== null) || cloudProfile !== null;
+
+  if (showPanel) {
+    const displayName = account?.name?.trim() ?? "";
+    const menuEmail = account?.email ?? cloudProfile?.label ?? "";
 
     return (
       <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -102,9 +158,16 @@ export function ProfileMenu() {
             <Button
               variant="ghost"
               size="icon"
-              aria-label={t("profile.accountMenu", { email: account.email })}
+              aria-label={t("profile.accountMenu", { email: menuEmail })}
               data-testid={TRIGGER_TESTID}
-              data-auth-state="logged-in"
+              data-auth-state={state}
+              data-cloud-status={
+                cloudProfile === null
+                  ? undefined
+                  : cloudProfile.is_signed_in
+                    ? "signed-in"
+                    : "signed-out"
+              }
             />
           }
         >
@@ -120,86 +183,135 @@ export function ProfileMenu() {
           data-testid="profile-menu-panel"
         >
           <DropdownMenuGroup>
-            <DropdownMenuLabel>{t("profile.signedInAs")}</DropdownMenuLabel>
-            {/* Plain elements, not DropdownMenuItems: identity is read, never actuated, and menu
-             * items take roving focus and typeahead that would strand the keyboard here. */}
-            <div
-              className="truncate px-1.5 py-1 text-body text-ink"
-              title={account.email}
-              data-testid="profile-menu-email"
-            >
-              {account.email}
-            </div>
-            {displayName ? (
+            {cloudProfile !== null ? (
+              // Read, never actuated, so a plain element for the same reason the address below is
+              // one: a menu item here would take roving focus for a label.
               <div
-                className="truncate px-1.5 pb-1 text-caption text-ink-dim"
-                title={displayName}
-                data-testid="profile-menu-name"
+                className="px-1.5 py-1 text-caption text-ink-dim"
+                data-testid="profile-menu-cloud-status"
               >
-                {displayName}
+                {cloudProfile.is_signed_in
+                  ? t("datasets.signedIn")
+                  : t("datasets.signedOut")}
               </div>
+            ) : null}
+
+            {account !== null ? (
+              <>
+                <DropdownMenuLabel>{t("profile.signedInAs")}</DropdownMenuLabel>
+                {/* Plain elements, not DropdownMenuItems: identity is read, never actuated, and menu
+                 * items take roving focus and typeahead that would strand the keyboard here. */}
+                <div
+                  className="truncate px-1.5 py-1 text-body text-ink"
+                  title={account.email}
+                  data-testid="profile-menu-email"
+                >
+                  {account.email}
+                </div>
+                {displayName ? (
+                  <div
+                    className="truncate px-1.5 pb-1 text-caption text-ink-dim"
+                    title={displayName}
+                    data-testid="profile-menu-name"
+                  >
+                    {displayName}
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </DropdownMenuGroup>
 
           <DropdownMenuSeparator />
 
-          {/* `render` rather than a nested anchor: Base UI's menu item owns roving focus and
-           * typeahead, and an anchor child would take the tab stop away from it. */}
-          <DropdownMenuItem
-            render={<Link to="/profile" data-testid="profile-menu-profile" />}
-          >
-            <User aria-hidden="true" />
-            {t("profile.menuItem")}
-          </DropdownMenuItem>
+          {account !== null ? (
+            // `render` rather than a nested anchor: Base UI's menu item owns roving focus and
+            // typeahead, and an anchor child would take the tab stop away from it.
+            <DropdownMenuItem
+              render={<Link to="/profile" data-testid="profile-menu-profile" />}
+            >
+              <User aria-hidden="true" />
+              {t("profile.menuItem")}
+            </DropdownMenuItem>
+          ) : null}
 
-          <DropdownMenuItem
-            // Closed unconditionally rather than in onSuccess: sign-out can fail, and a panel
-            // pinned open behind a failed request reads as a frozen app.
-            onClick={() => {
-              signOut.mutate();
-              setOpen(false);
-            }}
-            data-testid="profile-menu-sign-out"
-          >
-            <LogOut aria-hidden="true" />
-            {t("profile.signOut")}
-          </DropdownMenuItem>
+          {/* A local profile's panel carries the migrate action; a cloud-linked one carries sign-in
+           * or sign-out, never migrate — it is already linked. Withheld entirely while the active
+           * profile's kind is unknown: `cloudAction` falls back to plain sign-in for an undefined
+           * kind, so rendering it then would flash — or worse, commit — the wrong action. Gated on
+           * the data being *there*, not on `!isPending`: a query that settles into an error is no
+           * longer pending either, so pending-only would render the ambiguous fallback whenever
+           * `get_active_profile` rejects, and one click would silently switch the active profile. */}
+          {activeProfile.data !== undefined &&
+          (cloudProfile === null || !cloudProfile.is_signed_in) ? (
+            <DropdownMenuItem
+              onClick={() => {
+                startCloudFlow();
+                setOpen(false);
+              }}
+              data-testid="profile-menu-cloud-action"
+            >
+              {cloud.labelKey === "datasets.migrateToCloud" ? (
+                <CloudUpload aria-hidden="true" />
+              ) : (
+                <LogIn aria-hidden="true" />
+              )}
+              {t(cloud.labelKey)}
+            </DropdownMenuItem>
+          ) : null}
+
+          {account !== null ? (
+            <DropdownMenuItem
+              // Closed unconditionally rather than in onSuccess: sign-out can fail, and a panel
+              // pinned open behind a failed request reads as a frozen app.
+              onClick={() => {
+                signOut.mutate();
+                setOpen(false);
+              }}
+              data-testid="profile-menu-sign-out"
+            >
+              <LogOut aria-hidden="true" />
+              {t("profile.signOut")}
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
     );
   }
 
-  const isLoadingState = state === "loading";
-  const label = isLoadingState
-    ? t("profile.loading")
-    : state === "session-expired"
-      ? t("profile.sessionExpiredAction")
-      : t("profile.signIn");
+  // Icon-only and disabled, and only in this state: rendering "Loading account…" would resize the
+  // trigger on every launch.
+  if (state === "loading") {
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        disabled
+        aria-label={t("profile.loading")}
+        data-testid={TRIGGER_TESTID}
+        data-auth-state={state}
+      >
+        <User aria-hidden="true" className="size-5" />
+      </Button>
+    );
+  }
 
-  // Label every actuable state. Only `loading` is disabled, and only it stays icon-only: rendering
-  // "Loading account…" would resize the trigger on every launch. `unavailable` IS clickable and
-  // signs in like the rest, so it must not ship as a bare glyph.
-  const showLabel = !isLoadingState;
-
-  // No DropdownMenu wrapper in these states: there is no identity to show, so the trigger is the
-  // whole affordance and pressing it goes straight to the Hosted UI.
+  // Every remaining state — logged out, session expired, active profile not yet known, session
+  // unreadable — reaches here with a *local* profile open, and none of them may start a cloud flow
+  // from a single header click: signing in creates or reopens a cloud dataset and switches the
+  // active profile away from the local one, taking any in-progress work on it with it. So the
+  // trigger offers the one reversible thing it can offer, and the picker is where a deliberate
+  // cloud sign-in lives.
   return (
     <Button
       variant="ghost"
-      size={showLabel ? "default" : "icon"}
-      disabled={isLoadingState}
       className={cn(state === "session-expired" && "text-caution-ink")}
-      aria-label={label}
-      onClick={() => signIn.mutate()}
+      aria-label={t("datasets.switchProfile")}
+      onClick={() => void navigate({ to: "/picker" })}
       data-testid={TRIGGER_TESTID}
       data-auth-state={state}
     >
-      {isLoadingState ? (
-        <User aria-hidden="true" className="size-5" />
-      ) : (
-        <LogIn aria-hidden="true" className={cn(!showLabel && "size-5")} />
-      )}
-      {showLabel && t("profile.signIn")}
+      <ArrowLeftRight aria-hidden="true" />
+      {t("datasets.switchProfile")}
     </Button>
   );
 }

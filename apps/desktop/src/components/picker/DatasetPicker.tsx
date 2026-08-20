@@ -17,6 +17,7 @@ import {
   useDatasets,
   useSelectDataset,
 } from "@/hooks/useDatasets";
+import { useSignIn } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
 /**
@@ -33,6 +34,7 @@ export function DatasetPicker() {
   const datasets = useDatasets();
   const selectDataset = useSelectDataset();
   const createDataset = useCreateDataset();
+  const signIn = useSignIn();
   const entries = datasets.data ?? [];
 
   // Navigating to `/` rather than reloading is what makes the picker's own gate the thing that
@@ -64,6 +66,17 @@ export function DatasetPicker() {
     }
   };
 
+  // No navigation here: the browser round-trip outlives this click, and the callback's own branch
+  // selects the profile it resolved. `CloudSignInNavigator` is what carries the user into it, so
+  // this handler's only job is starting the flow and reporting a start that failed.
+  const loginWithCloud = async () => {
+    try {
+      await signIn.mutateAsync({ kind: "Login" });
+    } catch {
+      toast.error(t("datasets.cloudFailed"));
+    }
+  };
+
   return (
     // `tabIndex={-1}` for the same reason the shell's `<main>` carries it: a keyboard user needs the
     // scroll region itself to be focusable, and on this route this element is that region.
@@ -78,7 +91,7 @@ export function DatasetPicker() {
         <div className="text-center">
           <span
             aria-hidden="true"
-            className="mx-auto mb-5 block size-10 rounded-xl bg-logo-gradient"
+            className="mx-auto mb-5 block size-10 rounded-xl bg-brand"
           />
           {/* The shell's skip link and its route-change focus move both target this id, and this
             * surface renders no PageHeader, so it owns the heading contract itself. */}
@@ -146,7 +159,10 @@ export function DatasetPicker() {
                   // `interactive` brings `cursor-pointer hover:bg-hover`, and both have to be
                   // cancelled while the row is inert — a row that still lights up under the cursor
                   // reads as clickable when it is not. `bg-card` is the Card's own base background.
-                  className="disabled:cursor-default disabled:hover:bg-card"
+                  // `w-full` is load-bearing: the Card's root element IS the `<button>` here, and a
+                  // form control shrink-to-fits even as a block-level flex box, so without it every
+                  // row would be exactly as wide as its own label.
+                  className="w-full disabled:cursor-default disabled:hover:bg-card"
                   data-testid="picker-dataset-row"
                 >
                   <CardContent className="text-left">
@@ -175,13 +191,23 @@ export function DatasetPicker() {
           {t("datasets.newLocalProfile")}
         </Button>
 
-        {/* Present but inert until Epic 35 wires it. Both spellings of disabled: the native
-          * attribute takes it out of the tab order, `aria-disabled` is what the shared Button's
-          * dimmed treatment is keyed to, so a dim is never the only signal. */}
+        {/* The one remote action on this screen. It starts the same unchanged Cognito flow the app
+          * has always used, carrying only the plain `Login` intent — the dataset it lands on is
+          * resolved Rust-side after the callback, so this click sends nothing about any profile.
+          * Disabled while either registry mutation is in flight for the same reason they disable
+          * each other: the callback's own branch rewrites the registry too. */}
         <Button
           className="mt-section-gap"
-          disabled
-          aria-disabled="true"
+          disabled={
+            signIn.isPending || createDataset.isPending || selectDataset.isPending
+          }
+          aria-disabled={
+            signIn.isPending ||
+            createDataset.isPending ||
+            selectDataset.isPending ||
+            undefined
+          }
+          onClick={() => void loginWithCloud()}
           data-testid="picker-login-cloud-button"
         >
           {t("datasets.loginWithCloud")}
