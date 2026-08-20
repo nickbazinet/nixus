@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Plus, TriangleAlertIcon } from "lucide-react";
+import { Pencil, Plus, TriangleAlertIcon } from "lucide-react";
 import {
   Alert,
   AlertTitle,
@@ -17,9 +18,11 @@ import {
   useCreateDataset,
   useDatasets,
   useSelectDataset,
+  type Dataset,
 } from "@/hooks/useDatasets";
 import { useSignIn } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { RenameProfilePanel } from "./RenameProfilePanel";
 
 /**
  * The launch-time screen: which local dataset is about to be opened.
@@ -37,6 +40,17 @@ export function DatasetPicker() {
   const createDataset = useCreateDataset();
   const signIn = useSignIn();
   const entries = datasets.data ?? [];
+
+  // The profile whose name is being edited, or none. The whole entry rather than an id, so the panel
+  // seeds its field from the row the user picked without re-searching the list.
+  const [renaming, setRenaming] = useState<Dataset | null>(null);
+
+  // Every control behind the rename panel is inert while a registry rewrite is in flight — select,
+  // create and rename all read-modify-write the same file — and for as long as the panel is open,
+  // because it is modal: a click that reached a row through the backdrop would open the very profile
+  // being renamed, and one that reached the create control would rewrite the registry underneath it.
+  const backgroundBusy =
+    selectDataset.isPending || createDataset.isPending || renaming !== null;
 
   // Navigating to `/` rather than reloading is what makes the picker's own gate the thing that
   // decides: the root's beforeLoad re-asks `check_picker_gate` (now latched) and `/`'s asks
@@ -131,7 +145,11 @@ export function DatasetPicker() {
             data-testid="picker-dataset-list"
           >
             {entries.map((entry) => (
-              <li key={entry.id}>
+              // `relative`, and the rename control is a *sibling* of the Card overlaid on it rather
+              // than a child: the Card's root element IS the row `<button>`, so a nested control
+              // would be a button inside a button. Overlaying rather than laying the two out side by
+              // side is what keeps every row the same full width as the buttons below the list.
+              <li key={entry.id} className="relative">
                 {/* `interactive` + `render={<button>}` is this repo's clickable-card convention
                   * (GarageVehicleRow's shape): the Card's root element itself becomes the button, so
                   * the row is one native focusable target. Nesting a button inside CardContent is
@@ -144,15 +162,12 @@ export function DatasetPicker() {
                     <button
                       type="button"
                       // Every row, not only the clicked one, so a second row cannot race the first.
-                      // A create in flight disables them too: the two mutations both rewrite the
-                      // registry, so letting them interleave is what has to be impossible. Both
-                      // spellings, matching the Cloud button below: the native attribute takes the
-                      // row out of the tab order, `aria-disabled` is what assistive tech reports,
-                      // so a dim is never the only signal.
-                      disabled={selectDataset.isPending || createDataset.isPending}
-                      aria-disabled={
-                        selectDataset.isPending || createDataset.isPending || undefined
-                      }
+                      // What else takes them out is `backgroundBusy` above. Both spellings, matching
+                      // the Cloud button below: the native attribute takes the row out of the tab
+                      // order, `aria-disabled` is what assistive tech reports, so a dim is never the
+                      // only signal.
+                      disabled={backgroundBusy}
+                      aria-disabled={backgroundBusy || undefined}
                       onClick={() => void selectEntry(entry.id)}
                     />
                   }
@@ -165,10 +180,33 @@ export function DatasetPicker() {
                   className="w-full disabled:cursor-default disabled:hover:bg-card"
                   data-testid="picker-dataset-row"
                 >
-                  <CardContent className="text-left">
+                  <CardContent
+                    // Reserved for the overlaid rename control, so a long name never runs under it.
+                    className={cn("text-left", entry.kind === "local" && "pr-10")}
+                  >
                     <span className="text-label text-ink">{entry.label}</span>
                   </CardContent>
                 </Card>
+                {/* Local profiles only: a cloud-linked profile's label is its account's, so the
+                  * affordance is absent rather than present-and-refused. */}
+                {entry.kind === "local" ? (
+                  <span className="absolute inset-y-0 right-2 flex items-center">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-ink-dim hover:text-ink"
+                      disabled={backgroundBusy}
+                      aria-disabled={backgroundBusy || undefined}
+                      aria-label={t("datasets.renameProfileAction", {
+                        name: entry.label,
+                      })}
+                      onClick={() => setRenaming(entry)}
+                      data-testid="picker-rename-button"
+                    >
+                      <Pencil aria-hidden="true" />
+                    </Button>
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -182,8 +220,8 @@ export function DatasetPicker() {
         <Button
           variant="outline"
           className="mt-section-gap"
-          disabled={createDataset.isPending || selectDataset.isPending}
-          aria-disabled={createDataset.isPending || selectDataset.isPending || undefined}
+          disabled={backgroundBusy}
+          aria-disabled={backgroundBusy || undefined}
           onClick={() => void createEntry()}
           data-testid="picker-new-profile-button"
         >
@@ -198,21 +236,24 @@ export function DatasetPicker() {
           * each other: the callback's own branch rewrites the registry too. */}
         <Button
           className="mt-section-gap"
-          disabled={
-            signIn.isPending || createDataset.isPending || selectDataset.isPending
-          }
-          aria-disabled={
-            signIn.isPending ||
-            createDataset.isPending ||
-            selectDataset.isPending ||
-            undefined
-          }
+          disabled={signIn.isPending || backgroundBusy}
+          aria-disabled={signIn.isPending || backgroundBusy || undefined}
           onClick={() => void loginWithCloud()}
           data-testid="picker-login-cloud-button"
         >
           {t("datasets.loginWithCloud")}
         </Button>
       </div>
+
+      {/* Mounted only while a rename is open, and keyed by the profile: that is what reseeds the
+        * field from the row the user actually picked instead of the first one they ever opened. */}
+      {renaming ? (
+        <RenameProfilePanel
+          key={renaming.id}
+          entry={renaming}
+          onClose={() => setRenaming(null)}
+        />
+      ) : null}
     </div>
   );
 }

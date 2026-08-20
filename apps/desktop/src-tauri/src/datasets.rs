@@ -475,6 +475,94 @@ pub(crate) fn migrate_to_cloud_dataset_at(
     .inspect_err(|_| crate::credentials::clear_credentials(&destination_id))
 }
 
+/// The longest display label a profile may carry.
+///
+/// Counted in `char`s, not bytes: the limit exists so a row stays readable, and a
+/// byte budget would let an accented or CJK name be rejected at half the length an
+/// ASCII one is allowed.
+const MAX_DATASET_LABEL_CHARS: usize = 80;
+
+/// Trims a submitted label and refuses one that is empty or over-long.
+///
+/// Parse-not-validate: the rest of the rename path receives a `String` that is
+/// already the exact bytes to persist, so no later step re-checks or re-trims. The
+/// error names `label` so the picker can attach it to the field the user typed in
+/// rather than showing a bare toast.
+///
+/// Split out of `rename_dataset_at` for the same reason `reject_taken_id` is: the
+/// whole rejection matrix is then testable without touching a filesystem.
+fn parse_dataset_label(label: &str) -> Result<String, AppError> {
+    let trimmed = label.trim();
+
+    if trimmed.is_empty() || trimmed.chars().count() > MAX_DATASET_LABEL_CHARS {
+        return Err(AppError::Validation {
+            message: format!(
+                "A profile name must be between 1 and {} characters",
+                MAX_DATASET_LABEL_CHARS
+            ),
+            field: Some("label".to_string()),
+        });
+    }
+
+    Ok(trimmed.to_string())
+}
+
+/// Replaces a local profile's display label, and nothing else.
+///
+/// Deliberately the narrowest possible mutator: `id`, `kind`, `cognito_sub`,
+/// `linked_from`, `is_default` and `created_at` are all left exactly as recorded,
+/// and no directory, database or keyring entry is touched. The id *is* the
+/// directory name, so moving the label rather than the id is what keeps the rename
+/// free of any data movement — Default included, whose directory is the app data
+/// root itself.
+///
+/// `REGISTRY_LOCK` is held across the whole read-modify-write, matching
+/// `create_dataset_at`: a rename racing a create must not drop the other's entry.
+/// The read goes through the unfiltered `read_registry_for_update`, so an entry the
+/// picker skips survives a rename of a sibling — the regression that helper exists
+/// for.
+///
+/// A cloud-linked profile is refused rather than silently ignored: its label is
+/// derived from the account it is linked to, so a local override would drift from
+/// the account the next sign-in reports.
+pub(crate) fn rename_dataset_at(root: &Path, id: &str, label: &str) -> Result<Dataset, AppError> {
+    // Before the lock: an invalid label cannot be persisted, so there is nothing to
+    // serialize against and no reason to make a valid rename wait behind it.
+    let label = parse_dataset_label(label)?;
+
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let path = registry_path(root);
+    let mut entries = read_registry_for_update(&path)?;
+
+    // `is_valid_dataset_id` is part of the lookup, not a separate check: an entry the
+    // picker cannot show is an entry the user cannot have asked to rename, so it reads
+    // as not-found rather than as a rename that silently succeeded off-screen.
+    let entry = entries
+        .iter_mut()
+        .find(|entry| entry.id == id && is_valid_dataset_id(&entry.id))
+        .ok_or_else(|| AppError::Validation {
+            message: format!("Unknown dataset: {}", id),
+            field: Some("dataset_id".to_string()),
+        })?;
+
+    if entry.kind != DatasetKind::Local {
+        return Err(AppError::Validation {
+            message: "A Nixus Cloud profile is named by its account".to_string(),
+            field: Some("dataset_id".to_string()),
+        });
+    }
+
+    entry.label = label;
+    let renamed = entry.clone();
+
+    write_json_atomic(&path, &entries)?;
+
+    Ok(renamed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1479,5 +1567,304 @@ mod tests {
 
         crate::credentials::clear_credentials(&source.id);
         crate::credentials::clear_credentials(&migrated.id);
+    }
+
+    fn local_entry(id: &str, label: &str) -> Dataset {
+        Dataset {
+            label: label.to_string(),
+            kind: DatasetKind::Local,
+            cognito_sub: None,
+            linked_from: None,
+            ..entry(id)
+        }
+    }
+
+    fn seeded_root(entries: &[Dataset]) -> TempDir {
+        let root = TempDir::new().expect("temp dir");
+        write_registry(
+            root.path(),
+            &serde_json::to_string(entries).expect("serialized"),
+        );
+        root
+    }
+
+    #[test]
+    fn a_submitted_label_is_trimmed_before_it_is_persisted() {
+        let root = seeded_root(&[local_entry("local-1", "Local Profile 1")]);
+
+        let renamed =
+            rename_dataset_at(root.path(), "local-1", "  Work  ").expect("rename succeeds");
+
+        assert_eq!(renamed.label, "Work");
+        assert_eq!(recorded(root.path())[0].label, "Work");
+    }
+
+    // The rename's whole safety claim: only `label` moves. A mutator that rebuilt the
+    // entry instead of assigning one field would reset `created_at` or `is_default`
+    // here, and `created_at` is what `most_recent_for_sub` tie-breaks on.
+    #[test]
+    fn renaming_changes_the_label_and_no_other_field_of_the_entry() {
+        let before = local_entry("local-1", "Local Profile 1");
+        let root = seeded_root(std::slice::from_ref(&before));
+
+        let renamed = rename_dataset_at(root.path(), "local-1", "Work").expect("rename succeeds");
+
+        assert_eq!(
+            renamed,
+            Dataset {
+                label: "Work".to_string(),
+                ..before
+            }
+        );
+        assert_eq!(
+            recorded(root.path())[0],
+            renamed,
+            "and that is what landed on disk"
+        );
+    }
+
+    // Default's directory *is* the app data root, so a rename that touched identity
+    // would have to move every top-level file in the app.
+    #[test]
+    fn renaming_default_changes_its_label_while_its_root_storage_stays_put() {
+        let root = TempDir::new().expect("temp dir");
+        bootstrap_registry_at(root.path()).expect("bootstrap succeeds");
+        let db = root.path().join(DB_FILE_NAME);
+        std::fs::write(&db, b"pretend sqlite bytes").expect("db written");
+
+        let renamed = rename_dataset_at(root.path(), DEFAULT_DATASET_ID, "Personal")
+            .expect("rename succeeds");
+
+        assert_eq!(renamed.id, DEFAULT_DATASET_ID);
+        assert_eq!(renamed.label, "Personal");
+        assert!(renamed.is_default, "Default must stay the default entry");
+        assert_eq!(
+            dataset_dir_from_root(root.path(), DEFAULT_DATASET_ID),
+            root.path(),
+            "Default's directory is still the root itself"
+        );
+        assert_eq!(
+            std::fs::read(&db).expect("db still readable"),
+            b"pretend sqlite bytes",
+            "a rename must move, copy and rename no data"
+        );
+        assert!(!root.path().join("datasets").exists());
+    }
+
+    #[test]
+    fn a_blank_or_whitespace_only_label_is_refused_and_the_registry_is_untouched() {
+        let root = seeded_root(&[local_entry("local-1", "Local Profile 1")]);
+        let before = std::fs::read(registry_path(root.path())).expect("file readable");
+
+        for rejected in ["", "   ", "\t\n"] {
+            let error = rename_dataset_at(root.path(), "local-1", rejected)
+                .expect_err("a blank label must be refused");
+
+            match error {
+                AppError::Validation { field, .. } => {
+                    assert_eq!(field.as_deref(), Some("label"))
+                }
+                other => panic!("expected AppError::Validation, got {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            std::fs::read(registry_path(root.path())).expect("file readable"),
+            before,
+            "a refused rename must not rewrite the registry"
+        );
+    }
+
+    // The boundary itself, both sides of it, and in `char`s rather than bytes — an
+    // accented name must get the same 80 characters an ASCII one does.
+    #[test]
+    fn the_label_length_limit_is_eighty_characters_not_eighty_bytes() {
+        let root = seeded_root(&[local_entry("local-1", "Local Profile 1")]);
+
+        let accented = "é".repeat(MAX_DATASET_LABEL_CHARS);
+        assert!(
+            accented.len() > MAX_DATASET_LABEL_CHARS,
+            "the fixture must be multi-byte"
+        );
+        let renamed =
+            rename_dataset_at(root.path(), "local-1", &accented).expect("80 chars is accepted");
+        assert_eq!(renamed.label, accented);
+
+        let too_long = "x".repeat(MAX_DATASET_LABEL_CHARS + 1);
+        let error = rename_dataset_at(root.path(), "local-1", &too_long)
+            .expect_err("81 chars must be refused");
+        match error {
+            AppError::Validation { field, .. } => assert_eq!(field.as_deref(), Some("label")),
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+        assert_eq!(
+            recorded(root.path())[0].label,
+            accented,
+            "the refused label must not have replaced the accepted one"
+        );
+    }
+
+    // Trimming happens before the length check, so a name that only exceeds the limit
+    // with its padding is still accepted.
+    #[test]
+    fn surrounding_whitespace_does_not_count_against_the_length_limit() {
+        let root = seeded_root(&[local_entry("local-1", "Local Profile 1")]);
+        let at_limit = "x".repeat(MAX_DATASET_LABEL_CHARS);
+
+        let renamed = rename_dataset_at(root.path(), "local-1", &format!("   {at_limit}   "))
+            .expect("padding is trimmed before it is measured");
+
+        assert_eq!(renamed.label, at_limit);
+    }
+
+    #[test]
+    fn renaming_an_unknown_id_is_a_validation_error_naming_the_field() {
+        let root = seeded_root(&[local_entry("local-1", "Local Profile 1")]);
+        let before = std::fs::read(registry_path(root.path())).expect("file readable");
+
+        let error = rename_dataset_at(root.path(), "does-not-exist", "Work")
+            .expect_err("an unknown id must be refused");
+
+        match error {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field.as_deref(), Some("dataset_id"))
+            }
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read(registry_path(root.path())).expect("file readable"),
+            before
+        );
+    }
+
+    // A cloud-linked label is the account's, and the next sign-in re-derives it, so a
+    // local override would silently drift rather than stick.
+    #[test]
+    fn renaming_a_cloud_linked_profile_is_refused_and_its_account_label_survives() {
+        let root = seeded_root(&[entry("cloud-1")]);
+
+        let error = rename_dataset_at(root.path(), "cloud-1", "Work")
+            .expect_err("a cloud-linked profile must not be renamed");
+
+        assert!(
+            matches!(error, AppError::Validation { .. }),
+            "expected AppError::Validation, got {error:?}"
+        );
+        assert_eq!(recorded(root.path())[0].label, "Label cloud-1");
+    }
+
+    // An id the picker cannot show is an id the user cannot have asked to rename, so
+    // it reads as not-found rather than mutating an entry nothing can display.
+    #[test]
+    fn an_entry_the_reader_skips_cannot_be_renamed() {
+        let root = seeded_root(&[default_dataset_entry(), entry("a/b")]);
+
+        let error = rename_dataset_at(root.path(), "a/b", "Work").expect_err("rename must fail");
+
+        match error {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field.as_deref(), Some("dataset_id"))
+            }
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // The same regression `read_registry_for_update` exists for, on the rename path:
+    // reading the filtered view and writing it back would delete the skipped entry
+    // from disk, with nothing in the product able to restore it.
+    #[test]
+    fn renaming_one_profile_leaves_every_sibling_entry_byte_for_byte_intact() {
+        let seeded = vec![
+            default_dataset_entry(),
+            local_entry("local-1", "Local Profile 1"),
+            local_entry("local-2", "Local Profile 2"),
+            entry("cloud-1"),
+            entry("a/b"),
+        ];
+        let root = seeded_root(&seeded);
+
+        rename_dataset_at(root.path(), "local-2", "Work").expect("rename succeeds");
+
+        let on_disk =
+            read_registry_for_update(&registry_path(root.path())).expect("registry parses");
+        assert_eq!(
+            on_disk.len(),
+            seeded.len(),
+            "no entry may be added or dropped"
+        );
+        for (index, before) in seeded.iter().enumerate() {
+            let expected = if before.id == "local-2" {
+                Dataset {
+                    label: "Work".to_string(),
+                    ..before.clone()
+                }
+            } else {
+                before.clone()
+            };
+            assert_eq!(
+                on_disk[index], expected,
+                "entry {index} changed unexpectedly"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rename_survives_a_registry_reload() {
+        let root = seeded_root(&[local_entry("local-1", "Local Profile 1")]);
+
+        rename_dataset_at(root.path(), "local-1", "Work").expect("rename succeeds");
+
+        assert_eq!(
+            load_registry_entries(&registry_path(root.path()))
+                .expect("load succeeds")
+                .into_iter()
+                .map(|entry| entry.label)
+                .collect::<Vec<_>>(),
+            vec!["Work".to_string()]
+        );
+    }
+
+    // The lock's claim on this path: a rename and a create both rewrite the whole
+    // file, so splitting the read from the write would let one drop the other's work.
+    // Asserted on final state only, so it cannot flake.
+    #[test]
+    fn parallel_renames_and_creates_all_survive_the_single_writer_lock() {
+        const RENAMES: usize = 4;
+        const CREATES: usize = 4;
+        let root = bootstrapped_root();
+        let target = create_dataset_at(root.path()).expect("target created");
+        let root_path = root.path();
+        let target_id = target.id.as_str();
+
+        std::thread::scope(|scope| {
+            for index in 0..RENAMES {
+                scope.spawn(move || {
+                    rename_dataset_at(root_path, target_id, &format!("Renamed {index}"))
+                        .expect("rename succeeds");
+                });
+            }
+            for _ in 0..CREATES {
+                scope.spawn(move || {
+                    create_dataset_at(root_path).expect("create succeeds");
+                });
+            }
+        });
+
+        let entries = recorded(root.path());
+        assert_eq!(
+            entries.len(),
+            CREATES + 2,
+            "Default, the target and every create must be recorded; a lost append means \
+             the read-modify-write was not atomic"
+        );
+        let renamed = entries
+            .iter()
+            .find(|entry| entry.id == target.id)
+            .expect("the target must still be recorded");
+        assert!(
+            renamed.label.starts_with("Renamed "),
+            "one of the renames must have won outright, got {}",
+            renamed.label
+        );
     }
 }

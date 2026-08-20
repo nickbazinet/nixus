@@ -174,6 +174,21 @@ pub fn create_dataset(app: AppHandle) -> Result<Dataset, AppError> {
     datasets::create_dataset_at(&datasets::global_root(&app)?)
 }
 
+/// Changes a local profile's display label, and nothing else: the same global-root
+/// resolution as `create_dataset` above, for the same reason — the registry is a
+/// sibling of every dataset, so `active_dataset_dir` would take `DbState`'s lock to
+/// answer a question that has nothing to do with the open connection. Renaming a
+/// profile the user is *not* currently in has to work too, which is why the id
+/// travels explicitly rather than being read off the active dataset.
+#[tauri::command(rename_all = "snake_case")]
+pub fn rename_dataset(
+    app: AppHandle,
+    dataset_id: String,
+    label: String,
+) -> Result<Dataset, AppError> {
+    datasets::rename_dataset_at(&datasets::global_root(&app)?, &dataset_id, &label)
+}
+
 /// Whether the launch-time picker has been passed during this run (AD-14).
 ///
 /// Deliberately a standalone flag *alongside* `ActiveDataset` rather than derived

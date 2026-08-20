@@ -37,6 +37,10 @@ interface PickerOptions {
   selectDatasetDelayMs?: number;
   /** Makes `create_dataset` reject, standing in for a failed directory create or migrate. */
   createDatasetFails?: boolean;
+  /** Makes `rename_dataset` reject, standing in for a label the registry refused. */
+  renameDatasetFails?: boolean;
+  /** Delays `rename_dataset` so the in-flight window — and the guarded panel — are assertable. */
+  renameDatasetDelayMs?: number;
   /** Delays `create_dataset` so the in-flight window — and the disabled rows — are assertable. */
   createDatasetDelayMs?: number;
   /** What the freshly-selected dataset's `check_onboarding_status` reports. */
@@ -163,6 +167,39 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
               setTimeout(
                 () => settle().then(resolve, reject),
                 opts.createDatasetDelayMs,
+              );
+            });
+          }
+
+          // A genuine label edit against the same mutable registry `list_datasets` reads, so the row
+          // can only show the new name if the mutation and its cache invalidation both landed. A
+          // stub that merely echoed the label back would pass on an optimistic render alone.
+          case "rename_dataset": {
+            const requestedId = String(args?.dataset_id);
+            const submitted = String(args?.label);
+            const settle = () => {
+              const target = registry?.find((entry) => entry.id === requestedId);
+              if (
+                opts.renameDatasetFails === true ||
+                target === undefined ||
+                target.kind !== "local"
+              ) {
+                return Promise.reject({
+                  type: "Validation",
+                  message: `Unknown dataset: ${requestedId}`,
+                  field: "dataset_id",
+                });
+              }
+              // Rust trims before it persists, so the mock has to as well or the assertions would be
+              // measuring the mock's leniency rather than the product's contract.
+              target.label = submitted.trim();
+              return Promise.resolve({ ...target });
+            };
+            if (opts.renameDatasetDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(
+                () => settle().then(resolve, reject),
+                opts.renameDatasetDelayMs,
               );
             });
           }
@@ -435,14 +472,18 @@ test.describe("picker contents", () => {
     await expect(rows.nth(1)).toHaveText("Work");
 
     // Every row is a real button, not a div with a click handler: the Card's own root element is
-    // rendered as one, so the row is a single native focusable target.
-    await expect(page.getByTestId("picker-dataset-list").getByRole("button")).toHaveCount(
-      2,
-    );
+    // rendered as one, so the row is a single native focusable target. Counted by testid rather than
+    // by every button in the list — each local row also carries its own rename control, which is a
+    // sibling of the row, never nested inside it.
     for (const row of await rows.all()) {
       expect(await row.evaluate((el) => el.tagName)).toBe("BUTTON");
       await expect(row).toBeEnabled();
     }
+
+    // The anti-pattern this layout exists to avoid: a button inside a button.
+    await expect(
+      page.getByTestId("picker-dataset-row").getByRole("button"),
+    ).toHaveCount(0);
   });
 
   test("every choice on the screen is laid out at the same full width", async ({
@@ -888,17 +929,304 @@ test.describe("creating a local profile", () => {
     expect(await readIpcCommands(page)).not.toContain("create_dataset");
   });
 
-  test("no free-text label input exists anywhere on the picker", async ({ page }) => {
-    // Naming and renaming are explicit non-goals: the label is auto-generated, so an input here
-    // would be the affordance the epic forbids.
+  test("creating a profile never asks the user to name it", async ({ page }) => {
+    // Naming on create is still an explicit non-goal: the label is auto-generated, so the create
+    // control must mint a row outright rather than opening a form. Renaming afterwards is its own
+    // affordance, tested below — which is why this is scoped to the create path instead of asserting
+    // the whole screen has no input at all.
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
 
     await page.getByTestId("picker-new-profile-button").click();
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
 
+    await expect(page.getByTestId("picker-rename-panel")).toHaveCount(0);
     await expect(page.locator("input")).toHaveCount(0);
     await expect(page.locator("textarea")).toHaveCount(0);
+  });
+});
+
+test.describe("renaming a local profile", () => {
+  test("a submitted name updates the row in place, without navigating", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows.nth(1)).toHaveText("Work");
+
+    await page.getByTestId("picker-rename-button").nth(1).click();
+    const input = page.getByTestId("picker-rename-input");
+    // Seeded from the row that was picked, not the first row: opening on the wrong entry is the
+    // failure a shared, always-mounted form would produce.
+    await expect(input).toHaveValue("Work");
+
+    // Padded on purpose: the trim is part of the contract, and the row must show neither the padding
+    // nor a name that kept it.
+    await input.fill("  Client work  ");
+    await page.getByTestId("picker-rename-save").click();
+
+    await expect(page.getByTestId("picker-rename-panel")).toHaveCount(0);
+    await expect(rows.nth(1)).toHaveText("Client work");
+    await expect(rows.nth(0)).toHaveText("Default", { timeout: 5_000 });
+
+    const renames = await callsTo(page, "rename_dataset");
+    expect(renames).toHaveLength(1);
+    // The clicked row's id and the raw submitted label, snake_case on the wire — the trim belongs to
+    // the registry, so the frontend must not silently pre-normalise it away.
+    expect(renames[0].args).toEqual({
+      dataset_id: "work-1",
+      label: "  Client work  ",
+    });
+
+    // A rename is not an open: still on the picker, nothing selected, nothing latched.
+    await expect(page).toHaveURL(/\/picker$/);
+    const commands = await readIpcCommands(page);
+    expect(commands).not.toContain("select_dataset");
+    expect(commands).not.toContain("mark_picker_passed");
+  });
+
+  test("the row's new name comes from a fresh registry read, not an optimistic write", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-rename-button").nth(1).click();
+    await page.getByTestId("picker-rename-input").fill("Client work");
+    await page.getByTestId("picker-rename-save").click();
+
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText(
+      "Client work",
+    );
+
+    // The mock's `rename_dataset` mutates the same array `list_datasets` reads, so a `list_datasets`
+    // call issued *after* the rename is what proves the label on screen was read back rather than
+    // painted optimistically — i.e. that the mutation invalidated the list. Durability across an
+    // actual process restart is not reachable here (a reload re-seeds the mock registry); the Rust
+    // `a_rename_survives_a_registry_reload` test owns that half.
+    const commands = await readIpcCommands(page);
+    const renameAt = commands.indexOf("rename_dataset");
+    expect(renameAt).toBeGreaterThan(-1);
+    expect(commands.slice(renameAt + 1)).toContain("list_datasets");
+  });
+
+  test("Default is renameable, being a local profile like any other", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    const rename = page.getByTestId("picker-rename-button");
+    await expect(rename).toHaveCount(1);
+    await rename.click();
+    await page.getByTestId("picker-rename-input").fill("Personal");
+    await page.getByTestId("picker-rename-save").click();
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveText("Personal");
+    expect((await callsTo(page, "rename_dataset"))[0].args).toEqual({
+      dataset_id: "default",
+      label: "Personal",
+    });
+  });
+
+  test("a blank name is refused inline, and the previous label stands", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-rename-button").nth(1).click();
+    await page.getByTestId("picker-rename-input").fill("   ");
+    await page.getByTestId("picker-rename-save").click();
+
+    // Translated copy, not a raw key, and attached to the field rather than thrown as a toast.
+    await expect(page.getByTestId("picker-rename-error")).toHaveText(
+      "Enter a name for this profile.",
+    );
+    await expect(page.getByTestId("picker-rename-input")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+
+    // Refused before the wire, and the row is untouched.
+    expect(await readIpcCommands(page)).not.toContain("rename_dataset");
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+  });
+
+  test("an over-long name is refused inline and names the limit", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-rename-button").nth(1).click();
+    await page.getByTestId("picker-rename-input").fill("x".repeat(81));
+    await page.getByTestId("picker-rename-save").click();
+
+    await expect(page.getByTestId("picker-rename-error")).toHaveText(
+      "A profile name can be at most 80 characters.",
+    );
+    expect(await readIpcCommands(page)).not.toContain("rename_dataset");
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+  });
+
+  test("a rejected rename is reported and leaves the panel open for another try", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      renameDatasetFails: true,
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-rename-button").nth(1).click();
+    await page.getByTestId("picker-rename-input").fill("Client work");
+    await page.getByTestId("picker-rename-save").click();
+
+    await expect(page.locator("[data-sonner-toast]")).toContainText(
+      "That profile could not be renamed. Please try again.",
+    );
+
+    // Not a dead end and not a silent loss: the panel stays open holding what was typed, and the row
+    // still shows the label the registry still has.
+    await expect(page.getByTestId("picker-rename-panel")).toBeVisible();
+    await expect(page.getByTestId("picker-rename-input")).toHaveValue("Client work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+  });
+
+  test("cancelling changes nothing at all", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-rename-button").nth(1).click();
+    await page.getByTestId("picker-rename-input").fill("Client work");
+    await page.getByTestId("picker-rename-cancel").click();
+
+    await expect(page.getByTestId("picker-rename-panel")).toHaveCount(0);
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    expect(await readIpcCommands(page)).not.toContain("rename_dataset");
+  });
+
+  test("a rename in flight cannot be abandoned, and nothing behind it is reachable", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      renameDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-rename-button").nth(1).click();
+    await page.getByTestId("picker-rename-input").fill("Client work");
+    await page.getByTestId("picker-rename-save").click();
+
+    const panel = page.getByTestId("picker-rename-panel");
+
+    // Both spellings on both controls, so a dim is never the only signal — and Playwright's click()
+    // waits for enabled, so a disabled Save cannot be double-submitted at all.
+    for (const control of [
+      page.getByTestId("picker-rename-save"),
+      page.getByTestId("picker-rename-cancel"),
+    ]) {
+      await expect(control).toBeDisabled();
+      await expect(control).toHaveAttribute("aria-disabled", "true");
+    }
+
+    // The registry write is in flight, so nothing behind the panel may start a second one.
+    for (const control of [
+      page.getByTestId("picker-dataset-row").nth(0),
+      page.getByTestId("picker-dataset-row").nth(1),
+      page.getByTestId("picker-rename-button").nth(0),
+      page.getByTestId("picker-new-profile-button"),
+      page.getByTestId("picker-login-cloud-button"),
+    ]) {
+      await expect(control).toBeDisabled();
+      await expect(control).toHaveAttribute("aria-disabled", "true");
+    }
+
+    // The three exits no `disabled` attribute can cover, driven for real: they are SlideOver's own,
+    // so only the panel refusing the close request keeps them from unmounting the surface that
+    // reports the rename's outcome.
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeVisible();
+    await page.getByTestId("slide-over-close").click();
+    await expect(panel).toBeVisible();
+    await page.getByTestId("picker-rename-panel-backdrop").click({ position: { x: 40, y: 40 } });
+    await expect(panel).toBeVisible();
+
+    // And then the ordinary success path still runs to completion, exactly once.
+    await expect(panel).toHaveCount(0, { timeout: 20_000 });
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Client work");
+    expect(await callsTo(page, "rename_dataset")).toHaveLength(1);
+
+    // The background is live again, so the guard was scoped to the panel's lifetime.
+    await expect(page.getByTestId("picker-dataset-row").nth(0)).toBeEnabled();
+    await expect(page.getByTestId("picker-new-profile-button")).toBeEnabled();
+  });
+
+  test("a cloud-linked profile is offered no rename at all", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [
+        DEFAULT_ENTRY,
+        {
+          ...DEFAULT_ENTRY,
+          id: "cloud-1",
+          label: "user@example.com",
+          kind: "cloud-linked",
+          cognito_sub: "sub-1",
+          is_default: false,
+        },
+      ],
+    });
+    await page.goto("/picker");
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+
+    // One control for the one local row: a cloud-linked label is its account's, so the affordance is
+    // absent rather than present-and-refused.
+    const rename = page.getByTestId("picker-rename-button");
+    await expect(rename).toHaveCount(1);
+    await expect(rename).toHaveAttribute("aria-label", "Rename Default");
+  });
+
+  test("a selection in flight makes the rename controls unreachable", async ({
+    page,
+  }) => {
+    // Both mutations rewrite the same registry, so they must not interleave — the same guard the
+    // rows and the create control already carry.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      selectDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    const rename = page.getByTestId("picker-rename-button").nth(0);
+    await page.getByTestId("picker-dataset-row").nth(0).click();
+
+    await expect(rename).toBeDisabled();
+    await expect(rename).toHaveAttribute("aria-disabled", "true");
+
+    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    expect(await readIpcCommands(page)).not.toContain("rename_dataset");
   });
 });
 

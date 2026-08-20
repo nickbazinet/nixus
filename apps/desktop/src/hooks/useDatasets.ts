@@ -113,3 +113,42 @@ export function createDatasetMutationOptions(queryClient: QueryClient) {
 export function useCreateDataset() {
   return useMutation(createDatasetMutationOptions(useQueryClient()));
 }
+
+/** What `rename_dataset` needs, in the camelCase the frontend speaks. */
+export interface RenameDatasetInput {
+  datasetId: string;
+  label: string;
+}
+
+/**
+ * Two invalidations, never a `clear()`: a rename changes one display string and leaves every
+ * profile's data exactly where it was, so the same reasoning as `createDatasetMutationOptions`
+ * applies — clearing would blank the app for a label edit.
+ *
+ * `activeProfile` is the second key because the renamed profile may be the one currently open, and
+ * `get_active_profile` carries its own copy of the label for the account menu. Without it the
+ * picker row would update while the header went on showing the old name until the next remount.
+ * Invalidated unconditionally rather than only for the active id, so no second source of truth for
+ * "which profile is open" appears here.
+ *
+ * Awaited, so `mutateAsync` does not resolve before the refetches have been kicked off — the caller
+ * closes its editor the moment it resolves.
+ *
+ * Navigation and error toasting stay with the caller, matching its two siblings above.
+ */
+export function renameDatasetMutationOptions(queryClient: QueryClient) {
+  return {
+    mutationFn: ({ datasetId, label }: RenameDatasetInput) =>
+      invoke<Dataset>("rename_dataset", { dataset_id: datasetId, label }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.datasets }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.activeProfile }),
+      ]);
+    },
+  };
+}
+
+export function useRenameDataset() {
+  return useMutation(renameDatasetMutationOptions(useQueryClient()));
+}

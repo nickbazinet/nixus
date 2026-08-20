@@ -215,6 +215,7 @@ pub fn run() {
             commands::datasets::select_dataset,
             commands::datasets::list_datasets,
             commands::datasets::create_dataset,
+            commands::datasets::rename_dataset,
             commands::datasets::check_picker_gate,
             commands::datasets::mark_picker_passed,
             commands::datasets::get_active_profile,

@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDatasetMutationOptions,
+  renameDatasetMutationOptions,
   selectDatasetMutationOptions,
   useSelectDataset,
 } from "@/hooks/useDatasets";
@@ -50,6 +51,12 @@ const OPEN_FAILED = {
 } as const;
 
 const LATCH_FAILED = { type: "Internal", message: "ipc gone" } as const;
+
+const RENAME_REJECTED = {
+  type: "Validation",
+  message: "A profile name must be between 1 and 80 characters",
+  field: "label",
+} as const;
 
 /** A client holding entries that demonstrably belong to the previously-open dataset. */
 function seedPreviousDataset(queryClient: QueryClient) {
@@ -180,10 +187,67 @@ describe("createDatasetMutationOptions", () => {
   });
 });
 
+const RENAMED = { ...CREATED, label: "Work" } as const;
+
+/** Same seam again: which cache keys move is the contract, not markup. */
+function runRename(queryClient: QueryClient, label: string) {
+  return new MutationObserver(
+    queryClient,
+    renameDatasetMutationOptions(queryClient),
+  ).mutate({ datasetId: CREATED.id, label });
+}
+
+describe("renameDatasetMutationOptions", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(RENAMED);
+  });
+
+  it("sends the id and label snake_case on the wire, in one invoke", async () => {
+    await runRename(newClient(), "Work");
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["rename_dataset", { dataset_id: CREATED.id, label: "Work" }],
+    ]);
+  });
+
+  it("invalidates the list and the active profile while unrelated cached data survives", async () => {
+    const queryClient = newClient();
+    seedPreviousDataset(queryClient);
+    queryClient.setQueryData(["active-profile"], { label: "Local Profile 1" });
+
+    await runRename(queryClient, "Work");
+
+    // Both keys: the picker list renders `label`, and `get_active_profile` carries its own copy for
+    // the header — refreshing only the first leaves the open profile's name stale on screen.
+    expect(queryClient.getQueryState(["datasets"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["active-profile"])?.isInvalidated).toBe(true);
+
+    // The half that fails under `clear()`: a label edit moves no money, so nothing else may be
+    // dropped. E2E cannot see this — a cleared cache simply refetches and looks identical.
+    expect(queryClient.getQueryData(["budget", "summary"])).toEqual({
+      total_spent_cents: 999,
+    });
+  });
+
+  it("invalidates nothing when the rename is rejected", async () => {
+    const queryClient = newClient();
+    seedPreviousDataset(queryClient);
+    queryClient.setQueryData(["active-profile"], { label: "Local Profile 1" });
+    invokeMock.mockRejectedValueOnce(RENAME_REJECTED);
+
+    // The exact rejected value, so the caller's field-level error handling is what this pins rather
+    // than "something threw".
+    await expect(runRename(queryClient, "   ")).rejects.toEqual(RENAME_REJECTED);
+
+    expect(queryClient.getQueryState(["datasets"])?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(["active-profile"])?.isInvalidated).toBe(false);
+  });
+});
+
 // The hook results have to escape the tree: this suite drives them directly instead of clicking a
 // UI, and @testing-library/react is not a dependency of @nixus/desktop.
 let selectDataset: ReturnType<typeof useSelectDataset>;
-
 function SelectHarness() {
   selectDataset = useSelectDataset();
   return null;

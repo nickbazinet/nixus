@@ -24,6 +24,13 @@ const REQUIRED_KEYS = [
   "datasets.loadError",
   "datasets.selectFailed",
   "datasets.createFailed",
+  "datasets.renameProfile",
+  "datasets.renameProfileAction",
+  "datasets.renameProfileDescription",
+  "datasets.profileName",
+  "datasets.nameRequired",
+  "datasets.nameTooLong",
+  "datasets.renameFailed",
   "datasets.migrateToCloud",
   "datasets.signInWithCloud",
   "datasets.signedIn",
@@ -165,6 +172,32 @@ describe("datasets i18n", () => {
     // go in the same change rather than leaving an orphan behind.
     expect(en["profile.signIn"]).toBeUndefined();
     expect(fr["profile.signIn"]).toBeUndefined();
+  });
+
+  it("names the rename action and keeps its three failures distinguishable in both locales", () => {
+    expect(en["datasets.renameProfile"]).toBe("Rename profile");
+    expect(fr["datasets.renameProfile"]).toBe("Renommer le profil");
+
+    for (const locale of [en, fr]) {
+      // The per-row action names the profile it acts on, so a screen reader hears which of several
+      // identical Rename buttons it has landed on — an interpolation-free label cannot.
+      expect(locale["datasets.renameProfileAction"]).toContain("{{name}}");
+      // The limit is stated by the validator that enforces it, never spelled out twice.
+      expect(locale["datasets.nameTooLong"]).toContain("{{max}}");
+
+      // Blank, too long, and refused by the backend are three different outcomes on one screen;
+      // identical copy would make them indistinguishable, and reusing select/create copy would
+      // report the wrong action entirely.
+      expect(locale["datasets.nameRequired"]).not.toBe(locale["datasets.nameTooLong"]);
+      expect(locale["datasets.renameFailed"]).not.toBe(locale["datasets.selectFailed"]);
+      expect(locale["datasets.renameFailed"]).not.toBe(locale["datasets.createFailed"]);
+    }
+  });
+
+  it("promises the rename moves no data, in both locales", () => {
+    // The one reassurance this dialog owes the user: a rename is a label edit, not a migration.
+    expect(en["datasets.renameProfileDescription"]).toContain("Only the name changes");
+    expect(fr["datasets.renameProfileDescription"]).toContain("Seul le nom change");
   });
 
   it("keeps the picker's copy out of the auth.* namespace", () => {
