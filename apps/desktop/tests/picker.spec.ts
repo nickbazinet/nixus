@@ -29,6 +29,8 @@ interface PickerOptions {
   datasets?: MockDataset[];
   /** What `get_auth_session` answers. */
   loggedOut?: boolean;
+  /** Makes `start_login` reject, standing in for a browser that could not be opened. */
+  startLoginFails?: boolean;
   /** Makes `select_dataset` reject, standing in for an unknown id or a failed open/migrate. */
   selectDatasetFails?: boolean;
   /** Delays `select_dataset` so the in-flight window — and the disabled rows — are assertable. */
@@ -186,6 +188,20 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
             });
           }
 
+          // Everything past this command — the Hosted UI, the identity provider, the loopback
+          // callback, the token exchange, and the Rust-side branch that resolves and selects the
+          // cloud-linked dataset — is deliberately out of E2E scope: external services are never
+          // mocked through in this suite. What the picker owns is starting the flow with the right
+          // intent, which is exactly what these calls record.
+          case "start_login":
+            return opts.startLoginFails === true
+              ? Promise.reject({
+                  type: "Auth",
+                  message: "Could not open your browser to sign in. Please try again.",
+                  recoverable: true,
+                })
+              : Promise.resolve(null);
+
           case "mark_picker_passed":
             needsPicker = false;
             return Promise.resolve(null);
@@ -302,7 +318,7 @@ test.describe("launch-time picker gate", () => {
 
     await expect(page).toHaveURL(/\/picker$/);
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Choose a profile");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Welcome to Nixus");
 
     // The dashboard is what the gate has to have beaten, so its absence is the assertion.
     await expect(page.getByTestId("import-statement-btn")).toHaveCount(0);
@@ -405,6 +421,47 @@ test.describe("picker contents", () => {
     }
   });
 
+  test("every choice on the screen is laid out at the same full width", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [
+        DEFAULT_ENTRY,
+        {
+          ...DEFAULT_ENTRY,
+          id: "long-1",
+          label: "Local Profile 12",
+          is_default: false,
+        },
+      ],
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(2);
+
+    const widths: number[] = [];
+    for (const target of [
+      rows.nth(0),
+      rows.nth(1),
+      page.getByTestId("picker-new-profile-button"),
+      page.getByTestId("picker-login-cloud-button"),
+    ]) {
+      const box = await target.boundingBox();
+      if (box === null) {
+        throw new Error("Element has no bounding box, so it is not laid out.");
+      }
+      widths.push(box.width);
+    }
+
+    // Label length must never decide a control's width: the column stretches every child, so a
+    // "Default" row, a "Local Profile 12" row and both buttons are one shared measure.
+    for (const width of widths) {
+      expect(width).toBeCloseTo(widths[0], 0);
+    }
+  });
+
   test("an empty registry is not an error state", async ({ page }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [] });
     await page.goto("/picker");
@@ -435,15 +492,50 @@ test.describe("picker contents", () => {
     await expect(page.getByTestId("picker-login-cloud-button")).toBeVisible();
   });
 
-  test("the Nixus Cloud action is present and inert", async ({ page }) => {
+  test("the Nixus Cloud action starts the plain Login flow and nothing else", async ({
+    page,
+  }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
 
     const cloud = page.getByTestId("picker-login-cloud-button");
     await expect(cloud).toBeVisible();
     await expect(cloud).toHaveText("Log in with Nixus Cloud");
-    await expect(cloud).toBeDisabled();
-    await expect(cloud).toHaveAttribute("aria-disabled", "true");
+    await expect(cloud).toBeEnabled();
+
+    await cloud.click();
+
+    // The intent is the whole payload: no dataset, no profile, no financial data leaves the webview
+    // on this click (NFR1).
+    const logins = await callsTo(page, "start_login");
+    expect(logins).toHaveLength(1);
+    expect(logins[0].args).toEqual({ intent: { kind: "Login" } });
+
+    // The picker never selects a dataset for a cloud sign-in — the callback's own branch does, after
+    // the browser round-trip — and the user stays here until it resolves.
+    expect(await readIpcCommands(page)).not.toContain("select_dataset");
+    expect(await readIpcCommands(page)).not.toContain("mark_picker_passed");
+    await expect(page).toHaveURL(/\/picker$/);
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+  });
+
+  test("a browser that will not open is reported instead of failing silently", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      startLoginFails: true,
+    });
+    await page.goto("/picker");
+
+    await page.getByTestId("picker-login-cloud-button").click();
+
+    // Without the toast the rejection is an unhandled promise and the button just looks dead.
+    await expect(page.locator("[data-sonner-toast]")).toContainText(
+      "Nixus Cloud could not be reached. Please try again.",
+    );
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
   });
 
   test("no i18n key leaks into the rendered screen", async ({ page }) => {
@@ -585,6 +677,34 @@ test.describe("choosing a profile", () => {
 
     await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
     expect(await callsTo(page, "select_dataset")).toHaveLength(1);
+  });
+
+  test("reaching the picker in-app, with the gate already passed, still opens a profile", async ({
+    page,
+  }) => {
+    // `needsPicker: false` is the in-app entry point — the header's and the `/profile` guard's Switch
+    // profile action navigate straight here — as opposed to the launch-time gate that redirects. It
+    // is the same screen either way, so a selection has to work with the gate already latched.
+    await setupTauriMock(page, {
+      needsPicker: false,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(2);
+    await rows.nth(1).click();
+
+    await expect(page).toHaveURL(/localhost:1420\/$/);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
+
+    const selections = await callsTo(page, "select_dataset");
+    expect(selections).toHaveLength(1);
+    expect(selections[0].args).toEqual({ dataset_id: "work-1" });
+    // Latched anyway: the flag is idempotent, and the picker's click path is the only thing allowed
+    // to set it whether or not the gate was what brought the user here.
+    expect(await readIpcCommands(page)).toContain("mark_picker_passed");
   });
 });
 

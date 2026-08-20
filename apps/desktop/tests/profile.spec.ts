@@ -39,6 +39,25 @@ interface MockSubdivision {
   name_fr?: string;
 }
 
+/** `get_active_profile`'s wire shape. The Cognito subject is deliberately absent from it (AD-10). */
+interface MockActiveProfile {
+  dataset_id: string;
+  kind: "local" | "cloud-linked";
+  label: string;
+  is_signed_in: boolean;
+}
+
+/** One entry of the dataset registry as `list_datasets` serialises it, for the `/picker` destination. */
+interface MockDataset {
+  id: string;
+  label: string;
+  kind: "local" | "cloud-linked";
+  cognito_sub: string | null;
+  linked_from: string | null;
+  is_default: boolean;
+  created_at: string;
+}
+
 /** `TfsaAccumulatedLimit` no longer renders on this surface — see `tfsa-room.spec.ts`. */
 
 type CommandOutcome =
@@ -67,6 +86,14 @@ interface AuthOptions {
   countries?: MockCountry[];
   /** What `get_subdivisions` answers, keyed by country code. An absent key answers `[]`, as Rust does. */
   subdivisions?: Record<string, MockSubdivision[]>;
+  /**
+   * What `get_active_profile` answers. Omit to leave it unstubbed so it falls through to the reject
+   * fallback — the state every pre-existing spec in this directory runs in, and the one the guard
+   * must degrade to "Switch profile" under, since a Login would activate a cloud dataset instead.
+   */
+  activeProfile?: MockActiveProfile;
+  /** What `list_datasets` answers, so the `/picker` destination renders its list rather than an error. */
+  datasets?: MockDataset[];
   /** Seeds `i18nextLng` before the app boots, so the FR locale is active on first paint. */
   language?: string;
 }
@@ -191,6 +218,16 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
                   value: session,
                   delayMs: opts.sessionDelayMs,
                 });
+
+          case "get_active_profile":
+            return opts.activeProfile === undefined
+              ? Promise.reject(`Unknown command: ${cmd}`)
+              : Promise.resolve(opts.activeProfile);
+
+          case "list_datasets":
+            return opts.datasets === undefined
+              ? Promise.reject(`Unknown command: ${cmd}`)
+              : Promise.resolve(opts.datasets);
 
           case "start_login":
             return opts.start_login === undefined
@@ -371,6 +408,37 @@ const LOGGED_IN: MockAuthState = {
   name: "Test User",
 };
 
+const LOCAL_PROFILE: MockActiveProfile = {
+  dataset_id: "00000000-0000-4000-8000-000000000001",
+  kind: "local",
+  label: "Local Profile 1",
+  is_signed_in: false,
+};
+
+/**
+ * Signed out, and cloud-linked: the one state in which the guard may offer a one-click Login, because
+ * the profile it would land on is the one already open.
+ */
+const CLOUD_PROFILE: MockActiveProfile = {
+  dataset_id: "00000000-0000-4000-8000-0000000000c1",
+  kind: "cloud-linked",
+  label: "user@example.com",
+  is_signed_in: false,
+};
+
+/** The registry `/picker` reads once the guard's Switch profile action has navigated there. */
+const PICKER_DATASETS: MockDataset[] = [
+  {
+    id: LOCAL_PROFILE.dataset_id,
+    label: LOCAL_PROFILE.label,
+    kind: "local",
+    cognito_sub: null,
+    linked_from: null,
+    is_default: false,
+    created_at: "2026-01-01T00:00:00+00:00",
+  },
+];
+
 /** Commands later stories introduce. None of them may be reachable from this story's code. */
 const FUTURE_PROFILE_COMMANDS = ["get_location_catalog"];
 
@@ -493,20 +561,28 @@ test.describe("/profile session guard", () => {
   test("signed out on /profile shows the sign-in required state and no email", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: { status: "LoggedOut" } });
+    // Cloud-linked, so the direct action is the correct offer: signing back in reopens the profile
+    // already open rather than switching the user off a local one.
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      activeProfile: CLOUD_PROFILE,
+    });
     await page.goto("/profile");
 
     const guard = page.getByTestId("profile-sign-in-required");
     await expect(guard).toBeVisible();
     await expect(guard).toHaveAttribute("data-auth-state", "logged-out");
     await expect(page.getByTestId("profile-sign-in-action")).toHaveText(
-      "Sign In with Nixus Cloud",
+      "Sign in with Nixus Cloud",
     );
     await expect(page.getByTestId("profile-email")).toHaveCount(0);
   });
 
   test("an expired session reuses the shipped expired copy", async ({ page }) => {
-    await setupTauriMock(page, { session: { status: "SessionExpired" } });
+    await setupTauriMock(page, {
+      session: { status: "SessionExpired" },
+      activeProfile: CLOUD_PROFILE,
+    });
     await page.goto("/profile");
 
     const guard = page.getByTestId("profile-sign-in-required");
@@ -515,6 +591,53 @@ test.describe("/profile session guard", () => {
     await expect(page.getByTestId("profile-sign-in-action")).toHaveText(
       /Session expired/,
     );
+  });
+
+  test("a local profile's guard switches profiles instead of signing in silently", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      activeProfile: LOCAL_PROFILE,
+      datasets: PICKER_DATASETS,
+    });
+    await page.goto("/profile");
+
+    const guard = page.getByTestId("profile-sign-in-required");
+    await expect(guard).toBeVisible();
+    // The whole point: completing a Login find-or-creates a cloud dataset and activates it, so this
+    // surface may not offer that in one click while a *local* profile is the one open.
+    await expect(page.getByTestId("profile-sign-in-action")).toHaveCount(0);
+    const switchProfile = page.getByTestId("profile-switch-profile-action");
+    await expect(switchProfile).toHaveText("Switch profile");
+
+    await switchProfile.click();
+
+    // The destination is asserted, not just the URL: a picker that rendered its load error would
+    // leave the user with no way back and the assertion would still pass on the URL alone.
+    await expect(page).toHaveURL(/\/picker$/);
+    await expect(page.getByTestId("picker-dataset-list")).toBeVisible();
+    await expect(page.getByTestId("picker-load-error")).toHaveCount(0);
+    const commands = await readIpcCommands(page);
+    expect(commands).not.toContain("start_login");
+  });
+
+  test("an unreadable active profile withholds the direct sign-in too", async ({
+    page,
+  }) => {
+    // `activeProfile` left unstubbed, so `get_active_profile` rejects: an unknown kind is treated as
+    // possibly-local, because guessing wrong here costs the user their open profile.
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      datasets: PICKER_DATASETS,
+    });
+    await page.goto("/profile");
+
+    await expect(page.getByTestId("profile-sign-in-required")).toBeVisible();
+    await expect(
+      page.getByTestId("profile-switch-profile-action"),
+    ).toBeVisible();
+    await expect(page.getByTestId("profile-sign-in-action")).toHaveCount(0);
   });
 
   test("an unusable session payload fails closed and stays silent", async ({
