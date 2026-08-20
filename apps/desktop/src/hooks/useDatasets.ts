@@ -31,6 +31,25 @@ export function fetchDatasets() {
   return invoke<Dataset[]>("list_datasets");
 }
 
+/**
+ * What the account menu needs about the dataset it renders inside, straight off
+ * the wire. `is_signed_in` is derived Rust-side and arrives as a bare boolean —
+ * the Cognito subject deliberately never crosses IPC.
+ */
+export interface ActiveProfile {
+  dataset_id: string;
+  kind: Dataset["kind"];
+  label: string;
+  is_signed_in: boolean;
+}
+
+export function useActiveProfile() {
+  return useQuery({
+    queryKey: queryKeys.activeProfile,
+    queryFn: () => invoke<ActiveProfile>("get_active_profile"),
+  });
+}
+
 export function useDatasets() {
   return useQuery({
     queryKey: queryKeys.datasets,

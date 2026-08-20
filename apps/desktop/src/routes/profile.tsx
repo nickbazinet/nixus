@@ -76,7 +76,7 @@ function ProfilePage() {
         )}
 
         {(guard === "logged-out" || guard === "unavailable") && (
-          <SignInRequired authState={guard} actionLabel={t("profile.signIn")} />
+          <SignInRequired authState={guard} actionLabel={t("datasets.signInWithCloud")} />
         )}
       </div>
     </div>

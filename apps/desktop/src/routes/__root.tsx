@@ -12,6 +12,7 @@ import { DestinationNav } from "../components/shared/DestinationNav";
 import { FloatingChatBar } from "../components/chat/FloatingChatBar";
 import { UpdateChecker } from "../components/shared/UpdateChecker";
 import { RecurringApplyListener } from "../components/shared/RecurringApplyListener";
+import { CloudSignInNavigator } from "../components/shared/CloudSignInNavigator";
 import { ValuesVisibilityProvider } from "../contexts/ValuesVisibilityContext";
 import { SURFACE_HEADING_ID } from "../components/shared/PageHeader";
 import { normalizePeriodParam } from "../hooks/usePeriod";
@@ -190,6 +191,9 @@ function RootLayout() {
           * RecurringApplyListener genuinely renders nothing, so it stays mounted. */}
         {!isPicker && <UpdateChecker />}
         <RecurringApplyListener />
+        {/* Mounted on the picker too: a Cloud sign-in started there is switched by the OAuth callback,
+          * so this is what leaves that screen for the profile it landed on. */}
+        <CloudSignInNavigator />
       </div>
     </ValuesVisibilityProvider>
   );

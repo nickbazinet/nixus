@@ -154,18 +154,43 @@ describe("useAuth", () => {
     expect(queryClient.getQueryData(["auth", "session"])).toEqual(session);
   });
 
-  it("starts login without arguments and without invalidating the session", async () => {
+  it("starts login carrying the plain Login intent and nothing else", async () => {
     invokeMock.mockResolvedValue(null);
 
     await act(async () => {
-      await signIn.mutateAsync();
+      await signIn.mutateAsync({ kind: "Login" });
     });
 
     // start_login only opens the system browser, so the session is unchanged at that
     // moment; the auth:callback-received event is what reflects a completed sign-in.
     expect(invokeMock).toHaveBeenCalledTimes(1);
-    expect(invokeMock.mock.calls[0]).toEqual(["start_login"]);
+    expect(invokeMock.mock.calls[0]).toEqual([
+      "start_login",
+      { intent: { kind: "Login" } },
+    ]);
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+
+  // Story 35.6's frontend half: the two Cloud entry points differ by one local dataset id and
+  // nothing else. Asserted as the whole argument object, so an added payload field fails here.
+  it("sends only the intent — never any profile data — for either entry point", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await act(async () => {
+      await signIn.mutateAsync({ kind: "Login" });
+      await signIn.mutateAsync({
+        kind: "Migrate",
+        source_dataset_id: "local-1",
+      });
+    });
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["start_login", { intent: { kind: "Login" } }],
+      [
+        "start_login",
+        { intent: { kind: "Migrate", source_dataset_id: "local-1" } },
+      ],
+    ]);
   });
 
   it("invalidates the session after signing out", async () => {
@@ -175,9 +200,13 @@ describe("useAuth", () => {
       await signOut.mutateAsync();
     });
 
-    // Then only the auth key is refetched — auth shares no data with any other domain
+    // Then the auth key and the derived signed-in badge are refetched, and nothing else:
+    // signing out of a cloud-linked profile changes the badge, never the dataset.
     expect(invokeMock.mock.calls[0]).toEqual(["sign_out"]);
-    expect(invalidatedKeys()).toEqual([["auth", "session"]]);
+    expect(invalidatedKeys()).toEqual([
+      ["auth", "session"],
+      ["active-profile"],
+    ]);
   });
 
   it("invalidates the session when the deep-link callback event fires", async () => {
@@ -193,8 +222,12 @@ describe("useAuth", () => {
       fireCallbackEvent();
     });
 
-    // Then the UI refreshes with no manual reload
-    expect(invalidatedKeys()).toEqual([["auth", "session"]]);
+    // Then the UI refreshes with no manual reload, including the profile the callback may have
+    // just switched to (Stories 35.2/35.3)
+    expect(invalidatedKeys()).toEqual([
+      ["auth", "session"],
+      ["active-profile"],
+    ]);
   });
 
   // Row 10 of Story 30.2's degradation matrix, and the only test of it anywhere.
@@ -278,7 +311,7 @@ describe("useAuth", () => {
     await settleQueries();
 
     await act(async () => {
-      await signIn.mutateAsync();
+      await signIn.mutateAsync({ kind: "Login" });
       await signOut.mutateAsync();
     });
 
