@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Button, Card, CardContent } from "@nixus/shared";
+import { Button, Card, CardContent, NixusLogo } from "@nixus/shared";
 import { useCompleteOnboarding } from "@/hooks/useOnboardingStatus";
 import { cn } from "@/lib/utils";
 import { OnboardingBudgetStep } from "./OnboardingBudgetStep";
@@ -66,8 +66,11 @@ export function OnboardingWizard() {
         <div className="mb-section-gap text-center">
           <span
             aria-hidden="true"
-            className="mx-auto mb-5 block size-10 rounded-xl bg-brand"
-          />
+            data-testid="onboarding-brand-mark"
+            className="mx-auto mb-5 block size-10"
+          >
+            <NixusLogo className="size-full" />
+          </span>
           <h1 className="text-h1 text-ink">{t("onboarding.welcome")}</h1>
           <p className="mx-auto mt-2 max-w-prose text-body text-ink-dim">
             {t("onboarding.description")}

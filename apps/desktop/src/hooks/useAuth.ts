@@ -17,7 +17,16 @@ export type LoginIntent =
   | { kind: "Login" }
   | { kind: "Migrate"; source_dataset_id: string };
 
-export function useAuthSession() {
+/**
+ * Reads the machine-wide Cognito session and keeps every reader of it fresh.
+ *
+ * `enabled` gates the query and nothing else. It exists for the always-mounted account menu, which
+ * may not read the session while a *local* profile is open — that read opens the OS secure store
+ * and can POST a Cognito refresh for a profile that has no account at all. The callback listener
+ * stays registered while disabled, so a cloud sign-in completed elsewhere still invalidates the
+ * caches this hook owns.
+ */
+export function useAuthSession({ enabled = true }: { enabled?: boolean } = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -58,6 +67,7 @@ export function useAuthSession() {
   return useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => invoke<AuthState>("get_auth_session"),
+    enabled,
     // get_auth_session performs the Cognito refresh POST when the stored token has
     // expired, so a stale entry would re-POST on every window focus and reconnect.
     staleTime: Infinity,

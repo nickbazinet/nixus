@@ -20,4 +20,8 @@ describe("robots.txt", () => {
   it("does not contain Disallow rules in v1", () => {
     expect(robots).not.toMatch(/Disallow:/i);
   });
+
+  it("points crawlers at the canonical host only", () => {
+    expect(robots).not.toContain("nixus.nicolasbazinet.net");
+  });
 });

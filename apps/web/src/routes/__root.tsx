@@ -3,6 +3,7 @@ import {
   Outlet,
   Scripts,
   createRootRoute,
+  useRouterState,
 } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { I18nextProvider, useTranslation } from "react-i18next";
@@ -13,7 +14,9 @@ import { PreAlphaBanner } from "../components/PreAlphaBanner";
 import { SiteFooter } from "../components/SiteFooter";
 import { SiteHeader } from "../components/SiteHeader";
 import { DownloadStateProvider } from "../features/download/DownloadStateContext";
-import i18n from "@/lib/i18n";
+import { i18nForLocale } from "@/lib/i18n";
+import { localeFromPath } from "@/lib/localePaths";
+import type { Locale } from "@/lib/site";
 
 // Inline script that runs synchronously before React hydrates so the
 // `dark` class is on `<html>` on first paint. Without this, returning
@@ -60,12 +63,11 @@ function useCloudflareAnalytics(): void {
 
 // Inner shell — split out so it can call `useTranslation()` from inside
 // the `<I18nextProvider>` tree. The provider must wrap any consumer.
-function ShellInner() {
-  const { t, i18n: i18nInstance } = useTranslation();
-  const lang = i18nInstance.language?.split("-")[0] || "en";
+function ShellInner({ locale }: { locale: Locale }) {
+  const { t } = useTranslation();
   useCloudflareAnalytics();
   return (
-    <html lang={lang}>
+    <html lang={locale}>
       <head>
         <HeadContent />
       </head>
@@ -94,11 +96,15 @@ function ShellInner() {
   );
 }
 
+// Concurrent prerendering mutates the i18n singleton's `language` across pages,
+// so locale is derived from the route path instead — never from that state.
 function RootDocument() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const locale = localeFromPath(pathname);
   return (
-    <I18nextProvider i18n={i18n}>
+    <I18nextProvider i18n={i18nForLocale(locale)}>
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-        <ShellInner />
+        <ShellInner locale={locale} />
       </ThemeProvider>
     </I18nextProvider>
   );

@@ -29,6 +29,7 @@ export const queryKeys = {
   onboardingStatus: ["onboarding-status"] as const,
   datasets: ["datasets"] as const,
   activeProfile: ["active-profile"] as const,
+  activeDatasetId: ["active-dataset-id"] as const,
   incomeSources: ["income-sources"] as const,
   incomeEntries: (sourceId?: number) =>
     sourceId !== undefined

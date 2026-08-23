@@ -152,3 +152,54 @@ export function renameDatasetMutationOptions(queryClient: QueryClient) {
 export function useRenameDataset() {
   return useMutation(renameDatasetMutationOptions(useQueryClient()));
 }
+
+/**
+ * Which profile is open, as a bare id, or `null` when this run has opened none.
+ *
+ * A separate query from `useActiveProfile`, never a field read off it: that one calls
+ * `get_active_profile`, which resolves the Cognito subject for a cloud-linked entry and can
+ * refresh an expired session over the network. The picker asks this question to decide which row's
+ * Delete item is disabled, and that decision must stay auth-free (NFR7).
+ */
+export function useActiveDatasetId() {
+  return useQuery({
+    queryKey: queryKeys.activeDatasetId,
+    queryFn: () => invoke<string | null>("get_active_dataset_id"),
+  });
+}
+
+/**
+ * The same two invalidations `renameDatasetMutationOptions` does, and for the same reason: a
+ * deletion removes one profile's own directory, registry row and AI keys, and leaves every other
+ * profile's data exactly where it was — so a `clear()` would blank the app for a change that
+ * touched nothing it is showing. `selectDatasetMutationOptions` stays the only sweeping case.
+ *
+ * `activeProfile` is the second key because `get_active_profile` carries its own copy of the open
+ * profile's label for the header. The deleted profile can never be the open one — Rust refuses that
+ * outright — but the key is invalidated unconditionally anyway, so no second source of truth for
+ * "which profile is open" appears here.
+ *
+ * `activeDatasetId` is deliberately *not* invalidated: deletion cannot change which profile is
+ * open, and refetching it would be a round-trip for an answer that provably did not move.
+ *
+ * Awaited, so `mutateAsync` does not resolve before the refetches are kicked off — the caller
+ * closes its dialog the moment it resolves.
+ *
+ * Navigation and error reporting stay with the caller, matching all three siblings above.
+ */
+export function deleteDatasetMutationOptions(queryClient: QueryClient) {
+  return {
+    mutationFn: (datasetId: string) =>
+      invoke<void>("delete_dataset", { dataset_id: datasetId }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.datasets }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.activeProfile }),
+      ]);
+    },
+  };
+}
+
+export function useDeleteDataset() {
+  return useMutation(deleteDatasetMutationOptions(useQueryClient()));
+}

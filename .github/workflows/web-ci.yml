@@ -81,6 +81,13 @@ jobs:
       - name: Build web app
         run: pnpm --filter @nixus/web build
 
+      # Offline gates over the built HTML: no AWS credentials, no network.
+      - name: Verify prerendered SEO + locale contracts
+        run: pnpm --filter @nixus/web verify:prerender
+
+      - name: Verify edge route rewrite against built output
+        run: pnpm --filter @nixus/web verify:routes
+
       - name: Lighthouse CI
         # Uses staticDistDir from apps/web/lighthouserc.json to serve the built
         # output locally — no real server required. Gates on the four category

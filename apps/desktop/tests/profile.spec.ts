@@ -426,6 +426,15 @@ const CLOUD_PROFILE: MockActiveProfile = {
   is_signed_in: false,
 };
 
+/**
+ * The same profile with its account attached. The account menu reads the session only for a
+ * cloud-linked profile, so every spec that drives the menu's signed-in panel supplies this.
+ */
+const CLOUD_PROFILE_SIGNED_IN: MockActiveProfile = {
+  ...CLOUD_PROFILE,
+  is_signed_in: true,
+};
+
 /** The registry `/picker` reads once the guard's Switch profile action has navigated there. */
 const PICKER_DATASETS: MockDataset[] = [
   {
@@ -467,7 +476,10 @@ test.describe("profile entry point", () => {
   test("the signed-in dropdown offers Profile and navigates to /profile", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: LOGGED_IN });
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+    });
     await page.goto("/");
 
     const trigger = page.getByTestId("profile-menu-trigger");
@@ -494,7 +506,10 @@ test.describe("profile entry point", () => {
   test("reaching /profile requests the profile and nothing a later story owns", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: LOGGED_IN });
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+    });
     await page.goto("/");
 
     await page.getByTestId("profile-menu-trigger").click();
@@ -516,7 +531,10 @@ test.describe("profile entry point", () => {
   test("the account dropdown itself requests no profile data", async ({ page }) => {
     // ProfileMenu is always mounted, so an invoke() added there would force every other spec's
     // Tauri mock to grow a case. The form must be the only consumer, and it lives behind a route.
-    await setupTauriMock(page, { session: LOGGED_IN });
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+    });
     await page.goto("/");
 
     await page.getByTestId("profile-menu-trigger").click();
@@ -527,14 +545,19 @@ test.describe("profile entry point", () => {
     expect(requested).not.toContain("get_tfsa_accumulated_limit");
   });
 
-  test("the signed-out header offers no dropdown and no Profile item", async ({
+  test("a local profile's header offers no dropdown and no Profile item", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: { status: "LoggedOut" } });
+    // A local profile has no account, so there is nothing for a panel to show — and the Profile item
+    // in particular would lead to a surface that only an account can fill.
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      activeProfile: LOCAL_PROFILE,
+    });
     await page.goto("/");
 
     const trigger = page.getByTestId("profile-menu-trigger");
-    await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
+    await expect(trigger).toHaveAttribute("data-profile-kind", "local");
     await expect(page.getByTestId("profile-menu-profile")).toHaveCount(0);
     await expect(page.getByTestId("profile-menu-panel")).toHaveCount(0);
   });

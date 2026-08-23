@@ -1,16 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { BetaPage, BETA_PAGE_PATHS } from "@/components/BetaPage";
-import i18n from "@/lib/i18n";
+import i18n, { applyRouteLocale } from "@/lib/i18n";
 import { buildMeta } from "@/lib/meta";
 
-async function ensureFrLanguage(): Promise<void> {
-  if (i18n.language?.startsWith("fr")) return;
-  await i18n.changeLanguage("fr");
-}
-
 export const Route = createFileRoute("/fr/beta")({
-  beforeLoad: ensureFrLanguage,
+  beforeLoad: () => applyRouteLocale("fr"),
   head: () => {
     const t = i18n.getFixedT("fr");
     return buildMeta({

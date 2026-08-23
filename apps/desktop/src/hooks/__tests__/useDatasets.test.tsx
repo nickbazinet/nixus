@@ -8,6 +8,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createDatasetMutationOptions,
+  deleteDatasetMutationOptions,
   renameDatasetMutationOptions,
   selectDatasetMutationOptions,
   useSelectDataset,
@@ -242,6 +243,82 @@ describe("renameDatasetMutationOptions", () => {
 
     expect(queryClient.getQueryState(["datasets"])?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(["active-profile"])?.isInvalidated).toBe(false);
+  });
+});
+
+const DELETE_REFUSED = {
+  type: "Validation",
+  message: "The profile you are using cannot be deleted",
+  field: "dataset_id",
+} as const;
+
+/** Same seam again: which cache keys move is the contract, not markup. */
+function runDelete(queryClient: QueryClient) {
+  return new MutationObserver(
+    queryClient,
+    deleteDatasetMutationOptions(queryClient),
+  ).mutate(CREATED.id);
+}
+
+describe("deleteDatasetMutationOptions", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+  });
+
+  it("sends the id snake_case on the wire, in one invoke", async () => {
+    await runDelete(newClient());
+
+    expect(invokeMock.mock.calls).toEqual([
+      ["delete_dataset", { dataset_id: CREATED.id }],
+    ]);
+  });
+
+  it("invalidates the list and the active profile while unrelated cached data survives", async () => {
+    const queryClient = newClient();
+    seedPreviousDataset(queryClient);
+    queryClient.setQueryData(["active-profile"], { label: "Local Profile 1" });
+
+    await runDelete(queryClient);
+
+    expect(queryClient.getQueryState(["datasets"])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(["active-profile"])?.isInvalidated).toBe(true);
+
+    // The half that fails under `clear()`: removing one profile moves no other profile's money, so
+    // nothing else may be dropped. E2E cannot see this — a cleared cache simply refetches.
+    expect(queryClient.getQueryData(["budget", "summary"])).toEqual({
+      total_spent_cents: 999,
+    });
+  });
+
+  it("leaves the open-profile id alone, because a deletion cannot change it", async () => {
+    const queryClient = newClient();
+    queryClient.setQueryData(["active-dataset-id"], "default");
+
+    await runDelete(queryClient);
+
+    // Rust refuses to delete the open profile outright, so which profile is open provably did not
+    // move — invalidating it would be a round-trip for an unchanged answer.
+    expect(queryClient.getQueryState(["active-dataset-id"])?.isInvalidated).toBe(
+      false,
+    );
+    expect(queryClient.getQueryData(["active-dataset-id"])).toBe("default");
+  });
+
+  it("invalidates nothing when the deletion is refused", async () => {
+    const queryClient = newClient();
+    seedPreviousDataset(queryClient);
+    queryClient.setQueryData(["active-profile"], { label: "Local Profile 1" });
+    invokeMock.mockRejectedValueOnce(DELETE_REFUSED);
+
+    // The exact rejected value, so the caller's inline failure handling is what this pins rather
+    // than "something threw".
+    await expect(runDelete(queryClient)).rejects.toEqual(DELETE_REFUSED);
+
+    expect(queryClient.getQueryState(["datasets"])?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(["active-profile"])?.isInvalidated).toBe(false);
+    // The refused profile has to still be listed, or the row the user must retry from is gone.
+    expect(queryClient.getQueryData(["datasets"])).toEqual([{ id: "previous" }]);
   });
 });
 

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tracing::warn;
 
@@ -236,24 +237,122 @@ fn new_dataset_id() -> String {
     id
 }
 
-/// The label the next local profile gets: `"Local Profile <n>"`.
-///
-/// `n` counts the existing local, non-default entries — Default and every
-/// cloud-linked entry are excluded, because neither is a "Local Profile <n>" and
-/// counting them would skip numbers. Counting rather than max-plus-one is what
-/// the story specifies, and it is only sound while removal does not exist:
-/// deleting "Local Profile 1" of two would make the next create collide with
-/// "Local Profile 2". Whenever a delete affordance lands, this has to become
-/// max-plus-one.
-///
-/// Takes an iterator so the caller chooses the view: the label is derived from the
-/// entries the *picker can show*, not from every line in the file.
-fn next_local_label<'a>(entries: impl Iterator<Item = &'a Dataset>) -> String {
-    let existing = entries
-        .filter(|entry| !entry.is_default && entry.kind == DatasetKind::Local)
-        .count();
+/// The generated-label prefix, so the parse and the format cannot drift apart.
+const LOCAL_LABEL_PREFIX: &str = "Local Profile ";
 
-    format!("Local Profile {}", existing + 1)
+/// The number `label` carries when it is a generated `"Local Profile <n>"`, or
+/// `None` for a user-chosen name.
+///
+/// Deliberately strict — the exact prefix followed by digits only — so
+/// "Local Profile 2 (work)", "local profile 2" and `"Local Profile 007"` are all
+/// user-chosen names that cannot inflate the sequence, because none is a label
+/// this code ever wrote.
+fn local_label_suffix(label: &str) -> Option<u32> {
+    let digits = label.strip_prefix(LOCAL_LABEL_PREFIX)?;
+
+    if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+
+    digits.parse().ok()
+}
+
+/// The highest generated suffix `entries` currently carries, or 0 when none does.
+///
+/// A renamed profile contributes nothing, because its label is no longer a
+/// generated one. Default and every cloud-linked entry are excluded because
+/// neither is a `"Local Profile <n>"`.
+///
+/// Takes an iterator so the caller chooses the view: the sequence is derived from
+/// the entries the *picker can show*, not from every line in the file.
+fn highest_local_label<'a>(entries: impl Iterator<Item = &'a Dataset>) -> u32 {
+    entries
+        .filter(|entry| !entry.is_default && entry.kind == DatasetKind::Local)
+        .filter_map(|entry| local_label_suffix(&entry.label))
+        .max()
+        .unwrap_or(0)
+}
+
+/// The high-water mark of generated labels, kept beside the registry (AD-3).
+///
+/// A separate file rather than a field, because `datasets.json` is a bare JSON
+/// *array* on the wire and every reader — including installs that predate this
+/// file — parses it as one. Wrapping it in an object to make room for a counter
+/// would be a breaking registry migration for a number that is not a dataset.
+const LABEL_SEQUENCE_FILE_NAME: &str = "local-label-sequence.json";
+
+/// The highest `"Local Profile <n>"` number ever handed out at this root.
+///
+/// Its own tiny document rather than a bare integer so the file explains itself to
+/// anyone reading an app-data directory, and so a later field needs no migration.
+#[derive(Serialize, Deserialize)]
+struct LocalLabelSequence {
+    highest_issued: u32,
+}
+
+fn label_sequence_path(root: &Path) -> PathBuf {
+    root.join(LABEL_SEQUENCE_FILE_NAME)
+}
+
+/// What the sequence file records, or 0 when there is nothing usable to read.
+///
+/// Absent, unreadable and unparseable all resolve to 0 rather than an error,
+/// because every caller takes the max with the live registry: the worst case is
+/// falling back to max-over-surviving-entries — the behaviour that shipped before
+/// this file existed — instead of refusing to create a profile at all. An install
+/// that predates the file is the *normal* case, not a fault.
+fn recorded_label_high_water(root: &Path) -> u32 {
+    std::fs::read_to_string(label_sequence_path(root))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<LocalLabelSequence>(&raw).ok())
+        .map(|sequence| sequence.highest_issued)
+        .unwrap_or(0)
+}
+
+/// The highest number either the sequence file or the live registry knows about.
+///
+/// The registry half is what seeds a root that predates the file and what
+/// self-heals one whose file was lost or hand-edited; the file half is what
+/// survives the deletion of the entry holding the highest label, which is exactly
+/// what the registry alone cannot answer.
+fn effective_label_high_water<'a>(
+    root: &Path,
+    entries: impl Iterator<Item = &'a Dataset>,
+) -> u32 {
+    recorded_label_high_water(root).max(highest_local_label(entries))
+}
+
+fn write_label_high_water(root: &Path, highest_issued: u32) -> Result<(), AppError> {
+    write_json_atomic(
+        &label_sequence_path(root),
+        &LocalLabelSequence { highest_issued },
+    )
+}
+
+/// Reserves the next generated label and records it as issued before returning it.
+///
+/// Recording *first* is what makes the guarantee durable: the number is spent the
+/// moment it is handed out, so no later create — and no create racing this one —
+/// can derive it again, whatever happens to the profile that received it. A create
+/// that then fails leaves a gap in the sequence, which is the deliberate trade: the
+/// contract forbids reuse and collision, not gaps.
+///
+/// Saturating rather than wrapping: a registry hand-edited to
+/// `"Local Profile 4294967295"` must not roll the next label back to 0 and collide.
+///
+/// Callers already hold `REGISTRY_LOCK`, so this must never take it — two creates
+/// reading the same high-water would otherwise reserve the same number.
+fn reserve_local_label<'a>(
+    root: &Path,
+    entries: impl Iterator<Item = &'a Dataset>,
+) -> Result<String, AppError> {
+    let issued = effective_label_high_water(root, entries).saturating_add(1);
+    write_label_high_water(root, issued)?;
+
+    Ok(format!("{}{}", LOCAL_LABEL_PREFIX, issued))
 }
 
 /// Refuses an id that any existing dataset already owns.
@@ -305,11 +404,12 @@ pub(crate) fn create_dataset_at(root: &Path) -> Result<Dataset, AppError> {
         id: new_dataset_id(),
         // The filtered view, and only here: the label numbers the profiles the user
         // can actually see, so a skipped entry must not consume a number.
-        label: next_local_label(
+        label: reserve_local_label(
+            root,
             entries
                 .iter()
                 .filter(|entry| is_valid_dataset_id(&entry.id)),
-        ),
+        )?,
         kind: DatasetKind::Local,
         cognito_sub: None,
         linked_from: None,
@@ -561,6 +661,153 @@ pub(crate) fn rename_dataset_at(root: &Path, id: &str, label: &str) -> Result<Da
     write_json_atomic(&path, &entries)?;
 
     Ok(renamed)
+}
+
+/// Refuses every profile the product must never remove, naming `dataset_id` so the
+/// picker can attach the message to the row it came from.
+///
+/// The authority, not a second opinion: the row menu omits Delete for Default and
+/// disables it for the open profile, but a stale render, a hand-edited registry or
+/// a direct IPC call has to be refused here all the same.
+///
+/// Split out of `delete_dataset_at` for the same reason `reject_taken_id` is: the
+/// whole rejection matrix is then testable without touching a filesystem.
+fn reject_undeletable(
+    entries: &[Dataset],
+    id: &str,
+    active_id: Option<&str>,
+) -> Result<(), AppError> {
+    let refuse = |message: String| AppError::Validation {
+        message,
+        field: Some("dataset_id".to_string()),
+    };
+
+    // First, because `id` becomes a path component below: an id the charset check
+    // rejects can never match a registered entry either, so it reads as not-found.
+    if !is_valid_dataset_id(id) {
+        return Err(refuse(format!("Unknown dataset: {}", id)));
+    }
+
+    // The literal and the flag are both refused, and separately: Default's directory
+    // *is* the app data root, so a removal driven off the flag alone would delete
+    // every profile in the app the moment a registry lost that flag.
+    if id == DEFAULT_DATASET_ID {
+        return Err(refuse("The Default profile cannot be deleted".to_string()));
+    }
+
+    // An open SQLite connection and its WAL sidecar cannot be removed safely on
+    // every platform, so the profile in use is refused rather than closed for the
+    // user — switching on their behalf is an explicitly deferred decision.
+    if active_id == Some(id) {
+        return Err(refuse(
+            "The profile you are using cannot be deleted".to_string(),
+        ));
+    }
+
+    // `id` is already valid here, so an entry it matches has a valid id too — no
+    // second charset check is needed to keep an unshowable entry unreachable.
+    let entry = entries
+        .iter()
+        .find(|entry| entry.id == id)
+        .ok_or_else(|| refuse(format!("Unknown dataset: {}", id)))?;
+
+    if entry.is_default {
+        return Err(refuse("The Default profile cannot be deleted".to_string()));
+    }
+
+    if entry.kind != DatasetKind::Local {
+        return Err(refuse(
+            "A Nixus Cloud profile cannot be deleted here".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+/// Removes a dataset's own directory, treating an already-absent one as done.
+///
+/// `NotFound` is success rather than an error because the directory is removed
+/// *before* the registry entry: a registry write that failed leaves the row on
+/// screen with its directory already gone, and the retry that finishes the job has
+/// to complete rather than fail on the half it already did.
+fn remove_dataset_dir(dir: &Path) -> Result<(), AppError> {
+    match std::fs::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(AppError::File {
+            message: format!("Failed to remove the profile directory: {}", e),
+        }),
+    }
+}
+
+/// Removes a local profile: its directory, its registry entry, and its own AI
+/// credentials. Nothing else on disk is touched.
+///
+/// `REGISTRY_LOCK` is held across the whole read-modify-write, matching
+/// `create_dataset_at` and `rename_dataset_at`: a delete racing a create must not
+/// drop the other's entry. The read goes through the unfiltered
+/// `read_registry_for_update`, so an entry the picker skips survives a sibling's
+/// deletion — the regression that helper exists for.
+///
+/// The directory is removed **before** the registry entry, the reverse of
+/// `create_dataset_at`'s ordering and for the mirror-image reason: a filesystem
+/// failure then leaves the row still listed, so the deletion stays visible and
+/// retryable instead of orphaning a directory nothing points at. The window it
+/// opens — directory gone, entry still recorded — is a profile that fails to open,
+/// which `remove_dataset_dir` lets the retry finish rather than re-fail on.
+///
+/// The keyring is cleared **last**, once the entry is gone: that is the point of no
+/// return, so a failed registry write leaves the keys for the retry to clear rather
+/// than stripping them from a profile still listed.
+///
+/// The generated-label high-water mark is raised **first**, before any removal, so a
+/// deleted profile's `"Local Profile <n>"` can never be handed out again.
+///
+/// `active_id` travels in rather than being read here: resolving it needs
+/// `DbState`'s guard, and this function must never hold that guard while it takes
+/// `REGISTRY_LOCK`. `None` is a run with nothing open, so nothing is in use.
+pub(crate) fn delete_dataset_at(
+    root: &Path,
+    id: &str,
+    active_id: Option<&str>,
+) -> Result<(), AppError> {
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let path = registry_path(root);
+    let mut entries = read_registry_for_update(&path)?;
+
+    reject_undeletable(&entries, id, active_id)?;
+
+    // Before anything is removed, and fatal if it fails: the entry about to go may be the one
+    // holding the highest generated label, and once it is out of the registry nothing left on disk
+    // could re-derive that number. Aborting here leaves the profile fully intact and the deletion
+    // retryable, which is strictly better than removing a profile whose name could come back.
+    //
+    // This is also the migration path for a root that predates the sequence file: the number is
+    // recorded from the live registry on the first deletion, so an install upgrading mid-sequence
+    // does not reuse the label it is about to remove.
+    write_label_high_water(
+        root,
+        effective_label_high_water(
+            root,
+            entries
+                .iter()
+                .filter(|entry| is_valid_dataset_id(&entry.id)),
+        ),
+    )?;
+
+    // Never the root: `reject_undeletable` proved `id` is neither `default` nor a
+    // path-unsafe string, so this resolves to `root/datasets/<id>` and nowhere else.
+    remove_dataset_dir(&dataset_dir_from_root(root, id))?;
+
+    entries.retain(|entry| entry.id != id);
+    write_json_atomic(&path, &entries)?;
+
+    crate::credentials::clear_credentials(id);
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1865,6 +2112,695 @@ mod tests {
             renamed.label.starts_with("Renamed "),
             "one of the renames must have won outright, got {}",
             renamed.label
+        );
+    }
+
+    const DOOMED_ID: &str = "00000000-0000-4000-8000-000000000001";
+    const SIBLING_ID: &str = "00000000-0000-4000-8000-000000000002";
+
+    #[test]
+    fn only_an_exact_generated_label_contributes_to_the_sequence() {
+        for (label, expected) in [
+            ("Local Profile 1", Some(1)),
+            ("Local Profile 42", Some(42)),
+            ("Local Profile 0", Some(0)),
+        ] {
+            assert_eq!(local_label_suffix(label), expected, "{label}");
+        }
+
+        // Each of these is a name a *user* chose, so none may consume a number.
+        for rejected in [
+            "Work",
+            "Local Profile",
+            "Local Profile ",
+            "Local Profile 2 (work)",
+            "local profile 2",
+            "Local Profile -1",
+            "Local Profile 007",
+            "Local Profile 1.5",
+            "Local Profile  3",
+            "Local Profile 99999999999999999999",
+        ] {
+            assert_eq!(local_label_suffix(rejected), None, "{rejected}");
+        }
+    }
+
+    // The naming rule the delete affordance forces: a count would hand the next
+    // create a label a surviving profile already owns.
+    #[test]
+    fn the_sequence_reads_the_highest_suffix_rather_than_the_count() {
+        let entries = vec![
+            default_dataset_entry(),
+            local_entry(DOOMED_ID, "Local Profile 3"),
+            entry("cloud-1"),
+        ];
+
+        assert_eq!(
+            highest_local_label(entries.iter()),
+            3,
+            "one surviving profile numbered 3 must not read as a count of 1"
+        );
+    }
+
+    #[test]
+    fn a_renamed_profile_holds_no_number_in_the_sequence() {
+        let renamed_only = vec![
+            default_dataset_entry(),
+            local_entry(DOOMED_ID, "Work"),
+            local_entry(SIBLING_ID, "Personal"),
+        ];
+
+        assert_eq!(
+            highest_local_label(renamed_only.iter()),
+            0,
+            "no generated label is in the way"
+        );
+
+        let mixed = vec![
+            default_dataset_entry(),
+            local_entry(DOOMED_ID, "Work"),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ];
+
+        assert_eq!(highest_local_label(mixed.iter()), 2);
+    }
+
+    // The end-to-end acceptance criterion, and the exact regression counting caused:
+    // under a count this third create would be labelled "Local Profile 2" and collide
+    // with the profile still on screen.
+    #[test]
+    fn a_created_profile_never_reuses_a_deleted_profiles_label() {
+        let root = bootstrapped_root();
+        let first = create_dataset_at(root.path()).expect("first create");
+        let second = create_dataset_at(root.path()).expect("second create");
+        assert_eq!(first.label, "Local Profile 1");
+        assert_eq!(second.label, "Local Profile 2");
+
+        delete_dataset_at(root.path(), &first.id, Some(DEFAULT_DATASET_ID))
+            .expect("delete succeeds");
+
+        let third = create_dataset_at(root.path()).expect("third create");
+
+        assert_eq!(third.label, "Local Profile 3");
+        assert_eq!(
+            recorded(root.path())
+                .into_iter()
+                .map(|entry| entry.label)
+                .collect::<Vec<_>>(),
+            vec!["Default", "Local Profile 2", "Local Profile 3"]
+        );
+    }
+
+    // The half max-over-surviving-entries cannot answer, and the frozen criterion's
+    // "highest PRIOR suffix": once the entry holding the top number is gone, nothing
+    // left in the registry remembers it, so only the durable high-water mark stops the
+    // next create from handing the very same name back.
+    #[test]
+    fn deleting_the_highest_numbered_profile_does_not_free_its_label_for_reuse() {
+        let root = bootstrapped_root();
+        let first = create_dataset_at(root.path()).expect("first create");
+        let highest = create_dataset_at(root.path()).expect("second create");
+        assert_eq!(highest.label, "Local Profile 2");
+
+        delete_dataset_at(root.path(), &highest.id, Some(DEFAULT_DATASET_ID))
+            .expect("delete the highest");
+
+        let next = create_dataset_at(root.path()).expect("third create");
+
+        assert_eq!(
+            next.label, "Local Profile 3",
+            "the deleted top number must not be re-issued"
+        );
+        assert_ne!(next.label, highest.label);
+        assert_eq!(
+            recorded(root.path())
+                .into_iter()
+                .map(|entry| entry.label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Default".to_string(),
+                first.label,
+                "Local Profile 3".to_string()
+            ]
+        );
+    }
+
+    // Deleting every generated profile must not reset the sequence either: the survivor
+    // set is then empty, so the registry contributes 0 and the file is the only thing
+    // standing between a fresh create and a name the user just removed.
+    #[test]
+    fn emptying_every_generated_profile_still_advances_the_sequence() {
+        let root = bootstrapped_root();
+        let first = create_dataset_at(root.path()).expect("first create");
+        let second = create_dataset_at(root.path()).expect("second create");
+
+        for target in [&first, &second] {
+            delete_dataset_at(root.path(), &target.id, Some(DEFAULT_DATASET_ID))
+                .expect("delete succeeds");
+        }
+        assert_eq!(recorded(root.path()).len(), 1, "only Default may remain");
+
+        let next = create_dataset_at(root.path()).expect("create after emptying");
+
+        assert_eq!(next.label, "Local Profile 3");
+    }
+
+    // The upgrade path: a root recorded before the sequence file existed has only the
+    // array to go on, so the first deletion is what has to capture the number.
+    #[test]
+    fn a_registry_predating_the_sequence_file_is_seeded_from_the_array_on_delete() {
+        let root = seeded_root(&[
+            default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ]);
+        std::fs::create_dir_all(dataset_dir_from_root(root.path(), SIBLING_ID))
+            .expect("directory");
+        assert!(
+            !label_sequence_path(root.path()).exists(),
+            "the fixture must start with no sequence file at all"
+        );
+
+        delete_dataset_at(root.path(), SIBLING_ID, None).expect("delete succeeds");
+
+        assert_eq!(
+            recorded_label_high_water(root.path()),
+            2,
+            "the deletion must record the number it removed"
+        );
+
+        let next = create_dataset_at(root.path()).expect("create succeeds");
+        assert_eq!(next.label, "Local Profile 3");
+    }
+
+    // Same upgrade path on the create side: an existing array must still seed the
+    // sequence, or the first create after an upgrade would collide with a live profile.
+    #[test]
+    fn a_registry_predating_the_sequence_file_is_seeded_from_the_array_on_create() {
+        let root = seeded_root(&[
+            default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ]);
+
+        let next = create_dataset_at(root.path()).expect("create succeeds");
+
+        assert_eq!(next.label, "Local Profile 3");
+        assert_eq!(recorded_label_high_water(root.path()), 3);
+    }
+
+    // A sequence file the user deleted, truncated or hand-edited must degrade to the
+    // pre-existing max-over-entries behaviour rather than bricking profile creation.
+    #[test]
+    fn an_unusable_sequence_file_falls_back_to_the_registry_instead_of_failing() {
+        for corrupt in ["{ not json", "", "{}", r#"{"highest_issued":"two"}"#, "[]"] {
+            let root = seeded_root(&[
+                default_dataset_entry(),
+                local_entry(SIBLING_ID, "Local Profile 2"),
+            ]);
+            std::fs::write(label_sequence_path(root.path()), corrupt)
+                .expect("corrupt sequence written");
+
+            assert_eq!(
+                recorded_label_high_water(root.path()),
+                0,
+                "{corrupt:?} must read as nothing recorded"
+            );
+
+            let next = create_dataset_at(root.path()).expect("create must still succeed");
+            assert_eq!(next.label, "Local Profile 3", "for {corrupt:?}");
+        }
+    }
+
+    // A recorded number is never lowered by what the registry happens to hold, which is
+    // the entire point: the file outranks the survivors, never the other way round.
+    #[test]
+    fn a_recorded_number_outranks_a_registry_that_has_fallen_behind_it() {
+        let root = seeded_root(&[
+            default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ]);
+        write_label_high_water(root.path(), 9).expect("high-water written");
+
+        let behind = vec![
+            default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ];
+        assert_eq!(effective_label_high_water(root.path(), behind.iter()), 9);
+
+        let next = create_dataset_at(root.path()).expect("create succeeds");
+        assert_eq!(next.label, "Local Profile 10");
+    }
+
+    // And the reverse: a registry that has run ahead of the file wins, so a lost file
+    // can never hand out a label a live profile already holds.
+    #[test]
+    fn a_registry_ahead_of_the_recorded_number_wins() {
+        let root = seeded_root(&[
+            default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 7"),
+        ]);
+        write_label_high_water(root.path(), 2).expect("stale high-water written");
+
+        let next = create_dataset_at(root.path()).expect("create succeeds");
+
+        assert_eq!(next.label, "Local Profile 8");
+    }
+
+    // The deliberate trade the reserve-before-provision ordering makes: a failed create
+    // burns its number. A gap is acceptable; reuse is not, and only reserving first can
+    // guarantee that against a create that dies after the number was handed out.
+    #[test]
+    fn a_failed_create_burns_its_number_rather_than_freeing_it() {
+        let root = bootstrapped_root();
+        std::fs::write(root.path().join("datasets"), b"not a directory")
+            .expect("blocker written");
+
+        create_dataset_at(root.path()).expect_err("create must fail");
+
+        assert_eq!(
+            recorded_label_high_water(root.path()),
+            1,
+            "the number was issued, so it must stay spent"
+        );
+
+        std::fs::remove_file(root.path().join("datasets")).expect("blocker removed");
+        let created = create_dataset_at(root.path()).expect("create now succeeds");
+
+        assert_eq!(created.label, "Local Profile 2");
+    }
+
+    // The sequence file is a sibling of the registry, not a dataset, so nothing that
+    // reads the registry may see it and nothing that removes a profile may remove it.
+    #[test]
+    fn the_sequence_file_sits_beside_the_registry_and_never_inside_a_dataset() {
+        let root = bootstrapped_root();
+        let created = create_dataset_at(root.path()).expect("create succeeds");
+
+        assert_eq!(
+            label_sequence_path(root.path()),
+            root.path().join("local-label-sequence.json")
+        );
+        let raw = std::fs::read_to_string(label_sequence_path(root.path()))
+            .expect("sequence file readable");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&raw).expect("valid json")
+                ["highest_issued"],
+            1
+        );
+        assert!(
+            !dataset_dir_from_root(root.path(), &created.id)
+                .join(LABEL_SEQUENCE_FILE_NAME)
+                .exists(),
+            "the sequence is global, never per-dataset"
+        );
+
+        // The registry itself is untouched by the sequence: it is still a bare array of
+        // exactly the datasets that exist.
+        assert_eq!(recorded(root.path()).len(), 2);
+
+        delete_dataset_at(root.path(), &created.id, None).expect("delete succeeds");
+        assert!(
+            label_sequence_path(root.path()).is_file(),
+            "a deletion must not remove the sequence file"
+        );
+    }
+
+    // Concurrency: the reservation happens under `REGISTRY_LOCK`, so two creates can
+    // never read the same high-water and issue the same number. Asserted on final state
+    // only, so it cannot flake.
+    #[test]
+    fn parallel_creates_reserve_distinct_numbers_from_the_shared_high_water() {
+        const CREATES: usize = 8;
+        let root = bootstrapped_root();
+        let root_path = root.path();
+
+        let created: Vec<Dataset> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..CREATES)
+                .map(|_| scope.spawn(|| create_dataset_at(root_path).expect("create succeeds")))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("thread did not panic"))
+                .collect()
+        });
+
+        let suffixes: std::collections::HashSet<u32> = created
+            .iter()
+            .map(|entry| local_label_suffix(&entry.label).expect("a generated label"))
+            .collect();
+        assert_eq!(suffixes.len(), CREATES, "every create must reserve its own number");
+        assert_eq!(
+            recorded_label_high_water(root.path()),
+            CREATES as u32,
+            "the recorded high-water must match the highest number issued"
+        );
+    }
+
+    #[test]
+    fn deleting_removes_the_directory_and_the_registry_entry_together() {
+        let root = bootstrapped_root();
+        let doomed = create_dataset_at(root.path()).expect("doomed created");
+        let dir = dataset_dir_from_root(root.path(), &doomed.id);
+        assert!(dir.is_dir(), "the fixture must start with a real directory");
+
+        delete_dataset_at(root.path(), &doomed.id, Some(DEFAULT_DATASET_ID))
+            .expect("delete succeeds");
+
+        assert!(!dir.exists(), "the profile's directory must be gone");
+        assert!(
+            !recorded(root.path())
+                .iter()
+                .any(|entry| entry.id == doomed.id),
+            "the profile must no longer be listed"
+        );
+    }
+
+    // Default's directory *is* the app data root, so the blast radius is the whole
+    // assertion here, not the deleted row.
+    #[test]
+    fn deleting_removes_only_the_targets_directory_and_never_root_level_storage() {
+        let root = bootstrapped_root();
+        let doomed = create_dataset_at(root.path()).expect("doomed created");
+        let survivor = create_dataset_at(root.path()).expect("survivor created");
+        let root_db = root.path().join(DB_FILE_NAME);
+        std::fs::write(&root_db, b"pretend sqlite bytes").expect("root db written");
+        std::fs::create_dir_all(root.path().join("profiles")).expect("profiles directory");
+        std::fs::write(root.path().join("profiles").join("me.json"), b"{}")
+            .expect("profile written");
+
+        delete_dataset_at(root.path(), &doomed.id, Some(DEFAULT_DATASET_ID))
+            .expect("delete succeeds");
+
+        assert!(!dataset_dir_from_root(root.path(), &doomed.id).exists());
+        assert!(
+            dataset_dir_from_root(root.path(), &survivor.id).is_dir(),
+            "a sibling profile's directory must survive"
+        );
+        assert!(root.path().is_dir(), "the app data root must survive");
+        assert!(registry_path(root.path()).is_file());
+        assert_eq!(
+            std::fs::read(&root_db).expect("root db still readable"),
+            b"pretend sqlite bytes",
+            "Default's database lives at the root and must be untouched"
+        );
+        assert!(
+            root.path().join("profiles").join("me.json").is_file(),
+            "the global demographic store must be untouched"
+        );
+    }
+
+    #[test]
+    fn deleting_clears_only_that_profiles_ai_credentials() {
+        let _keyring = crate::credentials::test_keyring_guard();
+        let root = bootstrapped_root();
+        let doomed = create_dataset_at(root.path()).expect("doomed created");
+        let survivor = create_dataset_at(root.path()).expect("survivor created");
+        crate::credentials::store_openai_key(&doomed.id, "sk-doomed").expect("key stored");
+        crate::credentials::store_openai_key(&survivor.id, "sk-survivor").expect("key stored");
+        crate::credentials::store_openai_key(DEFAULT_DATASET_ID, "sk-default")
+            .expect("key stored");
+
+        delete_dataset_at(root.path(), &doomed.id, Some(DEFAULT_DATASET_ID))
+            .expect("delete succeeds");
+
+        assert_eq!(crate::credentials::load_openai_key(&doomed.id), None);
+        assert_eq!(
+            crate::credentials::load_openai_key(&survivor.id),
+            Some("sk-survivor".to_string()),
+            "a sibling profile's provider key must survive"
+        );
+        assert_eq!(
+            crate::credentials::load_openai_key(DEFAULT_DATASET_ID),
+            Some("sk-default".to_string()),
+            "Default's key lives under the unsuffixed service and must survive"
+        );
+
+        crate::credentials::clear_credentials(&survivor.id);
+        crate::credentials::clear_credentials(DEFAULT_DATASET_ID);
+    }
+
+    // The same regression `read_registry_for_update` exists for, on the delete path —
+    // and worse here than a lost label: writing the filtered view back would drop the
+    // skipped entry as well as the requested one, with nothing able to restore it.
+    #[test]
+    fn deleting_one_profile_leaves_every_sibling_entry_including_a_skipped_one_intact() {
+        let seeded = vec![
+            default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+            local_entry(DOOMED_ID, "Local Profile 1"),
+            entry("cloud-1"),
+            entry("a/b"),
+        ];
+        let root = seeded_root(&seeded);
+        std::fs::create_dir_all(dataset_dir_from_root(root.path(), DOOMED_ID))
+            .expect("doomed directory");
+
+        delete_dataset_at(root.path(), DOOMED_ID, None).expect("delete succeeds");
+
+        let on_disk =
+            read_registry_for_update(&registry_path(root.path())).expect("registry parses");
+        assert_eq!(
+            on_disk,
+            seeded
+                .iter()
+                .filter(|entry| entry.id != DOOMED_ID)
+                .cloned()
+                .collect::<Vec<_>>(),
+            "only the requested entry may go, and the order must not change"
+        );
+    }
+
+    #[test]
+    fn a_delete_survives_a_registry_reload() {
+        let root = bootstrapped_root();
+        let doomed = create_dataset_at(root.path()).expect("doomed created");
+
+        delete_dataset_at(root.path(), &doomed.id, None).expect("delete succeeds");
+
+        assert_eq!(
+            load_registry_entries(&registry_path(root.path()))
+                .expect("load succeeds")
+                .into_iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            vec![DEFAULT_DATASET_ID.to_string()]
+        );
+    }
+
+    #[test]
+    fn the_default_profile_is_refused_by_its_id_and_by_its_flag() {
+        let flagged = Dataset {
+            is_default: true,
+            ..local_entry(DOOMED_ID, "Local Profile 1")
+        };
+        let entries = vec![default_dataset_entry(), flagged];
+
+        for id in [DEFAULT_DATASET_ID, DOOMED_ID] {
+            match reject_undeletable(&entries, id, None)
+                .expect_err("the Default profile must be refused")
+            {
+                AppError::Validation { field, .. } => {
+                    assert_eq!(field.as_deref(), Some("dataset_id"), "{id}")
+                }
+                other => panic!("expected AppError::Validation for {id}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_open_profile_is_refused_while_an_inactive_sibling_is_accepted() {
+        let entries = vec![
+            default_dataset_entry(),
+            local_entry(DOOMED_ID, "Local Profile 1"),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ];
+
+        match reject_undeletable(&entries, DOOMED_ID, Some(DOOMED_ID))
+            .expect_err("the open profile must be refused")
+        {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field.as_deref(), Some("dataset_id"))
+            }
+            other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+
+        reject_undeletable(&entries, SIBLING_ID, Some(DOOMED_ID))
+            .expect("an inactive sibling stays deletable while another is open");
+        reject_undeletable(&entries, DOOMED_ID, None)
+            .expect("a run with nothing open has nothing in use");
+    }
+
+    #[test]
+    fn a_cloud_linked_an_unknown_and_a_path_unsafe_id_are_all_refused() {
+        let entries = vec![default_dataset_entry(), entry("cloud-1"), entry("a/b")];
+
+        for id in [
+            "cloud-1",
+            "does-not-exist",
+            "a/b",
+            "..",
+            "",
+            "../../etc",
+            "a.b",
+        ] {
+            match reject_undeletable(&entries, id, None).expect_err("must be refused") {
+                AppError::Validation { field, .. } => {
+                    assert_eq!(field.as_deref(), Some("dataset_id"), "{id}")
+                }
+                other => panic!("expected AppError::Validation for {id:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_delete_leaves_the_registry_and_every_directory_untouched() {
+        let root = bootstrapped_root();
+        let local = create_dataset_at(root.path()).expect("created");
+        let before = std::fs::read(registry_path(root.path())).expect("file readable");
+
+        for (id, active) in [
+            (DEFAULT_DATASET_ID, None),
+            (local.id.as_str(), Some(local.id.as_str())),
+            ("does-not-exist", None),
+            ("a/b", None),
+            ("..", None),
+        ] {
+            let error =
+                delete_dataset_at(root.path(), id, active).expect_err("delete must be refused");
+            assert!(
+                matches!(error, AppError::Validation { .. }),
+                "expected AppError::Validation for {id:?}, got {error:?}"
+            );
+        }
+
+        assert_eq!(
+            std::fs::read(registry_path(root.path())).expect("file readable"),
+            before,
+            "a refused delete must not rewrite the registry"
+        );
+        assert!(dataset_dir_from_root(root.path(), &local.id).is_dir());
+        assert!(root.path().is_dir());
+    }
+
+    #[test]
+    fn deleting_a_cloud_linked_profile_is_refused_and_its_directory_survives() {
+        let root = seeded_root(&[default_dataset_entry(), entry("cloud-1")]);
+        let dir = dataset_dir_from_root(root.path(), "cloud-1");
+        std::fs::create_dir_all(&dir).expect("cloud directory");
+
+        let error =
+            delete_dataset_at(root.path(), "cloud-1", None).expect_err("delete must be refused");
+
+        assert!(
+            matches!(error, AppError::Validation { .. }),
+            "expected AppError::Validation, got {error:?}"
+        );
+        assert!(dir.is_dir(), "a refused delete must not remove a directory");
+        assert_eq!(recorded(root.path()).len(), 2);
+    }
+
+    // The ordering claim: the directory goes first, so a filesystem failure leaves the
+    // row still listed and the deletion still retryable. `remove_dir_all` refuses a
+    // path that is not a directory, which is the portable stand-in for a directory the
+    // OS will not remove.
+    #[test]
+    fn a_directory_that_cannot_be_removed_leaves_the_registry_intact_and_retryable() {
+        let root = seeded_root(&[
+            default_dataset_entry(),
+            local_entry(DOOMED_ID, "Local Profile 1"),
+        ]);
+        std::fs::create_dir_all(root.path().join("datasets")).expect("datasets directory");
+        let blocker = dataset_dir_from_root(root.path(), DOOMED_ID);
+        std::fs::write(&blocker, b"not a directory").expect("blocker written");
+        let before = std::fs::read(registry_path(root.path())).expect("file readable");
+
+        let error = delete_dataset_at(root.path(), DOOMED_ID, None).expect_err("delete must fail");
+
+        assert!(
+            matches!(error, AppError::File { .. }),
+            "expected AppError::File, got {error:?}"
+        );
+        assert_eq!(
+            std::fs::read(registry_path(root.path())).expect("file readable"),
+            before,
+            "the row must stay listed so the deletion is still visible and retryable"
+        );
+    }
+
+    // The mid-operation state the ordering deliberately allows: directory already
+    // gone, entry still recorded. The retry has to finish the registry half rather
+    // than fail on the half it already did.
+    #[test]
+    fn a_retry_treats_an_already_absent_directory_as_removed_and_finishes_the_cleanup() {
+        let root = bootstrapped_root();
+        let doomed = create_dataset_at(root.path()).expect("doomed created");
+        let dir = dataset_dir_from_root(root.path(), &doomed.id);
+        std::fs::remove_dir_all(&dir).expect("directory removed out of band");
+
+        delete_dataset_at(root.path(), &doomed.id, None).expect("the retry must finish the job");
+
+        assert!(
+            !recorded(root.path())
+                .iter()
+                .any(|entry| entry.id == doomed.id),
+            "the retry must complete the registry cleanup"
+        );
+        assert!(!dir.exists());
+    }
+
+    // AD-3's claim on this path, which every sequential test above would satisfy with
+    // no lock at all: a delete and a create both rewrite the whole file, so splitting
+    // the read from the write would let one drop the other's work. Asserted on final
+    // state only, so it cannot flake.
+    #[test]
+    fn parallel_deletes_and_creates_all_survive_the_single_writer_lock() {
+        const DELETES: usize = 4;
+        const CREATES: usize = 4;
+        let root = bootstrapped_root();
+        let doomed: Vec<Dataset> = (0..DELETES)
+            .map(|_| create_dataset_at(root.path()).expect("seed create"))
+            .collect();
+        let root_path = root.path();
+
+        std::thread::scope(|scope| {
+            for target in &doomed {
+                let id = target.id.as_str();
+                scope.spawn(move || {
+                    delete_dataset_at(root_path, id, None).expect("delete succeeds");
+                });
+            }
+            for _ in 0..CREATES {
+                scope.spawn(move || {
+                    create_dataset_at(root_path).expect("create succeeds");
+                });
+            }
+        });
+
+        let entries = recorded(root.path());
+        assert_eq!(
+            entries.len(),
+            CREATES + 1,
+            "Default plus every create must remain; a lost write means the \
+             read-modify-write was not atomic"
+        );
+        for target in &doomed {
+            assert!(
+                !entries.iter().any(|entry| entry.id == target.id),
+                "{} survived its own delete",
+                target.id
+            );
+            assert!(
+                !dataset_dir_from_root(root.path(), &target.id).exists(),
+                "{}'s directory survived its own delete",
+                target.id
+            );
+        }
+
+        let labels: std::collections::HashSet<&str> =
+            entries.iter().map(|entry| entry.label.as_str()).collect();
+        assert_eq!(
+            labels.len(),
+            entries.len(),
+            "max-plus-one must never mint a label another surviving entry holds"
         );
     }
 }

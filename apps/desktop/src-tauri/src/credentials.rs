@@ -940,4 +940,66 @@ mod tests {
             Some("sk-default".to_string())
         );
     }
+
+    /// The wipe a profile deletion performs, from the other side of
+    /// `clear_cognito_session_leaves_ai_credentials_intact` above: the Cognito
+    /// session lives under `nixus-auth`, which is the machine's identity rather
+    /// than any profile's (AD-10), so removing a profile must leave the user
+    /// signed in. Every sibling profile's own keys have to survive too — the whole
+    /// point of the per-dataset service suffix.
+    #[test]
+    fn clearing_one_datasets_credentials_leaves_every_sibling_and_the_session_intact() {
+        let _g = guard();
+        store_cognito_session(&sample()).unwrap();
+        store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+        store_aws_credentials(DATASET_B, "access-b", "secret-b", "us-east-1").unwrap();
+        store_openai_key(DATASET_B, "sk-b").unwrap();
+        store_openai_key(DEFAULT_DATASET_ID, "sk-default").unwrap();
+
+        clear_credentials(DATASET_A);
+
+        assert_eq!(load_openai_key(DATASET_A), None);
+        assert_eq!(load_aws_credentials(DATASET_A), None);
+
+        assert_eq!(load_openai_key(DATASET_B), Some("sk-b".to_string()));
+        assert_eq!(
+            load_aws_credentials(DATASET_B),
+            Some((
+                "access-b".to_string(),
+                "secret-b".to_string(),
+                "us-east-1".to_string()
+            ))
+        );
+        assert_eq!(
+            load_openai_key(DEFAULT_DATASET_ID),
+            Some("sk-default".to_string()),
+            "Default's keys live under the unsuffixed service and must survive"
+        );
+
+        let session = load_cognito_session()
+            .unwrap()
+            .expect("deleting a profile must never sign the user out");
+        assert_eq!(session.access_token, "at");
+        assert_eq!(session.refresh_token, "rt");
+    }
+
+    /// A profile that never configured a provider is the ordinary case, and the
+    /// deletion path calls this unconditionally, so it must not be a failure —
+    /// and a retry after a partially-completed deletion calls it a second time.
+    #[test]
+    fn clearing_is_idempotent_and_silent_when_a_dataset_has_no_credentials() {
+        let _g = guard();
+        store_openai_key(DATASET_B, "sk-b").unwrap();
+
+        clear_credentials(DATASET_A);
+        clear_credentials(DATASET_A);
+
+        assert_eq!(load_openai_key(DATASET_A), None);
+        assert_eq!(
+            load_openai_key(DATASET_B),
+            Some("sk-b".to_string()),
+            "a no-op wipe must not reach a sibling"
+        );
+    }
 }

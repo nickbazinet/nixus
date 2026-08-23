@@ -1,10 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { BetaPage, BETA_PAGE_PATHS } from "@/components/BetaPage";
-import i18n from "@/lib/i18n";
+import i18n, { applyRouteLocale } from "@/lib/i18n";
 import { buildMeta } from "@/lib/meta";
 
 export const Route = createFileRoute("/beta")({
+  beforeLoad: () => applyRouteLocale("en"),
   head: () => {
     const t = i18n.getFixedT("en");
     return buildMeta({

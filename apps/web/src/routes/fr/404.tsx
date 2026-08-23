@@ -1,23 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 
-import i18n from "@/lib/i18n";
+import i18n, { applyRouteLocale } from "@/lib/i18n";
+import { NOT_FOUND_PAGE_PATHS } from "@/lib/localePaths";
 import { buildMeta } from "@/lib/meta";
 
-async function ensureFrLanguage(): Promise<void> {
-  if (i18n.language?.startsWith("fr")) return;
-  await i18n.changeLanguage("fr");
-}
-
 export const Route = createFileRoute("/fr/404")({
-  beforeLoad: ensureFrLanguage,
+  beforeLoad: () => applyRouteLocale("fr"),
   head: () => {
     const t = i18n.getFixedT("fr");
     return buildMeta({
       locale: "fr",
-      path: "/fr/404",
+      path: NOT_FOUND_PAGE_PATHS.fr,
       title: t("meta.notFound.title"),
       description: t("meta.notFound.description"),
+      alternates: NOT_FOUND_PAGE_PATHS,
+      noindex: true,
     });
   },
   component: NotFoundPageFr,

@@ -15,7 +15,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "verify:prerender": "tsx scripts/verify-prerender.ts",
+    "verify:routes": "tsx scripts/verify-routes.ts"
   },
   "dependencies": {
     "@nixus/shared": "workspace:*",

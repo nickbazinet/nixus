@@ -1,17 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 
-import i18n from "@/lib/i18n";
+import i18n, { applyRouteLocale } from "@/lib/i18n";
+import { NOT_FOUND_PAGE_PATHS } from "@/lib/localePaths";
 import { buildMeta } from "@/lib/meta";
 
 export const Route = createFileRoute("/404")({
+  beforeLoad: () => applyRouteLocale("en"),
   head: () => {
     const t = i18n.getFixedT("en");
     return buildMeta({
       locale: "en",
-      path: "/404",
+      path: NOT_FOUND_PAGE_PATHS.en,
       title: t("meta.notFound.title"),
       description: t("meta.notFound.description"),
+      alternates: NOT_FOUND_PAGE_PATHS,
+      noindex: true,
     });
   },
   component: NotFoundPage,

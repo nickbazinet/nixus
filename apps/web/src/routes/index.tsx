@@ -7,9 +7,11 @@ import { DownloadBanner } from "@/components/DownloadBanner";
 import { FAQ } from "@/components/FAQ";
 import { FeatureGrid } from "@/components/FeatureGrid";
 import { Hero } from "@/components/Hero";
+import { applyRouteLocale } from "@/lib/i18n";
 import { buildMeta } from "@/lib/meta";
 
 export const Route = createFileRoute("/")({
+  beforeLoad: () => applyRouteLocale("en"),
   head: () => buildMeta({ locale: "en" }),
   component: HomePage,
 });

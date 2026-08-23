@@ -345,3 +345,6 @@ scope for this story:
   story (`tests/import.spec.ts`), but the concurrent-click race, retry-after-failure group reuse, and
   cross-row duplicate-proposal scenarios above remain unverified by automation.
 
+- source_spec: `_bmad-output/implementation-artifacts/spec-local-profile-switch-skips-auth-checks.md`
+  summary: A cloud-linked profile can expose neither sign-in nor sign-out when its derived badge says signed in but the auth-session read fails.
+  evidence: `ProfileMenu.tsx` hides sign-in from `cloudProfile.is_signed_in` and hides sign-out without a resolved account; this behavior predates the local-profile auth gate and needs a separate cloud error-state decision.

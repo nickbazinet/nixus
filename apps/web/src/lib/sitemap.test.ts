@@ -2,11 +2,19 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+import { betaPagePath, homePath } from "./localePaths";
 import { SITE } from "./meta";
 
 describe("sitemap.xml", () => {
   const sitemapPath = path.resolve(__dirname, "../../public/sitemap.xml");
   const sitemap = fs.readFileSync(sitemapPath, "utf8");
+
+  function locations(): string[] {
+    const doc = new DOMParser().parseFromString(sitemap, "application/xml");
+    return Array.from(doc.getElementsByTagName("loc")).map(
+      (loc) => loc.textContent ?? "",
+    );
+  }
 
   it("declares the sitemap.org namespace", () => {
     expect(sitemap).toContain("http://www.sitemaps.org/schemas/sitemap/0.9");
@@ -34,5 +42,29 @@ describe("sitemap.xml", () => {
     const firstUrl = urls[0];
     expect(firstUrl.getElementsByTagName("loc").length).toBe(1);
     expect(firstUrl.getElementsByTagName("lastmod").length).toBe(1);
+  });
+
+  it("lists exactly the indexable EN and FR routes, as canonical URLs", () => {
+    // Sitemap entries must be byte-identical to the canonical URLs `buildMeta`
+    // emits, or crawlers see two candidate URLs per page.
+    expect(locations()).toEqual([
+      `${SITE.url}${homePath("en")}`,
+      `${SITE.url}${homePath("fr")}`,
+      `${SITE.url}${betaPagePath("en")}`,
+      `${SITE.url}${betaPagePath("fr")}`,
+    ]);
+  });
+
+  it("keeps every location on the canonical host", () => {
+    for (const loc of locations()) {
+      expect(loc.startsWith(`${SITE.url}/`)).toBe(true);
+      expect(loc).not.toContain("nixus.nicolasbazinet.net");
+    }
+  });
+
+  it("omits the 404 routes, which must never be indexed", () => {
+    for (const loc of locations()) {
+      expect(loc).not.toContain("/404");
+    }
   });
 });

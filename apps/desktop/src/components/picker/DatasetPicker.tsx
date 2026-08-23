@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Pencil, Plus, TriangleAlertIcon } from "lucide-react";
+import { Plus, TriangleAlertIcon } from "lucide-react";
 import {
   Alert,
   AlertTitle,
+  Badge,
   Button,
   Card,
   CardContent,
@@ -15,6 +16,7 @@ import {
 } from "@nixus/shared";
 import { SURFACE_HEADING_ID } from "@/components/shared/PageHeader";
 import {
+  useActiveDatasetId,
   useCreateDataset,
   useDatasets,
   useSelectDataset,
@@ -22,6 +24,8 @@ import {
 } from "@/hooks/useDatasets";
 import { useSignIn } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
+import { DeleteProfilePanel } from "./DeleteProfilePanel";
+import { ProfileRowMenu, type DeleteAvailability } from "./ProfileRowMenu";
 import { RenameProfilePanel } from "./RenameProfilePanel";
 
 /**
@@ -36,6 +40,7 @@ export function DatasetPicker() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const datasets = useDatasets();
+  const activeDatasetId = useActiveDatasetId();
   const selectDataset = useSelectDataset();
   const createDataset = useCreateDataset();
   const signIn = useSignIn();
@@ -45,12 +50,38 @@ export function DatasetPicker() {
   // seeds its field from the row the user picked without re-searching the list.
   const [renaming, setRenaming] = useState<Dataset | null>(null);
 
-  // Every control behind the rename panel is inert while a registry rewrite is in flight — select,
-  // create and rename all read-modify-write the same file — and for as long as the panel is open,
-  // because it is modal: a click that reached a row through the backdrop would open the very profile
-  // being renamed, and one that reached the create control would rewrite the registry underneath it.
+  // The profile awaiting a typed deletion confirmation, or none. Same reasoning as `renaming`: the
+  // dialog names the profile, so it needs the entry rather than an id.
+  const [deleting, setDeleting] = useState<Dataset | null>(null);
+
+  // Every control behind either panel is inert while a registry rewrite is in flight — select,
+  // create, rename and delete all read-modify-write the same file — and for as long as a panel is
+  // open, because both are modal: a click that reached a row through the backdrop would open the very
+  // profile being renamed or deleted, and one that reached the create control would rewrite the
+  // registry underneath it.
   const backgroundBusy =
-    selectDataset.isPending || createDataset.isPending || renaming !== null;
+    selectDataset.isPending ||
+    createDataset.isPending ||
+    renaming !== null ||
+    deleting !== null;
+
+  // The one answer to "is this the row the user is already in", read by both the row's own mark and
+  // the delete refusal below, so the two can never disagree about which row that is.
+  //
+  // `isSuccess` — never `data === entry.id` alone — is what gates it on the backend having actually
+  // answered: while the query is pending or has errored `data` is `undefined`, this is false for
+  // every row, and nothing claims to be open on a guess.
+  const isOpenProfile = (entry: Dataset) =>
+    activeDatasetId.isSuccess && activeDatasetId.data === entry.id;
+
+  // Fail closed, on the same gate and for a sharper reason: while the query is unresolved a bare
+  // comparison would quietly offer deletion on *every* row including the open one. The refusal that
+  // lifts by itself is the honest state to show until the answer arrives. Rust refuses the open
+  // profile regardless; this only keeps the UI from inviting an action it cannot yet know is safe.
+  const deleteAvailabilityFor = (entry: Dataset): DeleteAvailability => {
+    if (!activeDatasetId.isSuccess) return "refused-unknown";
+    return isOpenProfile(entry) ? "refused-active" : "allowed";
+  };
 
   // Navigating to `/` rather than reloading is what makes the picker's own gate the thing that
   // decides: the root's beforeLoad re-asks `check_picker_gate` (now latched) and `/`'s asks
@@ -181,30 +212,45 @@ export function DatasetPicker() {
                   data-testid="picker-dataset-row"
                 >
                   <CardContent
-                    // Reserved for the overlaid rename control, so a long name never runs under it.
+                    // Reserved for the overlaid management menu, so a long name never runs under it.
                     className={cn("text-left", entry.kind === "local" && "pr-10")}
                   >
-                    <span className="text-label text-ink">{entry.label}</span>
+                    {/* `flex-wrap`, never `truncate`: the label is the user's own text, up to the 80
+                      * characters rename allows, so it keeps wrapping exactly as it did before this
+                      * mark existed and the mark drops onto its own line instead of squeezing the
+                      * name or sliding under the menu the `pr-10` above reserves room for. */}
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span
+                        className="text-label text-ink"
+                        data-testid="picker-dataset-label"
+                      >
+                        {entry.label}
+                      </span>
+                      {/* A word, never a dot or an icon: this is the only thing telling two
+                        * otherwise identical rows apart, so it has to survive a user who cannot
+                        * separate the brand tint from the card. Inside the row button on purpose —
+                        * a Badge is a label, not a control, so it adds no second focus target and
+                        * the word joins the button's own accessible name. */}
+                      {isOpenProfile(entry) ? (
+                        <Badge variant="brand" data-testid="picker-active-badge">
+                          {t("datasets.currentProfileBadge")}
+                        </Badge>
+                      ) : null}
+                    </span>
                   </CardContent>
                 </Card>
-                {/* Local profiles only: a cloud-linked profile's label is its account's, so the
-                  * affordance is absent rather than present-and-refused. */}
+                {/* Local profiles only: a cloud-linked profile's label is its account's and its
+                  * deletion is out of scope, so the whole menu is absent rather than
+                  * present-and-refused. */}
                 {entry.kind === "local" ? (
                   <span className="absolute inset-y-0 right-2 flex items-center">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-ink-dim hover:text-ink"
+                    <ProfileRowMenu
+                      entry={entry}
+                      deleteAvailability={deleteAvailabilityFor(entry)}
                       disabled={backgroundBusy}
-                      aria-disabled={backgroundBusy || undefined}
-                      aria-label={t("datasets.renameProfileAction", {
-                        name: entry.label,
-                      })}
-                      onClick={() => setRenaming(entry)}
-                      data-testid="picker-rename-button"
-                    >
-                      <Pencil aria-hidden="true" />
-                    </Button>
+                      onRename={() => setRenaming(entry)}
+                      onDelete={() => setDeleting(entry)}
+                    />
                   </span>
                 ) : null}
               </li>
@@ -252,6 +298,19 @@ export function DatasetPicker() {
           key={renaming.id}
           entry={renaming}
           onClose={() => setRenaming(null)}
+        />
+      ) : null}
+
+      {/* Same mount-and-key discipline as the rename panel, and for a sharper reason: the typed
+        * confirmation and the named profile must both be re-derived from the row that was picked, so
+        * a word typed against one profile can never carry over to another. Only one of the two panels
+        * can be open at a time, because opening either sets `backgroundBusy` and takes every menu
+        * trigger behind it out of reach. */}
+      {deleting ? (
+        <DeleteProfilePanel
+          key={deleting.id}
+          entry={deleting}
+          onClose={() => setDeleting(null)}
         />
       ) : null}
     </div>

@@ -6,11 +6,19 @@
  * locale-aware `og:locale`, and `<link rel="alternate" hreflang>` tags so
  * search engines correctly serve `/` to English visitors and `/fr/` to
  * French visitors.
+ *
+ * Every absolute URL it emits goes through `absoluteUrl()` on `SITE.url`, so
+ * canonical, og:url, hreflang and JSON-LD can never disagree on host or on
+ * root trailing slash.
  */
 
 import i18n from "./i18n";
+import { jsonLdScript } from "./jsonLd";
+import { LOCALE_PATH, SITE, absoluteUrl } from "./site";
+import type { Locale } from "./site";
 
-export type Locale = "en" | "fr";
+export type { Locale };
+export { SITE };
 
 type MetaInput = {
   /** Override the default page title. Used for `<title>`, og:title, twitter:title. */
@@ -25,28 +33,14 @@ type MetaInput = {
   locale?: Locale;
   /** Per-locale alternate paths for hreflang. Defaults to home EN/FR. */
   alternates?: Partial<Record<Locale, string>>;
+  /** Keep this page out of the index. Only for pages that must never rank. */
+  noindex?: boolean;
 };
-
-export const SITE = {
-  name: "Nixus",
-  defaultTitle: "Nixus — Local financial copilot for Canadians",
-  defaultDescription:
-    "Automate spreadsheet upkeep without bank passwords. Upload statements, get next-action guidance, track budget and net worth locally. Finance and car in one desktop app.",
-  url: "https://nixus.nicolasbazinet.net",
-  ogImage: "https://nixus.nicolasbazinet.net/og-image.png",
-  twitterHandle: "",
-} as const;
 
 /** OG locale strings per supported language. */
 const OG_LOCALE: Record<Locale, string> = {
   en: "en_US",
   fr: "fr_CA",
-};
-
-/** Path prefix for each locale. EN lives at the root; FR under /fr/. */
-const LOCALE_PATH: Record<Locale, string> = {
-  en: "/",
-  fr: "/fr/",
 };
 
 /** Return type of `buildMeta`. Matches TanStack Start's head-config shape. */
@@ -73,7 +67,7 @@ export function buildMeta(input: MetaInput = {}) {
   const title = input.title ?? defaultTitle;
   const description = input.description ?? defaultDescription;
   const path = input.path ?? LOCALE_PATH[locale];
-  const url = path === "/" ? SITE.url : `${SITE.url}${path}`;
+  const url = absoluteUrl(path);
   const ogImage = input.ogImage ?? SITE.ogImage;
 
   const altSummary = description.split(".")[0]?.trim() ?? SITE.name;
@@ -87,6 +81,9 @@ export function buildMeta(input: MetaInput = {}) {
       { name: "description", content: description },
       { name: "application-name", content: SITE.name },
       { name: "theme-color", content: "#FFFFFF" },
+      ...(input.noindex
+        ? [{ name: "robots", content: "noindex, follow" }]
+        : []),
 
       // Open Graph
       { property: "og:type", content: "website" },
@@ -110,9 +107,14 @@ export function buildMeta(input: MetaInput = {}) {
     links: [
       { rel: "canonical", href: url },
       // Per-locale alternates so crawlers serve the right URL by locale.
-      { rel: "alternate", hrefLang: "en", href: `${SITE.url}${enAlternatePath}` },
-      { rel: "alternate", hrefLang: "fr", href: `${SITE.url}${frAlternatePath}` },
-      { rel: "alternate", hrefLang: "x-default", href: `${SITE.url}${enAlternatePath}` },
+      { rel: "alternate", hrefLang: "en", href: absoluteUrl(enAlternatePath) },
+      { rel: "alternate", hrefLang: "fr", href: absoluteUrl(frAlternatePath) },
+      {
+        rel: "alternate",
+        hrefLang: "x-default",
+        href: absoluteUrl(enAlternatePath),
+      },
     ],
+    scripts: [jsonLdScript(locale)],
   };
 }

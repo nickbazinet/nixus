@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 
 // Initialize i18n so buildMeta's getFixedT can resolve title/description.
 import "./i18n";
+import { jsonLdScript } from "./jsonLd";
 import { buildMeta, SITE } from "./meta";
 
 /**
@@ -65,7 +66,7 @@ describe("buildMeta", () => {
     expect(metaContent(result, { property: "og:description" })).toBe(
       SITE.defaultDescription,
     );
-    expect(metaContent(result, { property: "og:url" })).toBe(SITE.url);
+    expect(metaContent(result, { property: "og:url" })).toBe(`${SITE.url}/`);
     expect(metaContent(result, { property: "og:image" })).toBe(SITE.ogImage);
     expect(metaContent(result, { property: "og:image:width" })).toBe("1200");
     expect(metaContent(result, { property: "og:image:height" })).toBe("630");
@@ -83,8 +84,12 @@ describe("buildMeta", () => {
     );
     expect(metaContent(result, { name: "twitter:image" })).toBe(SITE.ogImage);
 
-    // Canonical link points at the bare site URL.
-    expect(result.links).toContainEqual({ rel: "canonical", href: SITE.url });
+    // Canonical link points at the site root, with the same single trailing
+    // slash the sitemap and hreflang alternates use.
+    expect(result.links).toContainEqual({
+      rel: "canonical",
+      href: `${SITE.url}/`,
+    });
 
     // hreflang alternates emitted on every page.
     expect(result.links).toContainEqual({
@@ -154,5 +159,72 @@ describe("buildMeta", () => {
 
     expect(metaContent(result, { property: "og:image" })).toBe(override);
     expect(metaContent(result, { name: "twitter:image" })).toBe(override);
+  });
+
+  it("attaches the locale's JSON-LD graph as a head script", () => {
+    const result = buildMeta({ locale: "fr", path: "/fr/beta" });
+
+    expect(result.scripts).toEqual([jsonLdScript("fr")]);
+  });
+});
+
+describe("site identity", () => {
+  it("declares nixusapp.com as the public origin, with no trailing slash", () => {
+    expect(SITE.url).toBe("https://nixusapp.com");
+    expect(SITE.ogImage).toBe("https://nixusapp.com/og-image.png");
+  });
+
+  /** Absolute URLs emitted for a page, across meta, links, and JSON-LD. */
+  function emittedUrls(result: ReturnType<typeof buildMeta>): string[] {
+    const fromMeta = result.meta.flatMap((entry) =>
+      "content" in entry && typeof entry.content === "string"
+        ? [entry.content]
+        : [],
+    );
+    const fromLinks = result.links.map((link) => link.href);
+    const fromJsonLd = result.scripts.flatMap(
+      (script) => script.children.match(/https?:\/\/[^"]+/g) ?? [],
+    );
+    return [...fromMeta, ...fromLinks, ...fromJsonLd].filter((value) =>
+      value.startsWith("http"),
+    );
+  }
+
+  it("keeps every emitted URL on the canonical origin, on both locales", () => {
+    for (const locale of ["en", "fr"] as const) {
+      for (const url of emittedUrls(buildMeta({ locale }))) {
+        expect(
+          url.startsWith(`${SITE.url}/`) || url === "https://schema.org",
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("never emits the retired marketing hostname", () => {
+    for (const locale of ["en", "fr"] as const) {
+      for (const url of emittedUrls(buildMeta({ locale }))) {
+        expect(url).not.toContain("nixus.nicolasbazinet.net");
+      }
+    }
+  });
+
+  it("agrees between root canonical, og:url, and the x-default alternate", () => {
+    const result = buildMeta({ locale: "en" });
+    const canonical = result.links.find((link) => link.rel === "canonical");
+    const xDefault = result.links.find(
+      (link) => "hrefLang" in link && link.hrefLang === "x-default",
+    );
+
+    expect(canonical?.href).toBe(`${SITE.url}/`);
+    expect(canonical?.href).toBe(xDefault?.href);
+    expect(metaContent(result, { property: "og:url" })).toBe(canonical?.href);
+  });
+
+  it("agrees between canonical and og:url on a nested locale route", () => {
+    const result = buildMeta({ locale: "fr", path: "/fr/beta" });
+    const canonical = result.links.find((link) => link.rel === "canonical");
+
+    expect(canonical?.href).toBe(`${SITE.url}/fr/beta`);
+    expect(metaContent(result, { property: "og:url" })).toBe(canonical?.href);
   });
 });

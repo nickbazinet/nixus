@@ -41,6 +41,25 @@ interface PickerOptions {
   renameDatasetFails?: boolean;
   /** Delays `rename_dataset` so the in-flight window — and the guarded panel — are assertable. */
   renameDatasetDelayMs?: number;
+  /**
+   * Which profile the backend reports as open, before any selection on this screen.
+   *
+   * `lib.rs`'s `.setup()` auto-selects Default before any UI renders, so `"default"` is the
+   * realistic launch state and is what most cases here want. Omit for a run with nothing open, which
+   * `get_active_dataset_id` answers as `null`.
+   */
+  activeDatasetId?: string;
+  /**
+   * Makes `get_active_dataset_id` reject, standing in for a backend that cannot say which profile is
+   * open. The picker must fail closed on this, not fall back to offering deletion.
+   */
+  activeDatasetIdFails?: boolean;
+  /** Delays `get_active_dataset_id` so the window before the answer arrives is assertable. */
+  activeDatasetIdDelayMs?: number;
+  /** Makes `delete_dataset` reject, standing in for a directory the OS would not remove. */
+  deleteDatasetFails?: boolean;
+  /** Delays `delete_dataset` so the in-flight window — and the guarded dialog — are assertable. */
+  deleteDatasetDelayMs?: number;
   /** Delays `create_dataset` so the in-flight window — and the disabled rows — are assertable. */
   createDatasetDelayMs?: number;
   /** What the freshly-selected dataset's `check_onboarding_status` reports. */
@@ -112,6 +131,24 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
     // on nothing but an optimistic render.
     const registry = opts.datasets === undefined ? undefined : [...opts.datasets];
 
+    // Mirrors the Rust `local-label-sequence.json` high-water mark: a generated number, once issued,
+    // is never issued again — not even after the profile holding it is deleted. Without this the mock
+    // would re-derive labels from the survivors alone and the naming tests below would "pass" on
+    // behaviour the product no longer has.
+    let issuedLabelHighWater = 0;
+
+    const labelSuffix = (label: string) => {
+      const match = /^Local Profile (0|[1-9]\d*)$/.exec(label);
+      return match === null ? 0 : Number(match[1]);
+    };
+
+    // The registry half of Rust's `effective_label_high_water`: what seeds a registry that predates
+    // the sequence file, and what keeps a live profile's number from being handed out twice.
+    const registryHighWater = () =>
+      (registry ?? [])
+        .filter((entry) => !entry.is_default && entry.kind === "local")
+        .reduce((max, entry) => Math.max(max, labelSuffix(entry.label)), 0);
+
     (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: () => {},
     };
@@ -145,13 +182,15 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
                   message: "Failed to create dataset directory",
                 });
               }
-              // The real `next_local_label`: a count of the existing local, non-default entries,
-              // so Default and any cloud-linked entry are excluded exactly as Rust excludes them.
-              const n =
-                registry.filter((entry) => !entry.is_default && entry.kind === "local")
-                  .length + 1;
+              // The real `reserve_local_label`: one past the max of the durable high-water mark and
+              // the live registry, then recorded as issued. Never a count, and never re-derived from
+              // the survivors alone — that is exactly what would hand a fresh profile a deleted
+              // one's label. Default, cloud-linked entries and user-chosen names all contribute
+              // nothing, matching Rust's `local_label_suffix`.
+              const n = Math.max(issuedLabelHighWater, registryHighWater()) + 1;
+              issuedLabelHighWater = n;
               const created: MockDataset = {
-                id: `00000000-0000-4000-8000-00000000000${n}`,
+                id: `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
                 label: `Local Profile ${n}`,
                 kind: "local",
                 cognito_sub: null,
@@ -167,6 +206,65 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
               setTimeout(
                 () => settle().then(resolve, reject),
                 opts.createDatasetDelayMs,
+              );
+            });
+          }
+
+          // Auth-free by contract: the picker asks this for every local row it renders, so it must
+          // never be the command that resolves a Cognito subject. A successful `select_dataset` moves
+          // the answer, because selecting genuinely changes which profile is open.
+          case "get_active_dataset_id": {
+            const settle = () =>
+              opts.activeDatasetIdFails === true
+                ? Promise.reject({
+                    type: "Database",
+                    message: "the active dataset could not be read",
+                  })
+                : Promise.resolve(openDatasetId ?? opts.activeDatasetId ?? null);
+            if (opts.activeDatasetIdDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(
+                () => settle().then(resolve, reject),
+                opts.activeDatasetIdDelayMs,
+              );
+            });
+          }
+
+          // Every restriction the Rust boundary enforces is enforced here too, against the same
+          // mutable registry `list_datasets` reads. A stub that merely resolved would let the picker
+          // pass on an optimistic render, and one that skipped the restrictions would let a test
+          // "prove" a deletion the product would have refused.
+          case "delete_dataset": {
+            const requestedId = String(args?.dataset_id);
+            const settle = () => {
+              const target = registry?.find((entry) => entry.id === requestedId);
+              const activeId = openDatasetId ?? opts.activeDatasetId ?? null;
+              if (
+                opts.deleteDatasetFails === true ||
+                registry === undefined ||
+                target === undefined ||
+                target.is_default ||
+                requestedId === "default" ||
+                target.kind !== "local" ||
+                requestedId === activeId
+              ) {
+                return Promise.reject({
+                  type: "Validation",
+                  message: `Unknown dataset: ${requestedId}`,
+                  field: "dataset_id",
+                });
+              }
+              // Rust raises the high-water mark before it removes anything, so the number the doomed
+              // profile holds survives its own deletion.
+              issuedLabelHighWater = Math.max(issuedLabelHighWater, registryHighWater());
+              registry.splice(registry.indexOf(target), 1);
+              return Promise.resolve(null);
+            };
+            if (opts.deleteDatasetDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(
+                () => settle().then(resolve, reject),
+                opts.deleteDatasetDelayMs,
               );
             });
           }
@@ -346,6 +444,28 @@ async function callsTo(page: Page, command: string): Promise<IpcCall[]> {
   return (await readIpcCalls(page)).filter((call) => call.cmd === command);
 }
 
+/**
+ * Opens a local row's management menu, which is the single affordance now carrying both Rename and
+ * Delete. Every rename flow below goes through here because the pencil that used to sit on the row
+ * is gone — a destructive action must not be a visual peer of a harmless one, so both moved into the
+ * overflow.
+ *
+ * Only one menu is open at a time, so the items inside it need no `.nth()`.
+ */
+async function openRowMenu(page: Page, index: number) {
+  await page.getByTestId("picker-profile-menu").nth(index).click();
+}
+
+/** The confirmation word `datasets.deleteConfirmWord` carries in the default (English) locale. */
+const CONFIRM_WORD = "DELETE";
+
+/** Opens the row's menu, chooses Delete, and waits for the typed-confirmation dialog. */
+async function openDeleteDialog(page: Page, index: number) {
+  await openRowMenu(page, index);
+  await page.getByTestId("picker-delete-button").click();
+  await expect(page.getByTestId("picker-delete-dialog")).toBeVisible();
+}
+
 test.describe("launch-time picker gate", () => {
   test("a launch with the gate unset lands on the picker, not the dashboard", async ({
     page,
@@ -473,8 +593,8 @@ test.describe("picker contents", () => {
 
     // Every row is a real button, not a div with a click handler: the Card's own root element is
     // rendered as one, so the row is a single native focusable target. Counted by testid rather than
-    // by every button in the list — each local row also carries its own rename control, which is a
-    // sibling of the row, never nested inside it.
+    // by every button in the list — each local row also carries its own management menu trigger,
+    // which is a sibling of the row, never nested inside it.
     for (const row of await rows.all()) {
       expect(await row.evaluate((el) => el.tagName)).toBe("BUTTON");
       await expect(row).toBeEnabled();
@@ -773,6 +893,121 @@ test.describe("choosing a profile", () => {
   });
 });
 
+test.describe("marking the profile already open", () => {
+  test("the open profile's row says so in words, and no other row does", async ({
+    page,
+  }) => {
+    // Work, not the first row: a badge painted on `entries[0]`, or on every row, would satisfy a
+    // test that only ever asserted a badge was present somewhere.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "work-1",
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(2);
+
+    // Text, not a tint or an icon: this is the only thing distinguishing two otherwise identical
+    // rows, so it has to survive a user who cannot separate the brand colour from the card.
+    const badge = page.getByTestId("picker-active-badge");
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toHaveText("Current");
+    await expect(rows.nth(1).getByTestId("picker-active-badge")).toHaveCount(1);
+    await expect(rows.nth(0).getByTestId("picker-active-badge")).toHaveCount(0);
+
+    // A label, never a control: the row stays one native focusable target — no button inside a
+    // button — and the word joins that button's accessible name rather than being visual-only.
+    await expect(rows.nth(1).getByRole("button")).toHaveCount(0);
+    await expect(rows.nth(1)).toHaveAccessibleName(/Current/);
+
+    // Everything the rows already carried is untouched: both still open their profile, and both
+    // still have their management menu.
+    await expect(rows.nth(0)).toBeEnabled();
+    await expect(rows.nth(1)).toBeEnabled();
+    await expect(page.getByTestId("picker-profile-menu")).toHaveCount(2);
+  });
+
+  test("a cloud-linked row is left exactly as it was, badge included", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [
+        DEFAULT_ENTRY,
+        {
+          ...DEFAULT_ENTRY,
+          id: "cloud-1",
+          label: "user@example.com",
+          kind: "cloud-linked",
+          cognito_sub: "sub-1",
+          is_default: false,
+        },
+      ],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(2);
+
+    // The mark follows the open profile, not the row kind: Default is open, the cloud row is not,
+    // and the cloud row gains nothing at all from this change.
+    await expect(rows.nth(0).getByTestId("picker-active-badge")).toHaveCount(1);
+    await expect(rows.nth(1).getByTestId("picker-active-badge")).toHaveCount(0);
+    await expect(rows.nth(1)).toHaveText("user@example.com");
+  });
+
+  test("no row is marked open until the backend says which one is", async ({ page }) => {
+    // The same fail-closed rule the delete refusal already follows: while `get_active_dataset_id` is
+    // unresolved, `data` is undefined, and a bare comparison would mark either no row or every row
+    // on a guess. Nothing may claim to be open before the answer arrives.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetIdFails: true,
+    });
+    await page.goto("/picker");
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+    await expect(page.getByTestId("picker-active-badge")).toHaveCount(0);
+
+    // Proof the command really was attempted, so the absence above measures the fail-closed branch
+    // rather than a query that never ran.
+    expect(await readIpcCommands(page)).toContain("get_active_dataset_id");
+  });
+
+  test("a long name never pushes the badge under the row's own menu", async ({
+    page,
+  }) => {
+    // 80 characters: exactly what the rename validator allows, so this is the widest label the
+    // product can ever put in a row.
+    const longLabel = "x".repeat(40) + " " + "y".repeat(39);
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [{ ...WORK_ENTRY, id: "long-1", label: longLabel }],
+      activeDatasetId: "long-1",
+    });
+    await page.goto("/picker");
+
+    const badge = page.getByTestId("picker-active-badge");
+    await expect(badge).toBeVisible();
+    // The name is shown in full — the badge crowds it onto another line rather than clipping it.
+    await expect(page.getByTestId("picker-dataset-label")).toHaveText(longLabel);
+
+    const badgeBox = await badge.boundingBox();
+    const menuBox = await page.getByTestId("picker-profile-menu").boundingBox();
+    if (badgeBox === null || menuBox === null) {
+      throw new Error("The badge or the row menu has no bounding box, so it is not laid out.");
+    }
+
+    // The row reserves its right edge for the overflow menu, so the badge stays clear of it — it
+    // wraps onto its own line when the name leaves no room, and never slides underneath.
+    expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(menuBox.x);
+  });
+});
+
 test.describe("creating a local profile", () => {
   test("creating adds a row without navigating or opening it", async ({ page }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
@@ -959,7 +1194,8 @@ test.describe("renaming a local profile", () => {
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows.nth(1)).toHaveText("Work");
 
-    await page.getByTestId("picker-rename-button").nth(1).click();
+    await openRowMenu(page, 1);
+    await page.getByTestId("picker-rename-button").click();
     const input = page.getByTestId("picker-rename-input");
     // Seeded from the row that was picked, not the first row: opening on the wrong entry is the
     // failure a shared, always-mounted form would produce.
@@ -999,7 +1235,8 @@ test.describe("renaming a local profile", () => {
     });
     await page.goto("/picker");
 
-    await page.getByTestId("picker-rename-button").nth(1).click();
+    await openRowMenu(page, 1);
+    await page.getByTestId("picker-rename-button").click();
     await page.getByTestId("picker-rename-input").fill("Client work");
     await page.getByTestId("picker-rename-save").click();
 
@@ -1024,9 +1261,10 @@ test.describe("renaming a local profile", () => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
 
-    const rename = page.getByTestId("picker-rename-button");
-    await expect(rename).toHaveCount(1);
-    await rename.click();
+    const menu = page.getByTestId("picker-profile-menu");
+    await expect(menu).toHaveCount(1);
+    await menu.click();
+    await page.getByTestId("picker-rename-button").click();
     await page.getByTestId("picker-rename-input").fill("Personal");
     await page.getByTestId("picker-rename-save").click();
 
@@ -1046,7 +1284,8 @@ test.describe("renaming a local profile", () => {
     });
     await page.goto("/picker");
 
-    await page.getByTestId("picker-rename-button").nth(1).click();
+    await openRowMenu(page, 1);
+    await page.getByTestId("picker-rename-button").click();
     await page.getByTestId("picker-rename-input").fill("   ");
     await page.getByTestId("picker-rename-save").click();
 
@@ -1071,7 +1310,8 @@ test.describe("renaming a local profile", () => {
     });
     await page.goto("/picker");
 
-    await page.getByTestId("picker-rename-button").nth(1).click();
+    await openRowMenu(page, 1);
+    await page.getByTestId("picker-rename-button").click();
     await page.getByTestId("picker-rename-input").fill("x".repeat(81));
     await page.getByTestId("picker-rename-save").click();
 
@@ -1092,7 +1332,8 @@ test.describe("renaming a local profile", () => {
     });
     await page.goto("/picker");
 
-    await page.getByTestId("picker-rename-button").nth(1).click();
+    await openRowMenu(page, 1);
+    await page.getByTestId("picker-rename-button").click();
     await page.getByTestId("picker-rename-input").fill("Client work");
     await page.getByTestId("picker-rename-save").click();
 
@@ -1114,7 +1355,8 @@ test.describe("renaming a local profile", () => {
     });
     await page.goto("/picker");
 
-    await page.getByTestId("picker-rename-button").nth(1).click();
+    await openRowMenu(page, 1);
+    await page.getByTestId("picker-rename-button").click();
     await page.getByTestId("picker-rename-input").fill("Client work");
     await page.getByTestId("picker-rename-cancel").click();
 
@@ -1133,7 +1375,8 @@ test.describe("renaming a local profile", () => {
     });
     await page.goto("/picker");
 
-    await page.getByTestId("picker-rename-button").nth(1).click();
+    await openRowMenu(page, 1);
+    await page.getByTestId("picker-rename-button").click();
     await page.getByTestId("picker-rename-input").fill("Client work");
     await page.getByTestId("picker-rename-save").click();
 
@@ -1153,7 +1396,7 @@ test.describe("renaming a local profile", () => {
     for (const control of [
       page.getByTestId("picker-dataset-row").nth(0),
       page.getByTestId("picker-dataset-row").nth(1),
-      page.getByTestId("picker-rename-button").nth(0),
+      page.getByTestId("picker-profile-menu").nth(0),
       page.getByTestId("picker-new-profile-button"),
       page.getByTestId("picker-login-cloud-button"),
     ]) {
@@ -1200,14 +1443,14 @@ test.describe("renaming a local profile", () => {
 
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
 
-    // One control for the one local row: a cloud-linked label is its account's, so the affordance is
-    // absent rather than present-and-refused.
-    const rename = page.getByTestId("picker-rename-button");
-    await expect(rename).toHaveCount(1);
-    await expect(rename).toHaveAttribute("aria-label", "Rename Default");
+    // One menu for the one local row: a cloud-linked label is its account's and its deletion is out
+    // of scope, so the whole affordance is absent rather than present-and-refused.
+    const menu = page.getByTestId("picker-profile-menu");
+    await expect(menu).toHaveCount(1);
+    await expect(menu).toHaveAttribute("aria-label", "Manage Default");
   });
 
-  test("a selection in flight makes the rename controls unreachable", async ({
+  test("a selection in flight makes the row management controls unreachable", async ({
     page,
   }) => {
     // Both mutations rewrite the same registry, so they must not interleave — the same guard the
@@ -1219,14 +1462,423 @@ test.describe("renaming a local profile", () => {
     });
     await page.goto("/picker");
 
-    const rename = page.getByTestId("picker-rename-button").nth(0);
+    const menu = page.getByTestId("picker-profile-menu").nth(0);
     await page.getByTestId("picker-dataset-row").nth(0).click();
 
-    await expect(rename).toBeDisabled();
-    await expect(rename).toHaveAttribute("aria-disabled", "true");
+    await expect(menu).toBeDisabled();
+    await expect(menu).toHaveAttribute("aria-disabled", "true");
 
     await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
-    expect(await readIpcCommands(page)).not.toContain("rename_dataset");
+    const commands = await readIpcCommands(page);
+    expect(commands).not.toContain("rename_dataset");
+    expect(commands).not.toContain("delete_dataset");
+  });
+});
+
+/**
+ * Two generated labels, so the post-delete naming case can remove the lower one and prove the next
+ * create advances past the survivor instead of colliding with it.
+ */
+const LOCAL_ONE: MockDataset = {
+  ...DEFAULT_ENTRY,
+  id: "00000000-0000-4000-8000-000000000001",
+  label: "Local Profile 1",
+  is_default: false,
+};
+
+const LOCAL_TWO: MockDataset = {
+  ...DEFAULT_ENTRY,
+  id: "00000000-0000-4000-8000-000000000002",
+  label: "Local Profile 2",
+  is_default: false,
+};
+
+test.describe("deleting a local profile", () => {
+  test("a typed confirmation removes the row without navigating", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(2);
+
+    await openDeleteDialog(page, 1);
+
+    // The dialog names the profile it is about to remove and says the removal is final: without both
+    // the user is confirming an unrecoverable action against an unnamed target.
+    const dialog = page.getByTestId("picker-delete-dialog");
+    await expect(dialog).toContainText("Work");
+    await expect(dialog).toContainText("cannot be undone");
+
+    await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
+    await page.getByTestId("picker-delete-confirm-button").click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect(rows).toHaveCount(1);
+    // The label element, not the whole row: Default is the open profile here, so its row also
+    // carries the open-profile mark, and what this asserts is which profile survived.
+    await expect(rows.nth(0).getByTestId("picker-dataset-label")).toHaveText("Default");
+
+    const deletions = await callsTo(page, "delete_dataset");
+    expect(deletions).toHaveLength(1);
+    // The clicked row's id, snake_case on the wire — not the first entry's, and not camelCase.
+    expect(deletions[0].args).toEqual({ dataset_id: "work-1" });
+
+    // An irreversible action that only makes a row vanish gives the user nothing to read.
+    await expect(page.locator("[data-sonner-toast]")).toContainText("Work was deleted.");
+
+    // A deletion is not an open: still on the picker, nothing selected, nothing latched.
+    await expect(page).toHaveURL(/\/picker$/);
+    const commands = await readIpcCommands(page);
+    expect(commands).not.toContain("select_dataset");
+    expect(commands).not.toContain("mark_picker_passed");
+  });
+
+  test("the row disappears because of a fresh registry read, not an optimistic write", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    await openDeleteDialog(page, 1);
+    await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
+    await page.getByTestId("picker-delete-confirm-button").click();
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
+
+    // The mock's `delete_dataset` mutates the same array `list_datasets` reads, so a `list_datasets`
+    // call issued *after* the deletion is what proves the list on screen was read back rather than
+    // filtered optimistically — i.e. that the mutation invalidated the list. Durability across a
+    // process restart is not reachable here; the Rust `a_delete_survives_a_registry_reload` test owns
+    // that half.
+    const commands = await readIpcCommands(page);
+    const deleteAt = commands.indexOf("delete_dataset");
+    expect(deleteAt).toBeGreaterThan(-1);
+    expect(commands.slice(deleteAt + 1)).toContain("list_datasets");
+  });
+
+  test("Default is offered no delete at all, while it is still renameable", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    await openRowMenu(page, 0);
+
+    // Omitted, not disabled: Default's directory *is* the app data root, so this is not a
+    // restriction the user could ever lift, and an item that can never become available is noise.
+    await expect(page.getByTestId("picker-delete-button")).toHaveCount(0);
+    await expect(page.getByTestId("picker-rename-button")).toBeVisible();
+
+    // The whole menu is still useful, and the backend was never asked.
+    expect(await readIpcCommands(page)).not.toContain("delete_dataset");
+  });
+
+  test("the open profile's delete is disabled and says why", async ({ page }) => {
+    // Work is the open profile here, so its own row is the one that must refuse.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "work-1",
+    });
+    await page.goto("/picker");
+
+    await openRowMenu(page, 1);
+
+    const remove = page.getByTestId("picker-delete-button");
+    await expect(remove).toBeVisible();
+    await expect(remove).toHaveAttribute("aria-disabled", "true");
+
+    // The reason, not just the dim: this is the one restriction the user can actually lift, by
+    // opening another profile first. `data-reason` is the machine-readable variant, so the assertion
+    // pins which refusal fired rather than matching its wording.
+    const hint = page.getByTestId("picker-delete-refusal-hint");
+    await expect(hint).toHaveAttribute("data-reason", "refused-active");
+    await expect(hint).toContainText("You cannot delete the profile you are using.");
+
+    // Present-and-refused only in the UI; nothing reached the wire and no dialog opened.
+    await expect(page.getByTestId("picker-delete-dialog")).toHaveCount(0);
+    expect(await readIpcCommands(page)).not.toContain("delete_dataset");
+  });
+
+  test("an inactive sibling stays deletable while another profile is open", async ({
+    page,
+  }) => {
+    // The control for the test above: the guard must be scoped to the open profile, not applied to
+    // every row the moment anything is open.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY, LOCAL_ONE],
+      activeDatasetId: "work-1",
+    });
+    await page.goto("/picker");
+
+    await openRowMenu(page, 2);
+
+    const remove = page.getByTestId("picker-delete-button");
+    await expect(remove).toBeEnabled();
+    await expect(page.getByTestId("picker-delete-active-hint")).toHaveCount(0);
+  });
+
+  test("a cloud-linked profile is offered no management menu, so no delete either", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [
+        DEFAULT_ENTRY,
+        {
+          ...DEFAULT_ENTRY,
+          id: "cloud-1",
+          label: "user@example.com",
+          kind: "cloud-linked",
+          cognito_sub: "sub-1",
+          is_default: false,
+        },
+      ],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+    await expect(page.getByTestId("picker-profile-menu")).toHaveCount(1);
+    await expect(page.getByTestId("picker-profile-menu")).toHaveAttribute(
+      "aria-label",
+      "Manage Default",
+    );
+  });
+
+  test("the confirm button stays inert until the exact word is typed", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    await openDeleteDialog(page, 1);
+    const input = page.getByTestId("picker-delete-confirm-input");
+    const confirm = page.getByTestId("picker-delete-confirm-button");
+
+    // Empty, partial, wrong, and the right letters in the wrong case: none of these may arm an
+    // irreversible action, which is the entire reason this dialog is typed rather than a plain OK.
+    await expect(confirm).toBeDisabled();
+    for (const attempt of ["DELET", "delete", "Delete", "REMOVE", "DELETE!"]) {
+      await input.fill(attempt);
+      await expect(confirm).toBeDisabled();
+      await expect(confirm).toHaveAttribute("aria-disabled", "true");
+    }
+
+    // Surrounding whitespace is trimmed, so a trailing space from a paste is not a dead end.
+    await input.fill(`  ${CONFIRM_WORD}  `);
+    await expect(confirm).toBeEnabled();
+
+    // Playwright's click() waits for enabled, so a disabled confirm cannot be clicked at all — and
+    // nothing reached the wire while it was.
+    expect(await readIpcCommands(page)).not.toContain("delete_dataset");
+  });
+
+  test("a refused deletion is reported inline and leaves the row listed for a retry", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+      deleteDatasetFails: true,
+    });
+    await page.goto("/picker");
+
+    await openDeleteDialog(page, 1);
+    await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
+    await page.getByTestId("picker-delete-confirm-button").click();
+
+    // Inline, not a toast: the dialog stays open, so the failure belongs beside the action that was
+    // refused rather than in a corner that can be dismissed while the dialog looks untouched.
+    await expect(page.getByTestId("picker-delete-error")).toHaveText(
+      "That profile could not be deleted. Please try again.",
+    );
+    await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+
+    // Not a dead end and not a silent loss: the dialog holds what was typed, and the row is still
+    // there — which is exactly what makes the documented retry possible.
+    await expect(page.getByTestId("picker-delete-dialog")).toBeVisible();
+    await expect(page.getByTestId("picker-delete-confirm-input")).toHaveValue(
+      CONFIRM_WORD,
+    );
+    await expect(page.getByTestId("picker-delete-confirm-button")).toBeEnabled();
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+  });
+
+  test("cancelling changes nothing at all", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    await openDeleteDialog(page, 1);
+    await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
+    await page.getByTestId("picker-delete-cancel").click();
+
+    await expect(page.getByTestId("picker-delete-dialog")).toHaveCount(0);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    expect(await readIpcCommands(page)).not.toContain("delete_dataset");
+
+    // The background is live again, so the guard was scoped to the dialog's lifetime.
+    await expect(page.getByTestId("picker-dataset-row").nth(0)).toBeEnabled();
+    await expect(page.getByTestId("picker-new-profile-button")).toBeEnabled();
+  });
+
+  test("a deletion in flight cannot be abandoned, and nothing behind it is reachable", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+      deleteDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    await openDeleteDialog(page, 1);
+    await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
+    await page.getByTestId("picker-delete-confirm-button").click();
+
+    const dialog = page.getByTestId("picker-delete-dialog");
+
+    // Both spellings on both controls, so a dim is never the only signal — and Playwright's click()
+    // waits for enabled, so a disabled Confirm cannot be double-submitted at all.
+    for (const control of [
+      page.getByTestId("picker-delete-confirm-button"),
+      page.getByTestId("picker-delete-cancel"),
+    ]) {
+      await expect(control).toBeDisabled();
+      await expect(control).toHaveAttribute("aria-disabled", "true");
+    }
+
+    // A directory removal is in flight, so nothing behind the dialog may start a second registry
+    // write.
+    for (const control of [
+      page.getByTestId("picker-dataset-row").nth(0),
+      page.getByTestId("picker-dataset-row").nth(1),
+      page.getByTestId("picker-profile-menu").nth(0),
+      page.getByTestId("picker-new-profile-button"),
+      page.getByTestId("picker-login-cloud-button"),
+    ]) {
+      await expect(control).toBeDisabled();
+      await expect(control).toHaveAttribute("aria-disabled", "true");
+    }
+
+    // The three exits no `disabled` attribute can cover, driven for real: they are Base UI's own, so
+    // only the controlled dialog refusing the close request keeps them from unmounting the surface
+    // that reports the deletion's outcome.
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    await page.locator('[data-slot="dialog-close"]').click();
+    await expect(dialog).toBeVisible();
+    await page
+      .locator('[data-slot="dialog-overlay"]')
+      .click({ position: { x: 8, y: 8 } });
+    await expect(dialog).toBeVisible();
+
+    // And then the ordinary success path still runs to completion, exactly once.
+    await expect(dialog).toHaveCount(0, { timeout: 20_000 });
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
+    expect(await callsTo(page, "delete_dataset")).toHaveLength(1);
+
+    // The background is live again, so the guard was scoped to the dialog's lifetime.
+    await expect(page.getByTestId("picker-dataset-row").nth(0)).toBeEnabled();
+    await expect(page.getByTestId("picker-new-profile-button")).toBeEnabled();
+  });
+
+  test("a created profile never reuses a deleted profile's label", async ({ page }) => {
+    // The acceptance criterion max-plus-one naming exists for. Under the old count-based rule this
+    // create would be labelled "Local Profile 2" and collide with the row still on screen.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, LOCAL_ONE, LOCAL_TWO],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(3);
+
+    await openDeleteDialog(page, 1);
+    await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
+    await page.getByTestId("picker-delete-confirm-button").click();
+
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(1)).toHaveText("Local Profile 2");
+
+    await page.getByTestId("picker-new-profile-button").click();
+
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(2)).toHaveText("Local Profile 3");
+
+    // The surviving profile's name is not reused, and no two rows share one. Read off the label
+    // elements rather than the rows: Default is the open profile here, so its row also carries the
+    // open-profile mark, and this assertion is about names.
+    const labels = await page.getByTestId("picker-dataset-label").allTextContents();
+    expect(labels).toEqual(["Default", "Local Profile 2", "Local Profile 3"]);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  test("a deletion in flight disables the rows, so the two mutations cannot interleave", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+      deleteDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+
+    await openDeleteDialog(page, 1);
+
+    // Opening the dialog is already enough: it is modal, so a click that reached a row through the
+    // backdrop would open the very profile being deleted.
+    const row = page.getByTestId("picker-dataset-row").nth(0);
+    await expect(row).toBeDisabled();
+    await expect(row).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByTestId("picker-new-profile-button")).toBeDisabled();
+
+    expect(await readIpcCommands(page)).not.toContain("select_dataset");
+  });
+
+  test("no i18n key leaks into the delete dialog", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      activeDatasetId: "default",
+    });
+    await page.goto("/picker");
+
+    await openDeleteDialog(page, 1);
+
+    const dialog = page.getByTestId("picker-delete-dialog");
+    await expect(dialog).not.toContainText("datasets.");
+    await expect(dialog).not.toContainText("picker.");
+    // The internal noun must never surface in user-facing copy on this screen.
+    await expect(dialog).not.toContainText(/dataset/i);
   });
 });
 

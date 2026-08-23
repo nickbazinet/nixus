@@ -14,7 +14,7 @@ Nixus is a **local-first desktop app** for **lifestyle automation and tracking**
 
 > **Pre-alpha** — core features work, but the product is still maturing. [See limitations](#what-nixus-is--and-isnt) before you download.
 
-**[Download for macOS or Windows →](https://nixus.nicolasbazinet.net)** · **[Beta testing](#help-shape-nixus)** · **[Contributing](CONTRIBUTING.md)**
+**[Download for macOS or Windows →](https://nixusapp.com)** · **[Beta testing](#help-shape-nixus)** · **[Contributing](CONTRIBUTING.md)**
 
 <p align="center">
   <a href="https://buymeacoffee.com/nickbaz">
@@ -91,7 +91,7 @@ Before you download: an honest list so you know if this is worth your time.
 - **Pre-alpha** — features change and things break between releases.
 - **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
 
-More detail on the marketing site: [nixus.nicolasbazinet.net/beta](https://nixus.nicolasbazinet.net/beta)
+More detail on the marketing site: [nixusapp.com/beta](https://nixusapp.com/beta)
 
 ---
 
@@ -115,7 +115,7 @@ More detail on the marketing site: [nixus.nicolasbazinet.net/beta](https://nixus
   </tr>
 </table>
 
-More product visuals and an AI import demo: **[nixus.nicolasbazinet.net](https://nixus.nicolasbazinet.net)**. Additional screenshots live in [`docs/images/`](docs/images/).
+More product visuals and an AI import demo: **[nixusapp.com](https://nixusapp.com)**. Additional screenshots live in [`docs/images/`](docs/images/).
 
 ---
 
@@ -125,7 +125,7 @@ I'm looking for a handful of people who still track personal finances in a sprea
 
 **[Email me about beta testing](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20beta%20tester%20interest)**
 
-Or read the full beta guide on the site: [nixus.nicolasbazinet.net/beta](https://nixus.nicolasbazinet.net/beta)
+Or read the full beta guide on the site: [nixusapp.com/beta](https://nixusapp.com/beta)
 
 ---
 
@@ -146,7 +146,7 @@ Open source — inspect the code on GitHub. First-launch warnings (macOS Gatekee
 
 | Resource | Description |
 | -------- | ----------- |
-| [nixus.nicolasbazinet.net](https://nixus.nicolasbazinet.net) | Download, features, FAQ, beta info |
+| [nixusapp.com](https://nixusapp.com) | Download, features, FAQ, beta info |
 | [Contributing](CONTRIBUTING.md) | Clone, run locally, tests, architecture |
 | [Beta validation roadmap (June 2026)](docs/beta-validation-roadmap-june-2026.html) | How this pre-alpha is being validated |
 | [Project context for AI agents](docs/project-context.md) | Implementation rules for contributors |

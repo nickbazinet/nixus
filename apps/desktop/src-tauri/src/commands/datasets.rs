@@ -189,6 +189,58 @@ pub fn rename_dataset(
     datasets::rename_dataset_at(&datasets::global_root(&app)?, &dataset_id, &label)
 }
 
+/// Removes a local profile outright: its directory, its registry entry and its own
+/// AI credentials.
+///
+/// `DbState`'s guard is released *before* `delete_dataset_at` is called, not held
+/// across it. `datasets::active_dataset_id` takes that lock and the deleter takes
+/// `REGISTRY_LOCK`; holding the first across the second is the deadlock
+/// `active_dataset_dir`'s own doc warns about, and the id is a `String` copy so
+/// there is nothing to keep borrowed.
+///
+/// A run with no dataset selected resolves to `None` rather than an error: nothing
+/// is open, so nothing is in use, and the picker must not be unable to delete a
+/// profile because it has not opened one yet.
+///
+/// The same global-root resolution as `create_dataset` and `rename_dataset`, for
+/// the same reason — the registry is a sibling of every dataset, so
+/// `active_dataset_dir` would take `DbState`'s lock to answer a question that has
+/// nothing to do with the open connection.
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_dataset(app: AppHandle, dataset_id: String) -> Result<(), AppError> {
+    let active_id = match datasets::active_dataset_id(&app.state::<DbState>()) {
+        Ok(id) => Some(id),
+        Err(AppError::NotConfigured) => None,
+        Err(error) => return Err(error),
+    };
+
+    let root = datasets::global_root(&app)?;
+    datasets::delete_dataset_at(&root, &dataset_id, active_id.as_deref())?;
+
+    info!("Deleted profile {}", dataset_id);
+
+    Ok(())
+}
+
+/// Which dataset is open, and nothing else.
+///
+/// Deliberately separate from `get_active_profile` rather than a field the picker
+/// reads off it: that command resolves the Cognito subject for a cloud-linked
+/// entry, which can refresh an expired session over the network. The picker asks
+/// this question for every local row it renders, so it must stay auth-free (NFR7)
+/// and never trigger a token refresh just to decide which Delete item to disable.
+///
+/// `None` is a run with nothing selected, which is not an error here — the answer
+/// is "no profile is in use".
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_active_dataset_id(app: AppHandle) -> Result<Option<String>, AppError> {
+    match datasets::active_dataset_id(&app.state::<DbState>()) {
+        Ok(id) => Ok(Some(id)),
+        Err(AppError::NotConfigured) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// Whether the launch-time picker has been passed during this run (AD-14).
 ///
 /// Deliberately a standalone flag *alongside* `ActiveDataset` rather than derived

@@ -47,6 +47,12 @@ function SessionHarness() {
   return null;
 }
 
+// The account menu's shape: a local profile is open, so the session must not be read at all.
+function DisabledSessionHarness() {
+  authSession = useAuthSession({ enabled: false });
+  return null;
+}
+
 describe("useAuth", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -152,6 +158,48 @@ describe("useAuth", () => {
     // A wrong key literal in constants.ts is invisible to tsc; this is what catches it
     expect(queryClient.getQueryData(["auth", "session"])).toBeDefined();
     expect(queryClient.getQueryData(["auth", "session"])).toEqual(session);
+  });
+
+  it("reads no session at all while the query is disabled", async () => {
+    // Given a stored session the caller is not allowed to look at
+    invokeMock.mockResolvedValue({ status: "SessionExpired" });
+
+    // When the account menu mounts with a local profile open
+    render(<DisabledSessionHarness />);
+    await settleQueries(() => listenMock.mock.calls.length > 0);
+
+    // Then the keyring is never touched and no session state is exposed
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(authSession.data).toBeUndefined();
+    expect(authSession.isError).toBe(false);
+  });
+
+  it("keeps the callback listener live while the query is disabled", async () => {
+    // Given the same disabled reader
+    invokeMock.mockResolvedValue({ status: "LoggedOut" });
+
+    render(<DisabledSessionHarness />);
+    await settleQueries(() => listenMock.mock.calls.length > 0);
+
+    expect(listenMock.mock.calls[0][0]).toBe("auth:callback-received");
+
+    // When a cloud sign-in completes and Rust stores the session
+    act(() => {
+      fireCallbackEvent();
+    });
+
+    // Then the caches this hook owns are still invalidated, so a surface that only started reading
+    // after the callback gets the new account rather than the previous one's entry
+    expect(invalidatedKeys()).toEqual([
+      ["auth", "session"],
+      ["active-profile"],
+    ]);
+
+    // And invalidation does not smuggle the read back in
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("starts login carrying the plain Login intent and nothing else", async () => {

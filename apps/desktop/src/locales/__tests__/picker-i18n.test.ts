@@ -11,13 +11,15 @@ const fr = frLocale as Record<string, string>;
 const DATASETS_PREFIX = "datasets.";
 
 /**
- * DatasetPicker.tsx and ProfileMenu.tsx are the consumers of these keys (plus routes/profile.tsx for
- * the sign-in label that replaced the retired `profile.signIn`), and t() on a missing key renders
- * the raw key string rather than failing — so a typo or an en-only addition ships silently.
+ * DatasetPicker.tsx, ProfileRowMenu.tsx, DeleteProfilePanel.tsx and ProfileMenu.tsx are the
+ * consumers of these keys (plus routes/profile.tsx for the sign-in label that replaced the retired
+ * `profile.signIn`), and t() on a missing key renders the raw key string rather than failing — so a
+ * typo or an en-only addition ships silently.
  */
 const REQUIRED_KEYS = [
   "datasets.title",
   "datasets.subtitle",
+  "datasets.currentProfileBadge",
   "datasets.loginWithCloud",
   "datasets.newLocalProfile",
   "datasets.switchProfile",
@@ -25,12 +27,21 @@ const REQUIRED_KEYS = [
   "datasets.selectFailed",
   "datasets.createFailed",
   "datasets.renameProfile",
-  "datasets.renameProfileAction",
+  "datasets.profileActions",
   "datasets.renameProfileDescription",
   "datasets.profileName",
   "datasets.nameRequired",
   "datasets.nameTooLong",
   "datasets.renameFailed",
+  "datasets.deleteProfile",
+  "datasets.deleteProfileDescription",
+  "datasets.deleteProfileActiveHint",
+  "datasets.deleteProfileUnknownHint",
+  "datasets.deleteConfirmWord",
+  "datasets.deleteTypeToConfirm",
+  "datasets.deleting",
+  "datasets.deleteFailed",
+  "datasets.profileDeleted",
   "datasets.migrateToCloud",
   "datasets.signInWithCloud",
   "datasets.signedIn",
@@ -77,7 +88,7 @@ describe("datasets i18n", () => {
     expect(en["datasets.title"]).toBe("Welcome to Nixus");
     expect(fr["datasets.title"]).toBe("Bienvenue dans Nixus");
     expect(en["datasets.subtitle"]).toBe(
-      "Choose a profile to open. Each one keeps its own data on this machine, separate from the rest.",
+      "Choose a profile to open or log with Nixus Cloud",
     );
     expect(fr["datasets.subtitle"]).toBe(
       "Choisissez un profil à ouvrir. Chacun conserve ses propres données sur cet appareil, séparément des autres.",
@@ -91,6 +102,24 @@ describe("datasets i18n", () => {
     expect(fr["datasets.subtitle"]).toContain("Choisissez un profil");
   });
 
+  it("marks the profile already open with a word, short enough to sit beside a name", () => {
+    // The rows are otherwise identical, so the one profile already open needs *text* saying so — a
+    // tint alone is invisible to a user who cannot separate it from the card. Short on purpose: it
+    // sits inline with a name that can run to the 80 characters the rename validator allows.
+    expect(en["datasets.currentProfileBadge"]).toBe("Current");
+    expect(fr["datasets.currentProfileBadge"]).toBe("Actuel");
+
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.currentProfileBadge"].length).toBeLessThanOrEqual(12);
+      // The account menu's two cloud states are the only other badge copy here, and both speak
+      // about the signed-in account rather than about which profile is open.
+      expect(locale["datasets.currentProfileBadge"]).not.toBe(locale["datasets.signedIn"]);
+      expect(locale["datasets.currentProfileBadge"]).not.toBe(
+        locale["datasets.signedOut"],
+      );
+    }
+  });
+
   it("labels the header's way back to the picker in both locales", () => {
     // The account trigger's only action while a local profile is open: it must never read as a
     // cloud action, because a cloud sign-in would switch the profile out from under the user.
@@ -100,10 +129,8 @@ describe("datasets i18n", () => {
     expect(fr["datasets.switchProfile"]).not.toContain("Nixus Cloud");
   });
 
-  it("names the local-first guarantee in both locales", () => {
-    // A picker that does not say the data stays put reads as a cloud account switcher, which is
-    // the opposite of what this product is.
-    expect(en["datasets.subtitle"]).toContain("on this machine");
+  it("describes the cloud choice in English and local storage in French", () => {
+    expect(en["datasets.subtitle"]).toContain("Nixus Cloud");
     expect(fr["datasets.subtitle"]).toContain("sur cet appareil");
   });
 
@@ -179,9 +206,9 @@ describe("datasets i18n", () => {
     expect(fr["datasets.renameProfile"]).toBe("Renommer le profil");
 
     for (const locale of [en, fr]) {
-      // The per-row action names the profile it acts on, so a screen reader hears which of several
-      // identical Rename buttons it has landed on — an interpolation-free label cannot.
-      expect(locale["datasets.renameProfileAction"]).toContain("{{name}}");
+      // The per-row menu names the profile it acts on, so a screen reader hears which of several
+      // identical triggers it has landed on — an interpolation-free label cannot.
+      expect(locale["datasets.profileActions"]).toContain("{{name}}");
       // The limit is stated by the validator that enforces it, never spelled out twice.
       expect(locale["datasets.nameTooLong"]).toContain("{{max}}");
 
@@ -191,6 +218,74 @@ describe("datasets i18n", () => {
       expect(locale["datasets.nameRequired"]).not.toBe(locale["datasets.nameTooLong"]);
       expect(locale["datasets.renameFailed"]).not.toBe(locale["datasets.selectFailed"]);
       expect(locale["datasets.renameFailed"]).not.toBe(locale["datasets.createFailed"]);
+    }
+  });
+
+  it("retires the pencil-specific rename label now that one menu owns both row actions", () => {
+    // `renameProfileAction` labelled a pencil button that no longer exists. Left behind it would be
+    // copy no component reads, drifting out of sync with the menu trigger's own label.
+    expect(en["datasets.renameProfileAction"]).toBeUndefined();
+    expect(fr["datasets.renameProfileAction"]).toBeUndefined();
+  });
+
+  it("names the profile and its irreversibility in the delete copy, in both locales", () => {
+    // The two things this dialog owes the user before an unrecoverable action: which profile is
+    // about to go, and that nothing brings it back.
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.deleteProfileDescription"]).toContain("{{name}}");
+    }
+    expect(en["datasets.deleteProfileDescription"]).toContain("cannot be undone");
+    expect(fr["datasets.deleteProfileDescription"]).toContain("irréversible");
+  });
+
+  it("supplies a localized confirmation word and asks for it by interpolation", () => {
+    // The word the user must type is translated, so a French user is never asked to type an English
+    // word — and the prompt interpolates it rather than restating it, so the two cannot drift.
+    expect(en["datasets.deleteConfirmWord"]).toBe("DELETE");
+    expect(fr["datasets.deleteConfirmWord"]).toBe("SUPPRIMER");
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.deleteTypeToConfirm"]).toContain("{{word}}");
+      // The word is what the comparison is against, so a lowercase or padded value would make the
+      // typed confirmation impossible to satisfy from the prompt alone.
+      expect(locale["datasets.deleteConfirmWord"]).toBe(
+        locale["datasets.deleteConfirmWord"].trim().toUpperCase(),
+      );
+    }
+  });
+
+  it("keeps every delete outcome distinguishable from the rename and select ones", () => {
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.deleteFailed"]).not.toBe(locale["datasets.renameFailed"]);
+      expect(locale["datasets.deleteFailed"]).not.toBe(locale["datasets.selectFailed"]);
+      expect(locale["datasets.deleteFailed"]).not.toBe(locale["datasets.createFailed"]);
+      expect(locale["datasets.deleteProfile"]).not.toBe(locale["datasets.renameProfile"]);
+      // The success announcement names the profile that is gone, because the row it stood in has
+      // already disappeared by the time it is read.
+      expect(locale["datasets.profileDeleted"]).toContain("{{name}}");
+    }
+  });
+
+  it("explains why the open profile cannot be deleted rather than only dimming the item", () => {
+    // A disabled control with no reason attached is indistinguishable from a broken one, and this is
+    // the one restriction the user can actually resolve — by opening another profile first.
+    expect(en["datasets.deleteProfileActiveHint"]).toBeTruthy();
+    expect(fr["datasets.deleteProfileActiveHint"]).toBeTruthy();
+    expect(en["datasets.deleteProfileActiveHint"]).not.toBe(en["datasets.deleteFailed"]);
+    expect(fr["datasets.deleteProfileActiveHint"]).not.toBe(fr["datasets.deleteFailed"]);
+  });
+
+  it("distinguishes not-yet-knowing which profile is open from knowing it is this one", () => {
+    // The picker fails closed while `get_active_dataset_id` is unresolved, so the same dim covers two
+    // different situations: a restriction that will never lift for this row, and one that clears on
+    // its own in a moment. Identical copy would tell the user to act when they only had to wait.
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.deleteProfileUnknownHint"]).toBeTruthy();
+      expect(locale["datasets.deleteProfileUnknownHint"]).not.toBe(
+        locale["datasets.deleteProfileActiveHint"],
+      );
+      expect(locale["datasets.deleteProfileUnknownHint"]).not.toBe(
+        locale["datasets.deleteFailed"],
+      );
     }
   });
 

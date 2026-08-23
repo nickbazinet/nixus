@@ -37,9 +37,16 @@ interface AuthOptions {
   /**
    * What `get_active_profile` answers. Omit to leave it unstubbed so it falls through to the reject
    * fallback — the state every pre-existing spec in this directory runs in, and the one the account
-   * menu must degrade to plain sign-in under (a Migrate intent needs a concrete source id).
+   * menu must degrade to Switch profile under, without reading the session at all.
    */
   activeProfile?: MockActiveProfile;
+  /**
+   * Delays the `get_active_profile` answer so the window in which the profile's kind is unknown is
+   * assertable. That window is what gates every auth read now, so it has to be observable.
+   */
+  activeProfileDelayMs?: number;
+  /** Replaces the `get_active_profile` answer once `sign_out` has been invoked. */
+  activeProfileAfterSignOut?: MockActiveProfile;
   /**
    * What `list_datasets` answers. Stubbed by the specs that follow the header's Switch profile action
    * to `/picker`, so the destination renders its list instead of `picker-load-error`.
@@ -97,9 +104,11 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
       });
     };
 
-    // Mutable on purpose: sign-out flips the answer mid-test, which is what proves the header
-    // re-reads the one ["auth", "session"] cache entry rather than holding a private copy.
+    // Mutable on purpose: sign-out flips both answers mid-test, which is what proves the header
+    // re-reads the one ["auth", "session"] cache entry — and the profile the badge derives from —
+    // rather than holding private copies.
     let session = opts.session;
+    let activeProfile = opts.activeProfile;
 
     // The whole command surface is recorded, not just the auth commands, so per-command counts are
     // derived by filtering. Mirrors the `__APPLIED_TEMPLATE_CALLS` idiom in onboarding.spec.ts.
@@ -186,9 +195,13 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
                 });
 
           case "get_active_profile":
-            return opts.activeProfile === undefined
+            return activeProfile === undefined
               ? Promise.reject(`Unknown command: ${cmd}`)
-              : Promise.resolve(opts.activeProfile);
+              : settle({
+                  kind: "resolve",
+                  value: activeProfile,
+                  delayMs: opts.activeProfileDelayMs,
+                });
 
           case "list_datasets":
             return opts.datasets === undefined
@@ -203,6 +216,9 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
           case "sign_out": {
             if (opts.sessionAfterSignOut !== undefined) {
               session = opts.sessionAfterSignOut;
+            }
+            if (opts.activeProfileAfterSignOut !== undefined) {
+              activeProfile = opts.activeProfileAfterSignOut;
             }
             return opts.sign_out === undefined
               ? Promise.resolve(null)
@@ -363,11 +379,30 @@ const LOGGED_IN: MockAuthState = {
   name: "Test User",
 };
 
+const LOCAL_PROFILE: MockActiveProfile = {
+  dataset_id: "00000000-0000-4000-8000-000000000001",
+  kind: "local",
+  label: "Local Profile 1",
+  is_signed_in: false,
+};
+
+const CLOUD_PROFILE_SIGNED_IN: MockActiveProfile = {
+  dataset_id: "00000000-0000-4000-8000-0000000000c1",
+  kind: "cloud-linked",
+  label: "user@example.com",
+  is_signed_in: true,
+};
+
+const CLOUD_PROFILE_SIGNED_OUT: MockActiveProfile = {
+  ...CLOUD_PROFILE_SIGNED_IN,
+  is_signed_in: false,
+};
+
 /** The registry `/picker` reads once the header's Switch profile action has navigated there. */
 const PICKER_DATASETS: MockDataset[] = [
   {
-    id: "00000000-0000-4000-8000-000000000001",
-    label: "Local Profile 1",
+    id: LOCAL_PROFILE.dataset_id,
+    label: LOCAL_PROFILE.label,
     kind: "local",
     cognito_sub: null,
     linked_from: null,
@@ -386,64 +421,110 @@ async function expectPickerUsable(page: Page) {
   await expect(page.getByTestId("picker-load-error")).toHaveCount(0);
 }
 
+const LOCAL_PROFILE_KEYRING_COMMANDS = ["get_auth_session", "start_login"];
+
 test.describe("header profile entry point", () => {
-  test("the trigger reports loading while the session query is in flight, then logged out", async ({
+  test("the trigger stays inert until the profile's kind is known, then reports the cloud session", async ({
     page,
   }) => {
     await setupTauriMock(page, {
-      session: { status: "LoggedOut" },
-      sessionDelayMs: 2000,
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      activeProfileDelayMs: 2000,
     });
     await page.goto("/");
 
-    // The loading affordance is the proof the pending window was real — a bare waitForTimeout would
-    // assert nothing about whether the query had settled. ProfileMenu disables the trigger in this
-    // state, so the launch cannot start a sign-in before the session is even known.
+    // The kind is what decides whether an account exists at all, so nothing may touch the secure
+    // store before it lands — and the trigger stays disabled, because its own action switches the
+    // active profile and offering that about an unknown profile is offering nothing.
     const trigger = page.getByTestId("profile-menu-trigger");
-    await expect(trigger).toHaveAttribute("data-auth-state", "loading");
+    await expect(trigger).toHaveAttribute("data-profile-kind", "pending");
     await expect(trigger).toBeDisabled();
-    expect(await countIpcCalls(page, "get_auth_session")).toBeGreaterThan(0);
+    expect(await countIpcCalls(page, "get_auth_session")).toBe(0);
 
-    await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
+    // Then the profile resolves cloud-linked, which is the one kind that unlocks the session read
+    await expect(trigger).toHaveAttribute("data-auth-state", "logged-in");
     await expect(trigger).toBeEnabled();
+    await expect
+      .poll(() => countIpcCalls(page, "get_auth_session"))
+      .toBeGreaterThan(0);
   });
 
-  test("the logged-out trigger goes to the picker and starts no cloud flow", async ({
+  test("a cloud-linked trigger reports loading while its session query is in flight, then settles", async ({
     page,
   }) => {
+    // The kind resolves immediately and the session does not, which is the only window in which the
+    // gate is open but the answer has not arrived. The loading affordance is the proof that window
+    // was real — a bare waitForTimeout would assert nothing about whether the query had settled.
     await setupTauriMock(page, {
-      session: { status: "LoggedOut" },
+      session: LOGGED_IN,
+      sessionDelayMs: 2000,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+    });
+    await page.goto("/");
+
+    const trigger = page.getByTestId("profile-menu-trigger");
+    await expect(trigger).toHaveAttribute("data-auth-state", "loading");
+    // The badge comes from the profile, not the session, so it is readable before the session is
+    // and it does not flicker when the session lands.
+    await expect(trigger).toHaveAttribute("data-cloud-status", "signed-in");
+    expect(await countIpcCalls(page, "get_auth_session")).toBeGreaterThan(0);
+
+    await expect(trigger).toHaveAttribute("data-auth-state", "logged-in");
+    await trigger.click();
+    await expect(page.getByTestId("profile-menu-email")).toHaveText(
+      "user@example.com",
+    );
+  });
+
+  test("a local profile's trigger goes to the picker, reading no session and starting no cloud flow", async ({
+    page,
+  }) => {
+    // A stored Cognito session is present on purpose: a local profile is unauthenticated whatever
+    // the machine-wide session says, so this header must not read it — reading it opens the OS
+    // secure store and can POST a token refresh for a profile that has no account.
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: LOCAL_PROFILE,
       datasets: PICKER_DATASETS,
     });
     await page.goto("/");
 
     const trigger = page.getByTestId("profile-menu-trigger");
-    await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
+    await expect(trigger).toHaveAttribute("data-profile-kind", "local");
+    await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
+    // Absent, not merely unset to some benign value: an auth-derived attribute here would mean the
+    // header had an opinion about a session it is not allowed to have read.
+    await expect(trigger).not.toHaveAttribute("data-auth-state");
     await trigger.click();
 
-    // The whole point of the header's only action: a single click may never begin an OAuth round
-    // trip, because completing one creates or reopens a cloud profile and switches the active
-    // profile away from the local one the user is working in.
+    // A single click may never begin an OAuth round trip, because completing one creates or reopens
+    // a cloud profile and switches the active profile away from the local one the user works in.
     await expectPickerUsable(page);
-    expect(await countIpcCalls(page, "start_login")).toBe(0);
+    for (const command of LOCAL_PROFILE_KEYRING_COMMANDS) {
+      expect(await countIpcCalls(page, command), command).toBe(0);
+    }
     expect(await countIpcCalls(page, "handle_auth_callback")).toBe(0);
   });
 
-  test("the logged-out header offers switching profiles with no error state", async ({
+  test("a local profile's header offers switching profiles with no error state", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: { status: "LoggedOut" } });
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      activeProfile: LOCAL_PROFILE,
+    });
     await page.goto("/");
 
     const header = page.locator("header");
     const trigger = page.getByTestId("profile-menu-trigger");
 
     await expect(trigger).toBeVisible();
-    await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
+    await expect(trigger).toHaveAttribute("data-profile-kind", "local");
     await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
     await expect(trigger).not.toHaveAttribute("aria-label", /Nixus Cloud/);
 
-    await expect(page.locator('[data-auth-state="session-expired"]')).toHaveCount(0);
+    await expect(page.locator("[data-auth-state]")).toHaveCount(0);
     await expect(header).not.toContainText(/expired|error|failed/i);
     await expect(toasts(page)).toHaveCount(0);
     await expect(trigger).not.toContainText("auth.");
@@ -453,7 +534,12 @@ test.describe("header profile entry point", () => {
   test("the centred search trigger is not displaced by the profile icon", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: { status: "LoggedOut" } });
+    // The local profile's labelled button is the widest shape this slot ever takes, so it is the one
+    // that would displace the centred field if the header laid it out as a flex sibling.
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      activeProfile: LOCAL_PROFILE,
+    });
     await page.goto("/");
 
     const search = page.getByTestId("topbar-search-trigger");
@@ -477,7 +563,10 @@ test.describe("profile panel and sign out", () => {
   test("the signed-in panel shows identity and a sign-out action without navigating", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: LOGGED_IN });
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+    });
     await page.goto("/");
 
     const trigger = page.getByTestId("profile-menu-trigger");
@@ -504,6 +593,7 @@ test.describe("profile panel and sign out", () => {
   }) => {
     await setupTauriMock(page, {
       session: { status: "LoggedIn", email: "user@example.com", name: null },
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
     });
     await page.goto("/");
 
@@ -516,12 +606,16 @@ test.describe("profile panel and sign out", () => {
     await expect(page.getByTestId("profile-menu-name")).toHaveCount(0);
   });
 
-  test("sign-out invokes sign_out once and returns the header to logged out", async ({
+  test("sign-out invokes sign_out once and returns the panel to signed out", async ({
     page,
   }) => {
+    // The profile stays cloud-linked across a sign-out and simply reads as signed-out, so both
+    // answers flip together — a dataset does not become local because its account signed out.
     await setupTauriMock(page, {
       session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
       sessionAfterSignOut: { status: "LoggedOut" },
+      activeProfileAfterSignOut: CLOUD_PROFILE_SIGNED_OUT,
     });
     await page.goto("/");
 
@@ -535,79 +629,40 @@ test.describe("profile panel and sign out", () => {
 
     await expect(panel).toHaveCount(0);
     await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
-    await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
+    await expect(trigger).toHaveAttribute("data-cloud-status", "signed-out");
 
     expect(await countIpcCalls(page, "sign_out")).toBe(1);
   });
 });
 
-const LOCAL_PROFILE: MockActiveProfile = {
-  dataset_id: "00000000-0000-4000-8000-000000000001",
-  kind: "local",
-  label: "Local Profile 1",
-  is_signed_in: false,
-};
-
-const CLOUD_PROFILE_SIGNED_IN: MockActiveProfile = {
-  dataset_id: "00000000-0000-4000-8000-0000000000c1",
-  kind: "cloud-linked",
-  label: "user@example.com",
-  is_signed_in: true,
-};
-
-const CLOUD_PROFILE_SIGNED_OUT: MockActiveProfile = {
-  ...CLOUD_PROFILE_SIGNED_IN,
-  is_signed_in: false,
-};
-
 test.describe("the account menu's Nixus Cloud entry points", () => {
-  test("a signed-out local profile offers switching, never a silent migration", async ({
+  test("a local profile exposes no account panel at all, whatever the stored session says", async ({
     page,
   }) => {
+    // Signed in machine-wide, and it still changes nothing here: a local profile has no account, so
+    // it gets no identity, no sign-out, and no migration entry point — and no session read either.
     await setupTauriMock(page, {
-      session: { status: "LoggedOut" },
+      session: LOGGED_IN,
       activeProfile: LOCAL_PROFILE,
       datasets: PICKER_DATASETS,
     });
     await page.goto("/");
 
     const trigger = page.getByTestId("profile-menu-trigger");
-    // Migration is a panel action, reached only once the panel exists. On the bare trigger it would
-    // be one click away from creating a cloud profile and switching the active one away from this
-    // local profile — taking any in-progress work on it along.
-    await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
-    await trigger.click();
+    await expect(trigger).toHaveAttribute("data-profile-kind", "local");
+    await expect(trigger).toHaveText("Switch profile");
 
-    await expectPickerUsable(page);
-    expect(await countIpcCalls(page, "start_login")).toBe(0);
-  });
-
-  test("a local profile offers migration unconditionally, even while signed in", async ({
-    page,
-  }) => {
-    await setupTauriMock(page, {
-      session: LOGGED_IN,
-      activeProfile: LOCAL_PROFILE,
-    });
-    await page.goto("/");
-
-    await page.getByTestId("profile-menu-trigger").click();
-    const panel = page.getByTestId("profile-menu-panel");
-    await expect(panel).toBeVisible();
-
-    const cloudAction = page.getByTestId("profile-menu-cloud-action");
-    await expect(cloudAction).toHaveText("Migrate to Nixus Cloud");
-    // A local profile is not linked to anything, so it shows no badge.
-    await expect(page.getByTestId("profile-menu-cloud-status")).toHaveCount(0);
-    await expect(page.getByTestId("profile-menu-sign-out")).toBeVisible();
-
-    await cloudAction.click();
-    expect(await argsOfFirstCall(page, "start_login")).toEqual({
-      intent: {
-        kind: "Migrate",
-        source_dataset_id: LOCAL_PROFILE.dataset_id,
-      },
-    });
+    for (const testId of [
+      "profile-menu-panel",
+      "profile-menu-cloud-status",
+      "profile-menu-cloud-action",
+      "profile-menu-email",
+      "profile-menu-profile",
+      "profile-menu-sign-out",
+    ]) {
+      await expect(page.getByTestId(testId), testId).toHaveCount(0);
+    }
+    expect(await countIpcCalls(page, "get_auth_session")).toBe(0);
   });
 
   test("a signed-in cloud-linked profile shows the signed-in badge and no migrate action", async ({
@@ -682,42 +737,46 @@ test.describe("the account menu's Nixus Cloud entry points", () => {
     }
   });
 
-  test("an unreadable active profile withholds the cloud action rather than guessing", async ({
+  test("an unreadable active profile falls back to switching profiles without reading the session", async ({
     page,
   }) => {
-    // `activeProfile` omitted, so `get_active_profile` rejects. Withholding cannot be gated on
-    // `isPending`: react-query v5 clears that flag the moment a query settles into an *error* too, so
-    // a pending-only gate would render the ambiguous "Sign in with Nixus Cloud" fallback here — one
-    // click from find-or-creating a cloud dataset and switching whatever profile is really open.
-    await setupTauriMock(page, { session: LOGGED_IN });
+    // `activeProfile` omitted, so `get_active_profile` rejects. An unknown kind is treated as
+    // possibly-local, because guessing wrong costs the user the profile they had open — and a
+    // machine-wide session is not evidence about *this* profile, so it is not consulted at all.
+    await setupTauriMock(page, { session: LOGGED_IN, datasets: PICKER_DATASETS });
     await page.goto("/");
 
-    await page.getByTestId("profile-menu-trigger").click();
-    await expect(page.getByTestId("profile-menu-panel")).toBeVisible();
+    const trigger = page.getByTestId("profile-menu-trigger");
+    await expect(trigger).toBeDisabled();
 
     // The query settling is what has to be waited for, not merely its pending window: the default
     // QueryClient retries three times with exponential backoff, so the fourth attempt is the error
-    // state landing — the exact moment a pending-only gate opened.
+    // state landing — the exact moment a pending-only gate would have opened.
     await expect
       .poll(() => countIpcCalls(page, "get_active_profile"), { timeout: 20_000 })
       .toBeGreaterThanOrEqual(4);
 
+    await expect(trigger).toHaveAttribute("data-profile-kind", "unknown");
+    await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
+    await expect(page.getByTestId("profile-menu-panel")).toHaveCount(0);
     await expect(page.getByTestId("profile-menu-cloud-action")).toHaveCount(0);
-    await expect(page.getByTestId("profile-menu-cloud-status")).toHaveCount(0);
-    // Still a usable panel: identity and sign-out are readable from the session alone.
-    await expect(page.getByTestId("profile-menu-email")).toHaveText(
-      "user@example.com",
-    );
-    await expect(page.getByTestId("profile-menu-sign-out")).toBeVisible();
+    await expect(page.getByTestId("profile-menu-email")).toHaveCount(0);
+    expect(await countIpcCalls(page, "get_auth_session")).toBe(0);
+
+    await trigger.click();
+    await expectPickerUsable(page);
     expect(await countIpcCalls(page, "start_login")).toBe(0);
   });
 });
 
 test.describe("expired session", () => {
-  test("an expired session is stated plainly in the header and in a toast", async ({
+  test("a cloud-linked profile states an expired session in the header and in a toast", async ({
     page,
   }) => {
-    await setupTauriMock(page, { session: { status: "SessionExpired" } });
+    await setupTauriMock(page, {
+      session: { status: "SessionExpired" },
+      activeProfile: CLOUD_PROFILE_SIGNED_OUT,
+    });
     await page.goto("/");
 
     // Asserted first: the toast auto-dismisses after 4s, so it has to be read before the slower
@@ -726,14 +785,42 @@ test.describe("expired session", () => {
 
     const trigger = page.getByTestId("profile-menu-trigger");
     await expect(trigger).toHaveAttribute("data-auth-state", "session-expired");
-    // The toast above is what states the expiry; the trigger itself offers switching profiles like
-    // every other signed-out state, because reattaching an account must not be a one-click default.
-    await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
+    await expect(trigger).toHaveAttribute("data-cloud-status", "signed-out");
     await expect(trigger).toHaveClass(/text-caution-ink/);
+
+    // Reattaching the account is the answer to an expiry, and it stays a deliberate two step — the
+    // panel, then the action — rather than a single header click.
+    await trigger.click();
+    await expect(page.getByTestId("profile-menu-cloud-action")).toHaveText(
+      "Sign in with Nixus Cloud",
+    );
+  });
+
+  test("an expired stored session never surfaces on a local profile", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: { status: "SessionExpired" },
+      activeProfile: LOCAL_PROFILE,
+    });
+    await page.goto("/");
+
+    const trigger = page.getByTestId("profile-menu-trigger");
+    await expect(trigger).toHaveAttribute("data-profile-kind", "local");
+    await expect(trigger).toHaveText("Switch profile");
+
+    // The expiry is not this profile's to announce: the caution styling the cloud-linked trigger
+    // carries cannot be derived here from a session that was never read.
+    await expect(trigger).not.toHaveClass(/text-caution-ink/);
+    await expect(toasts(page)).toHaveCount(0);
+    expect(await countIpcCalls(page, "get_auth_session")).toBe(0);
   });
 
   test("an expired session does not break the app", async ({ page }) => {
-    await setupTauriMock(page, { session: { status: "SessionExpired" } });
+    await setupTauriMock(page, {
+      session: { status: "SessionExpired" },
+      activeProfile: CLOUD_PROFILE_SIGNED_OUT,
+    });
     await page.goto("/");
 
     await expect(page.getByTestId("budget-overall-progress")).toBeVisible();
