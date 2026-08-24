@@ -230,35 +230,46 @@ mod tests {
     }
 
     /// The other half of NFR1: the OAuth module may reach the network, but only at
-    /// Cognito's two existing endpoints. Matched on the composed-URL form
-    /// (`{}/oauth2/…`), which is the only way this module builds a request target,
-    /// so a path merely named in prose is not mistaken for a call site.
+    /// Cognito's known endpoints.
+    ///
+    /// Two shapes are scanned because the module composes its targets two ways: the
+    /// token endpoint is spliced inline (`{}/oauth2/…`), while the authorize entries
+    /// are the path literals `AuthorizeEntry` selects between. Only the production
+    /// half of the file is read, so a byte-exact URL in a test fixture is never
+    /// mistaken for a call site — and a path merely named in prose is not either.
+    /// Split on the test module's own declaration rather than on its `cfg` attribute:
+    /// that attribute is also *named* in a header comment, which would cut the scan
+    /// off at line 23 and silently leave it matching nothing.
     #[test]
-    fn the_oauth_module_only_ever_addresses_the_two_cognito_endpoints() {
+    fn the_oauth_module_only_ever_addresses_the_known_cognito_endpoints() {
         let auth = std::fs::read_to_string(src_root().join("commands").join("auth.rs"))
             .expect("the OAuth module is readable");
+        let (production, _) = auth
+            .split_once("mod tests {")
+            .expect("the OAuth module carries a test module");
 
-        let composed = "{}/oauth2/";
-        let paths: Vec<&str> = auth
-            .match_indices(composed)
-            .map(|(index, _)| {
-                let rest = &auth[index + 2..];
-                let end = rest
-                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '_')
-                    .unwrap_or(rest.len());
-                &rest[..end]
-            })
-            .collect();
+        let spliced = production.match_indices("{}/oauth2/").map(|(index, _)| {
+            let rest = &production[index + 2..];
+            let end = rest
+                .find(|c: char| !c.is_ascii_alphanumeric() && c != '/' && c != '_')
+                .unwrap_or(rest.len());
+            &rest[..end]
+        });
 
-        assert!(
-            paths.contains(&"/oauth2/authorize") && paths.contains(&"/oauth2/token"),
-            "both existing endpoints must be found, got {paths:?}"
+        let literal = production.match_indices("\"/").map(|(index, _)| {
+            let rest = &production[index + 1..];
+            let end = rest[1..].find('"').expect("a closed string literal") + 1;
+            &rest[..end]
+        });
+
+        let mut targets: Vec<&str> = spliced.chain(literal).collect();
+        targets.sort_unstable();
+        targets.dedup();
+
+        assert_eq!(
+            targets,
+            ["/oauth2/authorize", "/oauth2/token", "/signup"],
+            "the set of Cognito endpoints this module can address changed"
         );
-        for path in paths {
-            assert!(
-                matches!(path, "/oauth2/authorize" | "/oauth2/token"),
-                "unexpected Cognito endpoint {path}"
-            );
-        }
     }
 }

@@ -18,9 +18,14 @@ const DATASETS_PREFIX = "datasets.";
  */
 const REQUIRED_KEYS = [
   "datasets.title",
+  "datasets.titleLead",
   "datasets.subtitle",
   "datasets.currentProfileBadge",
   "datasets.loginWithCloud",
+  "datasets.createAccount",
+  "datasets.cloudBrowserNote",
+  "datasets.workingLocally",
+  "datasets.workingLocallyDescription",
   "datasets.newLocalProfile",
   "datasets.switchProfile",
   "datasets.loadError",
@@ -82,24 +87,96 @@ describe("datasets i18n", () => {
     expect(Object.keys(fr).filter((k) => k.startsWith("picker."))).toEqual([]);
   });
 
-  it("greets the user and says what a profile means in both locales", () => {
+  it("greets the user and says what Nixus is for, in both locales", () => {
     // The exact strings are the requirement, not a paraphrase: this is the first screen of every
-    // launch, so it greets first and then says what the user is choosing between.
+    // launch, so it greets first and then states what the product does. The value statement replaced
+    // the old "choose a profile" instruction when local profiles moved behind the disclosure — the
+    // instruction now lives with the profiles, asserted below.
     expect(en["datasets.title"]).toBe("Welcome to Nixus");
     expect(fr["datasets.title"]).toBe("Bienvenue dans Nixus");
     expect(en["datasets.subtitle"]).toBe(
-      "Choose a profile to open or log with Nixus Cloud",
+      "Budgeting, expenses and car upkeep in one place, on your own machine.",
     );
     expect(fr["datasets.subtitle"]).toBe(
-      "Choisissez un profil à ouvrir. Chacun conserve ses propres données sur cet appareil, séparément des autres.",
+      "Budget, dépenses et entretien auto au même endroit, sur votre propre appareil.",
     );
   });
 
-  it("still asks the screen's question now that the title is a greeting", () => {
-    // The instruction moved from the title into the subtitle; a greeting alone would leave the list
-    // below it unexplained.
-    expect(en["datasets.subtitle"]).toContain("Choose a profile");
-    expect(fr["datasets.subtitle"]).toContain("Choisissez un profil");
+  it("splits the greeting so the brand can render as the logo wordmark", () => {
+    // The heading paints the mark followed by "ixus" instead of spelling the brand out, so the
+    // visible lead stops short of the name while `datasets.title` stays the whole sentence and
+    // carries the heading's accessible name. Pinned as a pair rather than as two literals: the two
+    // must never drift, or the screen reader announces a different greeting from the one on screen.
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.title"]).toBe(
+        `${locale["datasets.titleLead"]} Nixus`,
+      );
+      // The brand name is never translated (NFR8), so the lead is the only translated half.
+      expect(locale["datasets.titleLead"]).not.toContain("Nixus");
+    }
+    expect(en["datasets.titleLead"]).toBe("Welcome to");
+    expect(fr["datasets.titleLead"]).toBe("Bienvenue dans");
+  });
+
+  it("offers account creation as an alternative, without competing with signing in", () => {
+    // The second cloud entry point. It leads with "Or" because it is the low-emphasis peer of the
+    // primary above it, and it never carries the brand term — that belongs to the primary, and two
+    // brand-bearing controls stacked would read as the same choice twice.
+    expect(en["datasets.createAccount"]).toBe("Or create an account");
+    expect(fr["datasets.createAccount"]).toBe("Ou créez un compte");
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.createAccount"]).not.toContain("Nixus Cloud");
+      expect(locale["datasets.createAccount"]).not.toBe(
+        locale["datasets.loginWithCloud"],
+      );
+      // Signing in and creating an account are different outcomes of the same flow; copy that made
+      // them indistinguishable would leave the user guessing which control does which.
+      expect(locale["datasets.createAccount"]).not.toBe(
+        locale["datasets.signInWithCloud"],
+      );
+    }
+  });
+
+  it("keeps the statement about the product, not about picking a profile", () => {
+    // The whole point of the cloud-first landing: the line under the greeting states what Nixus is
+    // for. A statement that went back to instructing the user to choose a profile would put the
+    // local list back at the top of the hierarchy where the screen no longer leads with it.
+    expect(en["datasets.subtitle"]).not.toMatch(/choose a profile/i);
+    expect(fr["datasets.subtitle"]).not.toMatch(/choisissez un profil/i);
+  });
+
+  it("still asks the screen's question, now inside the local disclosure", () => {
+    // The instruction moved out of the statement and onto the disclosure that reveals the profiles;
+    // a disclosure that opened onto an unexplained list would have dropped it entirely.
+    expect(en["datasets.workingLocallyDescription"]).toContain("Choose a profile");
+    expect(fr["datasets.workingLocallyDescription"]).toContain("Choisissez un profil");
+  });
+
+  it("labels the local disclosure as an alternative, not as a cloud action", () => {
+    // The trigger is the low-emphasis peer of the Nixus Cloud primary. Carrying the brand term would
+    // make the two read as the same choice, which is the hierarchy this screen exists to fix.
+    expect(en["datasets.workingLocally"]).toBe("Working locally");
+    expect(fr["datasets.workingLocally"]).toBe("Travailler en local");
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.workingLocally"]).not.toContain("Nixus Cloud");
+      // Short enough to sit on one line beside a chevron at the 1024px minimum, in both locales.
+      expect(locale["datasets.workingLocally"].length).toBeLessThanOrEqual(24);
+    }
+  });
+
+  it("warns that the cloud flow leaves the app, in both locales", () => {
+    // `start_login` opens the system browser and the picker stays put until the callback lands. With
+    // nothing saying so, a window that visibly does nothing reads as a dead button — which is exactly
+    // what the existing failure toast cannot cover, because a *successful* start is silent here.
+    expect(en["datasets.cloudBrowserNote"]).toMatch(/browser/i);
+    expect(fr["datasets.cloudBrowserNote"]).toMatch(/navigateur/i);
+    // And it says to come back, because the return trip is the half a user cannot guess.
+    expect(en["datasets.cloudBrowserNote"]).toMatch(/come back/i);
+    expect(fr["datasets.cloudBrowserNote"]).toMatch(/revenez/i);
+    for (const locale of [en, fr]) {
+      // A note, never a restatement of the button it sits under.
+      expect(locale["datasets.cloudBrowserNote"]).not.toBe(locale["datasets.loginWithCloud"]);
+    }
   });
 
   it("marks the profile already open with a word, short enough to sit beside a name", () => {
@@ -129,9 +206,11 @@ describe("datasets i18n", () => {
     expect(fr["datasets.switchProfile"]).not.toContain("Nixus Cloud");
   });
 
-  it("describes the cloud choice in English and local storage in French", () => {
-    expect(en["datasets.subtitle"]).toContain("Nixus Cloud");
-    expect(fr["datasets.subtitle"]).toContain("sur cet appareil");
+  it("says where local data lives, in both locales", () => {
+    // The reassurance the old subtitle carried in French only. It moved onto the disclosure with the
+    // profiles it describes, and it is now stated in both locales rather than one.
+    expect(en["datasets.workingLocallyDescription"]).toContain("on this device");
+    expect(fr["datasets.workingLocallyDescription"]).toContain("sur cet appareil");
   });
 
   it("labels the cloud action with the Nixus Cloud brand term in both locales", () => {

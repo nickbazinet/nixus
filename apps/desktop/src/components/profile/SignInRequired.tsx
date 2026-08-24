@@ -37,7 +37,9 @@ export function SignInRequired({ actionLabel, authState }: SignInRequiredProps) 
         isCloudLinked ? (
           <Button
             size="sm"
-            onClick={() => signIn.mutate({ kind: "Login" })}
+            onClick={() =>
+              signIn.mutate({ intent: { kind: "Login" }, entry: "SignIn" })
+            }
             data-testid="profile-sign-in-action"
           >
             {actionLabel}

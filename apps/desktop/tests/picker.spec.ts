@@ -27,6 +27,11 @@ interface PickerOptions {
   needsPicker?: boolean;
   /** What `list_datasets` answers. Omit for the reject fallback. */
   datasets?: MockDataset[];
+  /**
+   * Delays `list_datasets` so the pending window — and the skeleton the local panel shows in it —
+   * are assertable. Without it the registry resolves before the disclosure can be opened.
+   */
+  listDatasetsDelayMs?: number;
   /** What `get_auth_session` answers. */
   loggedOut?: boolean;
   /** Makes `start_login` reject, standing in for a browser that could not be opened. */
@@ -166,13 +171,22 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
               ? Promise.reject(`Unknown command: ${cmd}`)
               : Promise.resolve({ needs_picker: needsPicker });
 
-          case "list_datasets":
-            return registry === undefined
-              ? Promise.reject(`Unknown command: ${cmd}`)
-              // A copy, not the array itself: react-query's structural sharing compares the new
-              // payload against the stored one, and handing back the same mutated reference twice
-              // would make the appended entry invisible to it.
-              : Promise.resolve(registry.slice());
+          case "list_datasets": {
+            const settle = () =>
+              registry === undefined
+                ? Promise.reject(`Unknown command: ${cmd}`)
+                // A copy, not the array itself: react-query's structural sharing compares the new
+                // payload against the stored one, and handing back the same mutated reference twice
+                // would make the appended entry invisible to it.
+                : Promise.resolve(registry.slice());
+            if (opts.listDatasetsDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(
+                () => settle().then(resolve, reject),
+                opts.listDatasetsDelayMs,
+              );
+            });
+          }
 
           case "create_dataset": {
             const settle = () => {
@@ -445,6 +459,49 @@ async function callsTo(page: Page, command: string): Promise<IpcCall[]> {
 }
 
 /**
+ * Opens the default-collapsed "Working locally" disclosure.
+ *
+ * Nixus Cloud is the launch screen's primary action, so local profiles — the rows, their management
+ * menus and the create control — are not in the DOM until this runs. Every test below that touches
+ * any of them calls this first, which is also why it is idempotent: a call against an already-open
+ * panel must not toggle it shut.
+ */
+async function expandLocalProfiles(page: Page) {
+  const panel = page.getByTestId("picker-local-panel");
+  if ((await panel.count()) === 0) {
+    await page.getByTestId("picker-local-disclosure").click();
+  }
+  await expect(panel).toBeVisible();
+}
+
+/** A laid-out element's box, failing loudly rather than returning null into an arithmetic assertion. */
+async function boxOf(page: Page, testId: string) {
+  const box = await page.getByTestId(testId).boundingBox();
+  if (box === null) {
+    throw new Error(`${testId} has no bounding box, so it is not laid out.`);
+  }
+  return box;
+}
+
+/**
+ * Pixels of sideways scroll, measured on the document AND on the picker's own scroll container.
+ * Both are needed: the picker is the `overflow-y-auto` element on this route, so it can overflow
+ * horizontally while the document reports nothing at all.
+ */
+async function horizontalOverflowPx(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const doc = document.documentElement;
+    const surface = document.querySelector<HTMLElement>(
+      '[data-testid="dataset-picker"]',
+    );
+    return Math.max(
+      doc.scrollWidth - doc.clientWidth,
+      surface === null ? 0 : surface.scrollWidth - surface.clientWidth,
+    );
+  });
+}
+
+/**
  * Opens a local row's management menu, which is the single affordance now carrying both Rename and
  * Delete. Every rename flow below goes through here because the pencil that used to sit on the row
  * is gone — a destructive action must not be a visual peer of a harmless one, so both moved into the
@@ -475,7 +532,11 @@ test.describe("launch-time picker gate", () => {
 
     await expect(page).toHaveURL(/\/picker$/);
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Welcome to Nixus");
+    // The accessible name, not the text content: the brand half of the greeting is painted as the
+    // logo wordmark, so the visible node reads "Welcome to" plus a mark plus "ixus".
+    await expect(page.getByRole("heading", { level: 1 })).toHaveAccessibleName(
+      "Welcome to Nixus",
+    );
 
     // The dashboard is what the gate has to have beaten, so its absence is the assertion.
     await expect(page.getByTestId("import-statement-btn")).toHaveCount(0);
@@ -551,6 +612,586 @@ test.describe("picker chrome", () => {
   });
 });
 
+test.describe("the cloud-first launch composition", () => {
+  test("Nixus Cloud is the only primary action, and nothing local is on the screen", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toBeVisible();
+    await expect(cloud).toHaveText("Log in with Nixus Cloud");
+    await expect(cloud).toBeEnabled();
+
+    // Absent, not dimmed and not an empty list: two registry entries exist, and none of them — nor
+    // the create control, nor a row menu — reaches the DOM until the user asks for them.
+    for (const testId of [
+      "picker-dataset-list",
+      "picker-dataset-row",
+      "picker-new-profile-button",
+      "picker-profile-menu",
+    ]) {
+      await expect(page.getByTestId(testId)).toHaveCount(0);
+    }
+
+    const disclosure = page.getByTestId("picker-local-disclosure");
+    await expect(disclosure).toBeVisible();
+    await expect(disclosure).toHaveText("Working locally");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    // The control for the failed-registry case below: a healthy read leaves no failure marker, so
+    // that assertion measures the branch rather than an attribute that is always set.
+    await expect(disclosure).toHaveAttribute("data-registry-state", "ready");
+  });
+
+  test("the statement, the primary and its browser note read in that order", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    // Reading order IS the hierarchy on a landing surface: a browser-return note above the button it
+    // describes, or a value statement below the action, would each invert what the screen leads with.
+    const statement = await boxOf(page, "picker-value-statement");
+    const cloud = await boxOf(page, "picker-login-cloud-button");
+    const note = await boxOf(page, "picker-cloud-browser-note");
+    const disclosure = await boxOf(page, "picker-local-disclosure");
+
+    expect(statement.y).toBeLessThan(cloud.y);
+    expect(cloud.y).toBeLessThan(note.y);
+    expect(note.y).toBeLessThan(disclosure.y);
+  });
+
+  test("the primary carries the brand fill and the disclosure carries none", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+    await expect(page.getByTestId("picker-login-cloud-button")).toBeVisible();
+
+    // Measured against a probe painted with the token's own utility rather than a hardcoded hex, so
+    // the assertion survives a token value change but still catches the drift it exists for: a
+    // second filled button on the screen, or a primary that quietly stopped being one.
+    const fills = await page.evaluate(() => {
+      const read = (testId: string) => {
+        const el = document.querySelector<HTMLElement>(
+          `[data-testid="${testId}"]`,
+        );
+        return el === null ? null : getComputedStyle(el).backgroundColor;
+      };
+      const probe = document.createElement("span");
+      probe.className = "bg-brand";
+      document.body.append(probe);
+      const brand = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return {
+        brand,
+        cloud: read("picker-login-cloud-button"),
+        disclosure: read("picker-local-disclosure"),
+      };
+    });
+
+    expect(fills.cloud).toBe(fills.brand);
+    expect(fills.disclosure).not.toBe(fills.brand);
+    // Both must actually have been measured: a missing element reads as `null`, which would satisfy
+    // the inequality above and let this test pass on a screen that has no disclosure at all.
+    expect(fills.cloud).not.toBeNull();
+    expect(fills.disclosure).not.toBeNull();
+  });
+
+  test("the cloud action is described by its browser-return note", async ({ page }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+    await expect(page.getByTestId("picker-login-cloud-button")).toBeVisible();
+
+    // `aria-describedby` is only worth anything if it resolves: a stale or misspelled id leaves the
+    // button with no description at all, and nothing about the rendered screen would look wrong.
+    const described = await page.evaluate(() => {
+      const cta = document.querySelector(
+        '[data-testid="picker-login-cloud-button"]',
+      );
+      const id = cta?.getAttribute("aria-describedby") ?? "";
+      const target = id === "" ? null : document.getElementById(id);
+      return {
+        id,
+        targetTestId: target?.getAttribute("data-testid") ?? null,
+        text: target?.textContent ?? "",
+      };
+    });
+
+    expect(described.id).toBeTruthy();
+    expect(described.targetTestId).toBe("picker-cloud-browser-note");
+    // Localized copy, not a raw i18next key and not an empty node.
+    expect(described.text).toBe(
+      "Your browser opens to finish signing in. Come back here when you're done.",
+    );
+    expect(described.text).not.toContain("datasets.");
+  });
+
+  test("the launch divider is painted with the line-strong token", async ({ page }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+    await expect(page.getByTestId("picker-local-divider")).toBeVisible();
+
+    // Same probe pattern as the brand-fill test: compare against the token's own utility rather than
+    // a hardcoded hex, so a token value change does not break the test but a token *swap* does.
+    const colors = await page.evaluate(() => {
+      const probe = (className: string) => {
+        const span = document.createElement("span");
+        span.className = className;
+        document.body.append(span);
+        const value = getComputedStyle(span).backgroundColor;
+        span.remove();
+        return value;
+      };
+      const divider = document.querySelector<HTMLElement>(
+        '[data-testid="picker-local-divider"]',
+      );
+      return {
+        divider: divider === null ? null : getComputedStyle(divider).backgroundColor,
+        lineStrong: probe("bg-line-strong"),
+        line: probe("bg-line"),
+      };
+    });
+
+    expect(colors.divider).toBe(colors.lineStrong);
+    // And genuinely the firmer of the two — `line` is the value this rule was moved off, and the
+    // Separator's own base class still carries it, so tailwind-merge has to have won the override.
+    expect(colors.divider).not.toBe(colors.line);
+  });
+
+  test("every rendered Nixus mark owns its own gradient id", async ({ page }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+    await expect(page.getByTestId("picker-brand-mark")).toBeVisible();
+    await expect(page.getByTestId("picker-brand-visual")).toBeVisible();
+
+    const marks = await page.evaluate(() => {
+      const gradientIds = [...document.querySelectorAll("linearGradient")].map(
+        (gradient) => gradient.id,
+      );
+      const refs = [...document.querySelectorAll("polygon[fill^='url(']")].map(
+        (polygon) => {
+          const raw = polygon.getAttribute("fill") ?? "";
+          const id = raw.slice(raw.indexOf("#") + 1, raw.lastIndexOf(")"));
+          return { id, resolves: document.getElementById(id) !== null };
+        },
+      );
+      return { gradientIds, refs };
+    });
+
+    // This screen draws the mark twice — the one inside the heading wordmark and the one inside the
+    // illustration. A shared hardcoded id would make both `url(#…)` references resolve to whichever
+    // `<defs>` parsed first, so unmounting one instance silently un-paints the other.
+    expect(marks.gradientIds).toHaveLength(2);
+    expect(new Set(marks.gradientIds).size).toBe(marks.gradientIds.length);
+
+    // Every id is a legal fragment reference, so `url(#…)` cannot silently fail to match.
+    for (const id of marks.gradientIds) {
+      expect(id, `${id} is not a safe fragment id`).toMatch(
+        /^nixus-grad-[A-Za-z0-9_-]+$/,
+      );
+    }
+
+    // And every polygon points at a gradient that is actually in this document.
+    expect(marks.refs).toHaveLength(2);
+    for (const ref of marks.refs) {
+      expect(ref.resolves, `${ref.id} does not resolve to a gradient`).toBe(true);
+      expect(marks.gradientIds).toContain(ref.id);
+    }
+  });
+
+  test("the decorative column is hidden from assistive tech and holds no focus stop", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    const visual = page.getByTestId("picker-brand-visual");
+    await expect(visual).toBeVisible();
+    await expect(visual).toHaveAttribute("aria-hidden", "true");
+
+    // A decorative panel that contained a focusable would put a tab stop inside an aria-hidden
+    // subtree, which is the one combination that is worse than either alone.
+    await expect(
+      visual.locator("a, button, input, select, textarea, [tabindex]"),
+    ).toHaveCount(0);
+
+    // Exactly one gradient in the whole panel, and it is the canonical mark's own `<linearGradient>`.
+    // Lucide primitives define none, so this pins "the logo is the only gradient, surfaces stay flat"
+    // — which counting `<svg>` elements cannot, since the illustration is free to add module icons.
+    await expect(visual.locator("linearGradient")).toHaveCount(1);
+
+    // Drawn, never shipped as an asset, and never elevated: this is not a floating layer.
+    await expect(visual.locator("img")).toHaveCount(0);
+    const shadow = await visual.evaluate(
+      (el) => getComputedStyle(el.firstElementChild as Element).boxShadow,
+    );
+    expect(shadow).toBe("none");
+  });
+
+  test("the visual stays level with the action column, collapsed and expanded", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY, LOCAL_ONE],
+    });
+    await page.goto("/picker");
+    await expect(page.getByTestId("picker-brand-visual")).toBeVisible();
+
+    // Collapsed, the action column is the shorter of the two, so the panel's own floor sets the row.
+    const collapsedAction = await boxOf(page, "picker-action-column");
+    const collapsedVisual = await boxOf(page, "picker-brand-visual");
+    expect(Math.abs(collapsedVisual.height - collapsedAction.height)).toBeLessThanOrEqual(1);
+
+    await expandLocalProfiles(page);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(3);
+
+    // Expanded, three rows and a create control make the action column the taller one — and the panel
+    // has to follow it. A fixed-ratio box would leave it stranded, which is the regression this pins.
+    const openAction = await boxOf(page, "picker-action-column");
+    const openVisual = await boxOf(page, "picker-brand-visual");
+    expect(openAction.height).toBeGreaterThan(collapsedAction.height);
+    expect(Math.abs(openVisual.height - openAction.height)).toBeLessThanOrEqual(1);
+  });
+
+  test("two columns hold at 1280 x 800, visual beside the action content", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+    await expect(page.getByTestId("picker-brand-visual")).toBeVisible();
+
+    const action = await boxOf(page, "picker-action-column");
+    const visual = await boxOf(page, "picker-brand-visual");
+
+    // Beside, and sharing rows with, the action column — 1px of tolerance for sub-pixel layout.
+    expect(visual.x).toBeGreaterThanOrEqual(action.x + action.width - 1);
+    expect(visual.y).toBeLessThan(action.y + action.height);
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+
+  test("a constrained effective width stacks the visual below, without a sideways scroll", async ({
+    page,
+  }) => {
+    // What OS text scaling actually does to a 1024px window: the CSS viewport shrinks, the type does
+    // not. This is the realistic narrow case for the presbyopia-range primary user, not a phone.
+    await page.setViewportSize({ width: 800, height: 680 });
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+    await expandLocalProfiles(page);
+
+    const action = await boxOf(page, "picker-action-column");
+    const visual = await boxOf(page, "picker-brand-visual");
+
+    // Stacked, never hidden: the spec stacks the visual, and a display:none would pass a naive
+    // "no overlap" check while silently dropping it.
+    await expect(page.getByTestId("picker-brand-visual")).toBeVisible();
+    expect(visual.y).toBeGreaterThanOrEqual(action.y + action.height - 1);
+    expect(visual.x).toBeLessThan(action.x + action.width);
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+
+  test("nothing overflows sideways at the 1024 x 680 minimum, in either theme", async ({
+    page,
+  }) => {
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.setViewportSize({ width: 1024, height: 680 });
+      await setupTauriMock(page, {
+        needsPicker: true,
+        datasets: [DEFAULT_ENTRY, WORK_ENTRY, LOCAL_ONE],
+      });
+      await page.goto("/picker");
+
+      // Collapsed and expanded are different heights and different content widths, so both are
+      // measured — the expanded one is where the rows and their reserved menu gutter land.
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+      await expandLocalProfiles(page);
+      await expect(page.getByTestId("picker-dataset-row")).toHaveCount(3);
+      expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+
+      // The primary must stay on screen at the minimum window, not scroll out of the measure.
+      const cloud = await boxOf(page, "picker-login-cloud-button");
+      expect(cloud.x).toBeGreaterThanOrEqual(0);
+      expect(cloud.x + cloud.width).toBeLessThanOrEqual(1024);
+    }
+  });
+});
+
+test.describe("the local-profile disclosure", () => {
+  test("the keyboard opens it, keeps focus on the trigger, and pairs it with its panel", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+
+    const trigger = page.getByTestId("picker-local-disclosure");
+    const panel = page.getByTestId("picker-local-panel");
+
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    // No dangling reference while there is nothing to point at.
+    expect(await trigger.getAttribute("aria-controls")).toBeNull();
+
+    await trigger.press("Enter");
+
+    await expect(panel).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    const panelId = await panel.getAttribute("id");
+    const triggerId = await trigger.getAttribute("id");
+    expect(panelId).toBeTruthy();
+    expect(triggerId).toBeTruthy();
+    // The pair, both ways: the trigger names its panel, and the panel takes its name from the
+    // trigger — so a screen reader announces the group as the thing the user just opened.
+    await expect(trigger).toHaveAttribute("aria-controls", String(panelId));
+    await expect(panel).toHaveAttribute("aria-labelledby", String(triggerId));
+
+    // Focus stays where the user put it: they asked to see the list, not to be moved into it.
+    await expect(trigger).toBeFocused();
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+
+    // Space toggles it too, and closing takes the rows back out of the DOM rather than leaving
+    // hidden tab stops behind.
+    await trigger.press("Space");
+    await expect(panel).toHaveCount(0);
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(trigger).toBeFocused();
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(0);
+  });
+
+  test("the collapsed state returns on every launch and is never remembered", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    await page.goto("/picker");
+    await expandLocalProfiles(page);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+
+    // A reload is what makes this a real assertion rather than a restatement of `useState(false)`:
+    // a disclosure state persisted to storage would survive it and the screen would open expanded.
+    await page.reload();
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+
+    await expect(page.getByTestId("picker-local-disclosure")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    await expect(page.getByTestId("picker-local-panel")).toHaveCount(0);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(0);
+  });
+
+  test("arriving from Switch profile opens the list, with Cloud still the primary", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+    });
+    // The URL the header's Switch profile action navigates to. A user who came here deliberately to
+    // change profiles is already past the question the collapsed screen asks.
+    await page.goto("/picker?from=switch");
+
+    const trigger = page.getByTestId("picker-local-disclosure");
+    const panel = page.getByTestId("picker-local-panel");
+
+    await expect(panel).toBeVisible();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    // Open on arrival means genuinely open: the rows are in the DOM, and the trigger points at the
+    // panel that is actually in the document.
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+    await expect(trigger).toHaveAttribute(
+      "aria-controls",
+      String(await panel.getAttribute("id")),
+    );
+
+    // Expanded, never re-ranked: the cloud entry points keep their place and their emphasis, so this
+    // is a change to what is revealed and to nothing else.
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toBeEnabled();
+    expect((await boxOf(page, "picker-login-cloud-button")).y).toBeLessThan(
+      (await boxOf(page, "picker-local-disclosure")).y,
+    );
+    await expect(page.getByTestId("picker-create-account-link")).toBeVisible();
+
+    // And it is still a disclosure, not a permanently open list: closing it unmounts the rows.
+    await trigger.click();
+    await expect(panel).toHaveCount(0);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(0);
+  });
+
+  test("an ordinary launch and an unrecognised context both stay collapsed", async ({
+    page,
+  }) => {
+    for (const path of ["/picker", "/picker?from=elsewhere"]) {
+      await setupTauriMock(page, {
+        needsPicker: true,
+        datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      });
+      await page.goto(path);
+      await expect(page.getByTestId("dataset-picker")).toBeVisible();
+
+      // The launch default is the fallback for anything that is not the one known context, so a
+      // stale or hand-typed URL still lands on the cloud-first screen rather than an error.
+      await expect(page.getByTestId("picker-local-disclosure")).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      await expect(page.getByTestId("picker-local-panel")).toHaveCount(0);
+      await expect(page.getByTestId("picker-dataset-row")).toHaveCount(0);
+    }
+  });
+
+  test("a registry still loading reveals skeleton content, not an empty panel", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      listDatasetsDelayMs: 3000,
+    });
+    await page.goto("/picker");
+    await expandLocalProfiles(page);
+
+    const skeleton = page
+      .getByTestId("picker-local-panel")
+      .locator('[data-slot="skeleton"]');
+    await expect(skeleton).toBeVisible();
+    // Pending is stated to assistive tech, and the bars are never announced as profiles.
+    await expect(skeleton).toHaveAttribute("aria-busy", "true");
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(0);
+
+    // The third registry state, distinct from both `ready` and `failed`: a loading list is not an
+    // empty one and not a broken one.
+    await expect(page.getByTestId("picker-local-disclosure")).toHaveAttribute(
+      "data-registry-state",
+      "pending",
+    );
+
+    // The Cloud action does not wait on the local registry.
+    await expect(page.getByTestId("picker-login-cloud-button")).toBeEnabled();
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2, {
+      timeout: 20_000,
+    });
+    await expect(skeleton).toHaveCount(0);
+  });
+
+  test("a failed registry read is stated without the user opening the disclosure", async ({
+    page,
+  }) => {
+    // `datasets` omitted, so `list_datasets` falls through to the mock's reject fallback.
+    await setupTauriMock(page, { needsPicker: true });
+    await page.goto("/picker");
+
+    // react-query retries three times with exponential backoff (1s + 2s + 4s), so this state is ~7s
+    // out — well past the default 5s expect window.
+    const failure = page.getByTestId("picker-load-error");
+    await expect(failure).toBeVisible({ timeout: 20_000 });
+    await expect(failure).toContainText("Your profiles could not be read.");
+
+    // The whole point of putting it in the action column: a user who never opens the disclosure must
+    // not see a screen that looks perfectly healthy.
+    const disclosure = page.getByTestId("picker-local-disclosure");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("picker-local-panel")).toHaveCount(0);
+
+    // And the failure is attributable to the group it belongs to, not just floating above it. The
+    // always-visible alert above still carries the words — asserted at the top of this test — so the
+    // marked trigger is reinforcement rather than a colour-only signal, and it adds no second action.
+    await expect(disclosure).toHaveAttribute("data-registry-state", "failed");
+    await expect(disclosure).toHaveText("Working locally");
+
+    // Stated, but still not a dead end.
+    await expect(page.getByTestId("picker-login-cloud-button")).toBeEnabled();
+  });
+
+  test("a failure landing while the panel is open corrects the panel and refuses creating", async ({
+    page,
+  }) => {
+    // The order matters: `datasets` omitted means `list_datasets` rejects, but react-query retries for
+    // ~7s first, so the disclosure can be opened while the query is still pending and the failure then
+    // lands *underneath an already-open panel*. That is the case where stale instructions would sit on
+    // screen telling the user to choose from a list that never arrived.
+    await setupTauriMock(page, { needsPicker: true });
+    await page.goto("/picker");
+    await expandLocalProfiles(page);
+
+    const disclosure = page.getByTestId("picker-local-disclosure");
+    await expect(disclosure).toHaveAttribute("data-registry-state", "pending");
+
+    const failure = page.getByTestId("picker-load-error");
+    await expect(failure).toBeVisible({ timeout: 20_000 });
+
+    // The panel is still open, and it has corrected itself rather than kept the stale instruction.
+    await expect(page.getByTestId("picker-local-panel")).toBeVisible();
+    await expect(disclosure).toHaveAttribute("data-registry-state", "failed");
+
+    const note = page.getByTestId("picker-local-panel-note");
+    await expect(note).toHaveText("Your profiles could not be read.");
+    await expect(note).not.toContainText("Choose a profile");
+
+    // Nothing suggests usable profiles exist.
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(0);
+    await expect(page.getByTestId("picker-dataset-list")).toHaveCount(0);
+
+    // And creating is refused: the generated label is one past the high-water mark of a registry this
+    // process could not read, so it would either collide or write into unknown state.
+    const create = page.getByTestId("picker-new-profile-button");
+    await expect(create).toBeDisabled();
+    await expect(create).toHaveAttribute("aria-disabled", "true");
+    expect(await readIpcCommands(page)).not.toContain("create_dataset");
+
+    // The two things that must survive every one of these states.
+    await expect(failure).toContainText("Your profiles could not be read.");
+    await expect(page.getByTestId("picker-login-cloud-button")).toBeEnabled();
+  });
+
+  test("the disclosure cannot collapse the list while a mutation is in flight", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, WORK_ENTRY],
+      createDatasetDelayMs: 2000,
+    });
+    await page.goto("/picker");
+    await expandLocalProfiles(page);
+
+    await page.getByTestId("picker-new-profile-button").click();
+
+    // Both spellings, so a dim is never the only signal — and Playwright's click() waits for enabled,
+    // so a disabled trigger cannot be activated at all.
+    const disclosure = page.getByTestId("picker-local-disclosure");
+    await expect(disclosure).toBeDisabled();
+    await expect(disclosure).toHaveAttribute("aria-disabled", "true");
+
+    // The reason it matters: collapsing unmounts the rows, and a row is the element a rename or delete
+    // panel returns focus to on close. Toggling mid-mutation would destroy that target.
+    await expect(page.getByTestId("picker-local-panel")).toBeVisible();
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(3, {
+      timeout: 20_000,
+    });
+
+    // Scoped to the mutation's lifetime, not latched.
+    await expect(disclosure).toBeEnabled();
+  });
+});
+
 test.describe("picker contents", () => {
   test("the welcome screen leads with the shared Nixus mark, not a blank box", async ({
     page,
@@ -566,14 +1207,64 @@ test.describe("picker contents", () => {
     // `packages/shared` and is free to change — only that the mark slot draws one.
     await expect(mark.locator("svg")).toHaveCount(1);
 
-    // The footprint the placeholder already occupied, so swapping the mark in cannot quietly
-    // resize the header block.
+    // Sized to the heading it sits in rather than free-standing above it: the mark is the "N" of the
+    // wordmark now, so a footprint that drifted from the display type would break the lockup.
     const box = await mark.boundingBox();
     if (box === null) {
       throw new Error("The brand mark has no bounding box, so it is not laid out.");
     }
-    expect(box.width).toBeCloseTo(40, 0);
-    expect(box.height).toBeCloseTo(40, 0);
+    expect(box.width).toBeCloseTo(32, 0);
+    expect(box.height).toBeCloseTo(32, 0);
+  });
+
+  test("the heading is the logo wordmark, and the brand is never also spelled out", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    const heading = page.getByRole("heading", { level: 1 });
+    await expect(heading).toBeVisible();
+
+    // The mark lives inside the heading, so the lockup is one phrase rather than an icon parked
+    // above a sentence — and it is the only mark in the action column.
+    await expect(heading.getByTestId("picker-brand-mark")).toHaveCount(1);
+    await expect(page.getByTestId("picker-brand-mark")).toHaveCount(1);
+
+    const wordmark = await heading.evaluate((el) => {
+      const gradientText = [...el.querySelectorAll("span")].find((span) =>
+        span.className.includes("bg-clip-text"),
+      );
+      return {
+        text: (el.textContent ?? "").trim(),
+        clipped: gradientText?.textContent ?? null,
+        // The gradient is a background image on the text, not a fill on a surface: this is the one
+        // heading DESIGN.md permits to carry it.
+        background:
+          gradientText === null || gradientText === undefined
+            ? null
+            : getComputedStyle(gradientText).backgroundImage,
+        markIsBeforeText:
+          gradientText === null || gradientText === undefined
+            ? false
+            : (gradientText.previousElementSibling?.getAttribute(
+                "data-testid",
+              ) ?? null) === "picker-brand-mark",
+      };
+    });
+
+    // The mark carries the "N" and the type carries the rest, in that order.
+    expect(wordmark.clipped).toBe("ixus");
+    expect(wordmark.markIsBeforeText).toBe(true);
+    expect(wordmark.background).toContain("gradient");
+
+    // The whole point: the brand is drawn, never also typed out. "Nixus" as plain text beside the
+    // wordmark would render the name twice on the first screen of every launch.
+    expect(wordmark.text).not.toContain("Nixus");
+    expect(wordmark.text.replace(/\s+/g, " ")).toMatch(/^Welcome to ?ixus$/);
+
+    // And what a screen reader hears is still the whole greeting, not the three letters on screen.
+    await expect(heading).toHaveAccessibleName("Welcome to Nixus");
   });
 
   test("every registry entry is listed by its label", async ({ page }) => {
@@ -585,6 +1276,7 @@ test.describe("picker contents", () => {
       ],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(2);
@@ -622,6 +1314,7 @@ test.describe("picker contents", () => {
       ],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(2);
@@ -650,6 +1343,7 @@ test.describe("picker contents", () => {
   test("an empty registry is not an error state", async ({ page }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [] });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(0);
@@ -662,6 +1356,7 @@ test.describe("picker contents", () => {
     // `datasets` omitted, so `list_datasets` falls through to the mock's reject fallback.
     await setupTauriMock(page, { needsPicker: true });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     // react-query retries three times with exponential backoff (1s + 2s + 4s) before a query reports
     // an error, so this state is ~7s out — well past the default 5s expect window.
@@ -690,11 +1385,14 @@ test.describe("picker contents", () => {
 
     await cloud.click();
 
-    // The intent is the whole payload: no dataset, no profile, no financial data leaves the webview
-    // on this click (NFR1).
+    // The intent and the entry are the whole payload: no dataset, no profile, no financial data
+    // leaves the webview on this click (NFR1).
     const logins = await callsTo(page, "start_login");
     expect(logins).toHaveLength(1);
-    expect(logins[0].args).toEqual({ intent: { kind: "Login" } });
+    expect(logins[0].args).toEqual({
+      intent: { kind: "Login" },
+      entry: "SignIn",
+    });
 
     // The picker never selects a dataset for a cloud sign-in — the callback's own branch does, after
     // the browser round-trip — and the user stays here until it resolves.
@@ -723,9 +1421,89 @@ test.describe("picker contents", () => {
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
   });
 
+  test("the signup link starts one attempt on the same flow, differing only in the entry", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
+    await page.goto("/picker");
+
+    const createAccount = page.getByTestId("picker-create-account-link");
+    await expect(createAccount).toBeVisible();
+    await expect(createAccount).toHaveText("Or create an account");
+    await expect(createAccount).toBeEnabled();
+    // Under the primary, not beside it: the screen leads with signing in.
+    const cloud = await boxOf(page, "picker-login-cloud-button");
+    const link = await boxOf(page, "picker-create-account-link");
+    expect(link.y).toBeGreaterThan(cloud.y);
+    // And it shares the browser-return note, because it leaves the app exactly as the primary does.
+    expect(await createAccount.getAttribute("aria-describedby")).toBe(
+      await page
+        .getByTestId("picker-login-cloud-button")
+        .getAttribute("aria-describedby"),
+    );
+
+    await createAccount.click();
+
+    // Exactly one attempt, on the one command. A second command or a second listener would race the
+    // first, and the intent is unchanged: a new account still lands on the plain Login branch, which
+    // find-or-creates the cloud profile Rust-side after the callback.
+    const logins = await callsTo(page, "start_login");
+    expect(logins).toHaveLength(1);
+    expect(logins[0].args).toEqual({
+      intent: { kind: "Login" },
+      entry: "SignUp",
+    });
+
+    // No profile data on this click either (NFR1), and the user stays here for the round-trip.
+    expect(await readIpcCommands(page)).not.toContain("select_dataset");
+    expect(await readIpcCommands(page)).not.toContain("mark_picker_passed");
+    await expect(page).toHaveURL(/\/picker$/);
+  });
+
+  test("the signup link never reads as a second primary, and reports its own failure", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      startLoginFails: true,
+    });
+    await page.goto("/picker");
+    await expect(page.getByTestId("picker-create-account-link")).toBeVisible();
+
+    // Same probe pattern as the primary's brand-fill test: a filled signup control would make the
+    // screen offer two equally loud cloud actions, which is the hierarchy this composition fixes.
+    const fills = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.className = "bg-brand";
+      document.body.append(probe);
+      const brand = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      const link = document.querySelector<HTMLElement>(
+        '[data-testid="picker-create-account-link"]',
+      );
+      return {
+        brand,
+        link: link === null ? null : getComputedStyle(link).backgroundColor,
+      };
+    });
+    expect(fills.link).not.toBeNull();
+    expect(fills.link).not.toBe(fills.brand);
+
+    await page.getByTestId("picker-create-account-link").click();
+
+    // The signup entry owns the same failure affordance: a start that never opened a browser is
+    // silent otherwise, and the link would just look dead.
+    await expect(page.locator("[data-sonner-toast]")).toContainText(
+      "Nixus Cloud could not be reached. Please try again.",
+    );
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+  });
+
   test("no i18n key leaks into the rendered screen", async ({ page }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const picker = page.getByTestId("dataset-picker");
     await expect(picker).toBeVisible();
@@ -752,6 +1530,7 @@ test.describe("choosing a profile", () => {
       datasets: [DEFAULT_ENTRY, WORK_ENTRY],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await page.getByTestId("picker-dataset-row").nth(1).click();
 
@@ -783,6 +1562,7 @@ test.describe("choosing a profile", () => {
       selectDatasetFails: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await page.getByTestId("picker-dataset-row").click();
 
@@ -808,6 +1588,7 @@ test.describe("choosing a profile", () => {
       selectDatasetFails: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const row = page.getByTestId("picker-dataset-row");
     await row.click();
@@ -829,6 +1610,7 @@ test.describe("choosing a profile", () => {
       needsOnboarding: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await page.getByTestId("picker-dataset-row").click();
 
@@ -848,6 +1630,7 @@ test.describe("choosing a profile", () => {
       selectDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await rows.nth(0).click();
@@ -875,6 +1658,7 @@ test.describe("choosing a profile", () => {
       datasets: [DEFAULT_ENTRY, WORK_ENTRY],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
     const rows = page.getByTestId("picker-dataset-row");
@@ -905,6 +1689,7 @@ test.describe("marking the profile already open", () => {
       activeDatasetId: "work-1",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(2);
@@ -948,6 +1733,7 @@ test.describe("marking the profile already open", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(2);
@@ -969,6 +1755,7 @@ test.describe("marking the profile already open", () => {
       activeDatasetIdFails: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
     await expect(page.getByTestId("picker-active-badge")).toHaveCount(0);
@@ -990,6 +1777,7 @@ test.describe("marking the profile already open", () => {
       activeDatasetId: "long-1",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const badge = page.getByTestId("picker-active-badge");
     await expect(badge).toBeVisible();
@@ -1012,6 +1800,7 @@ test.describe("creating a local profile", () => {
   test("creating adds a row without navigating or opening it", async ({ page }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(1);
@@ -1041,6 +1830,7 @@ test.describe("creating a local profile", () => {
       needsOnboarding: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await page.getByTestId("picker-new-profile-button").click();
     const rows = page.getByTestId("picker-dataset-row");
@@ -1062,6 +1852,7 @@ test.describe("creating a local profile", () => {
   test("labels keep advancing across repeated creates", async ({ page }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const create = page.getByTestId("picker-new-profile-button");
     const rows = page.getByTestId("picker-dataset-row");
@@ -1082,6 +1873,7 @@ test.describe("creating a local profile", () => {
       createDatasetFails: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const create = page.getByTestId("picker-new-profile-button");
     await create.click();
@@ -1105,6 +1897,7 @@ test.describe("creating a local profile", () => {
       createDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const create = page.getByTestId("picker-new-profile-button");
     await create.click();
@@ -1132,6 +1925,7 @@ test.describe("creating a local profile", () => {
       createDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const row = page.getByTestId("picker-dataset-row");
     await page.getByTestId("picker-new-profile-button").click();
@@ -1153,6 +1947,7 @@ test.describe("creating a local profile", () => {
       selectDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const create = page.getByTestId("picker-new-profile-button");
     await page.getByTestId("picker-dataset-row").click();
@@ -1171,6 +1966,7 @@ test.describe("creating a local profile", () => {
     // the whole screen has no input at all.
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await page.getByTestId("picker-new-profile-button").click();
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
@@ -1190,6 +1986,7 @@ test.describe("renaming a local profile", () => {
       datasets: [DEFAULT_ENTRY, WORK_ENTRY],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows.nth(1)).toHaveText("Work");
@@ -1234,6 +2031,7 @@ test.describe("renaming a local profile", () => {
       datasets: [DEFAULT_ENTRY, WORK_ENTRY],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 1);
     await page.getByTestId("picker-rename-button").click();
@@ -1260,6 +2058,7 @@ test.describe("renaming a local profile", () => {
   }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const menu = page.getByTestId("picker-profile-menu");
     await expect(menu).toHaveCount(1);
@@ -1283,6 +2082,7 @@ test.describe("renaming a local profile", () => {
       datasets: [DEFAULT_ENTRY, WORK_ENTRY],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 1);
     await page.getByTestId("picker-rename-button").click();
@@ -1309,6 +2109,7 @@ test.describe("renaming a local profile", () => {
       datasets: [DEFAULT_ENTRY, WORK_ENTRY],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 1);
     await page.getByTestId("picker-rename-button").click();
@@ -1331,6 +2132,7 @@ test.describe("renaming a local profile", () => {
       renameDatasetFails: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 1);
     await page.getByTestId("picker-rename-button").click();
@@ -1354,6 +2156,7 @@ test.describe("renaming a local profile", () => {
       datasets: [DEFAULT_ENTRY, WORK_ENTRY],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 1);
     await page.getByTestId("picker-rename-button").click();
@@ -1374,6 +2177,7 @@ test.describe("renaming a local profile", () => {
       renameDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 1);
     await page.getByTestId("picker-rename-button").click();
@@ -1399,6 +2203,7 @@ test.describe("renaming a local profile", () => {
       page.getByTestId("picker-profile-menu").nth(0),
       page.getByTestId("picker-new-profile-button"),
       page.getByTestId("picker-login-cloud-button"),
+      page.getByTestId("picker-local-disclosure"),
     ]) {
       await expect(control).toBeDisabled();
       await expect(control).toHaveAttribute("aria-disabled", "true");
@@ -1440,6 +2245,7 @@ test.describe("renaming a local profile", () => {
       ],
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
 
@@ -1461,6 +2267,7 @@ test.describe("renaming a local profile", () => {
       selectDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const menu = page.getByTestId("picker-profile-menu").nth(0);
     await page.getByTestId("picker-dataset-row").nth(0).click();
@@ -1501,6 +2308,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(2);
@@ -1546,6 +2354,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openDeleteDialog(page, 1);
     await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
@@ -1573,6 +2382,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 0);
 
@@ -1593,6 +2403,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "work-1",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 1);
 
@@ -1623,6 +2434,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "work-1",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openRowMenu(page, 2);
 
@@ -1650,6 +2462,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
     await expect(page.getByTestId("picker-profile-menu")).toHaveCount(1);
@@ -1668,6 +2481,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openDeleteDialog(page, 1);
     const input = page.getByTestId("picker-delete-confirm-input");
@@ -1701,6 +2515,7 @@ test.describe("deleting a local profile", () => {
       deleteDatasetFails: true,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openDeleteDialog(page, 1);
     await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
@@ -1731,6 +2546,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openDeleteDialog(page, 1);
     await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
@@ -1756,6 +2572,7 @@ test.describe("deleting a local profile", () => {
       deleteDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openDeleteDialog(page, 1);
     await page.getByTestId("picker-delete-confirm-input").fill(CONFIRM_WORD);
@@ -1781,6 +2598,7 @@ test.describe("deleting a local profile", () => {
       page.getByTestId("picker-profile-menu").nth(0),
       page.getByTestId("picker-new-profile-button"),
       page.getByTestId("picker-login-cloud-button"),
+      page.getByTestId("picker-local-disclosure"),
     ]) {
       await expect(control).toBeDisabled();
       await expect(control).toHaveAttribute("aria-disabled", "true");
@@ -1817,6 +2635,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(3);
@@ -1851,6 +2670,7 @@ test.describe("deleting a local profile", () => {
       deleteDatasetDelayMs: 2000,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openDeleteDialog(page, 1);
 
@@ -1871,6 +2691,7 @@ test.describe("deleting a local profile", () => {
       activeDatasetId: "default",
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await openDeleteDialog(page, 1);
 
@@ -1907,6 +2728,7 @@ test.describe("selecting a profile opens that profile's own data", () => {
       budgetByDataset: BUDGET_BY_DATASET,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
     const rows = page.getByTestId("picker-dataset-row");
@@ -1944,6 +2766,7 @@ test.describe("selecting a profile opens that profile's own data", () => {
       budgetByDataset: BUDGET_BY_DATASET,
     });
     await page.goto("/picker");
+    await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows.nth(1)).toHaveText("Work");

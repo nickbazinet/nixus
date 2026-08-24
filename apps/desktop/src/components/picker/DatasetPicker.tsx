@@ -2,15 +2,15 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Plus, TriangleAlertIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, TriangleAlertIcon } from "lucide-react";
 import {
   Alert,
   AlertTitle,
-  Badge,
   Button,
   Card,
   CardContent,
   NixusLogo,
+  Separator,
   Skeleton,
   focusRing,
 } from "@nixus/shared";
@@ -22,29 +22,63 @@ import {
   useSelectDataset,
   type Dataset,
 } from "@/hooks/useDatasets";
-import { useSignIn } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 import { DeleteProfilePanel } from "./DeleteProfilePanel";
-import { ProfileRowMenu, type DeleteAvailability } from "./ProfileRowMenu";
+import { PickerBrandVisual } from "./PickerBrandVisual";
+import { PickerCloudEntry } from "./PickerCloudEntry";
+import { ProfileRow } from "./ProfileRow";
+import { type DeleteAvailability } from "./ProfileRowMenu";
 import { RenameProfilePanel } from "./RenameProfilePanel";
 
+// The disclosure's two halves reference each other by id — trigger → panel via `aria-controls`,
+// panel → trigger via `aria-labelledby` — so both ids are declared once here rather than inline,
+// where a typo would silently break the pairing without breaking the render.
+const LOCAL_TRIGGER_ID = "picker-local-trigger";
+const LOCAL_PANEL_ID = "picker-local-panel";
+
+// A `Record` over react-query's own status union rather than a ternary chain: adding a status makes
+// this a compile error instead of silently reporting `ready` for a state nobody mapped. The values
+// are the registry's vocabulary, not the query library's — `error` reads as `failed` on screen.
+const REGISTRY_STATE = {
+  pending: "pending",
+  error: "failed",
+  success: "ready",
+} as const satisfies Record<"pending" | "error" | "success", string>;
+
+interface DatasetPickerProps {
+  /**
+   * Whether the "Working locally" disclosure starts open. Resolved by the route, not derived here:
+   * `routes/picker.tsx` owns the arrival-context contract.
+   *
+   * Only "Switch profile" sets it. A user who deliberately came to change profiles is already past
+   * the question the collapsed screen asks, so the list is there when they arrive; an ordinary gated
+   * launch still leads with Nixus Cloud and keeps the list collapsed.
+   */
+  defaultLocalOpen: boolean;
+}
+
 /**
- * The launch-time screen: which local dataset is about to be opened.
+ * The launch-time landing screen: a Nixus Cloud entry point, with local profiles behind a
+ * disclosure.
  *
  * Chrome-free by arrangement with `routes/__root.tsx`, which omits the rail, the top bar, the
  * destination nav, the chat bar and the update dialog on this path and hands the surface the full
  * main column. That is also why this component — not the shell's `<main>`, which is
  * `overflow-hidden` here — is the scroll container, and why it centres itself.
  */
-export function DatasetPicker() {
+export function DatasetPicker({ defaultLocalOpen }: DatasetPickerProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const datasets = useDatasets();
   const activeDatasetId = useActiveDatasetId();
   const selectDataset = useSelectDataset();
   const createDataset = useCreateDataset();
-  const signIn = useSignIn();
   const entries = datasets.data ?? [];
+
+  // Whether the local-profile disclosure is open. Plain component state seeded once on purpose: the
+  // arrival context is the only thing that opens it, so nothing is remembered between runs and the
+  // first screen of a launch never differs run to run for a reason the user did not choose.
+  const [localOpen, setLocalOpen] = useState(defaultLocalOpen);
 
   // The profile whose name is being edited, or none. The whole entry rather than an id, so the panel
   // seeds its field from the row the user picked without re-searching the list.
@@ -112,17 +146,6 @@ export function DatasetPicker() {
     }
   };
 
-  // No navigation here: the browser round-trip outlives this click, and the callback's own branch
-  // selects the profile it resolved. `CloudSignInNavigator` is what carries the user into it, so
-  // this handler's only job is starting the flow and reporting a start that failed.
-  const loginWithCloud = async () => {
-    try {
-      await signIn.mutateAsync({ kind: "Login" });
-    } catch {
-      toast.error(t("datasets.cloudFailed"));
-    }
-  };
-
   return (
     // `tabIndex={-1}` for the same reason the shell's `<main>` carries it: a keyboard user needs the
     // scroll region itself to be focusable, and on this route this element is that region.
@@ -132,163 +155,212 @@ export function DatasetPicker() {
       data-testid="dataset-picker"
     >
       {/* `m-auto`, not `justify-center`: centring a flex child with justify-content makes the
-        * overflowing top unreachable once the list is taller than the window. */}
-      <div className="m-auto flex w-full max-w-md flex-col">
-        <div className="text-center">
-          <span data-testid="picker-brand-mark" className="mx-auto mb-5 block size-10">
-            <NixusLogo className="size-full" />
-          </span>
+        * overflowing top unreachable once the content is taller than the window.
+        *
+        * Two columns only while the effective width sustains them. At the 1024 × 680 minimum it
+        * does; under OS text scaling — which shrinks the CSS viewport rather than the type — it does
+        * not, and the composition stacks with the visual last instead of clipping.
+        *
+        * Stretch, not `items-center`: the decorative column matches the action column's height, so an
+        * expanded profile list never leaves a short panel stranded beside it. The action column
+        * centres its own content within the cell for the collapsed case, where it is the shorter of
+        * the two. */}
+      <div className="m-auto grid w-full max-w-4xl grid-cols-1 items-stretch gap-section-gap lg:grid-cols-[minmax(0,25rem)_minmax(0,1fr)] lg:gap-10">
+        <div
+          className="mx-auto flex w-full max-w-md flex-col justify-center lg:mx-0 lg:max-w-none"
+          data-testid="picker-action-column"
+        >
           {/* The shell's skip link and its route-change focus move both target this id, and this
-            * surface renders no PageHeader, so it owns the heading contract itself. */}
+            * surface renders no PageHeader, so it owns the heading contract itself.
+            *
+            * `text-display` carries a statement rather than a figure here. Everywhere else display
+            * is the one number that answers the surface's question; this surface has no figure at
+            * all, so the sentence is what the role carries, and the one-per-surface ceiling holds.
+            *
+            * `aria-label` carries the whole greeting and the lockup below is `aria-hidden`: the mark
+            * is an `<svg>` and the text beside it is three letters, so an unlabelled heading would
+            * announce "Welcome to ixus" — and the shell's focus-move-on-route-change reads exactly
+            * this name. */}
           <h1
             id={SURFACE_HEADING_ID}
             data-surface-heading=""
             tabIndex={-1}
-            className={cn("text-h1 text-ink", focusRing)}
+            aria-label={t("datasets.title")}
+            className={cn(
+              "flex flex-wrap items-end gap-x-2 text-display text-ink",
+              focusRing
+            )}
           >
-            {t("datasets.title")}
+            <span aria-hidden="true">{t("datasets.titleLead")}</span>
+            {/* The brand as the app draws it everywhere else — the mark followed by "ixus", the same
+              * lockup, kerning and gradient clip the rail wordmark uses — so the first screen of a
+              * launch shows the identity instead of spelling it out. This is the one surface heading
+              * permitted to carry the logo gradient, recorded as such in DESIGN.md.
+              *
+              * The mark's artboard leaves ~3px of empty box under its glyph, so `items-end` alone
+              * drops the "N" below the greeting's baseline. `mb-0.5` lifts it by that slack minus the
+              * font's descender space, which is what seats the glyph on the same baseline as
+              * "Welcome to" and "ixus" — half the lift this started with, which rode too high. */}
+            <span aria-hidden="true" className="flex items-end">
+              <span data-testid="picker-brand-mark" className="mb-0.5 block size-8">
+                <NixusLogo className="size-full" />
+              </span>
+              <span className="-ml-0.5 bg-logo-gradient bg-clip-text leading-none text-transparent">
+                ixus
+              </span>
+            </span>
           </h1>
-          <p className="mt-2 text-body text-ink-dim">{t("datasets.subtitle")}</p>
-        </div>
-
-        {datasets.isPending ? (
-          <Card className="mt-section-gap" size="sm">
-            <CardContent>
-              <Skeleton rows={2} />
-            </CardContent>
-          </Card>
-        ) : datasets.isError ? (
-          // Stated rather than silent: a failed registry read and a registry with zero entries would
-          // otherwise both render as "no rows", and the user could not tell "you have no profiles"
-          // from "we could not find out". `Alert variant="over"` rather than `EmptyState` — an empty
-          // state is styled never to read as broken, and it also carries `role="alert"`, so the
-          // failure is announced. No retry: `bootstrap_registry` guarantees a valid file at startup,
-          // so reaching here means the file changed underneath a running app, and a relaunch is the
-          // honest remedy rather than a button that re-reads the same broken bytes.
-          <Card flush className="mt-section-gap" data-testid="picker-load-error">
-            <Alert variant="over" icon={<TriangleAlertIcon />}>
-              <AlertTitle>{t("datasets.loadError")}</AlertTitle>
-            </Alert>
-          </Card>
-        ) : entries.length > 0 ? (
-          <ul
-            className="mt-section-gap flex list-none flex-col gap-grid-gap p-0"
-            data-testid="picker-dataset-list"
+          <p
+            className="mt-3 text-body text-ink-dim"
+            data-testid="picker-value-statement"
           >
-            {entries.map((entry) => (
-              // `relative`, and the rename control is a *sibling* of the Card overlaid on it rather
-              // than a child: the Card's root element IS the row `<button>`, so a nested control
-              // would be a button inside a button. Overlaying rather than laying the two out side by
-              // side is what keeps every row the same full width as the buttons below the list.
-              <li key={entry.id} className="relative">
-                {/* `interactive` + `render={<button>}` is this repo's clickable-card convention
-                  * (GarageVehicleRow's shape): the Card's root element itself becomes the button, so
-                  * the row is one native focusable target. Nesting a button inside CardContent is
-                  * the anti-pattern card.tsx documents against, and `interactive` — not a
-                  * hand-rolled className — is what supplies hover and the focus ring. */}
-                <Card
-                  size="sm"
-                  interactive
-                  render={
-                    <button
-                      type="button"
-                      // Every row, not only the clicked one, so a second row cannot race the first.
-                      // What else takes them out is `backgroundBusy` above. Both spellings, matching
-                      // the Cloud button below: the native attribute takes the row out of the tab
-                      // order, `aria-disabled` is what assistive tech reports, so a dim is never the
-                      // only signal.
-                      disabled={backgroundBusy}
-                      aria-disabled={backgroundBusy || undefined}
-                      onClick={() => void selectEntry(entry.id)}
-                    />
-                  }
-                  // `interactive` brings `cursor-pointer hover:bg-hover`, and both have to be
-                  // cancelled while the row is inert — a row that still lights up under the cursor
-                  // reads as clickable when it is not. `bg-card` is the Card's own base background.
-                  // `w-full` is load-bearing: the Card's root element IS the `<button>` here, and a
-                  // form control shrink-to-fits even as a block-level flex box, so without it every
-                  // row would be exactly as wide as its own label.
-                  className="w-full disabled:cursor-default disabled:hover:bg-card"
-                  data-testid="picker-dataset-row"
-                >
-                  <CardContent
-                    // Reserved for the overlaid management menu, so a long name never runs under it.
-                    className={cn("text-left", entry.kind === "local" && "pr-10")}
-                  >
-                    {/* `flex-wrap`, never `truncate`: the label is the user's own text, up to the 80
-                      * characters rename allows, so it keeps wrapping exactly as it did before this
-                      * mark existed and the mark drops onto its own line instead of squeezing the
-                      * name or sliding under the menu the `pr-10` above reserves room for. */}
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span
-                        className="text-label text-ink"
-                        data-testid="picker-dataset-label"
-                      >
-                        {entry.label}
-                      </span>
-                      {/* A word, never a dot or an icon: this is the only thing telling two
-                        * otherwise identical rows apart, so it has to survive a user who cannot
-                        * separate the brand tint from the card. Inside the row button on purpose —
-                        * a Badge is a label, not a control, so it adds no second focus target and
-                        * the word joins the button's own accessible name. */}
-                      {isOpenProfile(entry) ? (
-                        <Badge variant="brand" data-testid="picker-active-badge">
-                          {t("datasets.currentProfileBadge")}
-                        </Badge>
-                      ) : null}
-                    </span>
+            {t("datasets.subtitle")}
+          </p>
+
+          <PickerCloudEntry disabled={backgroundBusy} />
+
+          {datasets.isError ? (
+            // Stated rather than silent, and stated *outside* the disclosure: a failed registry read
+            // and a registry with zero entries would otherwise both render as "no rows", and a user
+            // who never opens the disclosure would see a screen that looks perfectly healthy.
+            // `Alert variant="over"` rather than `EmptyState` — an empty state is styled never to
+            // read as broken, and it also carries `role="alert"`, so the failure is announced. No
+            // retry: `bootstrap_registry` guarantees a valid file at startup, so reaching here means
+            // the file changed underneath a running app, and a relaunch is the honest remedy rather
+            // than a button that re-reads the same broken bytes.
+            <Card flush className="mt-section-gap" data-testid="picker-load-error">
+              <Alert variant="over" icon={<TriangleAlertIcon />}>
+                <AlertTitle>{t("datasets.loadError")}</AlertTitle>
+              </Alert>
+            </Card>
+          ) : null}
+
+          {/* The hairline that separates the cloud entry point from its low-emphasis alternative.
+            * `line-strong` rather than `line`: this rule sits on the page rather than inside a card,
+            * where `line` measures 1.13:1 and effectively disappears. Both are existing tokens — the
+            * global hairline value is deliberately left alone, per its own note in DESIGN.md. */}
+          <Separator
+            className="mt-section-gap bg-line-strong"
+            data-testid="picker-local-divider"
+          />
+
+          {/* `variant="ghost"`: the alternative must not read as a peer of the primary above it.
+            * `aria-controls` is set only while the panel exists, so the trigger never points at an
+            * id that is not in the document.
+            *
+            * Disabled while `backgroundBusy`, in both spellings, and this one is load-bearing rather
+            * than cosmetic: collapsing the panel unmounts the rows, and a row is the focus-return
+            * target a rename or delete panel restores focus to on close. Toggling mid-mutation would
+            * destroy that target and drop focus to `<body>`.
+            *
+            * `data-registry-state` carries the registry's health — named for the registry rather than
+            * a generic `data-state`, which Base UI also uses for its own component state. The glyph
+            * beside the label is *reinforcement only*: the announced `role="alert"` above carries the
+            * words, so nothing here is colour-only and no copy or action is added. */}
+          <Button
+            variant="ghost"
+            id={LOCAL_TRIGGER_ID}
+            className="mt-2 w-full justify-between px-2"
+            aria-expanded={localOpen}
+            aria-controls={localOpen ? LOCAL_PANEL_ID : undefined}
+            data-registry-state={REGISTRY_STATE[datasets.status]}
+            disabled={backgroundBusy}
+            aria-disabled={backgroundBusy || undefined}
+            onClick={() => setLocalOpen((open) => !open)}
+            data-testid="picker-local-disclosure"
+          >
+            <span className="flex items-center gap-2">
+              {t("datasets.workingLocally")}
+              {datasets.isError ? (
+                <TriangleAlertIcon aria-hidden="true" className="text-over" />
+              ) : null}
+            </span>
+            {localOpen ? (
+              <ChevronUp aria-hidden="true" />
+            ) : (
+              <ChevronDown aria-hidden="true" />
+            )}
+          </Button>
+
+          {/* Unmounted when closed, never hidden: a `display:none` panel would leave every row and
+            * its management menu in the document as an unreachable tab stop. Toggling state is also
+            * all this does, which is what leaves focus on the trigger — the user asked to see the
+            * list, not to be moved into it. */}
+          {localOpen ? (
+            <div
+              id={LOCAL_PANEL_ID}
+              role="group"
+              aria-labelledby={LOCAL_TRIGGER_ID}
+              className="flex flex-col"
+              data-testid="picker-local-panel"
+            >
+              {/* On a failed read this must NOT say "choose a profile to open": there is no list to
+                * choose from and the instruction would be a lie the user acts on. It restates the
+                * failure instead — the same sentence the alert above carries, because the panel has
+                * to explain its own emptiness to a user who opened it after reading nothing. */}
+              <p
+                className="mt-2 text-caption text-ink-dim"
+                data-testid="picker-local-panel-note"
+              >
+                {datasets.isError
+                  ? t("datasets.loadError")
+                  : t("datasets.workingLocallyDescription")}
+              </p>
+
+              {datasets.isPending ? (
+                <Card className="mt-grid-gap" size="sm">
+                  <CardContent>
+                    <Skeleton rows={2} />
                   </CardContent>
                 </Card>
-                {/* Local profiles only: a cloud-linked profile's label is its account's and its
-                  * deletion is out of scope, so the whole menu is absent rather than
-                  * present-and-refused. */}
-                {entry.kind === "local" ? (
-                  <span className="absolute inset-y-0 right-2 flex items-center">
-                    <ProfileRowMenu
+              ) : entries.length > 0 ? (
+                <ul
+                  className="mt-grid-gap flex list-none flex-col gap-grid-gap p-0"
+                  data-testid="picker-dataset-list"
+                >
+                  {entries.map((entry) => (
+                    <ProfileRow
+                      key={entry.id}
                       entry={entry}
+                      isOpen={isOpenProfile(entry)}
                       deleteAvailability={deleteAvailabilityFor(entry)}
                       disabled={backgroundBusy}
+                      onSelect={() => void selectEntry(entry.id)}
                       onRename={() => setRenaming(entry)}
                       onDelete={() => setDeleting(entry)}
                     />
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+                  ))}
+                </ul>
+              ) : null}
 
-        {/* `variant="outline"` so it carries the same `border-line-strong bg-card` surface the rows
-          * do — it belongs to the local-profile group above it, not to the branded Cloud CTA below.
-          * Disabled while a selection is in flight for the same reason the rows are disabled while a
-          * create is: both mutations rewrite the same registry. Both spellings of disabled, matching
-          * the rows and the Cloud button. */}
-        <Button
-          variant="outline"
-          className="mt-section-gap"
-          disabled={backgroundBusy}
-          aria-disabled={backgroundBusy || undefined}
-          onClick={() => void createEntry()}
-          data-testid="picker-new-profile-button"
-        >
-          <Plus aria-hidden="true" />
-          {t("datasets.newLocalProfile")}
-        </Button>
+              {/* `variant="outline"` so it shares the rows' `bg-card` surface and belongs to the
+                * local-profile group rather than to the branded Cloud CTA above. Its border is the
+                * firmer `line-strong` the outline variant supplies, not the rows' `line` hairline —
+                * correct for a control, where the rows are containers. Disabled while a selection is
+                * in flight for the same reason the rows are disabled while a create is: both
+                * mutations rewrite the same registry.
+                *
+                * Also disabled on a failed read, and that is a correctness guard rather than a
+                * courtesy: the generated label is one past the high-water mark of a registry this
+                * process could not read, so creating here would either collide with an existing
+                * profile's name or write into a file whose state is unknown. */}
+              <Button
+                variant="outline"
+                className="mt-grid-gap"
+                disabled={backgroundBusy || datasets.isError}
+                aria-disabled={backgroundBusy || datasets.isError || undefined}
+                onClick={() => void createEntry()}
+                data-testid="picker-new-profile-button"
+              >
+                <Plus aria-hidden="true" />
+                {t("datasets.newLocalProfile")}
+              </Button>
+            </div>
+          ) : null}
+        </div>
 
-        {/* The one remote action on this screen. It starts the same unchanged Cognito flow the app
-          * has always used, carrying only the plain `Login` intent — the dataset it lands on is
-          * resolved Rust-side after the callback, so this click sends nothing about any profile.
-          * Disabled while either registry mutation is in flight for the same reason they disable
-          * each other: the callback's own branch rewrites the registry too. */}
-        <Button
-          className="mt-section-gap"
-          disabled={signIn.isPending || backgroundBusy}
-          aria-disabled={signIn.isPending || backgroundBusy || undefined}
-          onClick={() => void loginWithCloud()}
-          data-testid="picker-login-cloud-button"
-        >
-          {t("datasets.loginWithCloud")}
-        </Button>
+        {/* The decorative column. Everything it owns — including why it stretches — lives with it. */}
+        <PickerBrandVisual />
       </div>
 
       {/* Mounted only while a rename is open, and keyed by the profile: that is what reseeds the

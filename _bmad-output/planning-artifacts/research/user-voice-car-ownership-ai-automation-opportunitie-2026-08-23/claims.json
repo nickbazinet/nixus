@@ -1,0 +1,14 @@
+[
+  {"claim":"Auto repair and add-on opacity remains a leading complaint category","class":"sentiment","pub_date":"2026-06"},
+  {"claim":"Independent shops rate better directionally on price and trust","class":"behavior","pub_date":"2024-03"},
+  {"claim":"High-net-worth insurers offer technical repair oversight","class":"feature","pub_date":"2025-03"},
+  {"claim":"Paid repair-estimate review is commercially available","class":"pricing","pub_date":"2026-05"},
+  {"claim":"Automated estimate analysis is demonstrated but accuracy-limited","class":"feature","pub_date":"2023-10"},
+  {"claim":"Ontario repair estimate and overage rules are currently operative","class":"regulatory","pub_date":"2025-04"},
+  {"claim":"Ontario regulates estimate and invoice contents","class":"regulatory","pub_date":"2025-08"},
+  {"claim":"Quebec repair authorization and pricing rules differ from Ontario","class":"regulatory","pub_date":"2025-10"},
+  {"claim":"CARFAX Car Care bundles free maintenance and recall features","class":"feature","pub_date":"2026-07"},
+  {"claim":"Recall completion declines for older vehicles","class":"regulatory","pub_date":"2026-04"},
+  {"claim":"Insurance comprehension is low and AI comparison is emerging","class":"behavior","pub_date":"2026-06"},
+  {"claim":"AI car-buying concierge is priced below human concierge","class":"pricing","pub_date":"2026-05"}
+]

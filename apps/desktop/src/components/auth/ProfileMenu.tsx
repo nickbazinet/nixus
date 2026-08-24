@@ -102,7 +102,7 @@ export function ProfileMenu() {
 
   const startCloudFlow = () => {
     signIn.mutate(
-      { kind: "Login" },
+      { intent: { kind: "Login" }, entry: "SignIn" },
       { onError: () => toast.error(t("datasets.cloudFailed")) },
     );
   };
@@ -262,11 +262,14 @@ export function ProfileMenu() {
   // creates or reopens a cloud dataset and switches the active profile away from this one, taking
   // any in-progress work on it along. The trigger offers the one reversible thing it can offer, and
   // the picker is where a deliberate cloud sign-in lives.
+  //
+  // `from: "switch"` is the arrival context, not a preference: a user who came here to change
+  // profiles lands with the local list already open instead of having to ask for it again.
   return (
     <Button
       variant="ghost"
       aria-label={t("datasets.switchProfile")}
-      onClick={() => void navigate({ to: "/picker" })}
+      onClick={() => void navigate({ to: "/picker", search: { from: "switch" } })}
       data-testid={TRIGGER_TESTID}
       data-profile-kind={activeProfile.data?.kind ?? "unknown"}
     >

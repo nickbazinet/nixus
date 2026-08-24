@@ -202,11 +202,11 @@ describe("useAuth", () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 
-  it("starts login carrying the plain Login intent and nothing else", async () => {
+  it("starts login carrying the plain Login intent, the sign-in entry, and nothing else", async () => {
     invokeMock.mockResolvedValue(null);
 
     await act(async () => {
-      await signIn.mutateAsync({ kind: "Login" });
+      await signIn.mutateAsync({ intent: { kind: "Login" }, entry: "SignIn" });
     });
 
     // start_login only opens the system browser, so the session is unchanged at that
@@ -214,31 +214,55 @@ describe("useAuth", () => {
     expect(invokeMock).toHaveBeenCalledTimes(1);
     expect(invokeMock.mock.calls[0]).toEqual([
       "start_login",
-      { intent: { kind: "Login" } },
+      { intent: { kind: "Login" }, entry: "SignIn" },
     ]);
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
   // Story 35.6's frontend half: the two Cloud entry points differ by one local dataset id and
   // nothing else. Asserted as the whole argument object, so an added payload field fails here.
-  it("sends only the intent — never any profile data — for either entry point", async () => {
+  it("sends only the intent and the entry — never any profile data — for every entry point", async () => {
     invokeMock.mockResolvedValue(null);
 
     await act(async () => {
-      await signIn.mutateAsync({ kind: "Login" });
+      await signIn.mutateAsync({ intent: { kind: "Login" }, entry: "SignIn" });
       await signIn.mutateAsync({
-        kind: "Migrate",
-        source_dataset_id: "local-1",
+        intent: { kind: "Migrate", source_dataset_id: "local-1" },
+        entry: "SignIn",
       });
+      await signIn.mutateAsync({ intent: { kind: "Login" }, entry: "SignUp" });
     });
 
     expect(invokeMock.mock.calls).toEqual([
-      ["start_login", { intent: { kind: "Login" } }],
+      ["start_login", { intent: { kind: "Login" }, entry: "SignIn" }],
       [
         "start_login",
-        { intent: { kind: "Migrate", source_dataset_id: "local-1" } },
+        {
+          intent: { kind: "Migrate", source_dataset_id: "local-1" },
+          entry: "SignIn",
+        },
       ],
+      ["start_login", { intent: { kind: "Login" }, entry: "SignUp" }],
     ]);
+  });
+
+  // Creating an account is one authorize-URL variant of the same flow, so it runs the SAME command:
+  // a second command — or a second listener — would be a second attempt racing the first.
+  it("reaches the signup entry through the one start_login command", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await act(async () => {
+      await signIn.mutateAsync({ intent: { kind: "Login" }, entry: "SignUp" });
+    });
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock.mock.calls[0][0]).toBe("start_login");
+    // The local instruction is unchanged: a new account still lands on the plain Login branch, which
+    // find-or-creates its cloud profile.
+    expect(invokeMock.mock.calls[0][1]).toEqual({
+      intent: { kind: "Login" },
+      entry: "SignUp",
+    });
   });
 
   it("invalidates the session after signing out", async () => {
@@ -359,7 +383,7 @@ describe("useAuth", () => {
     await settleQueries();
 
     await act(async () => {
-      await signIn.mutateAsync({ kind: "Login" });
+      await signIn.mutateAsync({ intent: { kind: "Login" }, entry: "SignIn" });
       await signOut.mutateAsync();
     });
 

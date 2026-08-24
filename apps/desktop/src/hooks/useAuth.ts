@@ -75,15 +75,31 @@ export function useAuthSession({ enabled = true }: { enabled?: boolean } = {}) {
 }
 
 /**
- * Starts the one unchanged Cognito flow, carrying the intent the caller chose.
+ * Which Nixus Cloud page the browser opens on, mirroring Rust's `AuthorizeEntry`.
  *
- * The intent is explicit at every call site rather than defaulted here: "log in"
- * and "migrate this profile" are different user actions with different outcomes,
- * and a silent default is how the wrong branch would ship unnoticed.
+ * One authorize-URL variant, never a second flow: both entries run the same PKCE
+ * attempt, the same loopback listener and the same callback, and differ only in
+ * the path segment the Hosted UI lands on.
+ */
+export type AuthorizeEntry = "SignIn" | "SignUp";
+
+/** The whole payload `start_login` receives: a Hosted UI entry, and what to do with the tokens. */
+export interface SignInRequest {
+  intent: LoginIntent;
+  entry: AuthorizeEntry;
+}
+
+/**
+ * Starts the one unchanged Cognito flow, carrying the entry and the intent the caller chose.
+ *
+ * Both are explicit at every call site rather than defaulted here: "log in", "create an account" and
+ * "migrate this profile" are different user actions with different outcomes, and a silent default is
+ * how the wrong branch — or the wrong Hosted UI page — would ship unnoticed.
  */
 export function useSignIn() {
   return useMutation({
-    mutationFn: (intent: LoginIntent) => invoke<void>("start_login", { intent }),
+    mutationFn: ({ intent, entry }: SignInRequest) =>
+      invoke<void>("start_login", { intent, entry }),
   });
 }
 

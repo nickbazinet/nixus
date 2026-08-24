@@ -348,3 +348,7 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-local-profile-switch-skips-auth-checks.md`
   summary: A cloud-linked profile can expose neither sign-in nor sign-out when its derived badge says signed in but the auth-session read fails.
   evidence: `ProfileMenu.tsx` hides sign-in from `cloudProfile.is_signed_in` and hides sign-out without a resolved account; this behavior predates the local-profile auth gate and needs a separate cloud error-state decision.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-picker-cloud-first-landing.md`
+  summary: Migrate the shared runtime color tokens from the pre-spine cool slate/indigo palette to the authoritative Quiet Ledger warm palette.
+  evidence: Fresh picker captures consume semantic token classes correctly, but `packages/shared/src/styles/tokens.css` still renders values that differ from `DESIGN.md` in both themes; changing them is repo-wide visual work requiring app-wide contrast and regression verification.

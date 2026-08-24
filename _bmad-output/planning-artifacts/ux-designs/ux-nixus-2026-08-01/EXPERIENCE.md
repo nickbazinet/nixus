@@ -2,7 +2,7 @@
 name: Nixus Experience
 description: Information architecture, behavior, states, interactions, and accessibility for the Nixus desktop app. Scope — Finance module + app shell.
 status: final
-updated: 2026-08-01
+updated: 2026-08-23
 design_spine: ./DESIGN.md
 scope: Finance module and app shell. Car/Garage inherits the shell; not specified here.
 primary_user: Marie — spreadsheet tracker, 40s–50s, least tolerant of complexity or confusing UI. Plus first-time budgeters trying to get control of their finances.
@@ -30,13 +30,13 @@ Single-window Tauri 2 desktop app, macOS and Windows. React 19 + TanStack Router
 
 **Window:** default 1280 × 800, **enforced minimum 1024 × 680**. Every layout in this spine is designed at the minimum first.
 
-**Local-first is a product promise, not an implementation detail.** All CRUD, budgeting, accounts, assets, net worth, and financial health work fully offline. Only two features touch the network — AI statement import and AI chat — and neither may ever block a task.
+**Local-first is a product promise, not an implementation detail.** All CRUD, budgeting, accounts, assets, net worth, and financial health work fully offline in local mode, with no Nixus Cloud account required. Only AI statement import and AI chat touch the network in local mode (BYOK), and neither may ever block a task. Nixus Cloud is **identity only** today — per `architecture-login.md`, sign-in gates no local functionality, and there is no cloud data sync, backup, notification delivery or account-based AI service. Do not describe cloud capabilities this spine cannot point at.
 
 **Theme is `system` by default.** Light and dark are equal citizens; a pattern that only works in one mode is not shipped.
 
 **Bilingual EN/FR.** Every string is an i18next key. Labels must survive French expansion at 1024px width.
 
-**One user, one machine, no account.** No login, no sync, no household sharing. Nothing in this spine may imply otherwise.
+**One user, one machine, no account required.** Local mode has no login, no sync, no household sharing. An optional Nixus Cloud **identity/sign-in** exists alongside this; it **currently gates no local functionality and sends no local profile data**. Nothing in this spine implies local mode requires an account, and nothing here should be read as banning an optional identity — but nothing here may promise a cloud *service* either.
 
 This spine **supersedes** `ux-design-specification.md` in three places, all logged in `.decision-log.md`: the primary user (power user → Marie), money typography (monospace → tabular Inter), and the onboarding wizard (5 sequential steps → one fork).
 
@@ -67,6 +67,28 @@ Within a destination, sub-surfaces are a **segmented sub-nav** on a layout route
 **Period is global.** One period context, mirrored to a URL search param so back/forward work, rendered once in the destination header. Today, Spending, and Insights all read it. The shipped app holds month in three independent `useState` hooks (`index.tsx:42`, `budget.tsx:38`, `income.tsx:33`), so choosing March on Today and clicking Budget silently returns you to June — "review last month" is structurally broken, and it is the first question a spreadsheet user asks.
 
 No breadcrumbs. Rail plus destination plus sub-nav is the full location model.
+
+## Launch Screen
+
+Before any destination, launch paints the profile picker — gated in the root's `beforeLoad`, chrome-free, no rail, no destination nav, no period. It is a **landing composition**, and `DESIGN.md.Components ▸ Launch surface` owns how it looks.
+
+**Nixus Cloud is the primary entry point. Local is the peer alternative, one disclosure away.** This is a statement about *emphasis*, not about capability: local mode stays fully functional and account-free, exactly as Foundation says. Putting local profiles behind a default-collapsed **"Working locally"** disclosure changes which choice is loudest on a screen that previously read as a utility list; it changes nothing about what the product can do without an account. Nothing on this screen may imply an account is required, and nothing here should be read as retracting the optional one.
+
+Hierarchy, top to bottom in the action column: a statement in `{typography.display}` whose brand half is the Nixus wordmark rather than the typed name · one supporting sentence · the full-width **Log in with Nixus Cloud** primary · the low-emphasis **Or create an account** link · the browser-return note · the "Working locally" disclosure. The mark is no longer a free-standing element above the statement — it is the wordmark's "N", so the identity appears once; `DESIGN.md.Components ▸ Launch surface` owns why. The decorative column sits beside the action column, and below it once the composition stacks.
+
+| Behaviour | Rule |
+|---|---|
+| Arriving | Nothing is auto-selected. The screen is a question, and a launch that opened a profile by itself would answer it for the user. |
+| Cloud sign-in | Starts the one unchanged Cognito flow carrying only the login intent. The dataset it lands on is resolved after the callback, so this click selects no profile and the user stays here until the round-trip completes. |
+| Create an account | The **same** flow, the same PKCE attempt, the same loopback listener and the same callback — one authorize-URL variant that opens Cognito's account-creation page instead of its sign-in page. It carries the identical login intent, because a brand-new account find-or-creates its cloud profile exactly as a returning one reopens it. Never a second flow, never a second attempt, and never a second listener. |
+| Browser return | The flow leaves the app, so the CTA carries an adjacent note saying the browser opens and to come back. Both cloud entries are described by that one note. Without it a silent window reads as a dead button. |
+| The disclosure | **Default-collapsed on every launch, never remembered.** A remembered state would make the first screen of a launch differ run to run for no reason the user chose. The one exception is *arrival context*, not memory: reaching the picker from **"Switch profile"** opens it, because a user who deliberately came to change profiles is already past the question the collapsed screen asks. The context travels in the URL and belongs to that one navigation — nothing is persisted, so a fresh launch is collapsed again, and an unrecognised context falls back to collapsed. Nixus Cloud stays the primary action either way; expanding reveals the list and re-ranks nothing. Trigger carries `aria-expanded` and, while open, `aria-controls`; the panel is a group labelled by its trigger. `Enter` / `Space` toggle it. |
+| Focus | Expanding leaves focus **on the trigger** — the user asked to see the list, not to be moved into it. Collapsing removes the rows from the DOM, so nothing hidden is still tabbable. |
+| Local actions | Everything the local panel already did is unchanged: open a profile, create one, rename, delete. The disclosure is a container, not a gate — it adds no confirmation and no new state. |
+
+**Failure is never hidden behind the disclosure.** A registry that could not be read is stated in the action column itself, visible while the disclosure is still collapsed, because a user who never expands it would otherwise see a screen that looks perfectly healthy. The disclosure trigger is *additionally* marked with an `{colors.over}` glyph so the failure is attributable to the group it belongs to — reinforcement only, never the carrier: the announced `role="alert"` above it holds the words, so nothing is colour-only, and the marker adds no copy, no action and no new state. Cloud sign-in stays available in every one of these states.
+
+No breadcrumbs on this surface either, and no shell affordance rendered disabled: the picker runs before the user has chosen what the shell would be showing, so the chrome is omitted outright.
 
 → Composition reference — the spine wins on conflict with all of them:
 [Onboarding fork](.working/key-onboarding.html) · [Transactions, full detail](.working/key-transactions.html) · [Where to put your money](.working/key-financial-health.html) · [Settings](.working/key-settings.html)
@@ -200,6 +222,7 @@ Behavioral. Visual specs live in `DESIGN.md.Components`.
 | Toast (`{components.toast}`) | Save confirmations, recoverable failures | One at a time, auto-dismissing, `aria-live="polite"`. Never carries the only copy of an error a user must act on — that goes inline. |
 | Card (`{components.card}`) | Every container | Presentational by default. A card is only clickable when it is a link to a detail surface, and then the whole card is one focusable target with one accessible name — never a card with competing inner click targets. |
 | Buttons (`{components.button-primary}` / `{components.button-ghost}`) | Everywhere | One primary per surface. Disabled state uses `{components.disabled}` **and** `aria-disabled`; a dim alone is not a state. |
+| Disclosure | Launch screen ▸ "Working locally" | A ghost trigger plus a panel, never an ARIA tablist and never a dialog. `aria-expanded` always, `aria-controls` while open, panel labelled by the trigger, focus stays on the trigger, closed means unmounted. Default-collapsed on every launch — the open state is **never** persisted; the sole thing that opens it on arrival is the "Switch profile" context in the URL, which the next launch does not carry. Reserved for demoting a peer alternative below a primary action; it is not a way to hide a required step. |
 | Badges | Status everywhere | Text always present. Never interactive — a badge is a label, not a filter control. |
 | Meter (`{components.meter}`) | Budget, savings cushion | Never the only indicator of state — always paired with a figure or badge. `role="progressbar"` with `aria-valuenow`. Never draggable. |
 | Chart (`{components.chart}`) | Insights, Today, Wealth | Direct labels above five series. Rank-ordered colors, 1px segment dividers. Fixed/changeable toggle wherever a bill would pin the scale. Data available as a table equivalent for screen readers. |
@@ -216,6 +239,9 @@ Behavioral. Visual specs live in `DESIGN.md.Components`.
 |---|---|---|
 | Cold load | Every card | Per-card `Skeleton`, never a global spinner. **Row count matches the real content count** — hardcoded 2–3 rows is why nearly every list shifts on load. Chrome (toolbar, headers, footer) resolves first; only cells are skeletons. `aria-busy`, never announced as content. |
 | First launch, no budget | App open | `beforeLoad` redirect to onboarding. The shipped `useEffect` gate (`index.tsx:34-38`) renders an empty dashboard for one frame first. |
+| Profile registry pending | Launch screen | Expanding the disclosure reveals `Skeleton` content, `aria-busy`, and **a neutral two-row placeholder — deliberately not a matched row count.** This is the documented exception to the row-count rule above: the count comes *from* the registry read that has not returned, so there is nothing to match. Do not persist a previous count or add an IPC call to learn it early — a remembered count from another profile's session would be a confident guess, which is worse than a neutral one. Cloud sign-in is usable throughout. |
+| Profile registry unreadable | Launch screen | Stated in the action column, **outside** the disclosure, so a collapsed screen never reads as healthy, and the trigger is additionally marked. If the failure lands while the panel is already open, the panel **corrects itself**: the "choose a profile" instruction is replaced by the failure statement and creating is disabled — a generated label derives from a high-water mark this process could not read. `Alert variant="over"` rather than an empty state, because "you have no profiles" and "we could not find out" must not look alike. No retry button: the registry is guaranteed valid at startup, so reaching here means the file moved underneath a running app and a relaunch is the honest remedy. |
+| Profile registry empty | Launch screen | Not an error. The panel offers creation, and nothing on screen says anything failed. |
 | Not enough history | Next-action card, Financial Health | `data_sufficient: false` is a **first-class state, not an error**: "Come back in a couple of months — to suggest what to do next, Nixus needs about three finished months of spending to see a pattern. You have one so far." Plus a progress indicator (1 of 3) and an Import CTA. **No financial-health figure renders in this state.** |
 | No transactions match | Transactions | "Nothing matches 'costco' in February." Plus "Nixus searches merchant names only — not categories or notes." Filters stay visible; one Clear filters action. |
 | Empty category | Budget row | One line + Add expense. |

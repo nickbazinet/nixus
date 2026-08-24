@@ -431,10 +431,24 @@ async function readStorage(page: Page, keys: string[]): Promise<(string | null)[
   );
 }
 
+/**
+ * Opens the local-profile disclosure the launch screen keeps collapsed by default. Nixus Cloud is the
+ * picker's primary action, so nothing local is in the DOM until this runs. Idempotent, because the
+ * switching helpers below land on the picker repeatedly within one session.
+ */
+async function expandLocalProfiles(page: Page) {
+  const panel = page.getByTestId("picker-local-panel");
+  if ((await panel.count()) === 0) {
+    await page.getByTestId("picker-local-disclosure").click();
+  }
+  await expect(panel).toBeVisible();
+}
+
 /** Opens the picker and creates the second profile through the real "+ New local profile" action. */
 async function launchAndCreateSecondProfile(page: Page) {
   await page.goto("/picker");
   await expect(page.getByTestId("dataset-picker")).toBeVisible();
+  await expandLocalProfiles(page);
 
   const rows = page.getByTestId("picker-dataset-row");
   await expect(rows).toHaveCount(1);
@@ -446,6 +460,7 @@ async function launchAndCreateSecondProfile(page: Page) {
 /** Clicks a row on the picker that is already on screen. */
 async function selectProfileRow(page: Page, label: string, landing: RegExp) {
   await expect(page.getByTestId("dataset-picker")).toBeVisible();
+  await expandLocalProfiles(page);
 
   const row = page.getByTestId("picker-dataset-row").filter({ hasText: label });
   await expect(row).toHaveCount(1);

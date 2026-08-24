@@ -414,9 +414,18 @@ const PICKER_DATASETS: MockDataset[] = [
 /**
  * The picker really rendered, rather than merely the URL having changed: a destination stuck on
  * `picker-load-error` is a dead end, and asserting the URL alone would not notice.
+ *
+ * The header's action carries its arrival context in the URL, so the local list is already open here
+ * — nothing is clicked to reveal it. Clicking the disclosure at this point would *collapse* it, which
+ * is why this helper asserts the panel instead of asking for it.
  */
 async function expectPickerUsable(page: Page) {
-  await expect(page).toHaveURL(/\/picker$/);
+  await expect(page).toHaveURL(/\/picker\?from=switch$/);
+  await expect(page.getByTestId("picker-local-panel")).toBeVisible();
+  await expect(page.getByTestId("picker-local-disclosure")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   await expect(page.getByTestId("picker-dataset-list")).toBeVisible();
   await expect(page.getByTestId("picker-load-error")).toHaveCount(0);
 }
@@ -505,6 +514,13 @@ test.describe("header profile entry point", () => {
       expect(await countIpcCalls(page, command), command).toBe(0);
     }
     expect(await countIpcCalls(page, "handle_auth_callback")).toBe(0);
+
+    // The user came here to change profiles, so the local list is what they land on — while Nixus
+    // Cloud stays the primary action rather than being demoted by the expansion.
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(
+      PICKER_DATASETS.length,
+    );
+    await expect(page.getByTestId("picker-login-cloud-button")).toBeEnabled();
   });
 
   test("a local profile's header offers switching profiles with no error state", async ({
@@ -710,8 +726,11 @@ test.describe("the account menu's Nixus Cloud entry points", () => {
     await expect(page.getByTestId("profile-menu-sign-out")).toHaveCount(0);
 
     await cloudAction.click();
+    // The sign-in entry, never the signup one: this profile already has an account behind it, and
+    // reattaching it is the whole action.
     expect(await argsOfFirstCall(page, "start_login")).toEqual({
       intent: { kind: "Login" },
+      entry: "SignIn",
     });
   });
 

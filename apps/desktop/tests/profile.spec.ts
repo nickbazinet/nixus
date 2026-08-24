@@ -639,6 +639,9 @@ test.describe("/profile session guard", () => {
     // The destination is asserted, not just the URL: a picker that rendered its load error would
     // leave the user with no way back and the assertion would still pass on the URL alone.
     await expect(page).toHaveURL(/\/picker$/);
+    // The local list sits behind the launch screen's default-collapsed disclosure, so it is asked for
+    // before it is asserted.
+    await page.getByTestId("picker-local-disclosure").click();
     await expect(page.getByTestId("picker-dataset-list")).toBeVisible();
     await expect(page.getByTestId("picker-load-error")).toHaveCount(0);
     const commands = await readIpcCommands(page);

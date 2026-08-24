@@ -85,6 +85,41 @@ pub enum LoginIntent {
     },
 }
 
+/// Which Hosted UI page the browser lands on. Purely a path choice on the
+/// authorize URL: the response type, client id, redirect URI, scope, PKCE pair,
+/// challenge method and CSRF state are identical for both, and so are the
+/// callback, the state check and the token exchange. One URL variant, never a
+/// second flow — which is why nothing downstream of `build_authorize_url` reads
+/// it and the pending attempt does not carry it.
+///
+/// Variants stay PascalCase for the same reason `LoginIntent`'s do: the webview
+/// sends the literals "SignIn" | "SignUp", so `rename_all` must NOT be applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthorizeEntry {
+    SignIn,
+    SignUp,
+}
+
+impl AuthorizeEntry {
+    /// The one thing that differs between the two entries. `/signup` is the
+    /// Hosted UI's own account-creation endpoint and takes the same query as
+    /// `/oauth2/authorize`, so a user who finishes there returns through the
+    /// identical redirect.
+    fn path(self) -> &'static str {
+        match self {
+            Self::SignIn => "/oauth2/authorize",
+            Self::SignUp => "/signup",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::SignIn => "sign_in",
+            Self::SignUp => "sign_up",
+        }
+    }
+}
+
 /// PKCE + CSRF material for one in-flight sign-in. Deliberately does **not**
 /// derive `Debug`: the verifier and state are secrets for the lifetime of the
 /// attempt, so there must be no way to format this into a log line at all.
@@ -142,10 +177,11 @@ fn generate_pkce(intent: LoginIntent) -> PendingAttempt {
     }
 }
 
-fn build_authorize_url(code_challenge: &str, state: &str) -> String {
+fn build_authorize_url(entry: AuthorizeEntry, code_challenge: &str, state: &str) -> String {
     format!(
-        "{}/oauth2/authorize?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
+        "{}{}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
         COGNITO_HOSTED_UI_BASE_URL,
+        entry.path(),
         urlencoding::encode(COGNITO_CLIENT_ID),
         urlencoding::encode(COGNITO_REDIRECT_URI),
         urlencoding::encode(COGNITO_SCOPES),
@@ -365,10 +401,11 @@ fn lock_poisoned() -> AppError {
 pub async fn start_login(
     app: AppHandle,
     intent: Option<LoginIntent>,
+    entry: AuthorizeEntry,
     listener: State<'_, crate::commands::auth_listener::LoopbackListener>,
 ) -> Result<(), AppError> {
     let attempt = begin_attempt(intent);
-    let authorize_url = build_authorize_url(&attempt.code_challenge, &attempt.state);
+    let authorize_url = build_authorize_url(entry, &attempt.code_challenge, &attempt.state);
 
     // ORDER IS LOAD-BEARING: the listener is started (and any previous one
     // interrupted and joined) *before* the new attempt is stored. A superseded
@@ -392,7 +429,10 @@ pub async fn start_login(
         *slot = Some(attempt);
     }
 
-    info!("Opening the Cognito Hosted UI in the system browser");
+    info!(
+        "Opening the Cognito Hosted UI in the system browser (entry={})",
+        entry.label()
+    );
     if app.opener().open_url(&authorize_url, None::<&str>).is_err() {
         // The opener error is discarded on purpose: `Error::ForbiddenUrl`'s
         // Display embeds the URL, which carries the code_challenge and state.
@@ -1082,16 +1122,18 @@ mod tests {
 
     #[test]
     fn authorize_url_contains_every_required_param() {
-        let url = build_authorize_url("test-challenge", "test-state");
+        for entry in [AuthorizeEntry::SignIn, AuthorizeEntry::SignUp] {
+            let url = build_authorize_url(entry, "test-challenge", "test-state");
 
-        assert!(url.starts_with("https://auth.nixusapp.com/oauth2/authorize?"));
-        assert!(url.contains("response_type=code"));
-        assert!(url.contains(&format!("client_id={}", COGNITO_CLIENT_ID)));
-        assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback"));
-        assert!(url.contains("scope=openid%20email%20profile"));
-        assert!(url.contains("code_challenge=test-challenge"));
-        assert!(url.contains("code_challenge_method=S256"));
-        assert!(url.contains("state=test-state"));
+            assert!(url.starts_with("https://auth.nixusapp.com/"), "{url}");
+            assert!(url.contains("response_type=code"));
+            assert!(url.contains(&format!("client_id={}", COGNITO_CLIENT_ID)));
+            assert!(url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback"));
+            assert!(url.contains("scope=openid%20email%20profile"));
+            assert!(url.contains("code_challenge=test-challenge"));
+            assert!(url.contains("code_challenge_method=S256"));
+            assert!(url.contains("state=test-state"));
+        }
     }
 
     /// Byte-exact guard: locks the URL shape so a future edit can't silently
@@ -1101,7 +1143,7 @@ mod tests {
     #[test]
     fn authorize_url_is_byte_exact() {
         assert_eq!(
-            build_authorize_url("CHALLENGE", "STATE"),
+            build_authorize_url(AuthorizeEntry::SignIn, "CHALLENGE", "STATE"),
             "https://auth.nixusapp.com/oauth2/authorize\
              ?response_type=code\
              &client_id=6525109r95las7odvuesf13joj\
@@ -1113,15 +1155,82 @@ mod tests {
         );
     }
 
+    /// The signup entry's own byte-exact guard, spelled out in full rather than
+    /// derived from the sign-in one: deriving it would let a rewrite of the
+    /// shared parameter list change both at once and still pass.
     #[test]
-    fn authorize_url_never_emits_a_raw_space_or_a_forbidden_param() {        let url = build_authorize_url("test-challenge", "test-state");
+    fn signup_authorize_url_is_byte_exact() {
+        assert_eq!(
+            build_authorize_url(AuthorizeEntry::SignUp, "CHALLENGE", "STATE"),
+            "https://auth.nixusapp.com/signup\
+             ?response_type=code\
+             &client_id=6525109r95las7odvuesf13joj\
+             &redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback\
+             &scope=openid%20email%20profile\
+             &code_challenge=CHALLENGE\
+             &code_challenge_method=S256\
+             &state=STATE"
+        );
+    }
 
-        assert!(!url.contains(' '));
-        assert!(!url.contains("client_secret"));
-        assert!(!url.contains("nonce"));
-        assert!(!url.contains("identity_provider"));
-        assert!(!url.contains("prompt"));
-        assert!(!url.contains("resource"));
+    /// The whole claim of the signup entry: one authorize-URL variant, not a
+    /// second flow. The two URLs differ in the path segment and in nothing else,
+    /// so a param that drifted onto only one of them fails here.
+    #[test]
+    fn the_two_entries_differ_only_in_the_path_segment() {
+        let sign_in = build_authorize_url(AuthorizeEntry::SignIn, "CHALLENGE", "STATE");
+        let sign_up = build_authorize_url(AuthorizeEntry::SignUp, "CHALLENGE", "STATE");
+
+        assert_ne!(sign_in, sign_up);
+        let (sign_in_path, sign_in_query) = sign_in.split_once('?').expect("has a query");
+        let (sign_up_path, sign_up_query) = sign_up.split_once('?').expect("has a query");
+
+        assert_eq!(sign_in_query, sign_up_query);
+        assert_eq!(sign_in_path, "https://auth.nixusapp.com/oauth2/authorize");
+        assert_eq!(sign_up_path, "https://auth.nixusapp.com/signup");
+    }
+
+    /// The tag-free string literals are a cross-language contract: the webview
+    /// sends them verbatim, so a `rename_all` or a renamed variant would fail
+    /// the command's own deserialization rather than any test.
+    #[test]
+    fn the_entry_wire_shape_is_a_bare_pascal_case_string() {
+        assert_eq!(
+            serde_json::from_str::<AuthorizeEntry>(r#""SignIn""#).expect("SignIn parses"),
+            AuthorizeEntry::SignIn
+        );
+        assert_eq!(
+            serde_json::from_str::<AuthorizeEntry>(r#""SignUp""#).expect("SignUp parses"),
+            AuthorizeEntry::SignUp
+        );
+        assert_eq!(
+            serde_json::to_string(&AuthorizeEntry::SignIn).expect("SignIn serializes"),
+            r#""SignIn""#
+        );
+        assert_eq!(
+            serde_json::to_string(&AuthorizeEntry::SignUp).expect("SignUp serializes"),
+            r#""SignUp""#
+        );
+    }
+
+    #[test]
+    fn entry_labels_stay_stable_for_the_log_line() {
+        assert_eq!(AuthorizeEntry::SignIn.label(), "sign_in");
+        assert_eq!(AuthorizeEntry::SignUp.label(), "sign_up");
+    }
+
+    #[test]
+    fn authorize_url_never_emits_a_raw_space_or_a_forbidden_param() {
+        for entry in [AuthorizeEntry::SignIn, AuthorizeEntry::SignUp] {
+            let url = build_authorize_url(entry, "test-challenge", "test-state");
+
+            assert!(!url.contains(' '));
+            assert!(!url.contains("client_secret"));
+            assert!(!url.contains("nonce"));
+            assert!(!url.contains("identity_provider"));
+            assert!(!url.contains("prompt"));
+            assert!(!url.contains("resource"));
+        }
     }
 
     #[test]
