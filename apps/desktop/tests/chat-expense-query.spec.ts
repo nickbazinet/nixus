@@ -13,7 +13,12 @@ async function setupTauriMock(page: Page) {
     }
 
     // Control mock response type
-    let nextResponseType: "query" | "action" | "tool_call" | "tool_call_no_results" = "query";
+    let nextResponseType:
+      | "query"
+      | "action"
+      | "tool_call"
+      | "tool_call_category_name"
+      | "tool_call_no_results" = "query";
     (window as unknown as Record<string, unknown>).__MOCK_SET_RESPONSE__ = (type: string) => {
       nextResponseType = type as typeof nextResponseType;
     };
@@ -63,6 +68,41 @@ async function setupTauriMock(page: Page) {
                 '| Date | Merchant | Amount | Category |\n' +
                 '|------|----------|--------|----------|\n' +
                 '| 2026-03-20 | Costco | $45.00 | Groceries |\n';
+
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: finalResponse, done: false });
+              }, 800);
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: "", done: true });
+              }, 850);
+            } else if (nextResponseType === "tool_call_category_name") {
+              const toolCallJson = '```tool_call\n' + JSON.stringify({
+                tool: "query_expenses",
+                params: {
+                  category_name: "Groceries",
+                  date_from: "2025-12-24",
+                  date_to: "2026-03-24",
+                  sort: "date_desc",
+                },
+              }) + '\n```';
+
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: toolCallJson, done: false });
+              }, 50);
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: "", done: true });
+              }, 100);
+
+              setTimeout(() => {
+                emitEvent("chat:tool-executing", "query_expenses");
+              }, 200);
+
+              const finalResponse =
+                'You spent $70.00 in Groceries over the past three months.\n\n' +
+                '| Date | Merchant | Amount | Category |\n' +
+                '|------|----------|--------|----------|\n' +
+                '| 2026-03-20 | Costco | $45.00 | Groceries |\n' +
+                '| 2026-01-08 | Loblaws | $25.00 | Groceries |\n';
 
               setTimeout(() => {
                 emitEvent("chat:response-chunk", { chunk: finalResponse, done: false });
@@ -195,6 +235,26 @@ test.describe("AI Chat Expense Query Tool", () => {
     await expect(page.getByTestId("chat-table").first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByTestId("chat-table").first()).toContainText("Costco");
     await expect(page.getByTestId("chat-table").first()).toContainText("$45.00");
+  });
+
+  test("category-name plus date-range tool call shows searching indicator then table", async ({ page }) => {
+    await page.evaluate(() => {
+      ((window as unknown as Record<string, unknown>).__MOCK_SET_RESPONSE__ as (t: string) => void)("tool_call_category_name");
+    });
+
+    await page.getByTestId("chat-input").fill("Give me all expenses for Groceries for the past 3 months");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("tool-searching-indicator")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("tool-searching-indicator")).toContainText("Searching your expenses");
+
+    const table = page.getByTestId("chat-table").first();
+    await expect(table).toBeVisible({ timeout: 5000 });
+    await expect(table).toContainText("Costco");
+    await expect(table).toContainText("Loblaws");
+    await expect(table).toContainText("$45.00");
+    await expect(page.getByTestId("chat-message-assistant")).toContainText("Groceries");
+    await expect(page.getByTestId("tool-searching-indicator")).not.toBeVisible();
   });
 
   test("no results query shows appropriate message", async ({ page }) => {

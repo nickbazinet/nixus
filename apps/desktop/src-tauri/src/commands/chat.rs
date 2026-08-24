@@ -301,20 +301,32 @@ pub async fn send_chat_message(
     })
 }
 
+fn expense_filters_from_params(params: &serde_json::Value) -> expense_db::ExpenseSearchFilters {
+    let text = |key: &str| params.get(key).and_then(|v| v.as_str()).map(String::from);
+    let integer = |key: &str| {
+        params
+            .get(key)
+            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+    };
+
+    expense_db::ExpenseSearchFilters {
+        date_from: text("date_from"),
+        date_to: text("date_to"),
+        merchant: text("merchant"),
+        category_id: integer("category_id"),
+        category_name: text("category_name"),
+        limit: integer("limit"),
+        sort: text("sort"),
+    }
+}
+
 fn execute_tool_call(
     db_state: &State<DbState>,
     tool_call: &chat_ai::ToolCallRequest,
 ) -> Result<String, AppError> {
     match tool_call.tool.as_str() {
         "query_expenses" => {
-            let filters = expense_db::ExpenseSearchFilters {
-                date_from: tool_call.params.get("date_from").and_then(|v| v.as_str()).map(String::from),
-                date_to: tool_call.params.get("date_to").and_then(|v| v.as_str()).map(String::from),
-                merchant: tool_call.params.get("merchant").and_then(|v| v.as_str()).map(String::from),
-                category_id: tool_call.params.get("category_id").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
-                limit: tool_call.params.get("limit").and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
-                sort: tool_call.params.get("sort").and_then(|v| v.as_str()).map(String::from),
-            };
+            let filters = expense_filters_from_params(&tool_call.params);
             let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
@@ -512,4 +524,84 @@ pub fn execute_chat_action(
         success: true,
         message: result_msg,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn expense_filters_from_params_maps_category_name_and_date_bounds() {
+        let params = json!({
+            "category_name": "Groceries",
+            "date_from": "2025-12-24",
+            "date_to": "2026-03-24"
+        });
+
+        let filters = expense_filters_from_params(&params);
+
+        assert_eq!(filters.category_name.as_deref(), Some("Groceries"));
+        assert_eq!(filters.date_from.as_deref(), Some("2025-12-24"));
+        assert_eq!(filters.date_to.as_deref(), Some("2026-03-24"));
+        assert_eq!(filters.merchant, None);
+        assert_eq!(filters.category_id, None);
+        assert_eq!(filters.limit, None);
+        assert_eq!(filters.sort, None);
+    }
+
+    #[test]
+    fn expense_filters_from_params_maps_every_field_the_tool_advertises() {
+        let params = json!({
+            "date_from": "2026-01-01",
+            "date_to": "2026-01-31",
+            "merchant": "Costco",
+            "category_id": 3,
+            "category_name": "Groceries",
+            "limit": 10,
+            "sort": "date_asc"
+        });
+
+        let filters = expense_filters_from_params(&params);
+
+        assert_eq!(filters.date_from.as_deref(), Some("2026-01-01"));
+        assert_eq!(filters.date_to.as_deref(), Some("2026-01-31"));
+        assert_eq!(filters.merchant.as_deref(), Some("Costco"));
+        assert_eq!(filters.category_id, Some(3));
+        assert_eq!(filters.category_name.as_deref(), Some("Groceries"));
+        assert_eq!(filters.limit, Some(10));
+        assert_eq!(filters.sort.as_deref(), Some("date_asc"));
+    }
+
+    #[test]
+    fn expense_filters_from_params_still_coerces_quoted_integers() {
+        let params = json!({ "category_id": "3", "limit": "25" });
+
+        let filters = expense_filters_from_params(&params);
+
+        assert_eq!(filters.category_id, Some(3));
+        assert_eq!(filters.limit, Some(25));
+    }
+
+    #[test]
+    fn expense_filters_from_params_leaves_non_string_category_name_unset() {
+        let params = json!({ "category_name": 7 });
+
+        let filters = expense_filters_from_params(&params);
+
+        assert_eq!(filters.category_name, None);
+    }
+
+    #[test]
+    fn expense_filters_from_params_leaves_every_field_unset_when_params_are_empty() {
+        let filters = expense_filters_from_params(&json!({}));
+
+        assert_eq!(filters.date_from, None);
+        assert_eq!(filters.date_to, None);
+        assert_eq!(filters.merchant, None);
+        assert_eq!(filters.category_id, None);
+        assert_eq!(filters.category_name, None);
+        assert_eq!(filters.limit, None);
+        assert_eq!(filters.sort, None);
+    }
 }

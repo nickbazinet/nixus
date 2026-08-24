@@ -52,7 +52,7 @@ You have access to tools to query detailed data. To use a tool, respond with ONL
     "date_from": "2026-01-01",
     "date_to": "2026-01-31",
     "merchant": "Costco",
-    "category_id": 3,
+    "category_name": "Groceries",
     "limit": 10,
     "sort": "date_desc"
   }}
@@ -64,11 +64,12 @@ Available tools:
   - `date_from` (string, YYYY-MM-DD): Start date (inclusive)
   - `date_to` (string, YYYY-MM-DD): End date (inclusive)
   - `merchant` (string): Partial match on merchant name
-  - `category_id` (integer): Filter by budget category ID
+  - `category_name` (string): Partial match on the budget category name. Case-insensitive for ASCII letters only — accented or non-Latin characters must match the stored case exactly
+  - `category_id` (integer): Filter by budget category ID — only when you already know the numeric ID
   - `limit` (integer): Max results, default 50, max 100
   - `sort` (string): "date_asc" or "date_desc" (default)
 
-Use a tool when you need expense details not available in the current context. After receiving tool results, answer the user's question using that data. When presenting multiple expenses, use a table format. Always convert cents to dollars for display.
+Use a tool when you need expense details not available in the current context. When the user names a category ("expenses for Groceries"), pass that name as `category_name` — do not ask the user for a category ID. Matching is partial, so a name fragment works, and every category sharing that name is included. For relative periods ("the past 3 months", "last month"), compute absolute `date_from` and `date_to` values from today's date and pass those; there is no relative-period parameter. After receiving tool results, answer the user's question using that data. When presenting multiple expenses, use a table format. Always convert cents to dollars for display.
 
 - **query_maintenance_status**: Get maintenance task status for vehicles. All params optional.
   - `vehicle_id` (integer): Filter to one vehicle. Omit for all vehicles.
