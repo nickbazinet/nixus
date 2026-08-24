@@ -278,6 +278,7 @@ pub struct ExpenseSearchFilters {
     pub date_to: Option<String>,
     pub merchant: Option<String>,
     pub category_id: Option<i64>,
+    pub category_name: Option<String>,
     pub limit: Option<i64>,
     pub sort: Option<String>,
 }
@@ -290,6 +291,16 @@ pub struct ExpenseSearchResult {
     pub category_name: String,
     pub date: String,
     pub source: String,
+}
+
+// Callers MUST pair this pattern with `ESCAPE '\'` or the neutralized `%`/`_`/`\`
+// revert to wildcards.
+fn like_contains_pattern(needle: &str) -> String {
+    let escaped = needle
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{}%", escaped)
 }
 
 pub fn search_expenses(
@@ -317,13 +328,17 @@ pub fn search_expenses(
     }
     if let Some(ref merchant) = filters.merchant {
         sql.push_str(&format!(" AND e.merchant LIKE ?{} ESCAPE '\\'", param_idx));
-        let escaped = merchant.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-        param_values.push(Box::new(format!("%{}%", escaped)));
+        param_values.push(Box::new(like_contains_pattern(merchant)));
         param_idx += 1;
     }
     if let Some(category_id) = filters.category_id {
         sql.push_str(&format!(" AND e.budget_category_id = ?{}", param_idx));
         param_values.push(Box::new(category_id));
+        param_idx += 1;
+    }
+    if let Some(ref category_name) = filters.category_name {
+        sql.push_str(&format!(" AND bc.name LIKE ?{} ESCAPE '\\'", param_idx));
+        param_values.push(Box::new(like_contains_pattern(category_name)));
         param_idx += 1;
     }
     let _ = param_idx;
@@ -608,6 +623,175 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(account_balance(&conn, 1), 10_000);
         assert_eq!(expense_count(&conn), 0);
+    }
+
+    #[test]
+    fn search_expenses_matches_category_name_partially() {
+        let conn = search_test_db();
+
+        let merchants = search_merchants(&conn, &category_name_filters("grocer"));
+
+        assert_eq!(merchants, vec!["Costco", "Loblaws", "Metro"]);
+    }
+
+    #[test]
+    fn search_expenses_matches_exact_category_name_ignoring_ascii_case() {
+        let conn = search_test_db();
+
+        let merchants = search_merchants(&conn, &category_name_filters("GROCERIES"));
+
+        assert_eq!(merchants, vec!["Costco", "Loblaws", "Metro"]);
+    }
+
+    #[test]
+    fn search_expenses_spans_every_category_row_sharing_a_name() {
+        let conn = search_test_db();
+
+        let results = search_expenses(&conn, &category_name_filters("Groceries")).unwrap();
+
+        assert_eq!(matched_category_ids(&conn, &results), vec![1, 3]);
+    }
+
+    #[test]
+    fn search_expenses_treats_percent_in_category_name_literally() {
+        let conn = search_test_db();
+
+        let merchants = search_merchants(&conn, &category_name_filters("50% Off"));
+
+        assert_eq!(merchants, vec!["Discount"]);
+    }
+
+    #[test]
+    fn search_expenses_treats_underscore_in_category_name_literally() {
+        let conn = search_test_db();
+
+        let merchants = search_merchants(&conn, &category_name_filters("Sub_Category"));
+
+        assert_eq!(merchants, vec!["SubShop"]);
+    }
+
+    #[test]
+    fn search_expenses_treats_backslash_in_category_name_literally() {
+        let conn = search_test_db();
+
+        let merchants = search_merchants(&conn, &category_name_filters("Back\\Slash"));
+
+        assert_eq!(merchants, vec!["Slasher"]);
+    }
+
+    #[test]
+    fn search_expenses_returns_empty_when_no_category_name_matches() {
+        let conn = search_test_db();
+
+        let merchants = search_merchants(&conn, &category_name_filters("Vacation"));
+
+        assert!(merchants.is_empty());
+    }
+
+    #[test]
+    fn search_expenses_intersects_category_name_with_date_range() {
+        let conn = search_test_db();
+        let filters = ExpenseSearchFilters {
+            category_name: Some("Groceries".to_string()),
+            date_from: Some("2026-06-01".to_string()),
+            date_to: Some("2026-06-30".to_string()),
+            ..Default::default()
+        };
+
+        let merchants = search_merchants(&conn, &filters);
+
+        assert_eq!(merchants, vec!["Costco", "Loblaws"]);
+    }
+
+    #[test]
+    fn search_expenses_by_category_id_still_matches_that_id_only() {
+        let conn = search_test_db();
+        let filters = ExpenseSearchFilters {
+            category_id: Some(1),
+            ..Default::default()
+        };
+
+        let merchants = search_merchants(&conn, &filters);
+
+        assert_eq!(merchants, vec!["Costco", "Metro"]);
+    }
+
+    #[test]
+    fn search_expenses_intersects_category_name_with_category_id() {
+        let conn = search_test_db();
+        let filters = ExpenseSearchFilters {
+            category_id: Some(3),
+            category_name: Some("Groceries".to_string()),
+            ..Default::default()
+        };
+
+        let merchants = search_merchants(&conn, &filters);
+
+        assert_eq!(merchants, vec!["Loblaws"]);
+    }
+
+    fn category_name_filters(category_name: &str) -> ExpenseSearchFilters {
+        ExpenseSearchFilters {
+            category_name: Some(category_name.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn search_merchants(conn: &Connection, filters: &ExpenseSearchFilters) -> Vec<String> {
+        let mut merchants: Vec<String> = search_expenses(conn, filters)
+            .unwrap()
+            .into_iter()
+            .map(|result| result.merchant)
+            .collect();
+        merchants.sort();
+        merchants
+    }
+
+    fn matched_category_ids(conn: &Connection, results: &[ExpenseSearchResult]) -> Vec<i64> {
+        let mut ids: Vec<i64> = results
+            .iter()
+            .map(|result| {
+                conn.query_row(
+                    "SELECT budget_category_id FROM expenses WHERE id = ?1",
+                    params![result.id],
+                    |row| row.get(0),
+                )
+                .unwrap()
+            })
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    // Sibling names differ from each search needle by exactly one LIKE metacharacter,
+    // so an unescaped pattern would pull the sibling in and fail the literal-match tests.
+    fn search_test_db() -> Connection {
+        let conn = expense_test_db();
+        conn.execute_batch(
+            "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order) VALUES
+                (2, 1, 'Dining Out', 20000, 2),
+                (3, 1, 'Groceries', 30000, 3),
+                (4, 1, '50% Off', 40000, 4),
+                (5, 1, 'Sub_Category', 50000, 5),
+                (6, 1, 'Back\\Slash', 60000, 6),
+                (7, 1, 'SubXCategory', 70000, 7),
+                (8, 1, '50 Percent Off', 80000, 8),
+                (9, 1, 'BackSlash', 90000, 9);
+            INSERT INTO expenses (merchant, amount_cents, budget_category_id, date) VALUES
+                ('Costco', 1000, 1, '2026-06-10'),
+                ('Metro', 2000, 1, '2026-03-15'),
+                ('Bar', 3000, 2, '2026-06-12'),
+                ('Loblaws', 4000, 3, '2026-06-11'),
+                ('Discount', 5000, 4, '2026-06-13'),
+                ('SubShop', 6000, 5, '2026-06-14'),
+                ('Slasher', 7000, 6, '2026-06-15'),
+                ('SubXShop', 8000, 7, '2026-06-16'),
+                ('PercentOff', 9000, 8, '2026-06-17'),
+                ('NoSlash', 10000, 9, '2026-06-18');",
+        )
+        .unwrap();
+        conn
     }
 
     fn expense_input(account_id: Option<i64>, amount_cents: i64) -> CreateExpenseInput {
