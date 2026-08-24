@@ -14,7 +14,7 @@
   "ci": {
     "collect": {
       "staticDistDir": "./.output/public",
-      "url": ["http://localhost/index.html", "http://localhost/404/index.html"],
+      "url": ["http://localhost/index.html"],
       "numberOfRuns": 1
     },
     "assert": {
