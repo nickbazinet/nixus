@@ -1,6 +1,6 @@
 [package]
 name = "nkbaz-finance"
-version = "0.3.10"
+version = "0.3.11"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -51,4 +51,3 @@ tiny_http = "0.12.0"
 # nixus:// argv re-triggers the deep-link event in the already-running instance.
 [target."cfg(any(target_os = \"macos\", windows, target_os = \"linux\"))".dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-
