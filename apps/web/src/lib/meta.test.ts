@@ -194,7 +194,9 @@ describe("site identity", () => {
     for (const locale of ["en", "fr"] as const) {
       for (const url of emittedUrls(buildMeta({ locale }))) {
         expect(
-          url.startsWith(`${SITE.url}/`) || url === "https://schema.org",
+          url.startsWith(`${SITE.url}/`) ||
+            url === "https://schema.org" ||
+            url === SITE.repositoryUrl,
         ).toBe(true);
       }
     }

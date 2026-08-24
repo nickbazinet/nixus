@@ -7,6 +7,7 @@
  */
 
 export const EXPECTED_ORIGIN = "https://nixusapp.com";
+export const EXPECTED_REPOSITORY_URL = "https://github.com/nickbazinet/nixus";
 
 /** Hostnames retired from the site's identity; must not appear in output. */
 export const RETIRED_ORIGINS = ["https://nixus.nicolasbazinet.net"] as const;
@@ -29,6 +30,10 @@ const HOME_ALTERNATES: Record<ExpectedLocale, string> = { en: "/", fr: "/fr/" };
 const BETA_ALTERNATES: Record<ExpectedLocale, string> = {
   en: "/beta",
   fr: "/fr/beta",
+};
+const NOT_FOUND_ALTERNATES: Record<ExpectedLocale, string> = {
+  en: "/404",
+  fr: "/fr/404",
 };
 
 const MARKER: Record<ExpectedLocale, string> = {
@@ -70,14 +75,14 @@ export const EXPECTED_ROUTES: readonly ExpectedRoute[] = [
     locale: "en",
     htmlFile: "404/index.html",
     localeMarker: MARKER.en,
-    alternates: HOME_ALTERNATES,
+    alternates: NOT_FOUND_ALTERNATES,
   },
   {
     canonicalPath: "/fr/404",
     locale: "fr",
     htmlFile: "fr/404/index.html",
     localeMarker: MARKER.fr,
-    alternates: HOME_ALTERNATES,
+    alternates: NOT_FOUND_ALTERNATES,
   },
 ];
 

@@ -22,6 +22,7 @@ import {
 } from "./lib/html-contract.ts";
 import {
   EXPECTED_ORIGIN,
+  EXPECTED_REPOSITORY_URL,
   EXPECTED_ROUTES,
   RETIRED_ORIGINS,
   SITEMAP_PATHS,
@@ -66,7 +67,9 @@ function checkJsonLd(scope: string, html: string): void {
   for (const url of payloads[0].match(/https?:\/\/[^"]+/g) ?? []) {
     check(
       scope,
-      url.startsWith(`${EXPECTED_ORIGIN}/`) || url === "https://schema.org",
+      url.startsWith(`${EXPECTED_ORIGIN}/`) ||
+        url === "https://schema.org" ||
+        url === EXPECTED_REPOSITORY_URL,
       `ld+json references off-origin URL ${url}`,
     );
   }

@@ -67,27 +67,31 @@ describe("siteGraph", () => {
     });
   });
 
-  it("keeps every absolute URL on the canonical host", () => {
+  it("keeps every absolute URL on the canonical host or owned repository", () => {
     const urls = allStrings(siteGraph("fr")["@graph"]).filter((value) =>
       value.startsWith("http"),
     );
 
     expect(urls.length).toBeGreaterThan(0);
     for (const url of urls) {
-      expect(url.startsWith(`${SITE.url}/`)).toBe(true);
+      expect(
+        url.startsWith(`${SITE.url}/`) || url === SITE.repositoryUrl,
+      ).toBe(true);
     }
   });
 
-  it("claims no ratings, reviews, social profiles, or app-store eligibility", () => {
+  it("claims only the owned repository as a social profile", () => {
     // Structured data this repository cannot verify is a manual-action risk,
     // not an SEO win.
-    const serialized = serializeJsonLd(siteGraph("en"));
+    const graph = siteGraph("en");
+    const serialized = serializeJsonLd(graph);
+
+    expect(graph["@graph"][1].sameAs).toEqual([SITE.repositoryUrl]);
 
     for (const unverifiable of [
       "aggregateRating",
       "ratingValue",
       "review",
-      "sameAs",
       "SoftwareApplication",
       "offers",
       "price",
