@@ -49,7 +49,6 @@ const REQUIRED_KEYS = [
   "datasets.profileDeleted",
   "datasets.migrateToCloud",
   "datasets.signInWithCloud",
-  "datasets.signedIn",
   "datasets.signedOut",
   "datasets.cloudFailed",
 ] as const;
@@ -188,9 +187,8 @@ describe("datasets i18n", () => {
 
     for (const locale of [en, fr]) {
       expect(locale["datasets.currentProfileBadge"].length).toBeLessThanOrEqual(12);
-      // The account menu's two cloud states are the only other badge copy here, and both speak
-      // about the signed-in account rather than about which profile is open.
-      expect(locale["datasets.currentProfileBadge"]).not.toBe(locale["datasets.signedIn"]);
+      // The account menu's signed-out state is the only other badge copy here, and it speaks
+      // about the account rather than about which profile is open.
       expect(locale["datasets.currentProfileBadge"]).not.toBe(
         locale["datasets.signedOut"],
       );
@@ -250,13 +248,12 @@ describe("datasets i18n", () => {
 
   it("labels the account menu's cloud entry points with the brand term in both locales", () => {
     // Story 35.3 makes the migrate label unconditional in a local profile, and Story 35.4 adds the
-    // signed-in/out badge. All four are brand-bearing copy, and the brand is never translated.
+    // signed-out badge. All three are brand-bearing copy, and the brand is never translated.
     expect(en["datasets.migrateToCloud"]).toBe("Migrate to Nixus Cloud");
     expect(fr["datasets.migrateToCloud"]).toBe("Migrer vers Nixus Cloud");
     for (const key of [
       "datasets.migrateToCloud",
       "datasets.signInWithCloud",
-      "datasets.signedIn",
       "datasets.signedOut",
     ]) {
       expect(en[key], `${key} lost the brand term in en.json`).toContain("Nixus Cloud");
@@ -264,13 +261,11 @@ describe("datasets i18n", () => {
     }
   });
 
-  it("distinguishes migrating from signing in, and signed in from signed out", () => {
-    // The two menu actions run the same OAuth flow but produce different profiles, and the two badge
-    // states are the whole point of Story 35.4 — identical copy would make either pair unreadable.
+  it("distinguishes migrating from signing in", () => {
+    // The two menu actions run the same OAuth flow but produce different profiles, so identical copy
+    // would make the pair unreadable.
     expect(en["datasets.migrateToCloud"]).not.toBe(en["datasets.signInWithCloud"]);
     expect(fr["datasets.migrateToCloud"]).not.toBe(fr["datasets.signInWithCloud"]);
-    expect(en["datasets.signedIn"]).not.toBe(en["datasets.signedOut"]);
-    expect(fr["datasets.signedIn"]).not.toBe(fr["datasets.signedOut"]);
   });
 
   it("retires profile.signIn now that the datasets namespace owns the cloud entry points", () => {

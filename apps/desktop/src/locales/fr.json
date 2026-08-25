@@ -115,7 +115,6 @@
   "datasets.profileDeleted": "{{name}} a été supprimé.",
   "datasets.migrateToCloud": "Migrer vers Nixus Cloud",
   "datasets.signInWithCloud": "Se connecter à Nixus Cloud",
-  "datasets.signedIn": "Connecté à Nixus Cloud",
   "datasets.signedOut": "Déconnecté de Nixus Cloud",
   "datasets.cloudFailed": "Nixus Cloud n'a pas pu être joint. Veuillez réessayer.",
   "common.save": "Enregistrer",

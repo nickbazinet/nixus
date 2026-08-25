@@ -156,16 +156,16 @@ export function ProfileMenu() {
           data-testid="profile-menu-panel"
         >
           <DropdownMenuGroup>
-            {/* Read, never actuated, so a plain element for the same reason the address below is
-             * one: a menu item here would take roving focus for a label. */}
-            <div
-              className="px-1.5 py-1 text-caption text-ink-dim"
-              data-testid="profile-menu-cloud-status"
-            >
-              {cloudProfile.is_signed_in
-                ? t("datasets.signedIn")
-                : t("datasets.signedOut")}
-            </div>
+            {!cloudProfile.is_signed_in ? (
+              // Read, never actuated, so a plain element for the same reason the address below is
+              // one: a menu item here would take roving focus for a label.
+              <div
+                className="px-1.5 py-1 text-caption text-ink-dim"
+                data-testid="profile-menu-cloud-status"
+              >
+                {t("datasets.signedOut")}
+              </div>
+            ) : null}
 
             {account !== null ? (
               <>

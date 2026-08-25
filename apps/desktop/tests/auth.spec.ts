@@ -753,7 +753,7 @@ test.describe("the account menu's Nixus Cloud entry points", () => {
     expect(await countIpcCalls(page, "get_auth_session")).toBe(0);
   });
 
-  test("a signed-in cloud-linked profile shows the signed-in badge and no migrate action", async ({
+  test("a signed-in cloud-linked profile shows its identity without a repetitive status and no migrate action", async ({
     page,
   }) => {
     await setupTauriMock(page, {
@@ -766,9 +766,8 @@ test.describe("the account menu's Nixus Cloud entry points", () => {
     await expect(trigger).toHaveAttribute("data-cloud-status", "signed-in");
     await trigger.click();
 
-    await expect(page.getByTestId("profile-menu-cloud-status")).toHaveText(
-      "Signed in to Nixus Cloud",
-    );
+    await expect(page.getByTestId("profile-menu-cloud-status")).toHaveCount(0);
+    await expect(page.getByText("Signed in as", { exact: true })).toBeVisible();
     // Already linked: migrating again would only produce a second copy.
     await expect(page.getByTestId("profile-menu-cloud-action")).toHaveCount(0);
     await expect(page.getByTestId("profile-menu-sign-out")).toBeVisible();

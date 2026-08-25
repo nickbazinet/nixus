@@ -115,7 +115,6 @@
   "datasets.profileDeleted": "{{name}} was deleted.",
   "datasets.migrateToCloud": "Migrate to Nixus Cloud",
   "datasets.signInWithCloud": "Sign in with Nixus Cloud",
-  "datasets.signedIn": "Signed in to Nixus Cloud",
   "datasets.signedOut": "Signed out of Nixus Cloud",
   "datasets.cloudFailed": "Nixus Cloud could not be reached. Please try again.",
   "common.save": "Save",
