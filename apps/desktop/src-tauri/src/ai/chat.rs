@@ -65,11 +65,10 @@ Available tools:
   - `date_to` (string, YYYY-MM-DD): End date (inclusive)
   - `merchant` (string): Partial match on merchant name
   - `category_name` (string): Partial match on the budget category name. Case-insensitive for ASCII letters only — accented or non-Latin characters must match the stored case exactly
-  - `category_id` (integer): Filter by budget category ID — only when you already know the numeric ID
   - `limit` (integer): Max results, default 50, max 100
   - `sort` (string): "date_asc" or "date_desc" (default)
 
-Use a tool when you need expense details not available in the current context. When the user names a category ("expenses for Groceries"), pass that name as `category_name` — do not ask the user for a category ID. Matching is partial, so a name fragment works, and every category sharing that name is included. For relative periods ("the past 3 months", "last month"), compute absolute `date_from` and `date_to` values from today's date and pass those; there is no relative-period parameter. After receiving tool results, answer the user's question using that data. When presenting multiple expenses, use a table format. Always convert cents to dollars for display.
+Categories are referenced by name only; there is no category ID parameter. When the user names a category ("expenses for Groceries"), pass that name as `category_name` — do not ask the user for a category ID. Matching is partial, so a name fragment works, and every category sharing that name is included. Use a tool when you need expense details not available in the current context. For relative periods ("the past 3 months", "last month"), compute absolute `date_from` and `date_to` values from today's date and pass those; there is no relative-period parameter. A `query_expenses` result lists the filters, limit and sort that were actually applied — trust those over anything from earlier in the conversation, and if it reports that the limit was reached, say the list may be incomplete. After receiving tool results, answer the user's question using that data. When presenting multiple expenses, use a table format. Always convert cents to dollars for display.
 
 - **query_maintenance_status**: Get maintenance task status for vehicles. All params optional.
   - `vehicle_id` (integer): Filter to one vehicle. Omit for all vehicles.
@@ -104,19 +103,19 @@ When the user asks you to PERFORM AN ACTION (add expense, update balance, create
   "params": {{
     "merchant": "Costco",
     "amount_cents": 4500,
-    "budget_category_id": 3,
+    "category_name": "Groceries",
     "date": "2026-03-14"
   }}
 }}
 ```
 
 Valid action_types: "create_expense", "update_balance", "create_account", "update_asset_value"
-- For create_expense: params must include merchant, amount_cents, budget_category_id, date
+- For create_expense: params must include merchant, amount_cents, category_name, date
 - For update_balance: params must include account_id, balance_cents
 - For create_account: params must include name, institution, account_type, currency
 - For update_asset_value: params must include asset_id, value_cents
 
-Match budget_category_id to the categories listed in the data. Use the ID, not the name.
+For create_expense, `category_name` must be the exact full name of one category listed in the data — never a numeric ID and never a fragment. If two listed categories share that name, or none matches, ask the user which category to use.
 If you cannot determine a required field, ask the user for clarification instead of guessing.
 
 For data QUERIES (not actions), respond with plain text as normal.
@@ -136,11 +135,51 @@ pub fn parse_tool_call(response: &str) -> Option<ToolCallRequest> {
     serde_json::from_str(json_str).ok()
 }
 
-pub fn format_tool_result(results: &[crate::db::expense::ExpenseSearchResult]) -> String {
-    if results.is_empty() {
-        return "Tool result: No expenses found matching the query.".to_string();
+fn describe_applied_filters(filters: &crate::db::expense::ExpenseSearchFilters) -> String {
+    let quoted =
+        |value: &str| serde_json::to_string(value).unwrap_or_else(|_| format!("{:?}", value));
+
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(ref category_name) = filters.category_name {
+        parts.push(format!("category_name={}", quoted(category_name)));
     }
-    let mut out = format!("Tool result: {} expense(s) found:\n", results.len());
+    if let Some(ref merchant) = filters.merchant {
+        parts.push(format!("merchant={}", quoted(merchant)));
+    }
+    if let Some(ref date_from) = filters.date_from {
+        parts.push(format!("date_from={}", quoted(date_from)));
+    }
+    if let Some(ref date_to) = filters.date_to {
+        parts.push(format!("date_to={}", quoted(date_to)));
+    }
+    parts.push(format!("limit={}", filters.effective_limit()));
+    parts.push(format!("sort={}", quoted(filters.effective_sort())));
+    parts.join(", ")
+}
+
+pub fn format_tool_result(
+    filters: &crate::db::expense::ExpenseSearchFilters,
+    results: &[crate::db::expense::ExpenseSearchResult],
+) -> String {
+    let applied = describe_applied_filters(filters);
+    if results.is_empty() {
+        return format!(
+            "Tool result for query_expenses (applied filters: {}): No expenses found matching the query.",
+            applied
+        );
+    }
+
+    let truncated = results.len() as i64 >= filters.effective_limit();
+    let mut out = format!(
+        "Tool result for query_expenses (applied filters: {}): {} expense(s) found{}:\n",
+        applied,
+        results.len(),
+        if truncated {
+            " (limit reached, more may exist)"
+        } else {
+            ""
+        }
+    );
     out.push_str("| Date | Merchant | Amount | Category |\n");
     out.push_str("|------|----------|--------|----------|\n");
     for r in results {
@@ -290,4 +329,142 @@ pub fn build_message(role: ConversationRole, text: &str) -> Result<Message, AppE
             message: format!("Failed to build message: {}", e),
             recoverable: false,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::expense::{ExpenseSearchFilters, ExpenseSearchResult};
+
+    fn vacation_filters() -> ExpenseSearchFilters {
+        ExpenseSearchFilters {
+            category_name: Some("Vacation".to_string()),
+            date_from: Some("2026-04-25".to_string()),
+            date_to: Some("2026-08-25".to_string()),
+            ..ExpenseSearchFilters::default()
+        }
+    }
+
+    fn vacation_row() -> ExpenseSearchResult {
+        ExpenseSearchResult {
+            id: 1,
+            merchant: "Air Canada".to_string(),
+            amount_cents: 45_000,
+            category_name: "Vacation".to_string(),
+            date: "2026-06-02".to_string(),
+            source: "manual".to_string(),
+        }
+    }
+
+    #[test]
+    fn format_tool_result_reports_the_applied_category_and_date_bounds() {
+        let out = format_tool_result(&vacation_filters(), &[vacation_row()]);
+
+        assert!(out.contains("category_name=\"Vacation\""));
+        assert!(out.contains("date_from=\"2026-04-25\""));
+        assert!(out.contains("date_to=\"2026-08-25\""));
+        assert!(out.contains("Air Canada"));
+    }
+
+    #[test]
+    fn format_tool_result_reports_the_applied_category_when_nothing_matched() {
+        let out = format_tool_result(&vacation_filters(), &[]);
+
+        assert!(out.contains("category_name=\"Vacation\""));
+    }
+
+    #[test]
+    fn format_tool_result_reports_the_effective_limit_and_sort_defaults() {
+        let out = format_tool_result(&ExpenseSearchFilters::default(), &[vacation_row()]);
+
+        assert!(out.contains("limit=50"));
+        assert!(out.contains("sort=\"date_desc\""));
+    }
+
+    #[test]
+    fn format_tool_result_reports_the_clamped_limit_and_requested_sort() {
+        let filters = ExpenseSearchFilters {
+            limit: Some(5_000),
+            sort: Some("date_asc".to_string()),
+            ..ExpenseSearchFilters::default()
+        };
+
+        let out = format_tool_result(&filters, &[vacation_row()]);
+
+        assert!(out.contains("limit=100"));
+        assert!(out.contains("sort=\"date_asc\""));
+    }
+
+    #[test]
+    fn format_tool_result_normalizes_an_unknown_sort_to_the_search_default() {
+        let filters = ExpenseSearchFilters {
+            sort: Some("amount_desc".to_string()),
+            ..ExpenseSearchFilters::default()
+        };
+
+        let out = format_tool_result(&filters, &[vacation_row()]);
+
+        assert!(out.contains("sort=\"date_desc\""));
+    }
+
+    #[test]
+    fn format_tool_result_flags_truncation_when_the_row_count_reaches_the_limit() {
+        let filters = ExpenseSearchFilters {
+            limit: Some(1),
+            ..ExpenseSearchFilters::default()
+        };
+
+        let out = format_tool_result(&filters, &[vacation_row()]);
+
+        assert!(out.contains("limit reached"));
+    }
+
+    #[test]
+    fn format_tool_result_does_not_flag_truncation_below_the_limit() {
+        let filters = ExpenseSearchFilters {
+            limit: Some(2),
+            ..ExpenseSearchFilters::default()
+        };
+
+        let out = format_tool_result(&filters, &[vacation_row()]);
+
+        assert!(!out.contains("limit reached"));
+    }
+
+    #[test]
+    fn format_tool_result_quotes_filter_values_that_contain_separators() {
+        let filters = ExpenseSearchFilters {
+            category_name: Some("Va\"ca, tion".to_string()),
+            ..ExpenseSearchFilters::default()
+        };
+
+        let out = format_tool_result(&filters, &[vacation_row()]);
+
+        assert!(out.contains("category_name=\"Va\\\"ca, tion\""));
+    }
+
+    #[test]
+    fn format_tool_result_names_the_tool_the_metadata_belongs_to() {
+        let out = format_tool_result(&vacation_filters(), &[vacation_row()]);
+
+        assert!(out.contains("query_expenses"));
+    }
+
+    #[test]
+    fn budget_helper_prompt_advertises_no_category_id_parameter() {
+        let prompt = build_system_prompt("budget-helper", "2026-08-25", "Budget Categories:\n");
+
+        assert!(!prompt.contains("category_id"));
+        assert!(!prompt.contains("budget_category_id"));
+    }
+
+    #[test]
+    fn parse_tool_call_reads_a_name_only_query_payload() {
+        let response = "```tool_call\n{\"tool\":\"query_expenses\",\"params\":{\"category_name\":\"Vacation\"}}\n```";
+
+        let call = parse_tool_call(response).expect("tool call should parse");
+
+        assert_eq!(call.tool, "query_expenses");
+        assert_eq!(call.params["category_name"], "Vacation");
+    }
 }

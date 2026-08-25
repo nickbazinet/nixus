@@ -18,6 +18,7 @@ async function setupTauriMock(page: Page) {
       | "action"
       | "tool_call"
       | "tool_call_category_name"
+      | "tool_call_vacation_after_stale_id"
       | "tool_call_no_results" = "query";
     (window as unknown as Record<string, unknown>).__MOCK_SET_RESPONSE__ = (type: string) => {
       nextResponseType = type as typeof nextResponseType;
@@ -110,6 +111,41 @@ async function setupTauriMock(page: Page) {
               setTimeout(() => {
                 emitEvent("chat:response-chunk", { chunk: "", done: true });
               }, 850);
+            } else if (nextResponseType === "tool_call_vacation_after_stale_id") {
+              const toolCallJson = '```tool_call\n' + JSON.stringify({
+                tool: "query_expenses",
+                params: {
+                  category_name: "Vacation",
+                  date_from: "2026-04-25",
+                  date_to: "2026-08-25",
+                  sort: "date_desc",
+                },
+              }) + '\n```';
+
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: toolCallJson, done: false });
+              }, 50);
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: "", done: true });
+              }, 100);
+
+              setTimeout(() => {
+                emitEvent("chat:tool-executing", "query_expenses");
+              }, 200);
+
+              const finalResponse =
+                'You spent $770.00 in Vacation over the past four months.\n\n' +
+                '| Date | Merchant | Amount | Category |\n' +
+                '|------|----------|--------|----------|\n' +
+                '| 2026-06-02 | Air Canada | $450.00 | Vacation |\n' +
+                '| 2026-05-18 | Airbnb | $320.00 | Vacation |\n';
+
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: finalResponse, done: false });
+              }, 800);
+              setTimeout(() => {
+                emitEvent("chat:response-chunk", { chunk: "", done: true });
+              }, 850);
             } else if (nextResponseType === "tool_call_no_results") {
               const toolCallJson = '```tool_call\n' + JSON.stringify({
                 tool: "query_expenses",
@@ -142,9 +178,10 @@ async function setupTauriMock(page: Page) {
                   details: [
                     { field: "Merchant", value: "Costco" },
                     { field: "Amount", value: "$45.00" },
+                    { field: "Category", value: "Groceries" },
                   ],
                 },
-                params: { merchant: "Costco", amount_cents: 4500, budget_category_id: 3, date: "2026-03-15" },
+                params: { merchant: "Costco", amount_cents: 4500, category_name: "Groceries", date: "2026-03-15" },
               }) + '\n```';
 
               setTimeout(() => {
@@ -164,7 +201,12 @@ async function setupTauriMock(page: Page) {
               }, 100);
             }
 
-            return Promise.resolve({ conversation_id: 1, user_message_id: 1 });
+            // Echo the conversation the turn belongs to; a hardcoded id silently reassigns
+            // an existing conversation to a different one mid-test.
+            return Promise.resolve({
+              conversation_id: (args.conversation_id as number | null) ?? 1,
+              user_message_id: 1,
+            });
           }
 
           case "execute_chat_action":
@@ -174,6 +216,21 @@ async function setupTauriMock(page: Page) {
             return Promise.resolve([]);
 
           case "get_chat_messages":
+            // Conversation 7 replays a prior turn that leaked Cloud's numeric category id,
+            // so a later named query must not be able to source rows from it.
+            if (args.conversation_id === 7) {
+              return Promise.resolve([
+                { role: "user", content: "How much did I spend on Cloud last month?" },
+                {
+                  role: "assistant",
+                  content:
+                    "You spent $12.00 in Cloud (category 12) last month.\n\n" +
+                    "| Date | Merchant | Amount | Category |\n" +
+                    "|------|----------|--------|----------|\n" +
+                    "| 2026-07-11 | AWS | $12.00 | Cloud |\n",
+                },
+              ]);
+            }
             return Promise.resolve([]);
 
           case "get_db_status":
@@ -255,6 +312,36 @@ test.describe("AI Chat Expense Query Tool", () => {
     await expect(table).toContainText("$45.00");
     await expect(page.getByTestId("chat-message-assistant")).toContainText("Groceries");
     await expect(page.getByTestId("tool-searching-indicator")).not.toBeVisible();
+  });
+
+  test("named Vacation query after a turn that leaked a numeric category id renders only Vacation rows", async ({
+    page,
+  }) => {
+    await page.goto("/chat?conversation=7");
+
+    const staleAnswer = page.getByTestId("chat-message-assistant").first();
+    await expect(staleAnswer).toContainText("category 12", { timeout: 5000 });
+
+    await page.evaluate(() => {
+      ((window as unknown as Record<string, unknown>).__MOCK_SET_RESPONSE__ as (t: string) => void)(
+        "tool_call_vacation_after_stale_id"
+      );
+    });
+
+    await page.getByTestId("chat-input").fill("Give me all Vacation expenses for the past 4 months");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("tool-searching-indicator")).toBeVisible({ timeout: 5000 });
+
+    const answerTable = page.getByTestId("chat-table").last();
+    await expect(answerTable).toContainText("Air Canada", { timeout: 5000 });
+    await expect(answerTable).toContainText("Airbnb");
+    await expect(answerTable).toContainText("Vacation");
+    await expect(answerTable).not.toContainText("Cloud");
+    await expect(answerTable).not.toContainText("AWS");
+
+    // Persisted history is untouched: the earlier leaked id is still displayed.
+    await expect(staleAnswer).toContainText("category 12");
   });
 
   test("no results query shows appropriate message", async ({ page }) => {

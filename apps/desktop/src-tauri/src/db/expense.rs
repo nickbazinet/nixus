@@ -283,6 +283,20 @@ pub struct ExpenseSearchFilters {
     pub sort: Option<String>,
 }
 
+// Reported to the AI alongside results, so the search and the metadata must not drift apart.
+impl ExpenseSearchFilters {
+    pub fn effective_limit(&self) -> i64 {
+        self.limit.unwrap_or(50).clamp(1, 100)
+    }
+
+    pub fn effective_sort(&self) -> &'static str {
+        match self.sort.as_deref() {
+            Some("date_asc") => "date_asc",
+            _ => "date_desc",
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ExpenseSearchResult {
     pub id: i64,
@@ -343,14 +357,13 @@ pub fn search_expenses(
     }
     let _ = param_idx;
 
-    let sort_order = match filters.sort.as_deref() {
-        Some("date_asc") => "e.date ASC, e.created_at ASC",
+    let sort_order = match filters.effective_sort() {
+        "date_asc" => "e.date ASC, e.created_at ASC",
         _ => "e.date DESC, e.created_at DESC",
     };
     sql.push_str(&format!(" ORDER BY {}", sort_order));
 
-    let limit = filters.limit.unwrap_or(50).clamp(1, 100);
-    sql.push_str(&format!(" LIMIT {}", limit));
+    sql.push_str(&format!(" LIMIT {}", filters.effective_limit()));
 
     let mut stmt = conn.prepare(&sql)?;
     let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();

@@ -1,4 +1,5 @@
-use serde::Serialize;
+use aws_sdk_bedrockruntime::types::{ConversationRole, Message};
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 use tracing::{error, info};
@@ -24,32 +25,59 @@ pub struct SendMessageResult {
     pub user_message_id: i64,
 }
 
+// Filtering internal tool messages out of the history can leave two user turns adjacent, and
+// Bedrock rejects any history that repeats a role or opens with the assistant. Same-role runs
+// are merged instead of dropped so no user turn is lost.
+fn alternating_turns(db_messages: &[chat_db::ChatMessage]) -> Vec<(ConversationRole, String)> {
+    let mut turns: Vec<(ConversationRole, String)> = Vec::new();
+
+    for msg in db_messages {
+        let role = match msg.role.as_str() {
+            "user" => ConversationRole::User,
+            "assistant" => ConversationRole::Assistant,
+            _ => continue,
+        };
+        match turns.last_mut() {
+            Some((last_role, content)) if *last_role == role => {
+                content.push_str("\n\n");
+                content.push_str(&msg.content);
+            }
+            _ => turns.push((role, msg.content.clone())),
+        }
+    }
+
+    if turns
+        .first()
+        .is_some_and(|(role, _)| *role == ConversationRole::Assistant)
+    {
+        turns.remove(0);
+    }
+
+    // A trailing assistant turn means the previous turn never got its answer back.
+    if turns
+        .last()
+        .is_some_and(|(role, _)| *role == ConversationRole::Assistant)
+    {
+        turns.pop();
+    }
+
+    turns
+}
+
 fn build_history_messages(
     db_state: &State<DbState>,
     conv_id: i64,
-) -> Result<Vec<aws_sdk_bedrockruntime::types::Message>, AppError> {
+) -> Result<Vec<Message>, AppError> {
     let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-    let db_messages = chat_db::get_conversation_messages(&conn, conv_id)?;
+    let db_messages = chat_db::get_conversation_messages_for_ai(&conn, conv_id)?;
 
-    let mut messages = Vec::new();
-    for msg in &db_messages {
-        let role = match msg.role.as_str() {
-            "user" => aws_sdk_bedrockruntime::types::ConversationRole::User,
-            "assistant" => aws_sdk_bedrockruntime::types::ConversationRole::Assistant,
-            _ => continue,
-        };
-        messages.push(chat_ai::build_message(role, &msg.content)?);
-    }
-
-    // Drop trailing assistant message to maintain valid alternation (partial tool-call failure edge case)
-    if db_messages.last().is_some_and(|m| m.role == "assistant") {
-        messages.pop();
-    }
-
-    Ok(messages)
+    alternating_turns(&db_messages)
+        .into_iter()
+        .map(|(role, content)| chat_ai::build_message(role, &content))
+        .collect()
 }
 
 fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
@@ -301,23 +329,133 @@ pub async fn send_chat_message(
     })
 }
 
-fn expense_filters_from_params(params: &serde_json::Value) -> expense_db::ExpenseSearchFilters {
-    let text = |key: &str| params.get(key).and_then(|v| v.as_str()).map(String::from);
-    let integer = |key: &str| {
-        params
-            .get(key)
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+// The model quotes integers about as often as it emits them bare.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum LooseInt {
+    Int(i64),
+    Text(String),
+}
+
+impl LooseInt {
+    fn value(&self) -> Option<i64> {
+        match self {
+            Self::Int(v) => Some(*v),
+            Self::Text(s) => s.trim().parse().ok(),
+        }
+    }
+}
+
+// `category_id` is captured only to reject it: a numeric id echoed back by the model can be
+// guessed or carried over from an earlier turn, so names are the only category reference.
+#[derive(Debug, Clone, Default, Deserialize)]
+struct AiExpenseQuery {
+    date_from: Option<String>,
+    date_to: Option<String>,
+    merchant: Option<String>,
+    category_name: Option<serde_json::Value>,
+    category_id: Option<serde_json::Value>,
+    limit: Option<LooseInt>,
+    sort: Option<String>,
+}
+
+fn invalid_category_name(message: impl Into<String>) -> AppError {
+    AppError::Validation {
+        message: message.into(),
+        field: Some("category_name".to_string()),
+    }
+}
+
+fn expense_filters_from_params(
+    params: &serde_json::Value,
+) -> Result<expense_db::ExpenseSearchFilters, AppError> {
+    let query: AiExpenseQuery =
+        serde_json::from_value(params.clone()).map_err(|e| AppError::Validation {
+            message: format!("query_expenses params are not valid: {}", e),
+            field: None,
+        })?;
+
+    let category_name = match query.category_name {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(name)) => {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                return Err(invalid_category_name(
+                    "category_name must not be blank; omit it to search every category",
+                ));
+            }
+            Some(trimmed.to_string())
+        }
+        Some(_) => {
+            return Err(invalid_category_name(
+                "category_name must be the category's name as text",
+            ))
+        }
     };
 
-    expense_db::ExpenseSearchFilters {
-        date_from: text("date_from"),
-        date_to: text("date_to"),
-        merchant: text("merchant"),
-        category_id: integer("category_id"),
-        category_name: text("category_name"),
-        limit: integer("limit"),
-        sort: text("sort"),
+    let has_category_id = query.category_id.is_some_and(|value| !value.is_null());
+    if has_category_id && category_name.is_none() {
+        return Err(invalid_category_name(
+            "query_expenses has no category_id parameter; pass the category's name as category_name",
+        ));
     }
+
+    Ok(expense_db::ExpenseSearchFilters {
+        date_from: query.date_from,
+        date_to: query.date_to,
+        merchant: query.merchant,
+        category_id: None,
+        category_name,
+        limit: query.limit.and_then(|limit| limit.value()),
+        sort: query.sort,
+    })
+}
+
+fn resolve_action_category_id(
+    conn: &rusqlite::Connection,
+    params: &serde_json::Value,
+) -> Result<i64, AppError> {
+    let name = params
+        .get("category_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .trim();
+
+    if name.is_empty() {
+        return Err(invalid_category_name("category_name is required"));
+    }
+
+    match budget_db::resolve_active_category_id_by_name(conn, name)? {
+        budget_db::CategoryNameMatch::Unique(id) => Ok(id),
+        budget_db::CategoryNameMatch::Missing => Err(invalid_category_name(format!(
+            "No active budget category named \"{}\"",
+            name
+        ))),
+        budget_db::CategoryNameMatch::Ambiguous => Err(invalid_category_name(format!(
+            "More than one active budget category is named \"{}\" — ask for a more specific category",
+            name
+        ))),
+    }
+}
+
+fn create_expense_action(
+    conn: &rusqlite::Connection,
+    params: &serde_json::Value,
+) -> Result<String, AppError> {
+    let budget_category_id = resolve_action_category_id(conn, params)?;
+    let input = CreateExpenseInput {
+        merchant: params["merchant"].as_str().unwrap_or("").to_string(),
+        amount_cents: params["amount_cents"].as_i64().unwrap_or(0),
+        budget_category_id,
+        date: params["date"].as_str().unwrap_or("").to_string(),
+        account_id: None,
+    };
+    let expense = expense_db::insert_expense(conn, &input)?;
+    Ok(format!(
+        "Done. ${:.2} expense added for {}.",
+        expense.amount_cents as f64 / 100.0,
+        expense.merchant
+    ))
 }
 
 fn execute_tool_call(
@@ -326,14 +464,14 @@ fn execute_tool_call(
 ) -> Result<String, AppError> {
     match tool_call.tool.as_str() {
         "query_expenses" => {
-            let filters = expense_filters_from_params(&tool_call.params);
+            let filters = expense_filters_from_params(&tool_call.params)?;
             let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
             let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
             let results = expense_db::search_expenses(&conn, &filters)?;
             info!("Tool query_expenses returned {} results", results.len());
-            Ok(chat_ai::format_tool_result(&results))
+            Ok(chat_ai::format_tool_result(&filters, &results))
         }
         "query_maintenance_status" => {
             let filters = maintenance_db::MaintenanceStatusFilters {
@@ -443,24 +581,7 @@ pub fn execute_chat_action(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let result_msg = match action_type.as_str() {
-        "create_expense" => {
-            let input = CreateExpenseInput {
-                merchant: params["merchant"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string(),
-                amount_cents: params["amount_cents"].as_i64().unwrap_or(0),
-                budget_category_id: params["budget_category_id"].as_i64().unwrap_or(0),
-                date: params["date"].as_str().unwrap_or("").to_string(),
-                account_id: None,
-            };
-            let expense = expense_db::insert_expense(&conn, &input)?;
-            format!(
-                "Done. ${:.2} expense added for {}.",
-                expense.amount_cents as f64 / 100.0,
-                expense.merchant
-            )
-        }
+        "create_expense" => create_expense_action(conn, &params)?,
         "update_balance" => {
             let account_id = params["account_id"].as_i64().ok_or_else(|| AppError::Validation {
                 message: "account_id is required".to_string(),
@@ -529,7 +650,85 @@ pub fn execute_chat_action(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
     use serde_json::json;
+
+    fn category_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE budget_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                target_cents INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at TEXT
+            );
+            CREATE TABLE expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                merchant TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
+                budget_category_id INTEGER NOT NULL REFERENCES budget_categories(id),
+                account_id INTEGER,
+                date TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO budget_categories (id, group_id, name) VALUES (11, 1, 'Vacation');
+            INSERT INTO budget_categories (id, group_id, name) VALUES (12, 1, 'Cloud');",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn expense_rows(conn: &Connection) -> Vec<(String, i64, i64)> {
+        let mut stmt = conn
+            .prepare("SELECT merchant, amount_cents, budget_category_id FROM expenses ORDER BY id")
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn vacation_expense_params() -> serde_json::Value {
+        json!({
+            "merchant": "Air Canada",
+            "amount_cents": 45_000,
+            "category_name": "Vacation",
+            "date": "2026-06-02"
+        })
+    }
+
+    fn validation_field(err: &AppError) -> Option<&str> {
+        match err {
+            AppError::Validation { field, .. } => field.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn validation_message(err: &AppError) -> String {
+        match err {
+            AppError::Validation { message, .. } => message.clone(),
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    fn chat_row(id: i64, role: &str, content: &str, message_type: &str) -> chat_db::ChatMessage {
+        chat_db::ChatMessage {
+            id,
+            conversation_id: 1,
+            role: role.to_string(),
+            content: content.to_string(),
+            message_type: message_type.to_string(),
+            created_at: "2026-08-25 10:00:00".to_string(),
+        }
+    }
+
+    fn roles(turns: &[(ConversationRole, String)]) -> Vec<ConversationRole> {
+        turns.iter().map(|(role, _)| role.clone()).collect()
+    }
 
     #[test]
     fn expense_filters_from_params_maps_category_name_and_date_bounds() {
@@ -539,7 +738,7 @@ mod tests {
             "date_to": "2026-03-24"
         });
 
-        let filters = expense_filters_from_params(&params);
+        let filters = expense_filters_from_params(&params).unwrap();
 
         assert_eq!(filters.category_name.as_deref(), Some("Groceries"));
         assert_eq!(filters.date_from.as_deref(), Some("2025-12-24"));
@@ -556,45 +755,88 @@ mod tests {
             "date_from": "2026-01-01",
             "date_to": "2026-01-31",
             "merchant": "Costco",
-            "category_id": 3,
             "category_name": "Groceries",
             "limit": 10,
             "sort": "date_asc"
         });
 
-        let filters = expense_filters_from_params(&params);
+        let filters = expense_filters_from_params(&params).unwrap();
 
         assert_eq!(filters.date_from.as_deref(), Some("2026-01-01"));
         assert_eq!(filters.date_to.as_deref(), Some("2026-01-31"));
         assert_eq!(filters.merchant.as_deref(), Some("Costco"));
-        assert_eq!(filters.category_id, Some(3));
         assert_eq!(filters.category_name.as_deref(), Some("Groceries"));
         assert_eq!(filters.limit, Some(10));
         assert_eq!(filters.sort.as_deref(), Some("date_asc"));
     }
 
     #[test]
-    fn expense_filters_from_params_still_coerces_quoted_integers() {
-        let params = json!({ "category_id": "3", "limit": "25" });
+    fn expense_filters_from_params_keeps_the_name_authoritative_over_a_stale_category_id() {
+        let params = json!({ "category_id": 3, "category_name": "Vacation" });
 
-        let filters = expense_filters_from_params(&params);
+        let filters = expense_filters_from_params(&params).unwrap();
 
-        assert_eq!(filters.category_id, Some(3));
-        assert_eq!(filters.limit, Some(25));
+        assert_eq!(filters.category_id, None);
+        assert_eq!(filters.category_name.as_deref(), Some("Vacation"));
     }
 
     #[test]
-    fn expense_filters_from_params_leaves_non_string_category_name_unset() {
-        let params = json!({ "category_name": 7 });
+    fn expense_filters_from_params_rejects_a_stale_category_id_supplied_alone() {
+        let err = expense_filters_from_params(&json!({ "category_id": 3 })).unwrap_err();
 
-        let filters = expense_filters_from_params(&params);
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
 
+    #[test]
+    fn expense_filters_from_params_rejects_a_category_id_paired_with_a_blank_name() {
+        let err = expense_filters_from_params(&json!({ "category_id": 3, "category_name": "  " }))
+            .unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
+
+    #[test]
+    fn expense_filters_from_params_accepts_a_null_category_id() {
+        let filters =
+            expense_filters_from_params(&json!({ "category_id": null, "merchant": "Costco" }))
+                .unwrap();
+
+        assert_eq!(filters.merchant.as_deref(), Some("Costco"));
         assert_eq!(filters.category_name, None);
     }
 
     #[test]
+    fn expense_filters_from_params_rejects_a_blank_category_name() {
+        let err = expense_filters_from_params(&json!({ "category_name": "   " })).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
+
+    #[test]
+    fn expense_filters_from_params_rejects_a_non_string_category_name() {
+        let err = expense_filters_from_params(&json!({ "category_name": 7 })).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
+
+    #[test]
+    fn expense_filters_from_params_trims_a_padded_category_name() {
+        let filters =
+            expense_filters_from_params(&json!({ "category_name": "  Vacation  " })).unwrap();
+
+        assert_eq!(filters.category_name.as_deref(), Some("Vacation"));
+    }
+
+    #[test]
+    fn expense_filters_from_params_still_coerces_quoted_limits() {
+        let filters = expense_filters_from_params(&json!({ "limit": "25" })).unwrap();
+
+        assert_eq!(filters.limit, Some(25));
+    }
+
+    #[test]
     fn expense_filters_from_params_leaves_every_field_unset_when_params_are_empty() {
-        let filters = expense_filters_from_params(&json!({}));
+        let filters = expense_filters_from_params(&json!({})).unwrap();
 
         assert_eq!(filters.date_from, None);
         assert_eq!(filters.date_to, None);
@@ -603,5 +845,269 @@ mod tests {
         assert_eq!(filters.category_name, None);
         assert_eq!(filters.limit, None);
         assert_eq!(filters.sort, None);
+    }
+
+    #[test]
+    fn expense_filters_from_params_ignores_parameters_the_tool_does_not_define() {
+        let filters =
+            expense_filters_from_params(&json!({ "merchant": "Costco", "vibe": "spendy" }))
+                .unwrap();
+
+        assert_eq!(filters.merchant.as_deref(), Some("Costco"));
+    }
+
+    #[test]
+    fn expense_filters_from_params_rejects_a_non_string_date_bound() {
+        let err = expense_filters_from_params(&json!({ "date_from": 20260101 })).unwrap_err();
+
+        assert!(matches!(err, AppError::Validation { .. }));
+    }
+
+    #[test]
+    fn resolve_action_category_id_returns_the_internal_id_for_a_unique_name() {
+        let conn = category_test_db();
+
+        let id =
+            resolve_action_category_id(&conn, &json!({ "category_name": "Vacation" })).unwrap();
+
+        assert_eq!(id, 11);
+    }
+
+    #[test]
+    fn resolve_action_category_id_ignores_a_model_supplied_budget_category_id() {
+        let conn = category_test_db();
+
+        let id = resolve_action_category_id(
+            &conn,
+            &json!({ "category_name": "Vacation", "budget_category_id": 12 }),
+        )
+        .unwrap();
+
+        assert_eq!(id, 11);
+    }
+
+    #[test]
+    fn resolve_action_category_id_rejects_an_unknown_name() {
+        let conn = category_test_db();
+
+        let err = resolve_action_category_id(&conn, &json!({ "category_name": "Groceries" }))
+            .unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
+
+    #[test]
+    fn resolve_action_category_id_rejects_an_ambiguous_name() {
+        let conn = category_test_db();
+        conn.execute(
+            "INSERT INTO budget_categories (id, group_id, name) VALUES (13, 1, 'vacation')",
+            [],
+        )
+        .unwrap();
+
+        let err =
+            resolve_action_category_id(&conn, &json!({ "category_name": "Vacation" })).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
+
+    #[test]
+    fn resolve_action_category_id_rejects_a_payload_carrying_only_a_numeric_id() {
+        let conn = category_test_db();
+
+        let err =
+            resolve_action_category_id(&conn, &json!({ "budget_category_id": 11 })).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
+
+    #[test]
+    fn resolve_action_category_id_rejects_a_blank_name() {
+        let conn = category_test_db();
+
+        let err =
+            resolve_action_category_id(&conn, &json!({ "category_name": "   " })).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+    }
+
+    #[test]
+    fn create_expense_action_inserts_the_resolved_category_id() {
+        let conn = category_test_db();
+
+        create_expense_action(&conn, &vacation_expense_params()).unwrap();
+
+        assert_eq!(
+            expense_rows(&conn),
+            vec![("Air Canada".to_string(), 45_000, 11)]
+        );
+    }
+
+    #[test]
+    fn create_expense_action_inserts_nothing_for_an_unknown_category_name() {
+        let conn = category_test_db();
+        let mut params = vacation_expense_params();
+        params["category_name"] = json!("Groceries");
+
+        let err = create_expense_action(&conn, &params).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+        assert!(expense_rows(&conn).is_empty());
+    }
+
+    #[test]
+    fn create_expense_action_inserts_nothing_for_an_ambiguous_category_name() {
+        let conn = category_test_db();
+        conn.execute(
+            "INSERT INTO budget_categories (id, group_id, name) VALUES (13, 1, 'vacation')",
+            [],
+        )
+        .unwrap();
+
+        let err = create_expense_action(&conn, &vacation_expense_params()).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+        assert!(expense_rows(&conn).is_empty());
+    }
+
+    #[test]
+    fn create_expense_action_distinguishes_a_missing_category_from_an_ambiguous_one() {
+        let conn = category_test_db();
+        let mut unknown_params = vacation_expense_params();
+        unknown_params["category_name"] = json!("Groceries");
+        let missing =
+            validation_message(&create_expense_action(&conn, &unknown_params).unwrap_err());
+
+        conn.execute(
+            "INSERT INTO budget_categories (id, group_id, name) VALUES (13, 1, 'vacation')",
+            [],
+        )
+        .unwrap();
+        let ambiguous = validation_message(
+            &create_expense_action(&conn, &vacation_expense_params()).unwrap_err(),
+        );
+
+        assert_ne!(missing, ambiguous);
+        assert!(missing.contains("Groceries"));
+        assert!(ambiguous.contains("Vacation"));
+    }
+
+    #[test]
+    fn create_expense_action_inserts_nothing_when_the_category_name_is_absent() {
+        let conn = category_test_db();
+        let params = json!({
+            "merchant": "Air Canada",
+            "amount_cents": 45_000,
+            "budget_category_id": 11,
+            "date": "2026-06-02"
+        });
+
+        let err = create_expense_action(&conn, &params).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+        assert!(expense_rows(&conn).is_empty());
+    }
+
+    #[test]
+    fn alternating_turns_merges_a_user_turn_orphaned_by_a_dropped_tool_exchange() {
+        let history = [
+            chat_row(1, "user", "cloud costs?", "chat"),
+            chat_row(4, "user", "vacation expenses?", "chat"),
+        ];
+
+        let turns = alternating_turns(&history);
+
+        assert_eq!(roles(&turns), vec![ConversationRole::User]);
+        assert!(turns[0].1.contains("cloud costs?"));
+        assert!(turns[0].1.contains("vacation expenses?"));
+    }
+
+    #[test]
+    fn alternating_turns_never_repeats_a_role() {
+        let history = [
+            chat_row(1, "user", "first", "chat"),
+            chat_row(2, "user", "second", "chat"),
+            chat_row(3, "assistant", "answer", "chat"),
+            chat_row(4, "assistant", "tool call", "tool_call"),
+            chat_row(5, "user", "tool result", "tool_result"),
+        ];
+
+        let turns = alternating_turns(&history);
+
+        for pair in roles(&turns).windows(2) {
+            assert_ne!(pair[0], pair[1]);
+        }
+    }
+
+    #[test]
+    fn alternating_turns_starts_with_the_user() {
+        let history = [
+            chat_row(1, "assistant", "leftover answer", "chat"),
+            chat_row(2, "user", "vacation expenses?", "chat"),
+            chat_row(3, "assistant", "tool call", "tool_call"),
+            chat_row(4, "user", "tool result", "tool_result"),
+        ];
+
+        let turns = alternating_turns(&history);
+
+        assert_eq!(
+            roles(&turns),
+            vec![
+                ConversationRole::User,
+                ConversationRole::Assistant,
+                ConversationRole::User,
+            ]
+        );
+        assert!(!turns[0].1.contains("leftover answer"));
+    }
+
+    #[test]
+    fn alternating_turns_drops_a_trailing_assistant_turn() {
+        let history = [
+            chat_row(1, "user", "vacation expenses?", "chat"),
+            chat_row(2, "assistant", "unanswered", "chat"),
+        ];
+
+        let turns = alternating_turns(&history);
+
+        assert_eq!(roles(&turns), vec![ConversationRole::User]);
+    }
+
+    #[test]
+    fn alternating_turns_keeps_a_healthy_tool_exchange_intact() {
+        let history = [
+            chat_row(1, "user", "vacation expenses?", "chat"),
+            chat_row(2, "assistant", "tool call", "tool_call"),
+            chat_row(3, "user", "tool result", "tool_result"),
+        ];
+
+        let turns = alternating_turns(&history);
+
+        assert_eq!(
+            roles(&turns),
+            vec![
+                ConversationRole::User,
+                ConversationRole::Assistant,
+                ConversationRole::User,
+            ]
+        );
+    }
+
+    #[test]
+    fn alternating_turns_is_empty_for_an_empty_history() {
+        assert!(alternating_turns(&[]).is_empty());
+    }
+
+    #[test]
+    fn alternating_turns_skips_rows_with_an_unknown_role() {
+        let history = [
+            chat_row(1, "system", "ignored", "chat"),
+            chat_row(2, "user", "vacation expenses?", "chat"),
+        ];
+
+        let turns = alternating_turns(&history);
+
+        assert_eq!(roles(&turns), vec![ConversationRole::User]);
+        assert_eq!(turns[0].1, "vacation expenses?");
     }
 }

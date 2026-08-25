@@ -352,3 +352,6 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-picker-cloud-first-landing.md`
   summary: Migrate the shared runtime color tokens from the pre-spine cool slate/indigo palette to the authoritative Quiet Ledger warm palette.
   evidence: Fresh picker captures consume semantic token classes correctly, but `packages/shared/src/styles/tokens.css` still renders values that differ from `DESIGN.md` in both themes; changing them is repo-wide visual work requiring app-wide contrast and regression verification.
+- source_spec: `_bmad-output/implementation-artifacts/spec-fix-ai-category-resolution.md`
+  summary: Split oversized AI chat command, formatter, database, and Playwright modules by responsibility.
+  evidence: The touched modules already exceeded the 250 pure-LOC ceiling at baseline; safely restructuring all of them is independent of the category-resolution bugfix and would materially expand its blast radius.

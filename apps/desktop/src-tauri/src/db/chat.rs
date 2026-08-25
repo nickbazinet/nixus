@@ -101,25 +101,40 @@ pub fn insert_message(
     .map_err(AppError::from)
 }
 
-pub fn get_conversation_messages(
+fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
+    Ok(ChatMessage {
+        id: row.get(0)?,
+        conversation_id: row.get(1)?,
+        role: row.get(2)?,
+        content: row.get(3)?,
+        message_type: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+// Internal tool payloads from earlier turns can contaminate later answers with stale
+// ids, so the AI only ever sees conversational turns plus the in-flight tool exchange.
+pub fn get_conversation_messages_for_ai(
     conn: &Connection,
     conversation_id: i64,
 ) -> Result<Vec<ChatMessage>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, conversation_id, role, content, message_type, created_at FROM chat_messages WHERE conversation_id = ?1 ORDER BY id ASC",
+        "SELECT id, conversation_id, role, content, message_type, created_at
+         FROM chat_messages
+         WHERE conversation_id = ?1
+           AND (
+             message_type = 'chat'
+             OR id > COALESCE(
+               (SELECT MAX(id) FROM chat_messages
+                WHERE conversation_id = ?1 AND message_type = 'chat'),
+               0
+             )
+           )
+         ORDER BY id ASC",
     )?;
 
     let messages = stmt
-        .query_map(params![conversation_id], |row| {
-            Ok(ChatMessage {
-                id: row.get(0)?,
-                conversation_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                message_type: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?
+        .query_map(params![conversation_id], map_message_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(messages)
@@ -134,16 +149,7 @@ pub fn get_conversation_messages_for_display(
     )?;
 
     let messages = stmt
-        .query_map(params![conversation_id], |row| {
-            Ok(ChatMessage {
-                id: row.get(0)?,
-                conversation_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                message_type: row.get(4)?,
-                created_at: row.get(5)?,
-            })
-        })?
+        .query_map(params![conversation_id], map_message_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(messages)
@@ -272,5 +278,145 @@ mod tests {
         let conv = create_conversation(&conn, Some(&title), "budget-helper").unwrap();
         // First 40 chars: "This is a very long message that should " -> trimmed removes trailing space
         assert_eq!(conv.title, Some("This is a very long message that should".to_string()));
+    }
+
+    #[test]
+    fn ai_history_excludes_tool_messages_from_earlier_turns() {
+        let conn = setup_test_db();
+        let conv = create_conversation(&conn, Some("c"), "budget-helper").unwrap();
+
+        insert_message(&conn, conv.id, "user", "cloud costs?", "chat").unwrap();
+        insert_message(&conn, conv.id, "assistant", "stale tool call", "tool_call").unwrap();
+        insert_message(
+            &conn,
+            conv.id,
+            "user",
+            "stale tool result id=7",
+            "tool_result",
+        )
+        .unwrap();
+        insert_message(&conn, conv.id, "assistant", "Cloud was $12.00", "chat").unwrap();
+        insert_message(&conn, conv.id, "user", "vacation expenses?", "chat").unwrap();
+        insert_message(
+            &conn,
+            conv.id,
+            "assistant",
+            "current tool call",
+            "tool_call",
+        )
+        .unwrap();
+        insert_message(&conn, conv.id, "user", "current tool result", "tool_result").unwrap();
+
+        let ai = get_conversation_messages_for_ai(&conn, conv.id).unwrap();
+
+        let contents: Vec<&str> = ai.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            vec![
+                "cloud costs?",
+                "Cloud was $12.00",
+                "vacation expenses?",
+                "current tool call",
+                "current tool result",
+            ]
+        );
+    }
+
+    #[test]
+    fn ai_history_keeps_role_alternation_for_the_current_tool_exchange() {
+        let conn = setup_test_db();
+        let conv = create_conversation(&conn, Some("c"), "budget-helper").unwrap();
+
+        insert_message(&conn, conv.id, "user", "vacation expenses?", "chat").unwrap();
+        insert_message(&conn, conv.id, "assistant", "tool call", "tool_call").unwrap();
+        insert_message(&conn, conv.id, "user", "tool result", "tool_result").unwrap();
+
+        let roles: Vec<String> = get_conversation_messages_for_ai(&conn, conv.id)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.role)
+            .collect();
+
+        assert_eq!(roles, vec!["user", "assistant", "user"]);
+    }
+
+    #[test]
+    fn ai_history_drops_tool_messages_left_over_from_a_failed_turn() {
+        let conn = setup_test_db();
+        let conv = create_conversation(&conn, Some("c"), "budget-helper").unwrap();
+
+        insert_message(&conn, conv.id, "user", "cloud costs?", "chat").unwrap();
+        insert_message(&conn, conv.id, "assistant", "orphan tool call", "tool_call").unwrap();
+        insert_message(&conn, conv.id, "user", "orphan tool result", "tool_result").unwrap();
+        insert_message(&conn, conv.id, "user", "vacation expenses?", "chat").unwrap();
+
+        let contents: Vec<String> = get_conversation_messages_for_ai(&conn, conv.id)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.content)
+            .collect();
+
+        assert_eq!(contents, vec!["cloud costs?", "vacation expenses?"]);
+    }
+
+    #[test]
+    fn ai_history_returns_chat_only_when_no_tool_exchange_is_in_flight() {
+        let conn = setup_test_db();
+        let conv = create_conversation(&conn, Some("c"), "budget-helper").unwrap();
+
+        insert_message(&conn, conv.id, "user", "hi", "chat").unwrap();
+        insert_message(&conn, conv.id, "assistant", "hello", "chat").unwrap();
+
+        let ai = get_conversation_messages_for_ai(&conn, conv.id).unwrap();
+
+        assert_eq!(ai.len(), 2);
+        assert!(ai.iter().all(|m| m.message_type == "chat"));
+    }
+
+    #[test]
+    fn ai_history_is_empty_for_a_conversation_with_no_messages() {
+        let conn = setup_test_db();
+        let conv = create_conversation(&conn, Some("c"), "budget-helper").unwrap();
+
+        assert!(get_conversation_messages_for_ai(&conn, conv.id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn display_history_still_hides_the_current_tool_exchange() {
+        let conn = setup_test_db();
+        let conv = create_conversation(&conn, Some("c"), "budget-helper").unwrap();
+
+        insert_message(&conn, conv.id, "user", "vacation expenses?", "chat").unwrap();
+        insert_message(&conn, conv.id, "assistant", "tool call", "tool_call").unwrap();
+        insert_message(&conn, conv.id, "user", "tool result", "tool_result").unwrap();
+
+        let display = get_conversation_messages_for_display(&conn, conv.id).unwrap();
+
+        assert_eq!(display.len(), 1);
+        assert_eq!(display[0].content, "vacation expenses?");
+    }
+
+    #[test]
+    fn stored_history_still_retains_every_tool_message() {
+        let conn = setup_test_db();
+        let conv = create_conversation(&conn, Some("c"), "budget-helper").unwrap();
+
+        insert_message(&conn, conv.id, "user", "cloud costs?", "chat").unwrap();
+        insert_message(&conn, conv.id, "assistant", "stale tool call", "tool_call").unwrap();
+        insert_message(&conn, conv.id, "user", "stale tool result", "tool_result").unwrap();
+        insert_message(&conn, conv.id, "assistant", "Cloud was $12.00", "chat").unwrap();
+        insert_message(&conn, conv.id, "user", "vacation expenses?", "chat").unwrap();
+
+        let stored: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chat_messages WHERE conversation_id = ?1",
+                params![conv.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(stored, 5);
     }
 }

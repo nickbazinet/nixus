@@ -376,6 +376,42 @@ pub fn get_all_budget_categories(conn: &Connection) -> Result<Vec<BudgetCategory
     Ok(categories)
 }
 
+/// Write actions store a single foreign key, so ambiguity is a validation outcome
+/// rather than a reason to pick the first row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CategoryNameMatch {
+    Unique(i64),
+    Missing,
+    Ambiguous,
+}
+
+// SQLite `LOWER` folds ASCII only: accented or non-Latin names must match stored case.
+pub fn resolve_active_category_id_by_name(
+    conn: &Connection,
+    name: &str,
+) -> Result<CategoryNameMatch, AppError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(CategoryNameMatch::Missing);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id FROM budget_categories
+         WHERE deleted_at IS NULL AND LOWER(TRIM(name)) = LOWER(?1)
+         ORDER BY id ASC
+         LIMIT 2",
+    )?;
+    let ids = stmt
+        .query_map(params![trimmed], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    match ids.as_slice() {
+        [] => Ok(CategoryNameMatch::Missing),
+        [id] => Ok(CategoryNameMatch::Unique(*id)),
+        _ => Ok(CategoryNameMatch::Ambiguous),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,5 +581,114 @@ mod tests {
             .unwrap();
         assert!(deleted_at.is_some());
         assert_eq!(hint_count, 0);
+    }
+
+    fn insert_category(conn: &Connection, id: i64, name: &str) {
+        conn.execute(
+            "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order)
+             VALUES (?1, 1, ?2, 0, 9)",
+            params![id, name],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_returns_unique_id_for_exact_name() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "Vacation").unwrap(),
+            CategoryNameMatch::Unique(42)
+        );
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_is_case_insensitive_and_trims_input() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "  vAcAtIoN  ").unwrap(),
+            CategoryNameMatch::Unique(42)
+        );
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_reports_missing_for_unknown_name() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "Cloud").unwrap(),
+            CategoryNameMatch::Missing
+        );
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_rejects_partial_matches() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "Vac").unwrap(),
+            CategoryNameMatch::Missing
+        );
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_reports_missing_for_blank_name() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "   ").unwrap(),
+            CategoryNameMatch::Missing
+        );
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_reports_ambiguous_for_duplicate_active_names() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+        insert_category(&conn, 43, "vacation");
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "Vacation").unwrap(),
+            CategoryNameMatch::Ambiguous
+        );
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_ignores_soft_deleted_duplicates() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+        insert_category(&conn, 43, "Vacation");
+        conn.execute(
+            "UPDATE budget_categories SET deleted_at = datetime('now') WHERE id = 43",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "Vacation").unwrap(),
+            CategoryNameMatch::Unique(42)
+        );
+    }
+
+    #[test]
+    fn resolve_active_category_id_by_name_reports_missing_when_only_match_is_soft_deleted() {
+        let conn = budget_test_db();
+        insert_category(&conn, 42, "Vacation");
+        conn.execute(
+            "UPDATE budget_categories SET deleted_at = datetime('now') WHERE id = 42",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_active_category_id_by_name(&conn, "Vacation").unwrap(),
+            CategoryNameMatch::Missing
+        );
     }
 }

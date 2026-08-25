@@ -28,6 +28,14 @@ function mockApi(page: Page) {
       page.evaluate(
         () => (window as unknown as MockWindow).__MOCK_EXECUTED_ACTIONS__ as string[]
       ),
+    executedActionParams: () =>
+      page.evaluate(
+        () =>
+          (window as unknown as MockWindow).__MOCK_EXECUTED_ACTION_PARAMS__ as Record<
+            string,
+            unknown
+          >[]
+      ),
   };
 }
 
@@ -54,6 +62,8 @@ async function setupTauriMock(page: Page) {
       emitEvent("chat:response-chunk", { chunk, done });
     const executedActions: string[] = [];
     w.__MOCK_EXECUTED_ACTIONS__ = executedActions;
+    const executedActionParams: Record<string, unknown>[] = [];
+    w.__MOCK_EXECUTED_ACTION_PARAMS__ = executedActionParams;
 
     w.__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args: Record<string, unknown>) => {
@@ -92,7 +102,7 @@ async function setupTauriMock(page: Page) {
                     { field: "Date", value: "2026-03-15" },
                   ],
                 },
-                params: { merchant: "Costco", amount_cents: 4500, budget_category_id: 3, date: "2026-03-15" },
+                params: { merchant: "Costco", amount_cents: 4500, category_name: "Groceries", date: "2026-03-15" },
               }) + '\n```';
             } else if (nextResponseType === "approximate") {
               response = "Rent runs ~$430 and groceries ~$260 a month.";
@@ -113,6 +123,7 @@ async function setupTauriMock(page: Page) {
 
           case "execute_chat_action":
             executedActions.push(args.action_type as string);
+            executedActionParams.push(args.params as Record<string, unknown>);
             return Promise.resolve({ success: true, message: "Done. $45.00 expense added for Costco." });
 
           case "list_conversations":
@@ -375,6 +386,10 @@ test.describe("AI Chat Page — Story 7.2", () => {
       "expense added for Costco"
     );
     expect(await mock.executedActions()).toEqual(["create_expense"]);
+
+    const [forwarded] = await mock.executedActionParams();
+    expect(forwarded.category_name).toBe("Groceries");
+    expect(forwarded).not.toHaveProperty("budget_category_id");
   });
 
   test("clicking Cancel shows 'Action cancelled' message [AC5]", async ({ page }) => {
