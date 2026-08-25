@@ -519,6 +519,29 @@ async fn exchange_code_for_tokens(
     })
 }
 
+/// The post-session-store tail of the callback, with all three effects injected so
+/// the ordering invariant is testable without an `AppHandle`.
+///
+/// The invariant, and the whole reason this is a separate function: `signal_success`
+/// is reachable only *after* `activate` has resolved successfully. A failed
+/// activation runs `roll_back_session` and reports the activation's own error
+/// instead, so no path both rolls back and signals success, and no path signals
+/// success before the dataset is active. Emitting first is exactly what let the
+/// previous profile's data be shown under the new identity.
+async fn settle_callback(
+    activate: impl std::future::Future<Output = Result<(), AppError>>,
+    roll_back_session: impl FnOnce(),
+    signal_success: impl FnOnce(),
+) -> Result<(), AppError> {
+    if let Err(error) = activate.await {
+        roll_back_session();
+        return Err(error);
+    }
+
+    signal_success();
+    Ok(())
+}
+
 /// The real callback logic, callable from both the Tauri command and Story
 /// 26.3's synchronous deep-link seam. Returns the intent the completed attempt
 /// carried, which is the seam Stories 35.2 and 35.3 branch on.
@@ -579,27 +602,35 @@ pub(crate) async fn complete_auth_callback(
 
     let intent = resolve_callback_intent(channel, pending.intent);
 
-    // Not `?`, deliberately: the session is stored by the time this runs, so the
-    // user IS signed in whatever the branch does, and `auth:callback-received`
-    // below has to be emitted either way.
-    let linked = crate::commands::cloud_link::resolve_intent(app, &intent, &session.id_token).await;
-
-    info!("Auth callback completed; session stored");
-    // Emitted either way, and strictly after the branch has run: on success a
-    // listener must already be able to see the dataset it landed on, and on
-    // failure the session is real and every reader of it still has to refresh.
-    // The intent is the payload so Stories 35.2/35.3 can branch on it; the
-    // session itself is still re-read over IPC, and nothing keeps the intent
-    // past this emit. Listeners that ignore the payload stay unaffected.
-    let _ = app.emit("auth:callback-received", &intent);
-
-    // The failure is reported by `dispatch_deep_link_url`, not here: it is the one
-    // place that sees *every* way this function can fail, so a single emission
-    // site there covers the pre-session-store stages too.
-    linked?;
+    settle_callback(
+        crate::commands::cloud_link::resolve_intent(app, &intent, &session.id_token),
+        || {
+            // The activation error is what the caller reports, so a keyring fault
+            // during cleanup must not replace it. `clear_cognito_session` drops the
+            // in-process session cache even when the keyring delete fails, so a
+            // discarded error here still cannot leave a usable session behind.
+            let _ = credentials::clear_cognito_session();
+            tracing::error!("Auth callback rolled back: the cloud profile could not be activated");
+        },
+        || {
+            info!("Auth callback completed; session stored and its cloud profile activated");
+            let _ = app.emit("auth:callback-received", &intent);
+        },
+    )
+    .await?;
 
     Ok(intent)
 }
+
+/// The one copy every non-user-facing failure variant degrades to.
+///
+/// Deliberately does not claim the user is signed in: every callback failure rolls
+/// the stored session back, so by the time this is read there is no session left
+/// and "signed in but…" would send the user looking for an account state that does
+/// not exist. Named so the wording lives in exactly one place and the tests below
+/// assert which variants reach it rather than pinning the sentence twice.
+const CLOUD_LINK_GENERIC_FAILURE: &str =
+    "Your Nixus Cloud profile could not be prepared, so you have not been signed in. Please try again.";
 
 /// What the UI is told when a callback fails, at any stage.
 ///
@@ -612,10 +643,7 @@ pub(crate) async fn complete_auth_callback(
 fn cloud_link_failure_message(error: &AppError) -> String {
     match error {
         AppError::Validation { message, .. } | AppError::Auth { message, .. } => message.clone(),
-        _ => {
-            "You are signed in, but your Nixus Cloud profile could not be prepared. Please try again."
-                .to_string()
-        }
+        _ => CLOUD_LINK_GENERIC_FAILURE.to_string(),
     }
 }
 
@@ -1020,7 +1048,14 @@ pub fn sign_out(app: AppHandle) -> Result<(), AppError> {
     // Idempotent per Story 26.2: a missing entry is not an error.
     credentials::clear_cognito_session()?;
 
-    info!("Sign-out completed; local session cleared");
+    // Re-armed only after the keyring is provably clear, so the gate can never be
+    // put back up for a session that is still usable. The active dataset itself is
+    // left alone — a cloud-linked profile stays cloud-linked and simply reads as
+    // signed-out (FR5) — but it is no longer authorized, so the picker has to be
+    // the next thing the user sees rather than that profile's data.
+    crate::commands::datasets::rearm_picker_gate();
+
+    info!("Sign-out completed; local session cleared and the launch picker re-armed");
     Ok(())
 }
 
@@ -1734,10 +1769,28 @@ mod tests {
 
         assert!(!message.contains('/'));
         assert!(!message.contains("nixus.db"));
-        assert_eq!(
-            message,
-            "You are signed in, but your Nixus Cloud profile could not be prepared. Please try again."
-        );
+        assert_eq!(message, CLOUD_LINK_GENERIC_FAILURE);
+    }
+
+    /// Every variant that cannot carry user-facing copy degrades to the one generic
+    /// message, and that message never claims the user is signed in — the callback
+    /// rolls the session back, so there is no account left to point them at.
+    #[test]
+    fn every_non_user_facing_variant_degrades_to_the_rollback_consistent_copy() {
+        for error in [
+            AppError::File {
+                message: "disk full".to_string(),
+            },
+            AppError::Database {
+                message: "no such table: expenses".to_string(),
+            },
+            AppError::NotConfigured,
+            AppError::Unavailable,
+        ] {
+            assert_eq!(cloud_link_failure_message(&error), CLOUD_LINK_GENERIC_FAILURE);
+        }
+
+        assert!(!CLOUD_LINK_GENERIC_FAILURE.contains("You are signed in"));
     }
 
     #[test]
@@ -1758,6 +1811,67 @@ mod tests {
             }),
             "Could not reach the sign-in service. Check your connection and try again."
         );
+    }
+
+    /// Records the callback tail's effects in the order they actually happen, which
+    /// is the only thing the ordering invariant can be asserted against.
+    fn settled_effects(
+        activation: Result<(), AppError>,
+    ) -> (Result<(), AppError>, Vec<&'static str>) {
+        let effects = Mutex::new(Vec::<&'static str>::new());
+        let log = |effect: &'static str| {
+            effects
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(effect);
+        };
+
+        let outcome = tauri::async_runtime::block_on(settle_callback(
+            async {
+                log("activate");
+                activation
+            },
+            || log("roll_back"),
+            || log("signal_success"),
+        ));
+
+        (outcome, effects.into_inner().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// The success half of the invariant: the sign-in is announced only once the
+    /// dataset it landed on is active, so `signal_success` may never precede
+    /// activation and no rollback may run on a healthy login.
+    #[test]
+    fn a_successful_activation_signals_success_only_after_activating() {
+        let (outcome, effects) = settled_effects(Ok(()));
+
+        assert!(outcome.is_ok(), "got {outcome:?}");
+        assert_eq!(effects, vec!["activate", "signal_success"]);
+    }
+
+    /// The failure half, and the regression this exists for: emitting
+    /// `auth:callback-received` before activation succeeded is what let the previous
+    /// profile's data be shown under the newly signed-in identity.
+    #[test]
+    fn a_failed_activation_rolls_back_signals_nothing_and_reports_its_own_error() {
+        let (outcome, effects) = settled_effects(Err(AppError::Validation {
+            message: "The profile you started migrating is no longer open. Please try again."
+                .to_string(),
+            field: Some("source_dataset_id".to_string()),
+        }));
+
+        // The activation's own error, not one invented by the rollback: the caller
+        // turns this into the user-facing copy.
+        match outcome {
+            Err(AppError::Validation { field, .. }) => {
+                assert_eq!(field.as_deref(), Some("source_dataset_id"))
+            }
+            other => panic!("expected the activation error to propagate, got {other:?}"),
+        }
+
+        // Rollback ran, strictly after activation, and success was never signalled.
+        assert_eq!(effects, vec!["activate", "roll_back"]);
+        assert!(!effects.contains(&"signal_success"));
     }
 
     /// Every stage upstream of the branch fails as `AppError::Auth`, so the
@@ -1889,7 +2003,8 @@ mod tests {
     }
 
     #[test]
-    fn current_subject_returns_the_sub_claim_of_a_live_session() {        let resolved = ResolvedSession::Live(session_with_claims(
+    fn current_subject_returns_the_sub_claim_of_a_live_session() {
+        let resolved = ResolvedSession::Live(session_with_claims(
             r#"{"sub":"a1b2c3","email":"user@example.com"}"#,
         ));
 

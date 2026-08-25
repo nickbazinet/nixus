@@ -455,10 +455,30 @@ pub fn load_cognito_session() -> Result<Option<CognitoSession>, AppError> {
     Ok(session)
 }
 
-pub fn clear_cognito_session() -> Result<(), AppError> {
-    clear_cognito_session_uncached()?;
+/// Clears the session, dropping the in-process cache whatever the keyring does,
+/// and still reporting the keyring's own failure.
+///
+/// The ordering is load-bearing for security. `SESSION_CACHE` is authoritative for
+/// every reader — `load_cognito_session` answers from it before touching the
+/// keyring — so a delete that fails must not leave the outgoing session cached, or
+/// `current_subject` and `get_auth_session` go on serving an account that has been
+/// signed out or rolled back. Caching `None` is the fail-closed choice over merely
+/// invalidating: an invalidated cache re-reads the keyring and resurrects the entry
+/// the delete could not remove.
+///
+/// The error still propagates, so `sign_out` surfaces a keyring fault rather than
+/// silently claiming success.
+///
+/// `delete` is injected because the mock keyring store cannot be made to fail a
+/// deletion, and this ordering is only worth having if it is tested.
+fn clear_session_and_cache(delete: impl FnOnce() -> Result<(), AppError>) -> Result<(), AppError> {
+    let deleted = delete();
     cache_session(None);
-    Ok(())
+    deleted
+}
+
+pub fn clear_cognito_session() -> Result<(), AppError> {
+    clear_session_and_cache(clear_cognito_session_uncached)
 }
 
 // Test-only escape hatch: a few tests below write directly to the mock
@@ -727,6 +747,45 @@ mod tests {
         clear_cognito_session().unwrap();
 
         assert!(load_cognito_session().unwrap().is_none());
+    }
+
+    /// A keyring deletion that fails must still leave nothing usable in-process.
+    ///
+    /// `SESSION_CACHE` is what every reader consults first, so a failed delete that
+    /// left it populated would keep `current_subject` and `get_auth_session`
+    /// serving the account that was just signed out — or, on the callback's
+    /// rollback path, the account whose dataset could not be activated.
+    #[test]
+    fn a_failed_keyring_delete_still_leaves_no_usable_session_and_reports_the_failure() {
+        let _g = guard();
+        store_cognito_session(&sample()).unwrap();
+        assert!(
+            load_cognito_session().unwrap().is_some(),
+            "the fixture must start from a readable session, or this proves nothing"
+        );
+
+        let outcome = clear_session_and_cache(|| {
+            Err(AppError::Auth {
+                message: "the keyring refused the delete".to_string(),
+                recoverable: false,
+            })
+        });
+
+        // The keyring's own failure is still reported: `sign_out` has to be able to
+        // tell the user the entry may survive, rather than claim success.
+        match outcome {
+            Err(AppError::Auth { message, .. }) => {
+                assert_eq!(message, "the keyring refused the delete")
+            }
+            other => panic!("the delete failure must propagate, got {other:?}"),
+        }
+
+        // And nothing in-process can still serve it, even though the entry itself
+        // was never removed.
+        assert!(
+            load_cognito_session().unwrap().is_none(),
+            "a failed delete left the outgoing session readable"
+        );
     }
 
     #[test]
