@@ -73,7 +73,11 @@ export function DatasetPicker({ defaultLocalOpen }: DatasetPickerProps) {
   const activeDatasetId = useActiveDatasetId();
   const selectDataset = useSelectDataset();
   const createDataset = useCreateDataset();
-  const entries = datasets.data ?? [];
+  // Local profiles only, and this is a correctness filter rather than a tidy-up: a cloud-linked
+  // dataset may be opened only by the account that owns it, so offering one here would offer a click
+  // the Rust boundary refuses — and, under the wrong session, would name another account's profile on
+  // screen. Cloud datasets are reached through the Nixus Cloud entry above, never through this list.
+  const entries = (datasets.data ?? []).filter((entry) => entry.kind === "local");
 
   // Whether the local-profile disclosure is open. Plain component state seeded once on purpose: the
   // arrival context is the only thing that opens it, so nothing is remembered between runs and the

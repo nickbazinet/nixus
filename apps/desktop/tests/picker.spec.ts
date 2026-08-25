@@ -1714,7 +1714,7 @@ test.describe("marking the profile already open", () => {
     await expect(page.getByTestId("picker-profile-menu")).toHaveCount(2);
   });
 
-  test("a cloud-linked row is left exactly as it was, badge included", async ({
+  test("a cloud-linked row is not in the local list at all", async ({
     page,
   }) => {
     await setupTauriMock(page, {
@@ -1735,14 +1735,22 @@ test.describe("marking the profile already open", () => {
     await page.goto("/picker");
     await expandLocalProfiles(page);
 
+    // The registry carries two entries and the local list renders one: a cloud-linked dataset may be
+    // opened only by the account that owns it, so offering it here would offer a click Rust refuses —
+    // and, under another account's session, would put that account's own label on this screen.
     const rows = page.getByTestId("picker-dataset-row");
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(1);
+    await expect(rows.nth(0)).toHaveText(/Default/);
+    // The label itself, not just the row count: a leaked address is the actual disclosure.
+    await expect(page.getByTestId("picker-local-panel")).not.toContainText(
+      "user@example.com",
+    );
 
-    // The mark follows the open profile, not the row kind: Default is open, the cloud row is not,
-    // and the cloud row gains nothing at all from this change.
+    // The mark follows the open profile, and Default is the one open.
     await expect(rows.nth(0).getByTestId("picker-active-badge")).toHaveCount(1);
-    await expect(rows.nth(1).getByTestId("picker-active-badge")).toHaveCount(0);
-    await expect(rows.nth(1)).toHaveText("user@example.com");
+
+    // Still not a dead end: Nixus Cloud above is how a cloud profile is reached.
+    await expect(page.getByTestId("picker-login-cloud-button")).toBeEnabled();
   });
 
   test("no row is marked open until the backend says which one is", async ({ page }) => {
@@ -2229,7 +2237,9 @@ test.describe("renaming a local profile", () => {
     await expect(page.getByTestId("picker-new-profile-button")).toBeEnabled();
   });
 
-  test("a cloud-linked profile is offered no rename at all", async ({ page }) => {
+  test("a cloud-linked profile is offered no rename because it is not listed", async ({
+    page,
+  }) => {
     await setupTauriMock(page, {
       needsPicker: true,
       datasets: [
@@ -2247,10 +2257,9 @@ test.describe("renaming a local profile", () => {
     await page.goto("/picker");
     await expandLocalProfiles(page);
 
-    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
-
-    // One menu for the one local row: a cloud-linked label is its account's and its deletion is out
-    // of scope, so the whole affordance is absent rather than present-and-refused.
+    // One row and one menu, both Default's: a cloud-linked label is its account's, so the profile is
+    // absent from this list entirely rather than listed-and-refused.
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
     const menu = page.getByTestId("picker-profile-menu");
     await expect(menu).toHaveCount(1);
     await expect(menu).toHaveAttribute("aria-label", "Manage Default");
@@ -2464,7 +2473,7 @@ test.describe("deleting a local profile", () => {
     await page.goto("/picker");
     await expandLocalProfiles(page);
 
-    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
     await expect(page.getByTestId("picker-profile-menu")).toHaveCount(1);
     await expect(page.getByTestId("picker-profile-menu")).toHaveAttribute(
       "aria-label",
