@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { queryKeys } from "@/lib/constants";
+import { clearProfileScopedState } from "@/lib/datasetSwitch";
 import type { AuthState } from "@/lib/types";
 
 /**
@@ -103,20 +105,26 @@ export function useSignIn() {
   });
 }
 
+/**
+ * `clearProfileScopedState` — the canonical switch sweep — rather than key-by-key invalidation: the
+ * profile that was open is no longer authorized to be open, so every cached row and profile-scoped
+ * `localStorage` entry belongs to an account that has just left, and invalidation would keep serving
+ * them while refetching.
+ *
+ * Swept strictly before the navigation, which is what leaves `/profile` rather than replacing its
+ * content in place. Rust's `sign_out` re-arms the launch-picker gate, so `/picker` is the only
+ * destination the root `beforeLoad` will hold; a navigation that cannot complete still leaves nothing
+ * of the signed-out account behind.
+ */
 export function useSignOut() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   return useMutation({
     mutationFn: () => invoke<void>("sign_out"),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.auth.session });
-      // A cloud-linked profile stays cloud-linked and simply reads as signed-out,
-      // which is a change to the derived badge, not to the dataset.
-      queryClient.invalidateQueries({ queryKey: queryKeys.activeProfile });
-      // Removed, not invalidated: the previous account's profile must not stay
-      // rendered while a refetch is in flight.
-      queryClient.removeQueries({ queryKey: queryKeys.profile });
-      queryClient.removeQueries({ queryKey: queryKeys.tfsaAccumulatedLimit });
+    onSuccess: async () => {
+      clearProfileScopedState(queryClient);
+      await navigate({ to: "/picker" });
     },
   });
 }

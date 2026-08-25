@@ -12,6 +12,9 @@ import {
   type MockInstance,
 } from "vitest";
 import { useAuthSession, useSignIn, useSignOut } from "@/hooks/useAuth";
+import { queryKeys } from "@/lib/constants";
+import { IMPORT_DRAFT_STORAGE_KEY } from "@/lib/datasetSwitch";
+import { installLocalStorageMock } from "@/test/localStorageMock";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -19,6 +22,7 @@ declare global {
 
 const invokeMock = vi.fn();
 const listenMock = vi.fn();
+const navigateMock = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
@@ -26,6 +30,12 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listenMock(...args),
+}));
+
+// Sign-out now leaves the route it was triggered from, so the hook reads the router. Mocked rather
+// than wrapped in a real router: this suite drives hooks directly and mounts no route tree.
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigateMock,
 }));
 
 // The hook results have to escape the tree: this suite drives them directly instead of
@@ -53,6 +63,10 @@ function DisabledSessionHarness() {
   return null;
 }
 
+// jsdom's own localStorage is a method-less stub, so the sweep's storage half needs the in-memory
+// Storage every other suite here installs.
+const localStorageMock = installLocalStorageMock();
+
 describe("useAuth", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -60,6 +74,7 @@ describe("useAuth", () => {
   let queryClient: QueryClient;
   let invalidateSpy: MockInstance<QueryClient["invalidateQueries"]>;
   let removeSpy: MockInstance<QueryClient["removeQueries"]>;
+  let clearSpy: MockInstance<QueryClient["clear"]>;
   let unlistenMocks: Mock[];
 
   function render(node: ReactNode) {
@@ -104,6 +119,9 @@ describe("useAuth", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     invokeMock.mockReset();
     listenMock.mockReset();
+    navigateMock.mockReset();
+    navigateMock.mockResolvedValue(undefined);
+    localStorageMock.clear();
     unlistenMocks = [];
     // listen must resolve a Promise: the hook awaits it, and a synchronous return would
     // make the cleaned-flag branch unreachable.
@@ -117,6 +135,7 @@ describe("useAuth", () => {
     });
     invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
     removeSpy = vi.spyOn(queryClient, "removeQueries");
+    clearSpy = vi.spyOn(queryClient, "clear");
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -132,6 +151,7 @@ describe("useAuth", () => {
     queryClient.clear();
     invalidateSpy.mockRestore();
     removeSpy.mockRestore();
+    clearSpy.mockRestore();
   });
 
   it("reads the session through the zero-arg command", async () => {
@@ -265,20 +285,66 @@ describe("useAuth", () => {
     });
   });
 
-  it("invalidates the session after signing out", async () => {
+  it("sweeps every profile-scoped cache and storage key after signing out", async () => {
+    // Given a signed-in account whose profile has cached rows and a resumable import draft
+    invokeMock.mockResolvedValue(null);
+    queryClient.setQueryData(queryKeys.profile, { email: "a@b.c" });
+    queryClient.setQueryData(queryKeys.tfsaAccumulatedLimit, 95000);
+    localStorage.setItem(IMPORT_DRAFT_STORAGE_KEY, "{}");
+
+    // When the account signs out
+    await act(async () => {
+      await signOut.mutateAsync();
+    });
+
+    // Then nothing of that account survives — the whole cache, not a hand-listed subset, because a
+    // key nobody remembered to list is exactly how the previous account's figures stay on screen
+    expect(invokeMock.mock.calls[0]).toEqual(["sign_out"]);
+    expect(clearSpy).toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.profile)).toBeUndefined();
+    expect(queryClient.getQueryData(queryKeys.tfsaAccumulatedLimit)).toBeUndefined();
+    // The canonical sweep, not a bare `queryClient.clear()`: the draft belongs to the profile too,
+    // and only `clearProfileScopedState` reaches it.
+    expect(localStorage.getItem(IMPORT_DRAFT_STORAGE_KEY)).toBeNull();
+  });
+
+  it("leaves for the picker only after the sweep has run", async () => {
     invokeMock.mockResolvedValue(null);
 
     await act(async () => {
       await signOut.mutateAsync();
     });
 
-    // Then the auth key and the derived signed-in badge are refetched, and nothing else:
-    // signing out of a cloud-linked profile changes the badge, never the dataset.
-    expect(invokeMock.mock.calls[0]).toEqual(["sign_out"]);
-    expect(invalidatedKeys()).toEqual([
-      ["auth", "session"],
-      ["active-profile"],
-    ]);
+    // Rust re-arms the launch-picker gate on sign-out, so `/picker` is the one destination the root
+    // beforeLoad will hold — landing anywhere else bounces straight back here anyway.
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock.mock.calls[0]).toEqual([{ to: "/picker" }]);
+
+    // Ordering, not merely both-happened: a navigation that rendered before the sweep would paint
+    // the signed-out account's cached rows on the way out.
+    expect(clearSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      navigateMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("neither sweeps nor navigates when sign-out itself fails", async () => {
+    // Given a keyring that refuses to clear
+    invokeMock.mockRejectedValue({
+      type: "auth",
+      message: "Your session could not be cleared.",
+      recoverable: true,
+    });
+    queryClient.setQueryData(queryKeys.profile, { email: "a@b.c" });
+
+    await act(async () => {
+      await signOut.mutateAsync().catch(() => undefined);
+    });
+
+    // Then the user stays signed in, in place: a swept cache plus a live session would read as
+    // signed out while the account is still stored.
+    expect(clearSpy).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.profile)).toEqual({ email: "a@b.c" });
   });
 
   it("invalidates the session when the deep-link callback event fires", async () => {
@@ -302,24 +368,11 @@ describe("useAuth", () => {
     ]);
   });
 
-  // Row 10 of Story 30.2's degradation matrix, and the only test of it anywhere.
-  // TanStack Query removes by key PREFIX, and ["tfsa-accumulated-limit"] shares no
-  // prefix with ["profile"], so the Story 28.2 removal does not reach it. A dev
-  // reasoning "the profile cache is cleared, so the derived figure is too" ships
-  // the previous account's dollar amount — a wrong number and a privacy leak at once.
-  it("removes the accumulated TFSA figure after signing out", async () => {
-    invokeMock.mockResolvedValue(null);
-
-    await act(async () => {
-      await signOut.mutateAsync();
-    });
-
-    // removeQueries, never invalidateQueries: invalidation leaves the previous
-    // account's figure rendered while the refetch is in flight.
-    expect(removedKeys()).toContainEqual(["tfsa-accumulated-limit"]);
-    expect(invalidatedKeys()).not.toContainEqual(["tfsa-accumulated-limit"]);
-  });
-
+  // Row 10 of Story 30.2's degradation matrix. TanStack Query removes by key PREFIX, and
+  // ["tfsa-accumulated-limit"] shares no prefix with ["profile"], so the Story 28.2 removal does not
+  // reach it. A dev reasoning "the profile cache is cleared, so the derived figure is too" ships the
+  // previous account's dollar amount — a wrong number and a privacy leak at once. Sign-out now sweeps
+  // wholesale, so the surviving prefix hazard is the *sign-in* path, which still removes key by key.
   it("removes the accumulated TFSA figure when a different account signs in", async () => {
     invokeMock.mockResolvedValue({ status: "LoggedOut" });
 

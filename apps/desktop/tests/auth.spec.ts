@@ -110,6 +110,11 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
     let session = opts.session;
     let activeProfile = opts.activeProfile;
 
+    // Mirrors the real `PICKER_PASSED` AtomicBool, including the one thing that unlatches it:
+    // `sign_out` re-arms the gate Rust-side, so a mock that stayed latched would let a sign-out test
+    // "pass" on a destination the product would have bounced away from.
+    let needsPicker = false;
+
     // The whole command surface is recorded, not just the auth commands, so per-command counts are
     // derived by filtering. Mirrors the `__APPLIED_TEMPLATE_CALLS` idiom in onboarding.spec.ts.
     const ipcCalls: IpcCall[] = [];
@@ -220,6 +225,7 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
             if (opts.activeProfileAfterSignOut !== undefined) {
               activeProfile = opts.activeProfileAfterSignOut;
             }
+            needsPicker = true;
             return opts.sign_out === undefined
               ? Promise.resolve(null)
               : settle(opts.sign_out);
@@ -234,7 +240,9 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               setup_incomplete: false,
             });
           case "check_picker_gate":
-            return Promise.resolve({ needs_picker: false });
+            return Promise.resolve({ needs_picker: needsPicker });
+          case "get_active_dataset_id":
+            return Promise.resolve(activeProfile?.dataset_id ?? null);
           case "get_budget_groups":
             return Promise.resolve(groups);
           case "get_budget_categories":
@@ -410,6 +418,28 @@ const PICKER_DATASETS: MockDataset[] = [
     created_at: "2026-01-01T00:00:00+00:00",
   },
 ];
+
+/**
+ * The same registry plus the cloud-linked profile a sign-out has just left behind.
+ *
+ * Present in the registry and absent from the picker's local list is the whole point: sign-out
+ * preserves the dataset's cloud-linked identity, and the list is local-only.
+ */
+const PICKER_DATASETS_WITH_CLOUD: MockDataset[] = [
+  ...PICKER_DATASETS,
+  {
+    id: CLOUD_PROFILE_SIGNED_IN.dataset_id,
+    label: CLOUD_PROFILE_SIGNED_IN.label,
+    kind: "cloud-linked",
+    cognito_sub: "sub-1",
+    linked_from: null,
+    is_default: false,
+    created_at: "2026-02-01T00:00:00+00:00",
+  },
+];
+
+/** The resumable-import-draft key, from `src/lib/datasetSwitch.ts`. */
+const IMPORT_DRAFT_KEY = "nixus:import-draft.v1";
 
 /**
  * The picker really rendered, rather than merely the URL having changed: a destination stuck on
@@ -622,7 +652,7 @@ test.describe("profile panel and sign out", () => {
     await expect(page.getByTestId("profile-menu-name")).toHaveCount(0);
   });
 
-  test("sign-out invokes sign_out once and returns the panel to signed out", async ({
+  test("sign-out invokes sign_out once and lands on the picker", async ({
     page,
   }) => {
     // The profile stays cloud-linked across a sign-out and simply reads as signed-out, so both
@@ -632,6 +662,7 @@ test.describe("profile panel and sign out", () => {
       activeProfile: CLOUD_PROFILE_SIGNED_IN,
       sessionAfterSignOut: { status: "LoggedOut" },
       activeProfileAfterSignOut: CLOUD_PROFILE_SIGNED_OUT,
+      datasets: PICKER_DATASETS_WITH_CLOUD,
     });
     await page.goto("/");
 
@@ -643,11 +674,52 @@ test.describe("profile panel and sign out", () => {
     await expect(panel).toBeVisible();
     await page.getByTestId("profile-menu-sign-out").click();
 
+    // Left the surface entirely rather than replacing its content in place: the profile that was open
+    // is no longer authorized to be open, so the picker is the only honest destination.
+    await expect(page).toHaveURL(/\/picker$/);
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
     await expect(panel).toHaveCount(0);
-    await expect(trigger).toHaveAttribute("data-auth-state", "logged-out");
-    await expect(trigger).toHaveAttribute("data-cloud-status", "signed-out");
-
     expect(await countIpcCalls(page, "sign_out")).toBe(1);
+
+    // And the profile it just left is not offered back: it is still cloud-linked in the registry, so
+    // it stays out of the local list.
+    await page.getByTestId("picker-local-disclosure").click();
+    const rows = page.getByTestId("picker-dataset-row");
+    await expect(rows).toHaveCount(PICKER_DATASETS.length);
+    await expect(page.getByTestId("picker-local-panel")).not.toContainText(
+      CLOUD_PROFILE_SIGNED_IN.label,
+    );
+  });
+
+  test("sign-out sweeps the signed-out profile's own stored draft on the way out", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      sessionAfterSignOut: { status: "LoggedOut" },
+      activeProfileAfterSignOut: CLOUD_PROFILE_SIGNED_OUT,
+      datasets: PICKER_DATASETS_WITH_CLOUD,
+    });
+    await page.goto("/");
+
+    // Given a resumable import draft belonging to the account that is about to leave
+    await page.evaluate((key: string) => {
+      localStorage.setItem(key, "{}");
+    }, IMPORT_DRAFT_KEY);
+
+    const trigger = page.getByTestId("profile-menu-trigger");
+    await expect(trigger).toHaveAttribute("data-auth-state", "logged-in");
+    await trigger.click();
+    await page.getByTestId("profile-menu-sign-out").click();
+
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+
+    // Then it is gone by the time the picker is on screen — the account's own work must not be
+    // readable by whoever opens a profile next on this machine.
+    expect(
+      await page.evaluate((key: string) => localStorage.getItem(key), IMPORT_DRAFT_KEY),
+    ).toBeNull();
   });
 });
 
