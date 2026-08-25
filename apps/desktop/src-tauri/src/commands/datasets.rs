@@ -116,8 +116,52 @@ fn find_registered(entries: Vec<Dataset>, dataset_id: &str) -> Result<Dataset, A
         })
 }
 
+/// Recoverable: signing in as that account is exactly what makes the request
+/// legitimate. The message names no email, id or subject — the caller just failed
+/// to prove it may know anything about this profile.
+fn cloud_authorization_error() -> AppError {
+    AppError::Auth {
+        message: "This profile belongs to a different Nixus Cloud account. Sign in to that account to open it."
+            .to_string(),
+        recoverable: true,
+    }
+}
+
+/// Keyed on the Cognito subject rather than on the dataset id, so a caller cannot
+/// name its way into another account's data. Pure, and split out of the command,
+/// so every kind/session combination is unit-testable without a keyring — which is
+/// the only way the reject cases get exercised at all.
+fn authorize_selection(entry: &Dataset, current_subject: Option<&str>) -> Result<(), AppError> {
+    match &entry.kind {
+        DatasetKind::Local => Ok(()),
+        DatasetKind::CloudLinked => {
+            if is_signed_in(entry, current_subject) {
+                Ok(())
+            } else {
+                Err(cloud_authorization_error())
+            }
+        }
+    }
+}
+
+/// The webview's only way to change the active dataset, and therefore the
+/// authorization boundary for one (AD-10). `select_dataset_now` stays the trusted
+/// internal seam — startup's Default auto-select and the post-login activation are
+/// both authorized by construction — so the check lives here rather than there.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn select_dataset(app: AppHandle, dataset_id: String) -> Result<(), AppError> {
+    let entry = find_registered(datasets::load_registry(&app)?, &dataset_id)?;
+
+    // Resolved only for a cloud-linked dataset, matching `get_active_profile`:
+    // `current_subject` can refresh an expired session over the network, and
+    // opening a local profile must never trigger that.
+    let subject = if entry.kind == DatasetKind::CloudLinked {
+        crate::commands::auth::current_subject().await.ok()
+    } else {
+        None
+    };
+    authorize_selection(&entry, subject.as_deref())?;
+
     select_dataset_now(&app, &dataset_id)?;
     refresh_ai_state(&app, &dataset_id).await;
     Ok(())
@@ -268,6 +312,16 @@ pub fn mark_picker_passed() {
 
 fn picker_passed() -> bool {
     PICKER_PASSED.load(Ordering::SeqCst)
+}
+
+/// Puts the launch picker back up for the rest of this run.
+///
+/// The one thing that unlatches the gate, and it is deliberately not a command:
+/// only `sign_out` calls it, because the picker is where a signed-out user has to
+/// land — otherwise the app stays pointed at the cloud-linked dataset the account
+/// just stopped owning.
+pub(crate) fn rearm_picker_gate() {
+    PICKER_PASSED.store(false, Ordering::SeqCst);
 }
 
 /// Same `{ needs_X: bool }` shape as `OnboardingStatus`'s primary field — one boolean the frontend's
@@ -585,5 +639,77 @@ mod tests {
         // second click must not put the gate back up mid-run.
         mark_picker_passed();
         assert!(!check_picker_gate().needs_picker);
+
+        // Sign-out is the one thing that unlatches it: a signed-out user must land
+        // on the picker rather than stay inside the profile they no longer own.
+        rearm_picker_gate();
+        assert!(check_picker_gate().needs_picker);
+
+        // And the gate is still a latch afterwards, not a toggle — re-arming is not
+        // a one-shot that leaves the flag stuck down.
+        mark_picker_passed();
+        assert!(!check_picker_gate().needs_picker);
+        rearm_picker_gate();
+        assert!(check_picker_gate().needs_picker);
+    }
+
+    /// Every dataset-kind × session combination the public selection boundary can
+    /// be handed, as an exhaustive matrix rather than a happy path plus one reject.
+    ///
+    /// Each cloud fixture's `cognito_sub` differs from the session subject it is
+    /// paired against wherever the expectation is a refusal, so a rule that stopped
+    /// comparing subjects entirely would fail here rather than pass by coincidence.
+    #[test]
+    fn only_a_local_dataset_or_a_subject_matched_cloud_one_may_be_selected() {
+        let local = entry("local-1", DatasetKind::Local);
+        let cloud_sub_1 = Dataset {
+            cognito_sub: Some("sub-1".to_string()),
+            ..entry("cloud-1", DatasetKind::CloudLinked)
+        };
+        let unlinked_cloud = entry("cloud-2", DatasetKind::CloudLinked);
+        // A local profile that records a subject anyway: hand-edited or left over
+        // from a migration source, and still never auth-aware.
+        let local_with_sub = Dataset {
+            cognito_sub: Some("sub-1".to_string()),
+            ..entry("local-2", DatasetKind::Local)
+        };
+
+        let allowed: [(&Dataset, Option<&str>); 4] = [
+            (&local, None),
+            (&local, Some("sub-1")),
+            (&local_with_sub, Some("sub-2")),
+            (&cloud_sub_1, Some("sub-1")),
+        ];
+        for (entry, subject) in allowed {
+            assert!(
+                authorize_selection(entry, subject).is_ok(),
+                "{} must be selectable with subject {subject:?}",
+                entry.id
+            );
+        }
+
+        let refused: [(&Dataset, Option<&str>); 4] = [
+            // Another account's profile, named directly — the attack this closes.
+            (&cloud_sub_1, Some("sub-2")),
+            // Signed out entirely: no session, so no cloud dataset is authorized.
+            (&cloud_sub_1, None),
+            // Two absent subjects must not compare equal.
+            (&unlinked_cloud, None),
+            (&unlinked_cloud, Some("sub-1")),
+        ];
+        for (entry, subject) in refused {
+            let error = authorize_selection(entry, subject)
+                .expect_err("an unauthorized cloud selection must be refused");
+            match error {
+                AppError::Auth { recoverable, message } => {
+                    assert!(recoverable, "signing in as that account is the remedy");
+                    // The refusal must not echo back what the caller failed to prove
+                    // it may know about this profile.
+                    assert!(!message.contains("sub-"), "{message}");
+                    assert!(!message.contains(&entry.id), "{message}");
+                }
+                other => panic!("expected AppError::Auth, got {other:?}"),
+            }
+        }
     }
 }
