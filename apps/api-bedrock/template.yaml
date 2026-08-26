@@ -88,35 +88,6 @@ Parameters:
     Description: >-
       GET /v1/ai/status does two consistent reads and no model call, so it keeps a
       short timeout rather than inheriting the streaming budget.
-  HostedAiReservedConcurrency:
-    Type: Number
-    Default: 0
-    AllowedValues:
-      - 0
-      - 10
-    Description: >-
-      Reserved concurrency for the hosted-AI Lambda. Exactly two values are legal.
-
-      0 is the INERT default and the only value the initial deployment may use: a
-      reservation of zero throttles the function to zero concurrent executions, so
-      the stack can be created and inspected while being unable to invoke Bedrock or
-      spend a cent. It also reserves nothing from the account pool, which is what
-      makes it deployable at all - see below.
-
-      10 is the ACTIVE value AD-4 mandates, and it is a prerequisite for enabling
-      GLOBAL, not an optional tuning knob. Reserving 10 requires the account's Lambda
-      concurrent-execution quota to exceed 10 by at least the 50 unreserved-capacity
-      floor AWS enforces; at the default quota of 50 the reservation is rejected and
-      the stack rolls back. Raise the quota first, then set
-      HOSTED_AI_RESERVED_CONCURRENCY to 10 on the protected production GitHub
-      environment and deploy (docs/runbooks/hosted-ai-rollout.md). The deploy job
-      asserts the deployed reservation equals that configured value, so a rejected or
-      silently ignored reservation fails the deployment rather than passing quietly.
-
-      Unbounded or absent is not an option: without a reservation one runaway caller
-      could consume the whole account's concurrency, which is the abuse bound AD-4
-      and AD-14 rely on.
-
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -364,9 +335,14 @@ Resources:
       CodeUri: ./
       Handler: api.handler
       Role: !GetAtt HostedAiExecutionRole.Arn
-      # Never a literal: the initial deployment must be inert (0) and the flip to
-      # AD-4's 10 must be a reviewed parameter change gated on the quota increase.
-      ReservedConcurrentExecutions: !Ref HostedAiReservedConcurrency
+      # No ReservedConcurrentExecutions, by user decision (2026-08-26). This account's
+      # Lambda quota is 50 and AWS refuses any reservation that would drop unreserved
+      # capacity below its 50 floor, so every positive reservation was rejected and the
+      # only deployable value was 0 - which throttles the function to zero executions.
+      # The function therefore draws on the account's shared 50 unreserved executions.
+      # The abuse bounds AD-4/AD-14 relied on are unchanged and live elsewhere: the
+      # Cognito authorizer at the edge, the 10 RPS / burst 20 stage throttle above, and
+      # the atomic per-user + GLOBAL charged_count caps in DynamoDB.
       LoggingConfig:
         LogGroup: !Ref HostedAiLogGroup
       Environment:
@@ -455,8 +431,11 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmDescription: >-
-        Reserved concurrency exhaustion on the hosted-AI function, which
-        surfaces to callers as hosted_unavailable.
+        Concurrency throttling on the hosted-AI function. With no function-level
+        reservation this fires when the ACCOUNT's shared unreserved pool is exhausted -
+        by this function or by any other - and surfaces to callers as
+        hosted_unavailable. That shared exposure is the accepted trade of removing the
+        reservation, so this alarm is the control that makes it visible.
       Namespace: AWS/Lambda
       MetricName: Throttles
       Dimensions:

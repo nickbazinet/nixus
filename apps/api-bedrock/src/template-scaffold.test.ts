@@ -300,45 +300,28 @@ describe("AD-4 compute topology", () => {
     expect(new Set(entryPoints.map((match) => match[0])).size).toBe(1);
   });
 
-  /* AD-4 mandates a reservation. Absent or unbounded, one runaway caller could take
-   * the whole account's concurrency, which is the abuse bound AD-4 and AD-14 rest on. */
-  it("always reserves concurrency, by parameter reference rather than a literal", () => {
-    expect(props(fn)).toHaveProperty("ReservedConcurrentExecutions");
-    expect(props(fn).ReservedConcurrentExecutions).toEqual(
-      ref("HostedAiReservedConcurrency")
-    );
-    // A literal would make the inert-vs-active choice a code edit rather than a
-    // reviewed parameter flip.
-    expect(typeof props(fn).ReservedConcurrentExecutions).not.toBe("number");
+  /* Superseded by the 2026-08-26 capacity decision. AWS refuses any reservation that
+   * would drop this account's unreserved concurrency below its 50 floor, and the account
+   * quota IS 50 - so the only deployable value was 0, which throttles the function to
+   * zero executions and makes it permanently unable to serve a request. The user waived
+   * the reservation and accepted the account's shared 50. The property and its parameter
+   * must therefore be absent, not present-and-zero. */
+  it("declares no function-level concurrency reservation at all", () => {
+    expect(props(fn)).not.toHaveProperty("ReservedConcurrentExecutions");
+    expect(PARAMETERS).not.toHaveProperty("HostedAiReservedConcurrency");
+    expect(TEMPLATE_TEXT).not.toContain("ReservedConcurrentExecutions:");
+    expect(TEMPLATE_TEXT).not.toContain("HostedAiReservedConcurrency");
   });
 
-  /* 0 is inert: the function is throttled to zero executions, so the stack can be
-   * created and inspected while being unable to invoke Bedrock. It is also the only
-   * value deployable before the account's Lambda quota is raised, because reserving
-   * 0 takes nothing from the unreserved pool. */
-  it("defaults the reservation to the inert value for the initial deployment", () => {
-    expect(PARAMETERS.HostedAiReservedConcurrency).toBeDefined();
-    expect(PARAMETERS.HostedAiReservedConcurrency!.Type).toBe("Number");
-    expect(PARAMETERS.HostedAiReservedConcurrency!.Default).toBe(0);
-  });
+  /* A reservation of 0 is the trap this replaces: it looks like "no limit configured"
+   * in a diff and is in fact a hard stop at zero concurrent executions. */
+  it("never reintroduces the reservation as a literal, a zero, or a default", () => {
+    expect(props(fn).ReservedConcurrentExecutions).toBeUndefined();
 
-  it("permits exactly the inert and active values, and nothing else", () => {
-    const allowed = PARAMETERS.HostedAiReservedConcurrency!.AllowedValues;
-
-    expect(allowed).toEqual([0, 10]);
-    // Any third value would let someone quietly pick a reservation AD-4 never
-    // sanctioned, or one that silently fails the account's unreserved-capacity floor.
-    expect(allowed).toHaveLength(2);
-    for (const rejected of [1, 5, 9, 11, 50, 100, -1]) {
-      expect(allowed, `${rejected} must not be selectable`).not.toContain(rejected);
+    for (const [, resource] of Object.entries(RESOURCES)) {
+      const properties = (resource.Properties ?? {}) as Record<string, unknown>;
+      expect(properties).not.toHaveProperty("ReservedConcurrentExecutions");
     }
-  });
-
-  it("keeps the active value at the AD-4 mandated 10", () => {
-    const allowed = PARAMETERS.HostedAiReservedConcurrency!.AllowedValues as number[];
-    const active = allowed.filter((value) => value !== 0);
-
-    expect(active).toEqual([10]);
   });
 
   it("serves both routes from that one function with response streaming enabled", () => {
@@ -532,6 +515,60 @@ describe("Bedrock identity is one direct model in its own region", () => {
     const outputs = TEMPLATE.Outputs as Record<string, { Value: unknown }>;
     expect(outputs.BedrockModelIdEcho!.Value).toEqual(ref("BedrockModelId"));
     expect(outputs.BedrockRegionEcho!.Value).toEqual(ref("BedrockRegion"));
+  });
+});
+
+/*
+ * Removing the function-level reservation removed ONE of AD-4/AD-14's layered abuse
+ * bounds. These assert the remaining layers are all still in place, because the waiver
+ * was of the reservation specifically - not of the bounding it contributed to.
+ */
+describe("the remaining abuse bounds survive the reservation waiver", () => {
+  const api = singleResourceOfType("AWS::Serverless::Api");
+  const role = singleResourceOfType("AWS::IAM::Role");
+
+  it("keeps the stage throttle at 10 RPS / burst 20", () => {
+    const settings = props(api).MethodSettings;
+
+    expect(settings).toHaveLength(1);
+    expect(settings[0].ThrottlingRateLimit).toBe(10);
+    expect(settings[0].ThrottlingBurstLimit).toBe(20);
+    expect(settings[0].HttpMethod).toBe("*");
+    expect(settings[0].ResourcePath).toBe("/*");
+  });
+
+  it("keeps the Cognito authorizer as the edge bound on non-premium callers", () => {
+    expect(props(api).Auth.DefaultAuthorizer).toBe("CognitoAuthorizer");
+    expect(
+      props(api).Auth.Authorizers.CognitoAuthorizer.AuthorizationScopes
+    ).toEqual(["nixus-api/ai.invoke"]);
+  });
+
+  /* The per-user and GLOBAL charged_count caps are the hard stop, and they are only
+   * enforceable through the transactional grant on the one retained table. */
+  it("keeps the transactional grant the atomic user + GLOBAL caps depend on", () => {
+    const table = props(role).Policies.find(
+      (policy: { PolicyName: string }) => policy.PolicyName === "hosted-ai-table"
+    );
+    const actions = table.PolicyDocument.Statement.flatMap(
+      (statement: { Action: string[] }) => statement.Action
+    );
+
+    expect(actions).toEqual(["dynamodb:GetItem", "dynamodb:TransactWriteItems"]);
+    // A direct write would let the Lambda bypass the condition check that enforces the
+    // caps, so these must stay absent even now that a layer was removed.
+    expect(actions).not.toContain("dynamodb:PutItem");
+    expect(actions).not.toContain("dynamodb:UpdateItem");
+  });
+
+  it("still alarms on throttling, now as the account-pool exposure it became", () => {
+    const throttleAlarm = resourcesOfType("AWS::CloudWatch::Alarm").find(
+      ([, alarm]) => props(alarm).MetricName === "Throttles"
+    );
+
+    expect(throttleAlarm, "the Throttles alarm is missing").toBeDefined();
+    expect(props(throttleAlarm![1]).AlarmDescription).toMatch(/ACCOUNT/);
+    expect(props(throttleAlarm![1]).Threshold).toBe(1);
   });
 });
 
