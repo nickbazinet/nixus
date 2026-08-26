@@ -1,7 +1,6 @@
 import {
   BedrockRuntimeClient,
   ConverseStreamCommand,
-  CountTokensCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 import type {
   ContentBlock,
@@ -34,18 +33,14 @@ export type BedrockStreamEvent =
       readonly outputTokens: number;
     };
 
-export interface CountTokensArgs {
+export interface ConverseStreamArgs {
   readonly system: string;
   readonly messages: readonly PreparedMessage[];
+  readonly maxOutputTokens: number;
   readonly abortSignal?: AbortSignal;
 }
 
-export interface ConverseStreamArgs extends CountTokensArgs {
-  readonly maxOutputTokens: number;
-}
-
 export interface BedrockPort {
-  countInputTokens(args: CountTokensArgs): Promise<number>;
   converseStream(args: ConverseStreamArgs): AsyncIterable<BedrockStreamEvent>;
 }
 
@@ -114,57 +109,22 @@ export function toConverseMessages(
   }));
 }
 
-/*
- * A profile-shaped id (`us.`, `eu.`, `apac.`, `global.`) is the one wrong value that
- * looks right: it is accepted by the SDK and then rejects CountTokens at runtime, which
- * classifies as `503 hosted_unavailable` and reads as a Bedrock outage rather than a
- * misconfiguration. Refusing it here names the real fault instead.
- */
-const INFERENCE_PROFILE_PREFIX = /^(us|eu|apac|global)\./;
-
 export function modelId(): string {
-  const id = process.env.BEDROCK_MODEL_ID?.trim();
+  const id = process.env.BEDROCK_MODEL_ID;
   if (!id) {
     throw new Error("BEDROCK_MODEL_ID is not configured");
-  }
-  if (INFERENCE_PROFILE_PREFIX.test(id)) {
-    throw new Error(
-      `BEDROCK_MODEL_ID must be a direct foundation model, not an inference profile: ${id}`
-    );
   }
   return id;
 }
 
-/*
- * The Bedrock region is owned explicitly, never inherited from the Lambda's own
- * region: the API stack runs in `us-east-1` while the selected direct model is
- * only reachable in `eu-west-2`. An inherited region would send both CountTokens
- * and ConverseStream to a region where the model does not exist, which surfaces as
- * a generic validation failure rather than a configuration error.
- *
- * The shape is checked because a whitespace-padded or malformed value is accepted by
- * the SDK's client config and only fails at endpoint resolution, far from its cause.
- */
-const AWS_REGION_SHAPE = /^[a-z]{2}(-[a-z]+)+-\d$/;
-
-export function modelRegion(): string {
-  const region = process.env.BEDROCK_REGION?.trim();
-  if (!region) {
-    throw new Error("BEDROCK_REGION is not configured");
-  }
-  if (!AWS_REGION_SHAPE.test(region)) {
-    throw new Error(`BEDROCK_REGION is not a valid AWS region: ${region}`);
-  }
-  return region;
-}
-
 let runtimeClient: BedrockRuntimeClient | undefined;
 
-/* One client for both commands, so CountTokens and ConverseStream can never drift
- * onto different regions. */
+/* No explicit region: the model is a us-east-1 cross-region inference profile and the
+ * Lambda runs in us-east-1, so the SDK's own resolution is correct and one less thing
+ * can disagree with the stack. */
 function getRuntimeClient(): BedrockRuntimeClient {
   if (!runtimeClient) {
-    runtimeClient = new BedrockRuntimeClient({ region: modelRegion() });
+    runtimeClient = new BedrockRuntimeClient({});
   }
   return runtimeClient;
 }
@@ -177,27 +137,6 @@ export function setRuntimeClientForTesting(
 
 export function createBedrockPort(): BedrockPort {
   return {
-    async countInputTokens({ system, messages, abortSignal }) {
-      const response = await getRuntimeClient().send(
-        new CountTokensCommand({
-          modelId: modelId(),
-          input: {
-            converse: {
-              system: toConverseSystem(system),
-              messages: toConverseMessages(messages),
-            },
-          },
-        }),
-        { abortSignal }
-      );
-
-      const inputTokens = response.inputTokens;
-      if (typeof inputTokens !== "number" || !Number.isFinite(inputTokens)) {
-        throw new Error("CountTokens returned no input token count");
-      }
-      return inputTokens;
-    },
-
     converseStream({ system, messages, maxOutputTokens, abortSignal }) {
       return streamConverse({ system, messages, maxOutputTokens, abortSignal });
     },
