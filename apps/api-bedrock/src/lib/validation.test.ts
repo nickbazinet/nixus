@@ -7,7 +7,6 @@ import {
   OPERATIONS,
   base64DecodedByteLength,
   checkContentEncoding,
-  checkInputTokenCeiling,
   validateInvokeRequest,
 } from "./validation.ts";
 
@@ -100,7 +99,7 @@ describe("closed top-level schema", () => {
 
   it("rejects a client-supplied model id as an unknown field", () => {
     const failure = expectFailure(
-      chatBody({ model_id: "anthropic.claude-sonnet-4-6" })
+      chatBody({ model_id: "us.anthropic.claude-sonnet-4-6" })
     );
     expect(failure.status).toBe(400);
     expect(failure.message).toContain("model_id");
@@ -443,22 +442,10 @@ describe("base64 and media size ceilings", () => {
 describe("serialized JSON ceilings exclude media", () => {
   it("pins the architecture's concrete per-operation limits", () => {
     expect(OPERATION_LIMITS).toEqual({
-      chat: { serializedJsonBytes: 1048576, inputTokens: 32768, outputTokens: 4096 },
-      statement_import: {
-        serializedJsonBytes: 262144,
-        inputTokens: 64000,
-        outputTokens: 8192,
-      },
-      project_advice: {
-        serializedJsonBytes: 262144,
-        inputTokens: 8192,
-        outputTokens: 1024,
-      },
-      trends_insight: {
-        serializedJsonBytes: 262144,
-        inputTokens: 8192,
-        outputTokens: 1024,
-      },
+      chat: { serializedJsonBytes: 1048576, outputTokens: 4096 },
+      statement_import: { serializedJsonBytes: 262144, outputTokens: 8192 },
+      project_advice: { serializedJsonBytes: 262144, outputTokens: 1024 },
+      trends_insight: { serializedJsonBytes: 262144, outputTokens: 1024 },
     });
   });
 
@@ -501,23 +488,27 @@ describe("serialized JSON ceilings exclude media", () => {
   });
 });
 
-describe("input token ceiling", () => {
-  it("passes a count at or under the per-operation ceiling", () => {
-    expect(checkInputTokenCeiling("chat", 32768)).toBeUndefined();
-    expect(checkInputTokenCeiling("statement_import", 64000)).toBeUndefined();
-    expect(checkInputTokenCeiling("project_advice", 8192)).toBeUndefined();
-    expect(checkInputTokenCeiling("trends_insight", 0)).toBeUndefined();
+/*
+ * Input is bounded in BYTES, not tokens: quota is one unit per request, so there is no
+ * upstream token count to gate on and no input-token ceiling to enforce. Only the output
+ * ceiling stays token-shaped, because only the model can apply it.
+ */
+describe("no input-token ceiling exists to be enforced", () => {
+  it("declares only a byte ceiling and an output-token ceiling per operation", () => {
+    for (const [operation, limits] of Object.entries(OPERATION_LIMITS)) {
+      expect(Object.keys(limits).sort(), operation).toEqual([
+        "outputTokens",
+        "serializedJsonBytes",
+      ]);
+    }
   });
 
-  it("rejects an overage as pre-reservation 400 validation, not a size error", () => {
-    const failure = checkInputTokenCeiling("chat", 32769);
-    expect(failure).toMatchObject({ code: "validation", status: 400 });
-    expect(failure?.message).toContain("32768");
-  });
-
-  it("applies each operation's own ceiling", () => {
-    expect(checkInputTokenCeiling("project_advice", 8193)?.status).toBe(400);
-    expect(checkInputTokenCeiling("statement_import", 8193)).toBeUndefined();
+  /* A reintroduced input-token limit would need an upstream count to compare against,
+   * which is exactly the call this design removed. */
+  it("exports no input-token ceiling check", async () => {
+    const module = await import("./validation.ts");
+    expect(module).not.toHaveProperty("checkInputTokenCeiling");
+    expect(Object.keys(module).filter((name) => /inputToken/i.test(name))).toEqual([]);
   });
 });
 

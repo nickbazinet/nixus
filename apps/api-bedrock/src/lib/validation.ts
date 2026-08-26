@@ -25,27 +25,28 @@ const MIB = 1024 * 1024;
 export interface OperationLimits {
   /** Serialized request JSON, excluding base64 media payloads. */
   readonly serializedJsonBytes: number;
-  readonly inputTokens: number;
   readonly outputTokens: number;
 }
-
+/*
+ * Input is bounded in bytes, not tokens: quota is one unit per request, so the ceilings
+ * below plus MAX_DECODED_MEDIA_BYTES are computed from the request itself, before any
+ * reservation and without an upstream call. Output stays token-bounded because only the
+ * model can enforce it, through inferenceConfig.maxTokens.
+ */
 export const OPERATION_LIMITS: Readonly<
   Record<CloudAiOperation, OperationLimits>
 > = {
-  chat: { serializedJsonBytes: 1 * MIB, inputTokens: 32_768, outputTokens: 4096 },
+  chat: { serializedJsonBytes: 1 * MIB, outputTokens: 4096 },
   statement_import: {
     serializedJsonBytes: 256 * KIB,
-    inputTokens: 64_000,
     outputTokens: 8192,
   },
   project_advice: {
     serializedJsonBytes: 256 * KIB,
-    inputTokens: 8192,
     outputTokens: 1024,
   },
   trends_insight: {
     serializedJsonBytes: 256 * KIB,
-    inputTokens: 8192,
     outputTokens: 1024,
   },
 };
@@ -325,10 +326,10 @@ function validateStatementImportShape(
  * with the assistant or repeats a role.
  *
  * Caught here, at step 1, so a malformed history is a canonical `400 validation`
- * before `CountTokens` is ever billed. Left to `ConverseStream` it would surface as
+ * before any quota unit is reserved. Left to `ConverseStream` it would surface as
  * a generic exception and be classified `503 hosted_unavailable` - which the closed
  * table treats as an outage, so the desktop would fall back to BYO and be rejected
- * there for the identical reason, having paid for a CountTokens call on the way.
+ * there for the identical reason, having spent a quota unit on the way.
  *
  * A TRAILING assistant turn is deliberately allowed: prefilling the response with a
  * final assistant message is a documented, supported pattern.
@@ -468,23 +469,5 @@ export function validateInvokeRequest(rawBody: string | undefined): ValidationRe
       messages,
       limits,
     },
-  };
-}
-
-/**
- * AD-8 step 3's ceiling check. Runs on the CountTokens result, after reservation
- * eligibility has been established and before any quota is reserved, so an
- * oversized prompt costs the caller nothing.
- */
-export function checkInputTokenCeiling(
-  operation: CloudAiOperation,
-  inputTokens: number
-): PreOutputFailure | undefined {
-  const limit = OPERATION_LIMITS[operation].inputTokens;
-  if (inputTokens <= limit) return undefined;
-  return {
-    code: "validation",
-    status: 400,
-    message: `Input is ${inputTokens} tokens, over the ${limit}-token ceiling for '${operation}'.`,
   };
 }
