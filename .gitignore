@@ -7,6 +7,7 @@ apps/web/.output/
 apps/web/.nitro/
 apps/web/.tanstack/
 apps/web/.lighthouseci/
+apps/api-bedrock/.aws-sam/
 
 # Tauri build/generated
 apps/desktop/src-tauri/target/
