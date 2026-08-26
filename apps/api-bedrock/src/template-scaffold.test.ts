@@ -388,18 +388,14 @@ describe("AD-4 compute topology", () => {
     expect(props(logGroup).RetentionInDays).toBe(14);
   });
 
-  it("passes the table, model, and Bedrock region through the environment and no secrets", () => {
+  it("passes the table and model through the environment and no secrets", () => {
     const env = props(fn).Environment.Variables as Record<string, unknown>;
-    expect(Object.keys(env).sort()).toEqual([
-      "BEDROCK_MODEL_ID",
-      "BEDROCK_REGION",
-      "TABLE_NAME",
-    ]);
+    expect(Object.keys(env).sort()).toEqual(["BEDROCK_MODEL_ID", "TABLE_NAME"]);
     expect(env.TABLE_NAME).toEqual(ref("HostedAiTable"));
     expect(env.BEDROCK_MODEL_ID).toEqual(ref("BedrockModelId"));
-    // Without this the runtime client inherits us-east-1, where the model does not
-    // exist, and every Bedrock call fails as a validation error.
-    expect(env.BEDROCK_REGION).toEqual(ref("BedrockRegion"));
+    // No BEDROCK_REGION: the profile is a us-east-1 profile and the Lambda runs there,
+    // so a second source of truth for the region could only disagree with the stack.
+    expect(env).not.toHaveProperty("BEDROCK_REGION");
 
     expect(resourcesOfType("AWS::SecretsManager::Secret")).toEqual([]);
     expect(resourcesOfType("AWS::SSM::Parameter")).toEqual([]);
@@ -407,83 +403,56 @@ describe("AD-4 compute topology", () => {
 });
 
 /*
- * The replacement for the rejected cross-region inference profile. Every probed
- * `us.anthropic.*` profile answered Runtime CountTokens with "The provided model
- * doesn't support counting tokens", which makes AD-8's pre-reservation gate
- * unimplementable on a profile; this bare model in eu-west-2 returned a count.
+ * Model identity. Quota is one unit per request and token counts come from the stream's
+ * own metadata, so the service makes no Runtime CountTokens call - which is what makes a
+ * cross-region inference profile legal here again. Profiles do not support CountTokens;
+ * nothing asks them to any more.
  */
-describe("Bedrock identity is one direct model in its own region", () => {
+describe("Bedrock identity is the approved cross-region inference profile", () => {
   const role = singleResourceOfType("AWS::IAM::Role");
 
-  it("defaults to the bare Claude Sonnet 4.6 model in eu-west-2", () => {
-    expect(PARAMETERS.BedrockModelId!.Default).toBe(
-      "anthropic.claude-sonnet-4-6"
-    );
-    expect(PARAMETERS.BedrockRegion!.Default).toBe("eu-west-2");
-  });
-
-  /* An AllowedPattern would still admit an unreviewed sibling model - "some Anthropic
-   * model" is not what the CountTokens/ConverseStream evidence covers. A one-entry
-   * AllowedValues makes CloudFormation itself refuse anything else. */
-  it("enumerates exactly one approved model and one approved region, not a pattern", () => {
+  it("defaults to the approved Sonnet 4.6 profile and enumerates only that value", () => {
+    expect(PARAMETERS.BedrockModelId!.Default).toBe("us.anthropic.claude-sonnet-4-6");
     expect(PARAMETERS.BedrockModelId!.AllowedValues).toEqual([
-      "anthropic.claude-sonnet-4-6",
+      "us.anthropic.claude-sonnet-4-6",
     ]);
-    expect(PARAMETERS.BedrockRegion!.AllowedValues).toEqual(["eu-west-2"]);
-
-    expect(PARAMETERS.BedrockModelId).not.toHaveProperty("AllowedPattern");
-    expect(PARAMETERS.BedrockRegion).not.toHaveProperty("AllowedPattern");
+    expect(PARAMETERS.BedrockModelId!.AllowedValues).toContain(
+      PARAMETERS.BedrockModelId!.Default
+    );
   });
 
-  it("makes every unapproved model and region unselectable", () => {
+  it("makes every unapproved model unselectable", () => {
     const models = PARAMETERS.BedrockModelId!.AllowedValues as string[];
-    const regions = PARAMETERS.BedrockRegion!.AllowedValues as string[];
 
     for (const rejected of [
-      "us.anthropic.claude-sonnet-4-6",
+      "anthropic.claude-sonnet-4-6",
+      "anthropic.claude-3-7-sonnet-20250219-v1:0",
       "eu.anthropic.claude-sonnet-4-6",
-      "apac.anthropic.claude-sonnet-4-6",
-      "global.anthropic.claude-sonnet-4-6",
-      "anthropic.claude-3-5-sonnet-20241022-v2:0",
       "amazon.nova-pro-v1:0",
       "",
     ]) {
       expect(models, `${rejected} must not be selectable`).not.toContain(rejected);
     }
-
-    for (const rejected of ["us-east-1", "eu-west-1", "eu-west-3", "ca-central-1", ""]) {
-      expect(regions, `${rejected} must not be selectable`).not.toContain(rejected);
-    }
-
     expect(models).toHaveLength(1);
-    expect(regions).toHaveLength(1);
   });
 
-  /* The default must be inside its own AllowedValues, or every deployment that omits an
-   * override fails validation - a trap that only surfaces at deploy time. */
-  it("keeps each default inside its own allowed set", () => {
-    expect(PARAMETERS.BedrockModelId!.AllowedValues).toContain(
-      PARAMETERS.BedrockModelId!.Default
-    );
-    expect(PARAMETERS.BedrockRegion!.AllowedValues).toContain(
-      PARAMETERS.BedrockRegion!.Default
-    );
+  /* The region is no longer a stack input at all: adding one back would create a value
+   * that can disagree with the region the profile and the Lambda actually live in. */
+  it("declares no Bedrock region parameter, reference, environment variable, or output", () => {
+    expect(PARAMETERS).not.toHaveProperty("BedrockRegion");
+    expect(TEMPLATE.Outputs).not.toHaveProperty("BedrockRegionEcho");
+    expect(TEMPLATE_TEXT).not.toContain("BEDROCK_REGION");
+    expect(TEMPLATE_TEXT).not.toContain("eu-west-2");
+
+    // Structural, not textual: the parameter's own prose explains why no region input
+    // exists, so a raw-text scan would match that explanation.
+    expect(JSON.stringify(TEMPLATE.Resources)).not.toContain('"BedrockRegion"');
   });
 
-  it("declares no inference-profile parameter or resource anywhere", () => {
-    expect(PARAMETERS).not.toHaveProperty("BedrockInferenceProfileArn");
-    expect(PARAMETERS).not.toHaveProperty("BedrockFoundationModelArnPattern");
-    expect(TEMPLATE_TEXT).not.toContain("us.anthropic");
-    expect(resourcesOfType("AWS::Bedrock::ApplicationInferenceProfile")).toEqual([]);
-
-    for (const [, resource] of Object.entries(RESOURCES)) {
-      expect(String(resource.Type)).not.toContain("InferenceProfile");
-    }
-  });
-
-  /* The grant is derived from the same two parameters the Lambda invokes with, so an
-   * IAM resource cannot drift from the model or region actually called. */
-  it("scopes the Bedrock grant to that one derived foundation-model ARN", () => {
+  /* Streaming through a profile is authorized against BOTH the profile and the
+   * foundation models it fans out to; the fan-out is per region, which is the one place
+   * AWS IAM requires a region wildcard on the resource. */
+  it("scopes the Bedrock grant to the profile ARN plus its destination models", () => {
     const bedrock = (
       props(role).Policies as {
         PolicyName: string;
@@ -493,26 +462,39 @@ describe("Bedrock identity is one direct model in its own region", () => {
 
     expect(bedrock!.PolicyDocument.Statement).toHaveLength(1);
     const statement = bedrock!.PolicyDocument.Statement[0]!;
-    expect(statement.Action).toEqual([
-      "bedrock:CountTokens",
-      "bedrock:InvokeModelWithResponseStream",
-    ]);
-    expect(statement.Resource).toEqual({
-      __cfn: "Sub",
-      value:
-        "arn:${AWS::Partition}:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}",
-    });
 
-    // A direct model does not fan out, so the region wildcard the profile needed is
-    // now a privilege escalation with no purpose.
-    expect(JSON.stringify(statement.Resource)).not.toContain("bedrock:*");
-    expect(JSON.stringify(statement.Resource)).not.toContain("inference-profile");
+    expect(statement.Resource).toEqual([
+      ref("BedrockInferenceProfileArn"),
+      ref("BedrockFoundationModelArnPattern"),
+    ]);
+    expect(PARAMETERS.BedrockFoundationModelArnPattern!.Default).toContain(
+      "foundation-model/anthropic.claude-sonnet-4-6"
+    );
   });
 
-  it("exposes the deployed model and region so live probes use the real identity", () => {
+  /* The action the service no longer calls must not be granted. A standing grant for a
+   * call nothing makes is how token-based billing gets reintroduced by accident. */
+  it("grants streaming only, never bedrock:CountTokens", () => {
+    const actions = (
+      props(role).Policies as {
+        PolicyDocument: { Statement: { Action: string[] }[] };
+      }[]
+    ).flatMap((policy) =>
+      policy.PolicyDocument.Statement.flatMap((statement) => statement.Action)
+    );
+
+    expect(actions).toContain("bedrock:InvokeModelWithResponseStream");
+    expect(actions).not.toContain("bedrock:CountTokens");
+    expect(actions).not.toContain("bedrock:InvokeModel");
+
+    // Structural, not textual: the IAM comment deliberately names the action it refuses
+    // to grant, and a raw-text scan would match that comment.
+    expect(JSON.stringify(props(role).Policies)).not.toContain("CountTokens");
+  });
+
+  it("exposes the deployed model so a live stream probe uses the real identity", () => {
     const outputs = TEMPLATE.Outputs as Record<string, { Value: unknown }>;
     expect(outputs.BedrockModelIdEcho!.Value).toEqual(ref("BedrockModelId"));
-    expect(outputs.BedrockRegionEcho!.Value).toEqual(ref("BedrockRegion"));
   });
 });
 
@@ -604,9 +586,8 @@ describe("IAM grants exact actions only", () => {
   ).flatMap((policy) => policy.PolicyDocument.Statement);
   const actions = statements.flatMap((statement) => statement.Action).sort();
 
-  it("grants only the six architecture-listed actions", () => {
+  it("grants only the five actions the service actually makes", () => {
     expect(actions).toEqual([
-      "bedrock:CountTokens",
       "bedrock:InvokeModelWithResponseStream",
       "dynamodb:GetItem",
       "dynamodb:TransactWriteItems",
@@ -623,6 +604,7 @@ describe("IAM grants exact actions only", () => {
     expect(actions).not.toContain("dynamodb:PutItem");
     expect(actions).not.toContain("dynamodb:UpdateItem");
     expect(actions).not.toContain("bedrock:InvokeModel");
+    expect(actions).not.toContain("bedrock:CountTokens");
   });
 
   it("uses the explicit role rather than a managed basic-execution policy", () => {
