@@ -49,7 +49,7 @@ describe("the model capability probes are recorded with their exact identity", (
   });
 
   it("records the direct model and region the CountTokens gate now passes on", () => {
-    expect(RUNBOOK).toContain("anthropic.claude-3-7-sonnet-20250219-v1:0");
+    expect(RUNBOOK).toContain("anthropic.claude-sonnet-4-6");
     expect(RUNBOOK).toContain("--region eu-west-2");
     expect(RUNBOOK).toContain("CountTokens` PASSES");
 
