@@ -1,11 +1,16 @@
 import { useTranslation } from "react-i18next";
 import { BuyMeACoffeeIcon, BUY_ME_A_COFFEE_URL, Separator } from "@nixus/shared";
 
+import { PRIVACY_PAGE_PATHS, TERMS_PAGE_PATHS } from "./LegalPage";
+import { localeFromLanguage } from "@/lib/localePaths";
+
 const GITHUB_URL = "https://github.com/nickbazinet/nixus";
 const CONTACT_EMAIL = "support@nixus.nicolasbazinet.net";
 
 export function SiteFooter() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = localeFromLanguage(i18n.language);
+
   return (
     <footer
       role="contentinfo"
@@ -25,6 +30,26 @@ export function SiteFooter() {
                 className="rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 {t("footer.linkGithub")}
+              </a>
+              <Separator
+                orientation="vertical"
+                className="hidden h-4 md:block"
+              />
+              <a
+                href={TERMS_PAGE_PATHS[locale]}
+                className="rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {t("footer.linkTerms")}
+              </a>
+              <Separator
+                orientation="vertical"
+                className="hidden h-4 md:block"
+              />
+              <a
+                href={PRIVACY_PAGE_PATHS[locale]}
+                className="rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                {t("footer.linkPrivacy")}
               </a>
               <Separator
                 orientation="vertical"
