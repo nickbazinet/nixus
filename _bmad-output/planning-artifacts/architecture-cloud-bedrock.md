@@ -152,7 +152,7 @@ sam init --runtime nodejs22.x --architecture arm64 --name nixus-bedrock-api --ap
 
 **Idempotency and timing:**
 - `period_key` (UTC `YYYY-MM`), a `reservation_id`, and three server-generated idempotency tokens — one each for reserve, refund, and finalize — are computed exactly once at the start of request handling and threaded through every subsequent call. `client_request_id` from the request body remains tracing-only and is never used as an idempotency token.
-- Reserve, refund, and finalize are each their own `TransactWriteItems` call, each passed the matching `ClientRequestToken`, so a retried SDK call cannot double-reserve, double-refund, or double-finalize. **All three atomically update both the user's `USAGE#` item and the `GLOBAL` `USAGE#` item in the same transaction** — none of the three is ever applied to only one of the two. The IAM action backing all three is `dynamodb:TransactWriteItems` — there is no separate `dynamodb:ConditionCheckItem` IAM action to grant.
+- Reserve, refund, and finalize are each their own `TransactWriteItems` call, each passed the matching `ClientRequestToken`, so a retried SDK call cannot double-reserve, double-refund, or double-finalize. **All three atomically update both the user's `USAGE#` item and the `GLOBAL` `USAGE#` item in the same transaction** — none of the three is ever applied to only one of the two. IAM must authorize the transaction and its underlying operations: `dynamodb:TransactWriteItems`, `dynamodb:ConditionCheckItem`, and `dynamodb:UpdateItem`.
 - Finalize is the transaction that records the outcome of a committed (post-`messageStart`) invocation: it increments the applicable `completed_count` or `failed_after_commit_count` on both the user and `GLOBAL` items, the matching per-operation settled counter, and the aggregate `input_tokens`/`output_tokens` — on both items. Finalize never changes `charged_count`; only reserve and refund do.
 - The period is computed once at request start and reused verbatim during refund/finalize — it is never re-derived from "the current month" later in the request, which would risk operating on the wrong period near a month boundary.
 
@@ -350,7 +350,7 @@ The adopted decision is Terms/Privacy-only disclosure — **no in-app consent ga
 - Never expose `HostedAiState` via a Tauri command or a frontend hook — it is Rust-internal to `ai/hosted_bedrock.rs` and `ai/hosted_state.rs`, and must be invalidated on any `subject_sub` mismatch before use.
 - Never route `commands/settings.rs::test_ai_connection` through the hosted path — it tests BYO credentials only.
 - Never persist or log `messages`, `system`, any message `content` block, or any Bedrock response text in Nixus-controlled storage; never log the statement file path from `cc_parser.rs`.
-- Never claim `dynamodb:ConditionCheckItem` as a grantable IAM action — the transactions above are authorized entirely by `dynamodb:TransactWriteItems`.
+- Keep `dynamodb:ConditionCheckItem` and `dynamodb:UpdateItem` scoped to the quota table: AWS authorizes the transaction's underlying condition and update operations separately.
 
 ### Pattern Examples
 
