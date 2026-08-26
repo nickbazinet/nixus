@@ -1,8 +1,8 @@
 ---
-title: 'Activate hosted AI with a CountTokens-capable direct model'
+title: 'Activate hosted AI with request-based US Bedrock quota'
 type: 'feature'
 created: '2026-08-26'
-status: 'done'
+status: 'in-progress'
 review_loop_iteration: 0
 baseline_commit: '7d82c8a5bb7909e11c1205285ae6bc318fd60e39'
 context:
@@ -15,24 +15,24 @@ context:
 
 ## Intent
 
-**Problem:** The deployed hosted-AI gateway was inert because its Sonnet 4.6 inference profile rejected the mandatory pre-reservation `CountTokens` call and no premium user configuration existed.
+**Problem:** Hosted AI moved to London solely to preserve a `CountTokens` preflight even though customer quota accounting is request-based and the product should remain in `us-east-1`.
 
-**Approach:** Replace the unsupported inference profile with direct Claude 3.7 Sonnet in `eu-west-2`, which live testing proves supports both required calls; preserve the `us-east-1` API stack while making the Bedrock runtime region explicit. Run Lambda in the account's existing unreserved concurrency pool, bounded by API throttling and atomic user/global quotas, and grant the confirmed Cognito account a 200-request monthly quota.
+**Approach:** Restore the `us.anthropic.claude-sonnet-4-6` inference profile in `us-east-1`, remove the `CountTokens` preflight, and charge exactly one quota unit for each actual `ConverseStream` request. Keep request-byte, media-size, output-token, API-throttle, and user/global monthly limits as the cost controls.
 
 ## Boundaries & Constraints
 
-**Always:** Keep `CountTokens` before reservation; keep server-owned model/region; scope IAM to the one direct foundation-model ARN; update EN/FR disclosures from US cross-region processing to direct London processing; deploy infrastructure only through GitHub Actions; preserve API throttling and atomic user/global quota enforcement; keep `GLOBAL` disabled until all rollout gates pass.
+**Always:** Charge one `charged_count` unit per actual model invocation; keep the model server-owned; validate request bytes and media before reservation; reserve user/global quota atomically before `ConverseStream`; enforce output ceilings; deploy only through GitHub Actions; keep privacy-safe logs and fallback semantics.
 
-**Ask First:** Any fallback from direct Claude 3.7 Sonnet, any region other than `eu-west-2`, any monthly user limit other than 200, or enabling `GLOBAL` before all acceptance evidence exists.
+**Ask First:** Any region outside `us-east-1`, any model other than Sonnet 4.6, any monthly user limit other than 200, or any change from request-based accounting.
 
-**Never:** Remove/weaken token counting, use an inference profile for the replacement, deploy locally, expose model selection to clients, overwrite an existing user configuration silently, put email/content in DynamoDB, or enable `GLOBAL` implicitly.
+**Never:** Reintroduce `CountTokens`, issue AWS credentials to devices, deploy locally, expose model selection to clients, count quota by tokens, overwrite user configuration silently, or persist email/content in DynamoDB.
 
 ## I/O & Edge-Case Matrix
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |----------|--------------|---------------------------|----------------|
-| Direct model gate | Claude 3.7 Sonnet in `eu-west-2` | `CountTokens` and `ConverseStream` use the same bare model ID and region | Do not deploy active traffic until both live probes pass |
-| Lambda capacity | Account regional quota is 50 | Function uses the shared unreserved pool; API and DynamoDB quotas remain authoritative cost controls | No function-level reservation or quota-increase dependency |
+| Hosted request | Sonnet 4.6 profile in `us-east-1` | One atomic quota reservation, then one `ConverseStream`; success consumes one request | Pre-commit failures refund once; post-commit failures remain charged |
+| Oversized input | JSON/media exceeds server byte limits | Reject before quota reservation or model invocation | Canonical validation/size error; no fallback for malformed input |
 | Premium grant | Confirmed Cognito user `nicobaz010@live.ca` | `USER#<sub>/CONFIG`, premium true, monthly limit 200 | Conditional write refuses overwrite |
 | Global state | No `GLOBAL/CONFIG` item or disabled item | Hosted traffic remains unavailable | Never create enabled global state implicitly |
 
@@ -40,14 +40,19 @@ context:
 
 ## Code Map
 
-- `apps/api-bedrock/src/lib/bedrock-client.ts` -- runtime client currently inherits Lambda region; add required `BEDROCK_REGION` ownership.
-- `apps/api-bedrock/template.yaml` -- replace inference-profile parameters/IAM with the direct `eu-west-2` Claude 3.7 foundation model; expose model region to Lambda; use the account's shared unreserved pool.
-- `apps/api-bedrock/src/{lib/bedrock-client,template-scaffold}.test.ts` -- lock direct model ID, region, ARN, CountTokens/stream command parity, and no inference-profile resource.
-- `.github/workflows/api-bedrock-ci.yml`, `src/deploy-pipeline.test.ts` -- remove obsolete inference-profile and concurrency inputs; assert the deployed function has no reservation.
-- `_bmad-output/planning-artifacts/architecture-cloud-bedrock.md`, `architecture/.../ARCHITECTURE-SPINE.md` -- record the user-approved direct-model/region amendment.
-- `apps/web/src/locales/{en,fr}.json`, `LegalPage.test.tsx` -- disclose direct London Bedrock processing accurately.
-- `docs/runbooks/hosted-ai-rollout.md`, `docs/project-context.md` -- replace the resolved CountTokens blocker with the streaming-verification and pending-quota gates.
-- DynamoDB `nixus-bedrock-api-HostedAiTable-VE6FZHJTJCBE` -- operational conditional write keyed only by Cognito `sub`.
+_Reflects the 2026-08-27 amendment (request-based quota, no CountTokens, profile in
+`us-east-1`). The earlier direct-model/eu-west-2 entries are superseded._
+
+- `apps/api-bedrock/src/lib/bedrock-client.ts` -- one command only (`ConverseStreamCommand`); no `CountTokensCommand`, no `countInputTokens`, no `BEDROCK_REGION`; the client inherits the Lambda's `us-east-1`.
+- `apps/api-bedrock/src/handlers/invoke.ts` -- no pre-reservation counting step; order is transport guard, schema/byte validation, eligibility, reserve, stream. Token figures come from stream metadata for observability.
+- `apps/api-bedrock/src/lib/validation.ts` -- `OperationLimits` is bytes + output tokens only; `checkInputTokenCeiling` removed; 4 MiB media cap unchanged.
+- `apps/api-bedrock/template.yaml` -- `BedrockModelId` pinned to `us.anthropic.claude-sonnet-4-6`, `BedrockInferenceProfileArn` + `BedrockFoundationModelArnPattern` restored, IAM grants streaming only (never `bedrock:CountTokens`), no `BedrockRegion`/`BEDROCK_REGION`/`BedrockRegionEcho`, no reserved concurrency.
+- `apps/api-bedrock/src/{lib/bedrock-client,lib/validation,handlers/invoke,template-scaffold}.test.ts` -- lock: no CountTokens command/IAM/action, one Bedrock call per request, byte/media rejection before reservation, profile identity, request-based `charged_count`.
+- `.github/workflows/api-bedrock-ci.yml`, `src/deploy-pipeline.test.ts` -- profile ARN as a deploy secret, model pinned from one job-level constant, post-deploy assertion of the model on stack output + Lambda env plus absence of an orphaned `BEDROCK_REGION`, and the unreserved-concurrency assertion.
+- `_bmad-output/planning-artifacts/architecture-cloud-bedrock.md`, `architecture/.../ARCHITECTURE-SPINE.md` -- 2026-08-27 amendment withdrawing AD-8's token gate and restoring the profile.
+- `apps/web/src/locales/{en,fr}.json`, `LegalPage.test.tsx`, `README.md` -- US cross-region processing, qualified as possibly outside the reader's country of residence; limit described as a monthly request count.
+- `docs/runbooks/hosted-ai-rollout.md`, `docs/project-context.md` -- request-based quota, no CountTokens gate or London gate, capability evidence marked as owed a re-run through the profile.
+- DynamoDB: existing `GLOBAL/CONFIG` (enabled, 1000) and the premium `USER#<sub>/CONFIG` (200) are untouched by this change.
 
 ## Tasks & Acceptance
 
@@ -81,8 +86,52 @@ deliberately and **not** in the runbook's reusable command text, which is parame
 | Enabled PDF-compatible build | **PASS** — GitHub Actions run `32998849688`; no Lambda reservation, model/region assertions, PITR, and API smoke tests all passed. |
 
 Additional live evidence: model lifecycle is `ACTIVE`; PDF streamed `PDF_OK`; image
-counted and streamed `IMAGE_OK`; `maxTokens: 8192` returned `LIMIT_OK`. Regional RPM/TPM
+streamed `IMAGE_OK`; `maxTokens: 8192` returned `LIMIT_OK`. Regional RPM/TPM
 increases are deferred until real traffic demonstrates a need.
+
+**All rows above describe the superseded direct-model/eu-west-2 deployment.** They are kept
+as the historical record; see the 2026-08-27 entry below for what production now runs and
+what evidence is owed against the new identity.
+
+## Design Amendment — 2026-08-27 (user-approved): request-based quota, no CountTokens, profile in `us-east-1`
+
+**Entitlement is a request count.** One `charged_count` unit per actual `ConverseStream`
+invocation; a chat turn with a local tool round-trip consumes two. Input and output token
+figures are read from the stream's own metadata and recorded as **observability counters
+only** — they never gate a request, never bill, and are never estimated locally.
+
+**No `CountTokens` anywhere.** Removed: `CountTokensCommand`, the `countInputTokens` port
+method and its arg types, the handler's pre-reservation counting step, the per-operation
+input-token ceilings and `checkInputTokenCeiling`, and the `bedrock:CountTokens` IAM grant.
+Input bounding is now purely byte-based (per-operation serialized-JSON ceilings + the 4 MiB
+decoded-media cap) and still happens **before** the reservation, so an oversized request
+costs no unit. Request order: transport guard → schema/byte validation → config reads and
+eligibility → reserve → `ConverseStream`.
+
+**Model and region.** Back to `us.anthropic.claude-sonnet-4-6` in `us-east-1`. Inference
+profiles do not support `CountTokens`, which is the only reason they were ever disqualified;
+nothing calls it now. IAM grants `bedrock:InvokeModelWithResponseStream` on the profile ARN
+plus its destination foundation-model ARN pattern. `BedrockRegion`, `BEDROCK_REGION`, and
+`BedrockRegionEcho` are gone — everything is `us-east-1` and the runtime client inherits it.
+
+**Unchanged, deliberately:** `charged_count` remains the sole quota authority at 1000 global
+/ 200 per user; refund stays pre-`messageStart` only; finalize still never touches
+`charged_count`; `GLOBAL` stays **enabled** for the beta account and the premium user record
+was not touched; no reserved concurrency; stage throttle 10 RPS / burst 20; 4 MiB media cap;
+serialized byte limits; output `maxTokens`; closed validation; AD-11 log limits; desktop
+fallback behaviour; OIDC-only deployment.
+
+**Disclosure.** EN and FR Terms **and** Privacy Policy now state US cross-region Bedrock
+processing (qualified as possibly outside the reader's country of residence) and describe
+the limit as a monthly request count. `README.md` matches.
+
+**Evidence owed against the new identity.** Streaming, multimodal PDF+image, and the 8192
+output ceiling were verified against `anthropic.claude-sonnet-4-6` — the model this profile
+routes to — so the capability evidence concerns the same model, but the invocation identity
+changed. Re-run all three through `us.anthropic.claude-sonnet-4-6`, and re-run the deploy
+job's model assertion, before treating gates 1a/1c/1d/1e/1h as current (runbook §0.2). None
+of those re-runs has been performed here. `GLOBAL` stays enabled meanwhile; if a
+re-confirmation fails, the kill switch is the response, not a silent gate.
 
 ## Spec Change Log
 
@@ -113,7 +162,9 @@ Completed: the function uses unreserved capacity and the first premium beta acco
 
 ## Design Notes
 
-Live evidence: the `us.anthropic.claude-sonnet-4-6` inference profile rejected Runtime `CountTokens`. Bare `anthropic.claude-sonnet-4-6` in `eu-west-2` returned an input-token count and streamed `OK.` through `ConverseStream`.
+Historical: the `us.anthropic.claude-sonnet-4-6` inference profile rejected Runtime `CountTokens`, which is why a bare foundation model in `eu-west-2` was briefly adopted (it returned an input-token count and streamed `OK.`).
+
+Superseded 2026-08-27: quota counts requests, so no `CountTokens` call exists and the profile's lack of that capability no longer disqualifies it. The profile is the deployed model again, in `us-east-1`.
 
 ## Verification
 
@@ -121,11 +172,12 @@ Live evidence: the `us.anthropic.claude-sonnet-4-6` inference profile rejected R
 - `pnpm --filter @nixus/api-bedrock lint && pnpm --filter @nixus/api-bedrock typecheck && pnpm --filter @nixus/api-bedrock test && pnpm --filter @nixus/api-bedrock sam:validate && pnpm --filter @nixus/api-bedrock sam:build` -- expected: clean and warning-free.
 - `pnpm --filter @nixus/web test && pnpm --filter @nixus/web build` -- expected: bilingual legal copy and prerender pass.
 - GitHub `API Bedrock CI` -- expected: OIDC deploy succeeds and asserts no reserved concurrency.
-- AWS SDK live driver -- expected: direct model returns token count and streamed text.
+- AWS SDK live driver -- expected: `us.anthropic.claude-sonnet-4-6` streams text in `us-east-1`. **Not run for this change.**
 
-**Observed:** GitHub run `32996088072` deployed the direct model at concurrency `0`; all
-post-deploy model/region, PITR, and API smoke assertions passed. A follow-up deployment
-removes the reservation so the function can use the account's shared pool.
+**Observed for this change (local gates only):** `@nixus/api-bedrock` lint, typecheck, 340
+tests, `sam validate`, and `sam build` all clean; `@nixus/web` 195 tests and a successful
+prerendering build. No deployment was performed and nothing was committed or pushed, so the
+deploy job's post-change model assertion and the live profile probes remain owed.
 
 ## Suggested Review Order
 
