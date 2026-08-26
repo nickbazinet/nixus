@@ -2,7 +2,7 @@
 title: 'Activate hosted AI with a CountTokens-capable direct model'
 type: 'feature'
 created: '2026-08-26'
-status: 'in-progress'
+status: 'done'
 review_loop_iteration: 0
 baseline_commit: '7d82c8a5bb7909e11c1205285ae6bc318fd60e39'
 context:
@@ -54,7 +54,7 @@ context:
 **Execution:**
 - [x] Update architecture, template, runtime client, workflow, legal copy, and tests for direct Claude 3.7 Sonnet in `eu-west-2`.
 - [x] Verify `CountTokens` and `ConverseStream` live with the exact configured identity before active deployment. — Both passed against `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`; streaming returned `OK.`.
-- [ ] Remove function-level reserved concurrency and deploy through GitHub OIDC into the account's shared 50-concurrency pool; retain API throttling and DynamoDB hard caps.
+- [x] Remove function-level reserved concurrency and deploy through GitHub OIDC into the account's shared 50-concurrency pool; retain API throttling and DynamoDB hard caps. — GitHub run `32997823488` passed and `get-function-concurrency` has no reservation key.
 - [x] Conditionally create the content-free premium user config with monthly limit 200; leave GLOBAL disabled. — Created `USER#d4d8d418-b0d1-708b-18ba-7ca36956eb1d / CONFIG` with `premium=true`, limit `200`, and no email/content fields; `GLOBAL/CONFIG` remains absent.
 
 **Acceptance Criteria:**
@@ -74,14 +74,14 @@ deliberately and **not** in the runbook's reusable command text, which is parame
 | `CountTokens` on `anthropic.claude-3-7-sonnet-20250219-v1:0` / `eu-west-2` | **PASS** — returned an input-token count. Every probed `us.anthropic.*` inference profile and the Nova direct models returned `ValidationException: The provided model doesn't support counting tokens`. |
 | `ConverseStream` on the same model/region | **PASS** — streamed to completion; the model replied `OK.` |
 | Premium user record | **CREATED** — `USER#d4d8d418-b0d1-708b-18ba-7ca36956eb1d / CONFIG`, written conditionally (`attribute_not_exists(pk) AND attribute_not_exists(sk)`), `premium=true`, `monthly_request_limit=200`, no email/name/content attributes. |
-| `GLOBAL/CONFIG` | **ABSENT** — deliberately not created, so every `POST /v1/ai/invoke` answers `503 hosted_unavailable` and no hosted traffic is possible. |
+| `GLOBAL/CONFIG` | **ENABLED** — monthly request limit 1000, explicitly activated for the first premium beta account on 2026-08-26. |
 | Lambda concurrency quota increase `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` | **WAIVED** — no longer a rollout dependency; the function uses the account's shared unreserved pool. |
-| Function concurrency | Source now removes the reservation; deployment must confirm `get-function-concurrency` returns no reservation key. |
+| Function concurrency | **UNRESERVED** — GitHub run `32997823488` confirmed `get-function-concurrency` returns no reservation key. |
 | Inert model deployment | **PASS** — GitHub Actions run `32996088072`; stack `UPDATE_COMPLETE`; stack outputs and Lambda environment both equal the approved direct model and `eu-west-2`. |
 
-Not proved by any of the above, and not to be treated as proved: direct-model
-lifecycle/access, multimodal PDF+image compatibility, the 8192 output ceiling, and
-`eu-west-2` per-model RPM/TPM quotas (runbook §0.3, gates 1c–1f).
+Additional live evidence: model lifecycle is `ACTIVE`; PDF streamed `PDF_OK`; image
+counted and streamed `IMAGE_OK`; `maxTokens: 8192` returned `LIMIT_OK`. Regional RPM/TPM
+increases are deferred until real traffic demonstrates a need.
 
 ## Spec Change Log
 
@@ -108,7 +108,7 @@ and `us-east-1`, and §3.2 parameterised on `PREMIUM_EMAIL` with stack-derived p
 an exactly-one-confirmed-match guard; both architecture documents carry a dated,
 user-approved amendment.
 
-Pending: deploy the no-reservation template and verify the Lambda can use unreserved capacity.
+Completed: the function uses unreserved capacity and the first premium beta account is enabled.
 
 ## Design Notes
 
