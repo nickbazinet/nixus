@@ -68,14 +68,34 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - The root `@nixus/shared` export is both the wire-type barrel **and** the whole UI surface (`export * from "./ui"`) — desktop/web import components from the package root, never `@nixus/shared/ui`
 
 ### Hosted AI Service (`@nixus/api-bedrock` — `apps/api-bedrock/`)
-- AWS SAM application. Stack `nixus-bedrock-api` in `us-east-1` is architecture-planned (AD-15) — this scaffold configures neither; no stack name, region, or deploy settings exist in `samconfig.toml` yet
+- AWS SAM application, fully implemented. Stack `nixus-bedrock-api`, region `us-east-1`, both pinned in `samconfig.toml` under `[default.global.parameters]`
+- **Not deployed and not enabled.** `GLOBAL#CONFIG` is unseeded and the Lambda's reserved concurrency defaults to `0` (inert). See `docs/runbooks/hosted-ai-rollout.md`
+- **Local deployment is prohibited.** `.github/workflows/api-bedrock-ci.yml` federating via GitHub OIDC is the only path that may mutate the stack; there is no long-lived AWS key for this service. Locally, only `sam:validate` / `sam:build` (offline) may be run
+- **`CountTokens` is a known blocker.** The AD-8 pre-reservation gate was probed against `us.anthropic.claude-sonnet-4-6` and rejected: `ValidationException: The provided model doesn't support counting tokens`. The model, region, and gate may not be changed without an architecture review
+- `HostedAiReservedConcurrency` accepts exactly `0` (inert) or `10` (AD-4 active). Reserving `10` needs the account Lambda quota above 60; at the default 50 it breaches AWS's 50-unreserved floor and the stack rolls back. Never remove the reservation — it is AD-4/AD-14's abuse bound
+- One Lambda, one entry point: `src/functions/api.ts` is the sole `streamifyResponse` handler and routes both `/v1/ai/status` and `/v1/ai/invoke`. Never add a second Lambda per route or per operation
+- `src/lib/{table,quota,validation,bedrock-client}.ts` + `src/handlers/{status,invoke}.ts`. `charged_count` is the sole net quota authority; reserve/refund/finalize are each one `TransactWriteItems` over BOTH the user and `GLOBAL` items, with three server-generated idempotency tokens computed once per request
+- `messageStart` is the exact commit event. Before it, failures are pre-output and refundable; after it, they are in-band, charged, and never retried or fallen back from
+- Never log or persist `system`, `messages`, any content block, Bedrock response text, or a file name — only `sub`, period, operation, timestamps, latency, status, and token counts (AD-11)
+- Build uses `BuildMethod: makefile` (see `Makefile`), not SAM's esbuild builder: the latter runs `npm install`, which cannot resolve pnpm's `workspace:*`. The Makefile also asserts the bundled artifact exports a handler
 - Node.js 22 (`nodejs22.x`) + ARM64 Lambda conventions live in `template.yaml` `Globals.Function`
 - TypeScript ~5.8.3, self-contained strict tsconfig (`noUnusedLocals`/`noUnusedParameters`/`noUncheckedIndexedAccess`)
 - ESLint flat config (`typescript-eslint`), Node globals; `no-restricted-globals` blocks the DOM globals most likely to be reached for by accident
-- Vitest 3.2.4 (`environment: "node"`), tests co-located under `src/`
+- Vitest 3.2.4 (`environment: "node"`), tests co-located under `src/`. Infrastructure, pipeline, and runbook contracts are themselves tested (`template-scaffold`, `deploy-pipeline`, `rollout-runbook`)
 - Consumes the canonical cloud-AI wire contract from the root `@nixus/shared` export — never redefines it locally
 - Requires the AWS SAM CLI on PATH for `sam:validate` / `sam:build`; `.aws-sam/` is generated output and gitignored
 - Scripts: `pnpm --filter @nixus/api-bedrock {lint,typecheck,test,sam:validate,sam:build}`
+
+### Desktop Hosted-AI Boundaries (`apps/desktop/src-tauri/src/ai/`)
+- All four AI surfaces (chat, statement import, project advice, trends insight) route through the one `ai/backend.rs` port. Never call a concrete Bedrock/OpenAI client from a surface — a source guard fails the build if you do
+- Hosted Bedrock takes precedence whenever a signed-in premium user has quota, even over an explicitly configured OpenAI provider. There is no provider toggle, and none may be added
+- Fallback is one lookup in `backend::fallback_for`. `validation`, `payload_too_large`, and `unsupported_encoding` never fall back; `unauthorized` refreshes exactly once. Statement import is Bedrock-only — OpenAI is never a valid fallback there
+- Each chat tool-loop invocation is routed independently, so one visible turn may use hosted then BYO
+- `ai/hosted_state.rs` is Rust-internal and `subject_sub`-scoped: no Tauri command, no frontend hook, no query key. Cleared on sign-out, session expiry, and any subject mismatch
+- `ai/hosted_bedrock.rs` must never touch `credentials.rs` or `keyring_core`; it obtains a call-time token from `commands/auth.rs` only. It also never constructs an AWS SDK client — no AWS credential exists on a device
+- `commands/auth.rs` requests scope `nixus-api/ai.invoke` and uses a 120-second expiry skew. A session lacking the scope is `reauthentication_required`; a refresh cannot add a scope
+- `commands/settings.rs::test_ai_connection` stays BYO-only — never route it through the port
+- Errors surface as `AppError::HostedAi { code, message, recoverable }`. The frontend narrows them via `src/lib/appError.ts`; never let a `hosted_ai` error fall through to a generic message
 
 ---
 
@@ -360,4 +380,4 @@ export function useCreateExpense() {
 - Update when technology stack or conventions change
 - Remove rules that become obvious over time
 
-_Last Updated: 2026-08-25_
+_Last Updated: 2026-08-26_

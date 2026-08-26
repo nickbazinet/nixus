@@ -6,9 +6,9 @@
   <img src="docs/images/nixus-banner.png" alt="Nixus — Financial clarity, built for your future" />
 </p>
 
-<p align="center"><strong>Automate and track your life — from one place, on your own machine.</strong></p>
+<p align="center"><strong>Automate and track your life — from one place, with your records on your own machine.</strong></p>
 
-Nixus is a **local-first desktop app** for **lifestyle automation and tracking**. It uses technology to take the tedious upkeep out of the things you should be staying on top of — money, your car, and more over time — so you actually keep doing them. Each area of life is a module in one shared app, and your data never leaves your machine.
+Nixus is a **local-first desktop app** for **lifestyle automation and tracking**. It uses technology to take the tedious upkeep out of the things you should be staying on top of — money, your car, and more over time — so you actually keep doing them. Each area of life is a module in one shared app, and your financial records are stored only on your machine. The one exception is the optional AI features: when you use them, the content of that request is sent to an AI provider for processing. See [AI features and your data](#ai-features-and-your-data).
 
 **Finance** is the first module: upload a credit card statement, let AI categorize the transactions, and see your full picture — budget, accounts, assets, net worth — without touching a spreadsheet.
 
@@ -87,11 +87,31 @@ Before you download: an honest list so you know if this is worth your time.
 - **No bank connection** — you upload credit card statements manually (screenshot or PDF).
 - **Desktop only** — macOS and Windows. No mobile app.
 - **Single user** — one person's finances per install.
-- **AI import requires your own API credentials** (stored in your OS keychain). The app works without AI; other features are unaffected.
+- **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for premium Nixus Cloud accounts, through Nixus infrastructure to AWS Bedrock. See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
 - **Pre-alpha** — features change and things break between releases.
 - **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
 
 More detail on the marketing site: [nixusapp.com/beta](https://nixusapp.com/beta)
+
+---
+
+## AI features and your data
+
+Everything Nixus stores — budgets, transactions, accounts, assets, net worth history — lives in a local SQLite database on your machine. Nixus has no cloud account for your financial records and no sync.
+
+The AI features are the exception, and they are opt-in by nature: they only run when you invoke them (statement import, AI chat, project advice, spending-trends insight). When you do, the content of that one request leaves your machine for processing:
+
+- **Bring your own credentials (default).** The request goes directly from your machine to the provider you configured (AWS Bedrock or OpenAI) using credentials you supply. Nixus infrastructure is not involved and cannot see the request.
+- **Nixus Cloud premium (hosted AI).** The request is transmitted **through Nixus's own infrastructure** to **AWS Bedrock**. Nixus does not store the prompt, the attached statement, the model's response, or the file name in its own databases or logs — it records only your account identifier, timestamps, request counts, and token counts for quota and billing purposes.
+
+Two limits on that guarantee, stated plainly:
+
+- **The non-retention guarantee covers Nixus-controlled systems only.** It does not bind AWS. AWS may process and, under Bedrock's terms and its abuse-detection policies, retain request content. Nixus does not control or override that.
+- **Processing is cross-region within the United States.** Hosted AI uses a `us.` Bedrock cross-region inference profile, so a request may be processed in any US region AWS routes it to.
+
+Hosted AI is subject to a **monthly request quota**. When it is unavailable, ineligible, or out of quota, Nixus falls back to your own configured provider where that provider supports the feature, and otherwise reports a normal error — the rest of the app is unaffected either way.
+
+Full terms: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
 
 ---
 
@@ -135,7 +155,7 @@ Or read the full beta guide on the site: [nixusapp.com/beta](https://nixusapp.co
 | --- | --- |
 | **Stack** | Tauri 2, React 19, Rust, SQLite |
 | **Platforms** | macOS, Windows |
-| **Data** | Local SQLite on your machine — no cloud account required |
+| **Data** | Local SQLite on your machine — no cloud account required for your records ([AI features are the exception](#ai-features-and-your-data)) |
 | **Repo** | pnpm monorepo: desktop app, marketing site, shared UI package |
 
 Open source — inspect the code on GitHub. First-launch warnings (macOS Gatekeeper, Windows SmartScreen) are normal for apps not yet signed by Apple or trusted by Microsoft's reputation system.
