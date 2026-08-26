@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use tauri::State;
 
-use crate::ai::{trends_insight, AiProvider, AiState};
+use crate::ai::{clone_provider, trends_insight, AiState};
 use crate::db::spending_trends as spending_trends_db;
 use crate::db::DbState;
 use crate::error::AppError;
@@ -56,20 +56,15 @@ pub async fn generate_trends_insight(
         categories,
     };
 
-    let provider = {
+    // Cloned out from under the guard because a held MutexGuard cannot cross an
+    // await point. `None` is no longer an early return: hosted Bedrock may still
+    // serve a premium user who has configured no BYO provider at all.
+    let byo = {
         let ai = ai_state.lock().map_err(|_| AppError::Database {
             message: "AI state lock poisoned".to_string(),
         })?;
-        match &ai.provider {
-            None => return Err(AppError::NotConfigured),
-            Some(AiProvider::Bedrock(client)) => {
-                trends_insight::ProviderClient::Bedrock(client.clone())
-            }
-            Some(AiProvider::OpenAI(client)) => {
-                trends_insight::ProviderClient::OpenAI(client.clone())
-            }
-        }
+        clone_provider(&ai.provider)
     };
 
-    trends_insight::generate_trends_insight(&provider, request).await
+    trends_insight::generate_trends_insight(byo.as_ref(), request).await
 }
