@@ -129,11 +129,9 @@ jobs:
       id-token: write
       contents: read
 
-    # One source of truth for the reservation. Both the deploy override and the
-    # post-deploy assertion read this same value, so they cannot drift apart -
-    # a per-step copy is how an assertion ends up proving a number nobody deployed.
+    # One source of truth for the values both the deploy overrides and the post-deploy
+    # assertions use, so an assertion can never prove a value nobody deployed.
     env:
-      HOSTED_AI_RESERVED_CONCURRENCY: ${{ vars.HOSTED_AI_RESERVED_CONCURRENCY || '0' }}
       APPROVED_BEDROCK_MODEL_ID: anthropic.claude-3-7-sonnet-20250219-v1:0
       APPROVED_BEDROCK_REGION: eu-west-2
 
@@ -171,54 +169,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_BEDROCK_DEPLOY_ROLE_ARN }}
           role-session-name: nixus-bedrock-api-deploy
           aws-region: us-east-1
-
-      # Runs BEFORE `sam deploy`, deliberately. A reservation AWS will refuse fails
-      # CloudFormation mid-update, and a first CREATE that fails that way lands the
-      # stack in ROLLBACK_COMPLETE - so the cheap arithmetic has to happen while
-      # refusing costs nothing.
-      - name: Validate the configured reservation before deploying
-        run: |
-          set -euo pipefail
-          case "${HOSTED_AI_RESERVED_CONCURRENCY}" in
-            0|10) ;;
-            *)
-              echo "HOSTED_AI_RESERVED_CONCURRENCY must be 0 (inert) or 10 (active)," >&2
-              echo "got '${HOSTED_AI_RESERVED_CONCURRENCY}'." >&2
-              exit 1
-              ;;
-          esac
-          echo "configured_concurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
-
-          if [ "${HOSTED_AI_RESERVED_CONCURRENCY}" = "0" ]; then
-            echo "Inert reservation takes nothing from the account pool; no quota check needed."
-            exit 0
-          fi
-
-          # AWS refuses any reservation that would drop the region's UNRESERVED
-          # concurrency below this floor. The account's total quota must therefore
-          # exceed the reservation by at least the floor, or the stack rolls back.
-          UNRESERVED_FLOOR=50
-          quota="$(aws service-quotas get-service-quota \
-            --service-code lambda --quota-code L-B99A9384 \
-            --query 'Quota.Value' --output text)"
-          quota="${quota%.*}"
-          required=$(( HOSTED_AI_RESERVED_CONCURRENCY + UNRESERVED_FLOOR ))
-          echo "lambda_concurrency_quota=${quota} required_minimum=${required}"
-
-          # Reported for the operator log: other functions' reservations shrink this
-          # pool further, and the arithmetic above cannot see them.
-          aws lambda get-account-settings \
-            --query 'AccountLimit.{Concurrent:ConcurrentExecutions,Unreserved:UnreservedConcurrentExecutions}'
-
-          if [ "${quota}" -lt "${required}" ]; then
-            echo "Refusing to deploy an active reservation of ${HOSTED_AI_RESERVED_CONCURRENCY}:" >&2
-            echo "the regional Lambda concurrency quota is ${quota}, which cannot preserve" >&2
-            echo "the mandatory ${UNRESERVED_FLOOR} unreserved floor. Raise the quota first" >&2
-            echo "(docs/runbooks/hosted-ai-rollout.md §2.2) or set the variable back to 0." >&2
-            exit 1
-          fi
-        env:
-          AWS_DEFAULT_REGION: us-east-1
 
       # A stack whose very first CREATE failed lands in ROLLBACK_COMPLETE, a terminal
       # state CloudFormation cannot update: the only way forward is to delete it and
@@ -279,8 +229,7 @@ jobs:
               "HostedZoneId=${HOSTED_ZONE_ID}" \
               "AlertEmail=${ALERT_EMAIL}" \
               "BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}" \
-              "BedrockRegion=${APPROVED_BEDROCK_REGION}" \
-              "HostedAiReservedConcurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
+              "BedrockRegion=${APPROVED_BEDROCK_REGION}"
         env:
           AWS_DEFAULT_REGION: us-east-1
           # Both produced by the one-time bootstrap stack
@@ -299,11 +248,14 @@ jobs:
           HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
 
-      # Asserts the DEPLOYED reservation, not the template's. A template that says
-      # `!Ref` proves nothing about which value CloudFormation actually applied, and
-      # the difference here is "cannot invoke Bedrock" versus "can". The expected
-      # value is the job-level one the deploy override used, so the two cannot diverge.
-      - name: Assert the deployed reservation equals the configured value
+      # Proves the function is UNRESERVED, which is not the same as reserved-zero.
+      # A reservation of 0 throttles the function to zero concurrent executions - it is
+      # deployed and permanently inert - while carrying no reservation at all lets it
+      # draw on the account's shared unreserved pool, which is the capacity the user
+      # accepted. `get-function-concurrency` returns an empty object in that second case,
+      # so the assertion is on the ABSENCE of the key: `--query` on a missing field prints
+      # the string "None", which compares equal to nothing useful.
+      - name: Assert the deployed function has no reserved concurrency
         run: |
           set -euo pipefail
           function_name="$(aws cloudformation describe-stacks \
@@ -312,19 +264,18 @@ jobs:
             --output text)"
           test -n "${function_name}" && test "${function_name}" != "None"
 
-          reserved="$(aws lambda get-function-concurrency \
-            --function-name "${function_name}" \
-            --query 'ReservedConcurrentExecutions' \
-            --output text)"
-          echo "reserved_concurrency=${reserved}"
-          echo "configured_concurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
+          concurrency="$(aws lambda get-function-concurrency \
+            --function-name "${function_name}" --output json)"
+          echo "get_function_concurrency=${concurrency}"
 
-          if [ "${reserved}" != "${HOSTED_AI_RESERVED_CONCURRENCY}" ]; then
-            echo "Deployed reservation '${reserved}' does not match the configured" >&2
-            echo "'${HOSTED_AI_RESERVED_CONCURRENCY}'. A rejected reservation leaves" >&2
-            echo "the function at a value AD-4 never sanctioned." >&2
+          if printf '%s' "${concurrency}" | jq -e 'has("ReservedConcurrentExecutions")' >/dev/null; then
+            reserved="$(printf '%s' "${concurrency}" | jq -r '.ReservedConcurrentExecutions')"
+            echo "The function still carries a reserved concurrency of '${reserved}'." >&2
+            echo "0 means it cannot execute at all, and any positive value is refused by" >&2
+            echo "this account's quota. It must carry no reservation." >&2
             exit 1
           fi
+          echo "unreserved=true (function draws on the account's shared pool)"
         env:
           AWS_DEFAULT_REGION: us-east-1
 

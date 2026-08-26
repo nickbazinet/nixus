@@ -323,65 +323,42 @@ describe("deploy job proves deployed guarantees", () => {
     expect(commands).toContain("|| echo");
   });
 
-  /* A template that says `!Ref` proves nothing about the value CloudFormation
-   * actually applied, and the difference is "cannot invoke Bedrock" versus "can".
-   * Comparing against the configured value rather than a hardcoded number is what
-   * makes activation one environment-variable change while still failing the deploy
-   * if AWS declined the reservation. */
-  it("asserts the DEPLOYED reservation equals the configured value, not the template's intent", () => {
-    const commands = runCommands(DEPLOY);
+  /* A reservation of 0 and no reservation at all are opposite states that read almost
+   * identically in a console: 0 throttles the function to zero concurrent executions,
+   * while no reservation lets it use the account's shared pool. `--query` on a missing
+   * field prints "None", so only an explicit key-absence check distinguishes them. */
+  it("asserts the deployed function carries no reserved concurrency at all", () => {
+    const script = step(DEPLOY, "no reserved concurrency").run as string;
 
-    expect(commands).toContain("lambda get-function-concurrency");
-    expect(commands).toContain("ReservedConcurrentExecutions");
-    expect(commands).toContain(
-      '"${reserved}" != "${HOSTED_AI_RESERVED_CONCURRENCY}"'
-    );
-    expect(commands).toContain("exit 1");
-
-    // A hardcoded expectation would have to be edited in the same pull request that
-    // activates the service, which is exactly the coupling this removes.
-    expect(commands).not.toContain('"${reserved}" != "0"');
-  });
-
-  /* Validating after the deploy is validating nothing: an unacceptable reservation has
-   * already failed CloudFormation mid-update by then, and on a first CREATE that leaves
-   * the stack in ROLLBACK_COMPLETE. */
-  it("validates the reservation BEFORE sam deploy, not after", () => {
-    const validate = stepIndex(DEPLOY, "Validate the configured reservation");
-    const deploy = stepIndex(DEPLOY, "Deploy stack");
-    const assertReservation = stepIndex(DEPLOY, "Assert the deployed reservation");
-
-    expect(validate).toBeLessThan(deploy);
-    expect(deploy).toBeLessThan(assertReservation);
-
-    // Credentials must already exist, because the quota lookup is an AWS call.
-    expect(stepIndex(DEPLOY, "aws-actions/configure-aws-credentials")).toBeLessThan(
-      validate
-    );
-
-    const script = step(DEPLOY, "Validate the configured reservation").run as string;
-    expect(script).toMatch(/0\|10\)/);
-    expect(script).toMatch(/must be 0 \(inert\) or 10 \(active\)/);
-  });
-
-  /* AWS refuses a reservation that would drop regional unreserved concurrency below its
-   * floor. Discovering that from a rolled-back stack costs an operator an incident; the
-   * arithmetic costs one API call. */
-  it("refuses an active reservation the regional Lambda quota cannot support", () => {
-    const script = step(DEPLOY, "Validate the configured reservation").run as string;
-
-    expect(script).toContain("service-quotas get-service-quota");
-    expect(script).toContain("--quota-code L-B99A9384");
-    expect(script).toContain("UNRESERVED_FLOOR=50");
-    expect(script).toContain(
-      "required=$(( HOSTED_AI_RESERVED_CONCURRENCY + UNRESERVED_FLOOR ))"
-    );
-    expect(script).toContain('[ "${quota}" -lt "${required}" ]');
-    expect(script).toMatch(/Refusing to deploy an active reservation/);
+    expect(script).toContain("lambda get-function-concurrency");
+    expect(script).toContain('jq -e \'has("ReservedConcurrentExecutions")\'');
     expect(script).toContain("exit 1");
 
-    // The inert path must not spend an API call or fail on a quota it never touches.
-    expect(script).toMatch(/if \[ "\$\{HOSTED_AI_RESERVED_CONCURRENCY\}" = "0" \]/);
+    // Querying the field directly is the mistake this replaces.
+    expect(script).not.toContain("--query 'ReservedConcurrentExecutions'");
+
+    expect(stepIndex(DEPLOY, "Deploy stack")).toBeLessThan(
+      stepIndex(DEPLOY, "no reserved concurrency")
+    );
+  });
+
+  /* The whole activation apparatus is gone, not merely defaulted off: a leftover
+   * variable or a Service Quotas preflight would imply the quota increase is still a
+   * rollout dependency, which the user waived. */
+  it("carries no reservation parameter, variable, or quota preflight anywhere", () => {
+    for (const removed of [
+      "HOSTED_AI_RESERVED_CONCURRENCY",
+      "HostedAiReservedConcurrency",
+      "service-quotas",
+      "L-B99A9384",
+      "UNRESERVED_FLOOR",
+      "get-account-settings",
+    ]) {
+      expect(WORKFLOW_TEXT, `${removed} must be gone`).not.toContain(removed);
+    }
+
+    expect(DEPLOY.env).not.toHaveProperty("HOSTED_AI_RESERVED_CONCURRENCY");
+    expect(runCommands(DEPLOY)).not.toContain("HostedAiReservedConcurrency=");
   });
 
   /* The AD-8 token gate was proved against one model in one region; an active function
@@ -417,37 +394,20 @@ describe("deploy job proves deployed guarantees", () => {
     );
   });
 
-  /* Two step-level copies of the same expression are how an assertion ends up proving a
-   * number nobody deployed. One job-level definition makes that impossible. */
-  it("defines the reservation once, at job level, and nowhere else", () => {
-    expect(DEPLOY.env.HOSTED_AI_RESERVED_CONCURRENCY).toBe(
-      "${{ vars.HOSTED_AI_RESERVED_CONCURRENCY || '0' }}"
-    );
-
+  /* Two step-level copies of the same expression are how a deploy override and an
+   * assertion end up disagreeing. One job-level definition makes that impossible. */
+  it("pins the approved model and region once, at job level, as the assertion source", () => {
     const perStepCopies = (DEPLOY.steps as { env?: Record<string, unknown> }[]).filter(
-      (entry) => entry.env?.HOSTED_AI_RESERVED_CONCURRENCY !== undefined
+      (entry) =>
+        entry.env?.APPROVED_BEDROCK_MODEL_ID !== undefined ||
+        entry.env?.APPROVED_BEDROCK_REGION !== undefined
     );
     expect(perStepCopies).toEqual([]);
 
-    expect(
-      WORKFLOW_TEXT.match(/vars\.HOSTED_AI_RESERVED_CONCURRENCY/g)
-    ).toHaveLength(1);
-  });
-
-  it("pins the approved model and region once, at job level, as the assertion source", () => {
     expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe(
       "anthropic.claude-3-7-sonnet-20250219-v1:0"
     );
     expect(DEPLOY.env.APPROVED_BEDROCK_REGION).toBe("eu-west-2");
-  });
-
-  it("passes the reservation in explicitly, defaulting to inert", () => {
-    const commands = runCommands(DEPLOY);
-
-    expect(commands).toContain("HostedAiReservedConcurrency=");
-    expect(WORKFLOW_TEXT).toContain(
-      "HOSTED_AI_RESERVED_CONCURRENCY: ${{ vars.HOSTED_AI_RESERVED_CONCURRENCY || '0' }}"
-    );
   });
 
   it("keeps the deployment non-cancelling while it mutates the stack", () => {
