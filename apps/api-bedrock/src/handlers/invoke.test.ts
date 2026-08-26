@@ -368,6 +368,40 @@ describe("AD-8 step 3 CountTokens gate", () => {
       { role: "user", content: [{ type: "text", text: "hi" }] },
     ]);
   });
+
+  it("counts PDF prompt text but streams the full bounded document", async () => {
+    queueEligible();
+    client.queueOk().queueOk();
+    const body = JSON.stringify({
+      operation: "statement_import",
+      system: "Extract transactions.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Read this statement." },
+            { type: "document", format: "pdf", data_base64: "JVBERi0xLjQ=" },
+          ],
+        },
+      ],
+      client_request_id: CLIENT_REQUEST_ID,
+    });
+
+    const { promise, bedrock } = run({ body });
+    await promise;
+
+    expect(bedrock.counted[0]!.messages[0]!.content).toEqual([
+      { type: "text", text: "Read this statement." },
+    ]);
+    expect(bedrock.streamed[0]!.messages[0]!.content).toEqual([
+      { type: "text", text: "Read this statement." },
+      {
+        type: "document",
+        format: "pdf",
+        bytes: new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52]),
+      },
+    ]);
+  });
 });
 
 describe("AD-8 step 4 reservation", () => {

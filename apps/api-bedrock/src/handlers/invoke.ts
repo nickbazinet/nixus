@@ -284,9 +284,16 @@ export async function handleInvoke(
         // costs a CountTokens call. Never repeated on the reserve retry: the input
         // has not changed, and a second count would be a second charge.
         try {
+          // Bedrock rejects document blocks in CountTokens even though the same model
+          // accepts them in ConverseStream. PDF cost is bounded by the 4 MiB media cap;
+          // count the finalized prompt text, then stream the full validated document.
+          const countMessages = request.messages.map((message) => ({
+            ...message,
+            content: message.content.filter((block) => block.type !== "document"),
+          }));
           inputTokens = await bedrock.countInputTokens({
             system: request.system,
-            messages: request.messages,
+            messages: countMessages,
             abortSignal: controller.signal,
           });
         } catch {
