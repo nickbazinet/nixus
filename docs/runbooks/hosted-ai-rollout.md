@@ -1,7 +1,7 @@
 # Runbook — Hosted AI (Nixus Cloud Bedrock) rollout
 
 Owner: Nixus operator (single-operator service)
-Stack: `nixus-bedrock-api` · API region `us-east-1` · Bedrock region `eu-west-2` · one production stack, no staging (AD-15)
+Stack: `nixus-bedrock-api` · region `us-east-1` (API and Bedrock) · one production stack, no staging (AD-15)
 
 `GLOBAL.enabled` is the single switch that turns hosted AI on. It was enabled on
 2026-08-26 for the first premium beta account after the direct model passed text,
@@ -9,97 +9,76 @@ PDF, image, and output-ceiling probes. Set it to `false` for an immediate stop.
 
 ---
 
-## 0. Model capability probes — both passed
+## 0. Model and quota design — what is verified, and what is not
 
-**STATUS: `CountTokens` PASSES. `ConverseStream` PASSES. NO CONCURRENCY DEPENDENCY REMAINS (§2.1). REMAINING GATES ARE THE UNRUN CAPABILITY CHECKS (§0.3) AND THE STANDARD ROLLOUT GATES BELOW.**
+**STATUS: quota is per request. NO TOKEN-COUNTING CALL EXISTS ANYWHERE. NO CONCURRENCY DEPENDENCY REMAINS (§2.1). Streaming, multimodal, and the output ceiling were verified on `anthropic.claude-sonnet-4-6`; §0.2 is the re-confirmation owed after the switch to that model's `us.` profile.**
 
-The architecture mandates a `bedrock:CountTokens` call against the exact selected model
-before any quota reservation (AD-8), so a model that rejects `CountTokens` makes the gate
-unimplementable and every eligible request a `503 hosted_unavailable`.
+### 0.1 Quota is per request, and streaming is the only Bedrock call
 
-Probe both against the values the stack actually deployed, never a remembered pair — the
-stack outputs both for exactly this reason:
+The monthly entitlement is a **request count**. Each actual `ConverseStream` invocation
+consumes exactly one `charged_count` unit; a chat turn that makes two model calls around a
+local tool consumes two. Input and output token counts are read from the stream's own
+metadata and recorded for **observability only** — they never gate a request, never bill,
+and are never estimated locally.
+
+That makes `ConverseStream` the only Bedrock call the service makes. There is **no
+`bedrock:CountTokens` call anywhere**, no token preflight, and no `bedrock:CountTokens` in
+the execution role — an action nothing calls would only be an invitation to start calling
+it. Input size is bounded before any reservation from the request itself: the per-operation
+serialized-JSON ceilings and the 4 MiB decoded-media cap, both computable without an
+upstream call. Output stays token-bounded because only the model can enforce that, through
+`inferenceConfig.maxTokens`.
+
+Because no CountTokens call exists, the model is a **cross-region inference profile**
+again: `us.anthropic.claude-sonnet-4-6` in `us-east-1`. Profiles do not support
+`CountTokens`, which is what once forced a bare foundation model; nothing asks them to now.
+API, Lambda, table, and Bedrock all sit in `us-east-1`, and the Lambda inherits its region
+— there is no Bedrock region parameter or environment variable to set.
+
+Probe against the value the stack actually deployed, never a remembered one:
 
 ```bash
 MODEL="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
   --query "Stacks[0].Outputs[?OutputKey=='BedrockModelIdEcho'].OutputValue" --output text)"
-REGION="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
-  --query "Stacks[0].Outputs[?OutputKey=='BedrockRegionEcho'].OutputValue" --output text)"
-```
 
-Both probes must pass against the *same* `$MODEL`/`$REGION` pair: a count taken on one
-identity says nothing about a stream issued on another.
-
-### 0.1 `CountTokens` — resolved by a user-approved model and region change
-
-The original `us.anthropic.claude-sonnet-4-6` cross-region inference profile was probed
-and **rejected**:
-
-```
-ValidationException: The provided model doesn't support counting tokens
-```
-
-Every other `us.anthropic.*` inference profile probed, and the Nova direct models,
-answered the same way. Runtime `CountTokens` is a foundation-model capability that
-inference profiles do not carry.
-
-The approved resolution is a **specification change, not a runbook workaround**: the
-service now calls the bare foundation model
-`anthropic.claude-sonnet-4-6` **directly in `eu-west-2`**, which returned
-an input-token count for the identical probe:
-
-```bash
-aws bedrock-runtime count-tokens \
-  --region "$REGION" --model-id "$MODEL" \
-  --input '{"converse":{"messages":[{"role":"user","content":[{"text":"probe"}]}]}}'
-```
-
-The amendment is recorded in `_bmad-output/planning-artifacts/architecture-cloud-bedrock.md`
-and the architecture spine's Stack Seed. The API, Lambda, and quota table stay in
-`us-east-1`; only the Bedrock runtime calls move, via the `BedrockRegion` parameter and
-the Lambda's `BEDROCK_REGION` variable.
-
-**What still must NOT happen.** Each of these alters cost enforcement or data
-processing and needs its own review, exactly as the profile swap did:
-
-- do **not** switch to a different model, and do **not** reintroduce an inference profile,
-- do **not** change the region away from `eu-west-2`,
-- do **not** remove, weaken, or reorder the pre-reservation token gate,
-- do **not** substitute a locally estimated token count for the gate.
-
-### 0.2 `ConverseStream` — passed
-
-`CountTokens` succeeding does not prove the model can stream, so streaming is its own
-gate:
-
-```bash
 aws bedrock-runtime converse-stream \
-  --region "$REGION" --model-id "$MODEL" \
+  --region us-east-1 --model-id "$MODEL" \
   --messages '[{"role":"user","content":[{"text":"probe"}]}]' \
   --inference-config '{"maxTokens":16}'
 ```
 
-Recorded outcome: the probe **streamed text and completed** — the model replied `OK.`
-on `anthropic.claude-sonnet-4-6` in `eu-west-2`. Both AD-8 gate calls are
-therefore proved on the one deployed identity.
+Expected: streamed text to completion. That is the whole model gate — a `CountTokens`
+probe is not part of this design and must not be reintroduced as one.
 
-### 0.3 First-customer capability checks
+**What must NOT change without a review.** Each of these alters cost enforcement or data
+processing:
 
-A one-line text stream does not cover statement media or the largest output ceiling.
-Those practical checks were run before first-customer activation.
+- do **not** add a `CountTokens` call, a token preflight, or a locally estimated count,
+- do **not** make quota token-based; `charged_count` counts requests,
+- do **not** change the model or move Bedrock out of `us-east-1`,
+- do **not** remove the pre-reservation byte and media checks, which are what stop an
+  oversized request from costing a unit.
 
-| Check | Why it is not covered by §0.1/§0.2 | How to check |
+### 0.2 Re-confirm the capability evidence through the profile
+
+Streaming, multimodal PDF + image, and the 8192 output ceiling were all verified against
+`anthropic.claude-sonnet-4-6` — the foundation model this profile routes to — so the
+capability evidence is about the same model. **What changed is the invocation identity:**
+requests now name `us.anthropic.claude-sonnet-4-6`, and a profile carries its own model
+access and its own regional capacity. Re-run these three through the profile after the
+deploy and record them against gates 1c–1e; until then they are evidence for the direct
+model, not for what production calls.
+
+| Check | Why the identity change matters | How to check |
 |---|---|---|
-| Model lifecycle and access | `get-foundation-model` reports `ACTIVE`, streaming enabled | Recheck before a future model retirement window |
-| Multimodal PDF + image | PDF streamed `PDF_OK`; PNG counted and streamed `IMAGE_OK` | PDF `CountTokens` rejects document blocks, so the service counts prompt text and relies on the existing 4 MiB PDF cap before streaming the full document |
-| Output ceilings | `ConverseStream` accepted `maxTokens: 8192` and returned `LIMIT_OK` | Keep per-operation limits at or below 8192 |
-| `eu-west-2` model quotas | Not separately raised for the beta | Observe real usage; request increases only if throttling occurs |
+| Multimodal PDF + image | Statement import sends `document`/`image` blocks; profile routing must accept them the same way | `converse` once with a small real PDF and once with a PNG, using `$MODEL` |
+| Output ceiling | The largest operation asks for 8192 output tokens and must not be rejected | `converse` with `maxTokens` at 8192 |
+| Profile model access | Per-account model access is granted per profile *and* per destination model; either can be missing | Bedrock → Model access in `us-east-1`, plus `aws bedrock get-foundation-model --model-identifier anthropic.claude-sonnet-4-6` |
 
-The function uses the account's shared pool (§2.1). Per-user/global monthly caps and the
-API throttle bound this beta; `GLOBAL.enabled=false` remains the emergency stop.
-
-
----
+`GLOBAL` is already enabled for the first premium beta account (gate 11). These
+re-confirmations are therefore **post-change verification on live configuration**, not a
+gate holding traffic back — if any of them fails, flip `enabled` to `false` (see Emergency
+stop) rather than leaving a broken model in service.
 
 ## 1. One-time, out-of-band AWS setup
 
@@ -262,12 +241,13 @@ in the existing Route53 zone.
 ### 1.4 Confirm Bedrock model-invocation logging is OFF (AD-15)
 
 Model-invocation logging is configured **per region**, so it must be checked in **both**
-regions. `eu-west-2` is where invocations now happen; `us-east-1` is where they used to be
-aimed, so a configuration left there from earlier probing is exactly the kind of thing that
-survives a region change unnoticed.
+regions. `us-east-1` is where invocations happen; `eu-west-2` is where they were briefly
+aimed, so a configuration left there from that period is exactly the kind of thing that
+survives a region change unnoticed. A cross-region profile can also route to other US
+regions, so check any region the profile has served.
 
 ```bash
-for region in eu-west-2 us-east-1; do
+for region in us-east-1 eu-west-2; do
   echo "== ${region}"
   aws bedrock get-model-invocation-logging-configuration --region "${region}" \
     || echo "no logging configuration (expected)"
@@ -280,8 +260,8 @@ destination, contradicting the Privacy Policy. **Disable it in that region befor
 traffic.**
 
 ```bash
-aws bedrock delete-model-invocation-logging-configuration --region eu-west-2
 aws bedrock delete-model-invocation-logging-configuration --region us-east-1
+aws bedrock delete-model-invocation-logging-configuration --region eu-west-2
 ```
 
 ---
@@ -363,7 +343,8 @@ them:
 | Stage throttle 10 RPS / burst 20 | `template.yaml` `MethodSettings` |
 | Per-user monthly cap (`charged_count` vs `monthly_request_limit`) | DynamoDB, enforced in every reserve transaction |
 | `GLOBAL` monthly hard cap and `enabled` kill switch | DynamoDB, same transaction, atomically |
-| Per-operation input/output token ceilings, `CountTokens`-gated | `src/lib/validation.ts`, AD-8 |
+| Per-operation input byte ceilings + 4 MiB media cap, checked before reservation | `src/lib/validation.ts`, AD-8 |
+| Per-operation output token ceiling, applied by the model | `inferenceConfig.maxTokens`, AD-8 |
 | AWS Budget $50/month on Bedrock, 80%/100% alerts | `template.yaml` |
 
 Re-adding a reservation is a specification change, not a tuning knob: it would have to
@@ -604,27 +585,27 @@ follow-up hardening, not blockers for this beta account.
 
 | # | Gate | Reference | Evidence | Date |
 |---|---|---|---|---|
-| 1 | Deployed `CountTokens` probe succeeds on the exact model/region | §0.1, AD-8 | **PASSED** — direct `anthropic.claude-sonnet-4-6` in `eu-west-2` returned an input-token count; its `us.` inference profile rejected the call. | 2026-08-26 |
-| 1a | Deployed `ConverseStream` probe succeeds on that same model/region | §0.2, AD-7 | **PASSED** — direct `anthropic.claude-sonnet-4-6` in `eu-west-2` streamed `OK.` | 2026-08-26 |
+| 1 | Quota is per request: no `CountTokens` call, no token preflight, no `bedrock:CountTokens` grant | §0.1, AD-8 | **BY DESIGN** — enforced by service tests (`no CountTokens command/IAM/action`, one reservation per stream call) | 2026-08-26 |
+| 1a | `ConverseStream` succeeds on the deployed model | §0.1, AD-7 | **PASSED** — `anthropic.claude-sonnet-4-6` streamed `OK.`; **re-run against `us.anthropic.claude-sonnet-4-6` after this change** | 2026-08-26 |
 | 1b | ~~Lambda concurrent-executions quota raised~~ — **WAIVED** by the user on 2026-08-26: the function carries no reservation and uses the account's shared 50. Request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` may stay `CASE_OPENED` but is no longer a rollout dependency. | §2.1 | **NOT A DEPENDENCY** | 2026-08-26 |
-| 1c | Direct model lifecycle and account access confirmed | §0.3 | **PASSED** — model `ACTIVE`, streaming supported | 2026-08-26 |
-| 1d | Multimodal compatibility confirmed: one real PDF and one image | §0.3, CAP-2 | **PASSED** — `PDF_OK`, `IMAGE_OK` | 2026-08-26 |
-| 1e | AD-8 output ceiling accepted at 8192 | §0.3, AD-8 | **PASSED** — `LIMIT_OK` | 2026-08-26 |
-| 1f | `eu-west-2` per-model quotas | §0.3 | **DEFERRED FOR REAL TRAFFIC** | |
+| 1c | Profile model access and lifecycle confirmed | §0.2 | **PASSED for the direct model** — `ACTIVE`, streaming supported; re-confirm for the profile | 2026-08-26 |
+| 1d | Multimodal compatibility confirmed: one real PDF and one image | §0.2, CAP-2 | **PASSED for the direct model** — `PDF_OK`, `IMAGE_OK`; re-confirm through the profile | 2026-08-26 |
+| 1e | Output ceiling accepted at 8192 | §0.2, AD-8 | **PASSED for the direct model** — `LIMIT_OK`; re-confirm through the profile | 2026-08-26 |
+| 1f | `us-east-1` per-model Bedrock RPM/TPM quotas | §0.2 | **DEFERRED FOR REAL TRAFFIC** | |
 | 1g | Deployed function reports **no** `ReservedConcurrentExecutions` | §2.2 | **PASSED** — GitHub run `32997823488` | 2026-08-26 |
-| 1h | Deployed model/region assertions pass | §2.2, AD-8 | **PASSED** — GitHub run `32997823488` | 2026-08-26 |
+| 1h | Deployed model assertion passes (stack output + Lambda env), and no orphaned `BEDROCK_REGION` survives | §2.2, AD-8 | **RE-RUN REQUIRED** — the previous pass was against the direct model in `eu-west-2` | |
 | 2 | Cognito `nixus-api/ai.invoke` scope added to pool + app client | §1.1, AD-3 | | |
 | 3 | Bootstrap stack deployed: OIDC provider, deploy role, CloudFormation execution role, artifact bucket. `sub` verified against `TrustedSubject` | §1.2, AD-12 | | |
 | 3a | `production` environment populated with both role ARNs and the artifact bucket | §1.2 step 5 | | |
 | 3b | Repository variable `API_BEDROCK_DEPLOY_ENABLED` set to `true` | §1.2 step 6 | | |
 | 3c | Bootstrap workflow file deleted, so no static-key path to AWS remains | §1.2 step 7 | | |
 | 4 | `production` environment requires approval and is default-branch-only | §1.2, AD-12 | | |
-| 5 | Bedrock model-invocation logging confirmed disabled **in `eu-west-2`** | §1.4, AD-15 | | |
+| 5 | Bedrock model-invocation logging confirmed disabled **in `us-east-1`, and swept in `eu-west-2`** | §1.4, AD-15 | | |
 | 6 | Quota table: PITR `ENABLED`, deletion protection on, `Retain` policies present | §2.5, AD-15 | | |
 | 7 | CloudWatch alarms exist (API 5XX, Lambda Errors, Lambda Throttles) and the SNS email subscription is **confirmed** | AD-14 | | |
 | 8 | AWS Budget `$50/mo` on Bedrock with 80% / 100% notifications | AD-14 | | |
-| 9 | Terms of Service and Privacy Policy published, EN + FR, stating: transmission through Nixus to AWS Bedrock; direct processing in `eu-west-2` (United Kingdom) and abuse-detection implications; non-retention is Nixus-controlled only and does not bind AWS; request quota; BYO fallback | AD-13 | | |
-| 10 | `README.md` and all marketing copy no longer claim data never leaves the machine, and no longer describe US cross-region processing | AD-13 | | |
+| 9 | Terms of Service and Privacy Policy published, EN + FR, stating: transmission through Nixus to AWS Bedrock; US cross-region processing and abuse-detection implications; non-retention is Nixus-controlled only and does not bind AWS; a **monthly request** quota; BYO fallback | AD-13 | | |
+| 10 | `README.md` and all marketing copy no longer claim data never leaves the machine, and describe US cross-region processing accurately | AD-13 | | |
 | 11 | `GLOBAL#CONFIG` present with monthly limit 1000 | §3.1, AD-15 | **ENABLED by explicit user decision for first premium beta** | 2026-08-26 |
 | 11a | Orphaned retained table from the rolled-back first attempt identified, confirmed empty, and removed by hand | §2.4 | | |
 | 11b | Premium `USER#<sub>/CONFIG` written conditionally and verified: `premium=true`, `monthly_request_limit=200`, and the attribute set carries no email, name, or content | §3.2, AD-6/AD-11 | | |
