@@ -69,32 +69,42 @@ describe("hosted-AI precedence disclosure", () => {
     expect(privacyKeys).toContain("privacyPage.hosted.precedence");
   });
 
-  /* Hosted processing moved from a US cross-region inference profile to one direct
-   * model in London, so the policy has to name the region the request is actually
-   * processed in - the old copy now describes a routing behaviour that no longer
-   * happens, which is a false disclosure rather than a stale one. */
+  /* Hosted processing runs through a US cross-region inference profile, so the policy
+   * must disclose that a request is not confined to one region - naming a single region
+   * would be a false disclosure, not merely an imprecise one. */
   it("discloses the AWS non-retention limit and where processing happens", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
     expect(text).toMatch(/does not bind Amazon Web Services/i);
     expect(text).toMatch(/abuse-detection/i);
-    expect(text).toMatch(/Europe \(London\)/);
-    expect(text).toContain("eu-west-2");
-    expect(text).toMatch(/United Kingdom/);
+    expect(text).toMatch(/cross-region/i);
+    expect(text).toMatch(/any US AWS region/i);
     expect(text).toMatch(/monthly request quota/i);
 
-    expect(text).not.toMatch(/any US AWS region/i);
-    expect(text).not.toMatch(/scoped to the United States/i);
+    // The superseded London wording described a routing behaviour that no longer happens.
+    expect(text).not.toMatch(/Europe \(London\)/);
+    expect(text).not.toContain("eu-west-2");
+    expect(text).not.toMatch(/United Kingdom/);
   });
 
   /* The Terms are the other half of AD-13's disclosure mechanism: a reader who accepts
    * the Terms without opening the Privacy Policy must still learn where their statement
    * is processed. */
-  it("names the processing region in the Terms too, not only the Privacy Policy", () => {
+  it("names the processing scope in the Terms too, not only the Privacy Policy", () => {
     const text = renderText(<TermsPage locale="en" />);
 
-    expect(text).toMatch(/Europe \(London\)/);
-    expect(text).toContain("eu-west-2");
+    expect(text).toMatch(/cross-region/i);
+    expect(text).toMatch(/any US AWS region/i);
+    expect(text).not.toContain("eu-west-2");
+  });
+
+  /* Quota is per request, so the Terms must promise a request limit and never imply a
+   * token- or usage-metered charge the service does not apply. */
+  it("describes the limit as a request count, not a token or usage measure", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/monthly limit on the number of requests/i);
+    expect(text).not.toMatch(/token/i);
   });
 
   /* "outside your own country" is false for a UK reader, and a legal document that
@@ -123,21 +133,31 @@ describe("French disclosures carry the same facts", () => {
       const text = renderText(<PrivacyPage locale="fr" />);
 
       expect(text).toMatch(/n'engage pas Amazon Web Services/i);
-      expect(text).toMatch(/Europe \(Londres\)/);
-      expect(text).toContain("eu-west-2");
-      expect(text).toMatch(/Royaume-Uni/);
+      expect(text).toMatch(/interrégional/i);
+      expect(text).toMatch(/région AWS américaine/i);
       expect(text).toMatch(/quota mensuel/i);
 
-      expect(text).not.toMatch(/région AWS américaine/i);
+      expect(text).not.toMatch(/Europe \(Londres\)/);
+      expect(text).not.toContain("eu-west-2");
     });
   });
 
-  it("names the processing region in the French Terms as well", async () => {
+  it("names the processing scope in the French Terms as well", async () => {
     await withFrench(() => {
       const text = renderText(<TermsPage locale="fr" />);
 
-      expect(text).toMatch(/Europe \(Londres\)/);
-      expect(text).toContain("eu-west-2");
+      expect(text).toMatch(/interrégional/i);
+      expect(text).toMatch(/région AWS américaine/i);
+      expect(text).not.toContain("eu-west-2");
+    });
+  });
+
+  it("describes the French limit as a request count", async () => {
+    await withFrench(() => {
+      const text = renderText(<TermsPage locale="fr" />);
+
+      expect(text).toMatch(/limite mensuelle sur le nombre de requêtes/i);
+      expect(text).not.toMatch(/jeton/i);
     });
   });
 
