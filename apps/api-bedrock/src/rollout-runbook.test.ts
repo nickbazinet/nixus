@@ -87,13 +87,14 @@ describe("the model capability probes are recorded with their exact identity", (
     expect(RUNBOOK).not.toMatch(/ConverseStream` — outstanding/i);
   });
 
-  /* With both probes passing, the quota is the only thing left standing between the
-   * stack and an active deployment - and saying so is what stops someone flipping
-   * GLOBAL and finding a function that cannot execute. */
-  it("names the Lambda concurrency quota as the sole activation blocker", () => {
-    expect(RUNBOOK).toMatch(/ACTIVATION IS BLOCKED ONLY ON THE LAMBDA CONCURRENCY QUOTA/i);
-    expect(gateRow("1b")).toMatch(/PENDING/);
-    expect(gateRow("1b")).toContain("CASE_OPENED");
+  /* With both probes passing and the reservation waived, no capacity dependency remains.
+   * Saying so is what stops the next reader waiting on a quota ticket that no longer
+   * gates anything. */
+  it("states that no concurrency dependency remains", () => {
+    expect(RUNBOOK).toMatch(/NO CONCURRENCY DEPENDENCY REMAINS/i);
+    expect(RUNBOOK).not.toMatch(
+      /ACTIVATION IS BLOCKED ONLY ON THE LAMBDA CONCURRENCY QUOTA/i
+    );
   });
 
   /* A one-line text stream is not the capability surface the four surfaces need, and
@@ -207,80 +208,113 @@ describe("the premium user grant is parameterised and cannot overwrite silently"
   });
 });
 
-describe("reserved concurrency is documented as inert versus active", () => {
-  it("explains that 0 is inert and 10 is the AD-4 active value", () => {
-    expect(RUNBOOK).toMatch(/`0` is inert, `10` is active/i);
-    expect(RUNBOOK).toMatch(/Inert\.\*\*|\*\*Inert\.\*\*/);
-    expect(RUNBOOK).toMatch(/reserves nothing from the account's concurrency pool/i);
-    expect(RUNBOOK).toMatch(/AD-4 mandates/i);
-  });
-
-  /* The rollback cause has to be written down, or the next person reads "reserve 10"
-   * as a value that simply works. */
-  it("explains why the first deployment rolled back", () => {
-    expect(RUNBOOK).toMatch(/unreserved.*below a floor of 50|floor of 50/i);
-    expect(RUNBOOK).toContain("ROLLBACK_COMPLETE");
-    expect(RUNBOOK).toMatch(/quota is 50/i);
-  });
-
-  it("states that removing the reservation is not an option", () => {
-    expect(RUNBOOK).toMatch(/Removing the reservation entirely is \*\*not\*\* an option/i);
-    expect(RUNBOOK).toMatch(/AD-4 and\s+AD-14 depend on/i);
-  });
-});
-
-describe("the quota increase and the reviewed flip are prerequisites", () => {
-  it("gives a verifiable quota-increase step with the Lambda quota code", () => {
-    expect(RUNBOOK).toContain("request-service-quota-increase");
-    expect(RUNBOOK).toContain("L-B99A9384");
-    expect(RUNBOOK).toContain("get-service-quota");
-    expect(RUNBOOK).toMatch(/at least \*\*60\*\*|>= 60/);
-  });
-
-  /* The activation lives on the protected environment, so it inherits the deployment
-   * approval; the template default staying 0 is what makes an unset or removed
-   * variable fail back to inert instead of silently keeping the service live. */
-  it("puts the activation on the protected production environment, not a repo variable", () => {
+/*
+ * The 2026-08-26 capacity decision. Everything here guards one confusion: a reservation
+ * of `0` and no reservation at all are opposite states that read almost identically. If
+ * the runbook stops explaining that, the next operator "restores" the reservation, AWS
+ * rejects every positive value against this account's quota, and 0 is what lands - a
+ * permanently inert function that looks configured.
+ */
+describe("the reservation waiver is documented, with its trade-off", () => {
+  it("states the function carries no reservation and uses the account's shared 50", () => {
     expect(RUNBOOK).toMatch(
-      /Set `HOSTED_AI_RESERVED_CONCURRENCY` to `10`\*\* on the \*\*protected `production`/
+      /### 2\.1 Concurrency: no function-level reservation \(user decision, 2026-08-26\)/
     );
-    expect(RUNBOOK).toMatch(/template's\s+`Default` stays `0`/i);
-    expect(RUNBOOK).toMatch(/returns the service to inert/i);
-    expect(RUNBOOK).toMatch(/already requires an approval to deploy through/i);
-    expect(RUNBOOK).toContain("HostedAiReservedConcurrency");
+    expect(RUNBOOK).toMatch(/carries no `ReservedConcurrentExecutions`/);
+    expect(RUNBOOK).toMatch(/shared pool of 50 unreserved executions/i);
   });
 
-  it("says the deploy job compares the deployed value against the configured one", () => {
-    expect(RUNBOOK).toMatch(/compares the deployed reservation\s+against the configured value/i);
-    expect(RUNBOOK).toMatch(/cannot be mistaken for a successful activation/i);
+  /* Without the arithmetic written down, "just reserve 10" looks like a value that works. */
+  it("explains why every positive reservation was refused", () => {
+    expect(RUNBOOK).toMatch(/floor of 50/i);
+    expect(RUNBOOK).toMatch(/quota \*\*is\*\* 50/i);
+    expect(RUNBOOK).toContain("ROLLBACK_COMPLETE");
+    expect(RUNBOOK).toMatch(/throttles the function to\s*zero concurrent executions/i);
   });
 
-  it("gives a command that asserts the DEPLOYED reservation", () => {
-    expect(RUNBOOK).toContain("aws lambda get-function-concurrency");
-    expect(RUNBOOK).toContain("ReservedConcurrentExecutions");
-    expect(RUNBOOK).toMatch(/proves nothing about the value CloudFormation actually/i);
+  it("records the waiver as the user's decision, not an implementation choice", () => {
+    expect(RUNBOOK).toMatch(/\*\*the user chose\s*neither and waived the reservation\*\*/i);
+    expect(RUNBOOK).toMatch(/accepting the account's shared 50/i);
   });
 
-  /* These must gate enablement, not sit in prose the reader can skip. */
-  it("adds the concurrency prerequisites to the enablement gate table", () => {
-    expect(gateRow("1b")).toMatch(/quota raised to at least 60/i);
-    expect(gateRow("1g")).toMatch(
-      /`HOSTED_AI_RESERVED_CONCURRENCY` set to `10` on the protected `production` environment/i
-    );
-    expect(gateRow("1h")).toMatch(/ReservedConcurrentExecutions = 10/i);
-    // The deployed model/region assertion is part of the same activation gate: an active
-    // function pointed at an unproved model voids both probe results.
+  /* A waiver that hides what it costs is not a decision record. */
+  it("states the shared-pool exposure the waiver accepts", () => {
+    expect(RUNBOOK).toMatch(/What this trades away/i);
+    expect(RUNBOOK).toMatch(/can exhaust the shared pool and throttle other functions/i);
+    expect(RUNBOOK).toMatch(/`Throttles` alarm \(threshold 1\)/);
+  });
+
+  /* The reservation was one of several layered bounds; the waiver must not read as a
+   * waiver of the bounding itself. */
+  it("lists the bounds that are unchanged, including the throttle and both caps", () => {
+    const section = sectionOf("### 2.1", "### 2.2");
+
+    expect(section).toMatch(/10 RPS \/ burst 20/);
+    expect(section).toMatch(/Cognito authorizer/i);
+    expect(section).toMatch(/Per-user monthly cap/i);
+    expect(section).toMatch(/`GLOBAL` monthly hard cap/);
+    expect(section).toMatch(/token ceilings/i);
+    expect(section).toMatch(/AWS Budget/);
+    expect(section).toMatch(/specification change/i);
+  });
+
+  /* `--query` on an absent field prints "None"; only a key-absence check tells the two
+   * states apart, and the runbook has to say so or the manual check is wrong. */
+  it("gives a command that distinguishes unreserved from reserved-zero", () => {
+    const section = sectionOf("### 2.2 Assert the function is unreserved", "### 2.3");
+
+    expect(section).toContain("aws lambda get-function-concurrency");
+    expect(section).toContain("--output json");
+    expect(section).toMatch(/expect: \{\}/);
+    expect(section).toMatch(/prints the string `None`/);
+    expect(section).toMatch(/0 means it cannot execute/i);
+    expect(section).toContain("get-account-settings");
+  });
+
+  it("explains that removing the property is an UPDATE, not a replacement", () => {
+    const section = sectionOf("### 2.3 Removing the reservation", "### 2.4");
+
+    expect(section).toMatch(/removes the reservation on UPDATE/i);
+    expect(section).toMatch(/does \*\*not\*\* require a stack replacement/i);
+    expect(section).toMatch(/does not touch the retained table/i);
+    // CloudFormation keeps prior parameter values, which is why model/region are passed.
+    expect(section).toMatch(/preserves previous parameter values on UPDATE/i);
+  });
+
+  /* The activation apparatus has to be gone from the operator instructions too, or the
+   * next person sets a variable that nothing reads. */
+  it("no longer instructs anyone to configure a reservation variable", () => {
+    expect(RUNBOOK).not.toContain("HOSTED_AI_RESERVED_CONCURRENCY");
+    expect(RUNBOOK).not.toContain("HostedAiReservedConcurrency");
+    expect(RUNBOOK).not.toContain("request-service-quota-increase");
+    expect(RUNBOOK).not.toContain("L-B99A9384");
+  });
+
+  it("records the quota request as open but no longer a dependency", () => {
+    const row = gateRow("1b");
+
+    expect(row).toMatch(/WAIVED/);
+    expect(row).toMatch(/no longer a rollout dependency/i);
+    expect(row).toContain("87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8");
+    expect(row).toMatch(/NOT A DEPENDENCY/);
+  });
+
+  it("gates the deployed function on being unreserved, not on a reservation value", () => {
+    expect(gateRow("1g")).toMatch(/no\*\* `ReservedConcurrentExecutions`/);
+    expect(gateRow("1g")).toMatch(/unreserved, not reserved-zero/i);
     expect(gateRow("1h")).toMatch(/model\/region assertions pass/i);
   });
 
-  /* The pending request id is the evidence that the quota gate is waiting on AWS
-   * rather than on someone remembering to ask. */
-  it("records the pending Lambda quota increase request", () => {
-    expect(RUNBOOK).toContain("87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8");
-  });
-
-  it("says enablement changes nothing while the function is inert", () => {
-    expect(RUNBOOK).toMatch(/cannot execute at all, so flipping `GLOBAL.enabled`/i);
+  /* A stale triage row would send the operator looking for a function-level limit that
+   * does not exist, instead of at the account pool. */
+  it("triages the Throttles alarm against the account pool", () => {
+    const row = RUNBOOK.split("\n").find((line) =>
+      line.startsWith("| Lambda `Throttles` |")
+    );
+    expect(row, "Throttles triage row is missing").toBeDefined();
+    expect(row).toMatch(/account's\*\* shared unreserved pool/i);
+    expect(row).toContain("get-account-settings");
+    expect(row).not.toMatch(/Reserved concurrency \(10\)/);
   });
 });
 

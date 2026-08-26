@@ -11,7 +11,7 @@ Deploying the stack does not enable traffic; only the manual item flip does.
 
 ## 0. Model capability probes — both passed
 
-**STATUS: `CountTokens` PASSES. `ConverseStream` PASSES. ACTIVATION IS BLOCKED ONLY ON THE LAMBDA CONCURRENCY QUOTA (§2.2).**
+**STATUS: `CountTokens` PASSES. `ConverseStream` PASSES. NO CONCURRENCY DEPENDENCY REMAINS (§2.1). REMAINING GATES ARE THE UNRUN CAPABILITY CHECKS (§0.3) AND THE STANDARD ROLLOUT GATES BELOW.**
 
 The architecture mandates a `bedrock:CountTokens` call against the exact selected model
 before any quota reservation (AD-8), so a model that rejects `CountTokens` makes the gate
@@ -97,9 +97,10 @@ of them as passed.** They are pre-enable gates 1c–1f.
 | Output ceilings | AD-8's per-operation output ceilings (chat 4096; statement_import 8192; advice/trends 1024) must be within this model's own `maxTokens` limit, or `ConverseStream` rejects the call for the largest operation | `converse` with `maxTokens` at 8192 and confirm no validation error |
 | `eu-west-2` model quotas | Bedrock per-model requests/tokens-per-minute quotas are regional, and London limits are not the `us-east-1` ones. Reserved concurrency 10 could exceed the model's own RPM | Service Quotas → Amazon Bedrock, in `eu-west-2`, for this model's on-demand RPM/TPM |
 
-Until §2.2's concurrency prerequisites land, `GLOBAL.enabled` stays `false` and the
-Lambda stays inert at reserved concurrency `0`. Everything else in this runbook may
-proceed: the stack is deployable, inspectable, and verifiable in that inert state.
+`GLOBAL.enabled` stays `false` until every enablement gate below is evidenced. The
+function itself is no longer the constraint: it carries no concurrency reservation and
+draws on the account's shared pool (§2.1), so it is deployable, inspectable, and able to
+run — the `GLOBAL` item is what keeps traffic off.
 
 
 ---
@@ -195,7 +196,6 @@ Two roles rather than one is the point: a single role able to both assume from G
    | `HOSTED_ZONE_ID` | secret | Route53 zone for `nixusapp.com` |
    | `ALERT_EMAIL` | secret | Alarm + budget subscriber |
    | `API_DOMAIN_NAME` | variable | `api.nixusapp.com` |
-   | `HOSTED_AI_RESERVED_CONCURRENCY` | variable | `0` until §2.2's prerequisites pass, then `10` |
 
    There is no Bedrock model or ARN input. A foundation-model ARN carries no account
    ID, so the template derives it from `BedrockModelId` + `BedrockRegion` and nothing
@@ -336,100 +336,85 @@ CloudFormation — not the GitHub-assumed deploy role — creates the resources.
 it would make CloudFormation act with the deploy role's own permissions, which
 deliberately cannot create anything.
 
-### 2.1 Reserved concurrency: `0` is inert, `10` is active
+### 2.1 Concurrency: no function-level reservation (user decision, 2026-08-26)
 
-`HostedAiReservedConcurrency` has exactly two legal values, and the difference is
-whether the service can spend money.
+**The function carries no `ReservedConcurrentExecutions` and no parameter to set one.**
+It draws on the account's shared pool of 50 unreserved executions.
 
-| Value | Meaning |
-|---|---|
-| **`0`** (default) | **Inert.** A reservation of zero throttles the function to zero concurrent executions: it is deployed, inspectable, and IAM-scoped, but it cannot run, cannot reach Bedrock, and cannot incur token cost. It also reserves nothing from the account's concurrency pool, which is what makes it deployable today. |
-| **`10`** | **Active**, and the value AD-4 mandates. A prerequisite for enabling `GLOBAL`, not a tuning knob. |
-
-**Why the default is `0` and not `10`.** The first deployment attempt failed and
-rolled back: AWS refuses a reservation that would drop the account's *unreserved*
+**Why.** AWS refuses any reservation that would drop the account's *unreserved*
 concurrency below a floor of 50, and this account's total Lambda concurrent-execution
-quota is 50. Reserving 10 would leave 40 unreserved, so CloudFormation rejected it and
-the stack entered `ROLLBACK_COMPLETE`.
+quota **is** 50. Every positive reservation was therefore rejected — the first deployment
+attempt rolled back into `ROLLBACK_COMPLETE` on exactly this — leaving `0` as the only
+deployable value. A reservation of `0` is not a mild setting: it throttles the function to
+zero concurrent executions, so the service can never serve a request while it stands.
 
-Removing the reservation entirely is **not** an option: it is the abuse bound AD-4 and
-AD-14 depend on, and without it one runaway caller could consume the whole account's
-concurrency. Hence a bounded parameter rather than a deletion.
+Faced with "permanently inert" versus "raise the quota and wait", **the user chose
+neither and waived the reservation**, accepting the account's shared 50. The quota-increase
+request may stay open, but **it is no longer a rollout dependency** and nothing waits on it.
 
-### 2.2 Raising the quota, then flipping the default to `10`
+**What this trades away, stated plainly.** The reservation was one of AD-4/AD-14's layered
+bounds, and it was the only one that isolated this function from the rest of the account.
+Without it, a burst here can exhaust the shared pool and throttle other functions, and
+theirs can throttle this one — callers see `503 hosted_unavailable` either way. The
+`Throttles` alarm (threshold 1) is what makes that visible.
 
-Both steps are prerequisites for §3's seed and for enablement.
+**What is unchanged.** Every other bound still stands, and the waiver did not touch any of
+them:
 
-1. **Request the quota increase.** Service Quotas → AWS Lambda → *Concurrent
-   executions*. Request enough headroom that reserving 10 still leaves at least 50
-   unreserved — i.e. a total of **at least 60**, and request more if other functions in
-   the account also reserve.
+| Bound | Where |
+|---|---|
+| Cognito authorizer with the required scope at the edge | `template.yaml` `Auth` |
+| Stage throttle 10 RPS / burst 20 | `template.yaml` `MethodSettings` |
+| Per-user monthly cap (`charged_count` vs `monthly_request_limit`) | DynamoDB, enforced in every reserve transaction |
+| `GLOBAL` monthly hard cap and `enabled` kill switch | DynamoDB, same transaction, atomically |
+| Per-operation input/output token ceilings, `CountTokens`-gated | `src/lib/validation.ts`, AD-8 |
+| AWS Budget $50/month on Bedrock, 80%/100% alerts | `template.yaml` |
 
-   Current state: request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` for 1000 concurrent
-   executions is `CASE_OPENED`. This is the sole remaining activation blocker.
+Re-adding a reservation is a specification change, not a tuning knob: it would have to
+clear the same quota arithmetic that rejected it, and it needs the user's decision
+reversed.
 
-   ```bash
-   aws service-quotas request-service-quota-increase \
-     --service-code lambda \
-     --quota-code L-B99A9384 \
-     --desired-value 1000
-   ```
+### 2.2 Assert the function is unreserved
 
-2. **Verify it was granted** before touching the parameter:
+"Unreserved" and "reserved 0" are opposite states that look nearly identical in a console.
+`get-function-concurrency` returns an **empty object** for an unreserved function, so query
+the whole response and check the key is absent — `--query 'ReservedConcurrentExecutions'`
+on a missing field prints the string `None`, which is easy to mistake for a real answer.
 
-   ```bash
-   aws service-quotas get-service-quota \
-     --service-code lambda --quota-code L-B99A9384 \
-     --query 'Quota.Value' --output text
-   # must be >= 60
-   ```
-
-3. **Set `HOSTED_AI_RESERVED_CONCURRENCY` to `10`** on the **protected `production`
-   GitHub environment**, then deploy through the OIDC workflow (§1.2b). The template's
-   `Default` stays `0`, so an unset or removed variable returns the service to inert
-   rather than silently keeping it active, and the parameter's `AllowedValues` still
-   permit nothing but `0` and `10`.
-
-   The environment is chosen over a repository variable and over a template edit for
-   the same reason: it already requires an approval to deploy through, so activation
-   is a reviewed act recorded in the deployment history, and reverting it is one
-   variable change rather than a code change and a release.
-
-4. **Confirm the deployed value** after that deployment, using the command in §2.3.
-   The deploy job asserts it automatically: it compares the deployed reservation
-   against the configured value and fails the job on any mismatch, so a reservation
-   AWS declined cannot be mistaken for a successful activation.
-
-The workflow also refuses to *start* a deployment it can predict will fail. Before
-`sam deploy` runs it checks the configured value is `0` or `10` and, when it is `10`,
-reads the regional Lambda concurrency quota from Service Quotas and refuses unless the
-quota can still preserve the 50-unreserved floor. That turns a rolled-back stack into a
-one-line job failure. It also asserts, after deploying, that the deployed model and region
-are the approved pair on **both** the stack outputs and the Lambda's own environment —
-an active function pointed at an unproved model would void the §0 probe evidence.
-
-Until step 3 lands, the deployed function is inert and no traffic is possible
-regardless of what `GLOBAL#CONFIG` says.
-
-### 2.3 Assert the deployed reservation
-
-The workflow does this automatically after every deploy, and it fails the job on a
-mismatch. To check by hand:
+The deploy workflow does this automatically after every deploy and fails the job if a
+reservation is present. By hand:
 
 ```bash
 FUNCTION_NAME="$(aws cloudformation describe-stacks \
   --stack-name nixus-bedrock-api \
   --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" --output text)"
 
-aws lambda get-function-concurrency \
-  --function-name "$FUNCTION_NAME" \
-  --query 'ReservedConcurrentExecutions' --output text
-# 0  → inert, the expected state before enablement
-# 10 → active, only valid after the quota increase and the reviewed environment change
+aws lambda get-function-concurrency --function-name "$FUNCTION_NAME" --output json
+# expect: {}   → unreserved, the intended state
+# a ReservedConcurrentExecutions key of any value → wrong; 0 means it cannot execute
 ```
 
-A template that says `!Ref` proves nothing about the value CloudFormation actually
-applied, which is why this asserts the deployed function rather than the template.
+Account-level capacity, for context when triaging a `Throttles` alarm:
+
+```bash
+aws lambda get-account-settings \
+  --query 'AccountLimit.{Concurrent:ConcurrentExecutions,Unreserved:UnreservedConcurrentExecutions}'
+```
+
+A template that says nothing about reservations proves nothing about the deployed
+function, which is why this asserts the function itself.
+
+### 2.3 Removing the reservation from an already-deployed stack
+
+The stack was previously deployed with a reservation of `0`. Deleting the property from
+the template is enough — CloudFormation removes the reservation on UPDATE, and the
+function moves to the shared pool. It does **not** require a stack replacement, and it
+does not touch the retained table.
+
+CloudFormation preserves previous parameter values on UPDATE, so the deploy job passes
+`BedrockModelId` and `BedrockRegion` explicitly rather than relying on the new template
+defaults; a parameter deleted from the template simply ceases to exist on the stack.
+Verify with §2.2 immediately after the deploy.
 
 ### 2.4 The orphaned rollback artefacts
 
@@ -618,24 +603,23 @@ Then confirm the negative paths:
 
 `GLOBAL.enabled = true` is forbidden until every row below has recorded evidence.
 
-**Currently blocked on gate 1b — the Lambda concurrency quota — and on the unrun
-capability checks 1c–1f.** Both AD-8 model probes now pass on the direct model in
-`eu-west-2` (§0.1, §0.2). Gates 1g–1h remain independently required: while the function
-sits at reserved concurrency `0` it
-cannot execute at all, so flipping `GLOBAL.enabled` would change nothing except to make
-the configuration misleading.
+**Currently blocked on the unrun capability checks 1c–1f.** Both AD-8 model probes pass
+on the direct model in `eu-west-2` (§0.1, §0.2), and gate 1b is waived — the concurrency
+reservation is gone and the quota increase is no longer a dependency (§2.1). Gates 1g–1h
+remain: they prove the deployed function is genuinely unreserved rather than reserved at
+zero, and that it still points at the one model/region the probes covered.
 
 | # | Gate | Reference | Evidence | Date |
 |---|---|---|---|---|
 | 1 | Deployed `CountTokens` probe succeeds on the exact model/region | §0.1, AD-8 | **PASSED** — `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count. Reached by a reviewed specification change away from the cross-region profile, which rejected the call. | 2026-08-26 |
 | 1a | Deployed `ConverseStream` probe succeeds on that same model/region | §0.2, AD-7 | **PASSED** — streamed text to completion on `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`; the model replied `OK.` | 2026-08-26 |
-| 1b | Lambda concurrent-executions quota raised to at least 60, and verified | §2.2 | **PENDING** — increase request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` for 1000 concurrent executions is `CASE_OPENED` at AWS. Sole remaining activation blocker. | |
+| 1b | ~~Lambda concurrent-executions quota raised~~ — **WAIVED** by the user on 2026-08-26: the function carries no reservation and uses the account's shared 50. Request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` may stay `CASE_OPENED` but is no longer a rollout dependency. | §2.1 | **NOT A DEPENDENCY** | 2026-08-26 |
 | 1c | Direct model lifecycle and account access confirmed (no announced end-of-life in the rollout horizon, access granted) | §0.3 | **NOT RUN** | |
 | 1d | Multimodal compatibility confirmed: one real PDF and one image through `converse` on the same model/region | §0.3, CAP-2 | **NOT RUN** | |
 | 1e | AD-8 output ceilings accepted by this model, checked at the largest (8192) | §0.3, AD-8 | **NOT RUN** | |
-| 1f | `eu-west-2` per-model Bedrock RPM/TPM quotas checked against reserved concurrency 10 | §0.3, AD-4 | **NOT RUN** | |
-| 1g | `HOSTED_AI_RESERVED_CONCURRENCY` set to `10` on the protected `production` environment | §2.2 | | |
-| 1h | Deployed function reports `ReservedConcurrentExecutions = 10`, and the deployed model/region assertions pass | §2.3, AD-4 | | |
+| 1f | `eu-west-2` per-model Bedrock RPM/TPM quotas checked against the account's shared 50 concurrency | §0.3, AD-4 | **NOT RUN** | |
+| 1g | Deployed function reports **no** `ReservedConcurrentExecutions` (unreserved, not reserved-zero) | §2.2 | | |
+| 1h | Deployed model/region assertions pass on both the stack outputs and the Lambda environment | §2.2, AD-8 | | |
 | 2 | Cognito `nixus-api/ai.invoke` scope added to pool + app client | §1.1, AD-3 | | |
 | 3 | Bootstrap stack deployed: OIDC provider, deploy role, CloudFormation execution role, artifact bucket. `sub` verified against `TrustedSubject` | §1.2, AD-12 | | |
 | 3a | `production` environment populated with both role ARNs and the artifact bucket | §1.2 step 5 | | |
@@ -663,8 +647,8 @@ so gate 7 requires confirmed, not merely created.
 ### Flip the switch
 
 Only once **every** gate above is evidenced — including gates 1c–1f (the capability
-checks a text-only stream probe does not cover) and gates 1b/1g/1h (the quota increase and
-the reviewed change to reserved concurrency `10`):
+checks a text-only stream probe does not cover) and gates 1g/1h (the deployed function is
+unreserved and still pointed at the approved model/region):
 
 ```bash
 aws dynamodb update-item --table-name "$TABLE" \
@@ -718,7 +702,7 @@ user, raise their `monthly_request_limit` — do **not** edit `charged_count`.
 |---|---|---|
 | API Gateway `5XXError` | Lambda faulting or timing out | Check the function log group for `unhandled_error` |
 | Lambda `Errors` | Handler exception | Check `invoke_rejected` / `invoke_failed_after_commit` entries |
-| Lambda `Throttles` | Reserved concurrency (10) exhausted | Genuine load or abuse — consider the kill switch |
+| Lambda `Throttles` | The **account's** shared unreserved pool (50) is exhausted — by this function or another, since there is no function-level reservation (§2.1) | Check `get-account-settings` for the current pool, then decide whether it is genuine load, abuse, or another function; consider the kill switch |
 | Budget 80% / 100% | Bedrock spend | Lower `GLOBAL.monthly_request_limit`; the budget only notifies, it never stops traffic |
 
 ---
