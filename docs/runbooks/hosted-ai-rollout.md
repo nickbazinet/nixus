@@ -1,0 +1,586 @@
+# Runbook — Hosted AI (Nixus Cloud Bedrock) rollout
+
+Owner: Nixus operator (single-operator service)
+Stack: `nixus-bedrock-api` · region `us-east-1` · one production stack, no staging (AD-15)
+
+`GLOBAL.enabled` is the single switch that turns hosted AI on. **It must stay `false`
+until every gate in [Enablement gates](#enablement-gates) has recorded evidence.**
+Deploying the stack does not enable traffic; only the manual item flip does.
+
+---
+
+## 0. Blocking prerequisite — deployed CountTokens capability probe
+
+**STATUS: PROBE RUN, PROBE FAILED. ENABLEMENT IS BLOCKED.**
+
+The architecture mandates a `bedrock:CountTokens` call against the exact selected
+inference profile (AD-8). AWS documents `CountTokens` at the foundation-model level
+but does **not** document inference-profile support, and `us.anthropic.claude-sonnet-4-6`
+is cross-region-only from `us-east-1`.
+
+The probe has now been run and was **rejected**:
+
+```
+ValidationException: The provided model doesn't support counting tokens
+```
+
+The command that produced it:
+
+```bash
+aws bedrock-runtime count-tokens \
+  --region us-east-1 \
+  --model-id us.anthropic.claude-sonnet-4-6 \
+  --input '{"converse":{"messages":[{"role":"user","content":[{"text":"probe"}]}]}}'
+```
+
+This is the spec's **Block If** condition, met. `POST /v1/ai/invoke` cannot complete
+for any caller while step 3 of the AD-8 request order is a `CountTokens` call this
+model rejects: every eligible request would fail at the gate and be classified
+`503 hosted_unavailable`.
+
+**What must NOT happen in response.** The spec is explicit that none of these may be
+changed silently, because each one alters cost enforcement or data processing:
+
+- do **not** switch to a different model or a foundation-model id,
+- do **not** change the region or drop the cross-region inference profile,
+- do **not** remove, weaken, or reorder the pre-reservation token gate,
+- do **not** substitute a locally estimated token count for the gate.
+
+Any of those is a **specification change** requiring architecture review, not a
+runbook workaround. Until that review happens and lands, `GLOBAL.enabled` stays
+`false` and the Lambda stays inert at reserved concurrency `0` (§2.2). Everything
+else in this runbook may proceed: the stack is deployable, inspectable, and
+verifiable in that inert state.
+
+> Evidence recorded: probe run against `us.anthropic.claude-sonnet-4-6` in `us-east-1`,
+> rejected with `ValidationException: The provided model doesn't support counting tokens`.
+> Re-run and update this section if AWS later adds inference-profile support, or once a
+> reviewed specification change selects a different gate.
+
+---
+
+## 1. One-time, out-of-band AWS setup
+
+These are **not** created by `nixus-bedrock-api` and must exist before the first deploy.
+
+### 1.1 Cognito resource-server scope (AD-3)
+
+The existing user pool from `architecture-login.md` is the sole identity authority.
+This stack never imports or owns it.
+
+1. Cognito → your user pool → **App integration → Resource servers**.
+2. Create (or edit) resource server with identifier **`nixus-api`**.
+3. Add custom scope **`ai.invoke`**. The full scope string becomes `nixus-api/ai.invoke`.
+4. App integration → your app client → **Hosted UI / OAuth 2.0 settings** → add
+   `nixus-api/ai.invoke` to the allowed custom scopes.
+
+The desktop already requests this scope (`COGNITO_SCOPES` in `commands/auth.rs`).
+
+> **Existing sessions do not gain the scope.** A refresh grant cannot add a scope.
+> Every already-signed-in user must sign out and sign in again. The desktop detects
+> the missing scope locally and classifies it as `reauthentication_required` rather
+> than looping on refresh.
+
+### 1.2 GitHub OIDC provider and deploy roles (AD-12)
+
+**`nixus-bedrock-api` must never define the role that deploys it** — a contract test
+asserts the application template contains no OIDC provider and no
+`token.actions.githubusercontent.com`. `infra/bootstrap/github-oidc-deploy.yaml` is the
+separately reviewed bootstrap stack AD-12 refers to, and it is deployed by its own
+one-time workflow.
+
+**The bootstrap paradox, and how it is resolved.** The application pipeline must
+authenticate via OIDC, but nothing can create the OIDC provider *over* OIDC, because
+neither the provider nor the role exists yet. Rather than create them by hand — which
+would contradict the rule that every infrastructure change runs through GitHub Actions
+— there is one temporary workflow that borrows the repository's pre-existing static
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (already present for `web-ci.yml`)
+exactly once. It is the only file permitted to use them, and a test enforces that
+`api-bedrock-ci.yml` contains no static credential.
+
+#### What the bootstrap stack creates
+
+| Resource | Purpose |
+|---|---|
+| GitHub OIDC provider | `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`. Retained, so removing the bootstrap stack cannot break another pipeline that federates through it |
+| **Deploy role** `nixus-bedrock-api-github-deploy` | Assumed by GitHub Actions. Drives CloudFormation on the one application stack, uploads packages, and reads deployed state. Holds **no** permission to create application resources, and no IAM write except `PassRole` to the one execution role |
+| **CloudFormation execution role** `nixus-bedrock-api-cfn-exec` | Assumed only by `cloudformation.amazonaws.com`. The sole identity that may create the application's resources. Carries an explicit **Deny** on `dynamodb:DeleteTable` |
+| Artifact bucket `nixus-sam-artifacts-<account>-<region>` | Private, AES256-encrypted, versioned, TLS-only, retained. Replaces SAM's managed bucket, which would sit outside these policies |
+
+Two roles rather than one is the point: a single role able to both assume from GitHub
+*and* create IAM roles could grant itself anything. Neither role carries
+`AdministratorAccess`, and no statement grants a wildcard action.
+
+#### Bootstrap sequence
+
+1. **Merge the source.** The bootstrap workflow is `workflow_dispatch`-only, so merging
+   it deploys nothing.
+
+2. **Run it.** Actions → *API Bedrock OIDC Bootstrap (TEMPORARY)* → **Run workflow**,
+   from `master`:
+   - `create_oidc_provider`: **`true`** on a first run. The workflow prechecks the
+     account and fails with the exact ARN to adopt if a provider already exists — an
+     account may hold only one per issuer URL.
+   - `existing_oidc_provider_arn`: leave blank unless adopting.
+   - `confirm`: type **`BOOTSTRAP`**. Without it the run refuses to start.
+
+3. **Read the outputs.** The final step prints a table and the exact mapping to copy.
+
+4. **Create the `production` environment.** GitHub → Settings → Environments → new
+   environment named **`production`**:
+   - Required reviewers: yourself.
+   - Deployment branches: **Selected branches** → default branch only.
+
+5. **Populate it** from the bootstrap outputs:
+
+   | Name | Kind | From bootstrap output |
+   |---|---|---|
+   | `AWS_BEDROCK_DEPLOY_ROLE_ARN` | secret | `DeployRoleArn` |
+   | `AWS_BEDROCK_CFN_EXEC_ROLE_ARN` | secret | `CloudFormationExecutionRoleArn` |
+   | `SAM_ARTIFACT_BUCKET` | variable | `SamArtifactBucketName` |
+
+   Plus the account-specific inputs the deploy job passes through:
+
+   | Name | Kind | Purpose |
+   |---|---|---|
+   | `COGNITO_USER_POOL_ARN` | secret | Authorizer target |
+   | `COGNITO_USER_POOL_ID` | secret | Operator traceability echo |
+   | `COGNITO_APP_CLIENT_ID` | secret | Client that carries the scope |
+   | `API_CERTIFICATE_ARN` | secret | ACM cert for the custom domain, in `us-east-1` |
+   | `HOSTED_ZONE_ID` | secret | Route53 zone for `nixusapp.com` |
+   | `ALERT_EMAIL` | secret | Alarm + budget subscriber |
+   | `BEDROCK_INFERENCE_PROFILE_ARN` | secret | Approved profile ARN |
+   | `API_DOMAIN_NAME` | variable | `api.nixusapp.com` |
+
+6. **Enable deployment.** Set the **repository** variable
+   `API_BEDROCK_DEPLOY_ENABLED` = `true`. Until this is set the deploy job is skipped
+   entirely, so merging deploy-capable source cannot deploy anything.
+
+7. **Delete the bootstrap workflow.** Its job is done and it is the only remaining
+   static-key path:
+
+   ```bash
+   git rm .github/workflows/api-bedrock-oidc-bootstrap.yml
+   ```
+
+   The bootstrap **stack** stays — only the workflow goes. Re-adding the file is the
+   only way to re-run it, which keeps that a deliberate, visible act.
+
+#### Verifying the trust subject
+
+The trust policy pins the `sub` claim to exactly:
+
+```
+repo:nickbazinet/nixus:environment:production
+```
+
+This repository has **immutable subject claims disabled** (`use_default: true`,
+`use_immutable_subject: false`), so GitHub emits the plain `repo:owner/name` form. Were
+immutable claims ever enabled, the claim becomes
+`repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production` and the trust policy must be
+updated to match. A `sub` that does not match fails every deploy closed, which is the
+safe direction; a `sub` that is too broad is privilege escalation.
+
+The stack outputs `TrustedSubject` so a failing run can be compared against it directly.
+
+#### Why the branch restriction is separate
+
+The trust policy's `sub` **cannot** encode both an environment and a branch. Restricting
+deployment to the default branch therefore comes from three independent controls:
+
+- the workflow's `push: branches: [master, main]` trigger,
+- the deploy job's `if`, which requires `github.ref` to be `master`/`main` for a manual
+  dispatch as well as a push, and
+- the `production` environment's deployment-branch policy.
+
+### 1.2b Manual dispatch of a normal deployment
+
+Once §1.2 is complete, a deployment can be triggered without an empty commit — the
+normal case for the first deployment, or for re-running one that failed on an
+account-side problem rather than a code problem:
+
+> Actions → **API Bedrock CI** → **Run workflow** → branch `master`.
+
+A dispatch from any other branch is refused by the job's `if`, and by the environment's
+branch policy. The `production` approval still applies.
+
+**Local deployment remains prohibited** (§2). Manual dispatch is a manual *trigger* of
+the GitHub-Actions deployment, not a local one.
+
+### 1.3 ACM certificate
+
+Issue/verify a certificate covering `api.nixusapp.com` **in `us-east-1`** (a Regional
+REST custom domain needs the certificate in the API's own region). Validate via DNS
+in the existing Route53 zone.
+
+### 1.4 Confirm Bedrock model-invocation logging is OFF (AD-15)
+
+```bash
+aws bedrock get-model-invocation-logging-configuration --region us-east-1
+```
+
+Expected: no logging configuration, or one that does not capture request/response
+data. If logging is enabled, request content would be persisted to a Nixus-controlled
+destination, contradicting the Privacy Policy. **Disable it before enabling traffic.**
+
+```bash
+aws bedrock delete-model-invocation-logging-configuration --region us-east-1
+```
+
+---
+
+## 2. Deploy — GitHub Actions only
+
+**Local deployment is prohibited.** The only path that may mutate the stack is the
+`deploy` job in `.github/workflows/api-bedrock-ci.yml`, which federates via GitHub
+OIDC into the deploy role from §1.2 and runs behind the protected `production`
+environment. There is no long-lived AWS key for this service, so there is no local
+credential to deploy with, and none may be created.
+
+Two clarifications, because both look like exceptions and are not:
+
+- **The one-time bootstrap** (§1.2) also runs in GitHub Actions. It uses the legacy
+  static keys because nothing can create an OIDC provider over OIDC, and it is deleted
+  once it has succeeded.
+- **Manual dispatch** (§1.2b) is a manual *trigger* of the GitHub-Actions deployment
+  from `master`. It is not a local deploy, and it is still gated on
+  `API_BEDROCK_DEPLOY_ENABLED`, the branch check, and `production` approval.
+
+Locally you may run only the offline gates:
+
+```bash
+cd apps/api-bedrock
+pnpm lint && pnpm typecheck && pnpm test
+pnpm sam:validate
+pnpm sam:build      # bundles the artifact; touches no AWS account
+```
+
+The bootstrap template is CloudFormation rather than SAM, so `sam validate` does not
+cover it. Lint it offline with:
+
+```bash
+pipx run cfn-lint infra/bootstrap/github-oidc-deploy.yaml
+```
+
+To deploy, merge to the default branch and approve the `production` environment, or
+dispatch from `master` (§1.2b). Stack name and region come from `samconfig.toml`.
+`resolve_s3` is **off**: the workflow passes `--s3-bucket` and `--s3-prefix` explicitly,
+because SAM's managed bucket would be created outside the bootstrap stack and therefore
+outside the deploy role's S3 policy and the bucket's encryption, versioning, and
+retention guarantees. Account-specific parameters are passed at deploy time and
+deliberately not committed.
+
+`sam deploy` runs with `--role-arn` pointing at the CloudFormation execution role, so
+CloudFormation — not the GitHub-assumed deploy role — creates the resources. Omitting
+it would make CloudFormation act with the deploy role's own permissions, which
+deliberately cannot create anything.
+
+### 2.1 Reserved concurrency: `0` is inert, `10` is active
+
+`HostedAiReservedConcurrency` has exactly two legal values, and the difference is
+whether the service can spend money.
+
+| Value | Meaning |
+|---|---|
+| **`0`** (default) | **Inert.** A reservation of zero throttles the function to zero concurrent executions: it is deployed, inspectable, and IAM-scoped, but it cannot run, cannot reach Bedrock, and cannot incur token cost. It also reserves nothing from the account's concurrency pool, which is what makes it deployable today. |
+| **`10`** | **Active**, and the value AD-4 mandates. A prerequisite for enabling `GLOBAL`, not a tuning knob. |
+
+**Why the default is `0` and not `10`.** The first deployment attempt failed and
+rolled back: AWS refuses a reservation that would drop the account's *unreserved*
+concurrency below a floor of 50, and this account's total Lambda concurrent-execution
+quota is 50. Reserving 10 would leave 40 unreserved, so CloudFormation rejected it and
+the stack entered `ROLLBACK_COMPLETE`.
+
+Removing the reservation entirely is **not** an option: it is the abuse bound AD-4 and
+AD-14 depend on, and without it one runaway caller could consume the whole account's
+concurrency. Hence a bounded parameter rather than a deletion.
+
+### 2.2 Raising the quota, then flipping the default to `10`
+
+Both steps are prerequisites for §3's seed and for enablement.
+
+1. **Request the quota increase.** Service Quotas → AWS Lambda → *Concurrent
+   executions*. Request enough headroom that reserving 10 still leaves at least 50
+   unreserved — i.e. a total of **at least 60**, and request more if other functions in
+   the account also reserve.
+
+   ```bash
+   aws service-quotas request-service-quota-increase \
+     --service-code lambda \
+     --quota-code L-B99A9384 \
+     --desired-value 1000
+   ```
+
+2. **Verify it was granted** before touching the parameter:
+
+   ```bash
+   aws service-quotas get-service-quota \
+     --service-code lambda --quota-code L-B99A9384 \
+     --query 'Quota.Value' --output text
+   # must be >= 60
+   ```
+
+3. **Flip the default in a reviewed pull request.** Change
+   `HostedAiReservedConcurrency`'s `Default` from `0` to `10` in
+   `apps/api-bedrock/template.yaml`, and update the workflow's post-deploy assertion
+   (§2.3) to expect `10`. This is deliberately a reviewed code change rather than a
+   console edit or a workflow variable, so the activation is visible in history and
+   cannot happen by accident.
+
+4. **Confirm the deployed value** after that deployment, using the command in §2.3.
+
+Until step 3 lands, the deployed function is inert and no traffic is possible
+regardless of what `GLOBAL#CONFIG` says.
+
+### 2.3 Assert the deployed reservation
+
+The workflow does this automatically after every deploy, and it fails the job on a
+mismatch. To check by hand:
+
+```bash
+FUNCTION_NAME="$(aws cloudformation describe-stacks \
+  --stack-name nixus-bedrock-api \
+  --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" --output text)"
+
+aws lambda get-function-concurrency \
+  --function-name "$FUNCTION_NAME" \
+  --query 'ReservedConcurrentExecutions' --output text
+# 0  → inert, the expected state before enablement
+# 10 → active, only valid after the quota increase and the reviewed flip
+```
+
+A template that says `!Ref` proves nothing about the value CloudFormation actually
+applied, which is why this asserts the deployed function rather than the template.
+
+### 2.4 The orphaned rollback artefacts
+
+The failed first attempt left two things behind:
+
+- **The stack in `ROLLBACK_COMPLETE`.** This is a terminal state CloudFormation cannot
+  update, so it must be deleted before a `CREATE` can be retried. The deploy job does
+  this automatically, but **only** when the status is exactly `ROLLBACK_COMPLETE` —
+  a state in which no resource was successfully created, so nothing can be lost. Every
+  other state, including a live stack or a failed `UPDATE` that still serves traffic,
+  is left strictly alone.
+- **An empty retained DynamoDB table with a generated name.** `DeletionPolicy: Retain`
+  kept it when the stack rolled back, so it survives as an orphan. It is empty and
+  costs effectively nothing on-demand, but it is not the table the next deployment will
+  use. Identify and delete it **by hand**, after confirming it holds no items and is
+  not the current stack's table:
+
+  ```bash
+  CURRENT="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
+    --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue" --output text)"
+  # For each candidate orphan, confirm it is NOT "$CURRENT" and that:
+  aws dynamodb scan --table-name "<orphan>" --select COUNT --query 'Count'
+  # expect 0 before deleting
+  ```
+
+  Left in place it is harmless; it is listed so it is not mistaken later for the live
+  quota table.
+
+### 2.5 Protect the quota table from the deploy role (AD-15)
+
+`DeletionPolicy: Retain` / `UpdateReplacePolicy: Retain` stop CloudFormation from
+deleting or replacing the table, but they do not stop a direct `DeleteTable` API call
+by the deploy role. Verify **both**:
+
+```bash
+# 1. PITR is on (CI asserts this after every deploy).
+aws dynamodb describe-continuous-backups --table-name "$TABLE" \
+  --query 'ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus'
+# expect: ENABLED
+
+# 2. Deletion protection is on — belt and braces beyond the Retain policies.
+aws dynamodb update-table --table-name "$TABLE" --deletion-protection-enabled
+```
+
+Confirm the deploy role's policy grants no `dynamodb:DeleteTable` on this table.
+
+---
+
+## 3. One-time operational seed (manual, post-deploy, pre-traffic)
+
+No code path creates these items. There is no bootstrap Lambda and no
+PostConfirmation trigger — this is deliberate (AD-6/AD-15).
+
+### 3.1 GLOBAL config — created disabled
+
+```bash
+TABLE=$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
+  --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue" --output text)
+
+aws dynamodb put-item --table-name "$TABLE" --item '{
+  "pk": {"S": "GLOBAL"},
+  "sk": {"S": "CONFIG"},
+  "enabled": {"BOOL": false},
+  "monthly_request_limit": {"N": "1000"},
+  "updated_at": {"S": "2026-08-26T00:00:00Z"}
+}' --condition-expression "attribute_not_exists(pk)"
+```
+
+`enabled: false` means every `POST /v1/ai/invoke` returns `503 hosted_unavailable`
+and `GET /v1/ai/status` reports non-premium. That is the intended pre-rollout state.
+
+### 3.2 Per-premium-user config
+
+One item per premium user, created by hand. `<sub>` is the Cognito `sub`.
+
+```bash
+aws dynamodb put-item --table-name "$TABLE" --item '{
+  "pk": {"S": "USER#<sub>"},
+  "sk": {"S": "CONFIG"},
+  "premium": {"BOOL": true},
+  "monthly_request_limit": {"N": "200"},
+  "updated_at": {"S": "2026-08-26T00:00:00Z"}
+}'
+```
+
+Fail-closed shapes, for reference: a missing item, `premium: false`, a
+`monthly_request_limit <= 0`, or a malformed item all resolve to `403 premium_required`
+on invoke. Never edit a `USAGE#` item to grant quota — `charged_count` is the accounting
+authority and lowering it hands out free requests silently.
+
+Re-check [Bedrock token pricing](https://aws.amazon.com/bedrock/pricing/) before
+setting or raising any `monthly_request_limit`.
+
+---
+
+## 4. Verify the deployed API
+
+```bash
+bash apps/api-bedrock/scripts/smoke-test.sh
+```
+
+Asserts, without a user credential: the custom domain serves over TLS, both routes
+reject an unauthenticated call with `401` **and** the canonical error envelope
+(`error.code == "unauthorized"`, not API Gateway's generic body), and the default
+`execute-api` endpoint is disabled.
+
+Then, with a scoped premium test user and **BYO credentials cleared**, exercise all
+four surfaces from one release build and confirm each uses hosted Bedrock while
+preserving its existing observable behaviour:
+
+| Surface | Expected |
+|---|---|
+| AI chat | Streams incrementally, token by token |
+| Statement import | Image and PDF both parse into transactions |
+| Project advice | Returns a parseable result |
+| Spending-trends insight | Returns a parseable result |
+
+Then confirm the negative paths:
+
+- Set `monthly_request_limit` below `charged_count` → surfaces fall back to BYO, or
+  report a typed error where no fallback is permitted.
+- Flip `GLOBAL.enabled` to `false` → all four surfaces stop using hosted AI.
+- Confirm CloudWatch logs contain **no** prompt, response, transaction, or file name —
+  only `sub`, period, operation, timestamps, latency, status, counts, and token counts.
+
+---
+
+## Enablement gates
+
+`GLOBAL.enabled = true` is forbidden until every row below has recorded evidence.
+
+**Currently blocked on gate 1.** The `CountTokens` probe was run and rejected (§0), so
+enablement cannot proceed on the present design regardless of the other gates. Gates
+1a–1c are additionally required: while the function sits at reserved concurrency `0` it
+cannot execute at all, so flipping `GLOBAL.enabled` would change nothing except to make
+the configuration misleading.
+
+| # | Gate | Reference | Evidence | Date |
+|---|---|---|---|---|
+| 1 | Deployed `CountTokens` probe succeeds on the exact model/profile/region | §0, AD-8 | **FAILED 2026-08-26** — `ValidationException: The provided model doesn't support counting tokens`. Blocks enablement; needs a reviewed specification change, not a workaround. | 2026-08-26 |
+| 1a | Lambda concurrent-executions quota raised to at least 60, and verified | §2.2 | | |
+| 1b | `HostedAiReservedConcurrency` default flipped `0` → `10` in a reviewed pull request | §2.2 | | |
+| 1c | Deployed function reports `ReservedConcurrentExecutions = 10` | §2.3, AD-4 | | |
+| 2 | Cognito `nixus-api/ai.invoke` scope added to pool + app client | §1.1, AD-3 | | |
+| 3 | Bootstrap stack deployed: OIDC provider, deploy role, CloudFormation execution role, artifact bucket. `sub` verified against `TrustedSubject` | §1.2, AD-12 | | |
+| 3a | `production` environment populated with both role ARNs and the artifact bucket | §1.2 step 5 | | |
+| 3b | Repository variable `API_BEDROCK_DEPLOY_ENABLED` set to `true` | §1.2 step 6 | | |
+| 3c | Bootstrap workflow file deleted, so no static-key path to AWS remains | §1.2 step 7 | | |
+| 4 | `production` environment requires approval and is default-branch-only | §1.2, AD-12 | | |
+| 5 | Bedrock model-invocation logging confirmed disabled | §1.4, AD-15 | | |
+| 6 | Quota table: PITR `ENABLED`, deletion protection on, `Retain` policies present | §2.5, AD-15 | | |
+| 7 | CloudWatch alarms exist (API 5XX, Lambda Errors, Lambda Throttles) and the SNS email subscription is **confirmed** | AD-14 | | |
+| 8 | AWS Budget `$50/mo` on Bedrock with 80% / 100% notifications | AD-14 | | |
+| 9 | Terms of Service and Privacy Policy published, EN + FR, stating: transmission through Nixus to AWS Bedrock; cross-region `us.` processing and abuse-detection implications; non-retention is Nixus-controlled only and does not bind AWS; request quota; BYO fallback | AD-13 | | |
+| 10 | `README.md` and all marketing copy no longer claim data never leaves the machine | AD-13 | | |
+| 11 | `GLOBAL#CONFIG` seeded with `enabled: false` | §3.1, AD-15 | | |
+| 11a | Orphaned retained table from the rolled-back first attempt identified, confirmed empty, and removed by hand | §2.4 | | |
+| 12 | Deployed smoke test passes | §4, AD-2/AD-3 | | |
+| 13 | All four surfaces verified hosted on one release build, BYO cleared | §4, CAP-1/CAP-2 | | |
+| 14 | Quota-exhaustion and global-disable fallback verified | §4, CAP-5 | | |
+| 15 | CloudWatch logs verified free of prompts, responses, and file paths | §4, AD-11 | | |
+
+**SNS note:** an email subscription stays `PendingConfirmation` until the recipient
+clicks the confirmation link. An unconfirmed subscription silently delivers nothing,
+so gate 7 requires confirmed, not merely created.
+
+### Flip the switch
+
+Only once **every** gate above is evidenced — including gate 1 (a `CountTokens` design
+that the selected model actually supports) and gates 1a–1c (the quota increase and the
+reviewed flip to reserved concurrency `10`):
+
+```bash
+aws dynamodb update-item --table-name "$TABLE" \
+  --key '{"pk":{"S":"GLOBAL"},"sk":{"S":"CONFIG"}}' \
+  --update-expression "SET enabled = :t, updated_at = :now" \
+  --expression-attribute-values '{":t":{"BOOL":true},":now":{"S":"2026-08-26T00:00:00Z"}}'
+```
+
+---
+
+## Rollback and incident response
+
+### Emergency stop (seconds, no deploy)
+
+`GLOBAL.enabled = false` is the kill switch. It is enforced in the same transaction as
+every reservation, so it takes effect on the very next request.
+
+```bash
+aws dynamodb update-item --table-name "$TABLE" \
+  --key '{"pk":{"S":"GLOBAL"},"sk":{"S":"CONFIG"}}' \
+  --update-expression "SET enabled = :f, updated_at = :now" \
+  --expression-attribute-values '{":f":{"BOOL":false},":now":{"S":"'"$(date -u +%FT%TZ)"'"}}'
+```
+
+Desktop clients see `503 hosted_unavailable`, fall back to BYO where permitted, and
+cache "unavailable" for at most 60 seconds. In-flight committed streams finish and
+stay charged — that is intended (AD-7), not a leak.
+
+### Reduce blast radius without a full stop
+
+- Lower `GLOBAL.monthly_request_limit` to throttle total spend.
+- Lower or remove a single user's `USER#<sub>/CONFIG` to cut off one account.
+
+### Roll back code
+
+Revert the offending commit and let the pipeline redeploy, or
+`aws cloudformation cancel-update-stack` / deploy the previous template. **The
+DynamoDB table is `Retain`-protected**, so quota state and recovery history survive
+stack changes; a rollback does not reset anyone's `charged_count`.
+
+### Known accepted risk
+
+A hard Lambda crash or timeout past the 10-second soft deadline can leak one
+`charged_count` increment (the user is charged for a request that produced nothing).
+This is an explicitly accepted v1 risk with **no reconciler** (AD-7). To compensate a
+user, raise their `monthly_request_limit` — do **not** edit `charged_count`.
+
+### Alarm triage
+
+| Alarm | Likely cause | First action |
+|---|---|---|
+| API Gateway `5XXError` | Lambda faulting or timing out | Check the function log group for `unhandled_error` |
+| Lambda `Errors` | Handler exception | Check `invoke_rejected` / `invoke_failed_after_commit` entries |
+| Lambda `Throttles` | Reserved concurrency (10) exhausted | Genuine load or abuse — consider the kill switch |
+| Budget 80% / 100% | Bedrock spend | Lower `GLOBAL.monthly_request_limit`; the budget only notifies, it never stops traffic |
+
+---
+
+## Deferred (not in v1)
+
+S3-backed statement upload · a `charged_count` reconciler · a staging stack · an admin
+UI for premium/quota · any in-app status or quota UI · WAF in front of the API.
