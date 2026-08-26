@@ -78,6 +78,7 @@ deliberately and **not** in the runbook's reusable command text, which is parame
 | Lambda concurrency quota increase `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` | **WAIVED** — no longer a rollout dependency; the function uses the account's shared unreserved pool. |
 | Function concurrency | **UNRESERVED** — GitHub run `32997823488` confirmed `get-function-concurrency` returns no reservation key. |
 | Inert model deployment | **PASS** — GitHub Actions run `32996088072`; stack `UPDATE_COMPLETE`; stack outputs and Lambda environment both equal the approved direct model and `eu-west-2`. |
+| Enabled PDF-compatible build | **PASS** — GitHub Actions run `32998849688`; no Lambda reservation, model/region assertions, PITR, and API smoke tests all passed. |
 
 Additional live evidence: model lifecycle is `ACTIVE`; PDF streamed `PDF_OK`; image
 counted and streamed `IMAGE_OK`; `maxTokens: 8192` returned `LIMIT_OK`. Regional RPM/TPM
