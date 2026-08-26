@@ -1,0 +1,302 @@
+name: API Bedrock CI
+
+# Hosted-AI gateway CI for apps/api-bedrock (AD-12).
+#
+# Deliberate divergence from web-ci.yml: that workflow authenticates with a
+# static AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY pair. This service has no
+# long-lived AWS key at all - the deploy job federates via GitHub OIDC into a
+# role that was created out-of-band, never by the stack it deploys.
+#
+# Default-branch-only deployment is enforced by TWO independent controls, because
+# an IAM trust policy `sub` claim cannot encode both a repository/environment and
+# a branch at once:
+#   1. this workflow's own `push: branches` trigger plus the job-level `if`, and
+#   2. the `production` GitHub environment's deployment branch policy.
+# The deploy role's trust policy pins the `sub` claim to
+# `repo:<owner>/<repo>:environment:production` (see docs/runbooks/hosted-ai-rollout.md).
+
+on:
+  pull_request:
+    paths:
+      - "apps/api-bedrock/**"
+      - "packages/shared/**"
+      - ".github/workflows/api-bedrock-ci.yml"
+      - "pnpm-lock.yaml"
+  push:
+    branches: [master, main]
+    paths:
+      - "apps/api-bedrock/**"
+      - "packages/shared/**"
+      - ".github/workflows/api-bedrock-ci.yml"
+      - "pnpm-lock.yaml"
+  # Lets an operator deploy a already-merged commit without an empty push - the
+  # normal case for the first deployment, and for re-running one that failed on an
+  # account-side problem rather than a code problem.
+  workflow_dispatch:
+
+# Verification is cancellable: superseding a PR run wastes nothing.
+# The deploy job overrides this with a non-cancelling group of its own, because
+# cancelling `sam deploy` mid-flight abandons a CloudFormation stack in
+# UPDATE_IN_PROGRESS, which then blocks every later deployment until an operator
+# intervenes by hand.
+concurrency:
+  group: api-bedrock-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default; the deploy job opts into id-token itself.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (lint, typecheck, test, sam validate, sam build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint service
+        run: pnpm --filter @nixus/api-bedrock lint
+
+      - name: Typecheck shared contract
+        run: pnpm --filter @nixus/shared typecheck
+
+      - name: Shared contract tests
+        run: pnpm --filter @nixus/shared test
+
+      - name: Typecheck service
+        run: pnpm --filter @nixus/api-bedrock typecheck
+
+      - name: Unit and infrastructure contract tests
+        run: pnpm --filter @nixus/api-bedrock test
+
+      # Offline gates: cfn-lint and an esbuild bundle, no AWS credentials.
+      - name: Validate SAM template
+        run: pnpm --filter @nixus/api-bedrock sam:validate
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Build SAM application
+        run: pnpm --filter @nixus/api-bedrock sam:build
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+  deploy:
+    name: Deploy (nixus-bedrock-api)
+    needs: verify
+    # Three independent conditions, all required:
+    #   1. deployment is explicitly switched on for this repository,
+    #   2. the trigger is a default-branch push or a manual dispatch, and
+    #   3. a dispatch must itself come from the default branch.
+    # Absent the variable this job is skipped entirely, so merging deploy-capable
+    # source cannot deploy anything until someone opts in.
+    if: >-
+      vars.API_BEDROCK_DEPLOY_ENABLED == 'true' &&
+      (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    # Never cancelled, and serialized against itself: one stack, one deployment at
+    # a time. `cancel-in-progress: false` is the load-bearing half.
+    concurrency:
+      group: api-bedrock-deploy-production
+      cancel-in-progress: false
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SAM application
+        run: pnpm --filter @nixus/api-bedrock sam:build
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Configure AWS credentials via GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_BEDROCK_DEPLOY_ROLE_ARN }}
+          role-session-name: nixus-bedrock-api-deploy
+          aws-region: us-east-1
+
+      # A stack whose very first CREATE failed lands in ROLLBACK_COMPLETE, a terminal
+      # state CloudFormation cannot update: the only way forward is to delete it and
+      # create again. That is safe ONLY for this state, because a ROLLBACK_COMPLETE
+      # stack has no successfully created resources to lose. Any other state - a live
+      # stack, an in-progress operation, a failed UPDATE that still serves traffic -
+      # is left strictly alone.
+      - name: Remove a failed initial stack, if and only if it is ROLLBACK_COMPLETE
+        run: |
+          set -euo pipefail
+          status="$(aws cloudformation describe-stacks \
+            --stack-name nixus-bedrock-api \
+            --query 'Stacks[0].StackStatus' \
+            --output text 2>/dev/null || echo "DOES_NOT_EXIST")"
+          echo "stack_status=${status}"
+
+          if [ "${status}" = "ROLLBACK_COMPLETE" ]; then
+            echo "Deleting the failed initial stack so CREATE can be retried."
+            aws cloudformation delete-stack --stack-name nixus-bedrock-api
+            aws cloudformation wait stack-delete-complete --stack-name nixus-bedrock-api
+            echo "Deletion complete."
+          else
+            echo "Leaving stack untouched: only ROLLBACK_COMPLETE is removable."
+          fi
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Deploy stack
+        working-directory: apps/api-bedrock
+        run: |
+          set -euo pipefail
+          test -n "${CFN_EXEC_ROLE_ARN}" || {
+            echo "AWS_BEDROCK_CFN_EXEC_ROLE_ARN is not set on the production environment." >&2
+            exit 1
+          }
+          test -n "${SAM_ARTIFACT_BUCKET}" || {
+            echo "SAM_ARTIFACT_BUCKET is not set on the production environment." >&2
+            exit 1
+          }
+
+          # Two-role separation (least privilege): the OIDC deploy role drives
+          # CloudFormation but holds no permission to create application resources.
+          # `--role-arn` hands CloudFormation the execution role that does. The
+          # bucket is explicit because `resolve_s3` is off - SAM's managed bucket
+          # would be created outside the bootstrap stack and outside its policies.
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --role-arn "${CFN_EXEC_ROLE_ARN}" \
+            --s3-bucket "${SAM_ARTIFACT_BUCKET}" \
+            --s3-prefix "${SAM_ARTIFACT_PREFIX}" \
+            --parameter-overrides \
+              "CognitoUserPoolArn=${COGNITO_USER_POOL_ARN}" \
+              "CognitoUserPoolId=${COGNITO_USER_POOL_ID}" \
+              "CognitoAppClientId=${COGNITO_APP_CLIENT_ID}" \
+              "ApiDomainName=${API_DOMAIN_NAME}" \
+              "ApiCertificateArn=${API_CERTIFICATE_ARN}" \
+              "HostedZoneId=${HOSTED_ZONE_ID}" \
+              "AlertEmail=${ALERT_EMAIL}" \
+              "BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}" \
+              "HostedAiReservedConcurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          # Both produced by the one-time bootstrap stack
+          # (infra/bootstrap/github-oidc-deploy.yaml) and copied onto the protected
+          # production environment.
+          CFN_EXEC_ROLE_ARN: ${{ secrets.AWS_BEDROCK_CFN_EXEC_ROLE_ARN }}
+          SAM_ARTIFACT_BUCKET: ${{ vars.SAM_ARTIFACT_BUCKET }}
+          # Stable prefix so the bucket policy and lifecycle rules apply to one
+          # predictable path rather than whatever key SAM invents per run.
+          SAM_ARTIFACT_PREFIX: nixus-bedrock-api
+          # Inert by default. Raising this to 10 requires the account Lambda quota
+          # increase first; see docs/runbooks/hosted-ai-rollout.md.
+          HOSTED_AI_RESERVED_CONCURRENCY: ${{ vars.HOSTED_AI_RESERVED_CONCURRENCY || '0' }}
+          COGNITO_USER_POOL_ARN: ${{ secrets.COGNITO_USER_POOL_ARN }}
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          COGNITO_APP_CLIENT_ID: ${{ secrets.COGNITO_APP_CLIENT_ID }}
+          API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
+          API_CERTIFICATE_ARN: ${{ secrets.API_CERTIFICATE_ARN }}
+          HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          BEDROCK_INFERENCE_PROFILE_ARN: ${{ secrets.BEDROCK_INFERENCE_PROFILE_ARN }}
+
+      # Asserts the DEPLOYED reservation, not the template's. A template that says
+      # `!Ref` proves nothing about which value CloudFormation actually applied, and
+      # the difference here is "cannot invoke Bedrock" versus "can".
+      - name: Assert the deployed Lambda is inert (reserved concurrency 0)
+        run: |
+          set -euo pipefail
+          function_name="$(aws cloudformation describe-stacks \
+            --stack-name nixus-bedrock-api \
+            --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" \
+            --output text)"
+          test -n "${function_name}" && test "${function_name}" != "None"
+
+          reserved="$(aws lambda get-function-concurrency \
+            --function-name "${function_name}" \
+            --query 'ReservedConcurrentExecutions' \
+            --output text)"
+          echo "reserved_concurrency=${reserved}"
+
+          # 0 is the inert default. Flipping to AD-4's 10 is a reviewed parameter
+          # change gated on the account quota increase, and this assertion is
+          # expected to be updated in that same pull request.
+          if [ "${reserved}" != "0" ]; then
+            echo "Expected an inert reservation of 0, got '${reserved}'." >&2
+            echo "If the quota increase and the reviewed flip to 10 have landed," >&2
+            echo "update this assertion in that pull request." >&2
+            exit 1
+          fi
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # The retained table must survive every stack change (AD-15). This asserts
+      # the deployed reality rather than trusting the template's DeletionPolicy.
+      - name: Assert quota table is still retained and PITR-enabled
+        run: |
+          TABLE_NAME="$(aws cloudformation describe-stacks \
+            --stack-name nixus-bedrock-api \
+            --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue" \
+            --output text)"
+          echo "table=${TABLE_NAME}"
+          PITR="$(aws dynamodb describe-continuous-backups \
+            --table-name "${TABLE_NAME}" \
+            --query 'ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus' \
+            --output text)"
+          test "${PITR}" = "ENABLED" || { echo "PITR is ${PITR}, expected ENABLED"; exit 1; }
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # Smoke test: unauthenticated calls must be rejected by the authorizer with
+      # the canonical envelope, and the default execute-api host must be gone.
+      # Authenticated four-surface acceptance is a manual release gate.
+      - name: Deployed API smoke test
+        run: bash apps/api-bedrock/scripts/smoke-test.sh
+        env:
+          AWS_DEFAULT_REGION: us-east-1
