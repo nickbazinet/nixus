@@ -1,5 +1,10 @@
+pub mod backend;
 pub mod cc_parser;
 pub mod chat;
+pub mod hosted_bedrock;
+#[cfg(test)]
+mod hosted_e2e;
+pub mod hosted_state;
 pub mod project_advice;
 pub mod trends_insight;
 
@@ -15,6 +20,19 @@ pub enum AiProvider {
 
 pub struct AiState {
     pub provider: Option<AiProvider>,
+}
+
+/// Snapshots the configured BYO provider so callers can release `AiState`'s guard
+/// before crossing an await point. Both underlying clients are cheap handles.
+///
+/// `None` means "no BYO provider configured", which is no longer a terminal state:
+/// hosted Bedrock can still serve a premium user who never entered credentials.
+pub fn clone_provider(provider: &Option<AiProvider>) -> Option<AiProvider> {
+    match provider {
+        Some(AiProvider::Bedrock(client)) => Some(AiProvider::Bedrock(client.clone())),
+        Some(AiProvider::OpenAI(client)) => Some(AiProvider::OpenAI(client.clone())),
+        None => None,
+    }
 }
 
 /// The database-side inputs the provider client needs, read in one pass.

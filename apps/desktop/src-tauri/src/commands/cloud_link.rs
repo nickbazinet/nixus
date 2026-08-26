@@ -147,7 +147,17 @@ mod tests {
     /// The vehicle catalog predates this epic and has nothing to do with sign-in;
     /// it is listed so the sweep below can assert an exact set rather than a
     /// minimum, which is what makes a new networked module a test failure.
-    const NETWORKED_MODULES: [&str; 2] = ["commands/auth.rs", "maintenance/catalog.rs"];
+    ///
+    /// `ai/hosted_bedrock.rs` is the Nixus Cloud Bedrock HTTP/NDJSON adapter. It is
+    /// deliberately networked and deliberately NOT on the Login/Migrate/keyring
+    /// path this guard protects: it never touches a profile file or `credentials.rs`,
+    /// obtains its only credential from `commands/auth.rs`, and sends nothing but a
+    /// prompt the user explicitly invoked an AI feature to send.
+    const NETWORKED_MODULES: [&str; 3] = [
+        "ai/hosted_bedrock.rs",
+        "commands/auth.rs",
+        "maintenance/catalog.rs",
+    ];
 
     /// The modules the Login and Migrate branches are built out of — this one
     /// included. None of them may ever appear in the networked set.
