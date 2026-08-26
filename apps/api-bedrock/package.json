@@ -15,15 +15,21 @@
     "sam:build": "sam build"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1118.0",
+    "@aws-sdk/client-dynamodb": "^3.1118.0",
+    "@aws-sdk/lib-dynamodb": "^3.1118.0",
     "@nixus/shared": "workspace:*"
   },
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.162",
     "@types/node": "^22.20.0",
     "@types/react": "^19.1.8",
+    "esbuild": "^0.28.2",
     "eslint": "^10.3.0",
     "globals": "^17.6.0",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.59.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "yaml": "^2.9.0"
   }
 }
