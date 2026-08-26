@@ -45,7 +45,7 @@ inference profiles do not carry.
 
 The approved resolution is a **specification change, not a runbook workaround**: the
 service now calls the bare foundation model
-`anthropic.claude-3-7-sonnet-20250219-v1:0` **directly in `eu-west-2`**, which returned
+`anthropic.claude-sonnet-4-6` **directly in `eu-west-2`**, which returned
 an input-token count for the identical probe:
 
 ```bash
@@ -80,7 +80,7 @@ aws bedrock-runtime converse-stream \
 ```
 
 Recorded outcome: the probe **streamed text and completed** — the model replied `OK.`
-on `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`. Both AD-8 gate calls are
+on `anthropic.claude-sonnet-4-6` in `eu-west-2`. Both AD-8 gate calls are
 therefore proved on the one deployed identity.
 
 ### 0.3 First-customer capability checks
@@ -604,8 +604,8 @@ follow-up hardening, not blockers for this beta account.
 
 | # | Gate | Reference | Evidence | Date |
 |---|---|---|---|---|
-| 1 | Deployed `CountTokens` probe succeeds on the exact model/region | §0.1, AD-8 | **PASSED** — `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count. Reached by a reviewed specification change away from the cross-region profile, which rejected the call. | 2026-08-26 |
-| 1a | Deployed `ConverseStream` probe succeeds on that same model/region | §0.2, AD-7 | **PASSED** — streamed text to completion on `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`; the model replied `OK.` | 2026-08-26 |
+| 1 | Deployed `CountTokens` probe succeeds on the exact model/region | §0.1, AD-8 | **PASSED** — direct `anthropic.claude-sonnet-4-6` in `eu-west-2` returned an input-token count; its `us.` inference profile rejected the call. | 2026-08-26 |
+| 1a | Deployed `ConverseStream` probe succeeds on that same model/region | §0.2, AD-7 | **PASSED** — direct `anthropic.claude-sonnet-4-6` in `eu-west-2` streamed `OK.` | 2026-08-26 |
 | 1b | ~~Lambda concurrent-executions quota raised~~ — **WAIVED** by the user on 2026-08-26: the function carries no reservation and uses the account's shared 50. Request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` may stay `CASE_OPENED` but is no longer a rollout dependency. | §2.1 | **NOT A DEPENDENCY** | 2026-08-26 |
 | 1c | Direct model lifecycle and account access confirmed | §0.3 | **PASSED** — model `ACTIVE`, streaming supported | 2026-08-26 |
 | 1d | Multimodal compatibility confirmed: one real PDF and one image | §0.3, CAP-2 | **PASSED** — `PDF_OK`, `IMAGE_OK` | 2026-08-26 |
