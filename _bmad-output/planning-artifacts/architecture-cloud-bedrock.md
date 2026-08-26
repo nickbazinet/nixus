@@ -3,7 +3,7 @@ workflowType: 'architecture'
 lastStep: 8
 status: 'complete'
 completedAt: '2026-08-25'
-amendedAt: '2026-08-26'
+amendedAt: '2026-08-27'
 inputDocuments:
   - architecture-entitlements-licensing.md
   - architecture-login.md
@@ -21,6 +21,12 @@ companionSpine: 'architecture/architecture-nixus-2026-08-25/ARCHITECTURE-SPINE.m
 # Architecture Decision Document — Nixus Cloud Bedrock
 
 _Companion to [ARCHITECTURE-SPINE.md](architecture/architecture-nixus-2026-08-25/ARCHITECTURE-SPINE.md). The spine carries the terse, enforceable invariants; this document carries the reasoning, the full contract, and the implementation sequence._
+
+> **Amendment — 2026-08-27 (user-approved, supersedes the 2026-08-26 amendment below): request-based quota, no CountTokens, Sonnet 4.6 profile in `us-east-1`.**
+> The monthly entitlement is a **request count**: one `charged_count` unit per actual `ConverseStream` invocation. Input/output token figures come from the stream's own metadata and are **observability counters only** — they never gate, never bill, and are never estimated locally.
+> **Withdrawn:** AD-8's pre-reservation `bedrock:CountTokens` gate, in full — no command, no port method, no handler step, no input-token ceilings, no `bedrock:CountTokens` IAM grant. Input is bounded in bytes instead (per-operation serialized-JSON ceilings + the 4 MiB decoded-media cap), still checked before any reservation, so an oversized request costs no unit. Request order is now: transport guard → schema/byte validation → config reads and eligibility → reserve → `ConverseStream`.
+> **Restored:** `us.anthropic.claude-sonnet-4-6` in `us-east-1`. Profiles lack `CountTokens`, which is what once disqualified them; nothing calls it now. IAM grants `bedrock:InvokeModelWithResponseStream` on the profile ARN plus its destination foundation-model pattern. No Bedrock region parameter or environment variable — everything is `us-east-1` and the client inherits it. Disclosure copy returns to US cross-region processing and describes a monthly **request** limit.
+> **Unchanged:** `charged_count` remains the sole quota authority at 1000 global / 200 per user; reserve/refund/finalize keep their exact fields and idempotency tokens; refund stays pre-`messageStart` only and finalize never touches `charged_count`; `messageStart` remains the commit event; stage throttle 10 RPS / burst 20, the Cognito authorizer, output `maxTokens` ceilings, closed validation, AD-11 logging limits, and the desktop fallback table all stand; reserved concurrency stays absent per the 2026-08-26 capacity waiver. Where a passage below still describes a `CountTokens` step, an input-token ceiling, or London processing, this amendment governs.
 
 > **Amendment — 2026-08-26 (user-approved): direct `eu-west-2` model replaces the cross-region inference profile.**
 > The AD-8 pre-reservation `bedrock:CountTokens` gate is not implementable on the `us.anthropic.claude-sonnet-4-6` inference profile, which returned `ValidationException: The provided model doesn't support counting tokens`; bare `anthropic.claude-sonnet-4-6` in `eu-west-2` supports both token counting and streaming.

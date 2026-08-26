@@ -7,7 +7,7 @@ paradigm: 'Server-brokered AI gateway with ports-and-adapters provider routing'
 scope: 'Premium Cognito users access Bedrock through a quota-enforcing Nixus cloud gateway'
 status: final
 created: '2026-08-25'
-updated: '2026-08-26'
+updated: '2026-08-27'
 binds:
   - AD-1
   - AD-2
@@ -83,10 +83,10 @@ companions:
 **Prevents:** silent double-output on failure; losing HTTP status on preflight errors; committing to a stream before Bedrock has actually started; an abandoned invocation running past the Lambda's remaining time.
 **Rule:** `application/x-ndjson` frames `meta | delta | end | error`, preceded by API Gateway's required streaming-metadata JSON and exactly eight NUL bytes (a missing/malformed prelude is `500`). The Lambda reserves quota (AD-5/AD-6), then calls `ConverseStream`. Any exception before the `messageStart` event is pre-output: refund + a real pre-output HTTP status (400/401/403/413/429/503), no NDJSON body — desktop fallback is legal here. `messageStart` is the exact commit event: only after it may the Lambda write the API Gateway streaming prelude and the `meta` frame; from that point on, failure increments `failed_after_commit_count` (never refunds) and surfaces as an in-band `error` frame — no fallback, no retry. When Lambda remaining time reaches a 10-second soft deadline, an `AbortController` stops upstream work and idempotent finalize/failure accounting runs in a `finally` block; a hard crash or timeout past that point may still leak `charged_count`/settled metrics, an explicitly accepted v1 risk with no reconciler.
 
-### AD-8: Server-owned ceilings, closed operation set, CountTokens gate
+### AD-8: Server-owned ceilings, closed operation set (token gate withdrawn 2026-08-27)
 **Binds:** request/response validation, request handling order, wire message schema.
-**Prevents:** client-selected model, client-selected token limits, open-ended operation strings, an oversized input reaching `ConverseStream` uncounted, spending a `CountTokens` call on a caller who can never be reserved anyway.
-**Rule:** operation ∈ `{chat, statement_import, project_advice, trends_insight}`. Every `invoke` request is handled in this exact order: (0) transport guard — `Content-Encoding` must be absent or `identity`; any other value is rejected pre-output with `415 unsupported_encoding`, no fallback; (1) schema/byte validation against the closed wire contract, with base64 content decoded only after this step, and decoded media size checked against the 4 MiB ceiling before any Bedrock call; (2) strongly consistent `USER`/`GLOBAL` config reads and eligibility classification (premium, enabled, limits); (3) `bedrock:CountTokens` on the final Converse-shaped input, only reached if step 2 classified the caller as eligible and step 1's media-size check passed; (4) the reserve transaction (AD-5/AD-6), which rechecks the same config; (5) `ConverseStream`. `CountTokens` never runs for a non-premium, disabled, missing-config, or globally-disabled caller — those are rejected at step 2 with `403`/`429`/`503` before any Bedrock call. A `CountTokens` failure is pre-reservation `503 hosted_unavailable`; an input-ceiling overage (chat 32,768; statement_import 64,000; project_advice 8,192; trends_insight 8,192) is pre-reservation `400 validation`. API Gateway's and Lambda's own request-size ceilings remain outer limits above and beyond the ones this document owns. Output-token ceilings (chat 4096; statement_import 8192; project_advice 1024; trends_insight 1024) are enforced by the Converse call itself; a `max_tokens` stop reason is explicit in the `end` frame, never a silent parse failure. The wire message schema is closed: `messages: CloudAiMessage[]` where `CloudAiMessage = { role: "user"|"assistant", content: CloudAiContent[] }` and content is `{type:"text",text}` | `{type:"image",format:"png"|"jpeg",data_base64}` | `{type:"document",format:"pdf",data_base64}` — there is no separate `media` field and no client-supplied document `name`; attachments are message content, and the Lambda always supplies a fixed, neutral Bedrock document name (`statement`), never a client-provided one. `chat`/`project_advice`/`trends_insight` accept text content only; `statement_import` accepts exactly one user message containing exactly one text block and exactly one image-or-document block. Unknown fields are rejected. Desktop sends `{ operation, system, messages, client_request_id }`; `client_request_id` is tracing-only, never an idempotency token.
+**Prevents:** client-selected model, client-selected token limits, open-ended operation strings, an oversized input reaching `ConverseStream`, spending a quota unit on a caller who can never be reserved anyway.
+**Rule:** operation ∈ `{chat, statement_import, project_advice, trends_insight}`. Every `invoke` request is handled in this exact order: (0) transport guard — `Content-Encoding` must be absent or `identity`; any other value is rejected pre-output with `415 unsupported_encoding`, no fallback; (1) schema/byte validation against the closed wire contract, with base64 content decoded only after this step, and decoded media size checked against the 4 MiB ceiling before any Bedrock call; (2) strongly consistent `USER`/`GLOBAL` config reads and eligibility classification (premium, enabled, limits); (3) the reserve transaction (AD-5/AD-6), which rechecks the same config; (4) `ConverseStream`. **Superseded 2026-08-27:** the former step 3 `bedrock:CountTokens` gate and the input-token ceilings are withdrawn — quota counts requests, so no token preflight exists and none may be reintroduced. An ineligible caller (non-premium, disabled, missing config, globally exhausted) is rejected at step 2 with `403`/`429`/`503` before any Bedrock call and without reserving. Input bounding is by bytes: the per-operation serialized-JSON ceilings and the 4 MiB decoded-media cap, both checked at step 1 and therefore before any reservation. API Gateway's and Lambda's own request-size ceilings remain outer limits above and beyond the ones this document owns. Output-token ceilings (chat 4096; statement_import 8192; project_advice 1024; trends_insight 1024) are enforced by the Converse call itself; a `max_tokens` stop reason is explicit in the `end` frame, never a silent parse failure. The wire message schema is closed: `messages: CloudAiMessage[]` where `CloudAiMessage = { role: "user"|"assistant", content: CloudAiContent[] }` and content is `{type:"text",text}` | `{type:"image",format:"png"|"jpeg",data_base64}` | `{type:"document",format:"pdf",data_base64}` — there is no separate `media` field and no client-supplied document `name`; attachments are message content, and the Lambda always supplies a fixed, neutral Bedrock document name (`statement`), never a client-provided one. `chat`/`project_advice`/`trends_insight` accept text content only; `statement_import` accepts exactly one user message containing exactly one text block and exactly one image-or-document block. Unknown fields are rejected. Desktop sends `{ operation, system, messages, client_request_id }`; `client_request_id` is tracing-only, never an idempotency token.
 
 ### AD-9: Provider precedence — closed fallback table
 **Binds:** desktop AI routing across all four surfaces.
@@ -130,7 +130,7 @@ companions:
 | Runtime | Node.js 22.x, ARM64, AWS Lambda (retained deliberately for entitlements-architecture alignment; supported through Apr 2027; Node 24 available but not adopted) |
 | API | API Gateway Regional REST API, `AWS_PROXY`, `ResponseTransferMode=STREAM`, custom domain only (no default execute-api in prod) |
 | Auth | Cognito user-pool authorizer, scope `nixus-api/ai.invoke` detected from the access-token `scope` claim |
-| Model | `anthropic.claude-sonnet-4-6` (direct foundation model, **not** an inference profile), Bedrock region `eu-west-2` — amended 2026-08-26, see [Amendments](#amendments) |
+| Model | `us.anthropic.claude-sonnet-4-6` (cross-region inference profile), `us-east-1` — legal again because no `CountTokens` call exists; see [Amendments](#amendments) |
 | Data | DynamoDB, on-demand (`PAY_PER_REQUEST`), PITR enabled, `Retain` deletion/replace policy |
 | IaC | AWS SAM, stack `nixus-bedrock-api`, one production stack, no staging |
 | Test | Vitest |
@@ -154,7 +154,7 @@ flowchart LR
     APIGW["API Gateway REST\nCognito authorizer, TLS1.2"]
     Fn["functions/api.ts\n(sole Lambda entry, node22 ARM64)"]
     Ddb["DynamoDB\nUSER#/GLOBAL CONFIG + USAGE#YYYY-MM"]
-    Bedrock["Bedrock CountTokens + ConverseStream"]
+    Bedrock["Bedrock ConverseStream"]
   end
   AiBackend --> Hosted
   AiBackend --> BYO
@@ -177,11 +177,10 @@ sequenceDiagram
   L->>L: schema/byte validation (closed message/content union)
   L->>Dd: consistent read USER#CONFIG + GLOBAL#CONFIG (eligibility classification)
   alt not eligible (non-premium / disabled / missing config / global exhausted)
-    L-->>D: 403/429/503 (pre-output, no CountTokens call)
+    L-->>D: 403/429/503 (pre-output, no Bedrock call)
   else eligible
-    L->>B: CountTokens (input ceiling check)
-    alt CountTokens fails or input over ceiling
-      L-->>D: 503 (CountTokens failure) or 400 (input overage) — pre-reservation
+    alt request over byte or media ceiling (checked at step 1)
+      L-->>D: 413/400 — pre-reservation
     else input ok
       L->>Dd: TransactWriteItems reserve USER USAGE + GLOBAL USAGE (ClientRequestToken)
       alt reserve condition-check fails
@@ -212,7 +211,7 @@ sequenceDiagram
 - Hosted-AI status is Rust-internal (`ai/hosted_state.rs`) — no Tauri command, no frontend hook, no TanStack Query key for it. `HostedAiState` carries `subject_sub`; it is cleared on sign-out, session expiry, sign-in as a different `sub`, or an auth-callback subject change, and is invalidated before use on any mismatch — no cross-user process cache. `403`, `429`, and `503` from `/v1/ai/invoke` all invalidate the cache immediately; a `503`/`hosted_unavailable` response may additionally be cached briefly (max 60 seconds) to avoid hammering a disabled or globally exhausted gateway, but the server's per-user and `GLOBAL` state remains authoritative — the 60-second cache is a client-side rate-limiting courtesy, never a substitute for a fresh check.
 - Wire JSON is snake_case at the public API boundary; the Lambda validates/translates it into AWS SDK Converse-shaped types internally — the SDK's own payload naming is never part of the public contract.
 - Structured CloudWatch JSON logs, no request/response bodies, 14-day retention, explicit log group (CloudFormation-created; not `logs:*`).
-- IAM (exact actions, no broad prose): the Lambda role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit log group; `dynamodb:GetItem` + `dynamodb:TransactWriteItems` scoped to the one table; `bedrock:CountTokens` + `bedrock:InvokeModelWithResponseStream` scoped to the **one direct foundation-model ARN**, derived in-template from the model id and the Bedrock region so the grant cannot drift from the identity actually invoked (amended 2026-08-26; a direct model does not fan out, so the region wildcard the cross-region profile required is gone). No static credentials, no SSM/Secrets Manager. DynamoDB IAM cannot isolate by sort key — the code boundary (and its tests) enforces that the Lambda never mutates a `CONFIG` item outside a transaction condition check; only the deploy/admin role edits config directly.
+- IAM (exact actions, no broad prose): the Lambda role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit log group; `dynamodb:GetItem` + `dynamodb:TransactWriteItems` scoped to the one table; `bedrock:InvokeModelWithResponseStream` — and **only** that Bedrock action — scoped to the approved inference-profile ARN plus its destination foundation-model ARN pattern (amended 2026-08-27; `bedrock:CountTokens` is deliberately not granted, because no code calls it). No static credentials, no SSM/Secrets Manager. DynamoDB IAM cannot isolate by sort key — the code boundary (and its tests) enforces that the Lambda never mutates a `CONFIG` item outside a transaction condition check; only the deploy/admin role edits config directly.
 
 ## Deferred
 
@@ -225,6 +224,45 @@ sequenceDiagram
 - Retiring `nixus://auth/callback` deep-link fallback plumbing (owned by `architecture-login.md`, not this feature).
 
 ## Amendments
+
+### 2026-08-27 — request-based quota; no CountTokens; profile restored in `us-east-1`
+
+**User-approved, and it supersedes the 2026-08-26 direct-model amendment below.**
+
+The monthly entitlement is a **request count**, not a token count. Each actual
+`ConverseStream` invocation consumes exactly one `charged_count` unit; input/output token
+figures are read from the stream's own metadata and kept as observability counters that
+never gate, bill, or get estimated locally.
+
+That removes the only reason the design ever needed `bedrock:CountTokens`. **AD-8's
+pre-reservation token gate is withdrawn**: there is no CountTokens command, no port method,
+no handler step, no input-token ceiling, and no `bedrock:CountTokens` in the execution role.
+The request-handling order becomes (0) transport guard, (1) schema/byte validation including
+the 4 MiB decoded-media cap, (2) consistent config reads and eligibility, (3) reserve,
+(4) `ConverseStream`. Every rejection that used to depend on a token count is now computed
+from the request itself, and all of them still precede the reservation — an oversized
+request costs no unit.
+
+With CountTokens gone, the capability that disqualified inference profiles no longer
+applies, so the model returns to **`us.anthropic.claude-sonnet-4-6` in `us-east-1`**. IAM
+grants `bedrock:InvokeModelWithResponseStream` on the profile ARN plus its destination
+foundation-model ARN pattern. There is no Bedrock region parameter or environment variable:
+API, Lambda, table, and Bedrock are all `us-east-1` and the runtime client inherits it.
+
+Unchanged: `charged_count` is still the sole quota authority, with the same 1000 global and
+200 per-user limits; reserve/refund/finalize keep their exact fields and idempotency
+tokens; refund is still only legal before `messageStart` and finalize still never touches
+`charged_count`; `messageStart` is still the commit event; the 10 RPS / burst 20 stage
+throttle, the Cognito authorizer, output `maxTokens` ceilings, closed validation, AD-11
+logging limits, and the desktop fallback table all stand. Reserved concurrency stays absent
+per the 2026-08-26 capacity waiver.
+
+Disclosure follows the processing: EN/FR Terms and Privacy Policy state US cross-region
+Bedrock processing again, and describe the limit as a monthly request count.
+
+Any move back to token-based quota, any reintroduced token preflight or local estimate, and
+any model or region other than the pair above are further amendments.
+
 
 ### 2026-08-26 — direct `eu-west-2` model replaces the cross-region inference profile
 
