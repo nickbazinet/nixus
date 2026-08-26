@@ -132,7 +132,7 @@ jobs:
     # One source of truth for the values both the deploy overrides and the post-deploy
     # assertions use, so an assertion can never prove a value nobody deployed.
     env:
-      APPROVED_BEDROCK_MODEL_ID: anthropic.claude-3-7-sonnet-20250219-v1:0
+      APPROVED_BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-6
       APPROVED_BEDROCK_REGION: eu-west-2
 
     steps:

@@ -405,7 +405,7 @@ describe("deploy job proves deployed guarantees", () => {
     expect(perStepCopies).toEqual([]);
 
     expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe(
-      "anthropic.claude-3-7-sonnet-20250219-v1:0"
+      "anthropic.claude-sonnet-4-6"
     );
     expect(DEPLOY.env.APPROVED_BEDROCK_REGION).toBe("eu-west-2");
   });
@@ -468,7 +468,7 @@ describe("deploy job proves deployed guarantees", () => {
     );
     expect(commands).toContain('"BedrockRegion=${APPROVED_BEDROCK_REGION}"');
     expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe(
-      "anthropic.claude-3-7-sonnet-20250219-v1:0"
+      "anthropic.claude-sonnet-4-6"
     );
     expect(DEPLOY.env.APPROVED_BEDROCK_REGION).toBe("eu-west-2");
   });
