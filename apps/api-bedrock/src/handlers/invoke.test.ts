@@ -783,6 +783,42 @@ describe("soft deadline", () => {
 });
 
 describe("privacy-safe failures (AD-11)", () => {
+  it("logs a bounded AccessDeniedException message without request content", async () => {
+    const denial = new Error(
+      "User arn:aws:sts::760573627796:assumed-role/example is not authorized on resource arn:aws:bedrock:us-east-1::foundation-model/example"
+    );
+    denial.name = "AccessDeniedException";
+    queueEligible();
+    client.queueOk().queueOk();
+
+    const { promise } = run({
+      body: chatBody({ system: "SECRET-SYSTEM-PROMPT" }),
+      streamError: denial,
+    });
+    await promise;
+
+    const rejected = vi
+      .mocked(console.error)
+      .mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>)
+      .find((entry) => entry.event === "invoke_rejected");
+    expect(rejected).toMatchObject({
+      error_name: "AccessDeniedException",
+      error_message: denial.message,
+    });
+    expect(JSON.stringify(rejected)).not.toContain("SECRET-SYSTEM-PROMPT");
+  });
+
+  it("keeps non-authorization upstream error messages out of logs", async () => {
+    queueEligible();
+    client.queueOk().queueOk();
+
+    const { promise } = run({ streamError: new Error("SECRET-UPSTREAM-DETAIL") });
+    await promise;
+
+    const serialized = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(serialized).not.toContain("SECRET-UPSTREAM-DETAIL");
+  });
+
   it("never puts prompt or response text in a log line", async () => {
     const logged: string[] = [];
     vi.mocked(console.error).mockImplementation((line: unknown) => {

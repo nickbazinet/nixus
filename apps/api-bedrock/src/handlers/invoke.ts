@@ -116,6 +116,19 @@ export function canonicalErrorBody(
  */
 type LogFields = Record<string, string | number | boolean>;
 
+const MAX_ACCESS_DENIED_MESSAGE_CHARS = 1_024;
+
+function bedrockErrorFields(error: unknown): LogFields {
+  if (!(error instanceof Error)) return { error_name: "unknown" };
+  if (error.name !== "AccessDeniedException") {
+    return { error_name: error.name };
+  }
+  return {
+    error_name: error.name,
+    error_message: error.message.slice(0, MAX_ACCESS_DENIED_MESSAGE_CHARS),
+  };
+}
+
 function writePreOutputError(
   sink: ResponseSink,
   failure: PreOutputFailure,
@@ -360,7 +373,7 @@ export async function handleInvoke(
       })
     );
   } catch (error) {
-    const errorName = error instanceof Error ? error.name : "unknown";
+    const errorFields = bedrockErrorFields(error);
 
     if (committed) {
       writeFrame(sink, {
@@ -376,7 +389,7 @@ export async function handleInvoke(
           operation,
           status: 200,
           code: "hosted_unavailable",
-          error_name: errorName,
+          ...errorFields,
         })
       );
     } else {
@@ -400,7 +413,7 @@ export async function handleInvoke(
         sub,
         operation,
         stage: "converse_stream",
-        error_name: errorName,
+        ...errorFields,
       });
     }
   } finally {
