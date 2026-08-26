@@ -7,7 +7,7 @@ paradigm: 'Server-brokered AI gateway with ports-and-adapters provider routing'
 scope: 'Premium Cognito users access Bedrock through a quota-enforcing Nixus cloud gateway'
 status: final
 created: '2026-08-25'
-updated: '2026-08-25'
+updated: '2026-08-26'
 binds:
   - AD-1
   - AD-2
@@ -111,7 +111,7 @@ companions:
 ### AD-13: Disclosure is Terms/Privacy, not an in-app gate
 **Binds:** rollout gating and legal-copy correctness.
 **Prevents:** an in-app consent toggle or modal as the disclosure mechanism (explicitly not adopted); shipping hosted AI while marketing copy contradicts it.
-**Rule:** Terms of Service and Privacy Policy are the sole authorization/disclosure mechanism for hosted AI — no in-app consent gate is built. Production rollout is blocked until those documents clearly state: financial prompts/statements are transmitted through Nixus infrastructure to AWS Bedrock; Bedrock's `us.` cross-region processing and abuse-detection implications; that non-retention is Nixus-controlled only (per AD-11) and does not bind AWS; the existence of a request quota; and BYO fallback behavior. Any README/marketing claim equivalent to "data never leaves your machine" must be corrected before rollout — it is not accurate once a user is on the hosted path.
+**Rule:** Terms of Service and Privacy Policy are the sole authorization/disclosure mechanism for hosted AI — no in-app consent gate is built. Production rollout is blocked until those documents clearly state: financial prompts/statements are transmitted through Nixus infrastructure to AWS Bedrock; that hosted processing happens directly in `eu-west-2` (United Kingdom), and AWS's abuse-detection implications for that region (amended 2026-08-26; the original US cross-region wording is now factually wrong and must not be restored); that non-retention is Nixus-controlled only (per AD-11) and does not bind AWS; the existence of a request quota; and BYO fallback behavior. Any README/marketing claim equivalent to "data never leaves your machine" must be corrected before rollout — it is not accurate once a user is on the hosted path.
 
 ### AD-14: Global hard cap and budget alerting are independent controls
 **Binds:** total spend exposure.
@@ -130,7 +130,7 @@ companions:
 | Runtime | Node.js 22.x, ARM64, AWS Lambda (retained deliberately for entitlements-architecture alignment; supported through Apr 2027; Node 24 available but not adopted) |
 | API | API Gateway Regional REST API, `AWS_PROXY`, `ResponseTransferMode=STREAM`, custom domain only (no default execute-api in prod) |
 | Auth | Cognito user-pool authorizer, scope `nixus-api/ai.invoke` detected from the access-token `scope` claim |
-| Model | `us.anthropic.claude-sonnet-4-6` (cross-region inference profile), `us-east-1` |
+| Model | `anthropic.claude-3-7-sonnet-20250219-v1:0` (direct foundation model, **not** an inference profile), Bedrock region `eu-west-2` — amended 2026-08-26, see [Amendments](#amendments) |
 | Data | DynamoDB, on-demand (`PAY_PER_REQUEST`), PITR enabled, `Retain` deletion/replace policy |
 | IaC | AWS SAM, stack `nixus-bedrock-api`, one production stack, no staging |
 | Test | Vitest |
@@ -212,7 +212,7 @@ sequenceDiagram
 - Hosted-AI status is Rust-internal (`ai/hosted_state.rs`) — no Tauri command, no frontend hook, no TanStack Query key for it. `HostedAiState` carries `subject_sub`; it is cleared on sign-out, session expiry, sign-in as a different `sub`, or an auth-callback subject change, and is invalidated before use on any mismatch — no cross-user process cache. `403`, `429`, and `503` from `/v1/ai/invoke` all invalidate the cache immediately; a `503`/`hosted_unavailable` response may additionally be cached briefly (max 60 seconds) to avoid hammering a disabled or globally exhausted gateway, but the server's per-user and `GLOBAL` state remains authoritative — the 60-second cache is a client-side rate-limiting courtesy, never a substitute for a fresh check.
 - Wire JSON is snake_case at the public API boundary; the Lambda validates/translates it into AWS SDK Converse-shaped types internally — the SDK's own payload naming is never part of the public contract.
 - Structured CloudWatch JSON logs, no request/response bodies, 14-day retention, explicit log group (CloudFormation-created; not `logs:*`).
-- IAM (exact actions, no broad prose): the Lambda role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit log group; `dynamodb:GetItem` + `dynamodb:TransactWriteItems` scoped to the one table; `bedrock:CountTokens` + `bedrock:InvokeModelWithResponseStream` scoped to the approved inference profile ARN and its destination foundation-model ARNs as AWS IAM supports. No static credentials, no SSM/Secrets Manager. DynamoDB IAM cannot isolate by sort key — the code boundary (and its tests) enforces that the Lambda never mutates a `CONFIG` item outside a transaction condition check; only the deploy/admin role edits config directly.
+- IAM (exact actions, no broad prose): the Lambda role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit log group; `dynamodb:GetItem` + `dynamodb:TransactWriteItems` scoped to the one table; `bedrock:CountTokens` + `bedrock:InvokeModelWithResponseStream` scoped to the **one direct foundation-model ARN**, derived in-template from the model id and the Bedrock region so the grant cannot drift from the identity actually invoked (amended 2026-08-26; a direct model does not fan out, so the region wildcard the cross-region profile required is gone). No static credentials, no SSM/Secrets Manager. DynamoDB IAM cannot isolate by sort key — the code boundary (and its tests) enforces that the Lambda never mutates a `CONFIG` item outside a transaction condition check; only the deploy/admin role edits config directly.
 
 ## Deferred
 
@@ -224,6 +224,35 @@ sequenceDiagram
 - WAF in front of the API — added only if observed abuse justifies the cost, per AD-14.
 - Retiring `nixus://auth/callback` deep-link fallback plumbing (owned by `architecture-login.md`, not this feature).
 
+## Amendments
+
+### 2026-08-26 — direct `eu-west-2` model replaces the cross-region inference profile
+
+**User-approved.** AD-8's mandatory pre-reservation `bedrock:CountTokens` call is not
+implementable on a cross-region inference profile: `us.anthropic.claude-sonnet-4-6`, every
+other probed `us.anthropic.*` profile, and the Nova direct models all answered
+`ValidationException: The provided model doesn't support counting tokens`. Bare
+`anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count
+for the identical probe.
+
+What changes: the Bedrock model identity and the region its runtime calls target
+(`BedrockRegion` → the Lambda's `BEDROCK_REGION`, owned explicitly rather than inherited),
+the IAM resource (one derived foundation-model ARN, no region wildcard), and the
+disclosure copy (direct London processing, not US cross-region).
+
+What does not change: `CountTokens` stays ahead of reservation; model and region stay
+server-owned and invisible to clients; the API, Lambda, and quota table stay in
+`us-east-1`; AD-2, AD-5–AD-7, AD-9–AD-12, AD-14, and AD-15 are untouched. Reserved
+concurrency stays exactly `0` or `10` (AD-4), activated through the protected
+`production` GitHub environment with the deploy job asserting the deployed value.
+
+Still gated: `ConverseStream` on the new model was refused pending AWS account
+verification, and the Lambda concurrency quota increase is pending. `GLOBAL` stays
+disabled until both clear — see `docs/runbooks/hosted-ai-rollout.md`.
+
+Any fallback from this model, any region other than `eu-west-2`, or any reintroduction of
+an inference profile is a further amendment, not an implementation detail.
+
 ## Status
 
-`final` — reviewer gate passed and fixes applied.
+`final` — reviewer gate passed and fixes applied; amended 2026-08-26 (see Amendments).
