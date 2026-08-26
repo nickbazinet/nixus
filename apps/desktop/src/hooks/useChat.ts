@@ -4,10 +4,17 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ActionPayload } from "@/components/chat/ChatMessageBubble";
 import { queryKeys } from "@/lib/constants";
+import {
+  isHostedAiError,
+  parseAppError,
+  type HostedAiErrorCode,
+} from "@/lib/appError";
 
 export interface ChatError {
   message: string;
   type?: string;
+  /** Present only when `type` is `hosted_ai`; drives the typed alert copy. */
+  code?: HostedAiErrorCode;
 }
 
 export interface ChatMessage {
@@ -163,31 +170,54 @@ export function useChat(options?: UseChatOptions) {
           });
         }
       } catch (err: unknown) {
-        const e = err as { message?: string; type?: string };
+        const parsed = parseAppError(err);
         setStreaming(false);
-        if (e?.type === "not_configured") {
-          setChatError({ message: e.message ?? "AI not configured", type: "not_configured" });
-          // Remove the empty assistant placeholder
+
+        // Drops the empty assistant placeholder so the error is not rendered as a
+        // blank turn from the model.
+        const dropEmptyPlaceholder = () =>
           setMessages((prev) => {
             const updated = [...prev];
-            if (updated[updated.length - 1]?.role === "assistant" && updated[updated.length - 1]?.content === "") {
+            const last = updated[updated.length - 1];
+            if (last?.role === "assistant" && last.content === "") {
               updated.pop();
             }
             return updated;
           });
-        } else {
-          setMessages((prev) => {
-            const updated = [...prev];
-            const lastMsg = updated[updated.length - 1];
-            if (lastMsg && lastMsg.role === "assistant" && lastMsg.content === "") {
-              updated[updated.length - 1] = {
-                ...lastMsg,
-                content: "Sorry, I couldn't process your request. Please try again.",
-              };
-            }
-            return updated;
+
+        if (parsed.type === "not_configured") {
+          setChatError({
+            message: parsed.message ?? "AI not configured",
+            type: "not_configured",
           });
+          dropEmptyPlaceholder();
+          return;
         }
+
+        // A hosted-AI failure is surfaced as a typed, localized alert. Left to the
+        // generic branch below it became a hardcoded English retry line, which is
+        // wrong for every code the closed table never retries.
+        if (isHostedAiError(parsed)) {
+          setChatError({
+            message: parsed.message,
+            type: "hosted_ai",
+            code: parsed.code,
+          });
+          dropEmptyPlaceholder();
+          return;
+        }
+
+        setMessages((prev) => {
+          const updated = [...prev];
+          const lastMsg = updated[updated.length - 1];
+          if (lastMsg && lastMsg.role === "assistant" && lastMsg.content === "") {
+            updated[updated.length - 1] = {
+              ...lastMsg,
+              content: "Sorry, I couldn't process your request. Please try again.",
+            };
+          }
+          return updated;
+        });
       }
     },
     [conversationId, streaming, queryClient]

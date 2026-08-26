@@ -21,6 +21,7 @@ import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
 import { ConversationListPanel } from "@/components/chat/ConversationListPanel";
 import { useChat } from "@/hooks/useChat";
 import { AGENTS, setLastUsedAgentId } from "@/lib/agents";
+import { hostedAiMessageKey, hostedAiNeedsSignIn } from "@/lib/appError";
 
 export const Route = createFileRoute("/ai/$agentId")({
   component: AgentChatPage,
@@ -120,6 +121,18 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
                 {t("settings.openSettings")}
               </Button>
             </AlertDescription>
+          </Alert>
+        )}
+        {chatError?.type === "hosted_ai" && chatError.code && (
+          <Alert variant="over" className="mx-auto max-w-md">
+            <AlertTitle>{t(hostedAiMessageKey(chatError.code))}</AlertTitle>
+            {hostedAiNeedsSignIn(chatError.code) && (
+              <AlertDescription className="mt-2">
+                <Button size="sm" render={<Link to="/settings" />}>
+                  {t("settings.openSettings")}
+                </Button>
+              </AlertDescription>
+            )}
           </Alert>
         )}
         {chatError?.type === "validation" && (

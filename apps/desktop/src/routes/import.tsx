@@ -44,6 +44,11 @@ import { useFormatCurrency } from "../hooks/useFormatCurrency";
 import { useCreateBudgetGroup, useCreateBudgetCategory } from "../hooks/useBudget";
 import { useMaskProps } from "../contexts/ValuesVisibilityContext";
 import { queryKeys } from "../lib/constants";
+import {
+  hostedAiMessageKey,
+  isHostedAiError,
+  parseAppError,
+} from "@/lib/appError";
 
 interface BudgetCategory {
   id: number;
@@ -982,6 +987,8 @@ function ErrorScreen({
   onReset: () => void;
 }) {
   const { t } = useTranslation();
+  const parsed = parseAppError(error);
+  const hostedAiCode = isHostedAiError(parsed) ? parsed.code : null;
 
   if (error?.type === "not_configured") {
     return (
@@ -1012,6 +1019,19 @@ function ErrorScreen({
           </div>
         </CardContent>
       </Card>
+    );
+  }
+
+  // A hosted-AI failure gets its own title: "Nixus can't read statements right now"
+  // is misleading for an oversized file or a sign-in that needs renewing, and each
+  // of those has a different remedy.
+  if (hostedAiCode) {
+    return (
+      <ImportUnavailable
+        title={t(hostedAiMessageKey(hostedAiCode))}
+        body={error?.message ?? t("import.timedOutBody")}
+        onReset={onReset}
+      />
     );
   }
 
