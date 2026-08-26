@@ -1,15 +1,12 @@
-use aws_sdk_bedrockruntime::Client;
-use aws_sdk_bedrockruntime::types::{
-    ContentBlock, ConversationRole, Message, SystemContentBlock,
-};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::info;
 
+use crate::ai::backend::{self, AiAttachment, AiImageFormat, AiOperation, AiRequest, AiTurn};
+use crate::ai::AiProvider;
 use crate::error::AppError;
 use crate::models::{BudgetCategory, BudgetGroup, MerchantHint};
 
-const MODEL_ID: &str = "us.anthropic.claude-sonnet-4-6";
 const CONFIDENCE_THRESHOLD: f64 = 0.8;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,127 +158,82 @@ fn parse_proposed_category(value: Option<serde_json::Value>) -> Option<ProposedC
     })
 }
 
-fn media_type_for_extension(ext: &str) -> &'static str {
+/// Maps the on-disk extension onto the closed attachment union. An unsupported
+/// extension is rejected here rather than silently sent as a PNG.
+fn attachment_for(ext: &str, bytes: Vec<u8>) -> Result<AiAttachment, AppError> {
     match ext {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "pdf" => "application/pdf",
-        _ => "application/octet-stream",
+        "pdf" => Ok(AiAttachment::Document { bytes }),
+        "png" => Ok(AiAttachment::Image {
+            format: AiImageFormat::Png,
+            bytes,
+        }),
+        "jpg" | "jpeg" => Ok(AiAttachment::Image {
+            format: AiImageFormat::Jpeg,
+            bytes,
+        }),
+        // The message deliberately names the extension, never the path.
+        other => Err(AppError::Validation {
+            message: format!("Unsupported statement file type: .{}", other),
+            field: Some("file_path".to_string()),
+        }),
     }
 }
 
 pub async fn parse_cc_statement(
-    client: &Client,
+    byo: Option<&AiProvider>,
     file_path: &str,
     categories: &[BudgetCategory],
     groups: &[BudgetGroup],
     hints: &[MerchantHint],
 ) -> Result<ParseResult, AppError> {
-    let path = Path::new(file_path);
-    let ext = path
+    let ext = Path::new(file_path)
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
 
     let file_bytes = std::fs::read(file_path).map_err(|e| AppError::File {
+        // `e` is io::Error, whose Display does not include the path; formatting the
+        // path here would put a statement filename into an IPC error (AD-11).
         message: format!("Cannot read file: {}", e),
     })?;
 
+    // Size and type only. The statement path is deliberately absent from every log
+    // line in this module (AD-11).
     info!(
-        "Sending file to Bedrock: {} ({} bytes, type: {})",
-        file_path,
+        "Preparing statement for AI extraction ({} bytes, type: {})",
         file_bytes.len(),
-        media_type_for_extension(&ext)
+        ext
     );
 
-    let media_type = media_type_for_extension(&ext);
-
-    let image_block = if ext == "pdf" {
-        ContentBlock::Document(
-            aws_sdk_bedrockruntime::types::DocumentBlock::builder()
-                .format(aws_sdk_bedrockruntime::types::DocumentFormat::Pdf)
-                .name("statement")
-                .source(
-                    aws_sdk_bedrockruntime::types::DocumentSource::Bytes(
-                        aws_sdk_bedrockruntime::primitives::Blob::new(file_bytes),
-                    ),
-                )
-                .build()
-                .map_err(|e| AppError::AiService {
-                    message: format!("Failed to build document block: {}", e),
-                    recoverable: false,
-                })?,
-        )
-    } else {
-        ContentBlock::Image(
-            aws_sdk_bedrockruntime::types::ImageBlock::builder()
-                .format(match media_type {
-                    "image/png" => aws_sdk_bedrockruntime::types::ImageFormat::Png,
-                    "image/jpeg" => aws_sdk_bedrockruntime::types::ImageFormat::Jpeg,
-                    _ => aws_sdk_bedrockruntime::types::ImageFormat::Png,
-                })
-                .source(
-                    aws_sdk_bedrockruntime::types::ImageSource::Bytes(
-                        aws_sdk_bedrockruntime::primitives::Blob::new(file_bytes),
-                    ),
-                )
-                .build()
-                .map_err(|e| AppError::AiService {
-                    message: format!("Failed to build image block: {}", e),
-                    recoverable: false,
-                })?,
-        )
-    };
+    let attachment = attachment_for(&ext, file_bytes)?;
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let system_prompt = build_system_prompt(&today, categories, groups, hints);
 
-    let message = Message::builder()
-        .role(ConversationRole::User)
-        .content(image_block)
-        .content(ContentBlock::Text(
-            "Extract all transactions from this credit card statement.".to_string(),
-        ))
-        .build()
-        .map_err(|e| AppError::AiService {
-            message: format!("Failed to build message: {}", e),
-            recoverable: false,
-        })?;
+    let output_text = backend::invoke(
+        byo,
+        AiRequest {
+            operation: AiOperation::StatementImport,
+            system: system_prompt,
+            turns: vec![AiTurn::user(
+                "Extract all transactions from this credit card statement.",
+            )],
+            attachment: Some(attachment),
+        },
+        &backend::ignore_deltas(),
+    )
+    .await?;
 
-    let response = client
-        .converse()
-        .model_id(MODEL_ID)
-        .system(SystemContentBlock::Text(system_prompt))
-        .messages(message)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("Bedrock API error details: {:?}", e);
-            AppError::AiService {
-                message: format!("Bedrock API error: {:?}", e),
-                recoverable: true,
-            }
-        })?;
+    info!("AI response received, parsing JSON");
 
-    let output_text = response
-        .output()
-        .and_then(|o| o.as_message().ok())
-        .and_then(|m| m.content().first())
-        .and_then(|c| c.as_text().ok())
-        .ok_or_else(|| AppError::AiService {
-            message: "No text response from Bedrock".to_string(),
-            recoverable: true,
-        })?;
+    let json_str = extract_json(&output_text);
 
-    info!("Bedrock response received, parsing JSON");
-
-    // Extract JSON from response (handle markdown code blocks)
-    let json_str = extract_json(output_text);
-
+    // The parse error's own text is included but the model output is NOT: raw
+    // output contains transaction detail, and an AppError crosses IPC (AD-11).
     let ai_response: AiResponse =
         serde_json::from_str(json_str).map_err(|e| AppError::AiService {
-            message: format!("Failed to parse AI response: {}. Raw: {}", e, output_text),
+            message: format!("Failed to parse the AI response: {}", e),
             recoverable: true,
         })?;
 

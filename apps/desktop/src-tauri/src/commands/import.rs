@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use base64::Engine;
 
 use crate::ai::cc_parser;
-use crate::ai::{AiProvider, AiState};
+use crate::ai::{clone_provider, AiState};
 use crate::datasets;
 use crate::db::audit as audit_db;
 use crate::db::budget as budget_db;
@@ -239,7 +239,8 @@ pub fn save_import_clipboard_image(
         })?
         .to_string();
 
-    info!("Saved clipboard import image to {}", file_path);
+    // Path deliberately omitted: it names a user statement file (AD-11).
+    info!("Saved clipboard import image to the staging directory");
 
     Ok(ClipboardImageSaveResult { file_path })
 }
@@ -281,16 +282,16 @@ pub async fn import_cc_statement(
         &file_path,
     )?;
 
-    // Extract the Bedrock client before any await points
-    let bedrock_client = {
+    // Snapshot the BYO provider before any await point. Statement import is
+    // multimodal and therefore Bedrock-only, but that rule is enforced once in the
+    // backend port's support matrix rather than re-derived here — and `None` is no
+    // longer terminal, since hosted Bedrock may serve a premium user with no BYO
+    // credentials at all.
+    let byo = {
         let ai = ai_state.lock().map_err(|_| AppError::Database {
             message: "AI state lock poisoned".to_string(),
         })?;
-        match &ai.provider {
-            None => return Err(AppError::NotConfigured),
-            Some(AiProvider::Bedrock(client)) => client.clone(),
-            Some(AiProvider::OpenAI(_)) => return Err(AppError::NotConfigured),
-        }
+        clone_provider(&ai.provider)
     };
 
     // Emit extracting stage
@@ -302,10 +303,13 @@ pub async fn import_cc_statement(
         },
     );
 
-    info!("Starting AI extraction for file: {}", file_path);
+    // The statement path is deliberately not logged (AD-11).
+    info!("Starting AI extraction for the selected statement");
 
     // Call AI parser
-    let result = cc_parser::parse_cc_statement(&bedrock_client, &file_path, &categories, &groups, &hints).await;
+    let result =
+        cc_parser::parse_cc_statement(byo.as_ref(), &file_path, &categories, &groups, &hints)
+            .await;
 
     match result {
         Ok(parse_result) => {
