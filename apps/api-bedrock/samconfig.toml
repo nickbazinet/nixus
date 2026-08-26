@@ -27,8 +27,12 @@ disable_rollback = false
 tags = "app=nixus service=hosted-ai managed-by=sam"
 
 # Account-specific inputs (Cognito pool/client, ACM certificate, hosted zone,
-# alert email, Bedrock inference profile) are deliberately absent: they are
+# alert email) are deliberately absent: they are
 # passed at deploy time via --parameter-overrides from the protected `production`
 # GitHub environment, or from the operator's shell when following
 # docs/runbooks/hosted-ai-rollout.md. Committing them here would either leak
 # account topology or silently deploy against the wrong user pool.
+#
+# The Bedrock model and region are NOT in that category and are deliberately not
+# overridable at deploy time: the template pins each to a single AllowedValues entry,
+# because the AD-8 CountTokens/ConverseStream evidence covers exactly one pair.

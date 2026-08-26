@@ -40,23 +40,38 @@ Parameters:
     Type: String
     Description: Operator address subscribed to the CloudWatch alarms and AWS Budget.
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
-  BedrockInferenceProfileArn:
-    Type: String
-    Description: >-
-      ARN of the approved us.anthropic.claude-sonnet-4-6 cross-region inference
-      profile. Model selection is server-owned; clients cannot influence it.
-    AllowedPattern: '^arn:aws[a-zA-Z-]*:bedrock:[a-z0-9-]+:\d{12}:(inference-profile|application-inference-profile)/.+$'
-  BedrockFoundationModelArnPattern:
-    Type: String
-    Default: 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*'
-    Description: >-
-      Destination foundation-model ARN pattern the inference profile routes to.
-      Cross-region profiles fan out per region, which is the one place AWS IAM
-      requires a region wildcard on the resource (never on an action).
   BedrockModelId:
     Type: String
-    Default: us.anthropic.claude-sonnet-4-6
-    Description: Inference profile ID passed to CountTokens and ConverseStream.
+    Default: anthropic.claude-3-7-sonnet-20250219-v1:0
+    Description: >-
+      Bare foundation-model ID passed to CountTokens and ConverseStream. Model
+      selection is server-owned; clients cannot influence it.
+
+      This is a DIRECT foundation model, not a cross-region inference profile. Every
+      cross-region Anthropic profile that was probed rejected Runtime CountTokens with
+      "The provided model doesn't support counting tokens", which makes the AD-8
+      pre-reservation gate unimplementable on a profile. This model answered the same
+      probe with an input-token count in BedrockRegion.
+
+      AllowedValues holds exactly the one approved model rather than a permissive
+      pattern: a pattern would still admit an unreviewed sibling model, and "some
+      Anthropic model" is not what the CountTokens/ConverseStream evidence covers.
+      Changing this list is a specification change (see the runbook's §0).
+    AllowedValues:
+      - anthropic.claude-3-7-sonnet-20250219-v1:0
+  BedrockRegion:
+    Type: String
+    Default: eu-west-2
+    Description: >-
+      Region the Bedrock runtime calls target. Deliberately independent of the
+      stack's own region: the API, Lambda, and table stay in us-east-1 while the
+      direct model above is invoked in London. The Lambda never inherits its region
+      for Bedrock - see src/lib/bedrock-client.ts.
+
+      One approved value, for the same reason as the model: the probes proved this
+      model in this region, and no other pair carries that evidence.
+    AllowedValues:
+      - eu-west-2
   InvokeIntegrationTimeoutMillis:
     Type: Number
     Default: 300000
@@ -92,8 +107,11 @@ Parameters:
       GLOBAL, not an optional tuning knob. Reserving 10 requires the account's Lambda
       concurrent-execution quota to exceed 10 by at least the 50 unreserved-capacity
       floor AWS enforces; at the default quota of 50 the reservation is rejected and
-      the stack rolls back. Raise the quota first, then flip this default to 10 in a
-      reviewed pull request (docs/runbooks/hosted-ai-rollout.md).
+      the stack rolls back. Raise the quota first, then set
+      HOSTED_AI_RESERVED_CONCURRENCY to 10 on the protected production GitHub
+      environment and deploy (docs/runbooks/hosted-ai-rollout.md). The deploy job
+      asserts the deployed reservation equals that configured value, so a rejected or
+      silently ignored reservation fails the deployment rather than passing quietly.
 
       Unbounded or absent is not an option: without a reservation one runaway caller
       could consume the whole account's concurrency, which is the abuse bound AD-4
@@ -321,13 +339,17 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # One direct foundation-model ARN, derived from the same two parameters
+              # the Lambda invokes with, so the grant cannot drift from the model or
+              # region actually called. A direct model needs no region wildcard: it
+              # does not fan out the way a cross-region inference profile did.
+              # Foundation-model ARNs carry no account ID, which is why this is
+              # derived rather than passed in as an account-specific secret.
               - Effect: Allow
                 Action:
                   - bedrock:CountTokens
                   - bedrock:InvokeModelWithResponseStream
-                Resource:
-                  - !Ref BedrockInferenceProfileArn
-                  - !Ref BedrockFoundationModelArnPattern
+                Resource: !Sub 'arn:${AWS::Partition}:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}'
 
   # ---------------------------------------------------------------------------
   # AD-4 - one Lambda, one entry point, both routes, response streaming
@@ -351,6 +373,9 @@ Resources:
         Variables:
           TABLE_NAME: !Ref HostedAiTable
           BEDROCK_MODEL_ID: !Ref BedrockModelId
+          # The runtime client pins this region rather than inheriting the Lambda's:
+          # the model is reachable in London only, while the stack lives in us-east-1.
+          BEDROCK_REGION: !Ref BedrockRegion
       Events:
         Status:
           Type: Api
@@ -500,3 +525,11 @@ Outputs:
   CognitoAppClientIdEcho:
     Description: Echo of the app client that must carry nixus-api/ai.invoke.
     Value: !Ref CognitoAppClientId
+  BedrockModelIdEcho:
+    Description: >-
+      Deployed model identity, so the live CountTokens and ConverseStream probes can
+      be run against exactly what the Lambda invokes rather than a remembered value.
+    Value: !Ref BedrockModelId
+  BedrockRegionEcho:
+    Description: Deployed Bedrock runtime region, for the same probes.
+    Value: !Ref BedrockRegion
