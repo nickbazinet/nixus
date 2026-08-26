@@ -7,6 +7,14 @@ pub enum AppError {
     Database { message: String },
     AiService { message: String, recoverable: bool },
     Auth { message: String, recoverable: bool },
+    /// A hosted-AI (Nixus Cloud Bedrock) failure. `code` is a `CloudAiErrorCode`
+    /// from the shared wire contract, kept as the discriminator the frontend
+    /// switches on; the raw upstream Bedrock error string is never carried here.
+    HostedAi {
+        code: String,
+        message: String,
+        recoverable: bool,
+    },
     File { message: String },
     NotConfigured,
     InvalidCredentials,
@@ -20,6 +28,9 @@ impl fmt::Display for AppError {
             AppError::Database { message } => write!(f, "Database error: {}", message),
             AppError::AiService { message, .. } => write!(f, "AI service error: {}", message),
             AppError::Auth { message, .. } => write!(f, "Authentication error: {}", message),
+            AppError::HostedAi { code, message, .. } => {
+                write!(f, "Hosted AI error ({}): {}", code, message)
+            }
             AppError::File { message } => write!(f, "File error: {}", message),
             AppError::NotConfigured => write!(f, "AI provider not configured"),
             AppError::InvalidCredentials => write!(f, "AI credentials are invalid"),
@@ -72,6 +83,18 @@ impl Serialize for AppError {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("type", "file")?;
                 map.serialize_entry("message", message)?;
+                map.end()
+            }
+            AppError::HostedAi {
+                code,
+                message,
+                recoverable,
+            } => {
+                let mut map = serializer.serialize_map(Some(4))?;
+                map.serialize_entry("type", "hosted_ai")?;
+                map.serialize_entry("code", code)?;
+                map.serialize_entry("message", message)?;
+                map.serialize_entry("recoverable", recoverable)?;
                 map.end()
             }
             AppError::NotConfigured => {
@@ -137,5 +160,47 @@ mod tests {
             recoverable: true,
         };
         assert_eq!(error.to_string(), "Authentication error: session missing");
+    }
+
+    #[test]
+    fn hosted_ai_error_serializes_with_the_canonical_discriminated_union_shape() {
+        let json = serde_json::to_string(&AppError::HostedAi {
+            code: "quota_exhausted".to_string(),
+            message: "Monthly hosted AI request limit reached.".to_string(),
+            recoverable: true,
+        })
+        .unwrap();
+
+        assert_eq!(
+            json,
+            r#"{"type":"hosted_ai","code":"quota_exhausted","message":"Monthly hosted AI request limit reached.","recoverable":true}"#
+        );
+    }
+
+    #[test]
+    fn hosted_ai_error_preserves_a_non_recoverable_code() {
+        let json = serde_json::to_string(&AppError::HostedAi {
+            code: "validation".to_string(),
+            message: "Request rejected.".to_string(),
+            recoverable: false,
+        })
+        .unwrap();
+
+        assert!(json.contains(r#""type":"hosted_ai""#));
+        assert!(json.contains(r#""code":"validation""#));
+        assert!(json.contains(r#""recoverable":false"#));
+    }
+
+    #[test]
+    fn hosted_ai_display_names_the_code_without_leaking_model_output() {
+        let error = AppError::HostedAi {
+            code: "hosted_unavailable".to_string(),
+            message: "Hosted AI is unavailable.".to_string(),
+            recoverable: true,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Hosted AI error (hosted_unavailable): Hosted AI is unavailable."
+        );
     }
 }

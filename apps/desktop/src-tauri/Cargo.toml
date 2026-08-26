@@ -40,11 +40,13 @@ regex = "1"
 keyring = "4"
 keyring-core = "1"
 async-openai = "0.27"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
 urlencoding = "2"
 sha2 = "0.10"
 rand = "0.9"
 tiny_http = "0.12.0"
+# Needed for reqwest's bytes_stream() when reading the hosted-AI NDJSON response.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # Must remain the LAST table in this file: bare keys after a [target...] table would
 # be silently absorbed into it. The "deep-link" feature is required so a forwarded

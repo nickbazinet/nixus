@@ -4025,6 +4025,7 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "base64 0.22.1",
  "chrono",
+ "futures-util",
  "keyring",
  "keyring-core",
  "rand 0.9.4",
