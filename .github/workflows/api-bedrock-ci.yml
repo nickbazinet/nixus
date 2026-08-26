@@ -278,6 +278,8 @@ jobs:
               "ApiCertificateArn=${API_CERTIFICATE_ARN}" \
               "HostedZoneId=${HOSTED_ZONE_ID}" \
               "AlertEmail=${ALERT_EMAIL}" \
+              "BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}" \
+              "BedrockRegion=${APPROVED_BEDROCK_REGION}" \
               "HostedAiReservedConcurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
         env:
           AWS_DEFAULT_REGION: us-east-1

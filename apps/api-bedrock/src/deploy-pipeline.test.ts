@@ -494,20 +494,20 @@ describe("deploy job proves deployed guarantees", () => {
     }
   });
 
-  /* A `BedrockModelId=` or `BedrockRegion=` override would let a deployment invoke a
-   * model the probes never covered while the committed template still reads correctly.
-   * The template's one-entry AllowedValues is the backstop; not passing the override at
-   * all is the primary control. */
-  it("never overrides the Bedrock model or region, leaving the template authoritative", () => {
+  /* CloudFormation preserves previous parameter values on UPDATE, so relying on a new
+   * template default leaves the old inference profile in place. The only legal
+   * overrides are the same job-level constants used by post-deploy assertions. */
+  it("migrates and pins the Bedrock model and region to the approved pair", () => {
     const commands = runCommands(DEPLOY);
 
-    expect(commands).not.toContain("BedrockModelId=");
-    expect(commands).not.toContain("BedrockRegion=");
-
-    const overridden = [...commands.matchAll(/"([A-Za-z]+)=\$\{/g)].map(
-      (match) => match[1] ?? ""
+    expect(commands).toContain(
+      '"BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}"'
     );
-    expect(overridden.filter((name) => name.startsWith("Bedrock"))).toEqual([]);
+    expect(commands).toContain('"BedrockRegion=${APPROVED_BEDROCK_REGION}"');
+    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe(
+      "anthropic.claude-3-7-sonnet-20250219-v1:0"
+    );
+    expect(DEPLOY.env.APPROVED_BEDROCK_REGION).toBe("eu-west-2");
   });
 });
 
