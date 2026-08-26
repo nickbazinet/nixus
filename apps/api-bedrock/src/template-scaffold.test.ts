@@ -549,12 +549,12 @@ describe("the remaining abuse bounds survive the reservation waiver", () => {
     expect(actions).toEqual([
       "dynamodb:GetItem",
       "dynamodb:ConditionCheckItem",
+      "dynamodb:UpdateItem",
       "dynamodb:TransactWriteItems",
     ]);
-    // A direct write would let the Lambda bypass the condition check that enforces the
-    // caps, so these must stay absent even now that a layer was removed.
+    // The transaction contains Update operations, so AWS requires UpdateItem permission
+    // even though the adapter never sends a standalone UpdateItem command.
     expect(actions).not.toContain("dynamodb:PutItem");
-    expect(actions).not.toContain("dynamodb:UpdateItem");
   });
 
   it("still alarms on throttling, now as the account-pool exposure it became", () => {
@@ -602,12 +602,13 @@ describe("IAM grants exact actions only", () => {
   ).flatMap((policy) => policy.PolicyDocument.Statement);
   const actions = statements.flatMap((statement) => statement.Action).sort();
 
-  it("grants only the six actions the service actually makes", () => {
+  it("grants only the seven actions the service actually requires", () => {
     expect(actions).toEqual([
       "bedrock:InvokeModelWithResponseStream",
       "dynamodb:ConditionCheckItem",
       "dynamodb:GetItem",
       "dynamodb:TransactWriteItems",
+      "dynamodb:UpdateItem",
       "logs:CreateLogStream",
       "logs:PutLogEvents",
     ]);
@@ -618,7 +619,6 @@ describe("IAM grants exact actions only", () => {
       expect(action).not.toContain("*");
     }
     expect(actions).not.toContain("dynamodb:PutItem");
-    expect(actions).not.toContain("dynamodb:UpdateItem");
     expect(actions).not.toContain("bedrock:InvokeModel");
     expect(actions).not.toContain("bedrock:CountTokens");
   });

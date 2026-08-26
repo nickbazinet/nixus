@@ -308,6 +308,7 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:ConditionCheckItem
+                  - dynamodb:UpdateItem
                   - dynamodb:TransactWriteItems
                 Resource: !GetAtt HostedAiTable.Arn
         - PolicyName: hosted-ai-bedrock
