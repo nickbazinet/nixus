@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -54,11 +54,15 @@ const customTags = CFN_TAGS.flatMap((name) => [
 ]);
 
 const BOOTSTRAP_TEXT = readRepoFile("infra/bootstrap/github-oidc-deploy.yaml");
+const WORKFLOW_TEXT = readRepoFile(
+  ".github/workflows/api-bedrock-oidc-bootstrap.yml"
+);
 
 /* A CloudFormation template and a workflow are untyped documents; this file is the
  * type boundary for both. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const BOOTSTRAP = parse(BOOTSTRAP_TEXT, { customTags }) as any;
+const WORKFLOW = parse(WORKFLOW_TEXT) as any;
 
 const RESOURCES: Record<string, any> = BOOTSTRAP.Resources;
 
@@ -74,19 +78,77 @@ function actionsOf(roleLogicalId: string): string[] {
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-describe("the one-time bootstrap has been retired", () => {
-  it("keeps the reviewed stack template but removes the static-key workflow", () => {
+describe("the bootstrap workflow is dispatch-only and temporary", () => {
+  it("has no automatic trigger, so merging it cannot deploy anything", () => {
+    const triggers = Object.keys(WORKFLOW.on ?? WORKFLOW[true as never]);
+
+    expect(triggers).toEqual(["workflow_dispatch"]);
+    expect(triggers).not.toContain("push");
+    expect(triggers).not.toContain("pull_request");
+    expect(triggers).not.toContain("schedule");
+  });
+
+  it("declares itself temporary and states how to remove it", () => {
+    expect(WORKFLOW.name).toContain("TEMPORARY");
     expect(BOOTSTRAP_TEXT).toContain("ONE-TIME");
-    expect(
-      existsSync(
-        fileURLToPath(
-          new URL(
-            ".github/workflows/api-bedrock-oidc-bootstrap.yml",
-            REPO_ROOT
-          )
-        )
-      )
-    ).toBe(false);
+    expect(WORKFLOW_TEXT).toMatch(/DELETE THIS FILE AFTER IT SUCCEEDS ONCE/);
+    expect(WORKFLOW_TEXT).toContain(
+      "git rm .github/workflows/api-bedrock-oidc-bootstrap.yml"
+    );
+  });
+
+  it("requires typed confirmation before using the privileged keys", () => {
+    expect(WORKFLOW.on.workflow_dispatch.inputs.confirm.required).toBe(true);
+
+    const gate = WORKFLOW.jobs.bootstrap.steps.find(
+      (step: { name?: string }) => step.name === "Require explicit confirmation"
+    );
+    expect(gate.if).toContain("inputs.confirm != 'BOOTSTRAP'");
+    expect(gate.run).toContain("exit 1");
+  });
+
+  /* This is the only file permitted to use them, and only because nothing can create
+   * an OIDC provider over OIDC. */
+  it("uses the legacy static keys here and nowhere else in the hosted-AI pipeline", () => {
+    expect(WORKFLOW_TEXT).toContain("secrets.AWS_ACCESS_KEY_ID");
+    expect(WORKFLOW_TEXT).toContain("secrets.AWS_SECRET_ACCESS_KEY");
+
+    const appPipeline = readRepoFile(".github/workflows/api-bedrock-ci.yml")
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(appPipeline).not.toContain("AWS_ACCESS_KEY_ID");
+    expect(appPipeline).not.toContain("AWS_SECRET_ACCESS_KEY");
+  });
+
+  it("prechecks for an existing provider and reconciles the operator's choice", () => {
+    const commands = WORKFLOW.jobs.bootstrap.steps
+      .map((step: { run?: string }) => step.run ?? "")
+      .join("\n");
+
+    expect(commands).toContain("list-open-id-connect-providers");
+    expect(commands).toContain("token.actions.githubusercontent.com");
+    // An account holds one provider per issuer, so create-vs-adopt must be checked
+    // against reality rather than trusted from the input.
+    expect(commands).toMatch(/already exists/i);
+    expect(commands).toMatch(/No provider exists to adopt/i);
+  });
+
+  it("deploys with named-IAM capability and prints the outputs to copy", () => {
+    const commands = WORKFLOW.jobs.bootstrap.steps
+      .map((step: { run?: string }) => step.run ?? "")
+      .join("\n");
+
+    expect(commands).toContain("CAPABILITY_NAMED_IAM");
+    expect(commands).not.toContain("CAPABILITY_AUTO_EXPAND");
+    expect(commands).toContain("describe-stacks");
+    expect(commands).toContain("AWS_BEDROCK_DEPLOY_ROLE_ARN");
+    expect(commands).toContain("AWS_BEDROCK_CFN_EXEC_ROLE_ARN");
+    expect(commands).toContain("SAM_ARTIFACT_BUCKET");
+  });
+
+  it("is never cancelled mid-bootstrap", () => {
+    expect(WORKFLOW.concurrency["cancel-in-progress"]).toBe(false);
   });
 });
 
@@ -270,6 +332,21 @@ describe("two-role separation", () => {
     expect(String(driveStack.Resource[0].value)).toContain(
       "stack/${ApplicationStackName}/*"
     );
+  });
+
+  it("lets the execution role apply only the SAM transform", () => {
+    const transform = statementsOf("CloudFormationExecutionRole").find(
+      (statement) => statement.Sid === "ApplyTheSamTransform"
+    );
+
+    expect(transform.Action).toEqual(["cloudformation:CreateChangeSet"]);
+    expect(transform.Resource).toEqual([
+      {
+        __cfn: "Sub",
+        value:
+          "arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31",
+      },
+    ]);
   });
 
   it("limits the exec role's role management to the application's own role path", () => {

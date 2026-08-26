@@ -312,6 +312,19 @@ Resources:
               StringEquals:
                 'aws:SourceAccount': !Ref AWS::AccountId
       Policies:
+        - PolicyName: apply-sam-transform
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Once `sam deploy --role-arn` hands execution to this role,
+              # CloudFormation evaluates the SAM transform as this identity rather
+              # than the GitHub deploy role.
+              - Sid: ApplyTheSamTransform
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
         - PolicyName: deny-destructive-data-operations
           PolicyDocument:
             Version: '2012-10-17'

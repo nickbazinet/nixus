@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -97,17 +97,18 @@ describe("AD-12 no long-lived AWS credentials", () => {
     ).toHaveLength(1);
   });
 
-  it("removes the one-time static-key bootstrap workflow after success", () => {
-    expect(
-      existsSync(
-        fileURLToPath(
-          new URL(
-            ".github/workflows/api-bedrock-oidc-bootstrap.yml",
-            REPO_ROOT
-          )
-        )
-      )
-    ).toBe(false);
+  /* The bootstrap workflow is the single sanctioned exception, and it exists only
+   * because nothing can create an OIDC provider over OIDC. It must never acquire a
+   * push or pull_request trigger. */
+  it("confines static keys to the dispatch-only bootstrap workflow", () => {
+    const bootstrap = readRepoFile(
+      ".github/workflows/api-bedrock-oidc-bootstrap.yml"
+    );
+
+    expect(bootstrap).toContain("secrets.AWS_ACCESS_KEY_ID");
+    expect(bootstrap).toMatch(/^on:\n\s+workflow_dispatch:/m);
+    expect(bootstrap).not.toMatch(/^\s+push:/m);
+    expect(bootstrap).not.toMatch(/^\s+pull_request:/m);
   });
 
   it("gives the verify job no AWS credentials at all", () => {
