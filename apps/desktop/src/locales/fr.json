@@ -1388,5 +1388,14 @@
   "projects.adviceError": "La suggestion n'a pas pu être générée. Vos chiffres de rythme ci-dessus ne changent pas.",
   "projects.adviceRetry": "Réessayer",
   "projects.adviceSkeleton": "Analyse de votre rythme et du budget du mois…",
-  "projects.paceMathInfoAria": "Comment le rythme mensuel est calculé"
+  "projects.paceMathInfoAria": "Comment le rythme mensuel est calculé",
+
+  "hostedAi.validation": "Nixus n'a pas pu envoyer cette requête. La réessayer telle quelle ne changera rien — la requête elle-même a été refusée.",
+  "hostedAi.payloadTooLarge": "Ce fichier est trop volumineux pour la lecture IA. Essayez une image plus petite, ou divisez un PDF de plusieurs pages.",
+  "hostedAi.unsupportedEncoding": "Nixus n'a pas pu envoyer cette requête dans un format accepté par le service IA.",
+  "hostedAi.reauthenticationRequired": "Veuillez vous reconnecter pour utiliser l'IA Nixus Cloud. Il manque à votre session une autorisation que seule une nouvelle connexion peut accorder.",
+  "hostedAi.unauthorized": "Votre session a expiré. Veuillez vous reconnecter.",
+  "hostedAi.premiumRequired": "L'IA Nixus Cloud n'est pas activée sur votre compte.",
+  "hostedAi.quotaExhausted": "Vous avez utilisé toutes vos requêtes IA Nixus Cloud pour ce mois-ci.",
+  "hostedAi.unavailable": "L'IA Nixus Cloud n'est pas disponible pour le moment. Veuillez réessayer sous peu."
 }

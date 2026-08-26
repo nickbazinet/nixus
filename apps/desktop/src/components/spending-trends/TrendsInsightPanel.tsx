@@ -16,6 +16,7 @@ import {
 } from "@nixus/shared";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { TrendsInsightResponse } from "@/lib/types";
+import { useAiErrorPresentation } from "@/hooks/useAiErrorPresentation";
 
 interface TrendsInsightPanelProps {
   gatePassed: boolean;
@@ -41,7 +42,11 @@ export function TrendsInsightPanel({
   insightQuery,
 }: TrendsInsightPanelProps) {
   const { t } = useTranslation();
-  const { data, isPending, isError, refetch, isFetching } = insightQuery;
+  const { data, isPending, isError, refetch, isFetching, error } = insightQuery;
+  const {
+    title: insightErrorTitle,
+    retryable: insightErrorRetryable,
+  } = useAiErrorPresentation(error, "spendingTrends.insightError");
 
   if (!gatePassed) {
     return (
@@ -107,19 +112,21 @@ export function TrendsInsightPanel({
     return (
       <Card flush data-testid="trends-insight-error">
         <Alert variant="over" icon={<TriangleAlertIcon />}>
-          <AlertTitle>{t("spendingTrends.insightError")}</AlertTitle>
+          <AlertTitle>{insightErrorTitle}</AlertTitle>
           <AlertDescription>
             {t("insights.insightManualPath")}
           </AlertDescription>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-2"
-            onClick={() => refetch()}
-            data-testid="trends-insight-retry"
-          >
-            {t("spendingTrends.insightRetry")}
-          </Button>
+          {insightErrorRetryable && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2"
+              onClick={() => refetch()}
+              data-testid="trends-insight-retry"
+            >
+              {t("spendingTrends.insightRetry")}
+            </Button>
+          )}
         </Alert>
       </Card>
     );

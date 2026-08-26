@@ -47,6 +47,7 @@ import { useAccounts } from "@/hooks/useAccounts";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import type { Project, ProjectAdviceResponse, ProjectContribution } from "@/lib/types";
+import { useAiErrorPresentation } from "@/hooks/useAiErrorPresentation";
 
 // Below this many days out, a monthly figure is no longer actionable — nobody plans "$400 this month"
 // when the deadline is five weeks away — so the weekly restatement appears only inside the window.
@@ -138,6 +139,11 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
     actualMonthlyCents: pace?.actual_monthly_cents ?? null,
     monthsToTarget,
   });
+
+  const {
+    title: adviceErrorTitle,
+    retryable: adviceErrorRetryable,
+  } = useAiErrorPresentation(advice.error, "projects.adviceError");
 
   // The provider is never touched until this runs, and it is only reachable from onClick. An
   // unconfigured provider stops here rather than firing a call that would fail by construction.
@@ -265,16 +271,18 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
           ) : advice.isError ? (
             <Card flush data-testid="project-advice-error">
               <Alert variant="over" icon={<TriangleAlertIcon />}>
-                <AlertTitle>{t("projects.adviceError")}</AlertTitle>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-2"
-                  onClick={handleAskForAdvice}
-                  data-testid="project-advice-retry"
-                >
-                  {t("projects.adviceRetry")}
-                </Button>
+                <AlertTitle>{adviceErrorTitle}</AlertTitle>
+                {adviceErrorRetryable && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={handleAskForAdvice}
+                    data-testid="project-advice-retry"
+                  >
+                    {t("projects.adviceRetry")}
+                  </Button>
+                )}
               </Alert>
             </Card>
           ) : advice.isSuccess ? (

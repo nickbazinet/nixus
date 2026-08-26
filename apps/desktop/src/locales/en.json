@@ -1388,5 +1388,14 @@
   "projects.adviceError": "The suggestion couldn't be generated. Your pace figures above are unaffected.",
   "projects.adviceRetry": "Try again",
   "projects.adviceSkeleton": "Looking at your pace and this month's budget…",
-  "projects.paceMathInfoAria": "How the monthly pace is calculated"
+  "projects.paceMathInfoAria": "How the monthly pace is calculated",
+
+  "hostedAi.validation": "Nixus couldn't send that request. Trying again unchanged won't help — the request itself was rejected.",
+  "hostedAi.payloadTooLarge": "That file is too large for AI reading. Try a smaller image, or split a multi-page PDF.",
+  "hostedAi.unsupportedEncoding": "Nixus couldn't send that request in a format the AI service accepts.",
+  "hostedAi.reauthenticationRequired": "Please sign in again to use Nixus Cloud AI. Your saved sign-in is missing a permission that only a fresh sign-in can grant.",
+  "hostedAi.unauthorized": "Your sign-in has expired. Please sign in again.",
+  "hostedAi.premiumRequired": "Nixus Cloud AI isn't enabled on your account.",
+  "hostedAi.quotaExhausted": "You've used all of this month's Nixus Cloud AI requests.",
+  "hostedAi.unavailable": "Nixus Cloud AI isn't available right now. Please try again shortly."
 }
