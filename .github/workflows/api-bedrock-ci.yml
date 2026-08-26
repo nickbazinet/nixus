@@ -129,6 +129,14 @@ jobs:
       id-token: write
       contents: read
 
+    # One source of truth for the reservation. Both the deploy override and the
+    # post-deploy assertion read this same value, so they cannot drift apart -
+    # a per-step copy is how an assertion ends up proving a number nobody deployed.
+    env:
+      HOSTED_AI_RESERVED_CONCURRENCY: ${{ vars.HOSTED_AI_RESERVED_CONCURRENCY || '0' }}
+      APPROVED_BEDROCK_MODEL_ID: anthropic.claude-3-7-sonnet-20250219-v1:0
+      APPROVED_BEDROCK_REGION: eu-west-2
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -163,6 +171,54 @@ jobs:
           role-to-assume: ${{ secrets.AWS_BEDROCK_DEPLOY_ROLE_ARN }}
           role-session-name: nixus-bedrock-api-deploy
           aws-region: us-east-1
+
+      # Runs BEFORE `sam deploy`, deliberately. A reservation AWS will refuse fails
+      # CloudFormation mid-update, and a first CREATE that fails that way lands the
+      # stack in ROLLBACK_COMPLETE - so the cheap arithmetic has to happen while
+      # refusing costs nothing.
+      - name: Validate the configured reservation before deploying
+        run: |
+          set -euo pipefail
+          case "${HOSTED_AI_RESERVED_CONCURRENCY}" in
+            0|10) ;;
+            *)
+              echo "HOSTED_AI_RESERVED_CONCURRENCY must be 0 (inert) or 10 (active)," >&2
+              echo "got '${HOSTED_AI_RESERVED_CONCURRENCY}'." >&2
+              exit 1
+              ;;
+          esac
+          echo "configured_concurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
+
+          if [ "${HOSTED_AI_RESERVED_CONCURRENCY}" = "0" ]; then
+            echo "Inert reservation takes nothing from the account pool; no quota check needed."
+            exit 0
+          fi
+
+          # AWS refuses any reservation that would drop the region's UNRESERVED
+          # concurrency below this floor. The account's total quota must therefore
+          # exceed the reservation by at least the floor, or the stack rolls back.
+          UNRESERVED_FLOOR=50
+          quota="$(aws service-quotas get-service-quota \
+            --service-code lambda --quota-code L-B99A9384 \
+            --query 'Quota.Value' --output text)"
+          quota="${quota%.*}"
+          required=$(( HOSTED_AI_RESERVED_CONCURRENCY + UNRESERVED_FLOOR ))
+          echo "lambda_concurrency_quota=${quota} required_minimum=${required}"
+
+          # Reported for the operator log: other functions' reservations shrink this
+          # pool further, and the arithmetic above cannot see them.
+          aws lambda get-account-settings \
+            --query 'AccountLimit.{Concurrent:ConcurrentExecutions,Unreserved:UnreservedConcurrentExecutions}'
+
+          if [ "${quota}" -lt "${required}" ]; then
+            echo "Refusing to deploy an active reservation of ${HOSTED_AI_RESERVED_CONCURRENCY}:" >&2
+            echo "the regional Lambda concurrency quota is ${quota}, which cannot preserve" >&2
+            echo "the mandatory ${UNRESERVED_FLOOR} unreserved floor. Raise the quota first" >&2
+            echo "(docs/runbooks/hosted-ai-rollout.md §2.2) or set the variable back to 0." >&2
+            exit 1
+          fi
+        env:
+          AWS_DEFAULT_REGION: us-east-1
 
       # A stack whose very first CREATE failed lands in ROLLBACK_COMPLETE, a terminal
       # state CloudFormation cannot update: the only way forward is to delete it and
@@ -222,7 +278,6 @@ jobs:
               "ApiCertificateArn=${API_CERTIFICATE_ARN}" \
               "HostedZoneId=${HOSTED_ZONE_ID}" \
               "AlertEmail=${ALERT_EMAIL}" \
-              "BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}" \
               "HostedAiReservedConcurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
         env:
           AWS_DEFAULT_REGION: us-east-1
@@ -234,9 +289,6 @@ jobs:
           # Stable prefix so the bucket policy and lifecycle rules apply to one
           # predictable path rather than whatever key SAM invents per run.
           SAM_ARTIFACT_PREFIX: nixus-bedrock-api
-          # Inert by default. Raising this to 10 requires the account Lambda quota
-          # increase first; see docs/runbooks/hosted-ai-rollout.md.
-          HOSTED_AI_RESERVED_CONCURRENCY: ${{ vars.HOSTED_AI_RESERVED_CONCURRENCY || '0' }}
           COGNITO_USER_POOL_ARN: ${{ secrets.COGNITO_USER_POOL_ARN }}
           COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
           COGNITO_APP_CLIENT_ID: ${{ secrets.COGNITO_APP_CLIENT_ID }}
@@ -244,12 +296,12 @@ jobs:
           API_CERTIFICATE_ARN: ${{ secrets.API_CERTIFICATE_ARN }}
           HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
-          BEDROCK_INFERENCE_PROFILE_ARN: ${{ secrets.BEDROCK_INFERENCE_PROFILE_ARN }}
 
       # Asserts the DEPLOYED reservation, not the template's. A template that says
       # `!Ref` proves nothing about which value CloudFormation actually applied, and
-      # the difference here is "cannot invoke Bedrock" versus "can".
-      - name: Assert the deployed Lambda is inert (reserved concurrency 0)
+      # the difference here is "cannot invoke Bedrock" versus "can". The expected
+      # value is the job-level one the deploy override used, so the two cannot diverge.
+      - name: Assert the deployed reservation equals the configured value
         run: |
           set -euo pipefail
           function_name="$(aws cloudformation describe-stacks \
@@ -263,14 +315,66 @@ jobs:
             --query 'ReservedConcurrentExecutions' \
             --output text)"
           echo "reserved_concurrency=${reserved}"
+          echo "configured_concurrency=${HOSTED_AI_RESERVED_CONCURRENCY}"
 
-          # 0 is the inert default. Flipping to AD-4's 10 is a reviewed parameter
-          # change gated on the account quota increase, and this assertion is
-          # expected to be updated in that same pull request.
-          if [ "${reserved}" != "0" ]; then
-            echo "Expected an inert reservation of 0, got '${reserved}'." >&2
-            echo "If the quota increase and the reviewed flip to 10 have landed," >&2
-            echo "update this assertion in that pull request." >&2
+          if [ "${reserved}" != "${HOSTED_AI_RESERVED_CONCURRENCY}" ]; then
+            echo "Deployed reservation '${reserved}' does not match the configured" >&2
+            echo "'${HOSTED_AI_RESERVED_CONCURRENCY}'. A rejected reservation leaves" >&2
+            echo "the function at a value AD-4 never sanctioned." >&2
+            exit 1
+          fi
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # The AD-8 token gate was proved against one model in one region. If the deployed
+      # function invokes anything else, that evidence is void - and a parameter override,
+      # a console edit, or a stale changeset can all move it without touching this repo.
+      # Both surfaces are checked: the stack outputs (what CloudFormation resolved) and
+      # the function's own environment (what the code will actually read).
+      - name: Assert the deployed model and region are the approved pair
+        run: |
+          set -euo pipefail
+          output_of() {
+            aws cloudformation describe-stacks \
+              --stack-name nixus-bedrock-api \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" \
+              --output text
+          }
+
+          function_name="$(output_of FunctionName)"
+          test -n "${function_name}" && test "${function_name}" != "None"
+
+          echoed_model="$(output_of BedrockModelIdEcho)"
+          echoed_region="$(output_of BedrockRegionEcho)"
+
+          env_json="$(aws lambda get-function-configuration \
+            --function-name "${function_name}" \
+            --query 'Environment.Variables' --output json)"
+          live_model="$(printf '%s' "${env_json}" | jq -r '.BEDROCK_MODEL_ID // ""')"
+          live_region="$(printf '%s' "${env_json}" | jq -r '.BEDROCK_REGION // ""')"
+
+          echo "stack_output_model=${echoed_model} stack_output_region=${echoed_region}"
+          echo "lambda_env_model=${live_model} lambda_env_region=${live_region}"
+
+          failed=0
+          for pair in \
+            "stack output model:${echoed_model}:${APPROVED_BEDROCK_MODEL_ID}" \
+            "lambda env model:${live_model}:${APPROVED_BEDROCK_MODEL_ID}" \
+            "stack output region:${echoed_region}:${APPROVED_BEDROCK_REGION}" \
+            "lambda env region:${live_region}:${APPROVED_BEDROCK_REGION}"; do
+            label="${pair%%:*}"
+            rest="${pair#*:}"
+            actual="${rest%%:*}"
+            expected="${rest#*:}"
+            if [ "${actual}" != "${expected}" ]; then
+              echo "${label}: expected '${expected}', got '${actual}'." >&2
+              failed=1
+            fi
+          done
+
+          if [ "${failed}" != "0" ]; then
+            echo "The deployed Bedrock identity does not match the approved pair, so the" >&2
+            echo "CountTokens/ConverseStream evidence no longer applies to it." >&2
             exit 1
           fi
         env:

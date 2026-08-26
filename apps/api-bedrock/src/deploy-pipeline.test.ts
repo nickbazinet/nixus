@@ -44,6 +44,26 @@ function runCommands(job: { steps: { run?: string }[] }): string {
     .join("\n");
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+function matchesStep(entry: any, fragment: string): boolean {
+  return `${entry.name ?? ""}\n${entry.uses ?? ""}`.includes(fragment);
+}
+
+/** Fails naming the step rather than throwing a bare TypeError on a renamed step. */
+function step(job: { steps: any[] }, fragment: string): any {
+  const found = job.steps.find((entry) => matchesStep(entry, fragment));
+  expect(found, `no step matching "${fragment}"`).toBeDefined();
+  return found;
+}
+
+/** Index of a step, for ordering assertions. */
+function stepIndex(job: { steps: any[] }, fragment: string): number {
+  const index = job.steps.findIndex((entry) => matchesStep(entry, fragment));
+  expect(index, `no step matching "${fragment}"`).toBeGreaterThan(-1);
+  return index;
+}
+/* eslint-enable @typescript-eslint/no-explicit-any */
+
 describe("AD-12 no long-lived AWS credentials", () => {
   it("never references a static AWS access key pair anywhere in the workflow", () => {
     expect(WORKFLOW_DIRECTIVES).not.toContain("AWS_ACCESS_KEY_ID");
@@ -54,9 +74,7 @@ describe("AD-12 no long-lived AWS credentials", () => {
   });
 
   it("acquires credentials only through OIDC role assumption on v6 of the action", () => {
-    const credentialStep = DEPLOY.steps.find((step: { uses?: string }) =>
-      step.uses?.startsWith("aws-actions/configure-aws-credentials")
-    );
+    const credentialStep = step(DEPLOY, "aws-actions/configure-aws-credentials");
 
     expect(credentialStep.uses).toBe("aws-actions/configure-aws-credentials@v6");
     expect(credentialStep.with["role-to-assume"]).toContain(
@@ -254,10 +272,7 @@ describe("verify job runs every prescribed check", () => {
 
   it("provisions the SAM CLI and Node 22 the service targets", () => {
     expect(stepNames(VERIFY)).toContain("Setup AWS SAM CLI");
-    const node = VERIFY.steps.find((step: { uses?: string }) =>
-      step.uses?.startsWith("actions/setup-node")
-    );
-    expect(node.with["node-version"]).toBe(22);
+    expect(step(VERIFY, "actions/setup-node").with["node-version"]).toBe(22);
   });
 });
 
@@ -309,14 +324,118 @@ describe("deploy job proves deployed guarantees", () => {
   });
 
   /* A template that says `!Ref` proves nothing about the value CloudFormation
-   * actually applied, and the difference is "cannot invoke Bedrock" versus "can". */
-  it("asserts the DEPLOYED reservation is the inert 0, not the template's intent", () => {
+   * actually applied, and the difference is "cannot invoke Bedrock" versus "can".
+   * Comparing against the configured value rather than a hardcoded number is what
+   * makes activation one environment-variable change while still failing the deploy
+   * if AWS declined the reservation. */
+  it("asserts the DEPLOYED reservation equals the configured value, not the template's intent", () => {
     const commands = runCommands(DEPLOY);
 
     expect(commands).toContain("lambda get-function-concurrency");
     expect(commands).toContain("ReservedConcurrentExecutions");
-    expect(commands).toMatch(/reserved.*!=.*"0"|"\$\{reserved\}" != "0"/);
+    expect(commands).toContain(
+      '"${reserved}" != "${HOSTED_AI_RESERVED_CONCURRENCY}"'
+    );
     expect(commands).toContain("exit 1");
+
+    // A hardcoded expectation would have to be edited in the same pull request that
+    // activates the service, which is exactly the coupling this removes.
+    expect(commands).not.toContain('"${reserved}" != "0"');
+  });
+
+  /* Validating after the deploy is validating nothing: an unacceptable reservation has
+   * already failed CloudFormation mid-update by then, and on a first CREATE that leaves
+   * the stack in ROLLBACK_COMPLETE. */
+  it("validates the reservation BEFORE sam deploy, not after", () => {
+    const validate = stepIndex(DEPLOY, "Validate the configured reservation");
+    const deploy = stepIndex(DEPLOY, "Deploy stack");
+    const assertReservation = stepIndex(DEPLOY, "Assert the deployed reservation");
+
+    expect(validate).toBeLessThan(deploy);
+    expect(deploy).toBeLessThan(assertReservation);
+
+    // Credentials must already exist, because the quota lookup is an AWS call.
+    expect(stepIndex(DEPLOY, "aws-actions/configure-aws-credentials")).toBeLessThan(
+      validate
+    );
+
+    const script = step(DEPLOY, "Validate the configured reservation").run as string;
+    expect(script).toMatch(/0\|10\)/);
+    expect(script).toMatch(/must be 0 \(inert\) or 10 \(active\)/);
+  });
+
+  /* AWS refuses a reservation that would drop regional unreserved concurrency below its
+   * floor. Discovering that from a rolled-back stack costs an operator an incident; the
+   * arithmetic costs one API call. */
+  it("refuses an active reservation the regional Lambda quota cannot support", () => {
+    const script = step(DEPLOY, "Validate the configured reservation").run as string;
+
+    expect(script).toContain("service-quotas get-service-quota");
+    expect(script).toContain("--quota-code L-B99A9384");
+    expect(script).toContain("UNRESERVED_FLOOR=50");
+    expect(script).toContain(
+      "required=$(( HOSTED_AI_RESERVED_CONCURRENCY + UNRESERVED_FLOOR ))"
+    );
+    expect(script).toContain('[ "${quota}" -lt "${required}" ]');
+    expect(script).toMatch(/Refusing to deploy an active reservation/);
+    expect(script).toContain("exit 1");
+
+    // The inert path must not spend an API call or fail on a quota it never touches.
+    expect(script).toMatch(/if \[ "\$\{HOSTED_AI_RESERVED_CONCURRENCY\}" = "0" \]/);
+  });
+
+  /* The AD-8 token gate was proved against one model in one region; an active function
+   * pointed anywhere else voids that evidence. Both the resolved outputs and the
+   * function's own environment are checked, because a console edit moves only the latter. */
+  it("asserts the deployed model and region on both the stack outputs and the Lambda env", () => {
+    const script = step(DEPLOY, "Assert the deployed model and region").run as string;
+
+    expect(script).toContain("BedrockModelIdEcho");
+    expect(script).toContain("BedrockRegionEcho");
+    expect(script).toContain("lambda get-function-configuration");
+    expect(script).toContain(".BEDROCK_MODEL_ID");
+    expect(script).toContain(".BEDROCK_REGION");
+
+    for (const compared of [
+      "stack output model",
+      "lambda env model",
+      "stack output region",
+      "lambda env region",
+    ]) {
+      expect(script, `${compared} must be compared`).toContain(compared);
+    }
+
+    expect(script).toContain("${APPROVED_BEDROCK_MODEL_ID}");
+    expect(script).toContain("${APPROVED_BEDROCK_REGION}");
+    expect(script).toContain("exit 1");
+
+    expect(stepIndex(DEPLOY, "Deploy stack")).toBeLessThan(
+      stepIndex(DEPLOY, "Assert the deployed model and region")
+    );
+  });
+
+  /* Two step-level copies of the same expression are how an assertion ends up proving a
+   * number nobody deployed. One job-level definition makes that impossible. */
+  it("defines the reservation once, at job level, and nowhere else", () => {
+    expect(DEPLOY.env.HOSTED_AI_RESERVED_CONCURRENCY).toBe(
+      "${{ vars.HOSTED_AI_RESERVED_CONCURRENCY || '0' }}"
+    );
+
+    const perStepCopies = (DEPLOY.steps as { env?: Record<string, unknown> }[]).filter(
+      (entry) => entry.env?.HOSTED_AI_RESERVED_CONCURRENCY !== undefined
+    );
+    expect(perStepCopies).toEqual([]);
+
+    expect(
+      WORKFLOW_TEXT.match(/vars\.HOSTED_AI_RESERVED_CONCURRENCY/g)
+    ).toHaveLength(1);
+  });
+
+  it("pins the approved model and region once, at job level, as the assertion source", () => {
+    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe(
+      "anthropic.claude-3-7-sonnet-20250219-v1:0"
+    );
+    expect(DEPLOY.env.APPROVED_BEDROCK_REGION).toBe("eu-west-2");
   });
 
   it("passes the reservation in explicitly, defaulting to inert", () => {
@@ -353,10 +472,42 @@ describe("deploy job proves deployed guarantees", () => {
       "ApiCertificateArn=",
       "HostedZoneId=",
       "AlertEmail=",
-      "BedrockInferenceProfileArn=",
     ]) {
       expect(commands, `missing override ${parameter}`).toContain(parameter);
     }
+  });
+
+  /* The direct foundation-model ARN is derived inside the template from the model id
+   * and region, and a foundation-model ARN carries no account id - so there is nothing
+   * account-specific left to pass, and the old profile secret must be gone rather than
+   * lingering as an unused, misleading input. */
+  it("passes no inference-profile parameter or secret any more", () => {
+    for (const obsolete of [
+      "BedrockInferenceProfileArn",
+      "BedrockFoundationModelArnPattern",
+      "BEDROCK_INFERENCE_PROFILE_ARN",
+      "BEDROCK_FOUNDATION_MODEL_ARN_PATTERN",
+      "inference-profile",
+      "us.anthropic",
+    ]) {
+      expect(WORKFLOW_TEXT, `${obsolete} must be gone`).not.toContain(obsolete);
+    }
+  });
+
+  /* A `BedrockModelId=` or `BedrockRegion=` override would let a deployment invoke a
+   * model the probes never covered while the committed template still reads correctly.
+   * The template's one-entry AllowedValues is the backstop; not passing the override at
+   * all is the primary control. */
+  it("never overrides the Bedrock model or region, leaving the template authoritative", () => {
+    const commands = runCommands(DEPLOY);
+
+    expect(commands).not.toContain("BedrockModelId=");
+    expect(commands).not.toContain("BedrockRegion=");
+
+    const overridden = [...commands.matchAll(/"([A-Za-z]+)=\$\{/g)].map(
+      (match) => match[1] ?? ""
+    );
+    expect(overridden.filter((name) => name.startsWith("Bedrock"))).toEqual([]);
   });
 });
 
