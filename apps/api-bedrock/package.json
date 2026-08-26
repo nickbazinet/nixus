@@ -1,0 +1,29 @@
+{
+  "name": "@nixus/api-bedrock",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "eslint src vitest.config.ts eslint.config.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sam:validate": "sam validate --lint",
+    "sam:build": "sam build"
+  },
+  "dependencies": {
+    "@nixus/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/react": "^19.1.8",
+    "eslint": "^10.3.0",
+    "globals": "^17.6.0",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.59.3",
+    "vitest": "^3.2.4"
+  }
+}

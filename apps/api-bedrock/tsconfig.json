@@ -1,0 +1,36 @@
+{
+  "include": ["src", "vitest.config.ts"],
+  "exclude": ["node_modules", ".aws-sam", "dist"],
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "types": ["node"],
+
+    /* `jsx` and the DOM lib exist only so tsc can traverse the `@nixus/shared`
+       root barrel, which also re-exports the React UI surface that 120+ desktop
+       files import from the package root. Service code has no use for either;
+       `no-restricted-globals` in eslint.config.js blocks the DOM globals that
+       are most likely to be reached for by accident. */
+    "lib": ["ES2023", "DOM"],
+    "jsx": "react-jsx",
+
+    /* Bundler mode — esbuild (Vitest) and esbuild-backed SAM builds, never tsc emit */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    /* Linting */
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}
