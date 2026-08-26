@@ -415,9 +415,9 @@ describe("AD-4 compute topology", () => {
 describe("Bedrock identity is one direct model in its own region", () => {
   const role = singleResourceOfType("AWS::IAM::Role");
 
-  it("defaults to the bare Claude 3.7 Sonnet model in eu-west-2", () => {
+  it("defaults to the bare Claude Sonnet 4.6 model in eu-west-2", () => {
     expect(PARAMETERS.BedrockModelId!.Default).toBe(
-      "anthropic.claude-3-7-sonnet-20250219-v1:0"
+      "anthropic.claude-sonnet-4-6"
     );
     expect(PARAMETERS.BedrockRegion!.Default).toBe("eu-west-2");
   });
@@ -427,7 +427,7 @@ describe("Bedrock identity is one direct model in its own region", () => {
    * AllowedValues makes CloudFormation itself refuse anything else. */
   it("enumerates exactly one approved model and one approved region, not a pattern", () => {
     expect(PARAMETERS.BedrockModelId!.AllowedValues).toEqual([
-      "anthropic.claude-3-7-sonnet-20250219-v1:0",
+      "anthropic.claude-sonnet-4-6",
     ]);
     expect(PARAMETERS.BedrockRegion!.AllowedValues).toEqual(["eu-west-2"]);
 
@@ -441,11 +441,9 @@ describe("Bedrock identity is one direct model in its own region", () => {
 
     for (const rejected of [
       "us.anthropic.claude-sonnet-4-6",
-      "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
-      "eu.anthropic.claude-3-7-sonnet-20250219-v1:0",
-      "apac.anthropic.claude-3-7-sonnet-20250219-v1:0",
+      "eu.anthropic.claude-sonnet-4-6",
+      "apac.anthropic.claude-sonnet-4-6",
       "global.anthropic.claude-sonnet-4-6",
-      "anthropic.claude-sonnet-4-6",
       "anthropic.claude-3-5-sonnet-20241022-v2:0",
       "amazon.nova-pro-v1:0",
       "",

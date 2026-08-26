@@ -42,7 +42,7 @@ Parameters:
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
   BedrockModelId:
     Type: String
-    Default: anthropic.claude-3-7-sonnet-20250219-v1:0
+    Default: anthropic.claude-sonnet-4-6
     Description: >-
       Bare foundation-model ID passed to CountTokens and ConverseStream. Model
       selection is server-owned; clients cannot influence it.
@@ -58,7 +58,7 @@ Parameters:
       Anthropic model" is not what the CountTokens/ConverseStream evidence covers.
       Changing this list is a specification change (see the runbook's §0).
     AllowedValues:
-      - anthropic.claude-3-7-sonnet-20250219-v1:0
+      - anthropic.claude-sonnet-4-6
   BedrockRegion:
     Type: String
     Default: eu-west-2
