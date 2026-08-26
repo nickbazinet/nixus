@@ -1,0 +1,188 @@
+name: API Bedrock OIDC Bootstrap (TEMPORARY)
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │ TEMPORARY, ONE-TIME WORKFLOW - DELETE THIS FILE AFTER IT SUCCEEDS ONCE.    │
+# └────────────────────────────────────────────────────────────────────────────┘
+#
+# This is the ONLY file in the repository that may use the legacy static
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY pair for the hosted-AI service, and it
+# exists solely to solve the bootstrap paradox: AD-12 requires the application
+# pipeline to authenticate via GitHub OIDC, but nothing can create the OIDC provider
+# and the deploy role over OIDC, because neither exists yet.
+#
+# Those secrets already exist in this repository for `web-ci.yml`. This workflow
+# borrows them exactly once. It does not create them, does not widen them, and after
+# it has run the hosted-AI pipeline never touches a static key again -
+# `api-bedrock-ci.yml` has no static credential of any kind, and a test enforces that.
+#
+# REMOVAL, once the run has succeeded and the production environment is populated
+# (see docs/runbooks/hosted-ai-rollout.md §1.2):
+#
+#     git rm .github/workflows/api-bedrock-oidc-bootstrap.yml
+#
+# The bootstrap STACK stays; only this workflow goes. Re-adding the file is how you
+# would ever re-run it, which is a deliberately visible act.
+#
+# `workflow_dispatch` only: there is no push trigger, so merging this file cannot
+# deploy anything. Someone has to press the button.
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_oidc_provider:
+        description: >-
+          Create the GitHub OIDC provider. Choose "false" only if the account already
+          has one (the precheck below reports this) and supply its ARN.
+        type: choice
+        required: true
+        default: 'true'
+        options:
+          - 'true'
+          - 'false'
+      existing_oidc_provider_arn:
+        description: >-
+          Required only when create_oidc_provider is "false". ARN of the existing
+          token.actions.githubusercontent.com provider to adopt.
+        type: string
+        required: false
+        default: ''
+      confirm:
+        description: 'Type BOOTSTRAP to confirm this one-time privileged run.'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancelled: an interrupted IAM/CloudFormation bootstrap is worse than a
+  # slow one.
+  group: api-bedrock-oidc-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Bootstrap OIDC provider, deploy roles, and artifact bucket
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Require explicit confirmation
+        if: inputs.confirm != 'BOOTSTRAP'
+        run: |
+          echo "This workflow uses the repository's static AWS keys and creates IAM" >&2
+          echo "roles. Re-run with confirm=BOOTSTRAP if that is intended." >&2
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      # The one sanctioned use of the legacy keys. Everything downstream of the
+      # bootstrap authenticates via the OIDC role this run creates.
+      - name: Configure AWS credentials (legacy static keys, one-time only)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Validate the bootstrap template
+        run: |
+          aws cloudformation validate-template \
+            --template-body "file://infra/bootstrap/github-oidc-deploy.yaml" \
+            --output text --query 'Description'
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # An account may hold only ONE provider per issuer URL, and creating a second
+      # fails with EntityAlreadyExists. This reports the truth rather than letting
+      # the operator guess which input to choose.
+      - name: Precheck for an existing GitHub OIDC provider
+        id: precheck
+        run: |
+          set -euo pipefail
+          existing="$(aws iam list-open-id-connect-providers \
+            --query "OpenIDConnectProviderList[?contains(Arn, 'token.actions.githubusercontent.com')].Arn | [0]" \
+            --output text)"
+
+          if [ -z "${existing}" ] || [ "${existing}" = "None" ]; then
+            echo "No GitHub OIDC provider found in this account."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "arn=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Existing GitHub OIDC provider: ${existing}"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "arn=${existing}" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Reconcile the create-or-adopt choice with reality
+        run: |
+          set -euo pipefail
+          found='${{ steps.precheck.outputs.found }}'
+          choice='${{ inputs.create_oidc_provider }}'
+          supplied='${{ inputs.existing_oidc_provider_arn }}'
+          detected='${{ steps.precheck.outputs.arn }}'
+
+          if [ "${found}" = "true" ] && [ "${choice}" = "true" ]; then
+            echo "A GitHub OIDC provider already exists (${detected})." >&2
+            echo "Re-run with create_oidc_provider=false and" >&2
+            echo "existing_oidc_provider_arn=${detected}" >&2
+            exit 1
+          fi
+
+          if [ "${found}" = "false" ] && [ "${choice}" = "false" ]; then
+            echo "No provider exists to adopt. Re-run with create_oidc_provider=true." >&2
+            exit 1
+          fi
+
+          if [ "${choice}" = "false" ] && [ -z "${supplied}" ]; then
+            echo "create_oidc_provider=false requires existing_oidc_provider_arn." >&2
+            exit 1
+          fi
+
+          echo "Create-or-adopt choice is consistent with the account."
+
+      - name: Deploy the bootstrap stack
+        run: |
+          set -euo pipefail
+          aws cloudformation deploy \
+            --stack-name nixus-bedrock-api-bootstrap \
+            --template-file infra/bootstrap/github-oidc-deploy.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              "GitHubOrg=nickbazinet" \
+              "GitHubRepo=nixus" \
+              "GitHubEnvironment=production" \
+              "ApplicationStackName=nixus-bedrock-api" \
+              "CreateOidcProvider=${{ inputs.create_oidc_provider }}" \
+              "ExistingOidcProviderArn=${{ inputs.existing_oidc_provider_arn }}"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Print the values to copy into the production environment
+        run: |
+          set -euo pipefail
+          aws cloudformation describe-stacks \
+            --stack-name nixus-bedrock-api-bootstrap \
+            --query 'Stacks[0].Outputs' \
+            --output table
+
+          echo ""
+          echo "Copy these into the GitHub 'production' environment:"
+          echo "  secret   AWS_BEDROCK_DEPLOY_ROLE_ARN     <- DeployRoleArn"
+          echo "  secret   AWS_BEDROCK_CFN_EXEC_ROLE_ARN   <- CloudFormationExecutionRoleArn"
+          echo "  variable SAM_ARTIFACT_BUCKET             <- SamArtifactBucketName"
+          echo ""
+          echo "Then set the repository variable API_BEDROCK_DEPLOY_ENABLED=true,"
+          echo "and delete this workflow file:"
+          echo "  git rm .github/workflows/api-bedrock-oidc-bootstrap.yml"
+        env:
+          AWS_DEFAULT_REGION: us-east-1

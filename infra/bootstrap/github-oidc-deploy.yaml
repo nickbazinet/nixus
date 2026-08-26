@@ -1,0 +1,518 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  ONE-TIME bootstrap for the Nixus hosted-AI delivery pipeline. Creates the GitHub
+  OIDC identity provider, a deploy role GitHub Actions assumes, a separate
+  CloudFormation execution role that actually creates the application's resources,
+  and a private retained artifact bucket for `sam deploy`.
+
+  Deliberately NOT part of `apps/api-bedrock/template.yaml`: AD-12 forbids the
+  application stack from defining the very role that deploys it. This stack is the
+  separately reviewed out-of-band step that requirement refers to.
+
+  Deployed exactly once, by `.github/workflows/api-bedrock-oidc-bootstrap.yml`, using
+  the repository's pre-existing static web-deploy keys. After it succeeds, those keys
+  are never used for this service again: the application pipeline is OIDC-only.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: nickbazinet
+    Description: GitHub account that owns the repository.
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9-]*$'
+  GitHubRepo:
+    Type: String
+    Default: nixus
+    Description: Repository name.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    Description: >-
+      GitHub environment whose deployments may assume the deploy role. The trust
+      policy matches this exactly, so a workflow running outside this environment
+      cannot assume the role even from the default branch.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  CreateOidcProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >-
+      An AWS account may hold only ONE identity provider per issuer URL, and creating
+      a second fails with EntityAlreadyExists. Set true on the first run; set false
+      and pass ExistingOidcProviderArn to adopt a provider another stack or an earlier
+      manual step already created.
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    Description: >-
+      Required only when CreateOidcProvider is false. ARN of the existing
+      token.actions.githubusercontent.com provider to adopt.
+  OidcThumbprintPrimary:
+    Type: String
+    Default: 6938fd4d98bab03faadb97b34396831e3780aea1
+    Description: >-
+      GitHub's OIDC certificate thumbprint. IAM no longer relies on the thumbprint for
+      well-known providers, but CloudFormation still requires the property, so both
+      published values are pinned as parameters rather than buried in the template.
+    AllowedPattern: '^[0-9a-f]{40}$'
+  OidcThumbprintSecondary:
+    Type: String
+    Default: 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+    Description: Second published GitHub OIDC thumbprint.
+    AllowedPattern: '^[0-9a-f]{40}$'
+  ApplicationStackName:
+    Type: String
+    Default: nixus-bedrock-api
+    Description: >-
+      The single application stack these roles may act on. Every CloudFormation
+      permission below is scoped to this name, so neither role can touch another
+      stack in the account.
+    AllowedPattern: '^[A-Za-z][A-Za-z0-9-]*$'
+
+Conditions:
+  ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # GitHub OIDC identity provider
+  # ---------------------------------------------------------------------------
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOidcProvider
+    # Retained so tearing this bootstrap stack down cannot break an unrelated
+    # workflow in the account that federates through the same provider.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - !Ref OidcThumbprintPrimary
+        - !Ref OidcThumbprintSecondary
+
+  # ---------------------------------------------------------------------------
+  # Private, encrypted, versioned artifact bucket for `sam deploy`
+  # ---------------------------------------------------------------------------
+  SamArtifactBucket:
+    Type: AWS::S3::Bucket
+    # Retained: a deleted artifact bucket breaks rollback to any previously
+    # deployed version, because CloudFormation fetches the old package from here.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'nixus-sam-artifacts-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          # Superseded packages are only needed for rollback, so old versions are
+          # aged out rather than kept forever.
+          - Id: expire-noncurrent-packages
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 90
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  SamArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SamArtifactBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Lambda packages are private build artifacts; plaintext transport is
+          # refused outright rather than merely discouraged.
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt SamArtifactBucket.Arn
+              - !Sub '${SamArtifactBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  # ---------------------------------------------------------------------------
+  # Role 1 of 2 - assumed by GitHub Actions. Drives CloudFormation and reads back
+  # deployed state. Holds NO resource-creation permission of its own.
+  # ---------------------------------------------------------------------------
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApplicationStackName}-github-deploy'
+      Description: >-
+        Assumed by GitHub Actions via OIDC to deploy the hosted-AI stack. Cannot
+        create application resources itself; it passes the execution role to
+        CloudFormation and reads back the result.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                # Audience and subject are both exact matches. The subject pins the
+                # repository AND the environment; this repository has immutable
+                # subject claims disabled, so the plain `repo:owner/name` form is
+                # what GitHub actually emits.
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:${GitHubEnvironment}'
+      Policies:
+        - PolicyName: cloudformation-one-stack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DriveTheApplicationStackOnly
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListStackResources
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ListChangeSets
+                  - cloudformation:TagResource
+                  - cloudformation:UntagResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ApplicationStackName}/*'
+              - Sid: TemplateValidationIsNotStackScoped
+                Effect: Allow
+                Action:
+                  # These two carry no resource to scope to; SAM calls them during
+                  # `deploy`. The action list stays explicit.
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource: '*'
+              - Sid: SamTransformNeedsTheServerlessRepo
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+        - PolicyName: pass-only-the-execution-role
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The deploy role's ONLY IAM capability. It cannot create, edit, or
+              # delete a role, and it can hand exactly one role to exactly one
+              # service - so it cannot escalate by passing a stronger role.
+              - Sid: PassExactlyTheCfnExecutionRole
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt CloudFormationExecutionRole.Arn
+                Condition:
+                  StringEquals:
+                    'iam:PassedToService': cloudformation.amazonaws.com
+        - PolicyName: sam-artifact-bucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: UploadPackagesOnly
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource:
+                  - !Sub '${SamArtifactBucket.Arn}/*'
+              - Sid: LocateTheBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:ListBucketMultipartUploads
+                Resource:
+                  - !GetAtt SamArtifactBucket.Arn
+        - PolicyName: post-deploy-verification-reads
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Exactly what the workflow's post-deploy assertions and smoke test
+              # need, all read-only.
+              - Sid: ReadDeployedLambdaConcurrency
+                Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionConcurrency
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ApplicationStackName}-api'
+              - Sid: ReadTableBackupState
+                Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-*'
+              - Sid: ReadApiConfiguration
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/*'
+
+  # ---------------------------------------------------------------------------
+  # Role 2 of 2 - assumed by CloudFormation, never by GitHub. This is the only
+  # identity that may create the application's resources.
+  # ---------------------------------------------------------------------------
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApplicationStackName}-cfn-exec'
+      Description: >-
+        Passed to CloudFormation by the deploy role. Creates the resources declared
+        in apps/api-bedrock/template.yaml and nothing else.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      Policies:
+        - PolicyName: deny-destructive-data-operations
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # AD-15 requires the deploy path to be unable to destroy the quota
+              # table. `DeletionPolicy: Retain` stops CloudFormation from doing it;
+              # this explicit Deny stops a direct API call too, and a Deny cannot be
+              # overridden by any later Allow.
+              - Sid: NeverDeleteOrReplaceTheQuotaTable
+                Effect: Deny
+                Action:
+                  - dynamodb:DeleteTable
+                  - dynamodb:DeleteBackup
+                  - dynamodb:DisableKinesisStreamingDestination
+                Resource: '*'
+        - PolicyName: application-stack-resources
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: RestApiAndCustomDomain
+                Effect: Allow
+                Action:
+                  # API Gateway authorizes by HTTP verb, so this is the complete
+                  # explicit set rather than a wildcard.
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                  - apigateway:UpdateRestApiPolicy
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/*'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/*'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/*'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/account'
+              - Sid: TheOneLambda
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionConcurrency
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:GetPolicy
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                  - lambda:PutRuntimeManagementConfig
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ApplicationStackName}-api'
+              - Sid: ReadTheDeploymentPackage
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub '${SamArtifactBucket.Arn}/*'
+              - Sid: QuotaTableWithoutDeletion
+                Effect: Allow
+                Action:
+                  # No DeleteTable, and the Deny above makes that structural rather
+                  # than a matter of remembering to omit it here (AD-15).
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-*'
+              - Sid: TheLambdaExecutionRole
+                Effect: Allow
+                Action:
+                  # Creates the function's own execution role declared in the
+                  # application template. Scoped by path so it cannot touch the two
+                  # roles this bootstrap stack owns.
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:UpdateRole
+                  - iam:UpdateRoleDescription
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Hosted*'
+              - Sid: PassTheLambdaExecutionRoleToLambda
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Hosted*'
+                Condition:
+                  StringEquals:
+                    'iam:PassedToService': lambda.amazonaws.com
+              - Sid: ExplicitLogGroup
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:DescribeLogGroups
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-api'
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-api:*'
+              - Sid: AlarmTopicAndSubscription
+                Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:GetSubscriptionAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
+                  - sns:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${ApplicationStackName}-*'
+              - Sid: ErrorRateAlarms
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ApplicationStackName}-*'
+              - Sid: BedrockSpendBudget
+                Effect: Allow
+                Action:
+                  # AWS Budgets authorizes create, modify, and delete through the
+                  # single ModifyBudget action; there is no CreateBudget. Budget ARNs
+                  # carry no stack name, so this is scoped to the account namespace.
+                  - budgets:ModifyBudget
+                  - budgets:ViewBudget
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/*'
+              - Sid: CustomDomainDnsRecord
+                Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                  - route53:ListResourceRecordSets
+                  - route53:GetHostedZone
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:route53:::hostedzone/*'
+                  - !Sub 'arn:${AWS::Partition}:route53:::change/*'
+              - Sid: AttachTheCertificateToTheDomain
+                Effect: Allow
+                Action:
+                  - acm:DescribeCertificate
+                  - acm:ListCertificates
+                Resource: '*'
+
+Outputs:
+  DeployRoleArn:
+    Description: >-
+      Set as the AWS_BEDROCK_DEPLOY_ROLE_ARN secret on the production environment.
+    Value: !GetAtt GitHubDeployRole.Arn
+  CloudFormationExecutionRoleArn:
+    Description: >-
+      Set as the AWS_BEDROCK_CFN_EXEC_ROLE_ARN secret on the production environment.
+    Value: !GetAtt CloudFormationExecutionRole.Arn
+  SamArtifactBucketName:
+    Description: >-
+      Set as the SAM_ARTIFACT_BUCKET variable on the production environment.
+    Value: !Ref SamArtifactBucket
+  OidcProviderArn:
+    Description: >-
+      The provider the deploy role trusts, whether created here or adopted.
+    Value: !If
+      - ShouldCreateOidcProvider
+      - !Ref GitHubOidcProvider
+      - !Ref ExistingOidcProviderArn
+  TrustedSubject:
+    Description: >-
+      The exact `sub` claim the deploy role accepts. Compare against the claim a
+      failing workflow run reports before changing anything.
+    Value: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:${GitHubEnvironment}'
