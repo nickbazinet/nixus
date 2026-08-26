@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use tauri::State;
 
-use crate::ai::{project_advice, AiProvider, AiState};
+use crate::ai::{clone_provider, project_advice, AiState};
 use crate::db::audit as audit_db;
 use crate::db::budget as budget_db;
 use crate::db::financial_health as financial_health_db;
@@ -601,23 +601,17 @@ pub async fn generate_project_advice(
     let adjusted_monthly =
         adjusted_required_monthly_cents(remaining_cents, months_to_target, &headroom);
 
-    let provider = {
+    // `None` is no longer an early return: hosted Bedrock may still serve a
+    // premium user who has configured no BYO provider at all.
+    let byo = {
         let ai = ai_state.lock().map_err(|_| AppError::Database {
             message: "AI state lock poisoned".to_string(),
         })?;
-        match &ai.provider {
-            None => return Err(AppError::NotConfigured),
-            Some(AiProvider::Bedrock(client)) => {
-                project_advice::ProviderClient::Bedrock(client.clone())
-            }
-            Some(AiProvider::OpenAI(client)) => {
-                project_advice::ProviderClient::OpenAI(client.clone())
-            }
-        }
+        clone_provider(&ai.provider)
     };
 
     project_advice::generate_project_advice(
-        &provider,
+        byo.as_ref(),
         request,
         &categories,
         &slack,

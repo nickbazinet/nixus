@@ -1,31 +1,13 @@
-use aws_sdk_bedrockruntime::types::{
-    ContentBlock, ConversationRole, Message, SystemContentBlock,
-};
-use async_openai::{
-    config::OpenAIConfig,
-    types::{
-        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs, CreateChatCompletionRequestArgs,
-    },
-    Client as OpenAIClient,
-};
-use aws_sdk_bedrockruntime::Client as BedrockClient;
 use serde::Deserialize;
 use tracing::info;
 
+use crate::ai::backend::{self, AiOperation, AiRequest, AiTurn};
+use crate::ai::AiProvider;
 use crate::error::AppError;
 use crate::models::{
     AccountHeadroom, BudgetCategoryStatus, CategoryCompareRow, ProjectAdviceRequest,
     ProjectAdviceResponse,
 };
-
-const BEDROCK_MODEL_ID: &str = "us.anthropic.claude-sonnet-4-6";
-const OPENAI_MODEL_ID: &str = "gpt-4o";
-
-pub enum ProviderClient {
-    Bedrock(BedrockClient),
-    OpenAI(OpenAIClient<OpenAIConfig>),
-}
 
 #[derive(Debug, Deserialize)]
 struct AiAdvicePayload {
@@ -272,9 +254,11 @@ fn parse_advice_response(
     project_name: &str,
 ) -> Result<ProjectAdviceResponse, AppError> {
     let json_str = extract_json(output_text);
+    // The parse error's own text is included but the model output is NOT: raw
+    // output can contain financial detail, and an AppError crosses IPC (AD-11).
     let payload: AiAdvicePayload =
         serde_json::from_str(json_str).map_err(|e| AppError::AiService {
-            message: format!("Failed to parse AI response: {}. Raw: {}", e, output_text),
+            message: format!("Failed to parse the AI response: {}", e),
             recoverable: true,
         })?;
 
@@ -286,98 +270,8 @@ fn parse_advice_response(
     })
 }
 
-async fn call_bedrock(
-    client: &BedrockClient,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<String, AppError> {
-    let message = Message::builder()
-        .role(ConversationRole::User)
-        .content(ContentBlock::Text(user_prompt.to_string()))
-        .build()
-        .map_err(|e| AppError::AiService {
-            message: format!("Failed to build message: {}", e),
-            recoverable: false,
-        })?;
-
-    let response = client
-        .converse()
-        .model_id(BEDROCK_MODEL_ID)
-        .system(SystemContentBlock::Text(system_prompt.to_string()))
-        .messages(message)
-        .send()
-        .await
-        .map_err(|e| AppError::AiService {
-            message: format!("Bedrock API error: {:?}", e),
-            recoverable: true,
-        })?;
-
-    response
-        .output()
-        .and_then(|o| o.as_message().ok())
-        .and_then(|m| m.content().first())
-        .and_then(|c| c.as_text().ok())
-        .map(|s| s.to_string())
-        .ok_or_else(|| AppError::AiService {
-            message: "No text response from Bedrock".to_string(),
-            recoverable: true,
-        })
-}
-
-async fn call_openai(
-    client: &OpenAIClient<OpenAIConfig>,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<String, AppError> {
-    let request = CreateChatCompletionRequestArgs::default()
-        .model(OPENAI_MODEL_ID)
-        .messages(vec![
-            ChatCompletionRequestMessage::System(
-                ChatCompletionRequestSystemMessageArgs::default()
-                    .content(system_prompt)
-                    .build()
-                    .map_err(|e| AppError::AiService {
-                        message: format!("Failed to build OpenAI system message: {}", e),
-                        recoverable: false,
-                    })?,
-            ),
-            ChatCompletionRequestMessage::User(
-                ChatCompletionRequestUserMessageArgs::default()
-                    .content(user_prompt)
-                    .build()
-                    .map_err(|e| AppError::AiService {
-                        message: format!("Failed to build OpenAI user message: {}", e),
-                        recoverable: false,
-                    })?,
-            ),
-        ])
-        .build()
-        .map_err(|e| AppError::AiService {
-            message: format!("Failed to build OpenAI request: {}", e),
-            recoverable: false,
-        })?;
-
-    let response = client
-        .chat()
-        .create(request)
-        .await
-        .map_err(|e| AppError::AiService {
-            message: format!("OpenAI API error: {}", e),
-            recoverable: true,
-        })?;
-
-    response
-        .choices
-        .first()
-        .and_then(|c| c.message.content.clone())
-        .ok_or_else(|| AppError::AiService {
-            message: "No text response from OpenAI".to_string(),
-            recoverable: true,
-        })
-}
-
 pub async fn generate_project_advice(
-    provider: &ProviderClient,
+    byo: Option<&AiProvider>,
     request: ProjectAdviceRequest,
     over_target_categories: &[BudgetCategoryStatus],
     under_target_categories: &[CategoryCompareRow],
@@ -403,14 +297,17 @@ pub async fn generate_project_advice(
         account_headroom.len()
     );
 
-    let output_text = match provider {
-        ProviderClient::Bedrock(client) => {
-            call_bedrock(client, &system_prompt, &user_prompt).await?
-        }
-        ProviderClient::OpenAI(client) => {
-            call_openai(client, &system_prompt, &user_prompt).await?
-        }
-    };
+    let output_text = backend::invoke(
+        byo,
+        AiRequest {
+            operation: AiOperation::ProjectAdvice,
+            system: system_prompt,
+            turns: vec![AiTurn::user(user_prompt)],
+            attachment: None,
+        },
+        &backend::ignore_deltas(),
+    )
+    .await?;
 
     parse_advice_response(&output_text, &project_name)
 }
