@@ -319,9 +319,10 @@ function validateStatementImportShape(
 }
 
 /**
- * Anthropic's Messages API - which the selected `us.anthropic.claude-sonnet-4-6`
- * profile implements - operates on alternating user/assistant turns beginning with
- * `user`. Bedrock rejects a history that opens with the assistant or repeats a role.
+ * Anthropic's Messages API - which the selected direct model
+ * `anthropic.claude-3-7-sonnet-20250219-v1:0` implements - operates on alternating
+ * user/assistant turns beginning with `user`. Bedrock rejects a history that opens
+ * with the assistant or repeats a role.
  *
  * Caught here, at step 1, so a malformed history is a canonical `400 validation`
  * before `CountTokens` is ever billed. Left to `ConverseStream` it would surface as
