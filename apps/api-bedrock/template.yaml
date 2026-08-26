@@ -1,10 +1,103 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  Nixus hosted-AI gateway (apps/api-bedrock). Scaffold only: this template
-  establishes the SAM metadata and the Node.js 22 / ARM64 function conventions.
-  The Regional REST API, Cognito authorizer, streaming Lambda, and DynamoDB table
-  are added by the infrastructure story.
+  Nixus hosted-AI gateway (apps/api-bedrock). One Regional REST streaming API
+  behind the existing Cognito user pool, one Node.js 22 ARM64 Lambda, and one
+  retained on-demand DynamoDB table holding per-user and GLOBAL quota state.
+  Hosted traffic stays off until GLOBAL#CONFIG is manually seeded and flipped to
+  enabled=true per docs/runbooks/hosted-ai-rollout.md.
+
+Parameters:
+  CognitoUserPoolArn:
+    Type: String
+    Description: >-
+      ARN of the EXISTING Cognito user pool from architecture-login.md. This
+      stack never creates, imports, or owns the pool.
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:cognito-idp:[a-z0-9-]+:\d{12}:userpool/.+$'
+  CognitoUserPoolId:
+    Type: String
+    Description: ID of the same existing Cognito user pool, for operator traceability.
+    AllowedPattern: '^[\w-]+_[0-9a-zA-Z]+$'
+  CognitoAppClientId:
+    Type: String
+    Description: >-
+      App client ID that must carry the nixus-api/ai.invoke resource-server
+      scope. The scope itself is added out-of-band in the Cognito console.
+    AllowedPattern: '^[a-z0-9]+$'
+  ApiDomainName:
+    Type: String
+    Default: api.nixusapp.com
+    Description: Stable production hostname compiled into release desktop builds.
+  ApiCertificateArn:
+    Type: String
+    Description: ACM certificate ARN covering ApiDomainName, in this stack's region.
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:acm:[a-z0-9-]+:\d{12}:certificate/.+$'
+  HostedZoneId:
+    Type: String
+    Description: Existing Route53 hosted-zone ID for the ApiDomainName apex domain.
+    AllowedPattern: '^[A-Z0-9]+$'
+  AlertEmail:
+    Type: String
+    Description: Operator address subscribed to the CloudWatch alarms and AWS Budget.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  BedrockInferenceProfileArn:
+    Type: String
+    Description: >-
+      ARN of the approved us.anthropic.claude-sonnet-4-6 cross-region inference
+      profile. Model selection is server-owned; clients cannot influence it.
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:bedrock:[a-z0-9-]+:\d{12}:(inference-profile|application-inference-profile)/.+$'
+  BedrockFoundationModelArnPattern:
+    Type: String
+    Default: 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*'
+    Description: >-
+      Destination foundation-model ARN pattern the inference profile routes to.
+      Cross-region profiles fan out per region, which is the one place AWS IAM
+      requires a region wildcard on the resource (never on an action).
+  BedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-4-6
+    Description: Inference profile ID passed to CountTokens and ConverseStream.
+  InvokeIntegrationTimeoutMillis:
+    Type: Number
+    Default: 300000
+    MinValue: 50
+    MaxValue: 300000
+    Description: >-
+      REST integration timeout for POST /v1/ai/invoke, matched to the Lambda's own
+      300s budget so a long streamed completion is never cut off at the API edge.
+  StatusIntegrationTimeoutMillis:
+    Type: Number
+    Default: 29000
+    MinValue: 50
+    MaxValue: 300000
+    Description: >-
+      GET /v1/ai/status does two consistent reads and no model call, so it keeps a
+      short timeout rather than inheriting the streaming budget.
+  HostedAiReservedConcurrency:
+    Type: Number
+    Default: 0
+    AllowedValues:
+      - 0
+      - 10
+    Description: >-
+      Reserved concurrency for the hosted-AI Lambda. Exactly two values are legal.
+
+      0 is the INERT default and the only value the initial deployment may use: a
+      reservation of zero throttles the function to zero concurrent executions, so
+      the stack can be created and inspected while being unable to invoke Bedrock or
+      spend a cent. It also reserves nothing from the account pool, which is what
+      makes it deployable at all - see below.
+
+      10 is the ACTIVE value AD-4 mandates, and it is a prerequisite for enabling
+      GLOBAL, not an optional tuning knob. Reserving 10 requires the account's Lambda
+      concurrent-execution quota to exceed 10 by at least the 50 unreserved-capacity
+      floor AWS enforces; at the default quota of 50 the reservation is rejected and
+      the stack rolls back. Raise the quota first, then flip this default to 10 in a
+      reviewed pull request (docs/runbooks/hosted-ai-rollout.md).
+
+      Unbounded or absent is not an option: without a reservation one runaway caller
+      could consume the whole account's concurrency, which is the abuse bound AD-4
+      and AD-14 rely on.
 
 Globals:
   Function:
@@ -15,10 +108,395 @@ Globals:
     Timeout: 300
 
 Resources:
-  # CloudFormation requires a non-empty Resources section, and a WaitConditionHandle
-  # is the no-op placeholder idiom: it provisions nothing, costs nothing, and grants
-  # nothing. It is replaced wholesale by the real resources in the infrastructure
-  # story — deliberately NOT a SAM `Api` shorthand, which would establish a buffered
-  # integration instead of the required RESPONSE_STREAM one.
-  ScaffoldPlaceholder:
-    Type: AWS::CloudFormation::WaitConditionHandle
+  # ---------------------------------------------------------------------------
+  # AD-2 / AD-3 - Regional REST edge, Cognito authorizer, canonical error body
+  # ---------------------------------------------------------------------------
+  HostedAiApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      StageName: prod
+      EndpointConfiguration: REGIONAL
+      # The default execute-api host is not a production fallback: the custom
+      # domain is the only reachable endpoint (AD-2).
+      DisableExecuteApiEndpoint: true
+      Domain:
+        DomainName: !Ref ApiDomainName
+        CertificateArn: !Ref ApiCertificateArn
+        EndpointConfiguration: REGIONAL
+        SecurityPolicy: TLS_1_2
+        BasePath:
+          - /
+        Route53:
+          HostedZoneId: !Ref HostedZoneId
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !Ref CognitoUserPoolArn
+            AuthorizationScopes:
+              - nixus-api/ai.invoke
+      MethodSettings:
+        # DataTraceEnabled=false is explicit: request/response bodies must never
+        # reach CloudWatch (AD-11). LoggingLevel is deliberately unset because it
+        # would require an account-level API Gateway CloudWatch role this stack
+        # does not own.
+        - HttpMethod: '*'
+          ResourcePath: '/*'
+          ThrottlingRateLimit: 10
+          ThrottlingBurstLimit: 20
+          DataTraceEnabled: false
+          MetricsEnabled: true
+      GatewayResponses:
+        # Every API-Gateway-owned rejection must carry the canonical envelope. Left
+        # to its default body, the desktop has no code in the closed union to switch
+        # on and falls back to mapping the raw HTTP status - which is exactly how a
+        # stage throttle gets misreported as the user's monthly quota (see THROTTLED).
+        UNAUTHORIZED:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        ACCESS_DENIED:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        MISSING_AUTHENTICATION_TOKEN:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        # Stage throttling (AD-15: 10 RPS / burst 20) is transient service capacity,
+        # NOT the caller's monthly allowance. API Gateway answers it 429, and 429 is
+        # what the desktop maps to `quota_exhausted` when it has no canonical code -
+        # telling a user with quota left that they are out of requests for the month.
+        # Emitting 503 `hosted_unavailable` keeps status and code in agreement and
+        # opens the client's short backoff window instead.
+        THROTTLED:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"hosted_unavailable","message":"Hosted AI is temporarily rate limited.","request_id":"$context.requestId"}}'
+        # Usage-plan quota, which this service does not use for the monthly cap
+        # either: the cap lives in DynamoDB `charged_count` (AD-5).
+        QUOTA_EXCEEDED:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"hosted_unavailable","message":"Hosted AI is temporarily rate limited.","request_id":"$context.requestId"}}'
+        INTEGRATION_FAILURE:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"hosted_unavailable","message":"Hosted AI is unavailable.","request_id":"$context.requestId"}}'
+        INTEGRATION_TIMEOUT:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"hosted_unavailable","message":"Hosted AI timed out.","request_id":"$context.requestId"}}'
+        API_CONFIGURATION_ERROR:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"hosted_unavailable","message":"Hosted AI is unavailable.","request_id":"$context.requestId"}}'
+        DEFAULT_5XX:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"hosted_unavailable","message":"Hosted AI is unavailable.","request_id":"$context.requestId"}}'
+        # Size and media-type rejections keep their own no-fallback codes: another
+        # provider would refuse the identical payload for the identical reason.
+        REQUEST_TOO_LARGE:
+          StatusCode: 413
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"payload_too_large","message":"The request is too large.","request_id":"$context.requestId"}}'
+        UNSUPPORTED_MEDIA_TYPE:
+          StatusCode: 415
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unsupported_encoding","message":"Unsupported media type.","request_id":"$context.requestId"}}'
+        BAD_REQUEST_BODY:
+          StatusCode: 400
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"validation","message":"The request body is malformed.","request_id":"$context.requestId"}}'
+
+  # ---------------------------------------------------------------------------
+  # AD-11 / AD-15 - explicit log group, 14-day retention, no logs:* grant
+  # ---------------------------------------------------------------------------
+  HostedAiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api'
+      RetentionInDays: 14
+
+  # ---------------------------------------------------------------------------
+  # AD-6 / AD-15 - one retained on-demand table for USER# and GLOBAL items
+  # ---------------------------------------------------------------------------
+  HostedAiTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------------------
+  # Execution role - exact actions only, per the architecture's IAM convention
+  # ---------------------------------------------------------------------------
+  HostedAiExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      # No ManagedPolicyArns: AWSLambdaBasicExecutionRole would grant logs:* on
+      # an implicit group, which AD-11's logging boundary forbids.
+      Policies:
+        - PolicyName: hosted-ai-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub '${HostedAiLogGroup.Arn}:*'
+        - PolicyName: hosted-ai-table
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # No PutItem/UpdateItem/DeleteItem: reserve, refund, and finalize
+              # are TransactWriteItems calls, and CONFIG items are only ever
+              # touched by a transaction condition check (AD-5).
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:TransactWriteItems
+                Resource: !GetAtt HostedAiTable.Arn
+        - PolicyName: hosted-ai-bedrock
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:CountTokens
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Ref BedrockInferenceProfileArn
+                  - !Ref BedrockFoundationModelArnPattern
+
+  # ---------------------------------------------------------------------------
+  # AD-4 - one Lambda, one entry point, both routes, response streaming
+  # ---------------------------------------------------------------------------
+  HostedAiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      # See Makefile for why this is `makefile` and not SAM's `esbuild` builder.
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      CodeUri: ./
+      Handler: api.handler
+      Role: !GetAtt HostedAiExecutionRole.Arn
+      # Never a literal: the initial deployment must be inert (0) and the flip to
+      # AD-4's 10 must be a reviewed parameter change gated on the quota increase.
+      ReservedConcurrentExecutions: !Ref HostedAiReservedConcurrency
+      LoggingConfig:
+        LogGroup: !Ref HostedAiLogGroup
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref HostedAiTable
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Events:
+        Status:
+          Type: Api
+          Properties:
+            RestApiId: !Ref HostedAiApi
+            Path: /v1/ai/status
+            Method: get
+            ResponseTransferMode: RESPONSE_STREAM
+            TimeoutInMillis: !Ref StatusIntegrationTimeoutMillis
+        Invoke:
+          Type: Api
+          Properties:
+            RestApiId: !Ref HostedAiApi
+            Path: /v1/ai/invoke
+            Method: post
+            ResponseTransferMode: RESPONSE_STREAM
+            # REST integrations default to a 29s timeout, which would sever a long
+            # chat completion mid-stream well before the Lambda's own 300s budget
+            # and its 10s soft deadline ever applied.
+            TimeoutInMillis: !Ref InvokeIntegrationTimeoutMillis
+
+  # ---------------------------------------------------------------------------
+  # AD-14 - alerting and budget are independent, softer controls than the
+  # GLOBAL hard cap. They notify; they never stop traffic.
+  # ---------------------------------------------------------------------------
+  HostedAiAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Nixus hosted AI alerts
+
+  HostedAiAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref HostedAiAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  HostedAiApiServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: API Gateway 5XX rate on the hosted-AI stage.
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub '${AWS::StackName}-api'
+        - Name: Stage
+          Value: prod
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref HostedAiAlertTopic
+
+  HostedAiFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Lambda invocation errors on the hosted-AI function.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref HostedAiFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref HostedAiAlertTopic
+
+  HostedAiFunctionThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: >-
+        Reserved concurrency exhaustion on the hosted-AI function, which
+        surfaces to callers as hosted_unavailable.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref HostedAiFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref HostedAiAlertTopic
+
+  HostedAiBedrockBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-bedrock-monthly'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: 50
+          Unit: USD
+        # Account-wide Bedrock spend. Isolating cost to this one stack is not
+        # claimed here; it would need verified cost-allocation tags (AD-14).
+        CostFilters:
+          Service:
+            - Amazon Bedrock
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  ApiEndpoint:
+    Description: Stable production base URL compiled into release desktop builds.
+    Value: !Sub 'https://${ApiDomainName}'
+  TableName:
+    Description: Quota/config table an operator edits by hand to grant premium.
+    Value: !Ref HostedAiTable
+  FunctionName:
+    Description: Sole hosted-AI Lambda.
+    Value: !Ref HostedAiFunction
+  AlertTopicArn:
+    Description: SNS topic backing the CloudWatch alarms.
+    Value: !Ref HostedAiAlertTopic
+  CognitoUserPoolIdEcho:
+    Description: >-
+      Echo of the external user pool this stack authorizes against, so an
+      operator can confirm the scope was added to the right pool.
+    Value: !Ref CognitoUserPoolId
+  CognitoAppClientIdEcho:
+    Description: Echo of the app client that must carry nixus-api/ai.invoke.
+    Value: !Ref CognitoAppClientId

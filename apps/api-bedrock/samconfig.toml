@@ -1,8 +1,34 @@
 version = 0.1
 
+# One production stack, no staging (AD-15). The stack name and region are pinned
+# here so a local `sam deploy` and the CI deploy job cannot drift apart.
+[default.global.parameters]
+stack_name = "nixus-bedrock-api"
+region = "us-east-1"
+
 [default.validate.parameters]
 lint = true
 
 [default.build.parameters]
 cached = true
 parallel = true
+
+[default.deploy.parameters]
+# CAPABILITY_IAM only: the stack creates the Lambda execution role, never the
+# OIDC deploy role that assumes it (AD-12), and never a named IAM resource.
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+# Off deliberately: SAM's managed bucket is created outside the bootstrap stack, so
+# it would fall outside the deploy role's S3 policy and outside the artifact bucket's
+# encryption, versioning, and retention guarantees. The workflow passes --s3-bucket.
+resolve_s3 = false
+disable_rollback = false
+tags = "app=nixus service=hosted-ai managed-by=sam"
+
+# Account-specific inputs (Cognito pool/client, ACM certificate, hosted zone,
+# alert email, Bedrock inference profile) are deliberately absent: they are
+# passed at deploy time via --parameter-overrides from the protected `production`
+# GitHub environment, or from the operator's shell when following
+# docs/runbooks/hosted-ai-rollout.md. Committing them here would either leak
+# account topology or silently deploy against the wrong user pool.
