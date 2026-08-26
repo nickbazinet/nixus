@@ -1,11 +1,12 @@
-use aws_sdk_bedrockruntime::types::{ConversationRole, Message};
+use aws_sdk_bedrockruntime::types::ConversationRole;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 use tracing::{error, info};
 
 use crate::ai::chat as chat_ai;
-use crate::ai::{AiProvider, AiState};
+use crate::ai::backend::AiTurn;
+use crate::ai::{clone_provider, AiState};
 use crate::db::account as account_db;
 use crate::db::asset as asset_db;
 use crate::db::audit as audit_db;
@@ -64,20 +65,20 @@ fn alternating_turns(db_messages: &[chat_db::ChatMessage]) -> Vec<(ConversationR
     turns
 }
 
-fn build_history_messages(
+fn build_history_turns(
     db_state: &State<DbState>,
     conv_id: i64,
-) -> Result<Vec<Message>, AppError> {
+) -> Result<Vec<AiTurn>, AppError> {
     let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     let db_messages = chat_db::get_conversation_messages_for_ai(&conn, conv_id)?;
 
-    alternating_turns(&db_messages)
+    Ok(alternating_turns(&db_messages)
         .into_iter()
-        .map(|(role, content)| chat_ai::build_message(role, &content))
-        .collect()
+        .map(|(role, content)| chat_ai::build_turn(role, &content))
+        .collect())
 }
 
 fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
@@ -205,16 +206,15 @@ pub async fn send_chat_message(
     conversation_id: Option<i64>,
     agent_id: String,
 ) -> Result<SendMessageResult, AppError> {
-    // Extract Bedrock client before any await points
-    let bedrock_client = {
+    // Snapshot the BYO provider before any await point. Chat's tool protocol is
+    // Bedrock-shaped, but that rule lives once in the backend port's support
+    // matrix; `None` is no longer terminal because hosted Bedrock may serve a
+    // premium user who configured no BYO credentials.
+    let byo = {
         let ai = ai_state.lock().map_err(|_| AppError::Database {
             message: "AI state lock poisoned".to_string(),
         })?;
-        match &ai.provider {
-            None => return Err(AppError::NotConfigured),
-            Some(AiProvider::Bedrock(client)) => client.clone(),
-            Some(AiProvider::OpenAI(_)) => return Err(AppError::NotConfigured),
-        }
+        clone_provider(&ai.provider)
     };
 
     // Create or use existing conversation
@@ -248,11 +248,13 @@ pub async fn send_chat_message(
     let system_prompt = chat_ai::build_system_prompt(&agent_id, &today, &context);
 
     // Load conversation history (includes user message just inserted above)
-    let history = build_history_messages(&db_state, conv_id)?;
+    let history = build_history_turns(&db_state, conv_id)?;
 
-    // First LLM call
+    // First LLM call. Routed through the port on its own, so the second
+    // (post-tool-call) invocation below re-evaluates precedence independently and
+    // may legitimately resolve to a different provider (AD-9).
     let first_response = chat_ai::stream_chat_response(
-        &bedrock_client,
+        byo.as_ref(),
         &app,
         history,
         &system_prompt,
@@ -292,10 +294,12 @@ pub async fn send_chat_message(
         }
 
         // Reload full history (now includes tool-call and tool-result saved above)
-        let history2 = build_history_messages(&db_state, conv_id)?;
+        let history2 = build_history_turns(&db_state, conv_id)?;
 
+        // A second, fully independent routing decision: quota may have changed
+        // between the two Bedrock invocations of this one visible turn.
         chat_ai::stream_chat_response(
-            &bedrock_client,
+            byo.as_ref(),
             &app,
             history2,
             &system_prompt,
@@ -639,7 +643,10 @@ pub fn execute_chat_action(
     // Insert success message into chat
     chat_db::insert_message(&conn, conversation_id, "assistant", &result_msg, "chat")?;
 
-    info!("Chat action executed: {} -> {}", action_type, result_msg);
+    // The action type only: `result_msg` carries the merchant and amount, which is
+    // transaction content and must not reach an app log (AD-11). The user's own
+    // audit-log row above is the intended record and stays complete.
+    info!("Chat action executed: {}", action_type);
 
     Ok(ActionResult {
         success: true,

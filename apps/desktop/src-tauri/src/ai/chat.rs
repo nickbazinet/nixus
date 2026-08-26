@@ -1,13 +1,10 @@
-use aws_sdk_bedrockruntime::Client;
-use aws_sdk_bedrockruntime::types::{
-    ContentBlock, ConversationRole, Message, SystemContentBlock,
-};
+use aws_sdk_bedrockruntime::types::ConversationRole;
 use tauri::{AppHandle, Emitter};
-use tracing::{error, info};
+use tracing::info;
 
+use crate::ai::backend::{self, AiOperation, AiRequest, AiRole, AiTurn};
+use crate::ai::AiProvider;
 use crate::error::AppError;
-
-const MODEL_ID: &str = "us.anthropic.claude-sonnet-4-6";
 
 #[derive(Clone, serde::Serialize)]
 struct ChatResponseChunk {
@@ -242,71 +239,41 @@ pub fn format_maintenance_history_result(
     out
 }
 
+/// Streams one chat invocation through the provider port.
+///
+/// The `chat:response-chunk` event contract is unchanged: incremental chunks with
+/// `done: false`, then a single empty chunk with `done: true` on success only. A
+/// failure returns before the terminal event, exactly as before.
 pub async fn stream_chat_response(
-    client: &Client,
+    byo: Option<&AiProvider>,
     app: &AppHandle,
-    messages: Vec<Message>,
+    turns: Vec<AiTurn>,
     system_prompt: &str,
 ) -> Result<String, AppError> {
-    info!("Sending chat message to Bedrock ({} messages)", messages.len());
+    info!("Sending chat message to AI ({} turns)", turns.len());
 
-    let mut req = client
-        .converse_stream()
-        .model_id(MODEL_ID)
-        .system(SystemContentBlock::Text(system_prompt.to_string()));
+    let emit_chunk = move |text: &str| {
+        let _ = app.emit(
+            "chat:response-chunk",
+            ChatResponseChunk {
+                chunk: text.to_string(),
+                done: false,
+            },
+        );
+    };
 
-    for msg in messages {
-        req = req.messages(msg);
-    }
+    let full_response = backend::invoke(
+        byo,
+        AiRequest {
+            operation: AiOperation::Chat,
+            system: system_prompt.to_string(),
+            turns,
+            attachment: None,
+        },
+        &emit_chunk,
+    )
+    .await?;
 
-    let mut stream_resp = req.send().await.map_err(|e| {
-        error!("Bedrock API error details: {:?}", e);
-        AppError::AiService {
-            message: format!("Bedrock streaming error: {:?}", e),
-            recoverable: true,
-        }
-    })?;
-
-    let mut full_response = String::new();
-
-    loop {
-        let event_result: Result<
-            Option<aws_sdk_bedrockruntime::types::ConverseStreamOutput>,
-            _,
-        > = stream_resp.stream.recv().await;
-
-        match event_result {
-            Ok(Some(event)) => {
-                if let aws_sdk_bedrockruntime::types::ConverseStreamOutput::ContentBlockDelta(
-                    delta,
-                ) = event
-                {
-                    if let Some(text_delta) = delta.delta() {
-                        if let Ok(text) = text_delta.as_text() {
-                            full_response.push_str(text);
-                            let _ = app.emit(
-                                "chat:response-chunk",
-                                ChatResponseChunk {
-                                    chunk: text.to_string(),
-                                    done: false,
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-            Ok(None) => break,
-            Err(e) => {
-                error!("Stream error: {}", e);
-                return Err(AppError::AiService {
-                    message: format!("Stream error: {}", e),
-                    recoverable: true,
-                });
-            }
-        }
-    }
-
-    // Signal completion
     let _ = app.emit(
         "chat:response-chunk",
         ChatResponseChunk {
@@ -320,15 +287,16 @@ pub async fn stream_chat_response(
     Ok(full_response)
 }
 
-pub fn build_message(role: ConversationRole, text: &str) -> Result<Message, AppError> {
-    Message::builder()
-        .role(role)
-        .content(ContentBlock::Text(text.to_string()))
-        .build()
-        .map_err(|e| AppError::AiService {
-            message: format!("Failed to build message: {}", e),
-            recoverable: false,
-        })
+/// Bridges the conversation history's existing `ConversationRole` representation
+/// onto the port's role union, so the DB and test fixtures stay unchanged.
+pub fn build_turn(role: ConversationRole, text: &str) -> AiTurn {
+    AiTurn {
+        role: match role {
+            ConversationRole::Assistant => AiRole::Assistant,
+            _ => AiRole::User,
+        },
+        text: text.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +424,62 @@ mod tests {
 
         assert!(!prompt.contains("category_id"));
         assert!(!prompt.contains("budget_category_id"));
+    }
+
+    /// `build_turn` is the bridge between the conversation history's stored
+    /// `ConversationRole` and the port's role union. A mis-mapped assistant turn
+    /// would silently attribute the model's own words to the user.
+    #[test]
+    fn build_turn_maps_the_user_role() {
+        let turn = build_turn(ConversationRole::User, "how is my budget?");
+
+        assert_eq!(turn.role, AiRole::User);
+        assert_eq!(turn.text, "how is my budget?");
+    }
+
+    #[test]
+    fn build_turn_maps_the_assistant_role() {
+        let turn = build_turn(ConversationRole::Assistant, "it looks fine");
+
+        assert_eq!(turn.role, AiRole::Assistant);
+        assert_eq!(turn.text, "it looks fine");
+    }
+
+    #[test]
+    fn build_turn_preserves_text_exactly_including_empty_and_multiline() {
+        assert_eq!(build_turn(ConversationRole::User, "").text, "");
+        assert_eq!(
+            build_turn(ConversationRole::Assistant, "line one\n\nline two").text,
+            "line one\n\nline two"
+        );
+        // Tool-call and action payloads travel as ordinary turn text.
+        let fenced = "```tool_call\n{\"tool\":\"query_expenses\"}\n```";
+        assert_eq!(build_turn(ConversationRole::User, fenced).text, fenced);
+    }
+
+    /// Round-trips the full history shape `commands/chat.rs` builds, so an inverted
+    /// mapping cannot pass by being symmetric.
+    #[test]
+    fn build_turn_round_trips_an_alternating_history_in_order() {
+        let history = [
+            (ConversationRole::User, "first"),
+            (ConversationRole::Assistant, "second"),
+            (ConversationRole::User, "third"),
+        ];
+
+        let turns: Vec<AiTurn> = history
+            .into_iter()
+            .map(|(role, text)| build_turn(role, text))
+            .collect();
+
+        assert_eq!(
+            turns.iter().map(|turn| turn.role).collect::<Vec<_>>(),
+            vec![AiRole::User, AiRole::Assistant, AiRole::User]
+        );
+        assert_eq!(
+            turns.iter().map(|turn| turn.text.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second", "third"]
+        );
     }
 
     #[test]
