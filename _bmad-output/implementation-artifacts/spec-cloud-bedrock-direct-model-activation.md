@@ -53,7 +53,7 @@ context:
 
 **Execution:**
 - [x] Update architecture, template, runtime client, workflow, legal copy, and tests for direct Claude 3.7 Sonnet in `eu-west-2`.
-- [x] Verify `CountTokens` and `ConverseStream` live with the exact configured identity before active deployment. — Both passed against `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`; streaming returned `OK.`.
+- [x] Verify `CountTokens` and `ConverseStream` live with the exact configured identity before active deployment. — Both passed against direct `anthropic.claude-sonnet-4-6` in `eu-west-2`; streaming returned `OK.`.
 - [x] Remove function-level reserved concurrency and deploy through GitHub OIDC into the account's shared 50-concurrency pool; retain API throttling and DynamoDB hard caps. — GitHub run `32997823488` passed and `get-function-concurrency` has no reservation key.
 - [x] Conditionally create the content-free premium user config with monthly limit 200; leave GLOBAL disabled. — Created `USER#d4d8d418-b0d1-708b-18ba-7ca36956eb1d / CONFIG` with `premium=true`, limit `200`, and no email/content fields; `GLOBAL/CONFIG` remains absent.
 
@@ -71,7 +71,7 @@ deliberately and **not** in the runbook's reusable command text, which is parame
 
 | Item | Outcome |
 |---|---|
-| `CountTokens` on `anthropic.claude-3-7-sonnet-20250219-v1:0` / `eu-west-2` | **PASS** — returned an input-token count. Every probed `us.anthropic.*` inference profile and the Nova direct models returned `ValidationException: The provided model doesn't support counting tokens`. |
+| `CountTokens` on `anthropic.claude-sonnet-4-6` / `eu-west-2` | **PASS** — returned an input-token count; the `us.anthropic.claude-sonnet-4-6` inference profile rejected the same call. |
 | `ConverseStream` on the same model/region | **PASS** — streamed to completion; the model replied `OK.` |
 | Premium user record | **CREATED** — `USER#d4d8d418-b0d1-708b-18ba-7ca36956eb1d / CONFIG`, written conditionally (`attribute_not_exists(pk) AND attribute_not_exists(sk)`), `premium=true`, `monthly_request_limit=200`, no email/name/content attributes. |
 | `GLOBAL/CONFIG` | **ENABLED** — monthly request limit 1000, explicitly activated for the first premium beta account on 2026-08-26. |
@@ -113,7 +113,7 @@ Completed: the function uses unreserved capacity and the first premium beta acco
 
 ## Design Notes
 
-Live evidence: every tested `us.anthropic.*` inference profile and Nova direct model rejected Runtime `CountTokens`. Bare `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count and then streamed `OK.` through `ConverseStream`.
+Live evidence: the `us.anthropic.claude-sonnet-4-6` inference profile rejected Runtime `CountTokens`. Bare `anthropic.claude-sonnet-4-6` in `eu-west-2` returned an input-token count and streamed `OK.` through `ConverseStream`.
 
 ## Verification
 

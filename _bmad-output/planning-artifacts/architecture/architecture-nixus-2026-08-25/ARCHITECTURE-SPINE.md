@@ -130,7 +130,7 @@ companions:
 | Runtime | Node.js 22.x, ARM64, AWS Lambda (retained deliberately for entitlements-architecture alignment; supported through Apr 2027; Node 24 available but not adopted) |
 | API | API Gateway Regional REST API, `AWS_PROXY`, `ResponseTransferMode=STREAM`, custom domain only (no default execute-api in prod) |
 | Auth | Cognito user-pool authorizer, scope `nixus-api/ai.invoke` detected from the access-token `scope` claim |
-| Model | `anthropic.claude-3-7-sonnet-20250219-v1:0` (direct foundation model, **not** an inference profile), Bedrock region `eu-west-2` — amended 2026-08-26, see [Amendments](#amendments) |
+| Model | `anthropic.claude-sonnet-4-6` (direct foundation model, **not** an inference profile), Bedrock region `eu-west-2` — amended 2026-08-26, see [Amendments](#amendments) |
 | Data | DynamoDB, on-demand (`PAY_PER_REQUEST`), PITR enabled, `Retain` deletion/replace policy |
 | IaC | AWS SAM, stack `nixus-bedrock-api`, one production stack, no staging |
 | Test | Vitest |
@@ -232,7 +232,7 @@ sequenceDiagram
 implementable on a cross-region inference profile: `us.anthropic.claude-sonnet-4-6`, every
 other probed `us.anthropic.*` profile, and the Nova direct models all answered
 `ValidationException: The provided model doesn't support counting tokens`. Bare
-`anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count
+`anthropic.claude-sonnet-4-6` in `eu-west-2` returned an input-token count
 for the identical probe.
 
 What changes: the Bedrock model identity and the region its runtime calls target
