@@ -131,7 +131,7 @@ export const PRIVACY_SECTIONS: readonly LegalSection[] = [
   },
   {
     headingKey: "privacyPage.limits.heading",
-    bodyKeys: ["privacyPage.limits.aws", "privacyPage.limits.crossRegion"],
+    bodyKeys: ["privacyPage.limits.aws", "privacyPage.limits.processingRegion"],
   },
   { headingKey: "privacyPage.quota.heading", bodyKeys: ["privacyPage.quota.body"] },
   { headingKey: "privacyPage.noSale.heading", bodyKeys: ["privacyPage.noSale.body"] },

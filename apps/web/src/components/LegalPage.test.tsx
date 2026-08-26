@@ -69,13 +69,42 @@ describe("hosted-AI precedence disclosure", () => {
     expect(privacyKeys).toContain("privacyPage.hosted.precedence");
   });
 
-  it("discloses the AWS non-retention limit and cross-region processing", () => {
+  /* Hosted processing moved from a US cross-region inference profile to one direct
+   * model in London, so the policy has to name the region the request is actually
+   * processed in - the old copy now describes a routing behaviour that no longer
+   * happens, which is a false disclosure rather than a stale one. */
+  it("discloses the AWS non-retention limit and where processing happens", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
     expect(text).toMatch(/does not bind Amazon Web Services/i);
     expect(text).toMatch(/abuse-detection/i);
-    expect(text).toMatch(/cross-region/i);
+    expect(text).toMatch(/Europe \(London\)/);
+    expect(text).toContain("eu-west-2");
+    expect(text).toMatch(/United Kingdom/);
     expect(text).toMatch(/monthly request quota/i);
+
+    expect(text).not.toMatch(/any US AWS region/i);
+    expect(text).not.toMatch(/scoped to the United States/i);
+  });
+
+  /* The Terms are the other half of AD-13's disclosure mechanism: a reader who accepts
+   * the Terms without opening the Privacy Policy must still learn where their statement
+   * is processed. */
+  it("names the processing region in the Terms too, not only the Privacy Policy", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/Europe \(London\)/);
+    expect(text).toContain("eu-west-2");
+  });
+
+  /* "outside your own country" is false for a UK reader, and a legal document that
+   * states a falsehood about its own scope is worse than one that says nothing. */
+  it("qualifies the location claim instead of asserting it absolutely", () => {
+    for (const page of [<PrivacyPage locale="en" />, <TermsPage locale="en" />]) {
+      const text = renderText(page);
+      expect(text).toMatch(/may be outside your country of residence/i);
+      expect(text).not.toMatch(/outside your own country/i);
+    }
   });
 });
 
@@ -89,13 +118,36 @@ describe("French disclosures carry the same facts", () => {
     });
   });
 
-  it("states the AWS limit and cross-region processing in French", async () => {
+  it("states the AWS limit and where processing happens in French", async () => {
     await withFrench(() => {
       const text = renderText(<PrivacyPage locale="fr" />);
 
       expect(text).toMatch(/n'engage pas Amazon Web Services/i);
-      expect(text).toMatch(/interrégional/i);
+      expect(text).toMatch(/Europe \(Londres\)/);
+      expect(text).toContain("eu-west-2");
+      expect(text).toMatch(/Royaume-Uni/);
       expect(text).toMatch(/quota mensuel/i);
+
+      expect(text).not.toMatch(/région AWS américaine/i);
+    });
+  });
+
+  it("names the processing region in the French Terms as well", async () => {
+    await withFrench(() => {
+      const text = renderText(<TermsPage locale="fr" />);
+
+      expect(text).toMatch(/Europe \(Londres\)/);
+      expect(text).toContain("eu-west-2");
+    });
+  });
+
+  it("qualifies the location claim in both French documents", async () => {
+    await withFrench(() => {
+      for (const page of [<PrivacyPage locale="fr" />, <TermsPage locale="fr" />]) {
+        const text = renderText(page);
+        expect(text).toMatch(/peut se trouver à l'extérieur de votre pays de résidence/i);
+        expect(text).not.toMatch(/à l'extérieur de votre pays,/i);
+      }
     });
   });
 });
