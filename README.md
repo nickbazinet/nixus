@@ -87,7 +87,7 @@ Before you download: an honest list so you know if this is worth your time.
 - **No bank connection** — you upload credit card statements manually (screenshot or PDF).
 - **Desktop only** — macOS and Windows. No mobile app.
 - **Single user** — one person's finances per install.
-- **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for premium Nixus Cloud accounts, through Nixus infrastructure to AWS Bedrock. See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
+- **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for premium Nixus Cloud accounts, through Nixus infrastructure to AWS Bedrock in London (`eu-west-2`). See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
 - **Pre-alpha** — features change and things break between releases.
 - **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
 
@@ -107,7 +107,7 @@ The AI features are the exception, and they are opt-in by nature: they only run 
 Two limits on that guarantee, stated plainly:
 
 - **The non-retention guarantee covers Nixus-controlled systems only.** It does not bind AWS. AWS may process and, under Bedrock's terms and its abuse-detection policies, retain request content. Nixus does not control or override that.
-- **Processing is cross-region within the United States.** Hosted AI uses a `us.` Bedrock cross-region inference profile, so a request may be processed in any US region AWS routes it to.
+- **Processing happens in London.** Hosted AI calls one Bedrock model directly in AWS's Europe (London) region (`eu-west-2`), so a hosted request is processed in the United Kingdom — which may be outside your country of residence — under AWS's terms for that region.
 
 Hosted AI is subject to a **monthly request quota**. When it is unavailable, ineligible, or out of quota, Nixus falls back to your own configured provider where that provider supports the feature, and otherwise reports a normal error — the rest of the app is unaffected either way.
 
