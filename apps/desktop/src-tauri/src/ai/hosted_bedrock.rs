@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::ai::backend::{AiAttachment, AiImageFormat, AiRequest, AiRole, DeltaSink};
 use crate::ai::hosted_state::{self, HostedAiStatus};
 use crate::commands::auth::{self, HostedAiAuth};
+use crate::error::AppError;
 
 /// HTTP/NDJSON client for `apps/api-bedrock` (AD-1, AD-7).
 ///
@@ -55,9 +56,8 @@ pub enum HostedOutcome {
 
 /// `None` disables hosted AI entirely.
 ///
-/// Local development defaults to disabled unless the env var is set explicitly, so
-/// a dev build cannot quietly consume production quota (AD-15). Release builds
-/// carry the production URL.
+/// Every build defaults to production so a signed-in user gets the same routing in
+/// development and release. The override remains available for a local stub.
 fn base_url() -> Option<String> {
     if let Ok(url) = std::env::var(BASE_URL_ENV) {
         let trimmed = url.trim().trim_end_matches('/').to_string();
@@ -76,11 +76,7 @@ fn base_url() -> Option<String> {
         }
     }
 
-    if cfg!(debug_assertions) {
-        None
-    } else {
-        Some(PRODUCTION_BASE_URL.to_string())
-    }
+    Some(PRODUCTION_BASE_URL.to_string())
 }
 
 /// HTTPS everywhere, with a loopback exception so `sam local` and a stub gateway
@@ -272,6 +268,22 @@ pub async fn retry_after_refresh(request: &AiRequest, on_delta: DeltaSink<'_>) -
     invoke_with_auth(request, on_delta, true).await
 }
 
+fn resolve_hosted_auth(
+    auth_result: Result<HostedAiAuth, AppError>,
+) -> Result<(String, String), HostedOutcome> {
+    match auth_result {
+        Ok(HostedAiAuth::Ready {
+            access_token,
+            subject_sub,
+        }) => Ok((access_token, subject_sub)),
+        Ok(HostedAiAuth::ReauthenticationRequired) | Err(_) => Err(HostedOutcome::PreOutput {
+            code: "reauthentication_required".to_string(),
+            message: "Please sign in again to use Nixus Cloud AI.".to_string(),
+        }),
+        Ok(HostedAiAuth::SignedOut) => Err(HostedOutcome::Skipped),
+    }
+}
+
 async fn invoke_with_auth(
     request: &AiRequest,
     on_delta: DeltaSink<'_>,
@@ -287,21 +299,9 @@ async fn invoke_with_auth(
         auth::hosted_ai_token().await
     };
 
-    let (access_token, subject_sub) = match auth_result {
-        Ok(HostedAiAuth::Ready {
-            access_token,
-            subject_sub,
-        }) => (access_token, subject_sub),
-        Ok(HostedAiAuth::ReauthenticationRequired) => {
-            return HostedOutcome::PreOutput {
-                code: "reauthentication_required".to_string(),
-                message: "Please sign in again to use Nixus Cloud AI.".to_string(),
-            }
-        }
-        // Not signed in at all: hosted simply does not apply, which is a routing
-        // decision rather than a hosted failure.
-        Ok(HostedAiAuth::SignedOut) => return HostedOutcome::Skipped,
-        Err(_) => return HostedOutcome::Skipped,
+    let (access_token, subject_sub) = match resolve_hosted_auth(auth_result) {
+        Ok(credentials) => credentials,
+        Err(outcome) => return outcome,
     };
 
     // Client-side courtesy backoff after a recent 503. Never a substitute for a
@@ -560,6 +560,7 @@ fn interrupted(committed: bool, request: &AiRequest) -> HostedOutcome {
 mod tests {
     use super::*;
     use crate::ai::backend::{AiOperation, AiTurn};
+    use crate::error::AppError;
 
     /// `base_url()` reads a process-wide env var, so the tests that set it must not
     /// run concurrently with each other or they observe one another's value.
@@ -691,7 +692,12 @@ mod tests {
         let media = &body["messages"][0]["content"][1];
 
         assert!(media.get("name").is_none());
-        let mut keys: Vec<&str> = media.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+        let mut keys: Vec<&str> = media
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
         keys.sort();
         assert_eq!(keys, vec!["data_base64", "format", "type"]);
     }
@@ -743,7 +749,9 @@ mod tests {
     #[test]
     fn frames_parse_into_the_closed_union() {
         assert!(matches!(
-            serde_json::from_str::<WireFrame>(r#"{"type":"meta","operation":"chat","request_id":"r"}"#),
+            serde_json::from_str::<WireFrame>(
+                r#"{"type":"meta","operation":"chat","request_id":"r"}"#
+            ),
             Ok(WireFrame::Meta {})
         ));
         assert!(matches!(
@@ -757,7 +765,9 @@ mod tests {
             Ok(WireFrame::End { .. })
         ));
         assert!(matches!(
-            serde_json::from_str::<WireFrame>(r#"{"type":"error","code":"hosted_unavailable","message":"x"}"#),
+            serde_json::from_str::<WireFrame>(
+                r#"{"type":"error","code":"hosted_unavailable","message":"x"}"#
+            ),
             Ok(WireFrame::Error { .. })
         ));
     }
@@ -767,19 +777,10 @@ mod tests {
         assert!(serde_json::from_str::<WireFrame>(r#"{"type":"surprise"}"#).is_err());
     }
 
-    /// A dev build must not consume production quota by accident (AD-15).
     #[test]
-    fn local_development_defaults_hosted_ai_disabled() {
+    fn local_development_defaults_to_the_production_hosted_api() {
         let resolved = base_url_with(None);
-
-        if cfg!(debug_assertions) {
-            assert!(
-                resolved.is_none(),
-                "a debug build with no override must disable hosted AI"
-            );
-        } else {
-            assert_eq!(resolved.as_deref(), Some(PRODUCTION_BASE_URL));
-        }
+        assert_eq!(resolved.as_deref(), Some(PRODUCTION_BASE_URL));
     }
 
     #[test]
@@ -791,14 +792,23 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_override_does_not_enable_hosted_ai_in_a_debug_build() {
+    fn a_blank_override_falls_back_to_the_production_hosted_api() {
         let resolved = base_url_with(Some("   "));
-
-        if cfg!(debug_assertions) {
-            assert!(resolved.is_none());
-        }
+        assert_eq!(resolved.as_deref(), Some(PRODUCTION_BASE_URL));
     }
 
+    #[test]
+    fn a_secure_storage_error_requires_reauthentication_instead_of_skipping_hosted_ai() {
+        let outcome = resolve_hosted_auth(Err(AppError::Auth {
+            message: "secure storage access was canceled".to_string(),
+            recoverable: true,
+        }));
+
+        assert!(matches!(
+            outcome,
+            Err(HostedOutcome::PreOutput { code, .. }) if code == "reauthentication_required"
+        ));
+    }
 
     /// The Bearer token and the user's financial prompt both travel on this
     /// connection, so plaintext is refused unless it cannot leave the machine.
@@ -868,12 +878,15 @@ mod tests {
         let sub = "cache-rules-subject";
 
         for status in [403u16, 429] {
-            hosted_state::store(sub, HostedAiStatus {
-                premium: true,
-                monthly_request_limit: 10,
-                charged_count: 0,
-                period: "2026-08".to_string(),
-            });
+            hosted_state::store(
+                sub,
+                HostedAiStatus {
+                    premium: true,
+                    monthly_request_limit: 10,
+                    charged_count: 0,
+                    period: "2026-08".to_string(),
+                },
+            );
             apply_error_cache_rules(status, sub);
             assert!(
                 hosted_state::get_fresh(sub).is_none(),
