@@ -407,6 +407,9 @@ describe("deploy job proves deployed guarantees", () => {
 
     expect(script).toContain("${APPROVED_BEDROCK_MODEL_ID}");
     expect(script).toContain("${APPROVED_BEDROCK_REGION}");
+    expect(script).toContain("check_equal");
+    expect(script).not.toContain("for pair in");
+    expect(script).not.toContain('actual="${rest%%:*}"');
     expect(script).toContain("exit 1");
 
     expect(stepIndex(DEPLOY, "Deploy stack")).toBeLessThan(

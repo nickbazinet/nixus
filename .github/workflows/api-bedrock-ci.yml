@@ -359,20 +359,20 @@ jobs:
           echo "lambda_env_model=${live_model} lambda_env_region=${live_region}"
 
           failed=0
-          for pair in \
-            "stack output model:${echoed_model}:${APPROVED_BEDROCK_MODEL_ID}" \
-            "lambda env model:${live_model}:${APPROVED_BEDROCK_MODEL_ID}" \
-            "stack output region:${echoed_region}:${APPROVED_BEDROCK_REGION}" \
-            "lambda env region:${live_region}:${APPROVED_BEDROCK_REGION}"; do
-            label="${pair%%:*}"
-            rest="${pair#*:}"
-            actual="${rest%%:*}"
-            expected="${rest#*:}"
+          check_equal() {
+            label="$1"
+            actual="$2"
+            expected="$3"
             if [ "${actual}" != "${expected}" ]; then
               echo "${label}: expected '${expected}', got '${actual}'." >&2
               failed=1
             fi
-          done
+          }
+
+          check_equal "stack output model" "${echoed_model}" "${APPROVED_BEDROCK_MODEL_ID}"
+          check_equal "lambda env model" "${live_model}" "${APPROVED_BEDROCK_MODEL_ID}"
+          check_equal "stack output region" "${echoed_region}" "${APPROVED_BEDROCK_REGION}"
+          check_equal "lambda env region" "${live_region}" "${APPROVED_BEDROCK_REGION}"
 
           if [ "${failed}" != "0" ]; then
             echo "The deployed Bedrock identity does not match the approved pair, so the" >&2
