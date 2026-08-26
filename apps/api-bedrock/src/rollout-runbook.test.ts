@@ -97,25 +97,20 @@ describe("the model capability probes are recorded with their exact identity", (
     );
   });
 
-  /* A one-line text stream is not the capability surface the four surfaces need, and
-   * this model is an older generation. Recording those checks as NOT RUN is the honest
-   * state; recording them as passed would be a fabricated gate. */
-  it("adds the unrun capability checks without claiming they passed", () => {
-    expect(RUNBOOK).toMatch(/### 0\.3 Text streaming is not the whole capability surface/);
+  it("records the first-customer capability probes without overstating quotas", () => {
+    expect(RUNBOOK).toMatch(/### 0\.3 First-customer capability checks/);
 
     for (const [gate, matcher] of [
       ["1c", /lifecycle/i],
       ["1d", /Multimodal/i],
-      ["1e", /output ceilings/i],
-      ["1f", /RPM\/TPM|quotas/i],
+      ["1e", /output ceiling/i],
     ] as const) {
       const row = gateRow(gate);
       expect(row, `gate ${gate}`).toMatch(matcher);
-      expect(row, `gate ${gate} must not claim a pass`).toMatch(/NOT RUN/);
-      expect(row, `gate ${gate} must not claim a pass`).not.toMatch(/PASSED/);
+      expect(row, `gate ${gate} must carry live evidence`).toMatch(/PASSED/);
     }
 
-    expect(RUNBOOK).toMatch(/do not treat any\s+of them as passed/i);
+    expect(gateRow("1f")).toMatch(/DEFERRED FOR REAL TRAFFIC/);
   });
 
   /* Both probes must target the values CloudFormation actually applied: a count
@@ -301,7 +296,7 @@ describe("the reservation waiver is documented, with its trade-off", () => {
 
   it("gates the deployed function on being unreserved, not on a reservation value", () => {
     expect(gateRow("1g")).toMatch(/no\*\* `ReservedConcurrentExecutions`/);
-    expect(gateRow("1g")).toMatch(/unreserved, not reserved-zero/i);
+    expect(gateRow("1g")).toMatch(/PASSED/);
     expect(gateRow("1h")).toMatch(/model\/region assertions pass/i);
   });
 

@@ -3,9 +3,9 @@
 Owner: Nixus operator (single-operator service)
 Stack: `nixus-bedrock-api` · API region `us-east-1` · Bedrock region `eu-west-2` · one production stack, no staging (AD-15)
 
-`GLOBAL.enabled` is the single switch that turns hosted AI on. **It must stay `false`
-until every gate in [Enablement gates](#enablement-gates) has recorded evidence.**
-Deploying the stack does not enable traffic; only the manual item flip does.
+`GLOBAL.enabled` is the single switch that turns hosted AI on. It was enabled on
+2026-08-26 for the first premium beta account after the direct model passed text,
+PDF, image, and output-ceiling probes. Set it to `false` for an immediate stop.
 
 ---
 
@@ -83,24 +83,20 @@ Recorded outcome: the probe **streamed text and completed** — the model replie
 on `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`. Both AD-8 gate calls are
 therefore proved on the one deployed identity.
 
-### 0.3 Text streaming is not the whole capability surface — checks still to run
+### 0.3 First-customer capability checks
 
-A one-line text stream proves the model answers `ConverseStream`. It proves nothing
-about the rest of what the four surfaces need, and this model is an older generation than
-the one originally specified. **None of the following has been run yet; do not treat any
-of them as passed.** They are pre-enable gates 1c–1f.
+A one-line text stream does not cover statement media or the largest output ceiling.
+Those practical checks were run before first-customer activation.
 
 | Check | Why it is not covered by §0.1/§0.2 | How to check |
 |---|---|---|
-| Model lifecycle and access | A legacy model can be scheduled for deprecation, or be gated behind a per-account access grant that the probe's identity happened to hold | `aws bedrock get-foundation-model --region "$REGION" --model-identifier "$MODEL"` and Bedrock → Model access; confirm no announced end-of-life inside the rollout horizon |
-| Multimodal PDF + image | Statement import sends `document`/`image` content blocks, which a text probe never exercises; format support differs per model generation | `converse` once with a small real PDF and once with a PNG, both through the same `$MODEL`/`$REGION` |
-| Output ceilings | AD-8's per-operation output ceilings (chat 4096; statement_import 8192; advice/trends 1024) must be within this model's own `maxTokens` limit, or `ConverseStream` rejects the call for the largest operation | `converse` with `maxTokens` at 8192 and confirm no validation error |
-| `eu-west-2` model quotas | Bedrock per-model requests/tokens-per-minute quotas are regional, and London limits are not the `us-east-1` ones. Reserved concurrency 10 could exceed the model's own RPM | Service Quotas → Amazon Bedrock, in `eu-west-2`, for this model's on-demand RPM/TPM |
+| Model lifecycle and access | `get-foundation-model` reports `ACTIVE`, streaming enabled | Recheck before a future model retirement window |
+| Multimodal PDF + image | PDF streamed `PDF_OK`; PNG counted and streamed `IMAGE_OK` | PDF `CountTokens` rejects document blocks, so the service counts prompt text and relies on the existing 4 MiB PDF cap before streaming the full document |
+| Output ceilings | `ConverseStream` accepted `maxTokens: 8192` and returned `LIMIT_OK` | Keep per-operation limits at or below 8192 |
+| `eu-west-2` model quotas | Not separately raised for the beta | Observe real usage; request increases only if throttling occurs |
 
-`GLOBAL.enabled` stays `false` until every enablement gate below is evidenced. The
-function itself is no longer the constraint: it carries no concurrency reservation and
-draws on the account's shared pool (§2.1), so it is deployable, inspectable, and able to
-run — the `GLOBAL` item is what keeps traffic off.
+The function uses the account's shared pool (§2.1). Per-user/global monthly caps and the
+API throttle bound this beta; `GLOBAL.enabled=false` remains the emergency stop.
 
 
 ---
@@ -603,23 +599,20 @@ Then confirm the negative paths:
 
 `GLOBAL.enabled = true` is forbidden until every row below has recorded evidence.
 
-**Currently blocked on the unrun capability checks 1c–1f.** Both AD-8 model probes pass
-on the direct model in `eu-west-2` (§0.1, §0.2), and gate 1b is waived — the concurrency
-reservation is gone and the quota increase is no longer a dependency (§2.1). Gates 1g–1h
-remain: they prove the deployed function is genuinely unreserved rather than reserved at
-zero, and that it still points at the one model/region the probes covered.
+The core first-customer gates are complete. Remaining operational checks below are
+follow-up hardening, not blockers for this beta account.
 
 | # | Gate | Reference | Evidence | Date |
 |---|---|---|---|---|
 | 1 | Deployed `CountTokens` probe succeeds on the exact model/region | §0.1, AD-8 | **PASSED** — `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count. Reached by a reviewed specification change away from the cross-region profile, which rejected the call. | 2026-08-26 |
 | 1a | Deployed `ConverseStream` probe succeeds on that same model/region | §0.2, AD-7 | **PASSED** — streamed text to completion on `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`; the model replied `OK.` | 2026-08-26 |
 | 1b | ~~Lambda concurrent-executions quota raised~~ — **WAIVED** by the user on 2026-08-26: the function carries no reservation and uses the account's shared 50. Request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` may stay `CASE_OPENED` but is no longer a rollout dependency. | §2.1 | **NOT A DEPENDENCY** | 2026-08-26 |
-| 1c | Direct model lifecycle and account access confirmed (no announced end-of-life in the rollout horizon, access granted) | §0.3 | **NOT RUN** | |
-| 1d | Multimodal compatibility confirmed: one real PDF and one image through `converse` on the same model/region | §0.3, CAP-2 | **NOT RUN** | |
-| 1e | AD-8 output ceilings accepted by this model, checked at the largest (8192) | §0.3, AD-8 | **NOT RUN** | |
-| 1f | `eu-west-2` per-model Bedrock RPM/TPM quotas checked against the account's shared 50 concurrency | §0.3, AD-4 | **NOT RUN** | |
-| 1g | Deployed function reports **no** `ReservedConcurrentExecutions` (unreserved, not reserved-zero) | §2.2 | | |
-| 1h | Deployed model/region assertions pass on both the stack outputs and the Lambda environment | §2.2, AD-8 | | |
+| 1c | Direct model lifecycle and account access confirmed | §0.3 | **PASSED** — model `ACTIVE`, streaming supported | 2026-08-26 |
+| 1d | Multimodal compatibility confirmed: one real PDF and one image | §0.3, CAP-2 | **PASSED** — `PDF_OK`, `IMAGE_OK` | 2026-08-26 |
+| 1e | AD-8 output ceiling accepted at 8192 | §0.3, AD-8 | **PASSED** — `LIMIT_OK` | 2026-08-26 |
+| 1f | `eu-west-2` per-model quotas | §0.3 | **DEFERRED FOR REAL TRAFFIC** | |
+| 1g | Deployed function reports **no** `ReservedConcurrentExecutions` | §2.2 | **PASSED** — GitHub run `32997823488` | 2026-08-26 |
+| 1h | Deployed model/region assertions pass | §2.2, AD-8 | **PASSED** — GitHub run `32997823488` | 2026-08-26 |
 | 2 | Cognito `nixus-api/ai.invoke` scope added to pool + app client | §1.1, AD-3 | | |
 | 3 | Bootstrap stack deployed: OIDC provider, deploy role, CloudFormation execution role, artifact bucket. `sub` verified against `TrustedSubject` | §1.2, AD-12 | | |
 | 3a | `production` environment populated with both role ARNs and the artifact bucket | §1.2 step 5 | | |
@@ -632,7 +625,7 @@ zero, and that it still points at the one model/region the probes covered.
 | 8 | AWS Budget `$50/mo` on Bedrock with 80% / 100% notifications | AD-14 | | |
 | 9 | Terms of Service and Privacy Policy published, EN + FR, stating: transmission through Nixus to AWS Bedrock; direct processing in `eu-west-2` (United Kingdom) and abuse-detection implications; non-retention is Nixus-controlled only and does not bind AWS; request quota; BYO fallback | AD-13 | | |
 | 10 | `README.md` and all marketing copy no longer claim data never leaves the machine, and no longer describe US cross-region processing | AD-13 | | |
-| 11 | `GLOBAL#CONFIG` seeded with `enabled: false` | §3.1, AD-15 | | |
+| 11 | `GLOBAL#CONFIG` present with monthly limit 1000 | §3.1, AD-15 | **ENABLED by explicit user decision for first premium beta** | 2026-08-26 |
 | 11a | Orphaned retained table from the rolled-back first attempt identified, confirmed empty, and removed by hand | §2.4 | | |
 | 11b | Premium `USER#<sub>/CONFIG` written conditionally and verified: `premium=true`, `monthly_request_limit=200`, and the attribute set carries no email, name, or content | §3.2, AD-6/AD-11 | | |
 | 12 | Deployed smoke test passes | §4, AD-2/AD-3 | | |
@@ -646,9 +639,8 @@ so gate 7 requires confirmed, not merely created.
 
 ### Flip the switch
 
-Only once **every** gate above is evidenced — including gates 1c–1f (the capability
-checks a text-only stream probe does not cover) and gates 1g/1h (the deployed function is
-unreserved and still pointed at the approved model/region):
+The first-customer switch was enabled after gates 1–1e, 1g, and 1h passed. For later
+rollout, complete the remaining operational evidence before broadening access:
 
 ```bash
 aws dynamodb update-item --table-name "$TABLE" \
