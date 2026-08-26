@@ -77,6 +77,7 @@ deliberately and **not** in the runbook's reusable command text, which is parame
 | `GLOBAL/CONFIG` | **ABSENT** — deliberately not created, so every `POST /v1/ai/invoke` answers `503 hosted_unavailable` and no hosted traffic is possible. |
 | Lambda concurrency quota increase `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` | **CASE_OPENED** — still pending at AWS. Sole remaining activation blocker. |
 | Reserved concurrency | `0` (inert) — the function cannot execute at all. |
+| Inert model deployment | **PASS** — GitHub Actions run `32996088072`; stack `UPDATE_COMPLETE`; stack outputs and Lambda environment both equal the approved direct model and `eu-west-2`. |
 
 Not proved by any of the above, and not to be treated as proved: direct-model
 lifecycle/access, multimodal PDF+image compatibility, the 8192 output ceiling, and
@@ -89,8 +90,9 @@ lifecycle/access, multimodal PDF+image compatibility, the 8192 output ceiling, a
 Implemented: `BEDROCK_REGION` ownership in `src/lib/bedrock-client.ts` (explicit, required,
 trimmed, region-shape checked, one client shared by both commands) plus runtime rejection of
 a profile-shaped `BEDROCK_MODEL_ID` before any SDK call; template parameters
-`BedrockModelId` and `BedrockRegion` pinned to single-entry `AllowedValues` and deliberately
-never passed as deploy-time overrides; the Bedrock IAM grant narrowed to one derived
+`BedrockModelId` and `BedrockRegion` pinned to single-entry `AllowedValues` and passed from
+the same approved job-level constants used by post-deploy assertions (CloudFormation keeps
+old parameter values on updates, so explicit migration is required); the Bedrock IAM grant narrowed to one derived
 foundation-model ARN; the obsolete `BedrockInferenceProfileArn` /
 `BedrockFoundationModelArnPattern` parameters and the `BEDROCK_INFERENCE_PROFILE_ARN` deploy
 secret removed; the reservation hoisted to one job-level env source, validated (`0|10` plus a
@@ -118,6 +120,10 @@ Live evidence: every tested `us.anthropic.*` inference profile and Nova direct m
 - `pnpm --filter @nixus/web test && pnpm --filter @nixus/web build` -- expected: bilingual legal copy and prerender pass.
 - GitHub `API Bedrock CI` -- expected: OIDC deploy succeeds and asserts reserved concurrency 10.
 - AWS SDK live driver -- expected: direct model returns token count and streamed text.
+
+**Observed:** GitHub run `32996088072` deployed the direct model at concurrency `0`; all
+post-deploy model/region, PITR, and API smoke assertions passed. Activation at `10` remains
+blocked solely by Service Quotas case `178776291000903`.
 
 ## Suggested Review Order
 
