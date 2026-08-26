@@ -2,7 +2,7 @@
 title: 'Nixus Cloud Bedrock — all remaining stories'
 type: 'feature'
 created: '2026-08-25'
-status: 'in-review'
+status: 'done'
 review_loop_iteration: 0
 followup_review_recommended: false
 baseline_revision: '765f552074f03c30da65d7b00d0796eee1adcfd4'
@@ -155,7 +155,7 @@ reservation assertion.
 The `cloud_link.rs` networked-module guard was updated deliberately to admit `ai/hosted_bedrock.rs`: it is networked by design and is not on the Login/Migrate/keyring path that guard protects.
 
 
-The architecture-selected profile `us.anthropic.claude-sonnet-4-6` is documented to support `CountTokens` at the foundation-model level, but AWS does not document inference-profile support and the model is cross-region-only from `us-east-1`; its model card also provides no Bedrock Mantle fallback. The local AWS CLI session is expired and its installed version lacks `count-tokens`, so the no-charge live capability probe could not be performed. On explicit resume, implementation proceeds with the frozen `CountTokens` design; production enablement remains blocked until a deployed probe proves the exact model/profile/region call.
+The architecture-selected profile `us.anthropic.claude-sonnet-4-6` is documented to support `CountTokens` at the foundation-model level, but AWS does not document inference-profile support and the model is cross-region-only from `us-east-1`; its model card also provides no Bedrock Mantle fallback. A live SDK probe against the exact profile and region returned `ValidationException: The provided model doesn't support counting tokens.` Production enablement therefore remains blocked pending architecture review.
 
 GitHub environment OIDC subjects under immutable claims use `repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production`; the out-of-band deploy-role trust policy must verify the exact subject emitted by this repository.
 
@@ -170,7 +170,7 @@ GitHub environment OIDC subjects under immutable claims use `repo:OWNER@OWNER_ID
 ## Auto Run Result
 
 Status: complete
-Resolution: implemented the frozen architecture literally. All eight stories are code-complete and verified from source; production enablement remains blocked on the deployed `CountTokens` capability probe and the other 14 runbook gates, which require an AWS account and cannot be evidenced here.
+Resolution: implemented the frozen architecture literally and deployed the production stack in its inert state through GitHub OIDC. Production enablement remains blocked because the selected inference profile rejects `CountTokens`; `GLOBAL` is unseeded and Lambda reserved concurrency remains `0`.
 
 ### Review-patch pass (recorded 2026-08-26)
 
@@ -216,6 +216,24 @@ does not exist. `cargo check --release` confirms 0 warnings.
 | `@nixus/desktop` playwright | 607 passed |
 | `@nixus/web` lint / typecheck / test | clean; 187 passed / 25 files |
 | `@nixus/web` build / verify:prerender / verify:routes | 13 pages prerendered; 10 routes agree; 8 sitemap routes resolve |
+
+### Deployment evidence (recorded 2026-08-26)
+
+| Gate | Result |
+|---|---|
+| GitHub Actions run | [32989184332](https://github.com/nickbazinet/nixus/actions/runs/32989184332) passed verify and deploy jobs at revision `26df247489ab5950341de8724fa5ed11da384d9b` |
+| CloudFormation | `nixus-bedrock-api` is `CREATE_COMPLETE` in `us-east-1` |
+| Stable endpoint | `https://api.nixusapp.com` |
+| Authentication smoke | `GET /v1/ai/status` and `POST /v1/ai/invoke` both return canonical `401 unauthorized` envelopes without credentials |
+| API edge | default execute-api endpoint disabled |
+| Inert-state control | Lambda `ReservedConcurrentExecutions = 0` |
+| Quota table | PITR `ENABLED`; `GLOBAL / CONFIG` item absent |
+| Content logging | Bedrock model invocation logging configuration absent |
+| CountTokens gate | exact `us.anthropic.claude-sonnet-4-6` profile probe rejected with `ValidationException: The provided model doesn't support counting tokens` |
+
+The stack is deployed but cannot serve hosted model calls: concurrency `0`, no global
+configuration item, and the failed CountTokens gate are independent fail-closed controls.
+The model, region, or pre-reservation gate must not change without architecture review.
 
 Notes:
 - Desktop Playwright: the JSON reporter records **607 expected, 0 unexpected, 0 flaky, 0 skipped**. The default reporter intermittently fails one test in `chat.spec.ts`'s "Floating Chat Bar" suite or `maintenance.spec.ts`'s Escape test under parallel load, on a *different* test each run. Proven pre-existing rather than caused by the patch-14 frontend changes: with those changes stashed, `chat.spec.ts` still failed 2 of 3 baseline runs, on lines 487 and 473 respectively. No Playwright spec was modified.
