@@ -24,12 +24,15 @@ import {
   type PreOutputFailure,
   type PreparedInvokeRequest,
   checkContentEncoding,
-  checkInputTokenCeiling,
   validateInvokeRequest,
 } from "../lib/validation.ts";
 
 /*
  * POST /v1/ai/invoke (AD-7 / AD-8).
+ *
+ * Quota is per REQUEST: one `charged_count` unit per actual `ConverseStream` call.
+ * Token counts are recorded from the stream's own metadata for observability and never
+ * gate or bill anything, so there is no pre-flight token call to make.
  *
  * `messageStart` is the exact commit event. Before it, a failure is pre-output:
  * refund the reservation and answer a real HTTP status with no NDJSON body, which
@@ -238,8 +241,8 @@ export async function handleInvoke(
   const remaining = remainingTimeMillis();
   if (remaining <= SOFT_DEADLINE_MS) {
     // Already inside the soft-deadline margin. Starting upstream work now would
-    // spend a CountTokens call and possibly a quota unit on an invocation that
-    // cannot finish, so refuse before touching DynamoDB or Bedrock at all.
+    // spend a quota unit on an invocation that cannot finish, so refuse before
+    // touching DynamoDB or Bedrock at all.
     writePreOutputError(sink, HOSTED_UNAVAILABLE, requestId, {
       sub,
       operation,
@@ -277,44 +280,6 @@ export async function handleInvoke(
           stage: "eligibility",
         });
         return;
-      }
-
-      if (attempt === 0) {
-        // Step 3. Reached only for an eligible caller, so an ineligible one never
-        // costs a CountTokens call. Never repeated on the reserve retry: the input
-        // has not changed, and a second count would be a second charge.
-        try {
-          // Bedrock rejects document blocks in CountTokens even though the same model
-          // accepts them in ConverseStream. PDF cost is bounded by the 4 MiB media cap;
-          // count the finalized prompt text, then stream the full validated document.
-          const countMessages = request.messages.map((message) => ({
-            ...message,
-            content: message.content.filter((block) => block.type !== "document"),
-          }));
-          inputTokens = await bedrock.countInputTokens({
-            system: request.system,
-            messages: countMessages,
-            abortSignal: controller.signal,
-          });
-        } catch {
-          writePreOutputError(sink, HOSTED_UNAVAILABLE, requestId, {
-            sub,
-            operation,
-            stage: "count_tokens",
-          });
-          return;
-        }
-
-        const ceiling = checkInputTokenCeiling(operation, inputTokens);
-        if (ceiling) {
-          writePreOutputError(sink, ceiling, requestId, {
-            sub,
-            operation,
-            stage: "input_ceiling",
-            input_tokens: inputTokens,
-          });
-          return;
-        }
       }
 
       const outcome = await reserveQuotaUnit({

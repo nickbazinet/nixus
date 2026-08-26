@@ -4,7 +4,6 @@ import type {
   BedrockPort,
   BedrockStreamEvent,
   ConverseStreamArgs,
-  CountTokensArgs,
 } from "../lib/bedrock-client.ts";
 import { setDocumentClientForTesting } from "../lib/table.ts";
 import { FakeDocumentClient, transactionCanceled } from "../lib/testing/fake-dynamo.ts";
@@ -69,23 +68,15 @@ async function* streamOf(
 }
 
 interface FakeBedrockOptions {
-  readonly inputTokens?: number;
-  readonly countError?: Error;
   readonly streamError?: Error;
   readonly events?: BedrockStreamEvent[];
   readonly throwAfterCommit?: Error;
 }
 
 function fakeBedrock(options: FakeBedrockOptions = {}) {
-  const counted: CountTokensArgs[] = [];
   const streamed: ConverseStreamArgs[] = [];
 
   const port: BedrockPort = {
-    async countInputTokens(args) {
-      counted.push(args);
-      if (options.countError) throw options.countError;
-      return options.inputTokens ?? 100;
-    },
     converseStream(args) {
       streamed.push(args);
       if (options.streamError) {
@@ -109,7 +100,7 @@ function fakeBedrock(options: FakeBedrockOptions = {}) {
     },
   };
 
-  return { port, counted, streamed };
+  return { port, streamed };
 }
 
 let client: FakeDocumentClient;
@@ -211,7 +202,7 @@ describe("AD-8 step 0 and 1 reject before any AWS call", () => {
       },
     });
     expect(client.sent).toHaveLength(0);
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
     expect(bedrock.streamed).toHaveLength(0);
   });
 
@@ -222,7 +213,7 @@ describe("AD-8 step 0 and 1 reject before any AWS call", () => {
     expect(sink.status).toBe(400);
     expect(sink.json.error).toMatchObject({ code: "validation" });
     expect(client.transactions).toHaveLength(0);
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
   });
 
   it("rejects oversized media with 413 before any Bedrock call", async () => {
@@ -250,7 +241,7 @@ describe("AD-8 step 0 and 1 reject before any AWS call", () => {
 
     expect(sink.status).toBe(413);
     expect(sink.json.error).toMatchObject({ code: "payload_too_large" });
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
     expect(client.sent).toHaveLength(0);
   });
 
@@ -261,7 +252,7 @@ describe("AD-8 step 0 and 1 reject before any AWS call", () => {
   });
 });
 
-describe("AD-8 step 2 never spends a CountTokens call on an ineligible caller", () => {
+describe("an ineligible caller never reaches Bedrock at all", () => {
   it("returns 503 when the GLOBAL config was never seeded", async () => {
     queueEligible({ global: undefined });
     const { promise, bedrock } = run();
@@ -269,7 +260,7 @@ describe("AD-8 step 2 never spends a CountTokens call on an ineligible caller", 
 
     expect(sink.status).toBe(503);
     expect(sink.json.error).toMatchObject({ code: "hosted_unavailable" });
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
     expect(client.transactions).toHaveLength(0);
   });
 
@@ -279,7 +270,7 @@ describe("AD-8 step 2 never spends a CountTokens call on an ineligible caller", 
     await promise;
 
     expect(sink.status).toBe(503);
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
   });
 
   it("returns 503 when the global cap is exhausted", async () => {
@@ -288,7 +279,7 @@ describe("AD-8 step 2 never spends a CountTokens call on an ineligible caller", 
     await promise;
 
     expect(sink.status).toBe(503);
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
   });
 
   it("returns 403 for a missing, non-premium, or malformed user config", async () => {
@@ -308,7 +299,7 @@ describe("AD-8 step 2 never spends a CountTokens call on an ineligible caller", 
 
       expect(sink.status, JSON.stringify(user)).toBe(403);
       expect(sink.json.error).toMatchObject({ code: "premium_required" });
-      expect(bedrock.counted).toHaveLength(0);
+      expect(bedrock.streamed).toHaveLength(0);
     }
   });
 
@@ -319,7 +310,7 @@ describe("AD-8 step 2 never spends a CountTokens call on an ineligible caller", 
 
     expect(sink.status).toBe(429);
     expect(sink.json.error).toMatchObject({ code: "quota_exhausted" });
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
     expect(client.transactions).toHaveLength(0);
   });
 
@@ -335,41 +326,63 @@ describe("AD-8 step 2 never spends a CountTokens call on an ineligible caller", 
   });
 });
 
-describe("AD-8 step 3 CountTokens gate", () => {
-  it("maps a CountTokens failure to pre-reservation 503 with no reservation", async () => {
+/*
+ * Quota is per request: one unit per ConverseStream call. Nothing is counted upstream
+ * beforehand, so the only pre-reservation rejections are the ones computable from the
+ * request itself - and they must all happen BEFORE the reservation, or an oversized
+ * request costs the caller a unit it never got value for.
+ */
+describe("input size is bounded from the request, before any reservation", () => {
+  it("rejects an over-ceiling serialized body with 413 and reserves nothing", async () => {
     queueEligible();
-    const { promise } = run({ countError: new Error("bedrock down") });
+    const body = JSON.stringify({
+      operation: "project_advice",
+      system: "advise",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "x".repeat(300 * 1024) }] },
+      ],
+      client_request_id: CLIENT_REQUEST_ID,
+    });
+
+    const { promise, bedrock } = run({ body });
     await promise;
 
-    expect(sink.status).toBe(503);
-    expect(sink.json.error).toMatchObject({ code: "hosted_unavailable" });
+    expect(sink.status).toBe(413);
+    expect(sink.json.error).toMatchObject({ code: "payload_too_large" });
     expect(client.transactions).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
   });
 
-  it("maps an input-ceiling overage to pre-reservation 400 validation", async () => {
+  it("rejects decoded media over the 4 MiB cap with 413 and reserves nothing", async () => {
     queueEligible();
-    const { promise } = run({ inputTokens: 32_769 });
+    const oversized = Buffer.alloc(4 * 1024 * 1024 + 16, 1).toString("base64");
+    const body = JSON.stringify({
+      operation: "statement_import",
+      system: "Extract transactions.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Read this statement." },
+            { type: "image", format: "png", data_base64: oversized },
+          ],
+        },
+      ],
+      client_request_id: CLIENT_REQUEST_ID,
+    });
+
+    const { promise, bedrock } = run({ body });
     await promise;
 
-    expect(sink.status).toBe(400);
-    expect(sink.json.error).toMatchObject({ code: "validation" });
+    expect(sink.status).toBe(413);
+    expect(sink.json.error).toMatchObject({ code: "payload_too_large" });
     expect(client.transactions).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
   });
 
-  it("counts the finalized system prompt and messages, never a client-supplied count", async () => {
-    queueEligible();
-    client.queueOk().queueOk();
-    const { promise, bedrock } = run();
-    await promise;
-
-    expect(bedrock.counted).toHaveLength(1);
-    expect(bedrock.counted[0]!.system).toBe("You are a budgeting assistant.");
-    expect(bedrock.counted[0]!.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: "hi" }] },
-    ]);
-  });
-
-  it("counts PDF prompt text but streams the full bounded document", async () => {
+  /* The document block used to be stripped for the counting call; with no counting call
+   * it must reach the model whole. */
+  it("streams the full validated document rather than a reduced copy", async () => {
     queueEligible();
     client.queueOk().queueOk();
     const body = JSON.stringify({
@@ -390,9 +403,7 @@ describe("AD-8 step 3 CountTokens gate", () => {
     const { promise, bedrock } = run({ body });
     await promise;
 
-    expect(bedrock.counted[0]!.messages[0]!.content).toEqual([
-      { type: "text", text: "Read this statement." },
-    ]);
+    expect(bedrock.streamed).toHaveLength(1);
     expect(bedrock.streamed[0]!.messages[0]!.content).toEqual([
       { type: "text", text: "Read this statement." },
       {
@@ -400,6 +411,18 @@ describe("AD-8 step 3 CountTokens gate", () => {
         format: "pdf",
         bytes: new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52]),
       },
+    ]);
+  });
+
+  it("passes the finalized server-owned system prompt and messages to the stream", async () => {
+    queueEligible();
+    client.queueOk().queueOk();
+    const { promise, bedrock } = run();
+    await promise;
+
+    expect(bedrock.streamed[0]!.system).toBe("You are a budgeting assistant.");
+    expect(bedrock.streamed[0]!.messages).toEqual([
+      { role: "user", content: [{ type: "text", text: "hi" }] },
     ]);
   });
 });
@@ -430,8 +453,8 @@ describe("AD-8 step 4 reservation", () => {
     expect(sink.status).toBe(200);
     // Two eligibility passes (4 reads each) plus reserve+finalize transactions.
     expect(client.gets).toHaveLength(8);
-    // The retry must not pay for a second CountTokens call.
-    expect(bedrock.counted).toHaveLength(1);
+    // One reservation, one model call: the retry must not double-charge.
+    expect(bedrock.streamed).toHaveLength(1);
   });
 
   it("fails closed rather than looping when config changes twice", async () => {
@@ -674,12 +697,13 @@ describe("finalize settles a completed invocation", () => {
     }
   });
 
-  it("falls back to the CountTokens figure when the stream reports no usage", async () => {
+  /* Token counts are observability, not billing: a stream that reports no usage costs
+   * the same one unit, and the counters simply report zero rather than being estimated. */
+  it("reports zero tokens when the stream reports no usage, and still charges one unit", async () => {
     queueEligible();
     client.queueOk().queueOk();
 
     const { promise } = run({
-      inputTokens: 77,
       events: [
         { kind: "message_start" },
         { kind: "stop", stopReason: "end_turn" },
@@ -690,7 +714,7 @@ describe("finalize settles a completed invocation", () => {
     expect(sink.frames.at(-1)).toEqual({
       type: "end",
       stop_reason: "end_turn",
-      input_tokens: 77,
+      input_tokens: 0,
       output_tokens: 0,
     });
   });
@@ -743,7 +767,7 @@ describe("soft deadline", () => {
     expect(sink.status).toBe(503);
     expect(sink.json.error).toMatchObject({ code: "hosted_unavailable" });
     expect(client.sent).toHaveLength(0);
-    expect(bedrock.counted).toHaveLength(0);
+    expect(bedrock.streamed).toHaveLength(0);
     expect(bedrock.streamed).toHaveLength(0);
   });
 
