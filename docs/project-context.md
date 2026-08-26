@@ -19,7 +19,7 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 ### Monorepo
 - **Package manager:** pnpm with workspaces (`pnpm-workspace.yaml`)
 - **Package scope:** `@nixus/` for all npm packages
-- **Workspace packages:** `apps/desktop`, `apps/web`, `packages/shared`
+- **Workspace packages:** `apps/desktop`, `apps/web`, `apps/api-bedrock`, `packages/shared`
 
 ### Desktop App (`@nixus/desktop` — `apps/desktop/`)
 - React 19.1.0
@@ -65,6 +65,17 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - TypeScript ~5.8.3
 - `@base-ui/react ^1.3.0` — underlying primitive for all shared UI components
 - Exports: `@nixus/shared` (types + index), `@nixus/shared/ui` (components), `@nixus/shared/lib/cn`, `@nixus/shared/styles/tokens.css`
+- The root `@nixus/shared` export is both the wire-type barrel **and** the whole UI surface (`export * from "./ui"`) — desktop/web import components from the package root, never `@nixus/shared/ui`
+
+### Hosted AI Service (`@nixus/api-bedrock` — `apps/api-bedrock/`)
+- AWS SAM application. Stack `nixus-bedrock-api` in `us-east-1` is architecture-planned (AD-15) — this scaffold configures neither; no stack name, region, or deploy settings exist in `samconfig.toml` yet
+- Node.js 22 (`nodejs22.x`) + ARM64 Lambda conventions live in `template.yaml` `Globals.Function`
+- TypeScript ~5.8.3, self-contained strict tsconfig (`noUnusedLocals`/`noUnusedParameters`/`noUncheckedIndexedAccess`)
+- ESLint flat config (`typescript-eslint`), Node globals; `no-restricted-globals` blocks the DOM globals most likely to be reached for by accident
+- Vitest 3.2.4 (`environment: "node"`), tests co-located under `src/`
+- Consumes the canonical cloud-AI wire contract from the root `@nixus/shared` export — never redefines it locally
+- Requires the AWS SAM CLI on PATH for `sam:validate` / `sam:build`; `.aws-sam/` is generated output and gitignored
+- Scripts: `pnpm --filter @nixus/api-bedrock {lint,typecheck,test,sam:validate,sam:build}`
 
 ---
 
@@ -349,4 +360,4 @@ export function useCreateExpense() {
 - Update when technology stack or conventions change
 - Remove rules that become obvious over time
 
-_Last Updated: 2026-05-18_
+_Last Updated: 2026-08-25_
