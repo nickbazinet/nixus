@@ -2,7 +2,7 @@
 title: 'Activate hosted AI with a CountTokens-capable direct model'
 type: 'feature'
 created: '2026-08-26'
-status: 'done'
+status: 'in-progress'
 review_loop_iteration: 0
 baseline_commit: '7d82c8a5bb7909e11c1205285ae6bc318fd60e39'
 context:
@@ -15,24 +15,24 @@ context:
 
 ## Intent
 
-**Problem:** The deployed hosted-AI gateway is inert because its Sonnet 4.6 inference profile rejects the mandatory pre-reservation `CountTokens` call, the account cannot yet reserve concurrency 10, and no premium user configuration exists.
+**Problem:** The deployed hosted-AI gateway was inert because its Sonnet 4.6 inference profile rejected the mandatory pre-reservation `CountTokens` call and no premium user configuration existed.
 
-**Approach:** Replace the unsupported inference profile with direct Claude 3.7 Sonnet in `eu-west-2`, which live testing proves accepts `CountTokens`; preserve the `us-east-1` API stack while making the Bedrock runtime region explicit. After AWS approves the pending Lambda quota increase and EU inference streaming is available, deploy concurrency 10 through GitHub OIDC and grant the confirmed Cognito account a 200-request monthly quota.
+**Approach:** Replace the unsupported inference profile with direct Claude 3.7 Sonnet in `eu-west-2`, which live testing proves supports both required calls; preserve the `us-east-1` API stack while making the Bedrock runtime region explicit. Run Lambda in the account's existing unreserved concurrency pool, bounded by API throttling and atomic user/global quotas, and grant the confirmed Cognito account a 200-request monthly quota.
 
 ## Boundaries & Constraints
 
-**Always:** Keep `CountTokens` before reservation; keep server-owned model/region; scope IAM to the one direct foundation-model ARN; update EN/FR disclosures from US cross-region processing to direct London processing; deploy infrastructure only through GitHub Actions; keep `GLOBAL` disabled until the model stream, concurrency, user record, and all rollout gates pass.
+**Always:** Keep `CountTokens` before reservation; keep server-owned model/region; scope IAM to the one direct foundation-model ARN; update EN/FR disclosures from US cross-region processing to direct London processing; deploy infrastructure only through GitHub Actions; preserve API throttling and atomic user/global quota enforcement; keep `GLOBAL` disabled until all rollout gates pass.
 
 **Ask First:** Any fallback from direct Claude 3.7 Sonnet, any region other than `eu-west-2`, any monthly user limit other than 200, or enabling `GLOBAL` before all acceptance evidence exists.
 
-**Never:** Remove/weaken token counting, use an inference profile for the replacement, deploy locally, expose model selection to clients, enable unbounded Lambda concurrency, overwrite an existing user configuration silently, or put email/content in DynamoDB.
+**Never:** Remove/weaken token counting, use an inference profile for the replacement, deploy locally, expose model selection to clients, overwrite an existing user configuration silently, put email/content in DynamoDB, or enable `GLOBAL` implicitly.
 
 ## I/O & Edge-Case Matrix
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
 |----------|--------------|---------------------------|----------------|
 | Direct model gate | Claude 3.7 Sonnet in `eu-west-2` | `CountTokens` and `ConverseStream` use the same bare model ID and region | Do not deploy active traffic until both live probes pass |
-| Concurrency activation | Lambda quota can preserve AWS's unreserved floor | Deploy reserved concurrency 10 | Quota pending/denied keeps deployed value 0 |
+| Lambda capacity | Account regional quota is 50 | Function uses the shared unreserved pool; API and DynamoDB quotas remain authoritative cost controls | No function-level reservation or quota-increase dependency |
 | Premium grant | Confirmed Cognito user `nicobaz010@live.ca` | `USER#<sub>/CONFIG`, premium true, monthly limit 200 | Conditional write refuses overwrite |
 | Global state | No `GLOBAL/CONFIG` item or disabled item | Hosted traffic remains unavailable | Never create enabled global state implicitly |
 
@@ -41,9 +41,9 @@ context:
 ## Code Map
 
 - `apps/api-bedrock/src/lib/bedrock-client.ts` -- runtime client currently inherits Lambda region; add required `BEDROCK_REGION` ownership.
-- `apps/api-bedrock/template.yaml` -- replace inference-profile parameters/IAM with the direct `eu-west-2` Claude 3.7 foundation model; expose model region to Lambda; active reservation remains exactly 10.
+- `apps/api-bedrock/template.yaml` -- replace inference-profile parameters/IAM with the direct `eu-west-2` Claude 3.7 foundation model; expose model region to Lambda; use the account's shared unreserved pool.
 - `apps/api-bedrock/src/{lib/bedrock-client,template-scaffold}.test.ts` -- lock direct model ID, region, ARN, CountTokens/stream command parity, and no inference-profile resource.
-- `.github/workflows/api-bedrock-ci.yml`, `src/deploy-pipeline.test.ts` -- remove obsolete inference-profile secret and assert deployed concurrency against the configured active value.
+- `.github/workflows/api-bedrock-ci.yml`, `src/deploy-pipeline.test.ts` -- remove obsolete inference-profile and concurrency inputs; assert the deployed function has no reservation.
 - `_bmad-output/planning-artifacts/architecture-cloud-bedrock.md`, `architecture/.../ARCHITECTURE-SPINE.md` -- record the user-approved direct-model/region amendment.
 - `apps/web/src/locales/{en,fr}.json`, `LegalPage.test.tsx` -- disclose direct London Bedrock processing accurately.
 - `docs/runbooks/hosted-ai-rollout.md`, `docs/project-context.md` -- replace the resolved CountTokens blocker with the streaming-verification and pending-quota gates.
@@ -54,12 +54,12 @@ context:
 **Execution:**
 - [x] Update architecture, template, runtime client, workflow, legal copy, and tests for direct Claude 3.7 Sonnet in `eu-west-2`.
 - [x] Verify `CountTokens` and `ConverseStream` live with the exact configured identity before active deployment. — Both passed against `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`; streaming returned `OK.`.
-- [ ] Wait for/verify Lambda concurrency quota approval, then set GitHub environment concurrency to 10 and deploy through OIDC. — **blocked on AWS.** Quota request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` is still `CASE_OPENED`. The code path is ready: template `Default` `0`, `AllowedValues [0, 10]`, activation via `HOSTED_AI_RESERVED_CONCURRENCY` on the protected `production` environment, validated (`0|10` plus a Service Quotas unreserved-floor check) **before** `sam deploy` and asserted against the deployed function afterwards.
+- [ ] Remove function-level reserved concurrency and deploy through GitHub OIDC into the account's shared 50-concurrency pool; retain API throttling and DynamoDB hard caps.
 - [x] Conditionally create the content-free premium user config with monthly limit 200; leave GLOBAL disabled. — Created `USER#d4d8d418-b0d1-708b-18ba-7ca36956eb1d / CONFIG` with `premium=true`, limit `200`, and no email/content fields; `GLOBAL/CONFIG` remains absent.
 
 **Acceptance Criteria:**
 - Given the direct model configuration, when service tests and live probes run, then token counting and streaming target the same model/region and succeed.
-- Given approved Lambda quota, when GitHub deploys, then stack update completes and deployed reserved concurrency equals 10.
+- Given the account's regional Lambda quota, when GitHub deploys, then stack update completes with no function-level reservation and the function can use unreserved capacity.
 - Given the confirmed Cognito account, when premium config is written, then exactly one `USER#<sub>/CONFIG` item exists with premium true and monthly limit 200.
 - Given completion, when global state is inspected, then hosted traffic is still disabled until an explicit later enablement decision.
 
@@ -75,8 +75,8 @@ deliberately and **not** in the runbook's reusable command text, which is parame
 | `ConverseStream` on the same model/region | **PASS** — streamed to completion; the model replied `OK.` |
 | Premium user record | **CREATED** — `USER#d4d8d418-b0d1-708b-18ba-7ca36956eb1d / CONFIG`, written conditionally (`attribute_not_exists(pk) AND attribute_not_exists(sk)`), `premium=true`, `monthly_request_limit=200`, no email/name/content attributes. |
 | `GLOBAL/CONFIG` | **ABSENT** — deliberately not created, so every `POST /v1/ai/invoke` answers `503 hosted_unavailable` and no hosted traffic is possible. |
-| Lambda concurrency quota increase `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` | **CASE_OPENED** — still pending at AWS. Sole remaining activation blocker. |
-| Reserved concurrency | `0` (inert) — the function cannot execute at all. |
+| Lambda concurrency quota increase `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` | **WAIVED** — no longer a rollout dependency; the function uses the account's shared unreserved pool. |
+| Function concurrency | Source now removes the reservation; deployment must confirm `get-function-concurrency` returns no reservation key. |
 | Inert model deployment | **PASS** — GitHub Actions run `32996088072`; stack `UPDATE_COMPLETE`; stack outputs and Lambda environment both equal the approved direct model and `eu-west-2`. |
 
 Not proved by any of the above, and not to be treated as proved: direct-model
@@ -95,9 +95,10 @@ the same approved job-level constants used by post-deploy assertions (CloudForma
 old parameter values on updates, so explicit migration is required); the Bedrock IAM grant narrowed to one derived
 foundation-model ARN; the obsolete `BedrockInferenceProfileArn` /
 `BedrockFoundationModelArnPattern` parameters and the `BEDROCK_INFERENCE_PROFILE_ARN` deploy
-secret removed; the reservation hoisted to one job-level env source, validated (`0|10` plus a
-Service Quotas unreserved-floor check) **before** `sam deploy`, and asserted afterwards
-together with the deployed model/region on **both** the stack outputs and the Lambda
+secret removed; the user-approved pre-revenue simplification removes function-level
+reserved concurrency and its quota-increase path while preserving API throttling and
+atomic user/global request caps; deployment asserts no reservation exists, together with
+the deployed model/region on **both** the stack outputs and the Lambda
 environment; EN+FR **Terms and** Privacy copy moved to direct London processing
 (`privacyPage.limits.crossRegion` → `privacyPage.limits.processingRegion`) with the absolute
 "outside your own country" claim replaced by "may be outside your country of residence";
@@ -107,23 +108,23 @@ and `us-east-1`, and §3.2 parameterised on `PREMIUM_EMAIL` with stack-derived p
 an exactly-one-confirmed-match guard; both architecture documents carry a dated,
 user-approved amendment.
 
-Not implemented: the concurrency activation, which is waiting on AWS.
+Pending: deploy the no-reservation template and verify the Lambda can use unreserved capacity.
 
 ## Design Notes
 
-Live evidence: every tested `us.anthropic.*` inference profile and Nova direct model rejected Runtime `CountTokens`. Bare `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count and then streamed `OK.` through `ConverseStream`. Lambda quota increase request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` remains open for 1000 concurrent executions.
+Live evidence: every tested `us.anthropic.*` inference profile and Nova direct model rejected Runtime `CountTokens`. Bare `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count and then streamed `OK.` through `ConverseStream`.
 
 ## Verification
 
 **Commands:**
 - `pnpm --filter @nixus/api-bedrock lint && pnpm --filter @nixus/api-bedrock typecheck && pnpm --filter @nixus/api-bedrock test && pnpm --filter @nixus/api-bedrock sam:validate && pnpm --filter @nixus/api-bedrock sam:build` -- expected: clean and warning-free.
 - `pnpm --filter @nixus/web test && pnpm --filter @nixus/web build` -- expected: bilingual legal copy and prerender pass.
-- GitHub `API Bedrock CI` -- expected: OIDC deploy succeeds and asserts reserved concurrency 10.
+- GitHub `API Bedrock CI` -- expected: OIDC deploy succeeds and asserts no reserved concurrency.
 - AWS SDK live driver -- expected: direct model returns token count and streamed text.
 
 **Observed:** GitHub run `32996088072` deployed the direct model at concurrency `0`; all
-post-deploy model/region, PITR, and API smoke assertions passed. Activation at `10` remains
-blocked solely by Service Quotas case `178776291000903`.
+post-deploy model/region, PITR, and API smoke assertions passed. A follow-up deployment
+removes the reservation so the function can use the account's shared pool.
 
 ## Suggested Review Order
 

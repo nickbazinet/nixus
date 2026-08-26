@@ -242,13 +242,18 @@ disclosure copy (direct London processing, not US cross-region).
 
 What does not change: `CountTokens` stays ahead of reservation; model and region stay
 server-owned and invisible to clients; the API, Lambda, and quota table stay in
-`us-east-1`; AD-2, AD-5–AD-7, AD-9–AD-12, AD-14, and AD-15 are untouched. Reserved
-concurrency stays exactly `0` or `10` (AD-4), activated through the protected
-`production` GitHub environment with the deploy job asserting the deployed value.
+`us-east-1`; AD-2, AD-5–AD-7, AD-9–AD-12, AD-14, and AD-15 are untouched.
 
-Still gated: `ConverseStream` on the new model was refused pending AWS account
-verification, and the Lambda concurrency quota increase is pending. `GLOBAL` stays
-disabled until both clear — see `docs/runbooks/hosted-ai-rollout.md`.
+`CountTokens` and `ConverseStream` both pass on the direct model. `GLOBAL` stays disabled
+until the remaining rollout gates clear — see `docs/runbooks/hosted-ai-rollout.md`.
+
+### 2026-08-26 — pre-revenue concurrency simplification
+
+**User-approved.** The Lambda uses the account's shared unreserved pool rather than a
+function-level reservation. This removes the quota-increase dependency for the first
+customer. API Gateway throttling (10 RPS / burst 20), per-user/global request quotas, and
+server-owned token ceilings remain the v1 cost controls. Revisit a dedicated reservation
+only if observed traffic or shared-account contention justifies it.
 
 Any fallback from this model, any region other than `eu-west-2`, or any reintroduction of
 an inference profile is a further amendment, not an implementation detail.
