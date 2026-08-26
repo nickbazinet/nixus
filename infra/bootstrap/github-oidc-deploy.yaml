@@ -485,6 +485,8 @@ Resources:
                   # carry no stack name, so this is scoped to the account namespace.
                   - budgets:ModifyBudget
                   - budgets:ViewBudget
+                  - budgets:TagResource
+                  - budgets:UntagResource
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/*'
               - Sid: CustomDomainDnsRecord
