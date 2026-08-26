@@ -24,7 +24,7 @@ import {
  * "The provided model doesn't support counting tokens"; this bare model in eu-west-2
  * answered with an input-token count.
  */
-const DIRECT_MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0";
+const DIRECT_MODEL_ID = "anthropic.claude-sonnet-4-6";
 const DIRECT_MODEL_REGION = "eu-west-2";
 
 async function collect(
@@ -287,8 +287,8 @@ describe("model and region selection are server-owned", () => {
     try {
       for (const profile of [
         "us.anthropic.claude-sonnet-4-6",
-        "eu.anthropic.claude-3-7-sonnet-20250219-v1:0",
-        "apac.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        "eu.anthropic.claude-sonnet-4-6",
+        "apac.anthropic.claude-sonnet-4-6",
         "global.anthropic.claude-sonnet-4-6",
       ]) {
         process.env.BEDROCK_MODEL_ID = profile;

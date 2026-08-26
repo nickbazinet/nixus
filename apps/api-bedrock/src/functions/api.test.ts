@@ -95,7 +95,7 @@ beforeEach(() => {
   client = new FakeDocumentClient();
   setDocumentClientForTesting(client.asDocumentClient());
   process.env.TABLE_NAME = "nixus-hosted-ai";
-  process.env.BEDROCK_MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0";
+  process.env.BEDROCK_MODEL_ID = "anthropic.claude-sonnet-4-6";
   process.env.BEDROCK_REGION = "eu-west-2";
   stream = new BufferStream();
   vi.spyOn(console, "log").mockImplementation(() => undefined);
