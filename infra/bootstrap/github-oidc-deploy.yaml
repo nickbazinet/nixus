@@ -441,7 +441,6 @@ Resources:
                 Action:
                   - logs:CreateLogGroup
                   - logs:DeleteLogGroup
-                  - logs:DescribeLogGroups
                   - logs:PutRetentionPolicy
                   - logs:DeleteRetentionPolicy
                   - logs:TagResource
@@ -450,6 +449,11 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-api'
                   - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-api:*'
+              - Sid: FindExplicitLogGroup
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource: '*'
               - Sid: AlarmTopicAndSubscription
                 Effect: Allow
                 Action:
