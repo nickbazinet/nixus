@@ -355,3 +355,6 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-fix-ai-category-resolution.md`
   summary: Split oversized AI chat command, formatter, database, and Playwright modules by responsibility.
   evidence: The touched modules already exceeded the 250 pure-LOC ceiling at baseline; safely restructuring all of them is independent of the category-resolution bugfix and would materially expand its blast radius.
+- source_spec: `_bmad-output/specs/spec-cloud-bedrock/stories/1-canonical-cloud-ai-contract-and-service-scaffold.md`
+  summary: Split shared wire types from the React UI root barrel so backend packages can consume contracts without DOM or React type dependencies.
+  evidence: `@nixus/shared` currently re-exports both `types/cloud-ai.ts` and `./ui`; the Node-only Bedrock scaffold therefore needs JSX, DOM libs, and React types solely for TypeScript traversal, and changing the established root imports requires a separate cross-workspace migration.
