@@ -361,53 +361,46 @@ describe("deploy job proves deployed guarantees", () => {
     expect(runCommands(DEPLOY)).not.toContain("HostedAiReservedConcurrency=");
   });
 
-  /* The AD-8 token gate was proved against one model in one region; an active function
-   * pointed anywhere else voids that evidence. Both the resolved outputs and the
-   * function's own environment are checked, because a console edit moves only the latter. */
-  it("asserts the deployed model and region on both the stack outputs and the Lambda env", () => {
-    const script = step(DEPLOY, "Assert the deployed model and region").run as string;
+  /* The model decides what every request costs, and a parameter override, a console edit,
+   * or a stale changeset can all move it without touching this repo. Both surfaces are
+   * checked: the stack output CloudFormation resolved, and the function's own environment
+   * that the code actually reads. */
+  it("asserts the deployed model on both the stack output and the Lambda env", () => {
+    const script = step(DEPLOY, "Assert the deployed model").run as string;
 
     expect(script).toContain("BedrockModelIdEcho");
-    expect(script).toContain("BedrockRegionEcho");
     expect(script).toContain("lambda get-function-configuration");
     expect(script).toContain(".BEDROCK_MODEL_ID");
-    expect(script).toContain(".BEDROCK_REGION");
-
-    for (const compared of [
-      "stack output model",
-      "lambda env model",
-      "stack output region",
-      "lambda env region",
-    ]) {
-      expect(script, `${compared} must be compared`).toContain(compared);
-    }
-
+    expect(script).toContain('check_equal "stack output model"');
+    expect(script).toContain('check_equal "lambda env model"');
     expect(script).toContain("${APPROVED_BEDROCK_MODEL_ID}");
-    expect(script).toContain("${APPROVED_BEDROCK_REGION}");
-    expect(script).toContain("check_equal");
-    expect(script).not.toContain("for pair in");
-    expect(script).not.toContain('actual="${rest%%:*}"');
     expect(script).toContain("exit 1");
 
     expect(stepIndex(DEPLOY, "Deploy stack")).toBeLessThan(
-      stepIndex(DEPLOY, "Assert the deployed model and region")
+      stepIndex(DEPLOY, "Assert the deployed model")
     );
+  });
+
+  /* A leftover BEDROCK_REGION would be a configured value no code reads - which is how a
+   * reader concludes the region is still a knob and starts setting it. */
+  it("asserts no orphaned region variable survives on the deployed function", () => {
+    const script = step(DEPLOY, "Assert the deployed model").run as string;
+
+    expect(script).toContain("has(\"BEDROCK_REGION\")");
+    expect(script).not.toContain("BedrockRegionEcho");
+    expect(script).not.toContain("APPROVED_BEDROCK_REGION");
   });
 
   /* Two step-level copies of the same expression are how a deploy override and an
    * assertion end up disagreeing. One job-level definition makes that impossible. */
-  it("pins the approved model and region once, at job level, as the assertion source", () => {
+  it("pins the approved model once, at job level, as the assertion source", () => {
     const perStepCopies = (DEPLOY.steps as { env?: Record<string, unknown> }[]).filter(
-      (entry) =>
-        entry.env?.APPROVED_BEDROCK_MODEL_ID !== undefined ||
-        entry.env?.APPROVED_BEDROCK_REGION !== undefined
+      (entry) => entry.env?.APPROVED_BEDROCK_MODEL_ID !== undefined
     );
     expect(perStepCopies).toEqual([]);
 
-    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe(
-      "anthropic.claude-sonnet-4-6"
-    );
-    expect(DEPLOY.env.APPROVED_BEDROCK_REGION).toBe("eu-west-2");
+    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe("us.anthropic.claude-sonnet-4-6");
+    expect(DEPLOY.env).not.toHaveProperty("APPROVED_BEDROCK_REGION");
   });
 
   it("keeps the deployment non-cancelling while it mutates the stack", () => {
@@ -440,37 +433,42 @@ describe("deploy job proves deployed guarantees", () => {
     }
   });
 
-  /* The direct foundation-model ARN is derived inside the template from the model id
-   * and region, and a foundation-model ARN carries no account id - so there is nothing
-   * account-specific left to pass, and the old profile secret must be gone rather than
-   * lingering as an unused, misleading input. */
-  it("passes no inference-profile parameter or secret any more", () => {
-    for (const obsolete of [
-      "BedrockInferenceProfileArn",
-      "BedrockFoundationModelArnPattern",
-      "BEDROCK_INFERENCE_PROFILE_ARN",
-      "BEDROCK_FOUNDATION_MODEL_ARN_PATTERN",
-      "inference-profile",
-      "us.anthropic",
-    ]) {
-      expect(WORKFLOW_TEXT, `${obsolete} must be gone`).not.toContain(obsolete);
-    }
-  });
-
-  /* CloudFormation preserves previous parameter values on UPDATE, so relying on a new
-   * template default leaves the old inference profile in place. The only legal
-   * overrides are the same job-level constants used by post-deploy assertions. */
-  it("migrates and pins the Bedrock model and region to the approved pair", () => {
+  /* The profile ARN is account-specific, so it stays a deploy-time secret rather than a
+   * committed value. CloudFormation preserves previous parameter values on UPDATE, so the
+   * model is passed explicitly rather than left to a new template default. */
+  it("passes the inference profile ARN as a secret and pins the model explicitly", () => {
     const commands = runCommands(DEPLOY);
 
     expect(commands).toContain(
-      '"BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}"'
+      '"BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}"'
     );
-    expect(commands).toContain('"BedrockRegion=${APPROVED_BEDROCK_REGION}"');
-    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe(
-      "anthropic.claude-sonnet-4-6"
+    expect(WORKFLOW_TEXT).toContain(
+      "BEDROCK_INFERENCE_PROFILE_ARN: ${{ secrets.BEDROCK_INFERENCE_PROFILE_ARN }}"
     );
-    expect(DEPLOY.env.APPROVED_BEDROCK_REGION).toBe("eu-west-2");
+    expect(commands).toContain('"BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}"');
+
+    // No committed ARN, and no override for a region parameter that no longer exists.
+    expect(WORKFLOW_DIRECTIVES).not.toContain("arn:aws:bedrock");
+    expect(commands).not.toContain("BedrockRegion=");
+  });
+
+  /* The reserved-concurrency apparatus stays gone (2026-08-26 waiver), and no
+   * token-counting apparatus may appear alongside the request-based quota. */
+  it("carries no reservation or token-counting machinery", () => {
+    for (const removed of [
+      "HOSTED_AI_RESERVED_CONCURRENCY",
+      "HostedAiReservedConcurrency",
+      "service-quotas",
+      "L-B99A9384",
+      "UNRESERVED_FLOOR",
+      "count-tokens",
+      "CountTokens",
+    ]) {
+      expect(WORKFLOW_TEXT, `${removed} must be absent`).not.toContain(removed);
+    }
+
+    expect(DEPLOY.env).not.toHaveProperty("HOSTED_AI_RESERVED_CONCURRENCY");
+    expect(runCommands(DEPLOY)).not.toContain("HostedAiReservedConcurrency=");
   });
 });
 
