@@ -388,17 +388,29 @@ describe("AD-4 compute topology", () => {
     expect(props(logGroup).RetentionInDays).toBe(14);
   });
 
-  it("passes the table and model through the environment and no secrets", () => {
+  it("passes the table, model, and deployment revision through the environment", () => {
     const env = props(fn).Environment.Variables as Record<string, unknown>;
-    expect(Object.keys(env).sort()).toEqual(["BEDROCK_MODEL_ID", "TABLE_NAME"]);
+    expect(Object.keys(env).sort()).toEqual([
+      "BEDROCK_MODEL_ID",
+      "DEPLOYMENT_REVISION",
+      "TABLE_NAME",
+    ]);
     expect(env.TABLE_NAME).toEqual(ref("HostedAiTable"));
     expect(env.BEDROCK_MODEL_ID).toEqual(ref("BedrockModelId"));
+    expect(env.DEPLOYMENT_REVISION).toEqual(ref("DeploymentRevision"));
     // No BEDROCK_REGION: the profile is a us-east-1 profile and the Lambda runs there,
     // so a second source of truth for the region could only disagree with the stack.
     expect(env).not.toHaveProperty("BEDROCK_REGION");
 
     expect(resourcesOfType("AWS::SecretsManager::Secret")).toEqual([]);
     expect(resourcesOfType("AWS::SSM::Parameter")).toEqual([]);
+  });
+
+  it("requires a full Git commit SHA as the deployment revision", () => {
+    expect(PARAMETERS.DeploymentRevision).toMatchObject({
+      Type: "String",
+      AllowedPattern: "^[0-9a-f]{40}$",
+    });
   });
 });
 
@@ -534,7 +546,11 @@ describe("the remaining abuse bounds survive the reservation waiver", () => {
       (statement: { Action: string[] }) => statement.Action
     );
 
-    expect(actions).toEqual(["dynamodb:GetItem", "dynamodb:TransactWriteItems"]);
+    expect(actions).toEqual([
+      "dynamodb:GetItem",
+      "dynamodb:ConditionCheckItem",
+      "dynamodb:TransactWriteItems",
+    ]);
     // A direct write would let the Lambda bypass the condition check that enforces the
     // caps, so these must stay absent even now that a layer was removed.
     expect(actions).not.toContain("dynamodb:PutItem");
@@ -586,9 +602,10 @@ describe("IAM grants exact actions only", () => {
   ).flatMap((policy) => policy.PolicyDocument.Statement);
   const actions = statements.flatMap((statement) => statement.Action).sort();
 
-  it("grants only the five actions the service actually makes", () => {
+  it("grants only the six actions the service actually makes", () => {
     expect(actions).toEqual([
       "bedrock:InvokeModelWithResponseStream",
+      "dynamodb:ConditionCheckItem",
       "dynamodb:GetItem",
       "dynamodb:TransactWriteItems",
       "logs:CreateLogStream",
@@ -596,11 +613,10 @@ describe("IAM grants exact actions only", () => {
     ]);
   });
 
-  it("never grants wildcards, logs:*, or the non-existent ConditionCheckItem action", () => {
+  it("never grants wildcards, direct DynamoDB writes, or non-streaming Bedrock calls", () => {
     for (const action of actions) {
       expect(action).not.toContain("*");
     }
-    expect(actions).not.toContain("dynamodb:ConditionCheckItem");
     expect(actions).not.toContain("dynamodb:PutItem");
     expect(actions).not.toContain("dynamodb:UpdateItem");
     expect(actions).not.toContain("bedrock:InvokeModel");

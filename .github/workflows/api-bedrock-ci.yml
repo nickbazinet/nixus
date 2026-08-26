@@ -228,7 +228,8 @@ jobs:
               "HostedZoneId=${HOSTED_ZONE_ID}" \
               "AlertEmail=${ALERT_EMAIL}" \
               "BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}" \
-              "BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}"
+              "BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}" \
+              "DeploymentRevision=${GITHUB_SHA}"
         env:
           AWS_DEFAULT_REGION: us-east-1
           # Both produced by the one-time bootstrap stack
@@ -305,8 +306,9 @@ jobs:
             --function-name "${function_name}" \
             --query 'Environment.Variables' --output json)"
           live_model="$(printf '%s' "${env_json}" | jq -r '.BEDROCK_MODEL_ID // ""')"
+          live_revision="$(printf '%s' "${env_json}" | jq -r '.DEPLOYMENT_REVISION // ""')"
 
-          echo "stack_output_model=${echoed_model} lambda_env_model=${live_model}"
+          echo "stack_output_model=${echoed_model} lambda_env_model=${live_model} deployment_revision=${live_revision}"
 
           failed=0
           check_equal() {
@@ -321,6 +323,7 @@ jobs:
 
           check_equal "stack output model" "${echoed_model}" "${APPROVED_BEDROCK_MODEL_ID}"
           check_equal "lambda env model" "${live_model}" "${APPROVED_BEDROCK_MODEL_ID}"
+          check_equal "lambda deployment revision" "${live_revision}" "${GITHUB_SHA}"
 
           if printf '%s' "${env_json}" | jq -e 'has("BEDROCK_REGION")' >/dev/null; then
             echo "BEDROCK_REGION is set but no code reads it; remove it." >&2
@@ -328,7 +331,7 @@ jobs:
           fi
 
           if [ "${failed}" != "0" ]; then
-            echo "The deployed model is not the approved inference profile." >&2
+            echo "The deployed hosted-AI configuration does not match this commit." >&2
             exit 1
           fi
         env:

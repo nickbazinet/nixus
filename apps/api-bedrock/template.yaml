@@ -71,6 +71,10 @@ Parameters:
       through a profile is authorized against BOTH the profile ARN and the models it fans
       out to, and that fan-out is per region - which is the one place AWS IAM requires a
       region wildcard on the resource (never on an action).
+  DeploymentRevision:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{40}$'
+    Description: Git commit deployed by the GitHub OIDC workflow, used to reconcile Lambda configuration drift.
   InvokeIntegrationTimeoutMillis:
     Type: Number
     Default: 300000
@@ -303,6 +307,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
+                  - dynamodb:ConditionCheckItem
                   - dynamodb:TransactWriteItems
                 Resource: !GetAtt HostedAiTable.Arn
         - PolicyName: hosted-ai-bedrock
@@ -347,6 +352,7 @@ Resources:
         Variables:
           TABLE_NAME: !Ref HostedAiTable
           BEDROCK_MODEL_ID: !Ref BedrockModelId
+          DEPLOYMENT_REVISION: !Ref DeploymentRevision
       Events:
         Status:
           Type: Api

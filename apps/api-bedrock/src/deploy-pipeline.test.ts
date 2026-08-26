@@ -391,6 +391,16 @@ describe("deploy job proves deployed guarantees", () => {
     expect(script).not.toContain("APPROVED_BEDROCK_REGION");
   });
 
+  it("forces and verifies Lambda configuration reconciliation on every commit", () => {
+    const commands = runCommands(DEPLOY);
+    const assertion = step(DEPLOY, "Assert the deployed model").run as string;
+
+    expect(commands).toContain('"DeploymentRevision=${GITHUB_SHA}"');
+    expect(assertion).toContain(".DEPLOYMENT_REVISION");
+    expect(assertion).toContain('check_equal "lambda deployment revision"');
+    expect(assertion).toContain('"${GITHUB_SHA}"');
+  });
+
   /* Two step-level copies of the same expression are how a deploy override and an
    * assertion end up disagreeing. One job-level definition makes that impossible. */
   it("pins the approved model once, at job level, as the assertion source", () => {
