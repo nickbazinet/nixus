@@ -4,6 +4,10 @@ import path from "node:path";
 
 import { betaPagePath, homePath } from "./localePaths";
 import { SITE } from "./meta";
+import {
+  PRIVACY_PAGE_PATHS,
+  TERMS_PAGE_PATHS,
+} from "@/components/LegalPage";
 
 describe("sitemap.xml", () => {
   const sitemapPath = path.resolve(__dirname, "../../public/sitemap.xml");
@@ -52,6 +56,12 @@ describe("sitemap.xml", () => {
       `${SITE.url}${homePath("fr")}`,
       `${SITE.url}${betaPagePath("en")}`,
       `${SITE.url}${betaPagePath("fr")}`,
+      // The AD-13 disclosure pages are indexable: they are the sole hosted-AI
+      // disclosure mechanism, so they must be reachable and crawlable.
+      `${SITE.url}${TERMS_PAGE_PATHS.en}`,
+      `${SITE.url}${TERMS_PAGE_PATHS.fr}`,
+      `${SITE.url}${PRIVACY_PAGE_PATHS.en}`,
+      `${SITE.url}${PRIVACY_PAGE_PATHS.fr}`,
     ]);
   });
 

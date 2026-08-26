@@ -35,6 +35,14 @@ const NOT_FOUND_ALTERNATES: Record<ExpectedLocale, string> = {
   en: "/404",
   fr: "/fr/404",
 };
+const TERMS_ALTERNATES: Record<ExpectedLocale, string> = {
+  en: "/terms",
+  fr: "/fr/terms",
+};
+const PRIVACY_ALTERNATES: Record<ExpectedLocale, string> = {
+  en: "/privacy",
+  fr: "/fr/privacy",
+};
 
 const MARKER: Record<ExpectedLocale, string> = {
   en: "Skip to main content",
@@ -69,6 +77,34 @@ export const EXPECTED_ROUTES: readonly ExpectedRoute[] = [
     htmlFile: "fr/beta/index.html",
     localeMarker: MARKER.fr,
     alternates: BETA_ALTERNATES,
+  },
+  {
+    canonicalPath: "/terms",
+    locale: "en",
+    htmlFile: "terms/index.html",
+    localeMarker: MARKER.en,
+    alternates: TERMS_ALTERNATES,
+  },
+  {
+    canonicalPath: "/fr/terms",
+    locale: "fr",
+    htmlFile: "fr/terms/index.html",
+    localeMarker: MARKER.fr,
+    alternates: TERMS_ALTERNATES,
+  },
+  {
+    canonicalPath: "/privacy",
+    locale: "en",
+    htmlFile: "privacy/index.html",
+    localeMarker: MARKER.en,
+    alternates: PRIVACY_ALTERNATES,
+  },
+  {
+    canonicalPath: "/fr/privacy",
+    locale: "fr",
+    htmlFile: "fr/privacy/index.html",
+    localeMarker: MARKER.fr,
+    alternates: PRIVACY_ALTERNATES,
   },
   {
     canonicalPath: "/404",
