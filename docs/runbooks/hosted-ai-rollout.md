@@ -1,7 +1,7 @@
 # Runbook — Hosted AI (Nixus Cloud Bedrock) rollout
 
 Owner: Nixus operator (single-operator service)
-Stack: `nixus-bedrock-api` · region `us-east-1` · one production stack, no staging (AD-15)
+Stack: `nixus-bedrock-api` · API region `us-east-1` · Bedrock region `eu-west-2` · one production stack, no staging (AD-15)
 
 `GLOBAL.enabled` is the single switch that turns hosted AI on. **It must stay `false`
 until every gate in [Enablement gates](#enablement-gates) has recorded evidence.**
@@ -9,53 +9,98 @@ Deploying the stack does not enable traffic; only the manual item flip does.
 
 ---
 
-## 0. Blocking prerequisite — deployed CountTokens capability probe
+## 0. Model capability probes — both passed
 
-**STATUS: PROBE RUN, PROBE FAILED. ENABLEMENT IS BLOCKED.**
+**STATUS: `CountTokens` PASSES. `ConverseStream` PASSES. ACTIVATION IS BLOCKED ONLY ON THE LAMBDA CONCURRENCY QUOTA (§2.2).**
 
-The architecture mandates a `bedrock:CountTokens` call against the exact selected
-inference profile (AD-8). AWS documents `CountTokens` at the foundation-model level
-but does **not** document inference-profile support, and `us.anthropic.claude-sonnet-4-6`
-is cross-region-only from `us-east-1`.
+The architecture mandates a `bedrock:CountTokens` call against the exact selected model
+before any quota reservation (AD-8), so a model that rejects `CountTokens` makes the gate
+unimplementable and every eligible request a `503 hosted_unavailable`.
 
-The probe has now been run and was **rejected**:
+Probe both against the values the stack actually deployed, never a remembered pair — the
+stack outputs both for exactly this reason:
+
+```bash
+MODEL="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
+  --query "Stacks[0].Outputs[?OutputKey=='BedrockModelIdEcho'].OutputValue" --output text)"
+REGION="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
+  --query "Stacks[0].Outputs[?OutputKey=='BedrockRegionEcho'].OutputValue" --output text)"
+```
+
+Both probes must pass against the *same* `$MODEL`/`$REGION` pair: a count taken on one
+identity says nothing about a stream issued on another.
+
+### 0.1 `CountTokens` — resolved by a user-approved model and region change
+
+The original `us.anthropic.claude-sonnet-4-6` cross-region inference profile was probed
+and **rejected**:
 
 ```
 ValidationException: The provided model doesn't support counting tokens
 ```
 
-The command that produced it:
+Every other `us.anthropic.*` inference profile probed, and the Nova direct models,
+answered the same way. Runtime `CountTokens` is a foundation-model capability that
+inference profiles do not carry.
+
+The approved resolution is a **specification change, not a runbook workaround**: the
+service now calls the bare foundation model
+`anthropic.claude-3-7-sonnet-20250219-v1:0` **directly in `eu-west-2`**, which returned
+an input-token count for the identical probe:
 
 ```bash
 aws bedrock-runtime count-tokens \
-  --region us-east-1 \
-  --model-id us.anthropic.claude-sonnet-4-6 \
+  --region "$REGION" --model-id "$MODEL" \
   --input '{"converse":{"messages":[{"role":"user","content":[{"text":"probe"}]}]}}'
 ```
 
-This is the spec's **Block If** condition, met. `POST /v1/ai/invoke` cannot complete
-for any caller while step 3 of the AD-8 request order is a `CountTokens` call this
-model rejects: every eligible request would fail at the gate and be classified
-`503 hosted_unavailable`.
+The amendment is recorded in `_bmad-output/planning-artifacts/architecture-cloud-bedrock.md`
+and the architecture spine's Stack Seed. The API, Lambda, and quota table stay in
+`us-east-1`; only the Bedrock runtime calls move, via the `BedrockRegion` parameter and
+the Lambda's `BEDROCK_REGION` variable.
 
-**What must NOT happen in response.** The spec is explicit that none of these may be
-changed silently, because each one alters cost enforcement or data processing:
+**What still must NOT happen.** Each of these alters cost enforcement or data
+processing and needs its own review, exactly as the profile swap did:
 
-- do **not** switch to a different model or a foundation-model id,
-- do **not** change the region or drop the cross-region inference profile,
+- do **not** switch to a different model, and do **not** reintroduce an inference profile,
+- do **not** change the region away from `eu-west-2`,
 - do **not** remove, weaken, or reorder the pre-reservation token gate,
 - do **not** substitute a locally estimated token count for the gate.
 
-Any of those is a **specification change** requiring architecture review, not a
-runbook workaround. Until that review happens and lands, `GLOBAL.enabled` stays
-`false` and the Lambda stays inert at reserved concurrency `0` (§2.2). Everything
-else in this runbook may proceed: the stack is deployable, inspectable, and
-verifiable in that inert state.
+### 0.2 `ConverseStream` — passed
 
-> Evidence recorded: probe run against `us.anthropic.claude-sonnet-4-6` in `us-east-1`,
-> rejected with `ValidationException: The provided model doesn't support counting tokens`.
-> Re-run and update this section if AWS later adds inference-profile support, or once a
-> reviewed specification change selects a different gate.
+`CountTokens` succeeding does not prove the model can stream, so streaming is its own
+gate:
+
+```bash
+aws bedrock-runtime converse-stream \
+  --region "$REGION" --model-id "$MODEL" \
+  --messages '[{"role":"user","content":[{"text":"probe"}]}]' \
+  --inference-config '{"maxTokens":16}'
+```
+
+Recorded outcome: the probe **streamed text and completed** — the model replied `OK.`
+on `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`. Both AD-8 gate calls are
+therefore proved on the one deployed identity.
+
+### 0.3 Text streaming is not the whole capability surface — checks still to run
+
+A one-line text stream proves the model answers `ConverseStream`. It proves nothing
+about the rest of what the four surfaces need, and this model is an older generation than
+the one originally specified. **None of the following has been run yet; do not treat any
+of them as passed.** They are pre-enable gates 1c–1f.
+
+| Check | Why it is not covered by §0.1/§0.2 | How to check |
+|---|---|---|
+| Model lifecycle and access | A legacy model can be scheduled for deprecation, or be gated behind a per-account access grant that the probe's identity happened to hold | `aws bedrock get-foundation-model --region "$REGION" --model-identifier "$MODEL"` and Bedrock → Model access; confirm no announced end-of-life inside the rollout horizon |
+| Multimodal PDF + image | Statement import sends `document`/`image` content blocks, which a text probe never exercises; format support differs per model generation | `converse` once with a small real PDF and once with a PNG, both through the same `$MODEL`/`$REGION` |
+| Output ceilings | AD-8's per-operation output ceilings (chat 4096; statement_import 8192; advice/trends 1024) must be within this model's own `maxTokens` limit, or `ConverseStream` rejects the call for the largest operation | `converse` with `maxTokens` at 8192 and confirm no validation error |
+| `eu-west-2` model quotas | Bedrock per-model requests/tokens-per-minute quotas are regional, and London limits are not the `us-east-1` ones. Reserved concurrency 10 could exceed the model's own RPM | Service Quotas → Amazon Bedrock, in `eu-west-2`, for this model's on-demand RPM/TPM |
+
+Until §2.2's concurrency prerequisites land, `GLOBAL.enabled` stays `false` and the
+Lambda stays inert at reserved concurrency `0`. Everything else in this runbook may
+proceed: the stack is deployable, inspectable, and verifiable in that inert state.
+
 
 ---
 
@@ -149,8 +194,13 @@ Two roles rather than one is the point: a single role able to both assume from G
    | `API_CERTIFICATE_ARN` | secret | ACM cert for the custom domain, in `us-east-1` |
    | `HOSTED_ZONE_ID` | secret | Route53 zone for `nixusapp.com` |
    | `ALERT_EMAIL` | secret | Alarm + budget subscriber |
-   | `BEDROCK_INFERENCE_PROFILE_ARN` | secret | Approved profile ARN |
    | `API_DOMAIN_NAME` | variable | `api.nixusapp.com` |
+   | `HOSTED_AI_RESERVED_CONCURRENCY` | variable | `0` until §2.2's prerequisites pass, then `10` |
+
+   There is no Bedrock model or ARN input. A foundation-model ARN carries no account
+   ID, so the template derives it from `BedrockModelId` + `BedrockRegion` and nothing
+   account-specific is left to pass. The former `BEDROCK_INFERENCE_PROFILE_ARN` secret
+   is obsolete and should be deleted rather than left as a misleading unused input.
 
 6. **Enable deployment.** Set the **repository** variable
    `API_BEDROCK_DEPLOY_ENABLED` = `true`. Until this is set the deploy job is skipped
@@ -215,15 +265,26 @@ in the existing Route53 zone.
 
 ### 1.4 Confirm Bedrock model-invocation logging is OFF (AD-15)
 
+Model-invocation logging is configured **per region**, so it must be checked in **both**
+regions. `eu-west-2` is where invocations now happen; `us-east-1` is where they used to be
+aimed, so a configuration left there from earlier probing is exactly the kind of thing that
+survives a region change unnoticed.
+
 ```bash
-aws bedrock get-model-invocation-logging-configuration --region us-east-1
+for region in eu-west-2 us-east-1; do
+  echo "== ${region}"
+  aws bedrock get-model-invocation-logging-configuration --region "${region}" \
+    || echo "no logging configuration (expected)"
+done
 ```
 
-Expected: no logging configuration, or one that does not capture request/response
+Expected in each: no logging configuration, or one that does not capture request/response
 data. If logging is enabled, request content would be persisted to a Nixus-controlled
-destination, contradicting the Privacy Policy. **Disable it before enabling traffic.**
+destination, contradicting the Privacy Policy. **Disable it in that region before enabling
+traffic.**
 
 ```bash
+aws bedrock delete-model-invocation-logging-configuration --region eu-west-2
 aws bedrock delete-model-invocation-logging-configuration --region us-east-1
 ```
 
@@ -304,6 +365,9 @@ Both steps are prerequisites for §3's seed and for enablement.
    unreserved — i.e. a total of **at least 60**, and request more if other functions in
    the account also reserve.
 
+   Current state: request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` for 1000 concurrent
+   executions is `CASE_OPENED`. This is the sole remaining activation blocker.
+
    ```bash
    aws service-quotas request-service-quota-increase \
      --service-code lambda \
@@ -320,14 +384,29 @@ Both steps are prerequisites for §3's seed and for enablement.
    # must be >= 60
    ```
 
-3. **Flip the default in a reviewed pull request.** Change
-   `HostedAiReservedConcurrency`'s `Default` from `0` to `10` in
-   `apps/api-bedrock/template.yaml`, and update the workflow's post-deploy assertion
-   (§2.3) to expect `10`. This is deliberately a reviewed code change rather than a
-   console edit or a workflow variable, so the activation is visible in history and
-   cannot happen by accident.
+3. **Set `HOSTED_AI_RESERVED_CONCURRENCY` to `10`** on the **protected `production`
+   GitHub environment**, then deploy through the OIDC workflow (§1.2b). The template's
+   `Default` stays `0`, so an unset or removed variable returns the service to inert
+   rather than silently keeping it active, and the parameter's `AllowedValues` still
+   permit nothing but `0` and `10`.
+
+   The environment is chosen over a repository variable and over a template edit for
+   the same reason: it already requires an approval to deploy through, so activation
+   is a reviewed act recorded in the deployment history, and reverting it is one
+   variable change rather than a code change and a release.
 
 4. **Confirm the deployed value** after that deployment, using the command in §2.3.
+   The deploy job asserts it automatically: it compares the deployed reservation
+   against the configured value and fails the job on any mismatch, so a reservation
+   AWS declined cannot be mistaken for a successful activation.
+
+The workflow also refuses to *start* a deployment it can predict will fail. Before
+`sam deploy` runs it checks the configured value is `0` or `10` and, when it is `10`,
+reads the regional Lambda concurrency quota from Service Quotas and refuses unless the
+quota can still preserve the 50-unreserved floor. That turns a rolled-back stack into a
+one-line job failure. It also asserts, after deploying, that the deployed model and region
+are the approved pair on **both** the stack outputs and the Lambda's own environment —
+an active function pointed at an unproved model would void the §0 probe evidence.
 
 Until step 3 lands, the deployed function is inert and no traffic is possible
 regardless of what `GLOBAL#CONFIG` says.
@@ -346,7 +425,7 @@ aws lambda get-function-concurrency \
   --function-name "$FUNCTION_NAME" \
   --query 'ReservedConcurrentExecutions' --output text
 # 0  → inert, the expected state before enablement
-# 10 → active, only valid after the quota increase and the reviewed flip
+# 10 → active, only valid after the quota increase and the reviewed environment change
 ```
 
 A template that says `!Ref` proves nothing about the value CloudFormation actually
@@ -424,17 +503,74 @@ and `GET /v1/ai/status` reports non-premium. That is the intended pre-rollout st
 
 ### 3.2 Per-premium-user config
 
-One item per premium user, created by hand. `<sub>` is the Cognito `sub`.
+One item per premium user, created by hand. Nothing about the account is hardcoded here:
+the operator supplies the email, and the pool and table are read back from the deployed
+stack rather than pasted, so this block cannot drift onto a stale table or a pool the
+stack does not authorize against. **Which accounts hold premium belongs in the deployment
+evidence, not in committed command text.**
+
+```bash
+: "${PREMIUM_EMAIL:?set PREMIUM_EMAIL to the account to grant}"
+
+POOL_ID="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
+  --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolIdEcho'].OutputValue" --output text)"
+TABLE="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
+  --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue" --output text)"
+for v in POOL_ID TABLE; do
+  test -n "${!v}" && test "${!v}" != "None" || { echo "${v} unresolved" >&2; exit 1; }
+done
+```
+
+The lookup must match **exactly one confirmed** account. A filter that matched two
+accounts, or an unconfirmed one, would otherwise silently grant premium to whichever
+happened to sort first:
+
+```bash
+SUBS="$(aws cognito-idp list-users \
+  --user-pool-id "$POOL_ID" \
+  --filter "email = \"${PREMIUM_EMAIL}\"" \
+  --query 'Users[?UserStatus==`CONFIRMED`].Attributes[?Name==`sub`].Value[]' \
+  --output text)"
+COUNT="$(printf '%s\n' $SUBS | grep -c . || true)"
+test "$COUNT" -eq 1 || { echo "expected exactly 1 confirmed match, got ${COUNT}" >&2; exit 1; }
+SUB="$SUBS"
+```
+
+The write is conditional, so re-running it can never silently overwrite an existing
+configuration — a rewrite would reset `monthly_request_limit` under a user who is mid
+month while `charged_count` keeps its accumulated value:
 
 ```bash
 aws dynamodb put-item --table-name "$TABLE" --item '{
-  "pk": {"S": "USER#<sub>"},
+  "pk": {"S": "USER#'"$SUB"'"},
   "sk": {"S": "CONFIG"},
   "premium": {"BOOL": true},
   "monthly_request_limit": {"N": "200"},
-  "updated_at": {"S": "2026-08-26T00:00:00Z"}
-}'
+  "updated_at": {"S": "'"$(date -u +%FT%TZ)"'"}
+}' --condition-expression "attribute_not_exists(pk) AND attribute_not_exists(sk)"
 ```
+
+A `ConditionalCheckFailedException` means the item already exists: inspect it and
+decide deliberately, never re-run with the condition removed.
+
+**Verify the item, and verify it holds nothing it should not** (AD-11: the table carries
+the subject identifier, entitlement, and limit — never an email, a name, or any content):
+
+```bash
+aws dynamodb get-item --table-name "$TABLE" --consistent-read \
+  --key '{"pk":{"S":"USER#'"$SUB"'"},"sk":{"S":"CONFIG"}}' \
+  --query 'Item'
+# expect exactly: pk, sk, premium=true, monthly_request_limit=200, updated_at
+# expect NO email, name, phone, or any prompt/response attribute
+
+aws dynamodb get-item --table-name "$TABLE" --consistent-read \
+  --key '{"pk":{"S":"USER#'"$SUB"'"},"sk":{"S":"CONFIG"}}' \
+  --query 'keys(Item)' --output text | tr '\t' '\n' | sort
+# expect: monthly_request_limit, pk, premium, sk, updated_at — and nothing else
+```
+
+Record the outcome in gate 11b's evidence cell (which account, when, verified attribute
+set) — not by editing the commands above.
 
 Fail-closed shapes, for reference: a missing item, `premium: false`, a
 `monthly_request_limit <= 0`, or a malformed item all resolve to `403 premium_required`
@@ -482,32 +618,39 @@ Then confirm the negative paths:
 
 `GLOBAL.enabled = true` is forbidden until every row below has recorded evidence.
 
-**Currently blocked on gate 1.** The `CountTokens` probe was run and rejected (§0), so
-enablement cannot proceed on the present design regardless of the other gates. Gates
-1a–1c are additionally required: while the function sits at reserved concurrency `0` it
+**Currently blocked on gate 1b — the Lambda concurrency quota — and on the unrun
+capability checks 1c–1f.** Both AD-8 model probes now pass on the direct model in
+`eu-west-2` (§0.1, §0.2). Gates 1g–1h remain independently required: while the function
+sits at reserved concurrency `0` it
 cannot execute at all, so flipping `GLOBAL.enabled` would change nothing except to make
 the configuration misleading.
 
 | # | Gate | Reference | Evidence | Date |
 |---|---|---|---|---|
-| 1 | Deployed `CountTokens` probe succeeds on the exact model/profile/region | §0, AD-8 | **FAILED 2026-08-26** — `ValidationException: The provided model doesn't support counting tokens`. Blocks enablement; needs a reviewed specification change, not a workaround. | 2026-08-26 |
-| 1a | Lambda concurrent-executions quota raised to at least 60, and verified | §2.2 | | |
-| 1b | `HostedAiReservedConcurrency` default flipped `0` → `10` in a reviewed pull request | §2.2 | | |
-| 1c | Deployed function reports `ReservedConcurrentExecutions = 10` | §2.3, AD-4 | | |
+| 1 | Deployed `CountTokens` probe succeeds on the exact model/region | §0.1, AD-8 | **PASSED** — `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2` returned an input-token count. Reached by a reviewed specification change away from the cross-region profile, which rejected the call. | 2026-08-26 |
+| 1a | Deployed `ConverseStream` probe succeeds on that same model/region | §0.2, AD-7 | **PASSED** — streamed text to completion on `anthropic.claude-3-7-sonnet-20250219-v1:0` in `eu-west-2`; the model replied `OK.` | 2026-08-26 |
+| 1b | Lambda concurrent-executions quota raised to at least 60, and verified | §2.2 | **PENDING** — increase request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` for 1000 concurrent executions is `CASE_OPENED` at AWS. Sole remaining activation blocker. | |
+| 1c | Direct model lifecycle and account access confirmed (no announced end-of-life in the rollout horizon, access granted) | §0.3 | **NOT RUN** | |
+| 1d | Multimodal compatibility confirmed: one real PDF and one image through `converse` on the same model/region | §0.3, CAP-2 | **NOT RUN** | |
+| 1e | AD-8 output ceilings accepted by this model, checked at the largest (8192) | §0.3, AD-8 | **NOT RUN** | |
+| 1f | `eu-west-2` per-model Bedrock RPM/TPM quotas checked against reserved concurrency 10 | §0.3, AD-4 | **NOT RUN** | |
+| 1g | `HOSTED_AI_RESERVED_CONCURRENCY` set to `10` on the protected `production` environment | §2.2 | | |
+| 1h | Deployed function reports `ReservedConcurrentExecutions = 10`, and the deployed model/region assertions pass | §2.3, AD-4 | | |
 | 2 | Cognito `nixus-api/ai.invoke` scope added to pool + app client | §1.1, AD-3 | | |
 | 3 | Bootstrap stack deployed: OIDC provider, deploy role, CloudFormation execution role, artifact bucket. `sub` verified against `TrustedSubject` | §1.2, AD-12 | | |
 | 3a | `production` environment populated with both role ARNs and the artifact bucket | §1.2 step 5 | | |
 | 3b | Repository variable `API_BEDROCK_DEPLOY_ENABLED` set to `true` | §1.2 step 6 | | |
 | 3c | Bootstrap workflow file deleted, so no static-key path to AWS remains | §1.2 step 7 | | |
 | 4 | `production` environment requires approval and is default-branch-only | §1.2, AD-12 | | |
-| 5 | Bedrock model-invocation logging confirmed disabled | §1.4, AD-15 | | |
+| 5 | Bedrock model-invocation logging confirmed disabled **in `eu-west-2`** | §1.4, AD-15 | | |
 | 6 | Quota table: PITR `ENABLED`, deletion protection on, `Retain` policies present | §2.5, AD-15 | | |
 | 7 | CloudWatch alarms exist (API 5XX, Lambda Errors, Lambda Throttles) and the SNS email subscription is **confirmed** | AD-14 | | |
 | 8 | AWS Budget `$50/mo` on Bedrock with 80% / 100% notifications | AD-14 | | |
-| 9 | Terms of Service and Privacy Policy published, EN + FR, stating: transmission through Nixus to AWS Bedrock; cross-region `us.` processing and abuse-detection implications; non-retention is Nixus-controlled only and does not bind AWS; request quota; BYO fallback | AD-13 | | |
-| 10 | `README.md` and all marketing copy no longer claim data never leaves the machine | AD-13 | | |
+| 9 | Terms of Service and Privacy Policy published, EN + FR, stating: transmission through Nixus to AWS Bedrock; direct processing in `eu-west-2` (United Kingdom) and abuse-detection implications; non-retention is Nixus-controlled only and does not bind AWS; request quota; BYO fallback | AD-13 | | |
+| 10 | `README.md` and all marketing copy no longer claim data never leaves the machine, and no longer describe US cross-region processing | AD-13 | | |
 | 11 | `GLOBAL#CONFIG` seeded with `enabled: false` | §3.1, AD-15 | | |
 | 11a | Orphaned retained table from the rolled-back first attempt identified, confirmed empty, and removed by hand | §2.4 | | |
+| 11b | Premium `USER#<sub>/CONFIG` written conditionally and verified: `premium=true`, `monthly_request_limit=200`, and the attribute set carries no email, name, or content | §3.2, AD-6/AD-11 | | |
 | 12 | Deployed smoke test passes | §4, AD-2/AD-3 | | |
 | 13 | All four surfaces verified hosted on one release build, BYO cleared | §4, CAP-1/CAP-2 | | |
 | 14 | Quota-exhaustion and global-disable fallback verified | §4, CAP-5 | | |
@@ -519,9 +662,9 @@ so gate 7 requires confirmed, not merely created.
 
 ### Flip the switch
 
-Only once **every** gate above is evidenced — including gate 1 (a `CountTokens` design
-that the selected model actually supports) and gates 1a–1c (the quota increase and the
-reviewed flip to reserved concurrency `10`):
+Only once **every** gate above is evidenced — including gates 1c–1f (the capability
+checks a text-only stream probe does not cover) and gates 1b/1g/1h (the quota increase and
+the reviewed change to reserved concurrency `10`):
 
 ```bash
 aws dynamodb update-item --table-name "$TABLE" \

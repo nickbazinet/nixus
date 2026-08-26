@@ -4,10 +4,11 @@ import { describe, expect, it } from "vitest";
 
 /*
  * The rollout runbook is not documentation in the decorative sense: AD-13 and AD-15
- * make it the enablement gate itself, and it is now also the only record that the
- * CountTokens probe was run and rejected. A silent edit that drops a gate, or a
- * "helpful" suggestion to swap the model, would remove the one control standing
- * between a blocked design and production traffic. Hence assertions on its content.
+ * make it the enablement gate itself, and it is also the only record of which model
+ * and region the CountTokens gate was actually proved against. A silent edit that
+ * drops a gate, or a "helpful" swap back to an inference profile, would remove the
+ * one control standing between an unproved design and production traffic. Hence
+ * assertions on its content.
  */
 
 const RUNBOOK = readFileSync(
@@ -17,31 +18,192 @@ const RUNBOOK = readFileSync(
   "utf8"
 );
 
-describe("the CountTokens blocker is recorded, not softened", () => {
-  it("records the exact rejection the probe returned", () => {
+/** Fails naming the gate rather than returning undefined into a silent `.toMatch`. */
+function gateRow(id: string): string {
+  const row = RUNBOOK.split("\n").find((line) => line.startsWith(`| ${id} |`));
+  expect(row, `gate ${id} row is missing`).toBeDefined();
+  return row!;
+}
+
+/** The evidence column, so "marked passed" and "carries evidence" stay distinguishable. */
+function evidenceOf(row: string): string {
+  const cells = row.split("|").map((cell) => cell.trim());
+  return cells[4] ?? "";
+}
+
+function sectionOf(heading: string, terminator: string): string {
+  const start = RUNBOOK.indexOf(heading);
+  expect(start, `section ${heading} is missing`).toBeGreaterThan(-1);
+  const end = RUNBOOK.indexOf(terminator, start + heading.length);
+  return RUNBOOK.slice(start, end === -1 ? undefined : end);
+}
+
+describe("the model capability probes are recorded with their exact identity", () => {
+  it("keeps the rejection that ruled out the inference profile on the record", () => {
     expect(RUNBOOK).toContain(
       "ValidationException: The provided model doesn't support counting tokens"
     );
-    expect(RUNBOOK).toContain("PROBE RUN, PROBE FAILED");
-    expect(RUNBOOK).toMatch(/ENABLEMENT IS BLOCKED/i);
+    // Without the original failure written down, reverting to a profile looks free.
+    expect(RUNBOOK).toContain("us.anthropic.claude-sonnet-4-6");
+    expect(RUNBOOK).toMatch(/inference profiles do not carry/i);
   });
 
-  /* The failure mode this guards is a future maintainer treating the blocker as a
+  it("records the direct model and region the CountTokens gate now passes on", () => {
+    expect(RUNBOOK).toContain("anthropic.claude-3-7-sonnet-20250219-v1:0");
+    expect(RUNBOOK).toContain("--region eu-west-2");
+    expect(RUNBOOK).toContain("CountTokens` PASSES");
+
+    const gateOne = RUNBOOK.split("\n").find(
+      (line) => line.startsWith("| 1 |") && line.includes("CountTokens")
+    );
+    expect(gateOne, "gate 1 row is missing").toBeDefined();
+    expect(gateOne).toMatch(/PASSED/);
+    expect(gateOne).toContain("eu-west-2");
+  });
+
+  /* A passing count says nothing about streaming, so streaming stays a gate of its own
+   * rather than being folded into gate 1. Asserted as a gate row carrying evidence -
+   * not as a status word - so the assertion survives the status changing again. */
+  it("keeps ConverseStream as its own gate, passed with recorded evidence", () => {
+    expect(RUNBOOK).toContain("converse-stream");
+
+    const gate = gateRow("1a");
+    expect(gate).toMatch(/ConverseStream/);
+    expect(gate).toMatch(/PASSED/);
+    // The observed reply is the evidence; a gate marked passed with an empty cell is
+    // indistinguishable from a gate someone ticked.
+    expect(gate).toContain("OK.");
+    expect(gate).toContain("eu-west-2");
+    expect(evidenceOf(gate).length).toBeGreaterThan(20);
+  });
+
+  /* The whole point of the amendment was that a blocked gate must not be softened; the
+   * inverse failure is a resolved gate still advertised as blocking, which sends the
+   * next reader chasing an AWS ticket that closed. */
+  it("carries no stale unresolved-stream or account-verification claim", () => {
+    expect(RUNBOOK).not.toMatch(/STREAM PROBE OUTSTANDING/i);
+    expect(RUNBOOK).not.toMatch(/account verification/i);
+    expect(RUNBOOK).not.toMatch(/under two hours/i);
+    expect(RUNBOOK).not.toMatch(/ConverseStream` — outstanding/i);
+  });
+
+  /* With both probes passing, the quota is the only thing left standing between the
+   * stack and an active deployment - and saying so is what stops someone flipping
+   * GLOBAL and finding a function that cannot execute. */
+  it("names the Lambda concurrency quota as the sole activation blocker", () => {
+    expect(RUNBOOK).toMatch(/ACTIVATION IS BLOCKED ONLY ON THE LAMBDA CONCURRENCY QUOTA/i);
+    expect(gateRow("1b")).toMatch(/PENDING/);
+    expect(gateRow("1b")).toContain("CASE_OPENED");
+  });
+
+  /* A one-line text stream is not the capability surface the four surfaces need, and
+   * this model is an older generation. Recording those checks as NOT RUN is the honest
+   * state; recording them as passed would be a fabricated gate. */
+  it("adds the unrun capability checks without claiming they passed", () => {
+    expect(RUNBOOK).toMatch(/### 0\.3 Text streaming is not the whole capability surface/);
+
+    for (const [gate, matcher] of [
+      ["1c", /lifecycle/i],
+      ["1d", /Multimodal/i],
+      ["1e", /output ceilings/i],
+      ["1f", /RPM\/TPM|quotas/i],
+    ] as const) {
+      const row = gateRow(gate);
+      expect(row, `gate ${gate}`).toMatch(matcher);
+      expect(row, `gate ${gate} must not claim a pass`).toMatch(/NOT RUN/);
+      expect(row, `gate ${gate} must not claim a pass`).not.toMatch(/PASSED/);
+    }
+
+    expect(RUNBOOK).toMatch(/do not treat any\s+of them as passed/i);
+  });
+
+  /* Both probes must target the values CloudFormation actually applied: a count
+   * proved against a remembered pair proves nothing about the deployed one. */
+  it("probes the deployed identity from the stack outputs, not a remembered pair", () => {
+    expect(RUNBOOK).toContain("BedrockModelIdEcho");
+    expect(RUNBOOK).toContain("BedrockRegionEcho");
+    expect(RUNBOOK).toContain("`$MODEL`/`$REGION`");
+    expect(RUNBOOK).toMatch(/Both probes must pass against the \*same\*/);
+  });
+
+  /* The failure mode this guards is a future maintainer treating a blocker as a
    * config problem and quietly changing the thing that makes the gate meaningful. */
   it("forbids silently changing the model, region, or token gate", () => {
     expect(RUNBOOK).toMatch(/do \*\*not\*\* switch to a different model/i);
-    expect(RUNBOOK).toMatch(/do \*\*not\*\* change the region/i);
+    expect(RUNBOOK).toMatch(/do \*\*not\*\* reintroduce an inference profile/i);
+    expect(RUNBOOK).toMatch(/do \*\*not\*\* change the region away from `eu-west-2`/i);
     expect(RUNBOOK).toMatch(/do \*\*not\*\* remove, weaken, or reorder the pre-reservation token gate/i);
     expect(RUNBOOK).toMatch(/specification change/i);
   });
 
-  it("keeps gate 1 marked failed rather than blank or passed", () => {
-    const gateOne = RUNBOOK.split("\n").find(
-      (line) => line.startsWith("| 1 |") && line.includes("CountTokens")
-    );
+  /* Model-invocation logging is per region. Checking only the new region would miss a
+   * configuration left behind in the old one by earlier probing - which is precisely the
+   * kind of state that survives a region change unnoticed (AD-11). */
+  it("checks model-invocation logging in both the active and the former region", () => {
+    expect(RUNBOOK).toMatch(/configured \*\*per region\*\*/i);
+    expect(RUNBOOK).toMatch(/for region in eu-west-2 us-east-1/);
+    expect(RUNBOOK).toContain("get-model-invocation-logging-configuration");
 
-    expect(gateOne, "gate 1 row is missing").toBeDefined();
-    expect(gateOne).toMatch(/FAILED/);
+    // And the disable path must cover both, or the check finds something the operator
+    // has no committed command to fix.
+    expect(RUNBOOK).toContain(
+      "aws bedrock delete-model-invocation-logging-configuration --region eu-west-2"
+    );
+    expect(RUNBOOK).toContain(
+      "aws bedrock delete-model-invocation-logging-configuration --region us-east-1"
+    );
+    expect(gateRow("5")).toMatch(/eu-west-2/);
+  });
+});
+
+describe("the premium user grant is parameterised and cannot overwrite silently", () => {
+  it("writes the user CONFIG item conditionally", () => {
+    expect(RUNBOOK).toContain(
+      "attribute_not_exists(pk) AND attribute_not_exists(sk)"
+    );
+    expect(RUNBOOK).toContain("ConditionalCheckFailedException");
+    expect(RUNBOOK).toMatch(/never re-run with the condition removed/i);
+    expect(RUNBOOK).toContain('"monthly_request_limit": {"N": "200"}');
+  });
+
+  /* Committed command text is copy-pasted by definition. A real address baked into it
+   * both leaks who holds premium and invites the next operator to grant the wrong
+   * account by editing nothing. */
+  it("hardcodes no account email, sub, pool id, or table name", () => {
+    expect(RUNBOOK).toContain('"${PREMIUM_EMAIL:?');
+    expect(RUNBOOK).not.toMatch(/[\w.+-]+@(live|gmail|outlook|hotmail|yahoo|icloud)\.[a-z.]+/i);
+    expect(RUNBOOK).not.toContain("HostedAiTable-");
+    expect(RUNBOOK).not.toMatch(/--user-pool-id "[a-z]{2}-[a-z]+-\d_/);
+  });
+
+  /* Both identifiers are read back from the deployed stack, so this block cannot be run
+   * against a stale table or a pool the stack does not authorize against. */
+  it("derives the pool id and table name from the deployed stack", () => {
+    const section = sectionOf("### 3.2", "---");
+
+    expect(section).toContain("CognitoUserPoolIdEcho");
+    expect(section).toContain("TableName");
+    expect(section).toContain("describe-stacks --stack-name nixus-bedrock-api");
+    expect(section).toMatch(/unresolved/);
+  });
+
+  /* Two confirmed matches, or one unconfirmed match, would otherwise grant premium to
+   * whichever account happened to sort first. */
+  it("requires exactly one confirmed Cognito match before writing", () => {
+    const section = sectionOf("### 3.2", "---");
+
+    expect(section).toContain("UserStatus==`CONFIRMED`");
+    expect(section).toMatch(/expected exactly 1 confirmed match/i);
+    expect(section).toContain('test "$COUNT" -eq 1');
+  });
+
+  it("gates the grant on verified attributes that exclude email and content", () => {
+    const row = gateRow("11b");
+
+    expect(row).toMatch(/premium=true/);
+    expect(row).toMatch(/monthly_request_limit=200/);
+    expect(row).toMatch(/no email, name, or content/i);
+    expect(RUNBOOK).toMatch(/expect NO email, name, phone, or any prompt\/response attribute/i);
   });
 });
 
@@ -75,10 +237,22 @@ describe("the quota increase and the reviewed flip are prerequisites", () => {
     expect(RUNBOOK).toMatch(/at least \*\*60\*\*|>= 60/);
   });
 
-  it("requires the flip to 10 to be a reviewed pull request, not a console edit", () => {
-    expect(RUNBOOK).toMatch(/reviewed pull request/i);
-    expect(RUNBOOK).toMatch(/rather than a\s+console edit or a workflow\s+variable/i);
+  /* The activation lives on the protected environment, so it inherits the deployment
+   * approval; the template default staying 0 is what makes an unset or removed
+   * variable fail back to inert instead of silently keeping the service live. */
+  it("puts the activation on the protected production environment, not a repo variable", () => {
+    expect(RUNBOOK).toMatch(
+      /Set `HOSTED_AI_RESERVED_CONCURRENCY` to `10`\*\* on the \*\*protected `production`/
+    );
+    expect(RUNBOOK).toMatch(/template's\s+`Default` stays `0`/i);
+    expect(RUNBOOK).toMatch(/returns the service to inert/i);
+    expect(RUNBOOK).toMatch(/already requires an approval to deploy through/i);
     expect(RUNBOOK).toContain("HostedAiReservedConcurrency");
+  });
+
+  it("says the deploy job compares the deployed value against the configured one", () => {
+    expect(RUNBOOK).toMatch(/compares the deployed reservation\s+against the configured value/i);
+    expect(RUNBOOK).toMatch(/cannot be mistaken for a successful activation/i);
   });
 
   it("gives a command that asserts the DEPLOYED reservation", () => {
@@ -89,12 +263,20 @@ describe("the quota increase and the reviewed flip are prerequisites", () => {
 
   /* These must gate enablement, not sit in prose the reader can skip. */
   it("adds the concurrency prerequisites to the enablement gate table", () => {
-    const gateLines = RUNBOOK.split("\n").filter((line) => line.startsWith("| 1"));
-    const gates = gateLines.join("\n");
+    expect(gateRow("1b")).toMatch(/quota raised to at least 60/i);
+    expect(gateRow("1g")).toMatch(
+      /`HOSTED_AI_RESERVED_CONCURRENCY` set to `10` on the protected `production` environment/i
+    );
+    expect(gateRow("1h")).toMatch(/ReservedConcurrentExecutions = 10/i);
+    // The deployed model/region assertion is part of the same activation gate: an active
+    // function pointed at an unproved model voids both probe results.
+    expect(gateRow("1h")).toMatch(/model\/region assertions pass/i);
+  });
 
-    expect(gates).toMatch(/\| 1a \|.*quota raised to at least 60/i);
-    expect(gates).toMatch(/\| 1b \|.*default flipped `0` → `10` in a reviewed pull request/i);
-    expect(gates).toMatch(/\| 1c \|.*ReservedConcurrentExecutions = 10/i);
+  /* The pending request id is the evidence that the quota gate is waiting on AWS
+   * rather than on someone remembering to ask. */
+  it("records the pending Lambda quota increase request", () => {
+    expect(RUNBOOK).toContain("87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8");
   });
 
   it("says enablement changes nothing while the function is inert", () => {
