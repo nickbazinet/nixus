@@ -11,7 +11,7 @@ import {
   type Mock,
   type MockInstance,
 } from "vitest";
-import { useAuthSession, useSignIn, useSignOut } from "@/hooks/useAuth";
+import { useAuthSession, useCloudAiPremium, useSignIn, useSignOut } from "@/hooks/useAuth";
 import { queryKeys } from "@/lib/constants";
 import { IMPORT_DRAFT_STORAGE_KEY } from "@/lib/datasetSwitch";
 import { installLocalStorageMock } from "@/test/localStorageMock";
@@ -43,6 +43,7 @@ vi.mock("@tanstack/react-router", () => ({
 let signIn: ReturnType<typeof useSignIn>;
 let signOut: ReturnType<typeof useSignOut>;
 let authSession: ReturnType<typeof useAuthSession>;
+let cloudAiPremium: ReturnType<typeof useCloudAiPremium>;
 
 function MutationsHarness() {
   signIn = useSignIn();
@@ -60,6 +61,13 @@ function SessionHarness() {
 // The account menu's shape: a local profile is open, so the session must not be read at all.
 function DisabledSessionHarness() {
   authSession = useAuthSession({ enabled: false });
+  return null;
+}
+
+// The entitlement is read on its own, with an explicit gate, because the two states that matter are
+// "an account is resolved" and "there is nothing to ask about".
+function PremiumHarness({ enabled }: { enabled: boolean }) {
+  cloudAiPremium = useCloudAiPremium({ enabled });
   return null;
 }
 
@@ -220,6 +228,98 @@ describe("useAuth", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("reads no entitlement at all while the gate is closed", async () => {
+    // Given an account whose entitlement the caller has no business asking about
+    invokeMock.mockResolvedValue(true);
+
+    // When a surface with no resolved account mounts the hook
+    render(<PremiumHarness enabled={false} />);
+    await settleQueries(() => cloudAiPremium !== undefined);
+
+    // Then nothing is invoked, so no keyring read and no /v1/ai/status request happen
+    expect(invokeMock).not.toHaveBeenCalled();
+    expect(cloudAiPremium.data).toBeUndefined();
+    expect(cloudAiPremium.isError).toBe(false);
+  });
+
+  it("reads the entitlement through the zero-arg command once an account is resolved", async () => {
+    // Given a signed-in premium account
+    invokeMock.mockResolvedValue(true);
+
+    render(<PremiumHarness enabled />);
+    await settleQueries(() => cloudAiPremium?.data !== undefined);
+
+    // The command carries no payload: the subject is resolved Rust-side and never sent from JS
+    expect(invokeMock.mock.calls[0]).toEqual(["get_cloud_ai_premium"]);
+    expect(cloudAiPremium.data).toBe(true);
+    // A wrong key literal in constants.ts is invisible to tsc; this is what catches it
+    expect(queryClient.getQueryData(["cloud-ai-premium"])).toBe(true);
+  });
+
+  it("keeps a rejected entitlement read out of every premium-claiming state", async () => {
+    // Given a command that somehow rejects despite Rust answering fail-closed
+    invokeMock.mockRejectedValue({ type: "auth", message: "x", recoverable: true });
+
+    render(<PremiumHarness enabled />);
+    await settleQueries(() => cloudAiPremium?.isError === true);
+
+    // Then the value stays absent, so `data === true` — the only premium claim — is unreachable
+    expect(cloudAiPremium.data).toBeUndefined();
+  });
+
+  it("invokes the entitlement command once on rejection, never retrying it", async () => {
+    // Given a client that WOULD retry — the shared harness client disables retries globally, so
+    // asserting against it would pass whether or not the hook opts out, proving nothing.
+    const retryingClient = new QueryClient({
+      defaultOptions: { queries: { retry: 2, retryDelay: 0 } },
+    });
+    invokeMock.mockRejectedValue({ type: "auth", message: "x", recoverable: true });
+
+    act(() => {
+      root.render(
+        <QueryClientProvider client={retryingClient}>
+          <PremiumHarness enabled />
+        </QueryClientProvider>,
+      );
+    });
+    await settleQueries(() => cloudAiPremium?.isError === true);
+
+    // Then exactly one attempt: each retry would re-open the OS secure store for an answer Rust
+    // has already resolved fail-closed.
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    retryingClient.clear();
+  });
+
+  // The cross-account leak this feature could ship: TanStack Query serves a stale entry while
+  // refetching, so an invalidated `true` renders a Premium badge under the account that just
+  // signed in — one that may hold no entitlement at all.
+  it("removes the entitlement when a different account signs in", async () => {
+    invokeMock.mockResolvedValue({ status: "LoggedOut" });
+
+    render(<SessionHarness />);
+    await settleQueries(() => listenMock.mock.calls.length > 0);
+    queryClient.setQueryData(queryKeys.cloudAiPremium, true);
+
+    act(() => {
+      fireCallbackEvent();
+    });
+
+    expect(removedKeys()).toContainEqual(["cloud-ai-premium"]);
+    expect(invalidatedKeys()).not.toContainEqual(["cloud-ai-premium"]);
+    expect(queryClient.getQueryData(queryKeys.cloudAiPremium)).toBeUndefined();
+  });
+
+  it("sweeps the entitlement away with the rest of the account on sign-out", async () => {
+    invokeMock.mockResolvedValue(null);
+    queryClient.setQueryData(queryKeys.cloudAiPremium, true);
+
+    await act(async () => {
+      await signOut.mutateAsync();
+    });
+
+    expect(queryClient.getQueryData(queryKeys.cloudAiPremium)).toBeUndefined();
   });
 
   it("starts login carrying the plain Login intent, the sign-in entry, and nothing else", async () => {

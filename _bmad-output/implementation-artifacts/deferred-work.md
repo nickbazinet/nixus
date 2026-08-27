@@ -358,3 +358,12 @@ scope for this story:
 - source_spec: `_bmad-output/specs/spec-cloud-bedrock/stories/1-canonical-cloud-ai-contract-and-service-scaffold.md`
   summary: Split shared wire types from the React UI root barrel so backend packages can consume contracts without DOM or React type dependencies.
   evidence: `@nixus/shared` currently re-exports both `types/cloud-ai.ts` and `./ui`; the Node-only Bedrock scaffold therefore needs JSX, DOM libs, and React types solely for TypeScript traversal, and changing the established root imports requires a separate cross-workspace migration.
+- source_spec: `_bmad-output/implementation-artifacts/spec-premium-cloud-ai-account-status.md`
+  summary: Reconcile the experience spine and hosted-AI rollout runbook with the shipped account-based AI service and its approved entitlement indicator.
+  evidence: The documentation predates hosted AI and still denies account-based AI or defers every in-app status surface; correcting those broader product and operational statements is independently reviewable and not required for the account-menu indicator to function.
+- source_spec: `_bmad-output/implementation-artifacts/spec-premium-cloud-ai-account-status.md`
+  summary: Split hosted Bedrock status, authentication, and invocation responsibilities out of the oversized adapter module.
+  evidence: `ai/hosted_bedrock.rs` already exceeded the 250-line ceiling before this feature and now also owns the entitlement status read and bounded 401 refresh; safely splitting it requires updating path-based architecture guards and is independent of the user-visible indicator.
+- source_spec: `_bmad-output/implementation-artifacts/spec-premium-cloud-ai-account-status.md`
+  summary: Restore repository-wide Rust formatting and clippy cleanliness without mixing unrelated domain edits into this feature.
+  evidence: `cargo fmt --check` reports pre-existing formatting drift across unrelated database and maintenance modules, while `cargo clippy --lib -- -D warnings` reports 229 pre-existing needless-borrow findings across command modules; the changed feature compiles and its 1026 Rust tests pass.

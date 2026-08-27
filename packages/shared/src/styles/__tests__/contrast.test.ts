@@ -120,6 +120,18 @@ describe.each(Object.entries(MODES))("%s mode", (_mode, tokens) => {
         4.5
       );
     });
+
+    /* premium-ink is real text on the rail beside the wordmark, so it is held to
+     * the text floor on every surface rather than the 3:1 graphical one — and on
+     * all four, because a token verified against one surface is how ink-faint
+     * shipped failing on chrome and rail. */
+    it("premium ink clears 4.5:1 on card, page, chrome, and rail", () => {
+      for (const surface of SURFACES) {
+        expect(ratioTo(tokens, "premium-ink", surface)).toBeGreaterThanOrEqual(
+          4.5
+        );
+      }
+    });
   });
 
   describe("graphical and state — 3:1", () => {
@@ -172,6 +184,27 @@ describe("token layer integrity", () => {
       (name) => !(name in MODES.dark)
     );
     expect(missing).toEqual([]);
+  });
+
+  /* The entitlement is not a status, and the fastest way for that to stop being
+   * true is someone "consolidating" premium onto the caution ramp because both
+   * are goldish. Pinning them apart in both modes makes that a failing test
+   * rather than a silent regression: a premium account would start reading as
+   * something the user has to act on. */
+  it.each(["caution", "caution-ink"])(
+    "keeps premium-ink a separate value from %s in both modes",
+    (statusToken) => {
+      for (const [mode, tokens] of Object.entries(MODES)) {
+        expect(
+          tokens["premium-ink"],
+          `premium-ink duplicates ${statusToken} in ${mode}`
+        ).not.toBe(tokens[statusToken]);
+      }
+    }
+  );
+
+  it("ships no premium fill, because the entitlement is never a status pill", () => {
+    expect(TOKENS_CSS).not.toContain("--premium-bg");
   });
 
   it("carries no raw JetBrains Mono reference", () => {

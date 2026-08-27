@@ -11,6 +11,7 @@ const REQUIRED_KEYS = [
   "profile.accountMenu",
   "profile.loading",
   "profile.signedInAs",
+  "profile.premiumBadge",
   "profile.signOut",
   "profile.sessionExpired",
   "profile.sessionExpiredAction",
@@ -47,6 +48,14 @@ const REQUIRED_KEYS = [
   "profile.tfsaAccumulatedLimitCaption",
   "profile.tfsaAccumulatedLimitNote",
 ] as const;
+
+/**
+ * Both surfaces that paint the entitlement, in the two namespaces they belong to. Deliberately not
+ * folded into REQUIRED_KEYS: that list feeds the `profile.`-prefixed exhaustiveness check, which a
+ * `sidebar.` key would break — but the rail label is subject to the identical copy constraints, and
+ * checking only the one that happens to share this file's prefix is how the other drifts.
+ */
+const PREMIUM_LABEL_KEYS = ["profile.premiumBadge", "sidebar.premium"] as const;
 
 /**
  * The bracket is a range label, not a monetary amount, and the currency is a separate field — a
@@ -213,6 +222,77 @@ describe("profile menu i18n", () => {
     expect(fr["profile.tfsaAccumulatedLimitNote"]).toContain(
       "ne suit pas vos cotisations ni vos retraits",
     );
+  });
+
+  it.each(PREMIUM_LABEL_KEYS)("defines %s in both locales with a value", (key) => {
+    expect(en[key], `${key} missing in en.json`).toBeTruthy();
+    expect(fr[key], `${key} missing in fr.json`).toBeTruthy();
+  });
+
+  it.each(PREMIUM_LABEL_KEYS)(
+    "keeps %s inside the badge-copy ceiling in both locales",
+    (key) => {
+      // DESIGN.md caps badge text at ~20 characters. In the menu the badge is the row's only
+      // content inside a 256px panel; on the rail it shares a 192px expanded width with the
+      // wordmark. A longer translation is what would push either into wrapping.
+      for (const [locale, name] of [
+        [en, "en.json"],
+        [fr, "fr.json"],
+      ] as const) {
+        expect(locale[key].length, `${key} too long in ${name}`).toBeLessThanOrEqual(20);
+      }
+    },
+  );
+
+  it.each(PREMIUM_LABEL_KEYS)("makes no usage or quota claim in %s", (key) => {
+    // Request counts and limits are deliberately absent from the IPC boundary, so copy that implied
+    // one could never be made true. Asserted rather than reviewed because a well-meaning "3 of 200
+    // requests left" edit here reads as an improvement.
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      expect(locale[key], `${key} carries a figure in ${name}`).not.toMatch(/\d/);
+      for (const word of [
+        "request",
+        "quota",
+        "limit",
+        "remaining",
+        "requête",
+        "restant",
+        "limite",
+      ]) {
+        expect(
+          locale[key].toLowerCase(),
+          `${key} says "${word}" in ${name}`,
+        ).not.toContain(word);
+      }
+    }
+  });
+
+  it("spells the entitlement identically on both surfaces, per locale", () => {
+    // DESIGN.md's rail-premium-label contract: the rail and the account menu read the identical
+    // word. Two keys in two namespaces is exactly the shape that drifts to "Premium" / "Premium+".
+    expect(en["sidebar.premium"]).toBe(en["profile.premiumBadge"]);
+    expect(fr["sidebar.premium"]).toBe(fr["profile.premiumBadge"]);
+  });
+
+  it("ships the badge as the only premium copy, with no caption and no free-tier counterpart", () => {
+    // Two things ride on this one pin. A `Free` label is explicitly out of scope — it would turn an
+    // additive entitlement into a tier comparison on every non-premium account. And the retired
+    // `profile.premiumCaption` must stay retired: the badge is the whole claim now, so a caption
+    // returning as an orphaned key is how the removed adjacent text comes back.
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      const premiumKeys = profileKeys(locale).filter((key) =>
+        key.startsWith("profile.premium"),
+      );
+      expect(premiumKeys.sort(), `unexpected premium copy in ${name}`).toEqual([
+        "profile.premiumBadge",
+      ]);
+    }
   });
 
   it("leaves the neighbouring update.* block intact", () => {

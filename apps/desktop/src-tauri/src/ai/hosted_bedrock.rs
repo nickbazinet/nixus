@@ -322,6 +322,122 @@ async fn invoke_with_auth(
     post_invoke(&base, &access_token, &subject_sub, request, on_delta).await
 }
 
+/// The one hosted-AI fact outside this crate may know: whether the signed-in
+/// account carries premium access.
+///
+/// Fail-closed and infallible on purpose. A refused transport override, no session,
+/// a missing resource-server scope, a live `503` courtesy window, and a status read
+/// that rejected or returned an unparseable body all answer `false` — the caller's
+/// contract is to make no premium claim, not to report a problem, so there is no
+/// error channel here for a toast to reach.
+///
+/// Deliberately `premium`, never `has_remaining_quota()`: an exhausted month does not
+/// revoke the entitlement, and the limit, charged count and period stay in this crate
+/// (AD-9). Reading through the shared cache is what keeps this answer from ever
+/// disagreeing with the one an invocation is routed against.
+pub async fn premium_entitlement() -> bool {
+    let Some(base) = base_url() else {
+        return false;
+    };
+
+    let Ok((access_token, subject_sub)) = resolve_hosted_auth(auth::hosted_ai_token().await) else {
+        return false;
+    };
+
+    if hosted_state::is_unavailable(&subject_sub) {
+        return false;
+    }
+
+    if let Some(cached) = hosted_state::get_fresh(&subject_sub) {
+        return cached.premium;
+    }
+
+    match fetch_status(&base, &access_token, &subject_sub).await {
+        StatusRead::Ready(status) => status.premium,
+        // The closed table's single refresh (AD-10). A `401` on the status read means the
+        // server rejected a token this device still considers live, which no local expiry
+        // check can detect, so the one repair available is a fresh grant.
+        StatusRead::Unauthorized => premium_after_refresh().await,
+        StatusRead::Failed => false,
+    }
+}
+
+/// Exactly one retry, and only after a forced refresh. A second `401` carrying a token
+/// minted seconds earlier is not a staleness problem, so retrying again would spend
+/// another refresh and another round-trip on the same answer.
+async fn premium_after_refresh() -> bool {
+    let Some(base) = base_url() else {
+        return false;
+    };
+
+    let Ok((access_token, subject_sub)) =
+        resolve_hosted_auth(auth::refresh_hosted_ai_token().await)
+    else {
+        return false;
+    };
+
+    matches!(
+        fetch_status(&base, &access_token, &subject_sub).await,
+        StatusRead::Ready(status) if status.premium
+    )
+}
+
+/// Outcome of one `/v1/ai/status` read. `Unauthorized` is split out from `Failed`
+/// because it is the only status the closed table lets a caller repair; every other
+/// failure is terminal for that read.
+enum StatusRead {
+    Ready(HostedAiStatus),
+    Unauthorized,
+    Failed,
+}
+
+/// One authenticated `/v1/ai/status` round-trip, with the cache write and the `503`
+/// courtesy marking that both readers need. Deliberately does NOT refresh or retry:
+/// the refresh budget belongs to the caller, so the routing path keeps its existing
+/// single-attempt behaviour while the entitlement read can spend its own.
+async fn fetch_status(base: &str, access_token: &str, subject_sub: &str) -> StatusRead {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(STATUS_TIMEOUT_SECS))
+        .build()
+    else {
+        return StatusRead::Failed;
+    };
+
+    let Ok(response) = client
+        .get(format!("{}/v1/ai/status", base))
+        .bearer_auth(access_token)
+        .send()
+        .await
+    else {
+        return StatusRead::Failed;
+    };
+
+    let status_code = response.status().as_u16();
+    if status_code != 200 {
+        tracing::error!("Hosted AI status read returned {}", status_code);
+        if status_code == 503 {
+            hosted_state::mark_unavailable(subject_sub);
+        }
+        if status_code == 401 {
+            return StatusRead::Unauthorized;
+        }
+        return StatusRead::Failed;
+    }
+
+    let Ok(body) = response.json::<WireStatus>().await else {
+        return StatusRead::Failed;
+    };
+    let status = HostedAiStatus {
+        premium: body.premium,
+        monthly_request_limit: body.monthly_request_limit,
+        charged_count: body.charged_count,
+        period: body.period,
+    };
+
+    hosted_state::store(subject_sub, status.clone());
+    StatusRead::Ready(status)
+}
+
 /// Lazily refreshes the subject-scoped status cache when it is absent, older than
 /// its TTL, or was fetched for a different `sub` (AD-9).
 async fn ensure_status(
@@ -333,37 +449,12 @@ async fn ensure_status(
         return Some(cached);
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(STATUS_TIMEOUT_SECS))
-        .build()
-        .ok()?;
-
-    let response = client
-        .get(format!("{}/v1/ai/status", base))
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .ok()?;
-
-    let status_code = response.status().as_u16();
-    if status_code != 200 {
-        tracing::error!("Hosted AI status read returned {}", status_code);
-        if status_code == 503 {
-            hosted_state::mark_unavailable(subject_sub);
-        }
-        return None;
+    match fetch_status(base, access_token, subject_sub).await {
+        StatusRead::Ready(status) => Some(status),
+        // Unchanged for the routing path: a status read it cannot complete — for any
+        // reason, including a 401 — means hosted is not selected for this invocation.
+        StatusRead::Unauthorized | StatusRead::Failed => None,
     }
-
-    let body = response.json::<WireStatus>().await.ok()?;
-    let status = HostedAiStatus {
-        premium: body.premium,
-        monthly_request_limit: body.monthly_request_limit,
-        charged_count: body.charged_count,
-        period: body.period,
-    };
-
-    hosted_state::store(subject_sub, status.clone());
-    Some(status)
 }
 
 async fn post_invoke(

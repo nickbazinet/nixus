@@ -73,6 +73,7 @@ export const queryKeys = {
   auth: {
     session: ["auth", "session"] as const,
   },
+  cloudAiPremium: ["cloud-ai-premium"] as const,
   profile: ["profile"] as const,
   countries: ["countries"] as const,
   subdivisions: (countryCode: string) =>

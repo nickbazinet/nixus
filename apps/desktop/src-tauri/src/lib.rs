@@ -335,6 +335,7 @@ pub fn run() {
             commands::auth::handle_auth_callback,
             commands::auth::get_auth_session,
             commands::auth::sign_out,
+            commands::cloud_ai::get_cloud_ai_premium,
             commands::profile::get_user_profile,
             commands::profile::save_user_profile,
             commands::profile::get_countries,

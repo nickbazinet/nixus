@@ -6,6 +6,7 @@ pub mod backup;
 pub mod budget;
 pub mod budget_template;
 pub mod chat;
+pub mod cloud_ai;
 pub mod cloud_link;
 pub mod danger_zone;
 pub mod dashboard;

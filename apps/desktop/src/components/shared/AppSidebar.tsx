@@ -22,26 +22,18 @@ import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import {
   BuyMeACoffeeIcon,
   BUY_ME_A_COFFEE_URL,
-  NixusLogo,
   focusRing,
 } from "@nixus/shared";
+import {
+  persistCollapsedPreference,
+  railLabelClass,
+  readCollapsedPreference,
+  SidebarBrandHeader,
+} from "./SidebarBrandHeader";
 
 const themeOrder = ["light", "dark", "system"] as const;
 const themeIcons = { light: Sun, dark: Moon, system: Monitor } as const;
 const themeLabelKeys = { light: "sidebar.light", dark: "sidebar.dark", system: "sidebar.system" } as const;
-
-const RAIL_COLLAPSED_KEY = "rail-collapsed";
-
-// The rail opens LABELLED. Icon-only-by-default asks the least tech-comfortable user to learn
-// navigation by discovery; collapsing to save space is the user's choice, so it is a persisted
-// preference rather than a default.
-function readCollapsedPreference(): boolean {
-  try {
-    return localStorage.getItem(RAIL_COLLAPSED_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
 
 function railItemClass(expanded: boolean, active: boolean) {
   return cn(
@@ -51,13 +43,6 @@ function railItemClass(expanded: boolean, active: boolean) {
       ? "bg-rail-on text-rail-on-ink"
       : "text-rail-ink hover:bg-hover hover:text-ink",
     focusRing
-  );
-}
-
-function railLabelClass(expanded: boolean) {
-  return cn(
-    "whitespace-nowrap transition-opacity duration-200",
-    expanded ? "opacity-100" : "w-0 overflow-hidden opacity-0"
   );
 }
 
@@ -89,11 +74,7 @@ export function AppSidebar() {
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(RAIL_COLLAPSED_KEY, String(collapsed));
-    } catch {
-      // localStorage unavailable
-    }
+    persistCollapsedPreference(collapsed);
   }, [collapsed]);
 
   // A screen reader that keeps an English voice on French content is unusable for the whole
@@ -154,29 +135,11 @@ export function AppSidebar() {
         {languageNotice}
       </span>
 
-      {/* Rail mark — one of only three places the identity gradient is permitted. */}
-      <button
-        type="button"
-        onClick={() => setCollapsed((c) => !c)}
-        className={cn(
-          "flex h-14 w-full min-h-target-min items-center px-3 text-left",
-          focusRing
-        )}
-        aria-label={collapsed ? t("sidebar.expandSidebar") : t("sidebar.collapseSidebar")}
-        aria-expanded={expanded}
-      >
-        <span className="flex min-w-0 items-end">
-          <NixusLogo className="h-8 w-8 shrink-0" />
-          <span
-            className={cn(
-              "-ml-0.5 mb-px bg-logo-gradient bg-clip-text text-h2 leading-none text-transparent",
-              railLabelClass(expanded)
-            )}
-          >
-            ixus
-          </span>
-        </span>
-      </button>
+      <SidebarBrandHeader
+        expanded={expanded}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
+      />
 
       {/* Module nav */}
       <nav aria-label={t("sidebar.moduleNav")} className="mt-2 flex-1 px-2">

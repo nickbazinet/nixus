@@ -100,6 +100,13 @@
   --neutral-bg: #EDF1F6;
   --neutral-ink: #576578;
 
+  /* Entitlement — deliberately NOT the status family. A premium account is a
+   * durable fact, not something that went well (`good`) or needs attention
+   * (`caution`), so it owns a token and a distinctly yellower gold (hue ~42 vs
+   * caution's ~36 ochre). Ink only: the entitlement never renders as a filled
+   * status pill — the account menu uses the `neutral` badge. */
+  --premium-ink: #8A6304;
+
   /* Charts — eight steps, walking brand indigo through violet/orchid/pink
    * then teal, teal-green, warm amber, and cool slate for the long tail.
    * Luminance alternates (odd steps dark, even steps light) so adjacent
@@ -164,6 +171,9 @@
   --over-on: #3A1A24;
   --neutral-bg: #212C3E;
   --neutral-ink: #94A3B8;
+
+  /* Muted rather than caution-dark's saturated amber: premium stays calm. */
+  --premium-ink: #E9C46A;
 
   --chart-1: #818CF8;
   --chart-2: #8074B0;
@@ -333,6 +343,9 @@
   --color-over-on: var(--over-on);
   --color-neutral-bg: var(--neutral-bg);
   --color-neutral-ink: var(--neutral-ink);
+
+  /* Entitlement */
+  --color-premium-ink: var(--premium-ink);
 
   /* Charts */
   --color-chart-1: var(--chart-1);

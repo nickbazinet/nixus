@@ -52,6 +52,11 @@ interface AuthOptions {
    * to `/picker`, so the destination renders its list instead of `picker-load-error`.
    */
   datasets?: MockDataset[];
+  /**
+   * What `get_cloud_ai_premium` answers. Omit for a non-premium account: an entitlement is never
+   * assumed, so the default is the answer that makes no claim.
+   */
+  cloudAiPremium?: CommandOutcome;
 }
 
 /** `get_active_profile`'s wire shape. The Cognito subject is deliberately absent from it (AD-10). */
@@ -212,6 +217,11 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
             return opts.datasets === undefined
               ? Promise.reject(`Unknown command: ${cmd}`)
               : Promise.resolve(opts.datasets);
+
+          case "get_cloud_ai_premium":
+            return opts.cloudAiPremium === undefined
+              ? Promise.resolve(false)
+              : settle(opts.cloudAiPremium);
 
           case "start_login":
             return opts.start_login === undefined

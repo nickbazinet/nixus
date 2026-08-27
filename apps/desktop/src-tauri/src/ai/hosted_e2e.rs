@@ -74,9 +74,23 @@ fn refreshed_token_body() -> String {
 struct StubGateway {
     base_url: String,
     server: Arc<Server>,
+    status_calls: Arc<AtomicUsize>,
     invoke_calls: Arc<AtomicUsize>,
     authorizations: Arc<Mutex<Vec<String>>>,
     bodies: Arc<Mutex<Vec<String>>>,
+}
+
+/// How the stub should answer `GET /v1/ai/status`.
+#[derive(Clone)]
+enum StatusReply {
+    /// 200 with the given body, which a test may deliberately make unparseable.
+    Body(String),
+    Error {
+        status: u16,
+    },
+    /// One reply per call, in order; the last repeats once exhausted. Lets a test
+    /// script a 401-then-200 status sequence and assert the retry happened once.
+    Scripted(Vec<StatusReply>),
 }
 
 /// How the stub should answer `POST /v1/ai/invoke`.
@@ -92,18 +106,24 @@ enum InvokeReply {
 }
 
 fn spawn_gateway(status_body: String, reply: InvokeReply) -> StubGateway {
+    spawn_gateway_with(StatusReply::Body(status_body), reply)
+}
+
+fn spawn_gateway_with(status: StatusReply, reply: InvokeReply) -> StubGateway {
     let server = Arc::new(Server::http("127.0.0.1:0").expect("stub gateway binds"));
     let base_url = format!(
         "http://127.0.0.1:{}",
         server.server_addr().to_ip().expect("ip addr").port()
     );
 
+    let status_calls = Arc::new(AtomicUsize::new(0));
     let invoke_calls = Arc::new(AtomicUsize::new(0));
     let authorizations = Arc::new(Mutex::new(Vec::new()));
     let bodies = Arc::new(Mutex::new(Vec::new()));
 
     {
         let server = Arc::clone(&server);
+        let status_calls = Arc::clone(&status_calls);
         let invoke_calls = Arc::clone(&invoke_calls);
         let authorizations = Arc::clone(&authorizations);
         let bodies = Arc::clone(&bodies);
@@ -136,9 +156,28 @@ fn spawn_gateway(status_body: String, reply: InvokeReply) -> StubGateway {
                 }
 
                 if url.starts_with("/v1/ai/status") {
-                    let _ = request.respond(
-                        Response::from_string(status_body.clone()).with_header(json_header),
-                    );
+                    // fetch_add returns the PREVIOUS value, which is this call's 0-based index.
+                    let call_index = status_calls.fetch_add(1, Ordering::SeqCst);
+                    let effective = match &status {
+                        StatusReply::Scripted(replies) => replies
+                            .get(call_index)
+                            .or_else(|| replies.last())
+                            .cloned()
+                            .unwrap_or(StatusReply::Error { status: 500 }),
+                        other => other.clone(),
+                    };
+                    let response = match &effective {
+                        StatusReply::Scripted(_) => unreachable!("flattened above"),
+                        StatusReply::Body(body) => {
+                            Response::from_string(body.clone()).with_header(json_header)
+                        }
+                        StatusReply::Error { status } => Response::from_string(
+                            r#"{"error":{"code":"unauthorized","message":"stub","request_id":"r"}}"#,
+                        )
+                        .with_status_code(*status)
+                        .with_header(json_header),
+                    };
+                    let _ = request.respond(response);
                     continue;
                 }
 
@@ -207,6 +246,7 @@ fn spawn_gateway(status_body: String, reply: InvokeReply) -> StubGateway {
     StubGateway {
         base_url,
         server,
+        status_calls,
         invoke_calls,
         authorizations,
         bodies,
@@ -850,4 +890,273 @@ fn a_403_never_triggers_a_refresh() {
         1,
         "a 403 must not consume the refresh budget"
     );
+}
+
+/// The narrow read the account menu consumes. Driven through the same stub gateway as
+/// the routing tests above, because the whole point of the extraction is that the two
+/// share one `/v1/ai/status` path and one cache — a second HTTP path would be able to
+/// answer `true` for an account the router would skip.
+fn entitlement() -> bool {
+    tauri::async_runtime::block_on(crate::ai::hosted_bedrock::premium_entitlement())
+}
+
+#[test]
+fn an_eligible_account_reports_the_entitlement_from_the_authenticated_status_read() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    assert!(entitlement());
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        gateway.invoke_calls.load(Ordering::SeqCst),
+        0,
+        "reading the entitlement must never invoke the model"
+    );
+
+    let bearers = gateway.authorizations.lock().unwrap().clone();
+    assert!(
+        bearers.iter().any(|value| value.starts_with("Bearer ")),
+        "the status read must be authenticated"
+    );
+}
+
+#[test]
+fn an_ineligible_account_reports_no_entitlement() {
+    let gateway = spawn_gateway(non_premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    assert!(!entitlement());
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
+}
+
+/// The entitlement is what the account holds, so an exhausted month still reports it.
+/// Routing would skip hosted here — that divergence is deliberate, and asserting both
+/// in one test is what stops someone "fixing" the read to use `has_remaining_quota`.
+#[test]
+fn an_exhausted_month_still_reports_the_entitlement_while_routing_skips_hosted() {
+    let exhausted =
+        r#"{"premium":true,"monthly_request_limit":5,"charged_count":5,"period":"2026-08"}"#
+            .to_string();
+    let gateway = spawn_gateway(exhausted, InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    assert!(entitlement());
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let _ = run(chat_request(), &deltas);
+    assert_eq!(
+        gateway.invoke_calls.load(Ordering::SeqCst),
+        0,
+        "an exhausted month must still not be routed to hosted"
+    );
+}
+
+#[test]
+fn a_rejected_status_read_fails_closed() {
+    let gateway = spawn_gateway_with(
+        StatusReply::Error { status: 500 },
+        InvokeReply::Ndjson(chat_ndjson()),
+    );
+    let _harness = Harness::new(&gateway);
+
+    assert!(!entitlement());
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        1,
+        "only a 401 is repairable, so a 500 must not spend the refresh budget"
+    );
+}
+
+/// A 200 carrying a body this build cannot parse is the shape a server-side contract
+/// change would take, and it must not be read as premium.
+#[test]
+fn a_malformed_status_body_fails_closed() {
+    let gateway = spawn_gateway_with(
+        StatusReply::Body(r#"{"premium":"yes"}"#.to_string()),
+        InvokeReply::Ndjson(chat_ndjson()),
+    );
+    let _harness = Harness::new(&gateway);
+
+    assert!(!entitlement());
+}
+
+/// A `503` opens the courtesy window, and the entitlement must respect it rather than
+/// re-reading a gateway that just said it was unavailable.
+#[test]
+fn a_503_backoff_window_reports_no_entitlement_without_a_second_read() {
+    let gateway = spawn_gateway_with(
+        StatusReply::Error { status: 503 },
+        InvokeReply::Ndjson(chat_ndjson()),
+    );
+    let _harness = Harness::new(&gateway);
+
+    assert!(!entitlement());
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
+
+    assert!(!entitlement());
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        1,
+        "the backoff window must suppress the second read"
+    );
+}
+
+/// The matrix's "no authenticated cloud account" row: no request may leave the machine
+/// at all, so a signed-out process cannot even be observed asking.
+#[test]
+fn a_signed_out_process_makes_no_entitlement_request() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+    let _ = credentials::clear_cognito_session();
+
+    assert!(!entitlement());
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 0);
+}
+
+/// A session whose grant structurally lacks `nixus-api/ai.invoke` can never be
+/// repaired by a refresh, so it must fail closed without a network call rather than
+/// spending one on a request the authorizer would reject.
+#[test]
+fn a_session_without_the_hosted_scope_makes_no_entitlement_request() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    credentials::store_cognito_session(&CognitoSession {
+        access_token: jwt(
+            r#"{"sub":"e2e-subject-0001","token_use":"access","scope":"openid email"}"#,
+        ),
+        id_token: id_token(),
+        refresh_token: "refresh".to_string(),
+        expires_at: 4_000_000_000,
+    })
+    .expect("session stored");
+
+    assert!(!entitlement());
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 0);
+}
+
+/// One cache, one answer: a read taken for the menu is the one an invocation is routed
+/// against, so opening the menu cannot cost a second status round-trip.
+#[test]
+fn the_entitlement_and_the_routing_path_share_one_status_read() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    assert!(entitlement());
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let text = run(chat_request(), &deltas).expect("hosted invocation succeeds");
+
+    assert_eq!(text, "Your budget looks fine.");
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        1,
+        "the cached status must serve both readers"
+    );
+}
+
+/// The subject guard the cache already enforces, exercised through the entitlement:
+/// signing in as someone else must re-derive the answer rather than serve the previous
+/// account's cached `true`.
+#[test]
+fn a_different_subject_never_inherits_the_previous_accounts_entitlement() {
+    let gateway = spawn_gateway(non_premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    hosted_state::store(
+        "some-other-subject",
+        crate::ai::hosted_state::HostedAiStatus {
+            premium: true,
+            monthly_request_limit: 100,
+            charged_count: 0,
+            period: "2026-08".to_string(),
+        },
+    );
+
+    assert!(
+        !entitlement(),
+        "the cached entry belongs to another subject and must not be read"
+    );
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
+}
+
+/// The closed table's single refresh, on the status read this time: a `401` means the
+/// server rejected a token this device still considers live, and the one repair is a
+/// fresh grant. Both halves matter — without the retry an entitled account silently
+/// stops showing as premium, and without the ceiling a rejected grant loops.
+#[test]
+fn a_401_status_read_refreshes_once_and_then_reports_the_entitlement() {
+    let gateway = spawn_gateway_with(
+        StatusReply::Scripted(vec![
+            StatusReply::Error { status: 401 },
+            StatusReply::Body(premium_status()),
+        ]),
+        InvokeReply::Ndjson(chat_ndjson()),
+    );
+    let _harness = Harness::new(&gateway);
+
+    assert!(entitlement());
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        2,
+        "the original read plus exactly one retry"
+    );
+
+    // The retry has to present the refreshed credential; replaying the rejected one would
+    // be a round-trip that cannot succeed.
+    let bearers: Vec<String> = gateway
+        .authorizations
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|value| value.starts_with("Bearer "))
+        .cloned()
+        .collect();
+    assert_eq!(bearers.len(), 2);
+    assert!(bearers[0].contains(&scoped_access_token("original")));
+    assert!(bearers[1].contains(&scoped_access_token("refreshed")));
+
+    assert_eq!(
+        gateway.invoke_calls.load(Ordering::SeqCst),
+        0,
+        "reading the entitlement must never invoke the model, refresh or not"
+    );
+}
+
+#[test]
+fn a_persistent_401_status_read_refreshes_only_once_and_fails_closed() {
+    let gateway = spawn_gateway_with(
+        StatusReply::Error { status: 401 },
+        InvokeReply::Ndjson(chat_ndjson()),
+    );
+    let _harness = Harness::new(&gateway);
+
+    assert!(!entitlement());
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        2,
+        "a token minted seconds ago being rejected is not staleness: no second retry"
+    );
+}
+
+/// The refresh belongs to the entitlement read alone. Routing keeps its single attempt,
+/// so a `401` there still resolves to "hosted not selected" exactly as before.
+#[test]
+fn a_401_status_read_does_not_change_invoke_routing() {
+    let gateway = spawn_gateway_with(
+        StatusReply::Error { status: 401 },
+        InvokeReply::Ndjson(chat_ndjson()),
+    );
+    let _harness = Harness::new(&gateway);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let error = run(chat_request(), &deltas).expect_err("no BYO provider is configured");
+
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        1,
+        "routing must not spend a refresh on the status read"
+    );
+    assert_eq!(gateway.invoke_calls.load(Ordering::SeqCst), 0);
+    assert_pre_output_unavailable(error);
 }

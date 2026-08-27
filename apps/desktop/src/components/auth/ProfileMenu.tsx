@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { ArrowLeftRight, CircleUser, LogIn, LogOut, User } from "lucide-react";
 import {
+  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
@@ -14,7 +15,12 @@ import {
   DropdownMenuTrigger,
 } from "@nixus/shared";
 import { cn } from "@/lib/utils";
-import { useAuthSession, useSignIn, useSignOut } from "@/hooks/useAuth";
+import {
+  useAuthSession,
+  usePremiumEntitlement,
+  useSignIn,
+  useSignOut,
+} from "@/hooks/useAuth";
 import { useActiveProfile } from "@/hooks/useDatasets";
 
 type SessionState =
@@ -99,6 +105,10 @@ export function ProfileMenu() {
     cloudProfile !== null && session.data?.status === "LoggedIn"
       ? session.data
       : null;
+
+  // Shared with the rail label rather than derived here, so the two surfaces cannot disagree about
+  // which account is entitled. It does its own gating and costs no extra IPC.
+  const isPremium = usePremiumEntitlement();
 
   const startCloudFlow = () => {
     signIn.mutate(
@@ -186,6 +196,20 @@ export function ProfileMenu() {
                     data-testid="profile-menu-name"
                   >
                     {displayName}
+                  </div>
+                ) : null}
+                {/* A plain element for the same reason the identity rows above are — and `neutral`,
+                 * never `good` or `caution`: this is a durable entitlement, not a state that went
+                 * well or needs attention. The word carries it, so forced colors lose nothing.
+                 *
+                 * The rail's label is the same fact in `premium-ink`; this badge is the account-
+                 * scoped one, which is why the two use different treatments rather than one token. */}
+                {isPremium ? (
+                  <div
+                    className="flex items-center px-1.5 pb-1"
+                    data-testid="profile-menu-premium"
+                  >
+                    <Badge variant="neutral">{t("profile.premiumBadge")}</Badge>
                   </div>
                 ) : null}
               </>

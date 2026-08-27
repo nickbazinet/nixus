@@ -94,6 +94,11 @@ interface AuthOptions {
   activeProfile?: MockActiveProfile;
   /** What `list_datasets` answers, so the `/picker` destination renders its list rather than an error. */
   datasets?: MockDataset[];
+  /**
+   * What `get_cloud_ai_premium` answers. Omit for a non-premium account: an entitlement is never
+   * assumed, so the default is the answer that makes no claim.
+   */
+  cloudAiPremium?: CommandOutcome;
   /** Seeds `i18nextLng` before the app boots, so the FR locale is active on first paint. */
   language?: string;
 }
@@ -223,6 +228,11 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
             return opts.activeProfile === undefined
               ? Promise.reject(`Unknown command: ${cmd}`)
               : Promise.resolve(opts.activeProfile);
+
+          case "get_cloud_ai_premium":
+            return opts.cloudAiPremium === undefined
+              ? Promise.resolve(false)
+              : settle(opts.cloudAiPremium);
 
           case "list_datasets":
             return opts.datasets === undefined
@@ -560,6 +570,383 @@ test.describe("profile entry point", () => {
     await expect(trigger).toHaveAttribute("data-profile-kind", "local");
     await expect(page.getByTestId("profile-menu-profile")).toHaveCount(0);
     await expect(page.getByTestId("profile-menu-panel")).toHaveCount(0);
+  });
+});
+
+test.describe("account menu hosted-AI entitlement", () => {
+  const PREMIUM_ROW = "profile-menu-premium";
+
+  async function openAccountMenu(page: Page) {
+    await page.goto("/");
+    await page.getByTestId("profile-menu-trigger").click();
+    await expect(page.getByTestId("profile-menu-panel")).toBeVisible();
+  }
+
+  test("an eligible account shows Premium and nothing beside it", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await openAccountMenu(page);
+
+    const row = page.getByTestId(PREMIUM_ROW);
+    await expect(row).toBeVisible();
+    // The whole row's text, not `toContainText`: the badge is the entire claim now, so an
+    // explanatory sentence reappearing beside it has to fail here rather than pass unnoticed.
+    await expect(row).toHaveText("Premium");
+
+    // Beneath the identity it qualifies, not above it: an entitlement announced before the account
+    // it belongs to reads as a property of the app.
+    const emailIsFirst = await page.evaluate(() => {
+      const email = document.querySelector('[data-testid="profile-menu-email"]');
+      const premium = document.querySelector('[data-testid="profile-menu-premium"]');
+      if (email === null || premium === null) return null;
+      return Boolean(
+        email.compareDocumentPosition(premium) & Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    });
+    expect(emailIsFirst).toBe(true);
+  });
+
+  test("the badge is neutral, never a status or warning colour", async ({ page }) => {
+    // Amber is the specific mis-signal this placement rejects: it already means attention-required
+    // everywhere else in the product, and an entitlement demands nothing of the user.
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await openAccountMenu(page);
+
+    const badge = page.getByTestId(PREMIUM_ROW).locator("[data-slot='badge']");
+    await expect(badge).toHaveAttribute("data-variant", "neutral");
+  });
+
+  test("the rail label sits beside an unmodified wordmark", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await page.goto("/");
+
+    // The lockup is added to, never redrawn: the mark's own svg and the "ixus" glyphs it kerns
+    // against must both still be there, with the label as a following sibling rather than a
+    // replacement for either.
+    const lockup = page.locator("aside button[aria-expanded]").first();
+    await expect(lockup.locator("svg")).toHaveCount(1);
+    expect(
+      await lockup.evaluate((node) => (node.textContent ?? "").replace(/\s/g, ""))
+    ).toBe("ixusPremium");
+
+    const label = page.getByTestId("sidebar-premium");
+    await expect(label).toBeVisible();
+    await expect(label).toHaveText("Premium");
+
+    const wordmarkIsFirst = await page.evaluate(() => {
+      const lockupEl = document.querySelector("aside button[aria-expanded]");
+      if (lockupEl === null) return null;
+      const wordmark = [...lockupEl.querySelectorAll("span")].find(
+        (node) => node.textContent === "ixus",
+      );
+      const premium = document.querySelector('[data-testid="sidebar-premium"]');
+      if (!wordmark || premium === null) return null;
+      return Boolean(
+        wordmark.compareDocumentPosition(premium) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+    });
+    expect(wordmarkIsFirst).toBe(true);
+  });
+
+  test("the rail label uses the premium token and never the caution one", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await page.goto("/");
+    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
+
+    // Resolved from the live custom properties rather than pinned to a hex, so a palette retune
+    // stays legal while "the entitlement borrowed the attention-required colour" stays a failure.
+    const colors = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const normalise = (value: string) => {
+        const probe = document.createElement("div");
+        probe.style.color = value;
+        document.body.append(probe);
+        const resolved = getComputedStyle(probe).color;
+        probe.remove();
+        return resolved;
+      };
+      const label = document.querySelector('[data-testid="sidebar-premium"]');
+      if (label === null) return null;
+      return {
+        label: getComputedStyle(label).color,
+        premium: normalise(root.getPropertyValue("--premium-ink").trim()),
+        caution: normalise(root.getPropertyValue("--caution").trim()),
+        cautionInk: normalise(root.getPropertyValue("--caution-ink").trim()),
+      };
+    });
+
+    expect(colors).not.toBeNull();
+    if (colors === null) return;
+    expect(colors.label).toBe(colors.premium);
+    expect(colors.label).not.toBe(colors.caution);
+    expect(colors.label).not.toBe(colors.cautionInk);
+  });
+
+  test("a collapsed rail hides the label and hovering brings it back", async ({
+    page,
+  }) => {
+    // Seeded rather than clicked the toggle: `expanded` is also true while the rail is hovered or
+    // holds focus, so clicking the collapse button leaves it expanded by its own focus and the
+    // assertion would pass for the wrong reason.
+    await page.addInitScript(() => {
+      window.localStorage.setItem("rail-collapsed", "true");
+    });
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await page.goto("/");
+
+    // Still mounted, so it fades with every other rail label rather than popping in.
+    await expect(page.getByTestId("sidebar-premium")).toBeHidden();
+    await expect(page.getByTestId("settings-link")).toBeVisible();
+
+    // Opacity, not just the bounding box. A flex row this narrow squeezes an unstyled label to zero
+    // width all by itself, so `toBeHidden` alone passes even when the label is not participating in
+    // the rail's collapse transition at all — it has to be faded the way its siblings are.
+    //
+    // Polled rather than read once: the fade is a 200ms transition, and `toBeVisible` resolves the
+    // moment the box has width, which is partway through it. A single read samples mid-transition.
+    const opacity = () =>
+      page
+        .getByTestId("sidebar-premium")
+        .evaluate((node) => getComputedStyle(node).opacity);
+
+    await expect.poll(opacity).toBe("0");
+
+    await page.locator("aside").hover();
+    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
+    await expect.poll(opacity).toBe("1");
+  });
+
+  test("both surfaces render from a single entitlement request", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
+    await expect(page.getByTestId(PREMIUM_ROW)).toBeVisible();
+
+    // One shared query key, two observers. A second command here would mean the rail derived the
+    // entitlement independently, which is also how the two surfaces would start disagreeing.
+    const commands = await readIpcCommands(page);
+    expect(commands.filter((cmd) => cmd === "get_cloud_ai_premium")).toHaveLength(1);
+  });
+
+  test("the premium row takes no keyboard focus and leaves the menu order unchanged", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await openAccountMenu(page);
+
+    // The two actuable items, in the order they shipped. A status row that had joined the roving
+    // focus would insert itself here and strand a keyboard user on a label.
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("profile-menu-profile")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("profile-menu-sign-out")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("profile-menu-profile")).toBeFocused();
+  });
+
+  test("an ineligible account makes no premium claim and gets no free-tier label", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: false },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    await expect(page.getByText(/premium/i)).toHaveCount(0);
+    await expect(page.getByText(/^free$/i)).toHaveCount(0);
+    // The account is still fully usable: silence about the entitlement is not degradation.
+    await expect(page.getByTestId("profile-menu-profile")).toBeVisible();
+    await expect(page.getByTestId("profile-menu-sign-out")).toBeVisible();
+  });
+
+  test("a rejected status read stays silent and leaves every account action usable", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: {
+        kind: "reject",
+        error: { type: "auth", message: "boom", recoverable: true },
+      },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    await expect(page.getByTestId("profile-menu-profile")).toBeVisible();
+    await expect(page.getByTestId("profile-menu-sign-out")).toBeVisible();
+    // No toast and no error panel: this menu is mounted on every screen, so a failure surfaced here
+    // would follow the user around the whole app.
+    await expect(toastCount(page)).toHaveCount(0);
+  });
+
+  test("a slow status read never flashes a premium claim it has not confirmed", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true, delayMs: 1500 },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
+    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    await expect(page.getByTestId(PREMIUM_ROW)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
+  });
+
+  test("a local profile never asks for the entitlement at all", async ({ page }) => {
+    // NFR7: a local profile is a purely local concept, and this command resolves a Cognito token.
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      activeProfile: LOCAL_PROFILE,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await page.goto("/");
+    await expect(page.getByTestId("profile-menu-trigger")).toHaveAttribute(
+      "data-profile-kind",
+      "local",
+    );
+
+    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+  });
+
+  test("a signed-out cloud profile never asks for the entitlement", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: { status: "LoggedOut" },
+      activeProfile: CLOUD_PROFILE,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId("profile-menu-cloud-status")).toBeVisible();
+    await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
+    expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+  });
+
+  test("a logged-in session belonging to another account claims nothing here", async ({
+    page,
+  }) => {
+    // The subject-mismatch row of the matrix, and the one a kind+status gate lets through: the
+    // session is machine-wide and says LoggedIn, while `is_signed_in` says that session is not
+    // this profile's account. Without the extra condition a second cloud profile would paint the
+    // first one's entitlement.
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
+    await expect(page.getByText(/premium/i)).toHaveCount(0);
+    expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+  });
+
+  test("an expired session never asks for the entitlement", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: { status: "SessionExpired" },
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
+    expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+  });
+
+  test("in French the row resolves its label and leaks no raw key", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+      language: "fr",
+    });
+    await openAccountMenu(page);
+
+    // The FR label is deliberately the same word as EN — `Premium` is the established French term
+    // across this product — so the failure this catches is the key going missing from fr.json,
+    // which i18next renders as the bare `profile.premiumBadge` string.
+    const row = page.getByTestId(PREMIUM_ROW);
+    await expect(row).toHaveText("Premium");
+    await expect(row).not.toContainText("profile.");
+
+    // The rail label is a separate key in a separate namespace, so it can go missing from fr.json
+    // on its own; i18next would render the bare `sidebar.premium` string.
+    const rail = page.getByTestId("sidebar-premium");
+    await expect(rail).toHaveText("Premium");
+    await expect(rail).not.toContainText("sidebar.");
+  });
+
+  test("the row holds at the enforced minimum window without clipping the badge", async ({
+    page,
+  }) => {
+    // 1024 x 680 is the enforced minimum, and the badge is `whitespace-nowrap`, so a panel too
+    // narrow for a translated label truncates the only thing carrying the claim.
+    await page.setViewportSize({ width: 1024, height: 680 });
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+      language: "fr",
+    });
+    await openAccountMenu(page);
+
+    const badge = page.getByTestId(PREMIUM_ROW).locator("[data-slot='badge']");
+    await expect(badge).toBeVisible();
+    const clipped = await badge.evaluate(
+      (node) => node.scrollWidth > node.clientWidth + 1,
+    );
+    expect(clipped).toBe(false);
+
+    // And it sits inside the panel rather than overflowing it, which a clip check alone misses.
+    const badgeBox = (await badge.boundingBox())!;
+    const panelBox = (await page.getByTestId("profile-menu-panel").boundingBox())!;
+    expect(badgeBox.x).toBeGreaterThanOrEqual(panelBox.x);
+    expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(
+      panelBox.x + panelBox.width + 1,
+    );
   });
 });
 

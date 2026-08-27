@@ -877,10 +877,13 @@ mod boundary_guards {
         );
     }
 
-    /// Hosted-AI status is Rust-internal: no Tauri command, no IPC surface, and no
-    /// frontend hook may exist for it (architecture Conventions).
+    /// Narrowed from "hosted-AI status has no IPC surface at all": the account-status
+    /// feature exposes exactly one boolean, and only through `commands/cloud_ai.rs`.
+    /// Everything that made the original prohibition worth having still holds — the
+    /// cache, the adapter and the port stay command-free, so no surface can grow a
+    /// second, richer status read behind them.
     #[test]
-    fn hosted_status_has_no_ipc_surface() {
+    fn hosted_status_exposes_no_ipc_surface_beyond_the_entitlement_command() {
         for module in ["ai/hosted_state.rs", "ai/hosted_bedrock.rs", "ai/backend.rs"] {
             let source = production_source(module);
             assert!(
@@ -894,6 +897,47 @@ mod boundary_guards {
             assert!(
                 !lib.contains(symbol),
                 "lib.rs must not register {symbol} as a command"
+            );
+        }
+    }
+
+    /// The counterpart to the prohibitions above, and the one they cannot cover: every
+    /// other guard here proves a symbol is ABSENT, so a command that exists, compiles
+    /// and is fully tested but was never added to `generate_handler!` passes all of
+    /// them and then fails only at runtime, as an "Unknown command" rejection the
+    /// frontend is built to swallow silently.
+    #[test]
+    fn the_entitlement_command_is_registered_for_ipc() {
+        let lib = production_source("lib.rs");
+
+        assert!(
+            lib.contains("commands::cloud_ai::get_cloud_ai_premium"),
+            "lib.rs must register the entitlement command"
+        );
+    }
+
+    /// The entitlement command reads ONE boolean. A usage figure reaching the webview
+    /// is the failure this guards: the frontend has no legitimate use for the limit,
+    /// the charged count or the period, and shipping one would create the quota
+    /// surface the architecture defers.
+    #[test]
+    fn the_entitlement_command_carries_no_usage_figure() {
+        let source = production_source("commands/cloud_ai.rs");
+
+        assert!(
+            source.contains("-> Result<bool, AppError>"),
+            "the command must answer with a bare boolean"
+        );
+        for symbol in [
+            "monthly_request_limit",
+            "charged_count",
+            "period",
+            "HostedAiStatus",
+            "hosted_state",
+        ] {
+            assert!(
+                !source.contains(symbol),
+                "{symbol} must never cross IPC (AD-9)"
             );
         }
     }
