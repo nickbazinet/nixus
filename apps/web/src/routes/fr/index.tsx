@@ -6,13 +6,16 @@ import { BetaSection } from "@/components/BetaSection";
 import { DownloadBanner } from "@/components/DownloadBanner";
 import { FAQ } from "@/components/FAQ";
 import { FeatureGrid } from "@/components/FeatureGrid";
-import { Hero } from "@/components/Hero";
+import { HERO_BACKDROP_PRELOADS, Hero } from "@/components/Hero";
 import { applyRouteLocale } from "@/lib/i18n";
 import { buildMeta } from "@/lib/meta";
 
 export const Route = createFileRoute("/fr/")({
   beforeLoad: () => applyRouteLocale("fr"),
-  head: () => buildMeta({ locale: "fr" }),
+  head: () => {
+    const meta = buildMeta({ locale: "fr" });
+    return { ...meta, links: [...meta.links, ...HERO_BACKDROP_PRELOADS] };
+  },
   component: HomePageFr,
 });
 
