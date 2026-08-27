@@ -1,6 +1,28 @@
+import type { LinkHTMLAttributes } from "react";
 import { useTranslation } from "react-i18next";
 
 import { DownloadCTA } from "@/features/download/DownloadCTA";
+
+/**
+ * CSS backgrounds bypass the preload scanner, so keep these route-local hrefs
+ * beside the matching `before:bg-[url(...)]` declarations below.
+ */
+export const HERO_BACKDROP_PRELOADS = [
+  {
+    rel: "preload",
+    as: "image",
+    href: "/hero-bg-light.webp",
+    media: "(prefers-color-scheme: light)",
+    fetchPriority: "high",
+  },
+  {
+    rel: "preload",
+    as: "image",
+    href: "/hero-bg-dark.webp",
+    media: "(prefers-color-scheme: dark)",
+    fetchPriority: "high",
+  },
+] as const satisfies readonly LinkHTMLAttributes<HTMLLinkElement>[];
 
 export type HeroProps = {
   /**
