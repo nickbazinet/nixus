@@ -12,7 +12,7 @@ import { buildMeta } from "@/lib/meta";
 
 export const Route = createFileRoute("/fr/")({
   beforeLoad: () => applyRouteLocale("fr"),
-  head: () => buildMeta({ locale: "fr", path: "/fr/" }),
+  head: () => buildMeta({ locale: "fr" }),
   component: HomePageFr,
 });
 

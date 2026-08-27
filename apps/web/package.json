@@ -11,6 +11,7 @@
     "generate-favicons": "tsx scripts/generate-favicons.ts",
     "build": "vite build",
     "preview": "vite preview",
+    "preview:static": "tsx scripts/preview-static.ts",
     "lint": "eslint 'src/**/*.{ts,tsx}'",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

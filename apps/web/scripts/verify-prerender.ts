@@ -75,6 +75,13 @@ function checkJsonLd(scope: string, html: string): void {
   }
 }
 
+/**
+ * The hero backdrop is a CSS `::before` background, so the browser cannot
+ * discover it from the markup. The preload is what makes it discoverable, and it
+ * only helps if it reaches the prerendered HTML — which is what this checks,
+ * along with the priority hint and the colour-scheme split that keeps exactly
+ * one variant in flight. Heroless routes must ship none.
+ */
 function checkRoute(route: ExpectedRoute): void {
   const scope = route.canonicalPath;
   const html = read(`.output/public/${route.htmlFile}`);

@@ -148,6 +148,7 @@
 
   "preAlpha.banner.message": "Nixus is in pre-alpha — the product is still maturing and your feedback shapes what comes next.",
   "preAlpha.banner.learnMore": "Learn more",
+  "preAlpha.banner.learnMoreContext": "about the Nixus pre-alpha beta",
   "preAlpha.banner.dismissAria": "Dismiss pre-alpha notice",
   "preAlpha.banner.ariaLabel": "Pre-alpha notice",
 

@@ -2,7 +2,7 @@
 name: Nixus
 description: Visual identity for Nixus — a local-first desktop app that removes the upkeep from tracking your money. Direction A "Quiet Ledger". Tailwind v4 + @base-ui/react via @nkbaz/shared/ui; this DESIGN.md defines the token layer that was previously absent, plus the brand-layer deltas on top of it.
 status: final
-updated: 2026-08-23
+updated: 2026-08-27
 sources:
   - _bmad-output/planning-artifacts/product-brief-nkbaz-finance-2026-03-14.md
   - _bmad-output/planning-artifacts/prd.md
@@ -190,6 +190,17 @@ spacing:
   target-min: 24px
   focus-ring-w: 2px
   focus-offset-w: 2px
+marketing-web:
+  note: 'apps/web only. Authoritative values in apps/web/src/styles/main.css. Every clamp is anchored so the 1280px result equals the previously shipped fixed desktop value — the tier adds a phone floor, it never moves the desktop composition. Never consumed by apps/desktop, which keeps the fixed scale above.'
+  text-display-xl: 'clamp(2.25rem, 1.5rem + 3.75vw, 4rem)'
+  text-display-l: 'clamp(1.875rem, 1.25rem + 3.125vw, 3rem)'
+  text-lead: 'clamp(1.0625rem, 1rem + 0.3125vw, 1.25rem)'
+  gutter-x: 'clamp(1rem, 0.3333rem + 3.3333vw, 2rem)'
+  section-y: 'clamp(2.5rem, 1.3333rem + 5.8333vw, 6rem)'
+  hero-y-start: 'clamp(3rem, 1.3333rem + 8.3333vw, 8rem)'
+  section-lead: 'clamp(2rem, 1.1667rem + 4.1667vw, 4rem)'
+  tap-min: 44px
+  header-h: '56px / 64px from 640px / 80px from 1024px'
 components:
   card:
     background: '{colors.card}'
@@ -442,6 +453,20 @@ A 4-based scale, `{spacing.1}`–`{spacing.10}`, plus named tokens for the recur
 
 The shell is a `{spacing.rail-w}` icon rail plus a fluid main column. **The scroll container is the main column, not an inner centered wrapper** — the current `overflow-y-auto` on the `max-w-[1280px] mx-auto` element puts the scrollbar *inside* the centered content, visible in the shipped dashboard screenshot. Page width is identical on every surface; AI routes do not get their own measure.
 
+## Marketing site — responsive tier
+
+Everything above describes the **desktop app**, whose viewport is a resizable window with an enforced 1024 × 680 floor. The marketing site (`apps/web`) has no floor: it is served to 320px phones, and the `{marketing-web}` token family below is the one place where a *fluid* scale is permitted, because a fixed 48/64px display type and a fixed 64/96px section rhythm are what make a 375px page read as a broken desktop page. The app's fixed scale above stays fixed — this section adds a tier, it does not relax the spine.
+
+Four rules bind the tier, and they are stated here so the marketing components have a token to reach for instead of hand-rolling a breakpoint each.
+
+**First, marketing display type is fluid, not stepped.** `{marketing-web.text-display-xl}` and `{marketing-web.text-display-l}` interpolate linearly from a phone floor to the existing desktop ceiling, and the interpolation is anchored so that **1280px reproduces the previous fixed value byte-for-byte** — 64px and 48px respectively. That anchoring is the whole point: the phone gets a proportionate headline without the desktop composition moving a pixel, so a "make it fit on a phone" change can never be mistaken for a redesign. `{marketing-web.text-lead}` follows the same shape from 17px to 20px. A fluid role replaces the `text-display-l md:text-display-xl` pair the hero used to carry; a marketing heading now names **one** role and the viewport resolves it.
+
+**Second, the section rhythm is one token, not a `py-16 md:py-24` pair.** `{marketing-web.section-y}` is the vertical padding of every marketing section band, `{marketing-web.hero-y-start}` the taller lead-in above the hero headline, `{marketing-web.section-lead}` the gap between a section's heading block and its content, and `{marketing-web.gutter-x}` the page inline gutter. All four are anchored the same way — the 1280px value equals the shipped desktop value, the 320px value is the phone value — so a page keeps its full narrative on a phone without inheriting desktop dead space. Marketing sections do **not** restate raw padding utilities; a band that needs different rhythm needs a token, not an arbitrary value.
+
+**Third, phones and tablets get a 44px touch floor, and the desktop app's 24px `{spacing.target-min}` is not it.** `{spacing.target-min}` is correct for a pointer-driven register at 1024px and up and stays correct there. Below 1024px, every *meaningful marketing control* — header nav destination, theme and language triggers, banner dismiss, download and email affordances, footer destinations, accordion triggers — measures at least `{marketing-web.tap-min}` (44 × 44 CSS px) in both axes. Two exclusions are deliberate: a link inside a running sentence keeps the sentence's line box (forcing 44px there breaks the paragraph and WCAG 2.5.8 exempts inline text), and nothing about the desktop tier changes, because widening a 28px trigger to 44px at 1280px *is* a desktop layout change.
+
+**Fourth, the sticky marketing header carries chrome only on a phone.** The header is `{marketing-web.header-h}` — 56px on a phone, 64px from 640px, and the shipped 80px from 1024px. Inside it, a phone gets the brand lockup, the Beta destination, and the theme and language triggers, and nothing else. **The full send-to-computer download affordance never renders in sticky chrome below 1024px**: it is a multi-line block, it does not fit in a 56px bar, and duplicating the hero's single conversion affordance inside the chrome is what made the header overlap page content. The Beta destination is the inverse correction — it was hidden below 640px, which silently deleted a destination from exactly the visitors who cannot reach it any other way. One full conversion affordance per phone page, and it lives in page content.
+
 ## Elevation & Depth
 
 **`shadow: none`. This is a rule, not a default.**
@@ -528,4 +553,7 @@ The profile picker is the first thing every launch paints, and it is the one sur
 | Verify contrast in **both** modes, in CI | Assume a light-legible color survives dark |
 | Handle `forced-colors` for Windows | Ship hairline-only elevation to HCM users untested |
 | Design at 1024 × 680 first | Assume 1280 and let the minimum window break |
+| Reach for a `{marketing-web}` token on the marketing site | Hand-roll `py-16 md:py-24` or `text-display-l md:text-display-xl` per section |
+| Give every marketing control `{marketing-web.tap-min}` below 1024px | Ship a 28px phone trigger, or widen a desktop trigger to 44px |
+| Keep phone sticky chrome to brand, Beta and the toggles | Put the full send-to-computer block in a 56px header bar |
 | Bundle woff2 fonts locally | `@import` Google Fonts in a local-first app |

@@ -8,10 +8,10 @@ export function FeatureGrid() {
     <section
       data-testid="feature-grid"
       aria-labelledby="features-heading"
-      className="bg-accent/40 dark:bg-accent/30 py-16 md:py-24"
+      className="mkt-section-y bg-accent/40 dark:bg-accent/30"
     >
-      <div className="mx-auto max-w-[1280px] px-6 md:px-8">
-        <div className="mb-12 text-center md:mb-16">
+      <div className="mkt-page-x mx-auto max-w-[1280px]">
+        <div className="mkt-section-lead text-center">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
             {t("features.eyebrow")}
           </p>
@@ -24,7 +24,7 @@ export function FeatureGrid() {
         </div>
         <ul
           role="list"
-          className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3"
+          className="grid grid-cols-1 gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3"
         >
           {features.map((feature) => {
             const Icon = feature.icon;
@@ -32,7 +32,7 @@ export function FeatureGrid() {
               <li key={feature.id}>
                 <article
                   data-testid="feature-card"
-                  className="h-full rounded-lg border border-border bg-card p-6 transition-colors hover:border-slate-300"
+                  className="h-full rounded-lg border border-border bg-card p-5 transition-colors hover:border-slate-300 sm:p-6"
                 >
                   <div className="mb-4 inline-flex size-9 items-center justify-center rounded-md bg-accent text-accent-foreground">
                     <Icon aria-hidden="true" className="size-5" />

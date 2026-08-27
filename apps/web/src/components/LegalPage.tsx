@@ -44,16 +44,16 @@ export function LegalPage({
   const { t } = useTranslation();
 
   return (
-    <article className="mx-auto max-w-[70ch] px-6 py-16 md:px-8">
-      <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
+    <article className="mkt-page-x mkt-section-y mx-auto max-w-[70ch]">
+      <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl md:text-4xl">
         {t(headingKey)}
       </h1>
       <p className="mt-3 text-sm text-muted-foreground">{t("legal.lastUpdated")}</p>
       <p className="mt-6 text-base leading-relaxed text-foreground">{t(introKey)}</p>
 
       {sections.map((section) => (
-        <section key={section.headingKey} className="mt-10">
-          <h2 className="text-xl font-semibold tracking-tight text-foreground">
+        <section key={section.headingKey} className="mt-8 md:mt-10">
+          <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
             {t(section.headingKey)}
           </h2>
           {section.bodyKeys.map((bodyKey) => (
@@ -67,11 +67,11 @@ export function LegalPage({
         </section>
       ))}
 
-      <section className="mt-10">
-        <h2 className="text-xl font-semibold tracking-tight text-foreground">
+      <section className="mt-8 md:mt-10">
+        <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
           {t(contactHeadingKey)}
         </h2>
-        <p className="mt-4 text-base leading-relaxed text-muted-foreground">
+        <p className="mt-4 text-base leading-relaxed break-words text-muted-foreground">
           {t(contactBodyKey)}{" "}
           <a
             href={`mailto:${CONTACT_EMAIL}`}
@@ -82,10 +82,10 @@ export function LegalPage({
         </p>
       </section>
 
-      <p className="mt-12">
+      <p className="mt-10 md:mt-12">
         <a
           href={homePath(locale)}
-          className="rounded-sm text-sm underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="mkt-tap inline-flex items-center rounded-sm text-sm underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {t("legal.backHome")}
         </a>

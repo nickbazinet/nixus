@@ -37,7 +37,6 @@ type MetaInput = {
   noindex?: boolean;
 };
 
-/** OG locale strings per supported language. */
 const OG_LOCALE: Record<Locale, string> = {
   en: "en_US",
   fr: "fr_CA",

@@ -18,10 +18,9 @@
  *     to no-JS visitors and to anyone whose IO never fires (e.g. some
  *     test environments). The motion is a *bonus* on top of a complete
  *     static "before/after".
- *   - In `jsdom` (unit tests) and any environment without
- *     `IntersectionObserver`, we fall back to mounting in the animated
- *     state immediately so tests can assert the same DOM the user sees
- *     after scrolling.
+ *   - The first render is identical on the server and in the browser
+ *     (un-animated) so hydration cannot mismatch on the gating class;
+ *     the effect below turns the animation on after mount.
  *   - Skeleton state intentionally omitted: this is a pure-React
  *     component with no async data, so the static "after" composition
  *     IS its skeleton — no layout shift can happen because we never
@@ -45,70 +44,9 @@ import { useTranslation } from "react-i18next";
 
 import { Badge } from "@nixus/shared";
 
+import { categorizedRows, statementLines } from "@/content/aiDemo";
+
 import "./AIDemo.css";
-
-/**
- * The raw statement lines as they'd appear on a Tangerine Money-Back
- * credit-card statement. Real Canadian merchants, realistic CAD amounts,
- * uppercase "raw" descriptors (the way a bank export actually arrives).
- *
- * Order is intentional — it's the same order the categorized column
- * uses, so the eye can pair "before" and "after" rows visually without
- * scanning back and forth.
- */
-const STATEMENT_LINES = [
-  { merchant: "COSTCO WHOLESALE #482", amount: 184.32 },
-  { merchant: "TIM HORTONS #1273", amount: 6.45 },
-  { merchant: "PETRO-CANADA 0214", amount: 72.1 },
-  { merchant: "NETFLIX.COM", amount: 18.99 },
-  { merchant: "WEALTHSIMPLE INVEST", amount: 50.0 },
-] as const;
-
-/**
- * The "after" composition: same five transactions, normalized merchant
- * names, plus a category label and badge color. Colors are
- * Tailwind palette utilities (not theme tokens) because the categories
- * are signal colors, not theme accents — they should look the same on
- * every brand re-skin.
- *
- * The overall variant ("secondary") sets up the Badge's spacing/border
- * radius via the shared component; we override the background/text via
- * `className` to land the category-specific palette.
- */
-// Category labels are translation keys ("groceries", "diningOut", ...);
-// merchant strings are kept literal because they're brand names.
-const CATEGORIZED = [
-  {
-    merchant: "Costco",
-    amount: 184.32,
-    categoryKey: "groceries",
-    badgeClass: "bg-emerald-100 text-emerald-800",
-  },
-  {
-    merchant: "Tim Hortons",
-    amount: 6.45,
-    categoryKey: "diningOut",
-    badgeClass: "bg-amber-100 text-amber-800",
-  },
-  {
-    merchant: "Petro-Canada",
-    amount: 72.1,
-    categoryKey: "gas",
-    badgeClass: "bg-indigo-100 text-indigo-800",
-  },
-  {
-    merchant: "Netflix",
-    amount: 18.99,
-    categoryKey: "subscriptions",
-    badgeClass: "bg-purple-100 text-purple-800",
-  },
-  {
-    merchant: "Wealthsimple",
-    amount: 50.0,
-    categoryKey: "investing",
-    badgeClass: "bg-purple-100 text-purple-800",
-  },
-] as const;
 
 /**
  * Format a CAD amount with two decimals and a `$` prefix. The statement
@@ -120,54 +58,34 @@ function formatCAD(amount: number): string {
 }
 
 /**
- * `true` when we should mount in the animated state immediately,
- * without waiting for an IntersectionObserver. Two cases hit this:
+ * Animation gating.
  *
- *   1. SSR / no-JS environments: there's no observer to fire, but we
- *      want the prerendered HTML to include the animation class anyway
- *      so the very first paint after hydration shows the motion.
- *   2. `jsdom` (unit tests): no IO either. Tests should see the same
- *      DOM a real visitor sees after scrolling, which means the
- *      `ai-demo--animated` class needs to be present.
- *
- * Real browsers always have `IntersectionObserver`, so they take the
- * deferred path and the animation only kicks in on viewport entry.
+ * The first render — server AND browser — must agree that it should not, or
+ * React reports an attribute mismatch on the gating class and refuses to patch
+ * it, which silently kills the animation in a real browser. So the state starts
+ * `false` everywhere and only the post-mount effect turns it on: via
+ * IntersectionObserver where it exists, immediately where it does not (jsdom,
+ * older browsers). The static composition is complete without the class, so
+ * no-JS visitors lose nothing but the motion.
  */
-function shouldStartAnimatedImmediately(): boolean {
-  return (
-    typeof window === "undefined" ||
-    typeof IntersectionObserver === "undefined"
-  );
-}
-
 export function AIDemo() {
   const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
-  // We start animated on the server / in jsdom so the static composition
-  // is the *animated* state from the get-go (the CSS handles
-  // `prefers-reduced-motion` so this is never a problem). In real
-  // browsers we delay until the IO fires to avoid burning CPU on a
-  // demo nobody is looking at yet.
-  const [isVisible, setIsVisible] = useState<boolean>(
-    shouldStartAnimatedImmediately,
-  );
+  const [isAnimated, setIsAnimated] = useState(false);
 
   useEffect(() => {
-    if (isVisible) return;
+    if (isAnimated) return;
     const node = ref.current;
     if (!node) return;
     if (typeof IntersectionObserver === "undefined") {
-      // Defensive: we already covered this case in the initial state,
-      // but if SSR-hydration somehow lands here without IO support, just
-      // flip animation on so the visitor still sees something.
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- defensive fallback when IntersectionObserver is unavailable at hydration time
-      setIsVisible(true);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- no observer to wait on; start the animation immediately so the motion is not lost
+      setIsAnimated(true);
       return;
     }
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting) {
-          setIsVisible(true);
+          setIsAnimated(true);
           // Once we've started, we never stop. The CSS animation loops
           // by itself; observing further would just churn callbacks for
           // no behavioral change.
@@ -181,18 +99,14 @@ export function AIDemo() {
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isVisible]);
+  }, [isAnimated]);
 
   return (
     <section
       data-testid="ai-demo-section"
-      // Generous vertical padding so the demo reads as its own beat
-      // between the hero and the next marketing section. `bg-background`
-      // (rather than the hero's gradient) creates a clean transition
-      // out of the gradient.
-      className="bg-background py-16 md:py-24"
+      className="mkt-section-y bg-background"
     >
-      <div className="mx-auto mb-12 max-w-[1024px] px-6 text-center md:mb-14 md:px-8">
+      <div className="mkt-page-x mkt-section-lead mx-auto max-w-[1024px] text-center">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
           {t("aiDemo.eyebrow")}
         </p>
@@ -207,13 +121,14 @@ export function AIDemo() {
         // 1280px) so the demo feels deliberate, not edge-bleeding. Mac
         // window UIs at this scale read as a "screenshot of the app",
         // which is the metaphor we want.
-        className="mx-auto max-w-[1024px] px-6 md:px-8"
+        className="mkt-page-x mx-auto max-w-[1024px]"
       >
         <div
           ref={ref}
           data-testid="ai-demo"
+          aria-hidden="true"
           className={`ai-demo overflow-hidden rounded-xl border border-border bg-background shadow-[0_1px_3px_rgba(15,23,42,0.06),0_8px_24px_rgba(15,23,42,0.08)] ${
-            isVisible ? "ai-demo--animated" : ""
+            isAnimated ? "ai-demo--animated" : ""
           }`}
         >
           {/* Mac-style title bar.
@@ -221,7 +136,7 @@ export function AIDemo() {
             * Three traffic-light dots (red/yellow/green) plus a centered
             * window title. The dots are decorative — `aria-hidden` so
             * the screen reader's `<figure>` summary isn't polluted. */}
-          <div className="flex items-center gap-2.5 border-b border-border bg-slate-50 px-3.5 py-2.5">
+          <div className="flex items-center gap-2 border-b border-border bg-slate-50 px-3 py-2 dark:bg-card sm:gap-2.5 sm:px-3.5 sm:py-2.5">
             <span
               className="size-2.5 rounded-full bg-[#ff5f57]"
               aria-hidden="true"
@@ -234,7 +149,7 @@ export function AIDemo() {
               className="size-2.5 rounded-full bg-[#28c840]"
               aria-hidden="true"
             />
-            <span className="ml-2 text-xs text-muted-foreground">
+            <span className="ml-1 truncate text-xs text-muted-foreground sm:ml-2">
               {t("aiDemo.titlebarLabel")}
             </span>
           </div>
@@ -252,26 +167,28 @@ export function AIDemo() {
               * `relative` positioning hosts the absolute scan-line. */}
             <div
               data-testid="ai-demo-statement"
-              className="relative border-b border-border bg-slate-50/60 p-5 md:border-b-0 md:border-r"
+              className="relative border-b border-border bg-slate-50/60 p-4 dark:bg-card sm:p-5 md:border-b-0 md:border-r"
             >
-              <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("aiDemo.statementHeading")}
                 </span>
-                <span className="text-[11px] text-muted-foreground">
+                <span className="shrink-0 text-xs text-muted-foreground">
                   {t("aiDemo.statementDateRange")}
                 </span>
               </div>
 
-              <ul className="space-y-2 font-mono text-sm">
-                {STATEMENT_LINES.map((line) => (
+              <ul className="space-y-2 font-mono text-xs sm:text-sm">
+                {statementLines.map((line) => (
                   <li
                     key={line.merchant}
                     data-testid="ai-demo-statement-line"
-                    className="flex items-center justify-between text-foreground"
+                    className="flex items-center justify-between gap-2 text-foreground"
                   >
-                    <span className="font-semibold">{line.merchant}</span>
-                    <span>{formatCAD(line.amount)}</span>
+                    <span className="truncate font-semibold">
+                      {line.merchant}
+                    </span>
+                    <span className="shrink-0">{formatCAD(line.amount)}</span>
                   </li>
                 ))}
               </ul>
@@ -296,19 +213,21 @@ export function AIDemo() {
               * order the scan moves down the left column. */}
             <div
               data-testid="ai-demo-categorized"
-              className="bg-background p-5"
+              className="bg-background p-4 sm:p-5"
             >
-              <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("aiDemo.categorizedHeading")}
                 </span>
-                <span className="text-[11px] text-muted-foreground">
-                  {t("aiDemo.transactionCount", { count: CATEGORIZED.length })}
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {t("aiDemo.transactionCount", {
+                    count: categorizedRows.length,
+                  })}
                 </span>
               </div>
 
-              <ul className="space-y-2 text-sm">
-                {CATEGORIZED.map((row, i) => (
+              <ul className="space-y-2 text-xs sm:text-sm">
+                {categorizedRows.map((row, i) => (
                   <li
                     key={row.merchant}
                     data-testid="ai-demo-categorized-row"
@@ -316,9 +235,9 @@ export function AIDemo() {
                     // the five together fan out across ~2s, matching
                     // the scan-line traversal in the left column.
                     style={{ animationDelay: `${0.5 + i * 0.4}s` }}
-                    className="ai-demo__txn flex items-center justify-between gap-3 rounded-md border border-border/60 bg-slate-50/40 px-3 py-2"
+                    className="ai-demo__txn flex items-center justify-between gap-2 rounded-md border border-border/60 bg-slate-50/40 px-2.5 py-2 dark:bg-card sm:gap-3 sm:px-3"
                   >
-                    <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                       <span className="truncate font-medium text-foreground">
                         {row.merchant}
                       </span>
@@ -329,7 +248,7 @@ export function AIDemo() {
                         {t(`aiDemo.category.${row.categoryKey}`)}
                       </Badge>
                     </div>
-                    <span className="font-mono text-foreground">
+                    <span className="shrink-0 font-mono text-foreground">
                       {formatCAD(row.amount)}
                     </span>
                   </li>

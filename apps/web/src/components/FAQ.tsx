@@ -43,10 +43,10 @@ export function FAQ() {
       id="faq"
       data-testid="faq"
       aria-labelledby="faq-heading"
-      className="bg-background py-16 md:py-24"
+      className="mkt-section-y bg-background"
     >
-      <div className="mx-auto max-w-[720px] px-6 md:px-8">
-        <div className="mb-12 text-center md:mb-16">
+      <div className="mkt-page-x mx-auto max-w-[720px]">
+        <div className="mkt-section-lead text-center">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
             {t("faq.eyebrow")}
           </p>
@@ -85,7 +85,7 @@ export function FAQ() {
               value={entry.id}
               id={entry.id === "preAlpha" ? "faq-pre-alpha" : undefined}
             >
-              <AccordionTrigger>
+              <AccordionTrigger className="mkt-tap items-center">
                 <span className="pr-4 text-base font-medium">
                   {t(`faq.${entry.id}.question`)}
                 </span>
@@ -100,7 +100,7 @@ export function FAQ() {
                       <a
                         key={link.href}
                         href={link.href}
-                        className="text-primary underline-offset-4 hover:underline"
+                        className="mkt-tap inline-flex items-center text-primary underline-offset-4 hover:underline"
                         target={link.external ? "_blank" : undefined}
                         rel={link.external ? "noreferrer" : undefined}
                       >
@@ -114,7 +114,7 @@ export function FAQ() {
           ))}
         </Accordion>
 
-        <p className="mt-12 text-center text-sm text-muted-foreground">
+        <p className="mt-8 text-center text-sm break-words text-muted-foreground md:mt-12">
           {t("faq.stillHaveQuestions")}{" "}
           <a
             href={`mailto:${SUPPORT_EMAIL}`}

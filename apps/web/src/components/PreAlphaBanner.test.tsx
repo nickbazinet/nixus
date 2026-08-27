@@ -59,6 +59,21 @@ describe("<PreAlphaBanner />", () => {
     expect(link).toHaveAttribute("href", "/beta");
   });
 
+  /* "Learn more" on its own is the generic link text Lighthouse's `link-text`
+   * audit flags, and a screen-reader user tabbing a link list gets nothing from
+   * it. The audit and crawlers read the link's TEXT, not `aria-label`, so the
+   * description has to be content — carried in an out-of-flow `sr-only` node so
+   * the visible copy is byte-identical to what it always was. */
+  it("describes the link in text that is accessible-only, leaving visible copy intact", () => {
+    renderWithProviders(<PreAlphaBanner />);
+    const link = screen.getByRole("link", { name: /Learn more/i });
+    const srSuffix = link.querySelector(".sr-only")?.textContent ?? "";
+
+    expect(srSuffix.trim().length).toBeGreaterThan(0);
+    expect(link.textContent).toBe(`Learn more${srSuffix}`);
+    expect(link).not.toHaveAttribute("aria-label");
+  });
+
   it("has data-pre-alpha-banner on the root element", () => {
     renderWithProviders(<PreAlphaBanner />);
     expect(screen.getByTestId("pre-alpha-banner")).toHaveAttribute(
@@ -104,8 +119,10 @@ describe("<PreAlphaBanner />", () => {
     expect(
       screen.getByRole("button", { name: "Fermer l'avis pré-alpha" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /En savoir plus/i }),
-    ).toHaveAttribute("href", "/fr/beta");
+    const link = screen.getByRole("link", { name: /En savoir plus/i });
+    expect(link).toHaveAttribute("href", "/fr/beta");
+    const srSuffix = link.querySelector(".sr-only")?.textContent ?? "";
+    expect(srSuffix.trim().length).toBeGreaterThan(0);
+    expect(link.textContent).toBe(`En savoir plus${srSuffix}`);
   });
 });

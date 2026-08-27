@@ -7,39 +7,104 @@
  * ignores node_modules by default — point it at the real source path. */
 @source "../../../../packages/shared/src/**/*.{ts,tsx}";
 
-/* Marketing-site-specific extensions.
+/* Marketing-site-specific extensions — the `{marketing-web}` token family in
+ * DESIGN.md.
  *
- * Story 3.1 (Hero composition) introduces the Display XL / Display L /
- * Lead typography scale used by the centered hero. Tailwind v4's CSS-first
- * config means defining these as @theme custom properties auto-registers
- * them as utility classes (`text-display-xl`, `text-display-l`,
- * `text-lead`). The hero combines them responsively:
+ * Display XL / Display L / Lead are the marketing type roles. They used to be
+ * fixed (64 / 48 / 20px) and each call site paired them by hand
+ * (`text-display-l md:text-display-xl`), which is what made a 375px page render
+ * desktop-sized headings. They are now fluid, and every clamp is anchored so
+ * that a 1280px viewport resolves to the previous fixed value exactly — the
+ * phone gets a proportionate scale and the desktop composition does not move.
  *
- *   <h1 className="text-display-l md:text-display-xl ..."> => 48px on
- *   small viewports, 64px from md upwards.
+ * Tailwind v4's CSS-first config auto-registers these as utility classes
+ * (`text-display-xl`, `text-display-l`, `text-lead`), and the
+ * `--text-*--line-height` / `--letter-spacing` / `--font-weight` companions
+ * ride along with the utility automatically.
  *
- * The `--text-*--line-height`, `--text-*--letter-spacing`, and
- * `--text-*--font-weight` companion variables ride along with the
- * `text-display-xl` utility automatically — that's a Tailwind v4 feature.
- *
- * The hero gradient backdrop is composed using Tailwind v4 utilities
- * directly (`bg-gradient-to-b from-slate-50 to-background`) instead of
- * extending the theme with a one-off `bg-hero` token; keeps the surface
- * area smaller and the intent visible at the call site.
+ * The hero gradient backdrop is composed using Tailwind v4 utilities directly
+ * (`bg-gradient-to-b from-slate-50 to-background`) instead of extending the
+ * theme with a one-off `bg-hero` token; keeps the surface area smaller and the
+ * intent visible at the call site.
  */
 @theme {
-  --text-display-xl: 4rem;
+  --text-display-xl: clamp(2.25rem, 1.5rem + 3.75vw, 4rem);
   --text-display-xl--line-height: 1.05;
   --text-display-xl--letter-spacing: -0.02em;
   --text-display-xl--font-weight: 700;
 
-  --text-display-l: 3rem;
+  --text-display-l: clamp(1.875rem, 1.25rem + 3.125vw, 3rem);
   --text-display-l--line-height: 1.1;
   --text-display-l--letter-spacing: -0.02em;
   --text-display-l--font-weight: 700;
 
-  --text-lead: 1.25rem;
+  --text-lead: clamp(1.0625rem, 1rem + 0.3125vw, 1.25rem);
   --text-lead--line-height: 1.5;
+}
+
+/* Responsive rhythm + touch contract.
+ *
+ * Declared as plain custom properties (not `@theme`) and consumed by the plain
+ * classes below rather than by generated spacing utilities, for one concrete
+ * reason: `@nixus/shared`'s `cn()` configures tailwind-merge with an explicit
+ * allow-list of named spacing tokens. A web-local `--spacing-*` addition is
+ * invisible to that list, so it would silently stop conflicting with the class
+ * it is meant to override inside any `cn()` call. A separate namespace cannot
+ * be mistaken for one of those tokens.
+ *
+ * Every value is anchored at both ends: the 320px result is the phone value and
+ * the 1280px result is the shipped desktop value.
+ */
+:root {
+  /* 16px at 320px -> 32px at 800px and up (the old `px-6 md:px-8`). */
+  --mkt-gutter-x: clamp(1rem, 0.3333rem + 3.3333vw, 2rem);
+  /* 40px at 320px -> 96px at 1280px (the old `py-16 md:py-24`). */
+  --mkt-section-y: clamp(2.5rem, 1.3333rem + 5.8333vw, 6rem);
+  /* 48px at 320px -> 128px at 1280px (the old `pt-24 md:pt-32`). */
+  --mkt-hero-y-start: clamp(3rem, 1.3333rem + 8.3333vw, 8rem);
+  /* 32px at 320px -> 64px at 1280px (the old `mb-12 md:mb-16`). */
+  --mkt-section-lead: clamp(2rem, 1.1667rem + 4.1667vw, 4rem);
+  --mkt-tap-min: 2.75rem;
+  /* {spacing.4} — the inline padding a 44px-tall CTA needs to stay proportionate. */
+  --mkt-tap-px: 1rem;
+}
+
+.mkt-page-x {
+  padding-inline: var(--mkt-gutter-x);
+}
+
+.mkt-section-y {
+  padding-block: var(--mkt-section-y);
+}
+
+.mkt-hero-y {
+  padding-block: var(--mkt-hero-y-start) var(--mkt-section-y);
+}
+
+.mkt-section-lead {
+  margin-block-end: var(--mkt-section-lead);
+}
+
+/* The 44px phone/tablet touch floor.
+ *
+ * Unlayered on purpose. `@nixus/shared`'s Button and AccordionTrigger both
+ * carry the desktop app's 24px `min-h-target-min` from `@layer utilities`, and
+ * unlayered declarations win over layered ones regardless of source order — so
+ * this floor is deterministic rather than dependent on Tailwind's sort.
+ *
+ * Gated below 1024px because widening a 28px trigger to 44px on the desktop
+ * tier would be a desktop layout change, which this refactor does not make. */
+@media (width < 64rem) {
+  .mkt-tap {
+    min-height: var(--mkt-tap-min);
+    min-width: var(--mkt-tap-min);
+  }
+
+  .mkt-tap-cta {
+    min-height: var(--mkt-tap-min);
+    min-width: var(--mkt-tap-min);
+    padding-inline: var(--mkt-tap-px);
+  }
 }
 
 html,

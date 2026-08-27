@@ -48,8 +48,26 @@ describe("SiteHeader", () => {
     );
   });
 
-  it("uses the larger h-20 header height", () => {
+  /* jsdom applies no stylesheet, so these three assert the responsive contract
+   * at the class level. The measured behaviour — 56/64/80px bar, 44px targets,
+   * no overlap — is locked in `tests/e2e/responsive.spec.ts`, which runs a real
+   * browser at 320/375/390/430/768/1280px. */
+  it("steps the header height down for phone and tablet chrome", () => {
     const { container } = renderWithProviders(<SiteHeader />);
-    expect(container.querySelector(".h-20")).not.toBeNull();
+    const bar = container.querySelector("header > div");
+    expect(bar).toHaveClass("h-14", "sm:h-16", "lg:h-20");
+  });
+
+  it("keeps the Beta destination reachable on a phone", () => {
+    renderWithProviders(<SiteHeader />);
+    // It used to be `hidden sm:inline-flex`, which deleted the destination for
+    // exactly the visitors who cannot reach it any other way.
+    expect(screen.getByTestId("header-beta-link")).not.toHaveClass("hidden");
+  });
+
+  it("keeps the full download affordance out of phone sticky chrome", () => {
+    renderWithProviders(<SiteHeader />);
+    const ctaSlot = screen.getByTestId("download-cta").parentElement;
+    expect(ctaSlot).toHaveClass("hidden", "lg:block");
   });
 });

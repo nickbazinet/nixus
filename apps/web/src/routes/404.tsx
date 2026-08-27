@@ -24,12 +24,12 @@ export const Route = createFileRoute("/404")({
 function NotFoundPage() {
   const { t } = useTranslation();
   return (
-    <section className="mx-auto flex max-w-[1280px] flex-col items-center justify-center gap-4 px-6 py-24 text-center md:px-8">
-      <h1 className="text-4xl font-bold tracking-tight">404</h1>
-      <p className="text-lg text-muted-foreground">{t("notFound.heading")}</p>
+    <section className="mkt-page-x mkt-section-y mx-auto flex max-w-[1280px] flex-col items-center justify-center gap-4 text-center">
+      <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">404</h1>
+      <p className="text-lead text-muted-foreground">{t("notFound.heading")}</p>
       <Link
         to="/"
-        className="text-sm font-medium underline underline-offset-4"
+        className="mkt-tap inline-flex items-center text-sm font-medium underline underline-offset-4"
       >
         {t("notFound.backHome")}
       </Link>

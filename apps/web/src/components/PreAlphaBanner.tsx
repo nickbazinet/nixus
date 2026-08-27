@@ -48,20 +48,37 @@ export function PreAlphaBanner() {
         "dark:border-amber-800/40 dark:bg-amber-900/30 dark:text-amber-100",
       )}
     >
-      <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-3 gap-y-1 px-6 py-2 text-sm md:px-8">
+      <div className="mkt-page-x mx-auto flex max-w-[1280px] items-center gap-2 py-2 text-sm sm:gap-3">
         <AlertTriangle aria-hidden="true" className="size-4 shrink-0" />
-        <p className="flex-1 min-w-0">{t("preAlpha.banner.message")}</p>
-        <a
-          href={learnMoreHref}
-          className="rounded-sm font-medium underline underline-offset-4 outline-none hover:text-amber-950 focus-visible:ring-3 focus-visible:ring-amber-600/40 dark:hover:text-amber-50"
-        >
-          {t("preAlpha.banner.learnMore")}
-        </a>
+        {/* The link sits inside the sentence rather than beside it as a third
+            flex item: as a sibling it reserved ~130px of the row, squeezing the
+            message into 4-6 lines on a phone and making the banner 190-250px
+            tall. Inline, it keeps the sentence's line box — which DESIGN.md's
+            touch-target rule exempts for exactly this case. */}
+        <p className="min-w-0 flex-1">
+          {t("preAlpha.banner.message")}{" "}
+          <a
+            href={learnMoreHref}
+            className="rounded-sm px-0.5 py-1 font-medium underline underline-offset-4 outline-none hover:text-amber-950 focus-visible:ring-3 focus-visible:ring-amber-600/40 dark:hover:text-amber-50"
+          >
+            {t("preAlpha.banner.learnMore")}
+            {/* "Learn more" alone is on Lighthouse's generic-link-text blocklist
+                and tells a screen-reader user nothing in a link list. The suffix
+                is out of flow (`sr-only`), so the visible copy is untouched
+                while the link's *text* — which is what the audit and crawlers
+                read, not `aria-label` — becomes descriptive. Carrying it as
+                content rather than an `aria-label` keeps one source of truth for
+                the accessible name and satisfies WCAG 2.5.3 by construction. */}
+            <span className="sr-only">
+              {` ${t("preAlpha.banner.learnMoreContext")}`}
+            </span>
+          </a>
+        </p>
         <button
           type="button"
           onClick={handleDismiss}
           aria-label={t("preAlpha.banner.dismissAria")}
-          className="-mr-1 ml-1 inline-flex size-7 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-amber-100/60 focus-visible:ring-3 focus-visible:ring-amber-600/40 dark:hover:bg-amber-800/40"
+          className="mkt-tap -mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-amber-100/60 focus-visible:ring-3 focus-visible:ring-amber-600/40 dark:hover:bg-amber-800/40"
         >
           <X aria-hidden="true" className="size-4" />
         </button>

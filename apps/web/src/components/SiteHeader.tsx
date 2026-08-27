@@ -13,10 +13,17 @@ import { ThemeToggle } from "./ThemeToggle";
  * background + subtle border once the visitor scrolls past the hero.
  *
  * Composition (left → right):
- *   [ Logo mark + "Nixus" wordmark ] [ ThemeToggle ] [ LanguageToggle ] [ DownloadCTA ]
+ *   phone/tablet: [ Logo mark + "Nixus" wordmark ] [ Beta ] [ Theme ] [ Lang ]
+ *   desktop:      … plus [ DownloadCTA ]
  *
- * Header is `h-20` (80px) so the larger logo (`size-9`) and the toggle row
- * sit comfortably without crowding the Download CTA.
+ * Per DESIGN.md "Marketing site — responsive tier": the header is 56px on a
+ * phone, 64px from 640px, and the shipped 80px from 1024px. The download CTA
+ * is `hidden` below 1024px rather than conditionally rendered, so the
+ * prerendered HTML keeps its no-JS download links and hydration sees the same
+ * tree at every viewport. It has to leave the phone bar because it is a
+ * multi-line block — on a mobile UA it renders the whole send-to-computer
+ * affordance, which overflowed an 80px bar and painted over page content.
+ * The hero is the single full conversion affordance on a phone.
  */
 export function SiteHeader() {
   const { t, i18n } = useTranslation();
@@ -54,28 +61,28 @@ export function SiteHeader() {
           : "border-b border-transparent bg-background/0",
       )}
     >
-      <div className="mx-auto flex h-20 max-w-[1280px] items-center justify-between px-6 md:px-8">
+      <div className="mkt-page-x mx-auto flex h-14 max-w-[1280px] items-center justify-between gap-2 sm:h-16 lg:h-20">
         <a
           href="/"
           aria-label={t("header.brandHome")}
-          className="inline-flex items-end gap-0 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="mkt-tap inline-flex shrink-0 items-end gap-0 rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
-          <NixusLogo className="size-9 shrink-0" />
+          <NixusLogo className="size-8 shrink-0 sm:size-9" />
           {/* "ixus" wordmark continues from the logo's "N". Gradient
               + bg-clip-text mirrors apps/desktop/src/components/shared/AppSidebar.tsx
               so the brand identity stays visually identical across surfaces. */}
-          <span className="text-xl font-semibold whitespace-nowrap bg-gradient-to-r from-[#A78BFA] to-[#F472B6] bg-clip-text text-transparent leading-none -ml-0.5 mb-px">
+          <span className="text-lg font-semibold whitespace-nowrap bg-gradient-to-r from-[#A78BFA] to-[#F472B6] bg-clip-text text-transparent leading-none -ml-0.5 mb-px sm:text-xl">
             ixus
           </span>
         </a>
 
-        <div className="flex items-center gap-2 md:gap-3">
+        <div className="flex items-center gap-0.5 sm:gap-2 md:gap-3">
           <a
             href={betaHref}
             data-testid="header-beta-link"
             aria-current={onBetaPage ? "page" : undefined}
             className={cn(
-              "hidden rounded-md px-2.5 py-1.5 text-sm font-medium outline-none sm:inline-flex focus-visible:ring-3 focus-visible:ring-ring/50",
+              "mkt-tap inline-flex items-center justify-center rounded-md px-2.5 py-1.5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
               onBetaPage
                 ? "text-primary"
                 : "text-muted-foreground hover:text-foreground",
@@ -85,7 +92,9 @@ export function SiteHeader() {
           </a>
           <ThemeToggle />
           <LanguageToggle />
-          <DownloadCTA size="sm" />
+          <div className="hidden lg:block">
+            <DownloadCTA size="sm" />
+          </div>
         </div>
       </div>
     </header>

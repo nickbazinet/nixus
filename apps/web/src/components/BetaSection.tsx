@@ -15,10 +15,10 @@ export function BetaSection() {
       id="beta"
       data-testid="beta-section"
       aria-labelledby="beta-heading"
-      className="border-y border-border bg-background py-16 md:py-24"
+      className="mkt-section-y border-y border-border bg-background"
     >
-      <div className="mx-auto max-w-[720px] px-6 md:px-8">
-        <div className="mb-10 text-center md:mb-12">
+      <div className="mkt-page-x mx-auto max-w-[720px]">
+        <div className="mkt-section-lead text-center">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
             {t("beta.eyebrow")}
           </p>
@@ -34,7 +34,7 @@ export function BetaSection() {
 
         <div
           data-testid="beta-invite"
-          className="mt-12 rounded-lg border border-border bg-card p-6 md:p-8"
+          className="mt-8 rounded-lg border border-border bg-card p-5 sm:p-6 md:mt-12 md:p-8"
         >
           <h3 className="text-base font-semibold text-foreground">
             {t("beta.invite.heading")}
@@ -42,18 +42,18 @@ export function BetaSection() {
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
             {t("beta.invite.body")}
           </p>
-          <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+          <div className="mt-6 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:gap-4">
             <a
               href={mailtoHref}
               data-testid="beta-invite-cta"
-              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40"
+              className="mkt-tap-cta inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40"
             >
               {t("beta.invite.cta")}
             </a>
             <a
               href={fullGuideHref}
               data-testid="beta-full-guide-link"
-              className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+              className="mkt-tap inline-flex items-center justify-center text-sm font-medium text-primary underline-offset-4 hover:underline sm:justify-start"
             >
               {t("beta.fullGuideLink")}
             </a>

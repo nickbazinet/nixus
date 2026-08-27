@@ -12,10 +12,10 @@ export function ValuePillars() {
     <section
       data-testid="value-pillars"
       aria-labelledby="pillars-heading"
-      className="border-y border-border bg-background py-16 md:py-20"
+      className="mkt-section-y border-y border-border bg-background"
     >
-      <div className="mx-auto max-w-[1280px] px-6 md:px-8">
-        <div className="mb-12 text-center md:mb-14">
+      <div className="mkt-page-x mx-auto max-w-[1280px]">
+        <div className="mkt-section-lead text-center">
           <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
             {t("pillars.eyebrow")}
           </p>
@@ -28,7 +28,7 @@ export function ValuePillars() {
         </div>
         <ul
           role="list"
-          className="grid grid-cols-1 gap-8 md:grid-cols-3 md:gap-6 lg:gap-10"
+          className="grid grid-cols-1 gap-6 sm:gap-8 md:grid-cols-3 md:gap-6 lg:gap-10"
         >
           {pillars.map((pillar) => {
             const Icon = pillar.icon;

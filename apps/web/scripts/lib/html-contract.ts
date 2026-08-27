@@ -27,6 +27,11 @@ export function linkHrefs(html: string, rel: string): string[] {
     .map((attributes) => attributes.href ?? "");
 }
 
+/** Full attribute sets for every `<link>` with the given `rel`, in document order. */
+export function linkTags(html: string, rel: string): Attributes[] {
+  return tags(html, "link").filter((attributes) => attributes.rel === rel);
+}
+
 export function alternateHrefs(html: string): Map<string, string> {
   const alternates = new Map<string, string>();
   for (const attributes of tags(html, "link")) {

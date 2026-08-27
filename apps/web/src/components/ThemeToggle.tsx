@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import {
   Button,
+  cn,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -53,6 +54,7 @@ export function ThemeToggle() {
           <Button
             variant="ghost"
             size="icon"
+            className="mkt-tap"
             aria-label={t("header.themeToggle")}
             data-testid="theme-toggle"
           >
@@ -70,7 +72,7 @@ export function ThemeToggle() {
               onClick={() => setTheme(opt.value)}
               data-testid={`theme-toggle-option-${opt.value}`}
               data-active={isActive ? "true" : undefined}
-              className={isActive ? "font-medium" : undefined}
+              className={cn("mkt-tap px-2", isActive && "font-medium")}
             >
               <Icon className="size-4" aria-hidden="true" />
               {t(opt.labelKey)}

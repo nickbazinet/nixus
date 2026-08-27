@@ -4,6 +4,7 @@ import { useLocation } from "@tanstack/react-router";
 
 import {
   Button,
+  cn,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -46,6 +47,7 @@ export function LanguageToggle() {
           <Button
             variant="ghost"
             size="icon"
+            className="mkt-tap"
             aria-label={t("header.languageToggle")}
             data-testid="language-toggle"
           >
@@ -68,7 +70,10 @@ export function LanguageToggle() {
                   hrefLang={opt.value}
                   data-testid={`language-toggle-option-${opt.value}`}
                   data-active={isActive ? "true" : undefined}
-                  className={isActive ? "font-medium" : undefined}
+                  className={cn(
+                    "mkt-tap flex items-center px-2",
+                    isActive && "font-medium",
+                  )}
                 >
                   {t(opt.labelKey)}
                 </a>

@@ -2,8 +2,9 @@
 #
 # - Triggers on PRs and pushes-to-default-branch that touch the web app, the
 #   shared package, this workflow, or the lockfile.
-# - Runs install/typecheck/test/build, then gates on Lighthouse CI scores
-#   (Performance / Accessibility / Best Practices / SEO must each be >= 0.9).
+# - Runs install/typecheck/test/build, then the responsive Playwright suite
+#   (320/375/390/430/768/1280 across every EN/FR route), then gates on
+#   Lighthouse CI scores (Performance / Accessibility / Best Practices / SEO).
 # - On push-to-default-branch, kicks off a STUB deploy job. Story 1.5 fills
 #   that job in with the real S3 + CloudFront pipeline.
 #
@@ -36,9 +37,9 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify (typecheck, test, build, Lighthouse)
+    name: Verify (typecheck, test, build, responsive E2E, Lighthouse)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -88,6 +89,24 @@ jobs:
       - name: Verify edge route rewrite against built output
         run: pnpm --filter @nixus/web verify:routes
 
+      # Real-browser responsive gate: 320/375/390/430/768/1280 across every
+      # EN/FR route, served from `.output/public` through the shipped CloudFront
+      # rewrite function. Deployment behaviour is untouched — this only reads the
+      # build the step above already produced.
+      - name: Install Playwright Chromium
+        run: pnpm --filter @nixus/web exec playwright install --with-deps chromium
+
+      - name: Responsive E2E (Playwright)
+        run: pnpm --filter @nixus/web test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+
       - name: Lighthouse CI
         # Uses staticDistDir from apps/web/lighthouserc.json to serve the built
         # output locally — no real server required. Gates on the four category
@@ -99,12 +118,34 @@ jobs:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
 
   deploy:
-    name: Deploy (stub)
+    name: Deploy
     needs: verify
     # Only run on push to the default branch, never on PRs.
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+
+    # Publish order is a correctness property, not a preference.
+    #
+    # Invariant: an object may only be deleted once no cache can still hand out
+    # an HTML document that references it. Violate it and the browser requests
+    # /assets/main-<hash>.css, gets a 404, and paints the page with no stylesheet
+    # at all — default serif, blue links, unbounded logo.
+    #
+    # Second invariant: S3 serves no Cache-Control unless the upload sets one, so
+    # every upload below states its policy explicitly. Hashed paths are immutable;
+    # routing documents must revalidate or a deploy is invisible to returning
+    # visitors.
+    #
+    # `apps/web/infra/deploy/deploy-pipeline.test.ts` asserts this ordering and
+    # these headers.
+    env:
+      DIST: apps/web/.output/public
+      BUCKET: s3://nixus-web-cdn
+      DISTRIBUTION_ID: E691EEFVS0K6N
+      IMMUTABLE: "public, max-age=31536000, immutable"
+      REVALIDATE: "no-cache, must-revalidate"
+      MEDIA: "public, max-age=604800"
 
     steps:
       - name: Checkout
@@ -134,8 +175,42 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Deploy to S3
-        run: aws s3 sync apps/web/.output/public/ s3://nixus-web-cdn --delete
+      # 1. Content-addressed assets, additively. Nothing is deleted, so HTML
+      #    already in a cache keeps resolving while these land.
+      - name: Upload hashed assets (immutable, no delete)
+        run: |
+          aws s3 sync "$DIST" "$BUCKET" \
+            --exclude "*" --include "assets/*" \
+            --cache-control "$IMMUTABLE"
 
-      - name: Invalidate CloudFront
-        run: aws cloudfront create-invalidation --distribution-id E691EEFVS0K6N --paths "/*"
+      # 2. Media and fonts: stable names, so a week is safe and an invalidation
+      #    covers the rare replacement.
+      - name: Upload static media (no delete)
+        run: |
+          aws s3 sync "$DIST" "$BUCKET" \
+            --exclude "assets/*" \
+            --exclude "*.html" --exclude "*.xml" --exclude "*.txt" \
+            --cache-control "$MEDIA"
+
+      # 3. Routing documents last: only now can a viewer be handed HTML that
+      #    references the assets uploaded in step 1.
+      - name: Upload HTML and routing documents (no-cache, no delete)
+        run: |
+          aws s3 sync "$DIST" "$BUCKET" \
+            --exclude "*" --include "*.html" --include "*.xml" --include "*.txt" \
+            --cache-control "$REVALIDATE"
+
+      # 4. Wait for edge caches to adopt the new routing documents. Old hashed
+      #    assets intentionally remain available for already-open tabs and
+      #    browser-cached HTML; pruning them in this deploy recreates the exact
+      #    missing-CSS failure this ordering prevents.
+      - name: Invalidate CloudFront and wait for completion
+        run: |
+          invalidation_id="$(aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --paths "/*" \
+            --query 'Invalidation.Id' --output text)"
+          echo "invalidation: $invalidation_id"
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --id "$invalidation_id"

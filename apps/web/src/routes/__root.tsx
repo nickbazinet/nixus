@@ -67,29 +67,42 @@ function ShellInner({ locale }: { locale: Locale }) {
   const { t } = useTranslation();
   useCloudflareAnalytics();
   return (
-    <html lang={locale}>
+    // `suppressHydrationWarning` covers the `class` and `style` that
+    // FLASH_MITIGATION writes onto this element before React hydrates. Without
+    // it every page logs an attribute mismatch React explicitly will not patch,
+    // which is the documented next-themes pattern rather than a workaround.
+    <html lang={locale} suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
       <body className="font-sans antialiased">
-        <a
-          href="#main-content"
-          className="absolute left-2 top-2 z-[100] -translate-y-16 rounded-md bg-background px-3 py-2 text-sm font-medium text-foreground shadow outline-none focus-visible:translate-y-0 focus-visible:ring-3 focus-visible:ring-ring/50 motion-safe:transition-transform"
-        >
-          {t("skipToMain")}
-        </a>
-        <DownloadStateProvider>
-          <PreAlphaBanner />
-          <SiteHeader />
-          <main
-            id="main-content"
-            tabIndex={-1}
-            className="min-h-[calc(100dvh-4rem)] outline-none"
+        {/* ThemeProvider lives inside <body>, not around <html>. Wrapping the
+            document element put next-themes' synchronous pre-paint script
+            *outside* the document in the React tree, and React 19 refuses to
+            order a sync script there ("Cannot render a sync or defer <script>
+            outside the main document"). Inside body it is a normal in-document
+            script, and prepaint is unaffected: FLASH_MITIGATION in <head> has
+            already resolved the theme before any of this parses. */}
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <a
+            href="#main-content"
+            className="absolute left-2 top-2 z-[100] -translate-y-16 rounded-md bg-background px-3 py-2 text-sm font-medium text-foreground shadow outline-none focus-visible:translate-y-0 focus-visible:ring-3 focus-visible:ring-ring/50 motion-safe:transition-transform"
           >
-            <Outlet />
-          </main>
-          <SiteFooter />
-        </DownloadStateProvider>
+            {t("skipToMain")}
+          </a>
+          <DownloadStateProvider>
+            <PreAlphaBanner />
+            <SiteHeader />
+            <main
+              id="main-content"
+              tabIndex={-1}
+              className="min-h-[calc(100dvh-4rem)] outline-none"
+            >
+              <Outlet />
+            </main>
+            <SiteFooter />
+          </DownloadStateProvider>
+        </ThemeProvider>
         <Scripts />
       </body>
     </html>
@@ -103,9 +116,7 @@ function RootDocument() {
   const locale = localeFromPath(pathname);
   return (
     <I18nextProvider i18n={i18nForLocale(locale)}>
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-        <ShellInner locale={locale} />
-      </ThemeProvider>
+      <ShellInner locale={locale} />
     </I18nextProvider>
   );
 }
