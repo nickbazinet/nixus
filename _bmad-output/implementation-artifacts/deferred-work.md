@@ -367,3 +367,9 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-premium-cloud-ai-account-status.md`
   summary: Restore repository-wide Rust formatting and clippy cleanliness without mixing unrelated domain edits into this feature.
   evidence: `cargo fmt --check` reports pre-existing formatting drift across unrelated database and maintenance modules, while `cargo clippy --lib -- -D warnings` reports 229 pre-existing needless-borrow findings across command modules; the changed feature compiles and its 1026 Rust tests pass.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gh-actions-job-98631539207.md`
+  summary: Reconcile hero backdrop preloading with explicit light/dark theme overrides that differ from the operating-system colour preference.
+  evidence: The hero paints from the class-based `dark:` variant while static preload media can only select by `prefers-color-scheme`; resolving the mismatch requires a product/theme-loading decision beyond the failing CI contract.
+- source_spec: `_bmad-output/implementation-artifacts/spec-gh-actions-job-98631539207.md`
+  summary: Turn the existing hero-preload prerender comment into deterministic static HTML coverage for home and heroless routes.
+  evidence: `verify-prerender.ts` describes preload, priority, colour-scheme, and heroless-route assertions but does not implement them; the current browser regression test covers the reported CI failure, while static contract hardening is independently reviewable.
