@@ -1,6 +1,5 @@
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
-import { usePremiumEntitlement } from "@/hooks/useAuth";
 import { NixusLogo, focusRing } from "@nixus/shared";
 
 const RAIL_COLLAPSED_KEY = "rail-collapsed";
@@ -53,7 +52,6 @@ export function SidebarBrandHeader({
   onToggle: () => void;
 }) {
   const { t } = useTranslation();
-  const isPremium = usePremiumEntitlement();
 
   return (
     /* Rail mark — one of only three places the identity gradient is permitted. */
@@ -77,30 +75,6 @@ export function SidebarBrandHeader({
         >
           ixus
         </span>
-        {/* Beside the mark, never part of it: the lockup's own glyphs, kerning and gradient are
-         * untouched, so this adds a label rather than redrawing the identity.
-         *
-         * `premium-ink`, never `caution` — an entitlement is not an attention state. Sentence case
-         * for the same reason badge.tsx refuses uppercase despite {typography.micro} specifying
-         * it, and so the rail and the menu read the identical word.
-         *
-         * aria-hidden because the button's own aria-label already replaces its contents for a
-         * screen reader, so this could never be announced here; the account menu's badge is the
-         * announced home of the entitlement. Rides railLabelClass so it collapses with every other
-         * rail label, and its gap is expanded-only so a collapsed rail keeps its exact geometry. */}
-        {isPremium ? (
-          <span
-            aria-hidden="true"
-            data-testid="sidebar-premium"
-            className={cn(
-              "mb-px text-micro text-premium-ink",
-              expanded && "ml-2",
-              railLabelClass(expanded)
-            )}
-          >
-            {t("sidebar.premium")}
-          </span>
-        ) : null}
       </span>
     </button>
   );

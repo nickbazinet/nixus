@@ -582,7 +582,7 @@ test.describe("account menu hosted-AI entitlement", () => {
     await expect(page.getByTestId("profile-menu-panel")).toBeVisible();
   }
 
-  test("an eligible account shows Premium and nothing beside it", async ({
+  test("an eligible account shows the Premium label only", async ({
     page,
   }) => {
     await setupTauriMock(page, {
@@ -594,8 +594,6 @@ test.describe("account menu hosted-AI entitlement", () => {
 
     const row = page.getByTestId(PREMIUM_ROW);
     await expect(row).toBeVisible();
-    // The whole row's text, not `toContainText`: the badge is the entire claim now, so an
-    // explanatory sentence reappearing beside it has to fail here rather than pass unnoticed.
     await expect(row).toHaveText("Premium");
 
     // Beneath the identity it qualifies, not above it: an entitlement announced before the account
@@ -611,7 +609,7 @@ test.describe("account menu hosted-AI entitlement", () => {
     expect(emailIsFirst).toBe(true);
   });
 
-  test("the badge is neutral, never a status or warning colour", async ({ page }) => {
+  test("the badge uses the premium entitlement variant", async ({ page }) => {
     // Amber is the specific mis-signal this placement rejects: it already means attention-required
     // everywhere else in the product, and an entitlement demands nothing of the user.
     await setupTauriMock(page, {
@@ -622,10 +620,10 @@ test.describe("account menu hosted-AI entitlement", () => {
     await openAccountMenu(page);
 
     const badge = page.getByTestId(PREMIUM_ROW).locator("[data-slot='badge']");
-    await expect(badge).toHaveAttribute("data-variant", "neutral");
+    await expect(badge).toHaveAttribute("data-variant", "premium");
   });
 
-  test("the rail label sits beside an unmodified wordmark", async ({ page }) => {
+  test("Premium belongs to the account control, not the wordmark", async ({ page }) => {
     await setupTauriMock(page, {
       session: LOGGED_IN,
       activeProfile: CLOUD_PROFILE_SIGNED_IN,
@@ -633,36 +631,19 @@ test.describe("account menu hosted-AI entitlement", () => {
     });
     await page.goto("/");
 
-    // The lockup is added to, never redrawn: the mark's own svg and the "ixus" glyphs it kerns
-    // against must both still be there, with the label as a following sibling rather than a
-    // replacement for either.
     const lockup = page.locator("aside button[aria-expanded]").first();
     await expect(lockup.locator("svg")).toHaveCount(1);
     expect(
       await lockup.evaluate((node) => (node.textContent ?? "").replace(/\s/g, ""))
-    ).toBe("ixusPremium");
+    ).toBe("ixus");
+    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
 
-    const label = page.getByTestId("sidebar-premium");
-    await expect(label).toBeVisible();
-    await expect(label).toHaveText("Premium");
-
-    const wordmarkIsFirst = await page.evaluate(() => {
-      const lockupEl = document.querySelector("aside button[aria-expanded]");
-      if (lockupEl === null) return null;
-      const wordmark = [...lockupEl.querySelectorAll("span")].find(
-        (node) => node.textContent === "ixus",
-      );
-      const premium = document.querySelector('[data-testid="sidebar-premium"]');
-      if (!wordmark || premium === null) return null;
-      return Boolean(
-        wordmark.compareDocumentPosition(premium) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      );
-    });
-    expect(wordmarkIsFirst).toBe(true);
+    const trigger = page.getByTestId("profile-menu-trigger");
+    await expect(trigger).toHaveAttribute("data-premium", "true");
+    await expect(trigger).toHaveAccessibleName(/Premium/);
   });
 
-  test("the rail label uses the premium token and never the caution one", async ({
+  test("the account icon uses the premium token and the trigger border does not", async ({
     page,
   }) => {
     await setupTauriMock(page, {
@@ -670,11 +651,8 @@ test.describe("account menu hosted-AI entitlement", () => {
       activeProfile: CLOUD_PROFILE_SIGNED_IN,
       cloudAiPremium: { kind: "resolve", value: true },
     });
-    await page.goto("/");
-    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
+    await openAccountMenu(page);
 
-    // Resolved from the live custom properties rather than pinned to a hex, so a palette retune
-    // stays legal while "the entitlement borrowed the attention-required colour" stays a failure.
     const colors = await page.evaluate(() => {
       const root = getComputedStyle(document.documentElement);
       const normalise = (value: string) => {
@@ -685,10 +663,15 @@ test.describe("account menu hosted-AI entitlement", () => {
         probe.remove();
         return resolved;
       };
-      const label = document.querySelector('[data-testid="sidebar-premium"]');
-      if (label === null) return null;
+      const trigger = document.querySelector('[data-testid="profile-menu-trigger"]');
+      const icon = document.querySelector('[data-testid="profile-menu-icon"]');
+      const badge = document.querySelector('[data-testid="profile-menu-premium"] [data-slot="badge"]');
+      if (trigger === null || icon === null || badge === null) return null;
       return {
-        label: getComputedStyle(label).color,
+        triggerBorder: getComputedStyle(trigger).borderColor,
+        icon: getComputedStyle(icon).color,
+        badgeBorder: getComputedStyle(badge).borderColor,
+        badgeText: getComputedStyle(badge).color,
         premium: normalise(root.getPropertyValue("--premium-ink").trim()),
         caution: normalise(root.getPropertyValue("--caution").trim()),
         cautionInk: normalise(root.getPropertyValue("--caution-ink").trim()),
@@ -697,50 +680,14 @@ test.describe("account menu hosted-AI entitlement", () => {
 
     expect(colors).not.toBeNull();
     if (colors === null) return;
-    expect(colors.label).toBe(colors.premium);
-    expect(colors.label).not.toBe(colors.caution);
-    expect(colors.label).not.toBe(colors.cautionInk);
+    expect(colors.icon).toBe(colors.premium);
+    expect(colors.triggerBorder).not.toBe(colors.premium);
+    expect(colors.badgeBorder).toBe(colors.premium);
+    expect(colors.badgeText).toBe(colors.premium);
+    expect(colors.badgeText).not.toBe(colors.cautionInk);
   });
 
-  test("a collapsed rail hides the label and hovering brings it back", async ({
-    page,
-  }) => {
-    // Seeded rather than clicked the toggle: `expanded` is also true while the rail is hovered or
-    // holds focus, so clicking the collapse button leaves it expanded by its own focus and the
-    // assertion would pass for the wrong reason.
-    await page.addInitScript(() => {
-      window.localStorage.setItem("rail-collapsed", "true");
-    });
-    await setupTauriMock(page, {
-      session: LOGGED_IN,
-      activeProfile: CLOUD_PROFILE_SIGNED_IN,
-      cloudAiPremium: { kind: "resolve", value: true },
-    });
-    await page.goto("/");
-
-    // Still mounted, so it fades with every other rail label rather than popping in.
-    await expect(page.getByTestId("sidebar-premium")).toBeHidden();
-    await expect(page.getByTestId("settings-link")).toBeVisible();
-
-    // Opacity, not just the bounding box. A flex row this narrow squeezes an unstyled label to zero
-    // width all by itself, so `toBeHidden` alone passes even when the label is not participating in
-    // the rail's collapse transition at all — it has to be faded the way its siblings are.
-    //
-    // Polled rather than read once: the fade is a 200ms transition, and `toBeVisible` resolves the
-    // moment the box has width, which is partway through it. A single read samples mid-transition.
-    const opacity = () =>
-      page
-        .getByTestId("sidebar-premium")
-        .evaluate((node) => getComputedStyle(node).opacity);
-
-    await expect.poll(opacity).toBe("0");
-
-    await page.locator("aside").hover();
-    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
-    await expect.poll(opacity).toBe("1");
-  });
-
-  test("both surfaces render from a single entitlement request", async ({ page }) => {
+  test("the trigger and menu render from a single entitlement request", async ({ page }) => {
     await setupTauriMock(page, {
       session: LOGGED_IN,
       activeProfile: CLOUD_PROFILE_SIGNED_IN,
@@ -748,11 +695,12 @@ test.describe("account menu hosted-AI entitlement", () => {
     });
     await openAccountMenu(page);
 
-    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
+    await expect(page.getByTestId("profile-menu-trigger")).toHaveAttribute(
+      "data-premium",
+      "true",
+    );
     await expect(page.getByTestId(PREMIUM_ROW)).toBeVisible();
 
-    // One shared query key, two observers. A second command here would mean the rail derived the
-    // entitlement independently, which is also how the two surfaces would start disagreeing.
     const commands = await readIpcCommands(page);
     expect(commands.filter((cmd) => cmd === "get_cloud_ai_premium")).toHaveLength(1);
   });
@@ -788,7 +736,9 @@ test.describe("account menu hosted-AI entitlement", () => {
     await openAccountMenu(page);
 
     await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
-    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    expect(
+      await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
+    ).toBeNull();
     await expect(page.getByText(/premium/i)).toHaveCount(0);
     await expect(page.getByText(/^free$/i)).toHaveCount(0);
     // The account is still fully usable: silence about the entitlement is not degradation.
@@ -810,7 +760,9 @@ test.describe("account menu hosted-AI entitlement", () => {
     await openAccountMenu(page);
 
     await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
-    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    expect(
+      await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
+    ).toBeNull();
     await expect(page.getByTestId("profile-menu-profile")).toBeVisible();
     await expect(page.getByTestId("profile-menu-sign-out")).toBeVisible();
     // No toast and no error panel: this menu is mounted on every screen, so a failure surfaced here
@@ -829,9 +781,14 @@ test.describe("account menu hosted-AI entitlement", () => {
     await openAccountMenu(page);
 
     await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
-    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    expect(
+      await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
+    ).toBeNull();
     await expect(page.getByTestId(PREMIUM_ROW)).toBeVisible({ timeout: 5000 });
-    await expect(page.getByTestId("sidebar-premium")).toBeVisible();
+    await expect(page.getByTestId("profile-menu-trigger")).toHaveAttribute(
+      "data-premium",
+      "true",
+    );
   });
 
   test("a local profile never asks for the entitlement at all", async ({ page }) => {
@@ -847,7 +804,9 @@ test.describe("account menu hosted-AI entitlement", () => {
       "local",
     );
 
-    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    expect(
+      await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
+    ).toBeNull();
     expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
   });
 
@@ -878,7 +837,9 @@ test.describe("account menu hosted-AI entitlement", () => {
     });
     await openAccountMenu(page);
 
-    await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
+    expect(
+      await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
+    ).toBeNull();
     await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
     await expect(page.getByText(/premium/i)).toHaveCount(0);
     expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
@@ -893,6 +854,9 @@ test.describe("account menu hosted-AI entitlement", () => {
     await openAccountMenu(page);
 
     await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
+    expect(
+      await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
+    ).toBeNull();
     expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
   });
 
@@ -911,12 +875,9 @@ test.describe("account menu hosted-AI entitlement", () => {
     const row = page.getByTestId(PREMIUM_ROW);
     await expect(row).toHaveText("Premium");
     await expect(row).not.toContainText("profile.");
-
-    // The rail label is a separate key in a separate namespace, so it can go missing from fr.json
-    // on its own; i18next would render the bare `sidebar.premium` string.
-    const rail = page.getByTestId("sidebar-premium");
-    await expect(rail).toHaveText("Premium");
-    await expect(rail).not.toContainText("sidebar.");
+    await expect(page.getByTestId("profile-menu-trigger")).toHaveAccessibleName(
+      /Premium/,
+    );
   });
 
   test("the row holds at the enforced minimum window without clipping the badge", async ({
@@ -948,6 +909,7 @@ test.describe("account menu hosted-AI entitlement", () => {
       panelBox.x + panelBox.width + 1,
     );
   });
+
 });
 
 test.describe("/profile session guard", () => {

@@ -127,8 +127,8 @@ export function useCloudAiPremium({ enabled }: { enabled: boolean }) {
  *
  * Shared rather than duplicated because the entitlement now paints in two places. Two components
  * each assembling `profile -> session -> entitlement` is two chances to disagree, and the
- * disagreement a reviewer would never spot is the dangerous direction: a rail label that keeps
- * claiming premium under an account the menu has already stopped claiming it for.
+ * disagreement a reviewer would never spot is the dangerous direction: a gold account icon that keeps
+ * claiming premium after the account menu has already stopped claiming it.
  *
  * `is_signed_in` is required on top of the profile kind and the session status, and it is the part
  * that is easy to miss: the session is machine-wide, so a cloud-linked profile plus *somebody* being

@@ -9,6 +9,7 @@ const PROFILE_PREFIX = "profile.";
 
 const REQUIRED_KEYS = [
   "profile.accountMenu",
+  "profile.accountMenuPremium",
   "profile.loading",
   "profile.signedInAs",
   "profile.premiumBadge",
@@ -49,13 +50,7 @@ const REQUIRED_KEYS = [
   "profile.tfsaAccumulatedLimitNote",
 ] as const;
 
-/**
- * Both surfaces that paint the entitlement, in the two namespaces they belong to. Deliberately not
- * folded into REQUIRED_KEYS: that list feeds the `profile.`-prefixed exhaustiveness check, which a
- * `sidebar.` key would break — but the rail label is subject to the identical copy constraints, and
- * checking only the one that happens to share this file's prefix is how the other drifts.
- */
-const PREMIUM_LABEL_KEYS = ["profile.premiumBadge", "sidebar.premium"] as const;
+const PREMIUM_COPY_KEYS = ["profile.premiumBadge"] as const;
 
 /**
  * The bracket is a range label, not a monetary amount, and the currency is a separate field — a
@@ -75,6 +70,7 @@ const BRACKET_LABEL_KEYS = [
  */
 const ARIA_LABEL_KEYS = [
   "profile.accountMenu",
+  "profile.accountMenuPremium",
   "profile.loading",
   "profile.sessionExpiredAction",
 ] as const;
@@ -224,27 +220,17 @@ describe("profile menu i18n", () => {
     );
   });
 
-  it.each(PREMIUM_LABEL_KEYS)("defines %s in both locales with a value", (key) => {
+  it.each(PREMIUM_COPY_KEYS)("defines %s in both locales with a value", (key) => {
     expect(en[key], `${key} missing in en.json`).toBeTruthy();
     expect(fr[key], `${key} missing in fr.json`).toBeTruthy();
   });
 
-  it.each(PREMIUM_LABEL_KEYS)(
-    "keeps %s inside the badge-copy ceiling in both locales",
-    (key) => {
-      // DESIGN.md caps badge text at ~20 characters. In the menu the badge is the row's only
-      // content inside a 256px panel; on the rail it shares a 192px expanded width with the
-      // wordmark. A longer translation is what would push either into wrapping.
-      for (const [locale, name] of [
-        [en, "en.json"],
-        [fr, "fr.json"],
-      ] as const) {
-        expect(locale[key].length, `${key} too long in ${name}`).toBeLessThanOrEqual(20);
-      }
-    },
-  );
+  it("keeps the Premium badge inside its copy ceiling", () => {
+    expect(en["profile.premiumBadge"].length).toBeLessThanOrEqual(20);
+    expect(fr["profile.premiumBadge"].length).toBeLessThanOrEqual(20);
+  });
 
-  it.each(PREMIUM_LABEL_KEYS)("makes no usage or quota claim in %s", (key) => {
+  it.each(PREMIUM_COPY_KEYS)("makes no usage or quota claim in %s", (key) => {
     // Request counts and limits are deliberately absent from the IPC boundary, so copy that implied
     // one could never be made true. Asserted rather than reviewed because a well-meaning "3 of 200
     // requests left" edit here reads as an improvement.
@@ -270,18 +256,12 @@ describe("profile menu i18n", () => {
     }
   });
 
-  it("spells the entitlement identically on both surfaces, per locale", () => {
-    // DESIGN.md's rail-premium-label contract: the rail and the account menu read the identical
-    // word. Two keys in two namespaces is exactly the shape that drifts to "Premium" / "Premium+".
-    expect(en["sidebar.premium"]).toBe(en["profile.premiumBadge"]);
-    expect(fr["sidebar.premium"]).toBe(fr["profile.premiumBadge"]);
+  it("keeps Premium account-owned rather than branding the sidebar", () => {
+    expect(en["sidebar.premium"]).toBeUndefined();
+    expect(fr["sidebar.premium"]).toBeUndefined();
   });
 
-  it("ships the badge as the only premium copy, with no caption and no free-tier counterpart", () => {
-    // Two things ride on this one pin. A `Free` label is explicitly out of scope — it would turn an
-    // additive entitlement into a tier comparison on every non-premium account. And the retired
-    // `profile.premiumCaption` must stay retired: the badge is the whole claim now, so a caption
-    // returning as an orphaned key is how the removed adjacent text comes back.
+  it("ships only the approved Premium label copy", () => {
     for (const [locale, name] of [
       [en, "en.json"],
       [fr, "fr.json"],

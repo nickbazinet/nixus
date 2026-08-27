@@ -231,10 +231,19 @@ components:
     foreground: '{colors.neutral-ink}'
     radius: '{rounded.md}'
     typography: '{typography.micro}'
-  rail-premium-label:
+  badge-premium:
     foreground: '{colors.premium-ink}'
+    border: '1px solid {colors.premium-ink}'
+    background: 'transparent'
+    radius: '{rounded.md}'
     typography: '{typography.micro}'
-    note: 'Text only — no fill, no border, no dot. Sentence case, not uppercase, matching the badge primitive so the rail and the account menu read the identical word. Rides the rail label transition, so it is present only while the rail is expanded. Supplemental to the account menu badge, never the sole carrier of the entitlement.'
+    note: 'Account-scoped entitlement only. Its unfilled outline distinguishes it structurally from the soft-filled status family; the word carries the meaning in forced colors.'
+  account-trigger-entitled:
+    icon-foreground: '{colors.premium-ink}'
+    border: 'unchanged'
+    background: 'unchanged'
+    motion: 'none'
+    note: 'A quiet, persistent gold account icon. Decorative and supplemental to badge-premium. Suppressed whenever session-expired or another account state takes precedence; the trigger keeps its ordinary transparent border so entitlement cannot be mistaken for focus.'
   meter:
     track: '{colors.track}'
     fill: '{colors.brand}'
@@ -357,7 +366,7 @@ Every status color is paired with a text label in the same badge. A user who can
 
 **`{colors.premium-ink}` is an entitlement, and entitlement is not status.** A premium Nixus Cloud account is a durable fact about the account — it did not succeed, it is not on track, and it demands nothing of the user. So it sits outside the status family entirely rather than borrowing `{colors.caution}`, which would be the tempting shortcut because both are goldish: amber already means attention-required everywhere else in this product, and reusing it would tell a paying user something is wrong. The gold is deliberately yellower (hue ~42) than caution's orange ochre (hue ~36) so the two do not read as the same signal, and retuning either family cannot silently restyle the other.
 
-Three rules bind it. It is **ink only** — there is no `premium-bg`, because the entitlement never renders as a filled status pill; the account menu uses `{components.badge-neutral}`, whose word carries the meaning. It is verified at **4.5:1 on all four surfaces**, not the 3:1 graphical floor, because it renders as real text beside the rail wordmark. And it appears on exactly **two** surfaces — `{components.rail-premium-label}` and the account menu badge — because a durable account fact repeated across the shell stops being information and becomes decoration.
+Three rules bind it. It is **ink only** — there is no `premium-bg`, because the entitlement never renders as a filled status pill; `{components.badge-premium}` uses an unfilled outline whose word carries the meaning. It is verified at **4.5:1 on all four surfaces**, exceeding both text and graphical floors. And it appears on exactly **two account-owned surfaces** — `{components.account-trigger-entitled}` and `{components.badge-premium}` — because a durable account fact repeated across the shell stops being information and becomes decoration.
 
 **Charts are eight steps, they are not the status family, and their luminance alternates.** The ramp travels the logo's hue journey — periwinkle → violet → orchid → pink — then picks up a teal, a warm gold, an olive, and a warm neutral for the long tail.
 
@@ -497,7 +506,7 @@ The profile picker is the first thing every launch paints, and it is the one sur
 | Set money in `{typography.money}` — Inter, tabular | Set money in a monospace font |
 | Pair every status color with a text label | Rely on hue alone to carry meaning |
 | Reach for `{colors.premium-ink}` for the entitlement | Reuse `{colors.caution}` because both are gold |
-| Keep the entitlement to the rail label and the menu badge | Repeat a durable account fact across the shell |
+| Keep the entitlement on the account trigger and inside its menu | Repeat a durable account fact across unrelated surfaces |
 | Differentiate `caution` from `over` by **shape** too | Assume amber and crimson read apart under CVD |
 | Reach for a token | Write `emerald-600`, `teal-700`, `rose-500`, `amber-500` |
 | Reach for a type role | Write `text-[32px]` or `text-[10px]` |
@@ -509,7 +518,7 @@ The profile picker is the first thing every launch paints, and it is the one sur
 | Put charts on `{colors.card}` | Put charts directly on `{colors.bg}` |
 | One `{typography.display}` figure per surface | Two huge numbers competing on one screen |
 | Keep the gradient on the logo | Put the gradient on a surface or a button |
-| Set a wordmark-adjacent label in its own token beside the mark | Redraw, recolour or restack the mark to make room for it |
+| Attach entitlement styling to the account it describes | Put account status beside the Nixus wordmark |
 | Paint the launch `<h1>`'s brand as the mark plus "ixus" | Draw a second free-standing mark above a heading that already contains one |
 | Let the launch composition stack when two columns stop holding | Ship a decorative column that clips or forces a sideways scroll |
 | Build a decorative panel from the mark, hairlines and `{colors.brand-soft}` | Fill it with grey bars that read as a skeleton |

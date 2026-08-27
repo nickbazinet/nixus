@@ -106,8 +106,8 @@ export function ProfileMenu() {
       ? session.data
       : null;
 
-  // Shared with the rail label rather than derived here, so the two surfaces cannot disagree about
-  // which account is entitled. It does its own gating and costs no extra IPC.
+  // One entitlement query drives both account-owned surfaces: the trigger's gold icon and the
+  // named badge inside its menu. The hook owns profile/session gating and costs no extra IPC.
   const isPremium = usePremiumEntitlement();
 
   const startCloudFlow = () => {
@@ -136,6 +136,7 @@ export function ProfileMenu() {
   if (cloudProfile !== null) {
     const displayName = account?.name?.trim() ?? "";
     const menuEmail = account?.email ?? cloudProfile.label;
+    const showPremium = state === "logged-in" && isPremium;
 
     return (
       <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -144,17 +145,27 @@ export function ProfileMenu() {
             <Button
               variant="ghost"
               size="icon"
-              className={cn(state === "session-expired" && "text-caution-ink")}
-              aria-label={t("profile.accountMenu", { email: menuEmail })}
+              className={cn(
+                state === "session-expired" && "text-caution-ink",
+              )}
+              aria-label={t(
+                showPremium ? "profile.accountMenuPremium" : "profile.accountMenu",
+                { email: menuEmail },
+              )}
               data-testid={TRIGGER_TESTID}
               data-auth-state={state}
+              data-premium={showPremium ? "true" : undefined}
               data-cloud-status={
                 cloudProfile.is_signed_in ? "signed-in" : "signed-out"
               }
             />
           }
         >
-          <CircleUser aria-hidden="true" className="size-5" />
+          <CircleUser
+            aria-hidden="true"
+            className={cn("size-5", showPremium && "text-premium-ink")}
+            data-testid="profile-menu-icon"
+          />
         </DropdownMenuTrigger>
 
         {/* The explicit width is load-bearing: DropdownMenuContent is `w-(--anchor-width) min-w-32`,
@@ -198,18 +209,16 @@ export function ProfileMenu() {
                     {displayName}
                   </div>
                 ) : null}
-                {/* A plain element for the same reason the identity rows above are — and `neutral`,
-                 * never `good` or `caution`: this is a durable entitlement, not a state that went
-                 * well or needs attention. The word carries it, so forced colors lose nothing.
-                 *
-                 * The rail's label is the same fact in `premium-ink`; this badge is the account-
-                 * scoped one, which is why the two use different treatments rather than one token. */}
+                {/* A plain element for the same reason the identity rows above are. Premium owns an
+                 * unfilled entitlement treatment, never `good` or `caution`: it is a durable account
+                 * fact, not a state that went well or needs attention. The word remains the carrier,
+                 * so forced colors lose nothing when the trigger's decorative icon colour is flattened. */}
                 {isPremium ? (
                   <div
                     className="flex items-center px-1.5 pb-1"
                     data-testid="profile-menu-premium"
                   >
-                    <Badge variant="neutral">{t("profile.premiumBadge")}</Badge>
+                    <Badge variant="premium">{t("profile.premiumBadge")}</Badge>
                   </div>
                 ) : null}
               </>

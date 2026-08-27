@@ -25,6 +25,7 @@ const badgeVariants = cva(
         over: "bg-over-bg text-over-ink",
         neutral: "bg-neutral-bg text-neutral-ink",
         brand: "bg-brand-soft text-brand-ink",
+        premium: "border border-premium-ink text-premium-ink",
         outline: "border border-line-strong text-ink",
         // Deprecated shadcn-era names, kept so the apps/desktop migration wave can land in pieces.
         // Each points at the spine style it should become; delete once no call site uses them.
