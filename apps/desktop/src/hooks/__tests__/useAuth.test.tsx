@@ -1,6 +1,10 @@
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationObserver,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import {
   afterEach,
   beforeEach,
@@ -11,7 +15,13 @@ import {
   type Mock,
   type MockInstance,
 } from "vitest";
-import { useAuthSession, useCloudAiPremium, useSignIn, useSignOut } from "@/hooks/useAuth";
+import {
+  continueCloudSessionMutationOptions,
+  useAuthSession,
+  useCloudAiPremium,
+  useSignIn,
+  useSignOut,
+} from "@/hooks/useAuth";
 import { queryKeys } from "@/lib/constants";
 import { IMPORT_DRAFT_STORAGE_KEY } from "@/lib/datasetSwitch";
 import { installLocalStorageMock } from "@/test/localStorageMock";
@@ -545,5 +555,157 @@ describe("useAuth", () => {
     expect(
       invokeMock.mock.calls.every((call) => call[0] !== "handle_auth_callback"),
     ).toBe(true);
+  });
+});
+
+/**
+ * Drives the mutation options directly, with no component. The sweep is the contract here, not
+ * markup — and the picker unmounts on navigation, so an E2E test cannot observe it at all.
+ */
+function runContinuation(queryClient: QueryClient) {
+  return new MutationObserver(
+    queryClient,
+    continueCloudSessionMutationOptions(queryClient),
+  ).mutate();
+}
+
+/** A client holding entries that demonstrably belong to whichever profile was open before. */
+function seedPreviousProfile(queryClient: QueryClient) {
+  queryClient.setQueryData(queryKeys.profile, { cognito_sub: "previous" });
+  queryClient.setQueryData(queryKeys.cloudAiPremium, true);
+}
+
+/**
+ * The state the picker is in when it offers Continue: a resolved, signed-in session sitting in the
+ * shared cache, which is what the CTA's identity claim is derived from.
+ */
+function seedSignedInSession(queryClient: QueryClient) {
+  queryClient.setQueryData(queryKeys.auth.session, {
+    status: "LoggedIn",
+    email: "user@example.com",
+    name: null,
+  });
+}
+
+/**
+ * `AppError::Auth` exactly as `error.rs` serialises it — lowercase tag, which is what
+ * `parseAppError` matches on. Rust answers this shape when the stored session stopped being usable
+ * between the picker's render and the click: expired past refresh, revoked, or belonging to a
+ * different account than the profile it resolved.
+ */
+const CONTINUE_SESSION_INVALID = {
+  type: "auth",
+  message: "Your Nixus Cloud session is no longer valid. Please sign in again.",
+  recoverable: true,
+} as const;
+
+/**
+ * A local activation failure: the session was fine and the profile could not be opened. Deliberately
+ * a different `type` from the one above rather than a different message — the branch is on the typed
+ * envelope, so a fixture that varied only the prose would exercise the same path twice.
+ */
+const CONTINUE_ACTIVATION_FAILED = {
+  type: "database",
+  message: "the active dataset could not be opened",
+} as const;
+
+describe("continueCloudSessionMutationOptions", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+    localStorageMock.clear();
+  });
+
+  it("continues through one zero-argument command and never starts a browser sign-in", async () => {
+    // Given a stored session Rust has already judged usable
+    // When the picker's Continue is activated
+    await runContinuation(
+      new QueryClient({ defaultOptions: { mutations: { retry: false } } }),
+    );
+
+    // Then the subject, the email and the dataset id are all resolved Rust-side: nothing about the
+    // account crosses IPC, and no OAuth round-trip is started
+    expect(invokeMock.mock.calls).toEqual([["continue_cloud_session"]]);
+  });
+
+  it("drops every cached entry and stored draft once the activation succeeds", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    seedPreviousProfile(queryClient);
+    localStorage.setItem(IMPORT_DRAFT_STORAGE_KEY, "{}");
+
+    await runContinuation(queryClient);
+
+    // The whole cache, not a hand-listed subset: the profile that was open belongs to a different
+    // account than the one being continued as, and a key nobody remembered to list is exactly how
+    // its rows stay on screen under the new identity.
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    expect(queryClient.getQueryData(queryKeys.cloudAiPremium)).toBeUndefined();
+    // The canonical sweep, not a bare `queryClient.clear()`: the draft belongs to the profile too,
+    // and only `clearProfileScopedState` reaches it.
+    expect(localStorage.getItem(IMPORT_DRAFT_STORAGE_KEY)).toBeNull();
+  });
+
+  it("leaves the previous profile's cache intact when the activation fails", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    seedPreviousProfile(queryClient);
+    invokeMock.mockRejectedValueOnce(CONTINUE_ACTIVATION_FAILED);
+
+    // The exact rejected value, not merely "something threw": an unrelated TypeError from a
+    // refactored mutationFn would otherwise satisfy this test while breaking the caller's toast.
+    await expect(runContinuation(queryClient)).rejects.toEqual(
+      CONTINUE_ACTIVATION_FAILED,
+    );
+
+    // Nothing was opened, so the user is still in the profile they were in — sweeping here would
+    // blank a surface that never changed.
+    expect(queryClient.getQueryData(queryKeys.profile)).toEqual({
+      cognito_sub: "previous",
+    });
+  });
+
+  it("drops the cached session when the continuation fails because the session is no longer valid", async () => {
+    // Given a picker that resolved a signed-in session and is offering Continue
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    seedSignedInSession(queryClient);
+
+    // When the session turns out to have expired or been revoked since that render
+    invokeMock.mockRejectedValueOnce(CONTINUE_SESSION_INVALID);
+    await expect(runContinuation(queryClient)).rejects.toEqual(
+      CONTINUE_SESSION_INVALID,
+    );
+
+    // Then the stale identity is gone, which is what lets the CTA stop offering an account that
+    // cannot be continued as. Keeping it would leave the one filled primary on the launch screen
+    // permanently pointed at an action Rust has just refused.
+    expect(queryClient.getQueryData(queryKeys.auth.session)).toBeUndefined();
+  });
+
+  it("keeps the cached session when the continuation fails locally, so Continue stays retryable", async () => {
+    // Given the same picker offering Continue
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    seedSignedInSession(queryClient);
+
+    // When the profile itself could not be opened — the session was never in question
+    invokeMock.mockRejectedValueOnce(CONTINUE_ACTIVATION_FAILED);
+    await expect(runContinuation(queryClient)).rejects.toEqual(
+      CONTINUE_ACTIVATION_FAILED,
+    );
+
+    // Then the identity survives, so the spec's failed-activation row holds: the user stays on the
+    // picker with Continue still offering the same action rather than being demoted to a browser
+    // sign-in they do not need.
+    expect(queryClient.getQueryData(queryKeys.auth.session)).toEqual({
+      status: "LoggedIn",
+      email: "user@example.com",
+      name: null,
+    });
   });
 });

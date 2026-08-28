@@ -90,6 +90,8 @@
   "datasets.subtitle": "Budgeting, expenses and car upkeep in one place, on your own machine.",
   "datasets.currentProfileBadge": "Current",
   "datasets.loginWithCloud": "Log in with Nixus Cloud",
+  "datasets.checkingCloud": "Checking Nixus Cloud…",
+  "datasets.continueAs": "Continue as {{email}}",
   "datasets.createAccount": "Or create an account",
   "datasets.cloudBrowserNote": "Your browser opens to finish signing in. Come back here when you're done.",
   "datasets.workingLocally": "Working locally",

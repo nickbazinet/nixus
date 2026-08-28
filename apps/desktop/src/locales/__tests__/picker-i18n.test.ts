@@ -22,6 +22,8 @@ const REQUIRED_KEYS = [
   "datasets.subtitle",
   "datasets.currentProfileBadge",
   "datasets.loginWithCloud",
+  "datasets.checkingCloud",
+  "datasets.continueAs",
   "datasets.createAccount",
   "datasets.cloudBrowserNote",
   "datasets.workingLocally",
@@ -133,6 +135,46 @@ describe("datasets i18n", () => {
       expect(locale["datasets.createAccount"]).not.toBe(
         locale["datasets.signInWithCloud"],
       );
+    }
+  });
+
+  it("says what it is doing while the session is still being resolved, in both locales", () => {
+    // The primary is inert until the session query answers, and this is the copy it carries there.
+    // It has to be *true* rather than merely neutral: labelling that moment "Log in with Nixus Cloud"
+    // told a user who was already signed in that a browser was about to open, and then swapped the
+    // button under them — the flash this key exists to remove.
+    for (const locale of [en, fr]) {
+      // Brand-bearing like the sign-in label, and never translated (NFR8).
+      expect(locale["datasets.checkingCloud"]).toContain("Nixus Cloud");
+
+      // No identity is known yet, so the checking copy must not be able to name one. A placeholder
+      // here would render "Checking … {{email}}" — the exact premature claim the inert state exists
+      // to prevent.
+      expect(locale["datasets.checkingCloud"]).not.toContain("{{email}}");
+
+      // Four cloud labels now share this surface, and this one is the only status among three
+      // actions; identical copy on any pair would make the screen unreadable.
+      expect(locale["datasets.checkingCloud"]).not.toBe(locale["datasets.loginWithCloud"]);
+      expect(locale["datasets.checkingCloud"]).not.toBe(locale["datasets.continueAs"]);
+      expect(locale["datasets.checkingCloud"]).not.toBe(locale["datasets.createAccount"]);
+    }
+  });
+
+  it("names the account a restored session would continue as, in both locales", () => {
+    // The primary becomes Continue whenever a stored session is still usable, and it has to say
+    // *which* account it will open: the session is machine-wide, so a bare "Continue" would leave a
+    // user who shares the machine unable to tell whose profile the one filled button is about to
+    // open. The email is interpolated rather than appended by the component, so a locale that
+    // dropped the placeholder is a failure here rather than a label that silently omits the account.
+    for (const locale of [en, fr]) {
+      expect(locale["datasets.continueAs"]).toContain("{{email}}");
+
+      // Three cloud labels now share this surface's vocabulary and they are three different
+      // outcomes: continuing in-app, starting a browser sign-in, and creating an account. Identical
+      // copy on any pair would make the screen unreadable.
+      expect(locale["datasets.continueAs"]).not.toBe(locale["datasets.loginWithCloud"]);
+      expect(locale["datasets.continueAs"]).not.toBe(locale["datasets.createAccount"]);
+      expect(locale["datasets.continueAs"]).not.toBe(locale["datasets.signInWithCloud"]);
     }
   });
 

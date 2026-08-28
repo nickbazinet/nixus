@@ -15,6 +15,15 @@ interface MockDataset {
   created_at: string;
 }
 
+/**
+ * `AuthState` as the Rust side serialises it — `#[serde(tag = "status")]`, plain tagged JSON with no
+ * envelope. Redeclared locally for the same reason `MockDataset` is.
+ */
+type MockAuthState =
+  | { status: "LoggedOut" }
+  | { status: "LoggedIn"; email: string; name: string | null }
+  | { status: "SessionExpired" };
+
 interface PickerOptions {
   /**
    * What `check_picker_gate` answers. Omit to leave the command unstubbed so it falls through to the
@@ -32,8 +41,42 @@ interface PickerOptions {
    * are assertable. Without it the registry resolves before the disclosure can be opened.
    */
   listDatasetsDelayMs?: number;
-  /** What `get_auth_session` answers. */
-  loggedOut?: boolean;
+  /**
+   * What `get_auth_session` answers. Defaults to `LoggedOut`, which is the state the whole
+   * cloud-first composition below was written against: the picker resolves the machine-wide session
+   * on every launch to decide whether it can offer Continue, so leaving this unstubbed would put
+   * every case in this file behind react-query's retry backoff instead of the branch it means to
+   * test.
+   */
+  session?: MockAuthState;
+  /**
+   * Delays `get_auth_session` so the resolving window — where the cloud primary must be inert and
+   * must claim no identity — is assertable.
+   */
+  sessionDelayMs?: number;
+  /**
+   * Makes `get_auth_session` reject, standing in for a keyring blob this build cannot read. The
+   * launch screen must settle into the ordinary browser sign-in on it rather than into Continue or
+   * an inert dead end — a session that cannot be read is a decided answer, not an unknown one.
+   */
+  sessionFails?: boolean;
+  /**
+   * The Cognito subject the stored session belongs to. Rust selects the cloud-linked dataset by
+   * subject, never by email or by anything the webview sends, so the mock's continuation does the
+   * same: a dataset is reachable through Continue only if its `cognito_sub` matches this.
+   */
+  sessionSub?: string;
+  /**
+   * How `continue_cloud_session` fails, which the picker must tell apart:
+   *
+   * - `session-invalid` — `AppError::Auth`. The stored session stopped being usable between render
+   *   and click, so the offered Continue is stale and the screen has to stop offering it.
+   * - `activation` — a local fault opening the profile. The session is still good, so Continue stays
+   *   the right action and stays retryable, which is the spec's failed-activation row.
+   */
+  continueSessionFails?: "session-invalid" | "activation";
+  /** Delays `continue_cloud_session` so its in-flight window — and the inert primary — are assertable. */
+  continueSessionDelayMs?: number;
   /** Makes `start_login` reject, standing in for a browser that could not be opened. */
   startLoginFails?: boolean;
   /** Makes `select_dataset` reject, standing in for an unknown id or a failed open/migrate. */
@@ -125,6 +168,15 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
     // Mirrors the real `PICKER_PASSED` AtomicBool: in-memory, latching, and only ever set by the
     // picker's own click path.
     let needsPicker = opts.needsPicker;
+
+    // The machine-wide session the launch screen resolves. `LoggedOut` is the default because it is
+    // the state that keeps the browser sign-in composition on screen.
+    //
+    // Mutable, because an auth-typed continuation failure genuinely means the stored session stopped
+    // being usable: Rust's own `resolve_session` would answer `SessionExpired` on the next read. A
+    // mock that went on answering `LoggedIn` after refusing the continuation would make the picker's
+    // re-resolution look broken when it is the only correct thing it can do.
+    let session: MockAuthState = opts.session ?? { status: "LoggedOut" };
 
     // Which dataset the app is pointed at. Only a *successful* `select_dataset` moves it, so a
     // budget read before any selection — or after a click that opened a different entry — cannot
@@ -355,10 +407,88 @@ async function setupTauriMock(page: Page, options: PickerOptions = {}) {
             needsPicker = false;
             return Promise.resolve(null);
 
-          case "get_auth_session":
-            return opts.loggedOut === true
-              ? Promise.resolve({ status: "LoggedOut" })
-              : Promise.reject(`Unknown command: ${cmd}`);
+          // The whole Continue path, mirrored rather than merely resolved: Rust re-resolves the
+          // stored session, resolves the identity from its id token, find-or-creates the dataset
+          // whose `cognito_sub` matches that subject, opens it and latches the picker gate — all
+          // inside this one command, with no argument and no identity crossing IPC in either
+          // direction. A stub that only resolved would let a test "prove" a profile opened when
+          // nothing had been selected at all.
+          case "continue_cloud_session": {
+            const settle = () => {
+              const current = session;
+              // `AppError::Auth`, lowercase tag exactly as `error.rs` serialises it — the picker
+              // branches on that tag, so a capitalised one here would silently exercise the
+              // local-failure path instead and this distinction would go untested.
+              //
+              // The stored session goes with it: Rust refuses for exactly the reasons that also make
+              // the next `resolve_session` answer `SessionExpired`, so a re-read has to see that.
+              if (
+                opts.continueSessionFails === "session-invalid" ||
+                current.status !== "LoggedIn"
+              ) {
+                // Only a session that *was* usable becomes expired; one that never was stays as it is.
+                if (current.status === "LoggedIn") {
+                  session = { status: "SessionExpired" };
+                }
+                return Promise.reject({
+                  type: "auth",
+                  message:
+                    "Your Nixus Cloud session is no longer valid. Please sign in again.",
+                  recoverable: true,
+                });
+              }
+              if (opts.continueSessionFails === "activation" || registry === undefined) {
+                return Promise.reject({
+                  type: "database",
+                  message: "the active dataset could not be opened",
+                });
+              }
+              const sub = opts.sessionSub ?? null;
+              let target = registry.find(
+                (entry) => entry.kind === "cloud-linked" && entry.cognito_sub === sub,
+              );
+              // Find-or-create, exactly as `find_or_create_cloud_dataset_at` does: a first Continue
+              // for an account with no profile yet mints one rather than failing.
+              if (target === undefined) {
+                target = {
+                  id: `cloud-${String(sub)}`,
+                  label: current.email,
+                  kind: "cloud-linked",
+                  cognito_sub: sub,
+                  linked_from: null,
+                  is_default: false,
+                  created_at: "2026-08-28T00:00:00+00:00",
+                };
+                registry.push(target);
+              }
+              openDatasetId = target.id;
+              needsPicker = false;
+              return Promise.resolve(null);
+            };
+            if (opts.continueSessionDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(
+                () => settle().then(resolve, reject),
+                opts.continueSessionDelayMs,
+              );
+            });
+          }
+
+          case "get_auth_session": {
+            const settle = () =>
+              opts.sessionFails === true
+                ? Promise.reject({
+                    type: "auth",
+                    message:
+                      "Your saved session could not be read. Please sign in again.",
+                    recoverable: true,
+                  })
+                : Promise.resolve(session);
+            if (opts.sessionDelayMs === undefined) return settle();
+            return new Promise((resolve, reject) => {
+              setTimeout(() => settle().then(resolve, reject), opts.sessionDelayMs);
+            });
+          }
 
           // The dashboard's own surface, so a gate that fails to fire lands somewhere assertable
           // rather than on an error card.
@@ -587,7 +717,6 @@ test.describe("picker chrome", () => {
     await setupTauriMock(page, {
       needsPicker: true,
       datasets: [DEFAULT_ENTRY],
-      loggedOut: true,
     });
     await page.goto("/picker");
 
@@ -652,6 +781,13 @@ test.describe("the cloud-first launch composition", () => {
   }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
+    // The settled signed-out branch, because the note is part of *that* composition: it is withheld
+    // while the session is still resolving, so a bare `boxOf` here would measure an element that is
+    // not in the document yet.
+    await expect(page.getByTestId("picker-login-cloud-button")).toHaveAttribute(
+      "data-cloud-entry",
+      "sign-in",
+    );
 
     // Reading order IS the hierarchy on a landing surface: a browser-return note above the button it
     // describes, or a value statement below the action, would each invert what the screen leads with.
@@ -670,32 +806,45 @@ test.describe("the cloud-first launch composition", () => {
   }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
-    await expect(page.getByTestId("picker-login-cloud-button")).toBeVisible();
+    // The settled branch, not merely a painted element: the primary is deliberately inert — and so
+    // carries the disabled token set rather than the brand fill — until the session query answers.
+    await expect(page.getByTestId("picker-login-cloud-button")).toHaveAttribute(
+      "data-cloud-entry",
+      "sign-in",
+    );
 
     // Measured against a probe painted with the token's own utility rather than a hardcoded hex, so
     // the assertion survives a token value change but still catches the drift it exists for: a
     // second filled button on the screen, or a primary that quietly stopped being one.
-    const fills = await page.evaluate(() => {
-      const read = (testId: string) => {
-        const el = document.querySelector<HTMLElement>(
-          `[data-testid="${testId}"]`,
-        );
-        return el === null ? null : getComputedStyle(el).backgroundColor;
-      };
-      const probe = document.createElement("span");
-      probe.className = "bg-brand";
-      document.body.append(probe);
-      const brand = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      return {
-        brand,
-        cloud: read("picker-login-cloud-button"),
-        disclosure: read("picker-local-disclosure"),
-      };
-    });
+    const readFills = () =>
+      page.evaluate(() => {
+        const read = (testId: string) => {
+          const el = document.querySelector<HTMLElement>(
+            `[data-testid="${testId}"]`,
+          );
+          return el === null ? null : getComputedStyle(el).backgroundColor;
+        };
+        const probe = document.createElement("span");
+        probe.className = "bg-brand";
+        document.body.append(probe);
+        const brand = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return {
+          brand,
+          cloud: read("picker-login-cloud-button"),
+          disclosure: read("picker-local-disclosure"),
+        };
+      });
 
-    expect(fills.cloud).toBe(fills.brand);
-    expect(fills.disclosure).not.toBe(fills.brand);
+    // Polled, not read once, and this is a real hazard rather than caution: Button carries
+    // `transition-colors`, so leaving the inert resolving state animates the fill from the disabled
+    // token to the brand one, and a single read taken the instant the branch settles measures a
+    // colour part-way through that transition — neither end of it.
+    const brand = (await readFills()).brand;
+    await expect.poll(async () => (await readFills()).cloud).toBe(brand);
+
+    const fills = await readFills();
+    expect(fills.disclosure).not.toBe(brand);
     // Both must actually have been measured: a missing element reads as `null`, which would satisfy
     // the inequality above and let this test pass on a screen that has no disclosure at all.
     expect(fills.cloud).not.toBeNull();
@@ -705,7 +854,14 @@ test.describe("the cloud-first launch composition", () => {
   test("the cloud action is described by its browser-return note", async ({ page }) => {
     await setupTauriMock(page, { needsPicker: true, datasets: [DEFAULT_ENTRY] });
     await page.goto("/picker");
-    await expect(page.getByTestId("picker-login-cloud-button")).toBeVisible();
+    // The settled signed-out branch, not merely a painted button: the primary carries no
+    // `aria-describedby` while the session is resolving, precisely because the note it would name is
+    // not in the document then — so reading the attribute on visibility alone would measure the
+    // inert state and report a missing description as a defect.
+    await expect(page.getByTestId("picker-login-cloud-button")).toHaveAttribute(
+      "data-cloud-entry",
+      "sign-in",
+    );
 
     // `aria-describedby` is only worth anything if it resolves: a stale or misspelled id leaves the
     // button with no description at all, and nothing about the rendered screen would look wrong.
@@ -1382,6 +1538,9 @@ test.describe("picker contents", () => {
     await expect(cloud).toBeVisible();
     await expect(cloud).toHaveText("Log in with Nixus Cloud");
     await expect(cloud).toBeEnabled();
+    // The branch the copy above belongs to, read as an attribute so the two cannot drift: with no
+    // usable session this primary is the browser sign-in, never the in-app continuation.
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "sign-in");
 
     await cloud.click();
 
@@ -1398,6 +1557,7 @@ test.describe("picker contents", () => {
     // the browser round-trip — and the user stays here until it resolves.
     expect(await readIpcCommands(page)).not.toContain("select_dataset");
     expect(await readIpcCommands(page)).not.toContain("mark_picker_passed");
+    expect(await readIpcCommands(page)).not.toContain("continue_cloud_session");
     await expect(page).toHaveURL(/\/picker$/);
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
   });
@@ -1520,6 +1680,468 @@ const WORK_ENTRY: MockDataset = {
   label: "Work",
   is_default: false,
 };
+
+/** The Cognito subject the restored session below belongs to. */
+const RESTORED_SUB = "sub-restored";
+
+const RESTORED_SESSION: MockAuthState = {
+  status: "LoggedIn",
+  email: "user@example.com",
+  name: "Test User",
+};
+
+/**
+ * The account's own cloud-linked profile, keyed on the subject rather than on the email — the only
+ * key Rust ever matches on.
+ */
+const CLOUD_ENTRY: MockDataset = {
+  id: "cloud-restored",
+  label: "user@example.com",
+  kind: "cloud-linked",
+  cognito_sub: RESTORED_SUB,
+  linked_from: null,
+  is_default: false,
+  created_at: "2026-03-01T00:00:00+00:00",
+};
+
+/** Figures only this account's profile can answer with, so a wrong landing cannot render them. */
+const CLOUD_BUDGET: MockBudgetSummary = {
+  total_target_cents: 250_000,
+  total_spent_cents: 90_000,
+  remaining_cents: 160_000,
+  month: "2026-08",
+};
+
+test.describe("continuing a persisted Nixus Cloud session", () => {
+  test("a restored session offers Continue, opens that account's own profile, and never starts a browser sign-in", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: RESTORED_SESSION,
+      sessionSub: RESTORED_SUB,
+      budgetByDataset: { [CLOUD_ENTRY.id]: CLOUD_BUDGET },
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "continue");
+    await expect(cloud).toHaveText("Continue as user@example.com");
+    await expect(cloud).toBeEnabled();
+
+    // Absent, not merely dimmed: Continue stays inside the app, so a browser-return note would
+    // describe something that is not about to happen, and account creation is not the alternative
+    // offered to someone already signed in.
+    await expect(page.getByTestId("picker-create-account-link")).toHaveCount(0);
+    await expect(page.getByTestId("picker-cloud-browser-note")).toHaveCount(0);
+    // And with no note in the document the primary must not point at one — a dangling
+    // `aria-describedby` leaves the control with no description and nothing on screen looks wrong.
+    expect(await cloud.getAttribute("aria-describedby")).toBeNull();
+
+    await cloud.click();
+
+    // One command, and its payload is empty: the subject, the email and the dataset id are all
+    // resolved Rust-side from the stored token, so no identity crosses IPC in either direction.
+    // `{}` rather than `null` because that is what `invoke` sends for a no-argument command — the
+    // assertion is that the object is empty, not that the argument slot was omitted.
+    const continuations = await callsTo(page, "continue_cloud_session");
+    expect(continuations).toHaveLength(1);
+    expect(continuations[0].args).toEqual({});
+
+    // The whole point of the feature: no browser round-trip is started.
+    expect(await readIpcCommands(page)).not.toContain("start_login");
+
+    // And it landed on *that account's* profile, proven by figures only it can answer with rather
+    // than by the URL alone: `routes/index.tsx` builds this valuetext straight from the summary, and
+    // the mock answers with these figures for the cloud dataset only, so an activation that opened
+    // Default — or none at all — reads $0.00 here.
+    await expect(page).toHaveURL(/localhost:1420\/$/);
+    await expect(page.getByTestId("budget-overall-progress")).toHaveAttribute(
+      "aria-valuetext",
+      "$900.00 spent of $2,500.00",
+    );
+  });
+
+  test("an unbounded email never forces the launch screen to scroll sideways", async ({
+    page,
+  }) => {
+    // An email has no length limit the picker controls, and the primary's own `whitespace-nowrap` is
+    // what would push a long one past the action column at the enforced minimum window.
+    const longEmail = `${"a".repeat(64)}@an-unusually-long-mail-domain.example.com`;
+    await page.setViewportSize({ width: 1024, height: 680 });
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: { status: "LoggedIn", email: longEmail, name: null },
+      sessionSub: RESTORED_SUB,
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "continue");
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+
+    // Still on screen and still clickable, which is what distinguishes truncation from clipping the
+    // control out of the measure.
+    const box = await boxOf(page, "picker-login-cloud-button");
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(1024);
+
+    // Truncation hides characters, so the full address has to stay recoverable. A screen-reader user
+    // already hears the whole label; a sighted pointer user has only the tooltip, and without it the
+    // one control naming the account they are about to open is unreadable to them.
+    await expect(cloud.locator("[title]")).toHaveAttribute("title", longEmail);
+  });
+
+  test("a signed-out session keeps the browser sign-in flow exactly as it was", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: { status: "LoggedOut" },
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "sign-in");
+    await expect(cloud).toHaveText("Log in with Nixus Cloud");
+    await expect(page.getByTestId("picker-create-account-link")).toBeVisible();
+    await expect(page.getByTestId("picker-cloud-browser-note")).toBeVisible();
+
+    await cloud.click();
+
+    expect(await callsTo(page, "start_login")).toHaveLength(1);
+    // No identity to continue as, so the continuation must never be reachable — not even with a
+    // cloud-linked profile sitting in the registry.
+    expect(await readIpcCommands(page)).not.toContain("continue_cloud_session");
+    await expect(page).toHaveURL(/\/picker$/);
+  });
+
+  test("a session that could not be refreshed falls back to signing in, never to Continue", async ({
+    page,
+  }) => {
+    // `SessionExpired` is what Rust answers when the stored refresh token could not restore the
+    // session. There is an email in the keyring and a matching cloud profile in the registry, so
+    // this is precisely the state a Continue derived from anything but the resolved session would
+    // wrongly offer.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: { status: "SessionExpired" },
+      sessionSub: RESTORED_SUB,
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "sign-in");
+    await expect(cloud).toHaveText("Log in with Nixus Cloud");
+    await expect(cloud).toBeEnabled();
+    await expect(page.getByTestId("picker-create-account-link")).toBeVisible();
+    await expect(page.getByTestId("picker-cloud-browser-note")).toBeVisible();
+
+    // Reauthenticating is available immediately rather than behind a dead end.
+    await cloud.click();
+    expect(await callsTo(page, "start_login")).toHaveLength(1);
+    expect(await readIpcCommands(page)).not.toContain("continue_cloud_session");
+  });
+
+  test("an unresolved session shows only an inert checking primary, and settles without reflowing", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: RESTORED_SESSION,
+      sessionSub: RESTORED_SUB,
+      sessionDelayMs: 3000,
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "resolving");
+
+    // Truthful copy, because the button's own label is the only thing telling the user what this
+    // moment is. "Log in with Nixus Cloud" here was a claim about a browser that was not going to
+    // open for an already-signed-in user, and it was then swapped under them.
+    await expect(cloud).toHaveText("Checking Nixus Cloud…");
+
+    // Inert in both spellings, because the answer that decides what this button *does* has not
+    // arrived: activating it now would either start an OAuth round-trip the user did not need or
+    // continue as an account nobody has confirmed is signed in.
+    await expect(cloud).toBeDisabled();
+    await expect(cloud).toHaveAttribute("aria-disabled", "true");
+
+    // Absent, not merely disabled: both belong to the browser sign-in, and neither is known to apply
+    // until the session settles signed out. Rendering them here is what made the launch screen
+    // advertise account creation to someone who already had an account.
+    await expect(page.getByTestId("picker-create-account-link")).toHaveCount(0);
+    await expect(page.getByTestId("picker-cloud-browser-note")).toHaveCount(0);
+    // And with no note in the document the primary must not point at one.
+    expect(await cloud.getAttribute("aria-describedby")).toBeNull();
+
+    // And no identity is claimed on screen while it is unknown.
+    await expect(cloud).not.toContainText("user@example.com");
+
+    // The local half of the launch screen never waits on the session — it has no account in it.
+    await expandLocalProfiles(page);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
+
+    // The geometry of the inert state, captured for the reflow assertion below.
+    const resolvingColumn = await boxOf(page, "picker-action-column");
+    const resolvingPrimary = await boxOf(page, "picker-login-cloud-button");
+
+    // Nothing fired during the window, and then it settles into the Continue branch.
+    expect(await readIpcCommands(page)).not.toContain("start_login");
+    expect(await readIpcCommands(page)).not.toContain("continue_cloud_session");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "continue", {
+      timeout: 20_000,
+    });
+    await expect(cloud).toBeEnabled();
+    await expect(cloud).toHaveText("Continue as user@example.com");
+
+    // Zero reflow for the signed-in launch, which is the whole point of the compact inert state: the
+    // checking composition and the Continue composition are the same single primary, so the action
+    // column neither grows nor shifts when the answer lands. Measuring the column *and* the button
+    // because a column that happened to keep its height while the button moved inside it would still
+    // be a visible jump.
+    const settledColumn = await boxOf(page, "picker-action-column");
+    const settledPrimary = await boxOf(page, "picker-login-cloud-button");
+    expect(Math.abs(settledColumn.height - resolvingColumn.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(settledPrimary.y - resolvingPrimary.y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(settledPrimary.height - resolvingPrimary.height)).toBeLessThanOrEqual(1);
+  });
+
+  test("the browser sign-in composition appears only once the session settles signed out", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY],
+      session: { status: "LoggedOut" },
+      sessionDelayMs: 3000,
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "resolving");
+    await expect(cloud).toHaveText("Checking Nixus Cloud…");
+    // The login label is withheld too, not just the link and the note: a signed-out answer has not
+    // arrived yet either, so promising a browser is as premature here as it is for Continue.
+    await expect(cloud).not.toContainText("Log in with Nixus Cloud");
+    await expect(page.getByTestId("picker-create-account-link")).toHaveCount(0);
+    await expect(page.getByTestId("picker-cloud-browser-note")).toHaveCount(0);
+
+    // Then the signed-out answer lands and the full browser composition arrives together — the note
+    // is what tells the user the flow leaves the app, so a primary without it would be the dead
+    // silent window the note exists to prevent.
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "sign-in", {
+      timeout: 20_000,
+    });
+    await expect(cloud).toHaveText("Log in with Nixus Cloud");
+    await expect(cloud).toBeEnabled();
+    await expect(page.getByTestId("picker-create-account-link")).toBeVisible();
+    await expect(page.getByTestId("picker-cloud-browser-note")).toBeVisible();
+    expect(await cloud.getAttribute("aria-describedby")).toBe("picker-cloud-note");
+  });
+
+  test("Continue is inert while its own activation is in flight, so a second click cannot race", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: RESTORED_SESSION,
+      sessionSub: RESTORED_SUB,
+      continueSessionDelayMs: 3000,
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toBeEnabled();
+    await cloud.click();
+
+    // A second activation would open the same profile twice and race its own navigation.
+    await expect(cloud).toBeDisabled();
+    await expect(cloud).toHaveAttribute("aria-disabled", "true");
+
+    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    expect(await callsTo(page, "continue_cloud_session")).toHaveLength(1);
+  });
+
+  test("a failed activation leaves the user on a usable picker with Continue still offered", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: RESTORED_SESSION,
+      sessionSub: RESTORED_SUB,
+      continueSessionFails: "activation",
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toBeEnabled();
+    // The baseline for the selectivity assertion below, taken before the click that could disturb it.
+    const sessionReadsBefore = (await callsTo(page, "get_auth_session")).length;
+    await cloud.click();
+
+    // Without the toast the rejection is an unhandled promise and the button just looks dead. The
+    // Cloud-failure line, and provably not the session-expired one: nothing is wrong with the
+    // account here, so telling the user to sign in again would send them to fix something that is
+    // not broken — and it is the message, not just the branch, that tells them which it was.
+    const toast = page.locator("[data-sonner-toast]");
+    await expect(toast).toContainText(
+      "Nixus Cloud could not be reached. Please try again.",
+    );
+    await expect(toast).not.toContainText("Your session expired");
+
+    // Still here, and still usable rather than stranded: the picker gate was never latched, the
+    // primary is offering the same action again, and the local list is still reachable.
+    await expect(page).toHaveURL(/\/picker$/);
+    await expect(page.getByTestId("dataset-picker")).toBeVisible();
+    expect(await readIpcCommands(page)).not.toContain("mark_picker_passed");
+    await expect(cloud).toBeEnabled();
+
+    // Still Continue, and that is the point of this case: the session was never in question, so
+    // demoting the screen to a browser sign-in would send the user through an OAuth round-trip to
+    // fix a local fault that has nothing to do with their account.
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "continue");
+    await expect(page.getByTestId("picker-create-account-link")).toHaveCount(0);
+
+    // The session was not re-resolved at all, which is what makes this branch *selective* rather
+    // than merely arriving at the same answer: an unconditional reset would re-read the keyring —
+    // and land back on Continue anyway, because the session really is fine — so counting the reads
+    // is the only thing that distinguishes "left alone" from "dropped and restored".
+    expect(await callsTo(page, "get_auth_session")).toHaveLength(sessionReadsBefore);
+
+    // And the retry really is the same action, not a re-resolved one.
+    await cloud.click();
+    expect(await callsTo(page, "continue_cloud_session")).toHaveLength(2);
+    expect(await readIpcCommands(page)).not.toContain("start_login");
+
+    await expandLocalProfiles(page);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
+  });
+
+  test("a session invalidated between render and click stops offering Continue and falls back to signing in", async ({
+    page,
+  }) => {
+    // The gap this covers: the picker cached `LoggedIn` on render, and the session expired past
+    // refresh or was revoked before the click. Rust answers `AppError::Auth`, and a screen that kept
+    // the cached identity would leave its one filled primary permanently offering an account that
+    // can no longer be continued as — a dead end that no amount of clicking resolves.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: RESTORED_SESSION,
+      sessionSub: RESTORED_SUB,
+      continueSessionFails: "session-invalid",
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "continue");
+    await cloud.click();
+
+    // The session-expired line, and provably not the generic Cloud-failure one. The distinction is
+    // the user's next action: "could not be reached" invites a retry of an action that can no longer
+    // succeed, whereas this names the account as the thing to fix — which is also the composition the
+    // screen is about to become. Reuses the key the account menu already announces an expiry with,
+    // so the product says one thing about one condition.
+    const toast = page.locator("[data-sonner-toast]");
+    await expect(toast).toContainText(
+      "Your session expired. Sign in again to reconnect.",
+    );
+    await expect(toast).not.toContainText("Nixus Cloud could not be reached");
+
+    // The stale offer is withdrawn and the screen re-resolves into the ordinary browser sign-in —
+    // the composition a user with no usable session needs, whole rather than half of it.
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "sign-in");
+    await expect(cloud).toHaveText("Log in with Nixus Cloud");
+    await expect(cloud).toBeEnabled();
+    await expect(page.getByTestId("picker-create-account-link")).toBeVisible();
+    await expect(page.getByTestId("picker-cloud-browser-note")).toBeVisible();
+    await expect(cloud).not.toContainText("user@example.com");
+
+    // The session really was re-read rather than the label merely being swapped, which is what makes
+    // the new composition trustworthy instead of cosmetic.
+    expect((await callsTo(page, "get_auth_session")).length).toBeGreaterThan(1);
+
+    // Still on the picker, never latched, and now a working way in.
+    await expect(page).toHaveURL(/\/picker$/);
+    expect(await readIpcCommands(page)).not.toContain("mark_picker_passed");
+    await cloud.click();
+    expect(await callsTo(page, "start_login")).toHaveLength(1);
+    // And the withdrawn action is not silently re-attempted.
+    expect(await callsTo(page, "continue_cloud_session")).toHaveLength(1);
+  });
+
+  test("a session read that cannot be resolved settles into signing in, not into a dead end", async ({
+    page,
+  }) => {
+    // `get_auth_session` rejecting is the unreadable-keyring case, and it is a *decided* answer
+    // rather than an unknown one: there is no identity to continue as. react-query retries three
+    // times with exponential backoff (1s + 2s + 4s), so the settled state is ~7s out — the whole
+    // window this covers is the one where a screen keyed on "not signed in" alone would sit inert.
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      sessionFails: true,
+    });
+    await page.goto("/picker");
+
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "sign-in", {
+      timeout: 20_000,
+    });
+
+    // The whole signed-out composition, not a stranded primary: the note and the account-creation
+    // entry are what a user with no readable session actually needs.
+    await expect(cloud).toHaveText("Log in with Nixus Cloud");
+    await expect(cloud).toBeEnabled();
+    await expect(page.getByTestId("picker-create-account-link")).toBeVisible();
+    await expect(page.getByTestId("picker-cloud-browser-note")).toBeVisible();
+
+    // No identity is claimed from an answer that never arrived, and Continue is never offered.
+    await expect(cloud).not.toContainText("Continue as");
+    expect(await readIpcCommands(page)).not.toContain("continue_cloud_session");
+
+    // And it is a working way in rather than a screen that merely looks right.
+    await cloud.click();
+    const logins = await callsTo(page, "start_login");
+    expect(logins).toHaveLength(1);
+    expect(logins[0].args).toEqual({
+      intent: { kind: "Login" },
+      entry: "SignIn",
+    });
+
+    // The local half was never gated on the session either.
+    await expandLocalProfiles(page);
+    await expect(page.getByTestId("picker-dataset-row")).toHaveCount(1);
+  });
+
+  test("no i18n key leaks into the Continue state", async ({ page }) => {
+    await setupTauriMock(page, {
+      needsPicker: true,
+      datasets: [DEFAULT_ENTRY, CLOUD_ENTRY],
+      session: RESTORED_SESSION,
+      sessionSub: RESTORED_SUB,
+    });
+    await page.goto("/picker");
+    await expect(
+      page.getByTestId("picker-login-cloud-button"),
+    ).toHaveAttribute("data-cloud-entry", "continue");
+
+    // The interpolated label is the one place a missing key would render as raw `datasets.continueAs`
+    // with the email silently dropped, which reads as a plausible button rather than as a bug.
+    const picker = page.getByTestId("dataset-picker");
+    await expect(picker).not.toContainText("datasets.");
+    await expect(picker).not.toContainText("{{email}}");
+  });
+});
 
 test.describe("choosing a profile", () => {
   test("clicking a profile opens it, latches the gate, and lands on the dashboard", async ({

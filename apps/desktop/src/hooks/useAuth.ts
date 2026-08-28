@@ -1,9 +1,15 @@
 import { useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { queryKeys } from "@/lib/constants";
+import { parseAppError } from "@/lib/appError";
 import { clearProfileScopedState } from "@/lib/datasetSwitch";
 import { useActiveProfile } from "@/hooks/useDatasets";
 import type { AuthState } from "@/lib/types";
@@ -179,6 +185,58 @@ export function useSignIn() {
     mutationFn: ({ intent, entry }: SignInRequest) =>
       invoke<void>("start_login", { intent, entry }),
   });
+}
+
+/**
+ * Opens the persisted session's own cloud profile, with no browser round-trip.
+ *
+ * The counterpart to `useSignIn`, not a variant of it: `start_login` leaves the app and resolves
+ * minutes later through the loopback callback, whereas this completes inside the click. Rust
+ * re-resolves the stored session, resolves the identity from its id token, and find-or-creates,
+ * activates and latches the picker gate on the matching cloud-linked dataset — so this mutation
+ * sends no argument at all, and the Cognito subject never crosses IPC in either direction.
+ *
+ * `clearProfileScopedState`, never key-by-key invalidation: every cached row and profile-scoped
+ * `localStorage` entry belongs to whichever profile was open before this activation, and
+ * invalidation would keep serving them while refetching — a cross-account leak rather than a stale
+ * render. Swept synchronously here, rather than leaving it to the `dataset:switched` listener, so
+ * the previous profile's storage is provably gone before `mutateAsync` resolves and the caller
+ * navigates.
+ *
+ * Navigation and error toasting stay with the caller, matching `selectDatasetMutationOptions`.
+ *
+ * `onError` re-resolves the session, and **only** for an `auth`-typed rejection. The picker derives
+ * its Continue offer from a cached `LoggedIn`, so a session that expires past refresh or is revoked
+ * between that render and the click leaves the launch screen's one filled primary offering an account
+ * Rust has just refused — a dead end no amount of clicking resolves. Every `AppError::Auth` on this
+ * path says the same thing (`continuable_id_token`'s refusal, an unreadable session, a dataset owned
+ * by another account): the cached identity is wrong, so it is dropped and re-read.
+ *
+ * `resetQueries`, not `invalidateQueries`: invalidation keeps the stale `LoggedIn` rendered while it
+ * refetches, which is exactly the withdrawn offer staying clickable. Resetting clears it first, so
+ * the CTA goes inert for the round-trip and then settles into the browser sign-in composition.
+ *
+ * A non-auth rejection deliberately leaves the cache alone. The session was never in question, so
+ * Continue is still the right action and stays retryable — demoting the screen to a browser sign-in
+ * would send the user through an OAuth round-trip to fix a local fault about their profile.
+ *
+ * Split out of the hook for the same reason its dataset sibling is: the picker unmounts on
+ * navigation, which makes the sweep unobservable from an E2E test, so it is only assertable against
+ * a real QueryClient.
+ */
+export function continueCloudSessionMutationOptions(queryClient: QueryClient) {
+  return {
+    mutationFn: () => invoke<void>("continue_cloud_session"),
+    onSuccess: () => clearProfileScopedState(queryClient),
+    onError: (error: unknown) => {
+      if (parseAppError(error).type !== "auth") return;
+      void queryClient.resetQueries({ queryKey: queryKeys.auth.session });
+    },
+  };
+}
+
+export function useContinueCloudSession() {
+  return useMutation(continueCloudSessionMutationOptions(useQueryClient()));
 }
 
 /**

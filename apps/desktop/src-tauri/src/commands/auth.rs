@@ -1032,6 +1032,53 @@ pub async fn get_auth_session() -> Result<AuthState, AppError> {
     }
 }
 
+/// The id token of a session that is usable right now, or the one recoverable
+/// error every unusable shape degrades to.
+///
+/// Split from `continue_cloud_session` so the two rows of the matrix that must
+/// never reach an activation — signed out and expired — are unit-testable without
+/// a keyring. One message for both, because the affordance is identical: the
+/// picker falls back to the ordinary browser sign-in.
+fn continuable_id_token(resolved: ResolvedSession) -> Result<String, AppError> {
+    match resolved {
+        ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => Ok(session.id_token),
+        ResolvedSession::None | ResolvedSession::Expired => Err(AppError::Auth {
+            message: "Your Nixus Cloud session is no longer valid. Please sign in again."
+                .to_string(),
+            recoverable: true,
+        }),
+    }
+}
+
+/// Opens the persisted session's own cloud profile, with no browser round-trip.
+///
+/// Deliberately **not** a second sign-in: no PKCE attempt, no authorize URL, no
+/// opener, no token exchange, and no pending attempt. It re-resolves the session
+/// already in the keyring through the same `resolve_session` path
+/// `get_auth_session` uses — so an expired token is refreshed exactly once, by the
+/// existing grant — and hands its id token to the existing `LoginIntent::Login`
+/// branch, which find-or-creates the subject's cloud-linked dataset, activates it
+/// and latches the launch-picker gate.
+///
+/// Returns `()` on purpose: the identity is resolved from the token and consumed
+/// entirely Rust-side, so neither the subject nor the dataset id ever crosses IPC.
+///
+/// A failed activation does **not** clear the stored session, which is the one
+/// deliberate departure from the callback's `settle_callback` rollback. The
+/// callback rolls back because it had just written a *new* session and a failure
+/// there would leave the previous profile's data readable under the new identity;
+/// here the session predates the click and nothing was opened, so signing the user
+/// out over a transient local fault would be a logout the user never asked for.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn continue_cloud_session(app: AppHandle) -> Result<(), AppError> {
+    let id_token = continuable_id_token(resolve_session().await?)?;
+
+    crate::commands::cloud_link::resolve_intent(&app, &LoginIntent::Login, &id_token).await?;
+
+    info!("Continued the stored session; its cloud profile is now active");
+    Ok(())
+}
+
 /// The durable identity key of the active account, resolved server-side so the
 /// `sub` never crosses IPC as a parameter and account isolation stays an
 /// invariant rather than a convention the webview could bypass.
@@ -2413,6 +2460,88 @@ mod tests {
         assert_eq!(
             subject_from_resolved(resolved).expect("resolves"),
             "only-sub"
+        );
+    }
+
+    #[test]
+    fn continuing_uses_the_id_token_of_a_live_session() {
+        let session = session_with_claims(r#"{"sub":"a1b2c3","email":"user@example.com"}"#);
+        let expected = session.id_token.clone();
+
+        assert_eq!(
+            continuable_id_token(ResolvedSession::Live(session)).expect("resolves"),
+            expected
+        );
+    }
+
+    /// The refreshed token, never the one it replaced: a refresh is what makes an
+    /// expired-but-restorable session continuable at all, and handing the stale
+    /// token to the Login branch would resolve the identity from a token this
+    /// process has already superseded.
+    #[test]
+    fn continuing_uses_the_refreshed_id_token_rather_than_the_previous_one() {
+        let session = session_with_claims(r#"{"sub":"refreshed-sub","email":"user@example.com"}"#);
+        let expected = session.id_token.clone();
+
+        let resolved = continuable_id_token(ResolvedSession::Refreshed(session)).expect("resolves");
+
+        assert_eq!(resolved, expected);
+        assert_ne!(resolved, sample_session().id_token);
+    }
+
+    /// Both unusable shapes reject, and this is the guard that keeps the picker's
+    /// Continue path from ever activating a profile for an account that is not
+    /// signed in — the frontend's own branch is a courtesy, not the boundary.
+    #[test]
+    fn continuing_refuses_a_signed_out_or_expired_session_recoverably() {
+        for resolved in [ResolvedSession::None, ResolvedSession::Expired] {
+            let error = continuable_id_token(resolved).expect_err("rejects");
+            assert!(recoverable_of(&error));
+            assert!(message_of(&error).contains("sign in again"));
+        }
+    }
+
+    /// Every other guard in this module proves something about code that is already
+    /// reachable. This one proves it is reachable at all: a command that exists,
+    /// compiles and is fully unit-tested but was never added to `generate_handler!`
+    /// passes all of them and then fails only at runtime, as the "Unknown command"
+    /// rejection the picker's own `catch` turns into an ordinary Cloud-failure toast —
+    /// so an unregistered Continue would read as merely broken rather than as missing.
+    ///
+    /// Mirrors `ai/backend.rs`'s `the_entitlement_command_is_registered_for_ipc`, and is
+    /// scoped to the macro's own argument list rather than to the whole file, because
+    /// that is the claim being made: a `use` or a commented-out line naming the same
+    /// path would satisfy a bare file scan while leaving the command unregistered.
+    #[test]
+    fn the_continuation_command_is_registered_for_ipc() {
+        let lib_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("lib.rs");
+        let lib = std::fs::read_to_string(&lib_path).expect("lib.rs is readable");
+
+        let after_macro = lib
+            .split_once("generate_handler![")
+            .expect("lib.rs registers its commands through generate_handler!")
+            .1;
+        let registered = after_macro
+            .split_once("])")
+            .expect("the generate_handler! argument list is closed")
+            .0;
+
+        // Comments stripped for the same reason the sibling guard strips them: a
+        // commented-out registration must not satisfy the assertion.
+        let registered: String = registered
+            .lines()
+            .map(str::trim_start)
+            .filter(|line| !line.starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // The trailing comma keeps this from matching a longer name that merely starts
+        // with the same path.
+        assert!(
+            registered.contains("commands::auth::continue_cloud_session,"),
+            "lib.rs must register the continuation command"
         );
     }
 }

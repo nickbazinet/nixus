@@ -90,6 +90,8 @@
   "datasets.subtitle": "Budget, dépenses et entretien auto au même endroit, sur votre propre appareil.",
   "datasets.currentProfileBadge": "Actuel",
   "datasets.loginWithCloud": "Se connecter avec Nixus Cloud",
+  "datasets.checkingCloud": "Vérification de Nixus Cloud…",
+  "datasets.continueAs": "Continuer en tant que {{email}}",
   "datasets.createAccount": "Ou créez un compte",
   "datasets.cloudBrowserNote": "Votre navigateur s'ouvre pour terminer la connexion. Revenez ici ensuite.",
   "datasets.workingLocally": "Travailler en local",

@@ -545,22 +545,32 @@ test.describe("header profile entry point", () => {
     // Absent, not merely unset to some benign value: an auth-derived attribute here would mean the
     // header had an opinion about a session it is not allowed to have read.
     await expect(trigger).not.toHaveAttribute("data-auth-state");
+
+    // Counted before the navigation, because it is the *header's* claim: the launch picker resolves
+    // the machine-wide session on purpose — that is what decides whether it can offer Continue — so
+    // counting after the click would measure the picker's contract instead of this header's.
+    for (const command of LOCAL_PROFILE_KEYRING_COMMANDS) {
+      expect(await countIpcCalls(page, command), command).toBe(0);
+    }
+
     await trigger.click();
 
     // A single click may never begin an OAuth round trip, because completing one creates or reopens
     // a cloud profile and switches the active profile away from the local one the user works in.
     await expectPickerUsable(page);
-    for (const command of LOCAL_PROFILE_KEYRING_COMMANDS) {
-      expect(await countIpcCalls(page, command), command).toBe(0);
-    }
+    expect(await countIpcCalls(page, "start_login")).toBe(0);
     expect(await countIpcCalls(page, "handle_auth_callback")).toBe(0);
 
     // The user came here to change profiles, so the local list is what they land on — while Nixus
-    // Cloud stays the primary action rather than being demoted by the expansion.
+    // Cloud stays the primary action rather than being demoted by the expansion. The stored session
+    // is live, so that primary is the in-app continuation, and reaching it still cost no
+    // `start_login`.
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(
       PICKER_DATASETS.length,
     );
-    await expect(page.getByTestId("picker-login-cloud-button")).toBeEnabled();
+    const cloud = page.getByTestId("picker-login-cloud-button");
+    await expect(cloud).toBeEnabled();
+    await expect(cloud).toHaveAttribute("data-cloud-entry", "continue");
   });
 
   test("a local profile's header offers switching profiles with no error state", async ({

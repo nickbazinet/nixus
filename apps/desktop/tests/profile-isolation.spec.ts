@@ -293,6 +293,13 @@ async function setupIsolationMock(page: Page, options: IsolationOptions) {
               persist();
               return Promise.resolve(null);
 
+            // Every profile in this spec is local, so there is no account to continue as — but the
+            // launch picker resolves the machine-wide session on render to decide whether it can
+            // offer Continue, and leaving this unstubbed would put its cloud primary behind
+            // react-query's retry backoff on every visit.
+            case "get_auth_session":
+              return Promise.resolve({ status: "LoggedOut" });
+
             // ---- per-profile surfaces ------------------------------------------------------
             case "check_onboarding_status":
               return Promise.resolve(
