@@ -2,6 +2,16 @@ import { test, expect, type Page } from "@playwright/test";
 
 interface MockOptions {
   aiConfigured?: boolean;
+  /**
+   * A signed-in cloud account confirmed premium by Rust. Independent of `aiConfigured` on purpose:
+   * the pair is the whole matrix this surface has to gate on.
+   */
+  premium?: boolean;
+  /**
+   * Holds `get_cloud_ai_premium` unresolved for this long, which is the first-paint window every
+   * premium user actually sees.
+   */
+  premiumDelayMs?: number;
   insightDelayMs?: number;
   insightError?: boolean;
   insightNotConfigured?: boolean;
@@ -13,6 +23,8 @@ async function setupSpendingTrendsMock(
 ) {
   const {
     aiConfigured = true,
+    premium = false,
+    premiumDelayMs = 0,
     insightDelayMs = 0,
     insightError = false,
     insightNotConfigured = false,
@@ -22,7 +34,14 @@ async function setupSpendingTrendsMock(
   let lastInsightMonths: number | null = null;
 
   await page.addInitScript(
-    ({ aiConfigured, insightDelayMs, insightError, insightNotConfigured }) => {
+    ({
+      aiConfigured,
+      premium,
+      premiumDelayMs,
+      insightDelayMs,
+      insightError,
+      insightNotConfigured,
+    }) => {
       let currentMonths = 6;
 
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
@@ -30,6 +49,25 @@ async function setupSpendingTrendsMock(
           switch (cmd) {
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
+            case "get_active_profile":
+              return Promise.resolve({
+                dataset_id: "d1",
+                kind: premium ? "cloud-linked" : "local",
+                label: "Personal",
+                is_signed_in: premium,
+              });
+            case "get_auth_session":
+              return Promise.resolve(
+                premium
+                  ? { status: "LoggedIn", email: "a@b.c", name: null }
+                  : { status: "LoggedOut" },
+              );
+            case "get_cloud_ai_premium":
+              return premiumDelayMs > 0
+                ? new Promise((resolve) => {
+                    setTimeout(() => resolve(premium), premiumDelayMs);
+                  })
+                : Promise.resolve(premium);
             case "get_spending_trends": {
               currentMonths = args?.months ?? 6;
               const totals = Array.from({ length: currentMonths }, (_, i) => ({
@@ -122,7 +160,14 @@ async function setupSpendingTrendsMock(
         },
       };
     },
-    { aiConfigured, insightDelayMs, insightError, insightNotConfigured },
+    {
+      aiConfigured,
+      premium,
+      premiumDelayMs,
+      insightDelayMs,
+      insightError,
+      insightNotConfigured,
+    },
   );
 
   await page.exposeFunction("__getInsightCalls", () => insightCalls);
@@ -220,6 +265,53 @@ test.describe("Spending Trends — budget compare + AI insight", () => {
     await expect(page.getByTestId("category-spend-table")).toBeVisible();
 
     await page.waitForTimeout(500);
+    expect(await mock.getInsightCalls()).toBe(0);
+  });
+
+  test("a premium account with no BYO key reaches hosted AI without being asked for credentials", async ({
+    page,
+  }) => {
+    // Given a signed-in premium cloud account and no provider credentials on this machine
+    const mock = await setupSpendingTrendsMock(page, {
+      aiConfigured: false,
+      premium: true,
+    });
+
+    // When the trends page loads
+    await page.goto("/insights/trends");
+
+    // Then the insight is generated through the hosted-first backend
+    await expect(page.getByTestId("trends-insight-panel")).toContainText(
+      "Insight for 6 months",
+      { timeout: 5000 },
+    );
+    // And the setup prompt for a personal key never appears
+    await expect(page.getByTestId("trends-insight-settings-link")).toHaveCount(0);
+    expect(await mock.getInsightCalls()).toBe(1);
+  });
+
+  // Held unresolved for the whole test rather than released on a timer: a timed release races the
+  // page load, so the "during resolution" assertions could run after the answer had already landed
+  // and pass for the wrong reason. The resolving -> available transition is covered deterministically
+  // by the useAiConfig unit suite, and the resolved behavior by the instant-premium test above.
+  test("never offers to set up a personal key while the premium entitlement is still resolving", async ({
+    page,
+  }) => {
+    // Given a premium account with no BYO key whose entitlement read has not answered
+    const mock = await setupSpendingTrendsMock(page, {
+      aiConfigured: false,
+      premium: true,
+      premiumDelayMs: 30_000,
+    });
+
+    // When the trends page paints before that answer arrives
+    await page.goto("/insights/trends");
+
+    // Then the pending window shows the insight skeleton, proving we are observing it mid-resolution
+    await expect(page.getByTestId("trends-insight-skeleton")).toBeVisible();
+    // And the personal-key setup offer never appears in it
+    await expect(page.getByTestId("trends-insight-settings-link")).toHaveCount(0);
+    await expect(page.getByTestId("category-spend-table")).toBeVisible();
     expect(await mock.getInsightCalls()).toBe(0);
   });
 

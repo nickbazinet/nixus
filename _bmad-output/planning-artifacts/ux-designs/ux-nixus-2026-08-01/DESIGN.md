@@ -4,7 +4,7 @@ description: Visual identity for Nixus — a local-first desktop app that remove
 status: final
 updated: 2026-08-27
 sources:
-  - _bmad-output/planning-artifacts/product-brief-nkbaz-finance-2026-03-14.md
+  - _bmad-output/planning-artifacts/product-brief-Nixus-2026-03-14.md
   - _bmad-output/planning-artifacts/prd.md
   - _bmad-output/planning-artifacts/ux-design-specification.md
   - _bmad-output/planning-artifacts/ux-design-specification-beta-page-2026-06-09.md

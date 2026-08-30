@@ -12,7 +12,7 @@ inputDocuments:
   - project-context.md
   - ux-design-specification.md
 workflowType: 'architecture'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'Nbazinet'
 date: '2026-08-04'
 featureRequest: 'Budget Templates: apply a template to auto-create category/budget structure; system-seeded starter templates; export current category/budget as a shareable template; import a community template'

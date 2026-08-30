@@ -1,18 +1,24 @@
 ---
 stepsCompleted: [1, 2, 3, 4, 5, 6]
-status: complete
+status: historical
+supersededBy:
+  - docs/business-vision.md
+  - product-brief-addendum-mobile-cloud-differentiation-2026-08-12.md
+  - prd.md
 inputDocuments: []
 date: 2026-03-14
 author: dev
 ---
 
-# Product Brief: nkbaz-finance
+> **Historical document.** This brief's original framing — web app, friends/family only, "N/A — no commercial growth, revenue, or user acquisition goals" — reflects the earliest personal-project scope and is superseded by [docs/business-vision.md](../../docs/business-vision.md) (the current source of truth for product direction) and the [product-brief-addendum-mobile-cloud-differentiation-2026-08-12.md](product-brief-addendum-mobile-cloud-differentiation-2026-08-12.md), which already records the desktop pivot and SaaS-business direction. Kept for historical record of the original problem statement and personas; do not treat its Business Objectives, Out of Scope, or Future Vision sections as current.
+
+# Product Brief: Nixus
 
 <!-- Content will be appended sequentially through collaborative workflow steps -->
 
 ## Executive Summary
 
-nkbaz-finance is a personal finance management application that replaces manual spreadsheet tracking with an automation-first approach. The app enables users to build monthly budgets with grouped categories, track expenses, manage multiple accounts, and monitor net worth across diverse asset types (cash, crypto, housing, TFSA, RRSP, etc.). Its standout feature is AI-powered expense import — users upload a screenshot or PDF of their credit card statement, and the system automatically categorizes spending into the right budget categories using Strand SDK and AWS Bedrock. Built initially for personal use and close friends/family, each user gets their own isolated account and data.
+Nixus is a personal finance management application that replaces manual spreadsheet tracking with an automation-first approach. The app enables users to build monthly budgets with grouped categories, track expenses, manage multiple accounts, and monitor net worth across diverse asset types (cash, crypto, housing, TFSA, RRSP, etc.). Its standout feature is AI-powered expense import — users upload a screenshot or PDF of their credit card statement, and the system automatically categorizes spending into the right budget categories using Strand SDK and AWS Bedrock. Built initially for personal use and close friends/family, each user gets their own isolated account and data.
 
 ---
 
@@ -28,7 +34,7 @@ Without consistent tracking, users lose visibility into where their money goes, 
 
 ### Why Existing Solutions Fall Short
 
-While tools like spreadsheets offer full flexibility, they demand constant manual effort. The user's experience with Google Sheets reflects a common pattern: it works until the maintenance burden causes tracking to slip. The market has budgeting apps and net worth trackers, but nkbaz-finance is being built to scratch a personal itch — automation-first, with no compromises on the features that matter most to the builder and their circle.
+While tools like spreadsheets offer full flexibility, they demand constant manual effort. The user's experience with Google Sheets reflects a common pattern: it works until the maintenance burden causes tracking to slip. The market has budgeting apps and net worth trackers, but Nixus is being built to scratch a personal itch — automation-first, with no compromises on the features that matter most to the builder and their circle.
 
 ### Proposed Solution
 
@@ -89,7 +95,7 @@ N/A — No admin, support, or oversight roles needed at this stage. All users ar
 
 ## Success Metrics
 
-The primary measure of success for nkbaz-finance is whether it eliminates the manual spreadsheet workflow and provides reliable, automated financial tracking.
+The primary measure of success for Nixus is whether it eliminates the manual spreadsheet workflow and provides reliable, automated financial tracking.
 
 **User Success Metrics:**
 - **CC Auto-Categorization Accuracy:** 95%+ of transactions correctly categorized from uploaded screenshots/PDFs

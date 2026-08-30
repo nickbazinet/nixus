@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { queryKeys } from "@/lib/constants";
+import type { AiAvailability } from "@/hooks/useAiConfig";
 import type { CategoryCompareRow, TrendsInsightResponse } from "@/lib/types";
 
 const INSIGHT_STALE_MS = 15 * 60_000;
@@ -30,7 +31,7 @@ interface UseTrendsInsightOptions {
   months: number;
   windowLabel: string;
   categoryCompare: CategoryCompareRow[];
-  aiConfigured: boolean;
+  availability: AiAvailability;
   gatePassed: boolean;
 }
 
@@ -38,7 +39,7 @@ export function useTrendsInsight({
   months,
   windowLabel,
   categoryCompare,
-  aiConfigured,
+  availability,
   gatePassed,
 }: UseTrendsInsightOptions) {
   const { i18n } = useTranslation();
@@ -51,7 +52,7 @@ export function useTrendsInsight({
   // snapshot. Gating on the live array fires the first request with the still-empty debounced
   // value, which the backend rejects with "No category compare data provided".
   const debouncedGatePassed = useInsightGate(debouncedCategories);
-  const enabled = gatePassed && debouncedGatePassed && aiConfigured;
+  const enabled = gatePassed && debouncedGatePassed && availability === "available";
 
   return useQuery({
     queryKey: queryKeys.trendsInsight(debouncedMonths, debouncedLocale),

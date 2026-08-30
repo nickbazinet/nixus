@@ -12,11 +12,11 @@ scope: budget-templates
 parentDocument: architecture-desktop.md
 ---
 
-# nkbaz-finance - Budget Templates Epic Breakdown
+# Nixus - Budget Templates Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for the nkbaz-finance Budget Templates feature, decomposing FR96 (versioned budget template data portability) and the FR70/FR71 starter-template onboarding path from the PRD and `architecture-budget-templates.md` into implementable stories. Scoped addendum — parent epics live in `epics.md`; this file follows the same pattern as `epics-income.md` and `epics-car-maintenance.md`.
+This document provides the complete epic and story breakdown for the Nixus Budget Templates feature, decomposing FR96 (versioned budget template data portability) and the FR70/FR71 starter-template onboarding path from the PRD and `architecture-budget-templates.md` into implementable stories. Scoped addendum — parent epics live in `epics.md`; this file follows the same pattern as `epics-income.md` and `epics-car-maintenance.md`.
 
 ## Requirements Inventory
 

@@ -10,7 +10,7 @@ inputDocuments:
   - architecture-desktop.md
   - project-context.md
 workflowType: 'architecture'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'Nbazinet'
 date: '2026-06-10'
 featureRequest: 'Optional account selection on expense and income entry with automatic balance adjustment'

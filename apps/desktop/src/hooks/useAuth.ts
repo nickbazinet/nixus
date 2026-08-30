@@ -128,6 +128,25 @@ export function useCloudAiPremium({ enabled }: { enabled: boolean }) {
 }
 
 /**
+ * The entitlement answer plus whether it is an answer yet.
+ *
+ * `resolving` exists because `premium: false` is two different facts wearing one boolean: "this
+ * account is not entitled" and "nobody has asked yet". Collapsing them made a premium user's first
+ * paint indistinguishable from a non-premium one, so availability gates briefly rendered
+ * personal-key setup UI at accounts that need no key — and, on Project Advice, accepted a click and
+ * discarded it.
+ *
+ * Still no quota figure: the limit, the charged count and the period stay Rust-internal (AD-9). This
+ * carries the same one boolean plus a local render-state flag that never crosses IPC.
+ */
+export interface PremiumEntitlementState {
+  /** Fail-closed: only `true` may make a premium claim. */
+  readonly premium: boolean;
+  /** No decision yet. Never render a "not premium" consequence while this is true. */
+  readonly resolving: boolean;
+}
+
+/**
  * Whether a premium indicator may render right now — the single derivation of that answer, shared by
  * every surface that shows one.
  *
@@ -143,19 +162,39 @@ export function useCloudAiPremium({ enabled }: { enabled: boolean }) {
  * check that closes the subject-mismatch row of the matrix — without it a second cloud profile would
  * show the first one's entitlement.
  *
+ * `isLoading`, never `isPending`: a gated query sits at `pending` forever without ever fetching, so
+ * `isPending` would report a local profile as permanently undecided. Each link is only counted as
+ * resolving while the link before it has actually enabled it.
+ *
  * Costs no extra IPC. Every read here is an existing shared query key, so additional callers attach
  * as observers of caches the shell already holds rather than issuing their own commands.
  */
-export function usePremiumEntitlement(): boolean {
-  const profile = useActiveProfile().data;
+export function usePremiumEntitlementState(): PremiumEntitlementState {
+  const profile = useActiveProfile();
   const isEligibleProfile =
-    profile?.kind === "cloud-linked" && profile.is_signed_in;
+    profile.data?.kind === "cloud-linked" && profile.data.is_signed_in;
   const session = useQuery(authSessionQueryOptions(isEligibleProfile));
+  const isSessionLoggedIn = session.data?.status === "LoggedIn";
   const premium = useCloudAiPremium({
-    enabled: isEligibleProfile && session.data?.status === "LoggedIn",
+    enabled: isEligibleProfile && isSessionLoggedIn,
   });
 
-  return premium.data === true;
+  return {
+    premium: premium.data === true,
+    resolving:
+      profile.isLoading ||
+      (isEligibleProfile && session.isLoading) ||
+      (isEligibleProfile && isSessionLoggedIn && premium.isLoading),
+  };
+}
+
+/**
+ * The bare fail-closed boolean, for surfaces that only paint a premium indicator and have no
+ * "not premium" consequence to get wrong. Readers that gate an action or render setup UI must use
+ * `usePremiumEntitlementState` instead, so they can hold off while the answer is still in flight.
+ */
+export function usePremiumEntitlement(): boolean {
+  return usePremiumEntitlementState().premium;
 }
 
 /**

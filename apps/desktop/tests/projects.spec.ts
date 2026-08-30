@@ -40,6 +40,12 @@ const TWO_PROJECT_SUGGESTION: MockSuggestion[] = [
   },
 ];
 
+/** What `get_cloud_ai_premium` answers, and how long it takes to answer. */
+interface MockPremium {
+  granted: boolean;
+  delayMs?: number;
+}
+
 interface MockPace {
   project_id: number;
   required_monthly_cents: number | null;
@@ -79,7 +85,11 @@ async function setupTauriMock(
   aiConfigured: boolean = false,
   // Whether the provider answers or fails, which is the only difference between the advisory
   // success and error branches.
-  adviceOutcome: "success" | "error" = "success"
+  adviceOutcome: "success" | "error" = "success",
+  // A signed-in cloud account Rust confirmed premium. Independent of `aiConfigured`: the two are
+  // separate signals everywhere except the availability gate itself. `delayMs` holds the entitlement
+  // read unresolved, which is the first-paint window every premium user actually sees.
+  premium: MockPremium = { granted: false }
 ) {
   await page.addInitScript(
     ({
@@ -91,6 +101,7 @@ async function setupTauriMock(
       seedPace,
       aiConfigured,
       adviceOutcome,
+      premium,
     }) => {
       interface MockProject {
         id: number;
@@ -335,6 +346,30 @@ async function setupTauriMock(
               region: "us-east-1",
             });
 
+          // The advice gate now also reads the cloud entitlement, so all three of these are
+          // load-time invokes on this surface and cannot fall through to the rejecting default.
+          case "get_active_profile":
+            return Promise.resolve({
+              dataset_id: "d1",
+              kind: premium.granted ? "cloud-linked" : "local",
+              label: "Personal",
+              is_signed_in: premium.granted,
+            });
+
+          case "get_auth_session":
+            return Promise.resolve(
+              premium.granted
+                ? { status: "LoggedIn", email: "a@b.c", name: null }
+                : { status: "LoggedOut" }
+            );
+
+          case "get_cloud_ai_premium":
+            return premium.delayMs === undefined
+              ? Promise.resolve(premium.granted)
+              : new Promise((resolve) => {
+                  setTimeout(() => resolve(premium.granted), premium.delayMs);
+                });
+
           // Every argument the frontend sends is recorded so a spec can prove the request carries no
           // category name and no budget amount — the backend reads those itself.
           case "generate_project_advice": {
@@ -531,6 +566,7 @@ async function setupTauriMock(
       seedPace,
       aiConfigured,
       adviceOutcome,
+      premium,
     }
   );
 }
@@ -1519,7 +1555,8 @@ test.describe("AI advisory when a project is off track", () => {
     pace: MockPace,
     aiConfigured: boolean,
     adviceOutcome: "success" | "error" = "success",
-    project: MockSeedProject = OFF_TRACK_PROJECT
+    project: MockSeedProject = OFF_TRACK_PROJECT,
+    premium: MockPremium = { granted: false }
   ) {
     await setupTauriMock(
       page,
@@ -1530,7 +1567,8 @@ test.describe("AI advisory when a project is off track", () => {
       [project],
       [pace],
       aiConfigured,
-      adviceOutcome
+      adviceOutcome,
+      premium
     );
     await page.goto("/wealth/projects");
     await expect(page.getByTestId("project-row")).toHaveCount(1);
@@ -1611,6 +1649,58 @@ test.describe("AI advisory when a project is off track", () => {
       () => (window as unknown as { __INVOKE_LOG__: string[] }).__INVOKE_LOG__
     );
     expect(invoked).not.toContain("generate_project_advice");
+  });
+
+  test("a premium account with no BYO key gets advice without being asked for credentials", async ({
+    page,
+  }) => {
+    // Given a signed-in premium cloud account and no provider credentials on this machine
+    await openDetail(page, OFF_TRACK_PACE, false, "success", OFF_TRACK_PROJECT, {
+      granted: true,
+    });
+
+    // When the advisory is asked for
+    await page.getByTestId("project-advice-button").click();
+
+    // Then the hosted-first backend answers
+    await expect(page.getByTestId("project-advice-headline")).toContainText(
+      "Redirect $250 a month to stay on schedule."
+    );
+    // And the setup prompt for a personal key never appears
+    await expect(page.getByTestId("project-advice-not-configured")).toHaveCount(0);
+
+    const invoked = await page.evaluate(
+      () => (window as unknown as { __INVOKE_LOG__: string[] }).__INVOKE_LOG__
+    );
+    expect(invoked).toContain("generate_project_advice");
+  });
+
+  // Held unresolved for the whole test rather than released on a timer: a timed release races the
+  // page load and the row expansion, so the "during resolution" assertions could run after the
+  // answer had already landed and pass for the wrong reason. The resolving -> available transition
+  // is covered deterministically by the useAiConfig unit suite, and the resolved behavior by the
+  // premium/no-BYO test above.
+  test("a click cannot be lost or misexplained while the premium entitlement is still resolving", async ({
+    page,
+  }) => {
+    // Given a premium account with no BYO key whose entitlement read has not answered
+    await openDetail(page, OFF_TRACK_PACE, false, "success", OFF_TRACK_PROJECT, {
+      granted: true,
+      delayMs: 30_000,
+    });
+
+    // When the user reaches the action before that answer arrives
+    const button = page.getByTestId("project-advice-button");
+
+    // Then it refuses the click outright rather than accepting one it would discard, and it does not
+    // pre-emptively explain the refusal with a personal-key card this account has no use for
+    await expect(button).toBeDisabled();
+    await expect(page.getByTestId("project-advice-not-configured")).toHaveCount(0);
+    await expect(page.getByTestId("project-advice-panel")).toHaveCount(0);
+    expect(await adviceCallCount(page)).toBe(0);
+
+    // And the deterministic pace UI beside it is untouched by the pending AI read
+    await expect(page.getByTestId("project-pace-line")).toBeVisible();
   });
 
   test("a provider failure offers a retry and leaves the deterministic pace UI intact", async ({

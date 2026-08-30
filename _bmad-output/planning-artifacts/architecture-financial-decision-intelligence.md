@@ -13,7 +13,7 @@ inputDocuments:
   - architecture-desktop.md
   - project-context.md
 workflowType: 'architecture'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'Nbazinet'
 date: '2026-06-06'
 ---

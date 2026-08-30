@@ -6,11 +6,11 @@ inputDocuments:
   - ux-design-specification.md
 ---
 
-# nkbaz-finance - Epic Breakdown
+# Nixus - Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for nkbaz-finance, decomposing the requirements from the PRD, UX Design, and Architecture into implementable stories.
+This document provides the complete epic and story breakdown for Nixus, decomposing the requirements from the PRD, UX Design, and Architecture into implementable stories.
 
 ## Requirements Inventory
 

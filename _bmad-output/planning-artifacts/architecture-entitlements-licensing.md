@@ -13,7 +13,7 @@ inputDocuments:
   - prd.md
   - docs/project-context.md
 workflowType: 'architecture'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'dev'
 date: '2026-08-01'
 feature: 'entitlements-licensing'

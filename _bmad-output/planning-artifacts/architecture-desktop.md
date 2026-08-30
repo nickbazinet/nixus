@@ -4,12 +4,12 @@ lastStep: 8
 status: 'complete'
 completedAt: '2026-03-14'
 inputDocuments:
-  - product-brief-nkbaz-finance-2026-03-14.md
+  - product-brief-Nixus-2026-03-14.md
   - prd.md
   - prd-validation-report.md
   - ux-design-specification.md
 workflowType: 'architecture'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'dev'
 date: '2026-03-14'
 ---

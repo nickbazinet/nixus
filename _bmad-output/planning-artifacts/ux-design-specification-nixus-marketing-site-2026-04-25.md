@@ -3,13 +3,13 @@ stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 status: complete
 inputDocuments:
   - product-brief-nixus-marketing-site-2026-04-25.md
-  - product-brief-nkbaz-finance-2026-03-14.md
+  - product-brief-Nixus-2026-03-14.md
   - prd.md
 date: 2026-04-25
 author: Nbazinet
 project_name: nixus-marketing-site
 location: apps/web/
-relatedProduct: nkbaz-finance (desktop app, branded as Nixus)
+relatedProduct: Nixus (desktop app, branded as Nixus)
 ---
 
 # UX Design Specification nixus-marketing-site

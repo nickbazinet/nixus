@@ -12,13 +12,13 @@ editHistory:
   - date: '2026-03-16'
     changes: 'Added Income Module UX: CashFlowSummaryCard on dashboard, Income page design, IncomeSourceRow and IncomeEntryRow components, Journey 5 (Income Entry), onboarding Step 4 (Income Sources), updated navigation, empty states, and emotional design for income interactions'
 inputDocuments:
-  - product-brief-nkbaz-finance-2026-03-14.md
+  - product-brief-Nixus-2026-03-14.md
   - prd.md
   - prd-validation-report.md
   - architecture-car-maintenance.md
 ---
 
-# UX Design Specification nkbaz-finance
+# UX Design Specification Nixus
 
 **Author:** dev
 **Date:** 2026-03-14
@@ -29,7 +29,7 @@ inputDocuments:
 
 ### Project Vision
 
-nkbaz-finance is a personal finance SPA that replaces manual spreadsheet tracking with an automation-first approach. The core UX thesis: financial tools die when they demand effort. The app eliminates friction by automating data entry via AI-powered CC statement parsing, and consolidates budgeting, expense tracking, income tracking, multi-account balances, passive assets, and net worth history into a single interface. Income sources and monthly entries complete the cash flow picture — income versus expenses — enabling smarter AI recommendations. An AI chat provides natural language access to all financial data and operations. Built as a single-user desktop-first application.
+Nixus is a personal finance SPA that replaces manual spreadsheet tracking with an automation-first approach. The core UX thesis: financial tools die when they demand effort. The app eliminates friction by automating data entry via AI-powered CC statement parsing, and consolidates budgeting, expense tracking, income tracking, multi-account balances, passive assets, and net worth history into a single interface. Income sources and monthly entries complete the cash flow picture — income versus expenses — enabling smarter AI recommendations. An AI chat provides natural language access to all financial data and operations. Built as a single-user desktop-first application.
 
 ### Target Users
 
@@ -269,9 +269,9 @@ This is the interaction users would describe to a friend. If this feels effortle
 
 ### User Mental Model
 
-**Before nkbaz-finance:** "I have a list of spending, and I need to sort it into buckets." The user is the **doer** — they open a spreadsheet, read each transaction, type it in, assign a category. Manual, repetitive, draining.
+**Before Nixus:** "I have a list of spending, and I need to sort it into buckets." The user is the **doer** — they open a spreadsheet, read each transaction, type it in, assign a category. Manual, repetitive, draining.
 
-**With nkbaz-finance:** "I hand my statement to the app, and it sorts everything for me. I just check its work." The user becomes the **reviewer** — a fundamentally different cognitive posture. Less effort, more confidence.
+**With Nixus:** "I hand my statement to the app, and it sorts everything for me. I just check its work." The user becomes the **reviewer** — a fundamentally different cognitive posture. Less effort, more confidence.
 
 **Key mental model shifts:**
 - From data entry → quality review

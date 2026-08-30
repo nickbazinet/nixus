@@ -9,7 +9,7 @@ import { CategorySpendTable } from "@/components/spending-trends/CategorySpendTa
 import { TrendsInsightPanel } from "@/components/spending-trends/TrendsInsightPanel";
 import { useSpendingTrends } from "@/hooks/useSpendingTrends";
 import { useInsightGate, useTrendsInsight } from "@/hooks/useTrendsInsight";
-import { useAiConfig } from "@/hooks/useAiConfig";
+import { useAiAvailability } from "@/hooks/useAiConfig";
 
 export const Route = createFileRoute("/insights/trends")({
   component: SpendingTrendsPage,
@@ -41,19 +41,18 @@ function SpendingTrendsPage() {
 
   const months = WINDOW_MONTHS[selectedWindow];
   const { data, isPending } = useSpendingTrends(months);
-  const { data: aiConfig } = useAiConfig();
+  const availability = useAiAvailability();
 
   const totals = data?.totals ?? [];
   const categoryCompare = data?.category_compare ?? [];
   const isEmpty = totals.length === 0 && !isPending;
   const gatePassed = useInsightGate(categoryCompare);
-  const aiConfigured = aiConfig?.configured ?? false;
 
   const insightQuery = useTrendsInsight({
     months,
     windowLabel: windowLabels[selectedWindow],
     categoryCompare,
-    aiConfigured,
+    availability,
     gatePassed,
   });
 
@@ -90,7 +89,7 @@ function SpendingTrendsPage() {
           <SpendingTrendChart data={totals} isLoading={isPending} />
           <TrendsInsightPanel
             gatePassed={gatePassed}
-            aiConfigured={aiConfigured}
+            availability={availability}
             insightQuery={insightQuery}
           />
           <CategorySpendTable

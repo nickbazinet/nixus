@@ -18,7 +18,7 @@ editHistory:
     changes: 'Added Financial Decision Intelligence capability (FR83-FR89, NFR19-NFR22): deterministic emergency-fund health (months of runway vs configurable target), savings-capacity analysis (savings rate, surplus, top discretionary categories), and a guardrailed priority-waterfall next-best-action engine (emergency fund -> high-interest debt -> registered accounts TFSA/RRSP/FHSA -> invest surplus) surfaced on a dashboard card and dedicated Financial Health view; guidance is category-level and educational only with no specific securities and a not-professional-advice disclaimer; added Journey 9, MVP capability #14, updated Executive Summary, What Makes This Special, Success Criteria, and Phase 3 (conversational AI advisor + anomaly detection deferred)'
   - date: '2026-06-06'
     changes: 'Implementation parity sync for Financial Decision Intelligence and liability-aware net worth: marked capability #14 implemented; dashboard Financial Health card placement (above Top Categories); Financial Health section under Net Worth; FR86 CC debt buffer (15% of trailing avg monthly expenses for revolving balances); liability account types subtract from net worth (FR18/FR23/FR26); positive or negative owed-balance convention for credit cards; updated Journey 3 net worth formula and Journey 9 waterfall behavior notes'
-inputDocuments: ['product-brief-nkbaz-finance-2026-03-14.md']
+inputDocuments: ['product-brief-Nixus-2026-03-14.md']
 workflowType: 'prd'
 documentCounts:
   briefs: 1
@@ -32,16 +32,16 @@ classification:
   projectContext: greenfield
 ---
 
-# Product Requirements Document - nkbaz-finance
+# Product Requirements Document - Nixus
 
 **Author:** dev
 **Date:** 2026-03-14
 
 ## Executive Summary
 
-nkbaz-finance is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), optionally link individual expenses and income entries to specific accounts so balances stay in sync automatically, monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. Beyond tracking, the app provides financial-decision intelligence: it gauges emergency-fund health (months of runway against a target), measures savings capacity, and recommends the next best action for surplus cash using an accepted priority waterfall (emergency fund → high-interest debt → tax-advantaged room → investing) — kept educational and category-level rather than prescribing specific investments. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
+Nixus is a personal finance desktop application (built with Tauri) that replaces manual spreadsheet tracking with an automation-first approach. Users build monthly budgets with grouped categories, track expenses across multiple accounts (CAD and USD), optionally link individual expenses and income entries to specific accounts so balances stay in sync automatically, monitor passive assets, manage recurring expense templates, track car maintenance schedules across multiple vehicles, analyze spending trends and year-to-date summaries, project net worth forward, and view net worth history over time — all in a single interface. A guided onboarding wizard helps new users set up budget, accounts, assets, income, and first import. Users set up income sources and record monthly earnings, enabling a complete cash flow picture — income versus expenses — that powers smarter AI recommendations. Beyond tracking, the app provides financial-decision intelligence: it gauges emergency-fund health (months of runway against a target), measures savings capacity, and recommends the next best action for surplus cash using an accepted priority waterfall (emergency fund → high-interest debt → tax-advantaged room → investing) — kept educational and category-level rather than prescribing specific investments. The app surfaces in-app alerts when vehicle maintenance is approaching or overdue, based on odometer and time thresholds. The core workflow is built around AI-powered credit card statement import: users upload a screenshot or PDF, and the system auto-categorizes transactions using Strand SDK and AWS Bedrock, with duplicate detection and learned merchant-category hints. An AI chat interface — supporting multiple agent personalities with persistent conversation history — provides natural language access to all financial data and operations. Built for personal use as a single-user, local-first desktop application with English and French localization.
 
-The product solves a specific failure mode: financial tracking tools die when they demand effort. Spreadsheets work until the maintenance burden causes people to stop updating them. nkbaz-finance eliminates that friction by automating the most tedious part — data entry and categorization — starting with the highest-impact touchpoint (bi-weekly CC statements).
+The product solves a specific failure mode: financial tracking tools die when they demand effort. Spreadsheets work until the maintenance burden causes people to stop updating them. Nixus eliminates that friction by automating the most tedious part — data entry and categorization — starting with the highest-impact touchpoint (bi-weekly CC statements).
 
 ### What Makes This Special
 
@@ -79,7 +79,13 @@ The product solves a specific failure mode: financial tracking tools die when th
 
 ### Business Success
 
-N/A — personal project built to solve a personal problem. No commercial, growth, or adoption goals.
+*(Updated per [docs/business-vision.md](../../docs/business-vision.md) — Nixus is a sustainable, profitable SaaS business, not a personal-only project. This PRD's MVP scope remains the finance module; business framing below reflects the current commercial ambition.)*
+
+- Product provides enough value that early beta users are willing to pay for it once pricing goes live (see [pricing-model-competitive-analysis-2026-08-12.md](research/pricing-model-competitive-analysis-2026-08-12.md))
+- A clear target customer is validated: spreadsheet power users and financially engaged individuals who have outgrown basic budgeting apps (per business-vision.md)
+- Strong differentiation versus cloud-first incumbents (YNAB, Monarch, Copilot) established through local-first privacy, BYOK AI, and cross-module intelligence (Finance + Car) that no single-domain competitor can replicate
+- The business can grow organically (word of mouth, beta feedback, advisor/accountant channel) without requiring venture funding
+- Success is measured first by genuine user reliance (a real Google Sheets replacement), then by willingness to pay — not growth-at-all-costs metrics
 
 ### Technical Success
 
@@ -108,7 +114,7 @@ N/A — personal project built to solve a personal problem. No commercial, growt
 
 Dev sits down on a Saturday morning with coffee. Two weeks of spending on the credit card — time to update finances.
 
-He opens nkbaz-finance, hits upload, and drops in a screenshot of his Tangerine CC statement. The AI chews on it for a few seconds, then presents a categorized breakdown: groceries, gas, restaurants, subscriptions — all mapped to his budget categories.
+He opens Nixus, hits upload, and drops in a screenshot of his Tangerine CC statement. The AI chews on it for a few seconds, then presents a categorized breakdown: groceries, gas, restaurants, subscriptions — all mapped to his budget categories.
 
 A couple of flagged items need a quick look — a new merchant the AI hasn't seen before, and a transaction that could be either "Entertainment" or "Dining Out." Dev taps the right categories, confirms. Done.
 
@@ -177,7 +183,7 @@ The AI queries his data and responds with the breakdown. Dev follows up: "Am I s
 
 ### Journey 6: The Income Entry
 
-It's payday. Dev opens nkbaz-finance and navigates to income. His salary source is already set up — "Employment – Employer Name." He enters this month's net amount: $4,250 (a bit higher than last month due to overtime) and selects his Desjardins chequing account. Confirms. His chequing balance increases by $4,250, the dashboard updates: income bar for the month, cash flow ratio refreshes, and the AI now knows exactly how much came in versus what went out.
+It's payday. Dev opens Nixus and navigates to income. His salary source is already set up — "Employment – Employer Name." He enters this month's net amount: $4,250 (a bit higher than last month due to overtime) and selects his Desjardins chequing account. Confirms. His chequing balance increases by $4,250, the dashboard updates: income bar for the month, cash flow ratio refreshes, and the AI now knows exactly how much came in versus what went out.
 
 Next month his pay is lower — back to the base $3,800. He updates accordingly, leaving the account unlinked this time because he already reconciled the balance manually. Over time, the app builds a complete picture of income variability alongside spending patterns.
 
@@ -228,7 +234,7 @@ Before leaving a coffee shop, he toggles "Hide values" in the sidebar so passers
 
 ### Journey 9: The Financial Health Check
 
-Dev has been using nkbaz-finance for a few months — CC imports, income entries, and account balances are all current. He opens the new Financial Health view to figure out what to do with the cash piling up in his chequing account.
+Dev has been using Nixus for a few months — CC imports, income entries, and account balances are all current. He opens the new Financial Health view to figure out what to do with the cash piling up in his chequing account.
 
 At the top: **Emergency Fund — "2.4 months of expenses."** His target is 6 months, so the progress ring sits amber at 40%. Below it, **Savings Capacity:** "You're averaging a $620 monthly surplus — a 14% savings rate. Your two largest discretionary categories are Dining Out and Subscriptions." Then the part he actually came for — **Next Best Action:** "Build your emergency fund. You have surplus cash, but less than three months of buffer. Prioritize topping up your savings before investing." A short "Why?" line explains it's computed from his liquid balances and trailing average expenses. No ticker symbols, no "buy this fund" — just the priority and the reasoning. A small footnote reminds him this is educational guidance, not professional financial advice.
 
@@ -308,7 +314,7 @@ When he carries a small statement balance on his credit card — $300 against ~$
 
 **MVP Approach:** Problem-solving MVP — deliver the complete financial tracking replacement for Google Sheets. Core capabilities ship together because they form an interdependent system. Car maintenance tracking (capability #10) is specified but not yet implemented in codebase as of 2026-05-29.
 
-**Resource Requirements:** Solo developer. No external dependencies beyond Strand SDK and AWS Bedrock.
+**Resource Requirements:** Solo developer, building toward a paid SaaS product (per docs/business-vision.md) rather than a closed personal tool. No external dependencies beyond Strand SDK and AWS Bedrock for the core MVP; monetization infrastructure (LemonSqueezy + Keygen entitlements) is tracked separately in [architecture-entitlements-licensing.md](architecture-entitlements-licensing.md).
 
 **Must-Have Capabilities:**
 1. **Monthly Budget Builder** — create/manage budgets with customizable category groups and targets
@@ -328,7 +334,7 @@ When he carries a small statement balance on his credit card — $300 against ~$
 
 **Related Deliverable (separate app):** Marketing website (`apps/web`) — landing page, download CTA, feature showcase, FAQ. Not part of desktop MVP but ships alongside the product.
 
-Single-user only. No authentication required for MVP.
+Single-user only for the finance MVP. No authentication required for this module; account/login infrastructure exists separately to support the paid tiers described in the pricing research and entitlements architecture.
 
 ### Phase 2 (Growth)
 
@@ -359,15 +365,15 @@ Single-user only. No authentication required for MVP.
 
 **Implementation Gaps (PRD vs. Codebase, 2026-05-29):** Car maintenance module (FR49-FR61) is specified but not implemented. Multi-agent AI infrastructure exists with one agent (`budget-helper`) shipped — FR41-FR43 partially met. OpenAI credentials can be stored but chat and import require AWS Bedrock at runtime.
 
-**Market Risks:** N/A — personal project, no market validation needed.
+**Market Risks:** Nixus is entering a competitive market (YNAB, Monarch, Copilot, and local-first alternatives like Actual Budget, Sumhouse, MeasuredMoney) as a pre-alpha, solo-built product with no bank sync. Mitigation: compete on differentiators incumbents structurally can't copy — local-first privacy, BYOK AI with zero marginal AI cost, and cross-module intelligence (Finance + Car) — rather than head-on feature parity. See [pricing-model-competitive-analysis-2026-08-12.md](research/pricing-model-competitive-analysis-2026-08-12.md) for the full competitive positioning and pricing strategy.
 
-**Resource Risks:** Solo developer. All MVP features are scoped as minimal implementations. Budget builder, account/asset tracking, and car maintenance are straightforward CRUD. The AI integration is the only complex piece.
+**Resource Risks:** Solo developer. All MVP features are scoped as minimal implementations. Budget builder, account/asset tracking, and car maintenance are straightforward CRUD. The AI integration is the only complex piece. As the product moves toward monetization, licensing/entitlements and Nixus Cloud sync add scope beyond the original single-user tool — sequenced as separate architecture efforts so the core finance/car modules aren't blocked on them.
 
 ## Desktop Application Specific Requirements
 
 ### Project-Type Overview
 
-nkbaz-finance is a Tauri desktop application with a React frontend and Rust backend, serving as a personal finance dashboard. The app is primarily data-display and data-entry oriented, with an AI-powered async workflow (CC statement parsing) and a conversational AI interface as the core interaction patterns. Data is stored locally on the user's machine.
+Nixus is a Tauri desktop application with a React frontend and Rust backend, serving as a personal finance dashboard. The app is primarily data-display and data-entry oriented, with an AI-powered async workflow (CC statement parsing) and a conversational AI interface as the core interaction patterns. Data is stored locally on the user's machine.
 
 ### Technical Architecture Considerations
 

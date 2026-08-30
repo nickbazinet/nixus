@@ -2,7 +2,7 @@
 stepsCompleted: [1, 2, 3, 4, 5, 6]
 inputDocuments:
   - _bmad-output/planning-artifacts/product-brief-nixus-marketing-site-2026-04-25.md
-  - _bmad-output/planning-artifacts/product-brief-nkbaz-finance-2026-03-14.md
+  - _bmad-output/planning-artifacts/product-brief-Nixus-2026-03-14.md
   - _bmad-output/planning-artifacts/ux-design-specification-beta-page-2026-06-09.md
   - README.md
 workflowType: research

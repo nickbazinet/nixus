@@ -7,7 +7,7 @@ design_spine: ./DESIGN.md
 scope: Finance module and app shell. Car/Garage inherits the shell; not specified here.
 primary_user: Marie — spreadsheet tracker, 40s–50s, least tolerant of complexity or confusing UI. Plus first-time budgeters trying to get control of their finances.
 sources:
-  - _bmad-output/planning-artifacts/product-brief-nkbaz-finance-2026-03-14.md
+  - _bmad-output/planning-artifacts/product-brief-Nixus-2026-03-14.md
   - _bmad-output/planning-artifacts/prd.md
   - _bmad-output/planning-artifacts/prd-validation-report.md
   - _bmad-output/planning-artifacts/ux-design-specification.md

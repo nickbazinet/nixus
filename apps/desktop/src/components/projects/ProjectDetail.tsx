@@ -42,7 +42,7 @@ import {
   useProjectPace,
 } from "@/hooks/useProjects";
 import { useProjectAdvice } from "@/hooks/useProjectAdvice";
-import { useAiConfig } from "@/hooks/useAiConfig";
+import { useAiAvailability } from "@/hooks/useAiConfig";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
@@ -84,7 +84,7 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
   const { data: contributions = [] } = useProjectContributions(project.id);
   const { data: accounts = [] } = useAccounts();
   const { data: paces = [] } = useProjectPace();
-  const { data: aiConfig } = useAiConfig();
+  const availability = useAiAvailability();
   const deleteContribution = useDeleteProjectContribution();
 
   const remainingCents = Math.max(0, project.target_cents - savedCents);
@@ -115,7 +115,6 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
     accounts.find((account) => account.id === accountId)?.name ??
     String(accountId);
 
-  const aiConfigured = aiConfig?.configured ?? false;
   // Only a project the backend itself judged behind may ask. `good`, `neutral`, a reached goal and a
   // project with no required rate all fail this, so the button cannot appear where there is no
   // grounded shortfall to explain.
@@ -145,11 +144,16 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
     retryable: adviceErrorRetryable,
   } = useAiErrorPresentation(advice.error, "projects.adviceError");
 
-  // The provider is never touched until this runs, and it is only reachable from onClick. An
-  // unconfigured provider stops here rather than firing a call that would fail by construction.
+  // The provider is never touched until this runs, and it is only reachable from onClick. With
+  // neither BYO credentials nor a premium entitlement it stops here rather than firing a call that
+  // would fail by construction.
+  //
+  // `!== "available"` covers `resolving` too, but the button is already disabled for that state: a
+  // click accepted while the entitlement is still in flight would be recorded, discarded, and then
+  // explained with a set-up-your-key card the user does not need.
   const handleAskForAdvice = () => {
     setAdviceRequested(true);
-    if (!aiConfigured || requiredMonthlyCents === null) return;
+    if (availability !== "available" || requiredMonthlyCents === null) return;
 
     advice.refetch();
   };
@@ -234,14 +238,14 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
             size="sm"
             variant="outline"
             onClick={handleAskForAdvice}
-            disabled={advice.isFetching}
+            disabled={advice.isFetching || availability === "resolving"}
             data-testid="project-advice-button"
           >
             <Sparkles aria-hidden="true" />
             {t("projects.paceAdviceAction")}
           </Button>
 
-          {adviceRequested && !aiConfigured ? (
+          {adviceRequested && availability === "unavailable" ? (
             <Card flush data-testid="project-advice-not-configured">
               <Alert variant="info" icon={<InfoIcon />}>
                 <AlertTitle>{t("projects.adviceNotConfigured")}</AlertTitle>

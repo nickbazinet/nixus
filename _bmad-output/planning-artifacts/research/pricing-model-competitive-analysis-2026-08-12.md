@@ -1,5 +1,5 @@
 ---
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'dev'
 date: 2026-08-12
 status: complete

@@ -1,5 +1,5 @@
 ---
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'Nbazinet'
 date: '2026-05-18'
 sections_completed: ['technology_stack', 'language_rules', 'framework_rules', 'testing_rules', 'quality_rules', 'workflow_rules', 'anti_patterns']

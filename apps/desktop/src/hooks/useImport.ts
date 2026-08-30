@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  isHostedAiError,
+  parseAppError,
+  type HostedAiErrorCode,
+} from "@/lib/appError";
 import type { ImportStage } from "@/components/import/ImportProgressStepper";
 
 export interface ProposedCategory {
@@ -38,9 +43,19 @@ interface ImportErrorPayload {
 
 type ImportStatus = "idle" | "processing" | "done" | "error";
 
+/**
+ * The failure shape the import screen renders, kept wide enough to be re-read by `parseAppError`.
+ *
+ * `code` and `recoverable` are the whole point: dropping them collapsed every hosted refusal —
+ * premium, quota, auth, outage — into the generic "unavailable" wording, because an absent `code`
+ * degrades to `hosted_unavailable` in the parser. A premium user out of this month's quota was told
+ * Nixus could not read statements at all.
+ */
 export interface ImportError {
   message: string;
   type?: string;
+  code?: HostedAiErrorCode;
+  recoverable?: boolean;
 }
 
 export function useImport() {
@@ -66,7 +81,18 @@ export function useImport() {
         }),
         listen<ImportErrorPayload>("import:error", (event) => {
           setStatus("error");
-          setError({ message: event.payload.message });
+          // Merged, never assigned: `commands/import.rs` emits this event AND returns the typed
+          // `AppError`, and the two IPC messages are not ordered by contract. This payload carries
+          // no `type` and no `code`, so overwriting a rejection already in hand would silently
+          // downgrade a premium/quota/auth refusal to the generic "unavailable" wording.
+          setError((held) =>
+            held?.type === undefined
+              ? {
+                  message: event.payload.message,
+                  recoverable: event.payload.recoverable,
+                }
+              : held,
+          );
         }),
       ]);
 
@@ -95,9 +121,18 @@ export function useImport() {
     try {
       await invoke("import_cc_statement", { file_path: filePath });
     } catch (err: unknown) {
-      const e = err as { message?: string; type?: string };
+      const parsed = parseAppError(err);
       setStatus("error");
-      setError({ message: e.message ?? "Import failed", type: e.type });
+      setError(
+        isHostedAiError(parsed)
+          ? {
+              message: parsed.message || "Import failed",
+              type: parsed.type,
+              code: parsed.code,
+              recoverable: parsed.recoverable,
+            }
+          : { message: parsed.message ?? "Import failed", type: parsed.type },
+      );
     }
   }, []);
 

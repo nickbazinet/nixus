@@ -10,11 +10,11 @@ inputDocuments:
   - architecture-financial-decision-intelligence.md
 ---
 
-# nkbaz-finance - Financial Decision Intelligence Epic Breakdown
+# Nixus - Financial Decision Intelligence Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for the nkbaz-finance Financial Decision Intelligence module, decomposing FR83–FR89 (and NFR19–NFR22) from the PRD, UX Design, and Architecture into implementable stories.
+This document provides the complete epic and story breakdown for the Nixus Financial Decision Intelligence module, decomposing FR83–FR89 (and NFR19–NFR22) from the PRD, UX Design, and Architecture into implementable stories.
 
 ## Requirements Inventory
 

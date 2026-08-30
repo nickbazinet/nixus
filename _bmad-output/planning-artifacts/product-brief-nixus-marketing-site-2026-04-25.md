@@ -2,13 +2,13 @@
 stepsCompleted: [1, 2, 3, 4, 5, 6]
 status: complete
 inputDocuments:
-  - _bmad-output/planning-artifacts/product-brief-nkbaz-finance-2026-03-14.md
+  - _bmad-output/planning-artifacts/product-brief-Nixus-2026-03-14.md
   - _bmad-output/planning-artifacts/prd.md
 date: 2026-04-25
 author: Nbazinet
 project_name: nixus-marketing-site
 location: apps/web/
-relatedProduct: nkbaz-finance (desktop app, branded as Nixus)
+relatedProduct: Nixus (desktop app, branded as Nixus)
 ---
 
 # Product Brief: nixus-marketing-site

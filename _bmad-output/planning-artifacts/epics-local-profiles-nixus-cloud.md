@@ -62,7 +62,7 @@ NFR10: No `select_dataset` (switch), backup, danger-zone, or import operation ma
 - **Active-dataset state (AD-6a/6b/6c):** `DbState` becomes `Mutex<ActiveDataset{id, conn}>` — no connection exists before a profile is selected; ~125 existing `State<DbState>` access sites gain a guard. Switching is all-or-nothing (open+migrate the target before swapping) and always emits `dataset:switched { dataset_id, kind }`, including the first selection of a run.
 - **Registry (AD-3):** `datasets.json` at the global root is the picker's sole source of truth, one schema, one writer lock (shared with `select_dataset` and the OAuth-callback writer), with explicit missing-vs-corrupt handling and per-read id re-validation.
 - **Login/Migrate branching (AD-11/AD-12):** `start_login` carries a `LoginIntent` (`Login` | `Migrate{source_id}`) bound to the existing `auth_listener.rs` PKCE-attempt lifetime. Login finds-or-creates a cloud-linked dataset by `cognito_sub` (most-recent tie-break). Migrate copies the source `.db` file (post-`wal_checkpoint`, main file only) and its per-dataset AI-provider keyring entries into a new dataset, aborting if the source is no longer active when the callback resolves.
-- **Keyring naming (AD-8):** AI/AWS key service name is the unchanged literal `"nkbaz-finance"` for Default, `"nkbaz-finance-<uuid>"` for every other dataset — same UUID string as the directory name, never re-cased or slugged.
+- **Keyring naming (AD-8):** AI/AWS key service name is the unchanged literal `"Nixus"` for Default, `"Nixus-<uuid>"` for every other dataset — same UUID string as the directory name, never re-cased or slugged.
 - **Cognito session scope (AD-9, explicit non-goal this pass):** stays one global keyring slot / `SESSION_CACHE`, not per-profile. Cloud-linked signed-in/out display is derived via `commands::auth::current_subject()` compared to the stored `cognito_sub` (AD-10) — never via `AuthState`'s wire shape.
 - **Picker routing (AD-14):** New `routes/picker.tsx`, chrome-free via a conditional shell skip in `__root.tsx`; `AccountPromptDialog.tsx` and its dedicated i18n-parity test are deleted, not left dormant. Every existing Playwright spec's Tauri mock switch needs a case added for the new root-level `invoke()` (~30 spec files, no shared mock helper today).
 - **Frontend cache/state (AD-7):** `queryClient.clear()` on every `dataset:switched`, plus known `localStorage`-backed per-dataset state (import draft, onboarding/setup-banner dismissal flags in `DangerZone.tsx`/`SetupIncompleteBanner.tsx`/`CarOnboardingChecklist.tsx`) must not leak across a switch.
@@ -254,7 +254,7 @@ So that configuring an AI key in one profile never exposes it to another.
 
 **Given** a non-default profile (created via Story 34.1)
 **When** an AI-provider key is saved for it
-**Then** `credentials.rs` stores it under service name `"nkbaz-finance-<dataset_id>"`, using the exact same UUID string as the profile's directory name — never re-cased or slugged (AD-8)
+**Then** `credentials.rs` stores it under service name `"Nixus-<dataset_id>"`, using the exact same UUID string as the profile's directory name — never re-cased or slugged (AD-8)
 **And** `credentials.rs` remains the only module that touches `keyring_core::Entry` — no new call site bypasses it
 
 **Given** two local profiles, each with a different AI-provider key configured

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTrendsInsight } from "@/hooks/useTrendsInsight";
 import type { CategoryCompareRow } from "@/lib/types";
+import type { AiAvailability } from "@/hooks/useAiConfig";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -33,15 +34,17 @@ const POPULATED: CategoryCompareRow[] = [
 function Harness({
   categoryCompare,
   gatePassed,
+  availability = "available",
 }: {
   categoryCompare: CategoryCompareRow[];
   gatePassed: boolean;
+  availability?: AiAvailability;
 }) {
   useTrendsInsight({
     months: 6,
     windowLabel: "6 months",
     categoryCompare,
-    aiConfigured: true,
+    availability,
     gatePassed,
   });
   return null;
@@ -108,5 +111,60 @@ describe("useTrendsInsight", () => {
     ];
     expect(command).toBe("generate_trends_insight");
     expect(payload.categories).toEqual(POPULATED);
+  });
+
+  // The gate now consumes a composed availability state rather than the BYO flag alone, so the
+  // hook must stay indifferent to WHERE that availability came from and fire on `available` only.
+  it("requests an insight whenever AI is available, whatever made it available", () => {
+    // Given trend data that passes the gate and an AI backend that can serve the request
+    render(
+      <Harness categoryCompare={POPULATED} gatePassed={true} availability="available" />,
+    );
+
+    // When the debounce settles
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    // Then the insight request fires
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never requests an insight while no AI backend can serve it", () => {
+    // Given trend data that passes the gate but neither BYO credentials nor a premium entitlement
+    render(
+      <Harness
+        categoryCompare={POPULATED}
+        gatePassed={true}
+        availability="unavailable"
+      />,
+    );
+
+    // When the debounce settles
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    // Then nothing is invoked — the fail-closed setup state is what the panel renders
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("never requests an insight while availability is still being decided", () => {
+    // Given trend data that passes the gate but a premium entitlement that has not answered yet
+    render(
+      <Harness
+        categoryCompare={POPULATED}
+        gatePassed={true}
+        availability="resolving"
+      />,
+    );
+
+    // When the debounce settles
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    // Then no request is spent on a decision that has not been made
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 });

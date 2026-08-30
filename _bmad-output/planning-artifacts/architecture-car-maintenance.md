@@ -12,7 +12,7 @@ inputDocuments:
   - project-context.md
   - ux-design-specification.md
 workflowType: 'architecture'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'Nbazinet'
 date: '2026-05-29'
 ---

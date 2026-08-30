@@ -8,7 +8,7 @@ inputDocuments:
   - prd.md
 workflowType: 'architecture'
 feature: 'credential-management'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'Nbazinet'
 date: '2026-05-18'
 ---

@@ -4,7 +4,7 @@ status: complete
 document_type: 'product-brief-addendum'
 supersedes: null
 amends:
-  - product-brief-nkbaz-finance-2026-03-14.md
+  - product-brief-Nixus-2026-03-14.md
 relatedDocuments:
   - _bmad-output/planning-artifacts/research/pricing-model-competitive-analysis-2026-08-12.md
   - _bmad-output/planning-artifacts/architecture-entitlements-licensing.md
@@ -15,7 +15,7 @@ author: dev
 
 # Product Brief Addendum — Cross-Module Intelligence, Advisor Channel, Life-Checkup Reports & Nixus Cloud
 
-_This addendum captures a strategy discussion held 2026-08-12 on market differentiation and the mobile-companion vision. It does not replace [product-brief-nkbaz-finance-2026-03-14.md](product-brief-nkbaz-finance-2026-03-14.md) — that document's original MVP scope (web-only, single-user) is historical and already superseded by the desktop pivot and current [PRD](prd.md). This addendum records net-new strategic direction that should inform future architecture and PRD work: differentiation strategy, the mobile companion's actual shape, and the local-core/cloud-optional data model that makes it possible without abandoning the local-first promise._
+_This addendum captures a strategy discussion held 2026-08-12 on market differentiation and the mobile-companion vision. It does not replace [product-brief-Nixus-2026-03-14.md](product-brief-Nixus-2026-03-14.md) — that document's original MVP scope (web-only, single-user) is historical and already superseded by the desktop pivot and current [PRD](prd.md). This addendum records net-new strategic direction that should inform future architecture and PRD work: differentiation strategy, the mobile companion's actual shape, and the local-core/cloud-optional data model that makes it possible without abandoning the local-first promise._
 
 ---
 

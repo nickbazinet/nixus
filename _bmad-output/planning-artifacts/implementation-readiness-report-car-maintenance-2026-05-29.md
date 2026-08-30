@@ -7,7 +7,7 @@ stepsCompleted:
   - step-05-epic-quality-review
   - step-06-final-assessment
 assessmentScope: car-maintenance
-project: nkbaz-finance
+project: Nixus
 date: 2026-05-29
 documentsSelected:
   prd: _bmad-output/planning-artifacts/prd.md
@@ -23,7 +23,7 @@ documentsSelected:
 # Implementation Readiness Assessment Report
 
 **Date:** 2026-05-29
-**Project:** nkbaz-finance
+**Project:** Nixus
 **Scope:** Car Maintenance Module
 
 ## Document Inventory

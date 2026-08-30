@@ -8,14 +8,31 @@ const MOCK_CATEGORIES = [
 
 async function setupTauriMock(
   page: Page,
-  options?: { aiError?: boolean; badDates?: boolean; proposeCategory?: "existingGroup" | "newGroup" }
+  options?: {
+    aiError?: boolean;
+    badDates?: boolean;
+    proposeCategory?: "existingGroup" | "newGroup";
+    /** A typed hosted-AI refusal code, standing in for `AppError::HostedAi`'s discriminator. */
+    hostedAiCode?: string;
+    /** Delays the code-less `import:error` event until after the typed rejection has landed. */
+    hostedEventLast?: boolean;
+  }
 ) {
   const aiError = options?.aiError ?? false;
   const badDates = options?.badDates ?? false;
   const proposeCategory = options?.proposeCategory ?? null;
+  const hostedAiCode = options?.hostedAiCode ?? null;
+  const hostedEventLast = options?.hostedEventLast ?? false;
 
   await page.addInitScript(
-    ({ aiError, badDates, proposeCategory, categories }) => {
+    ({
+      aiError,
+      badDates,
+      proposeCategory,
+      hostedAiCode,
+      hostedEventLast,
+      categories,
+    }) => {
       type EventCallback = (event: { event: string; payload: unknown; id: number }) => void;
       const eventListeners: Record<string, EventCallback[]> = {};
       const callbacks: Record<number, EventCallback> = {};
@@ -88,6 +105,29 @@ async function setupTauriMock(
             case "import_cc_statement": {
               setTimeout(() => emitEvent("import:progress", { stage: "uploading", message: "Preparing file..." }), 50);
               setTimeout(() => emitEvent("import:progress", { stage: "extracting", message: "AI is reading your statement..." }), 100);
+
+              if (hostedAiCode) {
+                // The two IPC messages are not ordered by contract, so both orders are exercised.
+                // `hostedEventLast` delays the code-less event past the typed rejection: a listener
+                // that assigned rather than merged would overwrite the code and silently restore
+                // the generic-wording bug these tests cover.
+                const emitHostedEvent = () =>
+                  emitEvent("import:error", {
+                    message: "Hosted AI refused the request.",
+                    recoverable: true,
+                  });
+                if (hostedEventLast) {
+                  setTimeout(emitHostedEvent, 150);
+                } else {
+                  emitHostedEvent();
+                }
+                return Promise.reject({
+                  type: "hosted_ai",
+                  code: hostedAiCode,
+                  message: "Hosted AI refused the request.",
+                  recoverable: true,
+                });
+              }
 
               if (aiError) {
                 setTimeout(() => emitEvent("import:error", { message: "AI service error: Bedrock unavailable", recoverable: true }), 200);
@@ -172,7 +212,14 @@ async function setupTauriMock(
         convertFileSrc: (path: string) => path,
       };
     },
-    { aiError, badDates, proposeCategory, categories: MOCK_CATEGORIES }
+    {
+      aiError,
+      badDates,
+      proposeCategory,
+      hostedAiCode,
+      hostedEventLast,
+      categories: MOCK_CATEGORIES,
+    }
   );
 }
 
@@ -351,6 +398,82 @@ test.describe("Import Page — Story 6.2", () => {
     await expect(manual).toBeVisible();
     await expect(manual).toHaveText("Add transactions manually");
     await expect(manual).toHaveAttribute("href", "/spending/transactions");
+  });
+
+  // Given the four hosted codes whose remedies differ, each paired with the line it must select.
+  // Separate tests rather than a loop: `addInitScript` accumulates per page, and one failing code
+  // must not hide the other three.
+  const HOSTED_REFUSALS = [
+    ["quota_exhausted", "You've used all of this month's Nixus Cloud AI requests."],
+    ["premium_required", "Nixus Cloud AI isn't enabled on your account."],
+    ["unauthorized", "Your sign-in has expired. Please sign in again."],
+    [
+      "hosted_unavailable",
+      "Nixus Cloud AI isn't available right now. Please try again shortly.",
+    ],
+  ] as const;
+
+  for (const [code, expected] of HOSTED_REFUSALS) {
+    test(`a hosted ${code} refusal keeps its own wording rather than the generic unavailable line`, async ({
+      page,
+    }) => {
+      // When statement import fails with that code
+      await setupTauriMock(page, { hostedAiCode: code });
+      await page.goto("/import");
+      await triggerUpload(page);
+
+      // Then its own localized message is what the error screen shows
+      const errorState = page.getByTestId("import-error-state");
+      await expect(errorState).toBeVisible({ timeout: 5000 });
+      await expect(errorState).toContainText(expected);
+      await expect(
+        page.getByText("Nixus can't read statements right now")
+      ).toHaveCount(0);
+    });
+  }
+
+  test("a hosted refusal never asks a premium user to set up a personal key", async ({
+    page,
+  }) => {
+    // Given hosted AI is out of this month's quota
+    await setupTauriMock(page, { hostedAiCode: "quota_exhausted" });
+    await page.goto("/import");
+    await triggerUpload(page);
+
+    // When the error screen renders
+    await expect(page.getByTestId("import-error-state")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Then the not-configured setup path is absent — nothing about credentials is wrong here
+    await expect(page.getByTestId("open-settings-link")).toHaveCount(0);
+    await expect(page.getByTestId("try-again-button")).toBeVisible();
+  });
+
+  test("a code-less error event arriving after the typed rejection cannot erase the hosted code", async ({
+    page,
+  }) => {
+    // Given the quota refusal rejects the command first and the code-less event lands afterwards
+    await setupTauriMock(page, {
+      hostedAiCode: "quota_exhausted",
+      hostedEventLast: true,
+    });
+    await page.goto("/import");
+    await triggerUpload(page);
+
+    const errorState = page.getByTestId("import-error-state");
+    await expect(errorState).toBeVisible({ timeout: 5000 });
+
+    // When the late event has had time to land
+    await page.waitForTimeout(500);
+
+    // Then the quota wording still stands, and the generic line never replaces it
+    await expect(errorState).toContainText(
+      "You've used all of this month's Nixus Cloud AI requests."
+    );
+    await expect(
+      page.getByText("Nixus can't read statements right now")
+    ).toHaveCount(0);
   });
 });
 

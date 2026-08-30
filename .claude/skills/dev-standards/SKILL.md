@@ -1,9 +1,9 @@
 ---
 name: dev-standards
-description: 'Development standards and quality gates for nkbaz-finance. Run this skill when planning implementation work to ensure all standards are met. Use before starting any feature, bugfix, or refactor.'
+description: 'Development standards and quality gates for Nixus. Run this skill when planning implementation work to ensure all standards are met. Use before starting any feature, bugfix, or refactor.'
 ---
 
-# Development Standards — nkbaz-finance
+# Development Standards — Nixus
 
 These standards apply to all implementation work on this project. Review them before starting and verify them before claiming completion.
 

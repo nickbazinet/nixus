@@ -9,11 +9,11 @@ inputDocuments:
   - ux-design-specification.md
 ---
 
-# nkbaz-finance - Car Maintenance Module Epic Breakdown
+# Nixus - Car Maintenance Module Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for the nkbaz-finance Car Maintenance Module, decomposing FR49–FR61 (and dashboard FR62) from the PRD, UX Design, and Architecture into implementable stories.
+This document provides the complete epic and story breakdown for the Nixus Car Maintenance Module, decomposing FR49–FR61 (and dashboard FR62) from the PRD, UX Design, and Architecture into implementable stories.
 
 ## Requirements Inventory
 

@@ -3,7 +3,7 @@ name: version-bump
 description: 'Bump the app version across all required files when releasing or updating the version. Use when the user says "bump version", "update version", "release", or "update release number".'
 ---
 
-# Version Bump — nkbaz-finance
+# Version Bump — Nixus
 
 When bumping the version, **all three files** must be updated to the same version:
 

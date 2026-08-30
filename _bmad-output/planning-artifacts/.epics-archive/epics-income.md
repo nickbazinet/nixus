@@ -8,11 +8,11 @@ inputDocuments:
 scope: income-module
 ---
 
-# nkbaz-finance - Income Module Epic Breakdown
+# Nixus - Income Module Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for the nkbaz-finance Income Module, decomposing the income-related requirements from the PRD, UX Design, and Architecture into implementable stories.
+This document provides the complete epic and story breakdown for the Nixus Income Module, decomposing the income-related requirements from the PRD, UX Design, and Architecture into implementable stories.
 
 ## Requirements Inventory
 

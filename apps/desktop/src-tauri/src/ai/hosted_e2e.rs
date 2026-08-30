@@ -631,6 +631,53 @@ fn statement_import_reports_the_hosted_reason_instead_of_degrading_to_openai() {
     );
 }
 
+/// Statement import with no hosted eligibility and no BYO provider: hosted is never
+/// attempted, so `NotConfigured` is the honest answer rather than a hosted code the
+/// gateway never produced. The complement of the premium success path above — together
+/// they pin that a personal key is required only where hosted was never in play.
+#[test]
+fn a_statement_import_with_neither_hosted_eligibility_nor_byo_reports_not_configured() {
+    let gateway = spawn_gateway(non_premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let error = run(statement_request(), &deltas).expect_err("nothing can serve this surface");
+
+    assert!(matches!(error, AppError::NotConfigured), "got {error:?}");
+    assert_eq!(
+        gateway.invoke_calls.load(Ordering::SeqCst),
+        0,
+        "an ineligible account must never reach the invoke route"
+    );
+    assert!(
+        deltas.lock().unwrap().is_empty(),
+        "no output may be produced when no backend served the request"
+    );
+}
+
+/// The quota boundary, held deliberately: an exhausted premium month must NOT be routed
+/// to hosted. Hosted was therefore never attempted, so there is no hosted code to report
+/// and `NotConfigured` is the honest answer. Asserting the zero invoke count is what stops
+/// someone "fixing" premium access by bypassing the cap.
+#[test]
+fn an_exhausted_premium_month_skips_hosted_statement_import_rather_than_bypassing_the_cap() {
+    let exhausted =
+        r#"{"premium":true,"monthly_request_limit":5,"charged_count":5,"period":"2026-08"}"#
+            .to_string();
+    let gateway = spawn_gateway(exhausted, InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let error = run(statement_request(), &deltas).expect_err("no BYO Bedrock is configured");
+
+    assert_eq!(
+        gateway.invoke_calls.load(Ordering::SeqCst),
+        0,
+        "an exhausted month must not be routed to hosted, premium or not"
+    );
+    assert!(matches!(error, AppError::NotConfigured), "got {error:?}");
+}
+
 /// The same 429 on a text-only surface DOES reach the OpenAI fallback, proving the
 /// Bedrock-only rule above is specific to statement import rather than a blanket
 /// refusal to fall back.

@@ -8,7 +8,7 @@ inputDocuments:
 scope: ai-section-epic-13
 ---
 
-# nkbaz-finance - AI Section Epic Breakdown
+# Nixus - AI Section Epic Breakdown
 
 ## Overview
 

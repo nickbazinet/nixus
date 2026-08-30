@@ -6,7 +6,7 @@ completedAt: '2026-04-14'
 inputDocuments:
   - architecture-desktop.md
 workflowType: 'architecture'
-project_name: 'nkbaz-finance'
+project_name: 'Nixus'
 user_name: 'Nbazinet'
 date: '2026-04-14'
 scope: 'platform'
@@ -18,7 +18,7 @@ moduleDocuments:
 
 # Platform Architecture Decision Document
 
-_This is the root architecture document for the nkbaz-finance platform. It covers monorepo structure, cross-module decisions, and shared infrastructure. Each module has its own architecture document for internal implementation details._
+_This is the root architecture document for the Nixus platform. It covers monorepo structure, cross-module decisions, and shared infrastructure. Each module has its own architecture document for internal implementation details._
 
 **Module Architecture Documents:**
 - [Desktop App](architecture-desktop.md) — Tauri desktop application (React + Rust + SQLite)
@@ -29,7 +29,7 @@ _This is the root architecture document for the nkbaz-finance platform. It cover
 
 ### Platform Scope
 
-nkbaz-finance is expanding from a single desktop application into a multi-module platform. The desktop app (Tauri — React + Rust + SQLite) is already built and working. The platform expansion adds commercialization capabilities: a marketing website, user accounts, module licensing, and subscription management.
+Nixus is expanding from a single desktop application into a multi-module platform. The desktop app (Tauri — React + Rust + SQLite) is already built and working. The platform expansion adds commercialization capabilities: a marketing website, user accounts, module licensing, and subscription management.
 
 **Module Overview:**
 
@@ -285,7 +285,7 @@ sam init --runtime rust --app-template hello-world --name api
 | IaC | AWS SAM (template.yaml) | Defines Lambda, API Gateway, DynamoDB, Cognito in one file; simpler than CDK for this scope |
 | Web hosting | S3 + CloudFront | Static SPA; near-zero cost; ACM certificate for HTTPS |
 | DNS | Route 53 (nicolasbazinet.net) | Existing hosted zone; app.nicolasbazinet.net (web), api.nicolasbazinet.net (API) |
-| Environments | Prod only | Solo developer, no customers yet; test locally with sam local + vite dev; add staging when needed |
+| Environments | Prod only | Pre-beta/pre-pricing-launch (per business-vision.md and pricing-model-competitive-analysis-2026-08-12.md); test locally with sam local + vite dev. **Revisit before public pricing goes live** — add a staging environment once real paying customers depend on prod, since "no customers yet" will no longer hold |
 | CI/CD | Manual deploys | sam deploy (API), s3 sync (web), tauri build (desktop); add GitHub Actions later |
 | Monitoring | CloudWatch (default) | Lambda logs go to CloudWatch automatically; no external tools needed at this scale |
 | Certificates | ACM in us-east-1 | Required for CloudFront; *.nicolasbazinet.net wildcard or per-subdomain |

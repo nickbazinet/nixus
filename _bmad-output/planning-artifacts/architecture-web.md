@@ -7,7 +7,7 @@ inputDocuments:
   - architecture-desktop.md
   - product-brief-nixus-marketing-site-2026-04-25.md
   - ux-design-specification-nixus-marketing-site-2026-04-25.md
-  - product-brief-nkbaz-finance-2026-03-14.md
+  - product-brief-Nixus-2026-03-14.md
   - prd.md
 workflowType: 'architecture'
 project_name: 'nixus-marketing-site'

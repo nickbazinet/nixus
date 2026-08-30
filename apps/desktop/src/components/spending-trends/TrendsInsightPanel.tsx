@@ -16,11 +16,12 @@ import {
 } from "@nixus/shared";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { TrendsInsightResponse } from "@/lib/types";
+import type { AiAvailability } from "@/hooks/useAiConfig";
 import { useAiErrorPresentation } from "@/hooks/useAiErrorPresentation";
 
 interface TrendsInsightPanelProps {
   gatePassed: boolean;
-  aiConfigured: boolean;
+  availability: AiAvailability;
   insightQuery: UseQueryResult<TrendsInsightResponse, Error>;
 }
 
@@ -38,7 +39,7 @@ const TONE_VARIANT: Record<
 
 export function TrendsInsightPanel({
   gatePassed,
-  aiConfigured,
+  availability,
   insightQuery,
 }: TrendsInsightPanelProps) {
   const { t } = useTranslation();
@@ -68,9 +69,13 @@ export function TrendsInsightPanel({
     );
   }
 
+  // Strictly `unavailable`, never "not available yet": while the cloud entitlement is still
+  // resolving this offer to configure a personal key is aimed at a premium user who needs none, and
+  // the pending window falls through to the skeleton below instead.
+  //
   // AI unavailable is inline, non-modal, and recoverable, and it names the manual path. It never
   // blocks the chart or the compare table sitting either side of it.
-  if (!aiConfigured) {
+  if (availability === "unavailable") {
     return (
       <Card flush data-testid="trends-insight-panel">
         <Alert variant="info" icon={<InfoIcon />}>
