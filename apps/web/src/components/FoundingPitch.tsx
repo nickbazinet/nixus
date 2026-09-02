@@ -54,7 +54,7 @@ export function FoundingPitch({ showCta = true }: FoundingPitchProps) {
             <a
               href={programMailto}
               data-testid="founding-pitch-cta"
-              className="mkt-tap-cta inline-flex max-w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40"
+              className="mkt-tap-cta inline-flex max-w-full items-center justify-center rounded-md bg-gradient-to-b from-primary to-primary/80 px-4 py-2 text-center text-sm font-medium text-primary-foreground outline-none transition-[filter,transform] hover:brightness-105 active:translate-y-px focus-visible:ring-3 focus-visible:ring-primary/40"
             >
               {t("founding.pitch.cta")}
             </a>

@@ -46,6 +46,11 @@ describe("<FoundingPitch />", () => {
       "href",
       "mailto:nixus@gmail.com?subject=Nixus%20Founding%20User%20Program",
     );
+    expect(
+      screen.getByText(
+        "Interested? Send a short email about how you track your finances today, or download the app now.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders the recruitment message in French", async () => {
