@@ -74,3 +74,19 @@ describe("applyRouteLocale", () => {
     expect(i18next.language).toBe("en");
   });
 });
+
+describe("contact translations", () => {
+  it("uses the canonical contact address in both locales", () => {
+    const keys = [
+      "faq.contactEmail",
+      "faq.whoBuilt.linkEmail",
+      "installInstructions.helpEmail",
+      "footer.linkContact",
+    ] as const;
+
+    for (const key of keys) {
+      expect(en[key]).toBe("nixus@gmail.com");
+      expect(fr[key]).toBe("nixus@gmail.com");
+    }
+  });
+});
