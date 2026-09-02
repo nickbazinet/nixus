@@ -1,30 +1,3 @@
-/** Stable ids for `betaPage.fit.good.<id>` / `betaPage.fit.bad.<id>` i18n keys. */
-export type BetaFitGoodId =
-  | "spreadsheet"
-  | "desktop"
-  | "upload"
-  | "roughEdges";
-
-export type BetaFitBadId =
-  | "bankSync"
-  | "mobile"
-  | "advice"
-  | "polished";
-
-export const betaFitGoodIds: readonly BetaFitGoodId[] = [
-  "spreadsheet",
-  "desktop",
-  "upload",
-  "roughEdges",
-] as const;
-
-export const betaFitBadIds: readonly BetaFitBadId[] = [
-  "bankSync",
-  "mobile",
-  "advice",
-  "polished",
-] as const;
-
 /** Screenshot slots — assets live under `public/beta/`. */
 export type BetaScreenshotId = "budget" | "aiImport" | "netWorth";
 

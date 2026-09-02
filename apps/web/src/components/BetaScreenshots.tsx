@@ -22,13 +22,13 @@ export function BetaScreenshots() {
           <figure
             key={shot.id}
             data-testid={`beta-screenshot-${shot.id}`}
-            className="overflow-hidden rounded-lg border border-border bg-card shadow-sm"
+            className="overflow-hidden rounded-lg border border-border bg-card"
           >
             {shot.src ? (
               <img
                 src={shot.src}
                 alt={t(`betaPage.screenshots.${shot.id}.alt`)}
-                className="aspect-[16/10] w-full object-cover object-top"
+                className="h-auto w-full"
                 loading="lazy"
               />
             ) : (

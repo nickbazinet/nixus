@@ -8,20 +8,19 @@ import {
 } from "@nixus/shared";
 
 import { betaQuickFaqIds } from "@/content/betaPage";
-import { BETA_SUPPORT_EMAIL } from "@/content/limitations";
-import { DownloadCTA } from "@/features/download/DownloadCTA";
+import { contactMailto } from "@/content/contact";
 import { homePath, localeFromLanguage } from "@/lib/localePaths";
 
-import { BetaFitCards } from "./BetaFitCards";
 import { BetaGetStarted } from "./BetaGetStarted";
 import { BetaScreenshots } from "./BetaScreenshots";
+import { FoundingPitch } from "./FoundingPitch";
 import { LimitationsList } from "./LimitationsList";
 
 export function BetaPage() {
   const { t, i18n } = useTranslation();
   const locale = localeFromLanguage(i18n.language);
   const faqHomeHref = `${homePath(locale)}#faq`;
-  const feedbackMailto = `mailto:${BETA_SUPPORT_EMAIL}?subject=${encodeURIComponent(t("betaPage.feedback.emailSubject"))}`;
+  const programMailto = contactMailto(t("betaPage.feedback.emailSubject"));
 
   return (
     <div data-testid="beta-page" className="mkt-section-y bg-background">
@@ -37,15 +36,17 @@ export function BetaPage() {
             {t("betaPage.hero.lead")}
           </p>
           <div className="mt-8 flex justify-center">
-            <DownloadCTA
-              size="default"
-              showAltOS
-              className="max-w-full items-center"
-            />
+            <a
+              href={programMailto}
+              data-testid="beta-hero-cta"
+              className="mkt-tap-cta inline-flex max-w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40"
+            >
+              {t("betaPage.feedback.cta")}
+            </a>
           </div>
         </header>
 
-        <BetaFitCards />
+        <FoundingPitch showCta={false} />
         <BetaScreenshots />
 
         <section
@@ -57,10 +58,10 @@ export function BetaPage() {
             id="beta-expect-heading"
             className="mb-3 text-xl font-semibold text-foreground"
           >
-            {t("beta.limitations.heading")}
+            {t("betaPage.expect.heading")}
           </h2>
           <p className="mb-6 text-sm text-muted-foreground">
-            {t("beta.limitations.intro")}
+            {t("betaPage.expect.intro")}
           </p>
           <LimitationsList />
         </section>
@@ -93,7 +94,7 @@ export function BetaPage() {
             </p>
             <div className="mt-6">
               <a
-                href={feedbackMailto}
+                href={programMailto}
                 data-testid="beta-feedback-cta"
                 className="mkt-tap-cta inline-flex w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40 sm:w-auto"
               >

@@ -1,13 +1,13 @@
 import { useTranslation } from "react-i18next";
 
-import { BETA_SUPPORT_EMAIL } from "@/content/limitations";
+import { contactMailto } from "@/content/contact";
 import { betaPagePath, localeFromLanguage } from "@/lib/localePaths";
 
 import { LimitationsList } from "./LimitationsList";
 
 export function BetaSection() {
   const { t, i18n } = useTranslation();
-  const mailtoHref = `mailto:${BETA_SUPPORT_EMAIL}?subject=${encodeURIComponent(t("beta.invite.emailSubject"))}`;
+  const mailtoHref = contactMailto(t("beta.invite.emailSubject"));
   const fullGuideHref = betaPagePath(localeFromLanguage(i18n.language));
 
   return (

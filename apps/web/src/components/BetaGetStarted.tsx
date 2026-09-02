@@ -1,10 +1,12 @@
 import { useTranslation } from "react-i18next";
 
 import { betaGetStartedStepIds } from "@/content/betaPage";
-import { DownloadCTA } from "@/features/download/DownloadCTA";
 
-/** Numbered install walkthrough, closed by a second download affordance. */
-export function BetaGetStarted({ faqHomeHref }: { faqHomeHref: string }) {
+type BetaGetStartedProps = {
+  readonly faqHomeHref: string;
+};
+
+export function BetaGetStarted({ faqHomeHref }: BetaGetStartedProps) {
   const { t } = useTranslation();
 
   return (
@@ -43,13 +45,6 @@ export function BetaGetStarted({ faqHomeHref }: { faqHomeHref: string }) {
           </li>
         ))}
       </ol>
-      <div className="mt-8 flex justify-center">
-        <DownloadCTA
-          size="default"
-          showAltOS
-          className="max-w-full items-center"
-        />
-      </div>
     </section>
   );
 }
