@@ -25,16 +25,23 @@ test.describe("phone and tablet conversion path", () => {
     ).toBeVisible();
   });
 
-  test("keeps the Beta destination reachable and navigating", async ({ page }) => {
+  test("keeps the Founding destination reachable and email-driven", async ({
+    page,
+  }) => {
     await page.goto("/");
-    const beta = page.getByTestId("header-beta-link");
-    await expect(beta).toBeVisible();
-    await beta.click();
+    const founding = page.getByTestId("header-beta-link");
+    await expect(founding).toBeVisible();
+    await expect(founding).toHaveText("Founding");
+    await founding.click();
     await expect(page).toHaveURL(/\/beta$/);
     await expect(page.getByTestId("beta-page")).toBeVisible();
     await expect(
       page.getByTestId("header-beta-link"),
     ).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("beta-hero-cta")).toHaveAttribute(
+      "href",
+      "mailto:nixus@gmail.com?subject=Nixus%20Founding%20User%20Program",
+    );
   });
 
   test("keeps the locale switch reachable from chrome", async ({ page }) => {

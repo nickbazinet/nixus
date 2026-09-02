@@ -13,7 +13,7 @@ import { ThemeToggle } from "./ThemeToggle";
  * background + subtle border once the visitor scrolls past the hero.
  *
  * Composition (left → right):
- *   phone/tablet: [ Logo mark + "Nixus" wordmark ] [ Beta ] [ Theme ] [ Lang ]
+ *   phone/tablet: [ Logo mark + "Nixus" wordmark ] [ Founding ] [ Theme ] [ Lang ]
  *   desktop:      … plus [ DownloadCTA ]
  *
  * Per DESIGN.md "Marketing site — responsive tier": the header is 56px on a

@@ -15,13 +15,11 @@ describe("SiteHeader", () => {
     expect(screen.getByText("ixus")).toBeInTheDocument();
   });
 
-  it("renders the Beta nav link", () => {
+  it("renders the Founding nav link at the existing beta path", () => {
     renderWithProviders(<SiteHeader />);
-    expect(screen.getByTestId("header-beta-link")).toHaveAttribute(
-      "href",
-      "/beta",
-    );
-    expect(screen.getByTestId("header-beta-link")).toHaveTextContent("Beta");
+    const link = screen.getByTestId("header-beta-link");
+    expect(link).toHaveAttribute("href", "/beta");
+    expect(link).toHaveTextContent("Founding");
   });
 
   it("renders the DownloadCTA", () => {
@@ -58,7 +56,7 @@ describe("SiteHeader", () => {
     expect(bar).toHaveClass("h-14", "sm:h-16", "lg:h-20");
   });
 
-  it("keeps the Beta destination reachable on a phone", () => {
+  it("keeps the Founding destination reachable on a phone", () => {
     renderWithProviders(<SiteHeader />);
     // It used to be `hidden sm:inline-flex`, which deleted the destination for
     // exactly the visitors who cannot reach it any other way.
