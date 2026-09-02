@@ -15,5 +15,3 @@ export const limitationIds: readonly LimitationId[] = [
   "preAlphaStability",
   "notProfessionalAdvice",
 ] as const;
-
-export const BETA_SUPPORT_EMAIL = "support@nixus.nicolasbazinet.net";

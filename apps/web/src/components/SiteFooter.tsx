@@ -1,11 +1,11 @@
 import { useTranslation } from "react-i18next";
 import { BuyMeACoffeeIcon, BUY_ME_A_COFFEE_URL, Separator } from "@nixus/shared";
 
+import { CONTACT_EMAIL, contactMailto } from "@/content/contact";
 import { PRIVACY_PAGE_PATHS, TERMS_PAGE_PATHS } from "./LegalPage";
 import { localeFromLanguage } from "@/lib/localePaths";
 
 const GITHUB_URL = "https://github.com/nickbazinet/nixus";
-const CONTACT_EMAIL = "support@nixus.nicolasbazinet.net";
 
 // Every footer destination is a 44px touch target below 1024px, so the stacked
 // layout needs no extra gap — the targets themselves supply the rhythm. The
@@ -71,7 +71,7 @@ export function SiteFooter() {
                 className="hidden h-4 lg:block"
               />
               <a
-                href={`mailto:${CONTACT_EMAIL}`}
+                href={contactMailto()}
                 className={`${LINK_CLASS} break-all`}
               >
                 {CONTACT_EMAIL}

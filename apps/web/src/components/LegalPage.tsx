@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 
+import { CONTACT_EMAIL, contactMailto } from "@/content/contact";
 import { homePath } from "@/lib/localePaths";
 import type { Locale } from "@/lib/site";
 
@@ -12,8 +13,6 @@ export const PRIVACY_PAGE_PATHS = {
   en: "/privacy",
   fr: "/fr/privacy",
 } as const;
-
-const CONTACT_EMAIL = "support@nixus.nicolasbazinet.net";
 
 /** A heading plus one or more paragraphs. Rendered in order. */
 export interface LegalSection {
@@ -74,7 +73,7 @@ export function LegalPage({
         <p className="mt-4 text-base leading-relaxed break-words text-muted-foreground">
           {t(contactBodyKey)}{" "}
           <a
-            href={`mailto:${CONTACT_EMAIL}`}
+            href={contactMailto()}
             className="rounded-sm underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             {CONTACT_EMAIL}

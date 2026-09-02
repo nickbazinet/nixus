@@ -9,8 +9,8 @@
  * are worse than none.
  */
 
+import { CONTACT_EMAIL } from "@/content/contact";
 import i18n from "@/lib/i18n";
-import { BETA_SUPPORT_EMAIL } from "@/content/limitations";
 import { SITE, absoluteUrl, type Locale } from "@/lib/site";
 
 const WEBSITE_ID = absoluteUrl("/#website");
@@ -79,7 +79,7 @@ function organizationNode(): OrganizationNode {
     "@id": ORGANIZATION_ID,
     name: SITE.name,
     url: absoluteUrl("/"),
-    email: BETA_SUPPORT_EMAIL,
+    email: CONTACT_EMAIL,
     // The public repository is the only off-site profile this project owns.
     sameAs: [SITE.repositoryUrl],
     logo: {

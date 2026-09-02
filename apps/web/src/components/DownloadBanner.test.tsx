@@ -134,7 +134,8 @@ describe("<DownloadBanner /> — help link", () => {
     expect(help.tagName).toBe("A");
     expect(help).toHaveAttribute(
       "href",
-      "mailto:support@nixus.nicolasbazinet.net",
+      "mailto:nixus@gmail.com",
     );
+    expect(help).toHaveTextContent("nixus@gmail.com");
   });
 });

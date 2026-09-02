@@ -1,3 +1,5 @@
+import { contactMailto } from "@/content/contact";
+
 /**
  * FAQ structural data for `<FAQ />`. Question/answer copy lives in i18n
  * locale files (apps/web/src/locales/{en,fr}.json) under
@@ -60,7 +62,7 @@ export const faqEntries: readonly FAQEntry[] = [
       },
       {
         labelKey: "faq.whoBuilt.linkEmail",
-        href: "mailto:support@nixus.nicolasbazinet.net",
+        href: contactMailto(),
       },
     ],
   },

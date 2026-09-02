@@ -5,7 +5,7 @@ import i18n from "@/lib/i18n";
 import { renderWithProviders } from "@/lib/test-utils";
 import { SiteFooter } from "./SiteFooter";
 
-const SUPPORT_EMAIL = "support@nixus.nicolasbazinet.net";
+const CONTACT_EMAIL = "nixus@gmail.com";
 
 describe("SiteFooter", () => {
   it("renders a GitHub link pointing to the repo", () => {
@@ -21,9 +21,9 @@ describe("SiteFooter", () => {
   it("renders a mailto contact link to the new support address", () => {
     renderWithProviders(<SiteFooter />);
     const mail = screen.getByRole("link", {
-      name: new RegExp(SUPPORT_EMAIL.replace(/\./g, "\\."), "i"),
+      name: new RegExp(CONTACT_EMAIL.replace(/\./g, "\\."), "i"),
     });
-    expect(mail).toHaveAttribute("href", `mailto:${SUPPORT_EMAIL}`);
+    expect(mail).toHaveAttribute("href", `mailto:${CONTACT_EMAIL}`);
   });
 
   it("renders a Buy Me a Coffee link with the creator profile URL", () => {

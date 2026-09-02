@@ -1,4 +1,4 @@
-import { act } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import i18n from "@/lib/i18n";
 
@@ -115,6 +115,17 @@ describe("hosted-AI precedence disclosure", () => {
       expect(text).toMatch(/may be outside your country of residence/i);
       expect(text).not.toMatch(/outside your own country/i);
     }
+  });
+});
+
+describe("contact address", () => {
+  it("uses the canonical contact address on legal pages", () => {
+    renderWithProviders(<TermsPage locale="en" />);
+
+    expect(screen.getByRole("link", { name: "nixus@gmail.com" })).toHaveAttribute(
+      "href",
+      "mailto:nixus@gmail.com",
+    );
   });
 });
 

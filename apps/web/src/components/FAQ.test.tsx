@@ -14,7 +14,7 @@ import { trackEvent } from "@/lib/analytics";
 
 const mockedTrackEvent = vi.mocked(trackEvent);
 const enKeys = en as Record<string, string>;
-const SUPPORT_EMAIL = "support@nixus.nicolasbazinet.net";
+const CONTACT_EMAIL = "nixus@gmail.com";
 
 const questionFor = (id: string) => enKeys[`faq.${id}.question`]!;
 
@@ -133,9 +133,9 @@ describe("<FAQ />", () => {
   it("renders the mailto escape hatch below the accordion", () => {
     renderWithProviders(<FAQ />);
     const link = screen.getByRole("link", {
-      name: new RegExp(SUPPORT_EMAIL.replace(/\./g, "\\."), "i"),
+      name: new RegExp(CONTACT_EMAIL.replace(/\./g, "\\."), "i"),
     });
-    expect(link).toHaveAttribute("href", `mailto:${SUPPORT_EMAIL}`);
+    expect(link).toHaveAttribute("href", `mailto:${CONTACT_EMAIL}`);
   });
 
   it("renders inline external links with target=_blank rel=noreferrer", () => {
@@ -166,7 +166,7 @@ describe("<FAQ />", () => {
 
     const mailtoLinks = screen
       .getAllByRole("link")
-      .filter((a) => a.getAttribute("href") === `mailto:${SUPPORT_EMAIL}`);
+      .filter((a) => a.getAttribute("href") === `mailto:${CONTACT_EMAIL}`);
     expect(mailtoLinks.length).toBeGreaterThanOrEqual(2);
     for (const link of mailtoLinks) {
       expect(link).not.toHaveAttribute("target");

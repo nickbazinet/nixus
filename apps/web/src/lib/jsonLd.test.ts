@@ -99,6 +99,10 @@ describe("siteGraph", () => {
       expect(serialized).not.toContain(unverifiable);
     }
   });
+
+  it("publishes the canonical contact address", () => {
+    expect(siteGraph("en")["@graph"][1].email).toBe("nixus@gmail.com");
+  });
 });
 
 describe("jsonLdScript", () => {

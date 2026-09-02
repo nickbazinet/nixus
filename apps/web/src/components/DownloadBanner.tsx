@@ -2,9 +2,8 @@ import { Trans, useTranslation } from "react-i18next";
 
 import { cn } from "@nixus/shared";
 
+import { CONTACT_EMAIL, contactMailto } from "@/content/contact";
 import { useDownloadState } from "@/features/download/DownloadStateContext";
-
-const SUPPORT_EMAIL = "support@nixus.nicolasbazinet.net";
 
 export function DownloadBanner() {
   const { t } = useTranslation();
@@ -37,11 +36,11 @@ export function DownloadBanner() {
             <p className="mt-3 text-sm break-words text-muted-foreground">
               {t("downloadBanner.needHelp")}{" "}
               <a
-                href={`mailto:${SUPPORT_EMAIL}`}
+                href={contactMailto()}
                 className="font-medium text-foreground underline-offset-4 hover:underline"
                 data-testid="download-banner-help"
               >
-                {SUPPORT_EMAIL}
+                {CONTACT_EMAIL}
               </a>
             </p>
           </div>

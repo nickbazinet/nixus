@@ -8,10 +8,10 @@ import {
   AccordionTrigger,
 } from "@nixus/shared";
 
+import { CONTACT_EMAIL, contactMailto } from "@/content/contact";
 import { faqEntries } from "@/content/faq";
 import { trackEvent } from "@/lib/analytics";
 
-const SUPPORT_EMAIL = "support@nixus.nicolasbazinet.net";
 const PRE_ALPHA_HASH = "#faq-pre-alpha";
 
 export function FAQ() {
@@ -117,10 +117,10 @@ export function FAQ() {
         <p className="mt-8 text-center text-sm break-words text-muted-foreground md:mt-12">
           {t("faq.stillHaveQuestions")}{" "}
           <a
-            href={`mailto:${SUPPORT_EMAIL}`}
+            href={contactMailto()}
             className="text-primary underline-offset-4 hover:underline"
           >
-            {SUPPORT_EMAIL}
+            {CONTACT_EMAIL}
           </a>
         </p>
       </div>
