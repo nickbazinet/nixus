@@ -6,6 +6,7 @@ import { BetaSection } from "@/components/BetaSection";
 import { DownloadBanner } from "@/components/DownloadBanner";
 import { FAQ } from "@/components/FAQ";
 import { FeatureGrid } from "@/components/FeatureGrid";
+import { FoundingSection } from "@/components/FoundingSection";
 import { HERO_BACKDROP_PRELOADS, Hero } from "@/components/Hero";
 import { applyRouteLocale } from "@/lib/i18n";
 import { buildMeta } from "@/lib/meta";
@@ -24,6 +25,7 @@ function HomePage() {
     <>
       <Hero />
       <DownloadBanner />
+      <FoundingSection />
       <ValuePillars />
       <AIDemo />
       <FeatureGrid />
