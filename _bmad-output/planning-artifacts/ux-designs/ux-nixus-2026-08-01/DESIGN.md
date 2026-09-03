@@ -201,6 +201,21 @@ marketing-web:
   section-lead: 'clamp(2rem, 1.1667rem + 4.1667vw, 4rem)'
   tap-min: 44px
   header-h: '56px / 64px from 640px / 80px from 1024px'
+marketing-colors:
+  note: 'apps/web light mode only, under Warm Editorial. Scoped to marketing routes; never consumed by apps/desktop, which keeps the Quiet Ledger {colors} block above unchanged in both modes. Radii reuse {rounded.*} as-is; type roles reuse {typography.*} Inter roles as-is — no new radius or font scale is introduced.'
+  page: '#FAF8F5'
+  card: '#FFFFFF'
+  chrome: '#F5F2EC'
+  ink: '#1C1917'
+  ink-dim: '#6B635A'
+  ink-faint: '#71685F'
+  line: '#E8E3DA'
+  line-strong: '#D8D1C5'
+  hover: '#FBF9F6'
+  brand: '#5B54D6'
+  brand-ink: '#4A43BE'
+  brand-soft: '#EFEDFB'
+  focus-ring: '#5B54D6'
 components:
   card:
     background: '{colors.card}'
@@ -466,6 +481,24 @@ Four rules bind the tier, and they are stated here so the marketing components h
 **Third, phones and tablets get a 44px touch floor, and the desktop app's 24px `{spacing.target-min}` is not it.** `{spacing.target-min}` is correct for a pointer-driven register at 1024px and up and stays correct there. Below 1024px, every *meaningful marketing control* — header nav destination, theme and language triggers, banner dismiss, download and email affordances, footer destinations, accordion triggers — measures at least `{marketing-web.tap-min}` (44 × 44 CSS px) in both axes. Two exclusions are deliberate: a link inside a running sentence keeps the sentence's line box (forcing 44px there breaks the paragraph and WCAG 2.5.8 exempts inline text), and nothing about the desktop tier changes, because widening a 28px trigger to 44px at 1280px *is* a desktop layout change.
 
 **Fourth, the sticky marketing header carries chrome only on a phone.** The header is `{marketing-web.header-h}` — 56px on a phone, 64px from 640px, and the shipped 80px from 1024px. Inside it, a phone gets the brand lockup, the Beta destination, and the theme and language triggers, and nothing else. **The full send-to-computer download affordance never renders in sticky chrome below 1024px**: it is a multi-line block, it does not fit in a 56px bar, and duplicating the hero's single conversion affordance inside the chrome is what made the header overlap page content. The Beta destination is the inverse correction — it was hidden below 640px, which silently deleted a destination from exactly the visitors who cannot reach it any other way. One full conversion affordance per phone page, and it lives in page content.
+
+## Marketing — Warm Editorial
+
+**Scope: `apps/web` marketing routes, light mode only.** This is a bounded, marketing-only palette and exception set layered on top of everything above — it does not touch the desktop app, does not touch web dark mode, and does not touch any status, chart, focus-ring color rule, or forced-colors requirement stated elsewhere in this spine. Where this section is silent, the rules above still govern.
+
+**Exact values** (frontmatter `{marketing-colors}`): light page `{marketing-colors.page}` `#FAF8F5`, card `{marketing-colors.card}` `#FFFFFF`, chrome/band `{marketing-colors.chrome}` `#F5F2EC`, ink `{marketing-colors.ink}` `#1C1917`, dim ink `{marketing-colors.ink-dim}` `#6B635A`, faint ink `{marketing-colors.ink-faint}` `#71685F`, line `{marketing-colors.line}` `#E8E3DA`, line-strong `{marketing-colors.line-strong}` `#D8D1C5`, hover `{marketing-colors.hover}` `#FBF9F6`, brand `{marketing-colors.brand}` `#5B54D6`, brand ink `{marketing-colors.brand-ink}` `#4A43BE`, brand soft `{marketing-colors.brand-soft}` `#EFEDFB`, focus ring `{marketing-colors.focus-ring}` `#5B54D6`.
+
+**Radii and type are inherited unchanged.** Marketing surfaces reuse `{rounded.sm}`/`{rounded.md}`/`{rounded.lg}`/`{rounded.xl}`/`{rounded.full}` exactly as defined in Shapes, and Inter throughout with the existing `{typography.*}` roles (including tabular `{typography.money}`) — this section adds no radius scale and no font.
+
+**Three bounded exceptions to the rules above, marketing-only:**
+
+1. **Asymmetry.** Asymmetric composition is permitted **only** inside marketing hero and showcase compositions (for example the homepage AI-demo hero and beta-page product showcases). It is not permitted in ordinary card grids, forms, or list layouts, on marketing or elsewhere — those keep the Layout & Spacing rules above.
+2. **Ambient logo light.** The logo gradient may render as a **low-alpha ambient light** behind a marketing hero visual, in light mode only. It may **never** fill a card, button, or any other component surface — `{components.logo-gradient}`'s existing rule ("never on a surface, card, button, or chart") is unchanged; this is a narrowly scoped hero-background addition to where the gradient is *permitted to glow from behind*, not a relaxation of where it may render as a fill.
+3. **Product-imagery shadow.** A single warm shadow is permitted, and only inside `ProductFrame` / AI-demo imagery on marketing pages, with the exact recipe `0 1px 2px rgba(58,44,24,.05), 0 14px 30px -16px rgba(58,44,24,.18)`. This recipe is fixed inside the component; **no call site may override it.** The `shadow: none` rule for ordinary cards (see Elevation & Depth) is unchanged everywhere else, including on marketing pages outside `ProductFrame`/AI-demo imagery.
+
+**Everything else stays load-bearing on marketing routes too:** desktop app tokens and behavior, web dark mode, status-color family, chart-color rules, `{components.focus-ring}` treatment, and `forced-colors: active` handling are all unaffected by this section and are not to be weakened by it.
+
+**Supersession, narrowly scoped.** This section supersedes only the visual-tokens/shadows/gradient/landing-aesthetic prohibition at `docs/superpowers/specs/2026-09-02-founding-users-page-design.md:53` ("Do not introduce new visual tokens, shadows, decorative gradients, or a separate landing-page aesthetic") — and only to the extent that the three bounded exceptions above now exist as marketing-site contract. It does **not** change that document's Founding Users copy, CTA, flow, or any other requirement in it; the Founding Users page continues to use the established warm-paper background, card tonal separation, hairline borders, crisp radii, and brand action color exactly as that spec states elsewhere.
 
 ## Elevation & Depth
 

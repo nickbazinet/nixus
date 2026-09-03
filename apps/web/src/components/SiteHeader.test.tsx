@@ -68,4 +68,56 @@ describe("SiteHeader", () => {
     const ctaSlot = screen.getByTestId("download-cta").parentElement;
     expect(ctaSlot).toHaveClass("hidden", "lg:block");
   });
+
+  /* Warm Editorial harmonises the marketing chrome palette, and this component
+   * already inherits it: every surface decision here is a semantic alias
+   * (`border-border`, `bg-background`, `text-muted-foreground`, `text-primary`,
+   * `ring-ring`), so the warm `:root:not(.dark)` override reaches it with no
+   * edit. These two tests exist to keep it that way and to pin the single
+   * deliberate literal. */
+  describe("Warm Editorial chrome palette", () => {
+    /* The wordmark gradient is NOT a palette decision. `#A78BFA` and `#F472B6`
+     * are `--logo-stop-2` and `--logo-stop-3`, declared in `:root` with no dark
+     * override because brand identity is mode-independent, and DESIGN.md keeps
+     * `{components.logo-gradient}` outside the palette entirely. Repainting it
+     * warm would be an identity change, not a harmonisation — so it is the one
+     * documented raw-value exception in the chrome. */
+    it("preserves the Nixus identity gradient on the wordmark", () => {
+      renderWithProviders(<SiteHeader />);
+      expect(screen.getByText("ixus")).toHaveClass(
+        "bg-gradient-to-r",
+        "from-[#A78BFA]",
+        "to-[#F472B6]",
+        "bg-clip-text",
+        "text-transparent",
+      );
+    });
+
+    it("draws every surface it owns from a semantic alias", () => {
+      const { container } = renderWithProviders(<SiteHeader />);
+      const owned = {
+        header: container.querySelector("header"),
+        bar: container.querySelector("header > div"),
+        brand: container.querySelector('header a[aria-label]'),
+        founding: screen.getByTestId("header-beta-link"),
+        ctaSlot: screen.getByTestId("download-cta").parentElement,
+      };
+
+      const RAW_VALUE =
+        /\b(?:amber|slate|zinc|gray|neutral|stone|emerald|teal|rose|sky|indigo|violet|fuchsia|pink)-\d{2,3}\b|(?:bg|text|border|ring)-\[#/;
+
+      for (const [where, el] of Object.entries(owned)) {
+        expect(el, `${where} missing`).not.toBeNull();
+        expect(el?.className ?? "", `${where} uses a raw value`).not.toMatch(
+          RAW_VALUE,
+        );
+      }
+
+      // The sticky surface at rest. The scrolled swap to `border-border` +
+      // `bg-background/85` is measured for real in
+      // `tests/e2e/chrome-notices.spec.ts`, where a stale cool hairline fails.
+      expect(owned.header?.className).toContain("bg-background/0");
+      expect(owned.header?.className).toContain("sticky");
+    });
+  });
 });

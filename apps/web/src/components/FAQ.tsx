@@ -43,7 +43,7 @@ export function FAQ() {
       id="faq"
       data-testid="faq"
       aria-labelledby="faq-heading"
-      className="mkt-section-y bg-background"
+      className="mkt-section-y bg-accent/40 dark:bg-background"
     >
       <div className="mkt-page-x mx-auto max-w-[720px]">
         <div className="mkt-section-lead text-center">

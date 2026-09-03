@@ -10,14 +10,18 @@ export function BetaGetStarted({ faqHomeHref }: BetaGetStartedProps) {
   const { t } = useTranslation();
 
   return (
-    <section aria-labelledby="beta-start-heading" className="mkt-section-lead">
+    <section
+      aria-labelledby="beta-start-heading"
+      className="mkt-section-lead mkt-measure-prose"
+    >
+      <div aria-hidden="true" className="mkt-rule" />
       <h2
         id="beta-start-heading"
-        className="mb-6 text-xl font-semibold text-foreground"
+        className="text-xl font-semibold text-foreground"
       >
         {t("betaPage.getStarted.heading")}
       </h2>
-      <ol className="space-y-0 divide-y divide-border">
+      <ol className="mt-6 space-y-0 divide-y divide-border">
         {betaGetStartedStepIds.map((id, index) => (
           <li key={id} className="flex gap-3 py-5 first:pt-0 last:pb-0 sm:gap-4">
             <span

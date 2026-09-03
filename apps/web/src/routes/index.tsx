@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ValuePillars } from "@/components/ValuePillars";
-import { AIDemo } from "@/components/AIDemo";
 import { BetaSection } from "@/components/BetaSection";
 import { DownloadBanner } from "@/components/DownloadBanner";
 import { FAQ } from "@/components/FAQ";
@@ -27,7 +26,6 @@ function HomePage() {
       <DownloadBanner />
       <FoundingSection />
       <ValuePillars />
-      <AIDemo />
       <FeatureGrid />
       <BetaSection />
       <FAQ />

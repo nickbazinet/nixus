@@ -7,6 +7,58 @@
  * ignores node_modules by default — point it at the real source path. */
 @source "../../../../packages/shared/src/**/*.{ts,tsx}";
 
+/* Warm Editorial — the marketing-only light palette, `{marketing-colors}` in
+ * DESIGN.md.
+ *
+ * This overrides the VALUES of the shared spine variables, never their names.
+ * That is the whole mechanism: `tokens.css` exposes every utility through
+ * `@theme inline` (`--color-card: var(--card)`) and re-points the @base-ui
+ * compatibility aliases at the same spine (`--background: var(--bg)`), so
+ * re-declaring `--bg` here reaches `bg-page`, `bg-background`, the shadcn
+ * primitives inside `@nixus/shared`, and hand-written `var(--background)` in one
+ * step. Adding a parallel `--mkt-card` family instead would leave every shared
+ * primitive on Quiet Ledger and require touching each call site.
+ *
+ * `:root:not(.dark)` rather than `.light`, `:root`, or a media query:
+ *   - `next-themes` writes `dark` onto `<html>` (see `FLASH_MITIGATION` in
+ *     `__root.tsx`), so `:not(.dark)` is exactly "web light mode", including the
+ *     pre-hydration paint and an explicit light choice under a dark OS.
+ *   - Its 0-2-0 specificity clears `tokens.css`'s `:root` (0-1-0) regardless of
+ *     import order, so nothing here depends on where Tailwind sorts this file.
+ *   - It cannot leak into dark: `.dark` is untouched below and in `tokens.css`,
+ *     which is what keeps this a marketing-only, light-only exception rather
+ *     than a system-wide repaint. `apps/desktop` never imports this file.
+ *
+ * Scope discipline, from DESIGN.md: colour only. No radius, no font, no type
+ * scale, no status/chart/forced-colors change. `--brand-on` stays `#FFFFFF`
+ * (still 5.7:1 against the warmer indigo) and the status, rail, track, and chart
+ * families deliberately keep their shared values — a marketing page renders none
+ * of them, and forking a token nothing paints is how two sources of truth start.
+ */
+:root:not(.dark) {
+  /* Surfaces */
+  --bg: #FAF8F5;
+  --card: #FFFFFF;
+  --chrome: #F5F2EC;
+  --hover: #FBF9F6;
+
+  /* Ink */
+  --ink: #1C1917;
+  --ink-dim: #6B635A;
+  --ink-faint: #71685F;
+
+  /* Hairlines */
+  --line: #E8E3DA;
+  --line-strong: #D8D1C5;
+
+  /* Brand and action. Nothing else — the warm palette does not license
+   * `--brand` as a decorative accent any more than the cool one did. */
+  --brand: #5B54D6;
+  --brand-ink: #4A43BE;
+  --brand-soft: #EFEDFB;
+  --focus-ring: #5B54D6;
+}
+
 /* Marketing-site-specific extensions — the `{marketing-web}` token family in
  * DESIGN.md.
  *
@@ -105,6 +157,122 @@
     min-width: var(--mkt-tap-min);
     padding-inline: var(--mkt-tap-px);
   }
+}
+
+/* Warm Editorial materials — the named surfaces, measures, and one elevation
+ * that the marketing compositions are built from.
+ *
+ * Same `--mkt-*` namespace and same reason as the rhythm block above: these are
+ * plain custom properties consumed by plain classes, so `cn()`'s tailwind-merge
+ * allow-list cannot mistake one for a named spacing token and stop it from
+ * conflicting with the class it is meant to override.
+ *
+ * Every one of these is a bounded DESIGN.md exception, so the values live here
+ * once instead of at each call site — that is what makes "no call-site override"
+ * enforceable rather than aspirational.
+ */
+:root {
+  /* The editorial kicker rule: a short, readable mark above a heading, not a
+   * container edge. Inked rather than brand-tinted — DESIGN.md reserves
+   * `--brand` for action — and mode-agnostic, since `--ink` inverts. */
+  --mkt-rule-thickness: 2px;
+  --mkt-rule-length: 2.5rem;
+  --mkt-rule-color: var(--ink);
+  --mkt-rule-gap: 1.25rem;
+
+  /* Asymmetric measures. Text stops at a readable line length while the visual
+   * column keeps the remaining width — that imbalance IS the composition, so
+   * the measures are tokens rather than per-section max-widths. */
+  --mkt-measure-lead: 34rem;
+  --mkt-measure-prose: 44rem;
+  --mkt-asym-hero-cols: minmax(0, 5fr) minmax(0, 7fr);
+  --mkt-asym-gap: clamp(2rem, 1.1667rem + 4.1667vw, 4rem);
+
+  /* Hero overlap: 24px at 320px -> 80px at 1280px, anchored at both ends like
+   * every other rhythm token in this file. */
+  --mkt-hero-overlap: clamp(1.5rem, 0.3333rem + 5.8333vw, 5rem);
+
+  /* Ambient logo light. Zero here on purpose: DESIGN.md permits the glow in
+   * light mode only, and gating it by opacity in the light block below keeps
+   * `.dark` untouched — a `.dark` override would be a second palette source. */
+  --mkt-ambient-opacity: 0;
+  --mkt-ambient-spread: clamp(1.5rem, 5vw, 4rem);
+
+  /* The single permitted warm elevation, verbatim from DESIGN.md. `ProductFrame`
+   * and AI-demo imagery only; ordinary cards stay `shadow: none`. */
+  --mkt-product-frame-shadow: 0 1px 2px rgba(58, 44, 24, 0.05),
+    0 14px 30px -16px rgba(58, 44, 24, 0.18);
+}
+
+:root:not(.dark) {
+  --mkt-ambient-opacity: 0.22;
+}
+
+.mkt-rule {
+  border-block-start: var(--mkt-rule-thickness) solid var(--mkt-rule-color);
+  inline-size: var(--mkt-rule-length);
+  margin-block-end: var(--mkt-rule-gap);
+}
+
+.mkt-measure-lead {
+  max-inline-size: var(--mkt-measure-lead);
+}
+
+.mkt-measure-prose {
+  max-inline-size: var(--mkt-measure-prose);
+}
+
+/* Stacked in DOM reading order by default; the asymmetric pair is a desktop-tier
+ * composition, matching the 1024px boundary the rest of the site uses. */
+.mkt-asym-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mkt-asym-gap);
+}
+
+@media (width >= 64rem) {
+  .mkt-asym-hero {
+    grid-template-columns: var(--mkt-asym-hero-cols);
+    align-items: center;
+  }
+}
+
+/* The overlap is two halves of one contract: the visual is pulled past the hero
+ * boundary, and the next section reserves that much extra room. Shipping only
+ * the pull is how a hero ends up sitting on top of the following heading. */
+.mkt-hero-overlap {
+  margin-block-end: calc(var(--mkt-hero-overlap) * -1);
+}
+
+.mkt-overlap-clear {
+  padding-block-start: calc(var(--mkt-section-y) + var(--mkt-hero-overlap));
+}
+
+/* Ambient logo light: the identity gradient as a soft mesh BEHIND a hero
+ * visual, never as a fill on it. `isolation` keeps the local `z-index: -1`
+ * from escaping into the sticky header's stacking context, and radial stops are
+ * used instead of `filter: blur()` so a full-bleed glow costs no blur pass. */
+.mkt-ambient-light {
+  position: relative;
+  isolation: isolate;
+}
+
+.mkt-ambient-light::before {
+  content: "";
+  position: absolute;
+  inset: calc(var(--mkt-ambient-spread) * -1);
+  z-index: -1;
+  border-radius: var(--radius-xl);
+  background-image:
+    radial-gradient(58% 58% at 22% 18%, var(--logo-stop-1) 0%, transparent 70%),
+    radial-gradient(54% 54% at 78% 30%, var(--logo-stop-2) 0%, transparent 70%),
+    radial-gradient(60% 60% at 52% 92%, var(--logo-stop-3) 0%, transparent 70%);
+  opacity: var(--mkt-ambient-opacity);
+  pointer-events: none;
+}
+
+.mkt-product-frame {
+  box-shadow: var(--mkt-product-frame-shadow);
 }
 
 html,

@@ -2,8 +2,6 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, X } from "lucide-react";
 
-import { cn } from "@nixus/shared";
-
 import { betaPagePath, localeFromLanguage } from "@/lib/localePaths";
 
 const STORAGE_KEY = "nixus.preAlphaDismissed";
@@ -43,10 +41,7 @@ export function PreAlphaBanner() {
       data-testid="pre-alpha-banner"
       role="region"
       aria-label={t("preAlpha.banner.ariaLabel")}
-      className={cn(
-        "w-full border-b border-amber-200/60 bg-amber-50 text-amber-900",
-        "dark:border-amber-800/40 dark:bg-amber-900/30 dark:text-amber-100",
-      )}
+      className="w-full border-b border-caution/25 bg-caution-bg text-caution-ink"
     >
       <div className="mkt-page-x mx-auto flex max-w-[1280px] items-center gap-2 py-2 text-sm sm:gap-3">
         <AlertTriangle aria-hidden="true" className="size-4 shrink-0" />
@@ -59,7 +54,7 @@ export function PreAlphaBanner() {
           {t("preAlpha.banner.message")}{" "}
           <a
             href={learnMoreHref}
-            className="rounded-sm px-0.5 py-1 font-medium underline underline-offset-4 outline-none hover:text-amber-950 focus-visible:ring-3 focus-visible:ring-amber-600/40 dark:hover:text-amber-50"
+            className="rounded-sm px-0.5 py-1 font-medium underline underline-offset-4 outline-none hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             {t("preAlpha.banner.learnMore")}
             {/* "Learn more" alone is on Lighthouse's generic-link-text blocklist
@@ -78,7 +73,7 @@ export function PreAlphaBanner() {
           type="button"
           onClick={handleDismiss}
           aria-label={t("preAlpha.banner.dismissAria")}
-          className="mkt-tap -mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-amber-100/60 focus-visible:ring-3 focus-visible:ring-amber-600/40 dark:hover:bg-amber-800/40"
+          className="mkt-tap -mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-sm outline-none hover:bg-caution/15 focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <X aria-hidden="true" className="size-4" />
         </button>

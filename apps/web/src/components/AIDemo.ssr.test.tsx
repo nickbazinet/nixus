@@ -1,5 +1,5 @@
 /**
- * SSR/hydration contract for `<AIDemo />`.
+ * SSR/hydration contract for `<AIDemoFigure />`.
  *
  * The component gates its CSS animation on a class it decides at first render.
  * If that decision differs between the server and the browser's first client
@@ -20,7 +20,7 @@ import {
 } from "@/lib/hydration-test-utils";
 import { renderWithProviders } from "@/lib/test-utils";
 
-import { AIDemo } from "./AIDemo";
+import { AIDemoFigure } from "./AIDemo";
 
 const ANIMATED = "ai-demo--animated";
 
@@ -28,9 +28,9 @@ function withI18n(children: ReactElement) {
   return <I18nextProvider i18n={i18n}>{children}</I18nextProvider>;
 }
 
-describe("<AIDemo /> SSR parity", () => {
+describe("<AIDemoFigure /> SSR parity", () => {
   it("hydrates a server render without a single mismatch", async () => {
-    const result = await renderAndHydrate(<AIDemo />, withI18n);
+    const result = await renderAndHydrate(<AIDemoFigure />, withI18n);
 
     expect(hydrationMismatches(result)).toEqual([]);
   });
@@ -40,14 +40,14 @@ describe("<AIDemo /> SSR parity", () => {
    * the observer, which is exactly why the previous jsdom-only assertion passed
    * while Chromium reported a mismatch. */
   it("server-renders the demo un-animated so the first client render can match", async () => {
-    const { ssrHtml } = await renderAndHydrate(<AIDemo />, withI18n);
+    const { ssrHtml } = await renderAndHydrate(<AIDemoFigure />, withI18n);
 
     expect(ssrHtml).toContain("ai-demo");
     expect(ssrHtml).not.toContain(ANIMATED);
   });
 
   it("still delivers the complete static composition on the server", async () => {
-    const { ssrHtml } = await renderAndHydrate(<AIDemo />, withI18n);
+    const { ssrHtml } = await renderAndHydrate(<AIDemoFigure />, withI18n);
 
     expect(ssrHtml).toContain("ai-demo-summary");
     expect(
@@ -56,7 +56,7 @@ describe("<AIDemo /> SSR parity", () => {
   });
 
   it("turns the animation on after mount once the effect runs", () => {
-    renderWithProviders(<AIDemo />);
+    renderWithProviders(<AIDemoFigure />);
 
     expect(screen.getByTestId("ai-demo").className).toMatch(/ai-demo--animated/);
   });

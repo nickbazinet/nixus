@@ -1,0 +1,1327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Nixus — Light-mode visual directions A/B/C · comparison artifact</title>
+<style>
+/* ==========================================================================
+   NIXUS — LIGHT-MODE VISUAL DIRECTIONS (A/B/C)
+   Comparison artifact for the marketing site (apps/web). NOT production UI.
+
+   The same page slice is rendered three times. Content, copy, section order,
+   grid and component anatomy are identical in all three tabs — only surface,
+   depth and boundary treatment change, so what is being compared is the
+   palette, not the composition.
+
+   DESIGN.md is authoritative. Where a direction departs from it, the
+   departure is named in that direction's "Trade-offs" list rather than
+   quietly styled in.
+
+   Layout uses container queries (`container-name: slice`) rather than
+   viewport media queries so the "Phone width" toggle reflows the slice
+   exactly the way a 390px viewport does. The artifact chrome around it
+   uses ordinary media queries.
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* ---- artifact chrome: deliberately hue-neutral grey, so none of the three
+        warm/bright directions borrows contrast from its own frame ---- */
+:root {
+  --ch-bg: #ECEBE9;
+  --ch-panel: #FFFFFF;
+  --ch-ink: #1E1D1B;
+  --ch-dim: #5B5954;
+  --ch-faint: #6E6C66;
+  --ch-line: #D8D6D1;
+  --ch-line-strong: #C2BFB8;
+  --ch-focus: #2C2A6E;
+  --ch-accent: #5B54D6;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+             Helvetica, Arial, sans-serif;
+  --logo-grad: linear-gradient(135deg, #818CF8, #A78BFA 50%, #F472B6);
+}
+
+body {
+  margin: 0;
+  background: var(--ch-bg);
+  color: var(--ch-ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--ch-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.shell { max-width: 1560px; margin: 0 auto; padding: 0 clamp(12px, 3vw, 32px) 88px; }
+
+/* ---------- sticky comparison header ---------- */
+.bar {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--ch-bg);
+  border-bottom: 1px solid var(--ch-line-strong);
+  padding: 10px 0 12px;
+}
+.bar-in {
+  max-width: 1560px; margin: 0 auto;
+  padding: 0 clamp(12px, 3vw, 32px);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.bar-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bar-lock { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; }
+.bar-lock .mark { width: 20px; height: 20px; }
+.bar-title { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+.bar-title .sub { font-weight: 400; color: var(--ch-dim); }
+@media (max-width: 700px) { .bar-title .sub { display: none; } }
+
+.toggle {
+  min-height: 44px; padding: 0 14px;
+  display: inline-flex; align-items: center; gap: 8px;
+  font: inherit; font-size: 13px; font-weight: 550;
+  color: var(--ch-ink); background: var(--ch-panel);
+  border: 1px solid var(--ch-line-strong); border-radius: 5px;
+  cursor: pointer;
+}
+.toggle:hover { background: #F7F6F4; }
+.toggle[aria-pressed="true"] {
+  background: var(--ch-ink); color: #FFFFFF; border-color: var(--ch-ink);
+}
+.toggle .dot {
+  width: 9px; height: 5px; border: 1.5px solid currentColor; border-radius: 1.5px;
+}
+.toggle[aria-pressed="true"] .dot { width: 5px; height: 9px; }
+
+/* ---------- tabs ---------- */
+.tabs {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+}
+.tab {
+  min-height: 52px; padding: 6px 10px;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 1px; text-align: left;
+  font: inherit; cursor: pointer;
+  background: var(--ch-panel); color: var(--ch-dim);
+  border: 1px solid var(--ch-line-strong); border-radius: 6px;
+}
+.tab:hover { color: var(--ch-ink); }
+.tab .k { font-size: 11px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; }
+.tab .n { font-size: 13.5px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.25; }
+.tab[aria-selected="true"] {
+  background: var(--ch-ink); border-color: var(--ch-ink); color: #FFFFFF;
+}
+.tab[aria-selected="true"] .k { color: #C9C6E8; }
+.tab:focus-visible { outline: 2px solid var(--ch-focus); outline-offset: 2px; }
+@media (max-width: 460px) {
+  .tab { min-height: 48px; padding: 5px 8px; }
+  .tab .n { font-size: 12px; }
+}
+
+/* ---------- intro ---------- */
+.intro { padding: 28px 0 4px; max-width: 96ch; }
+.intro h1 {
+  margin: 0 0 10px; font-size: clamp(22px, 1rem + 2.2vw, 30px);
+  line-height: 1.15; letter-spacing: -0.02em; font-weight: 650;
+}
+.intro p { margin: 0 0 12px; color: var(--ch-dim); font-size: 14.5px; }
+.intro strong { color: var(--ch-ink); font-weight: 600; }
+.intro code, .intro kbd, .callout code {
+  font-family: var(--font-ui); font-size: 13.5px; font-weight: 600;
+  color: var(--ch-ink); background: var(--ch-panel);
+  border: 1px solid var(--ch-line); border-radius: 4px; padding: 1px 5px;
+}
+.callout {
+  margin: 18px 0 0; padding: 14px 16px;
+  background: var(--ch-panel);
+  border: 1px solid var(--ch-line);
+  border-left: 3px solid var(--ch-accent);
+  border-radius: 0 6px 6px 0;
+  font-size: 14px; color: var(--ch-dim);
+}
+.callout p { margin: 0 0 8px; }
+.callout p:last-child { margin: 0; }
+.shared { margin: 14px 0 0; padding: 0 0 0 20px; font-size: 14px; color: var(--ch-dim); }
+.shared li { margin: 0 0 5px; }
+.shared b { color: var(--ch-ink); font-weight: 600; }
+
+/* ---------- direction header ---------- */
+.panel { padding-top: 26px; scroll-margin-top: 148px; }
+.panel[hidden] { display: none; }
+.panel:focus-visible { outline: 2px solid var(--ch-focus); outline-offset: 4px; }
+
+.dir-head { max-width: 108ch; margin: 0 0 20px; }
+.dir-tag {
+  margin: 0 0 6px; font-size: 11px; font-weight: 650;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--ch-faint);
+}
+.dir-head h2 {
+  margin: 0 0 10px; font-size: clamp(19px, 1rem + 1.1vw, 23px);
+  letter-spacing: -0.018em; font-weight: 650; line-height: 1.2;
+}
+.dir-sum { margin: 0 0 16px; font-size: 14.5px; color: var(--ch-dim); max-width: 88ch; }
+.dir-sum code, .dir-col code {
+  font-family: var(--font-ui); font-weight: 600; color: var(--ch-ink);
+  font-variant-numeric: tabular-nums; font-size: 13.5px;
+}
+
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; padding: 0; list-style: none; }
+.swatches li {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px 4px 5px;
+  background: var(--ch-panel); border: 1px solid var(--ch-line);
+  border-radius: 4px; font-size: 11.5px; color: var(--ch-dim);
+}
+.swatches i {
+  width: 14px; height: 14px; border-radius: 3px;
+  border: 1px solid rgba(0,0,0,.16); flex: none;
+}
+.swatches b { color: var(--ch-ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.dir-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 860px) { .dir-cols { grid-template-columns: 1fr; } }
+.dir-col {
+  padding: 14px 16px; background: var(--ch-panel);
+  border: 1px solid var(--ch-line); border-radius: 6px;
+}
+.dir-lab {
+  margin: 0 0 8px; font-size: 11px; font-weight: 650;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ch-faint);
+}
+.dir-col ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--ch-dim); }
+.dir-col li { margin: 0 0 6px; }
+.dir-col li:last-child { margin: 0; }
+.dir-col code {
+  font-family: var(--font-ui); font-weight: 600; color: var(--ch-ink);
+  font-variant-numeric: tabular-nums; font-size: 13px;
+}
+
+.frame-note {
+  margin: 20px 0 8px; font-size: 12.5px; color: var(--ch-faint);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.frame-note .w {
+  padding: 2px 7px; border: 1px solid var(--ch-line-strong); border-radius: 999px;
+  font-size: 11px; font-weight: 600; color: var(--ch-dim); background: var(--ch-panel);
+}
+
+/* ---------- the frame: container for the rendered slice ---------- */
+.frame {
+  container-type: inline-size;
+  container-name: slice;
+  border: 1px solid var(--ch-line-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 0 auto;
+  transition: max-width .18s ease;
+}
+body[data-width="phone"] .frame { max-width: 390px; }
+@media (prefers-reduced-motion: reduce) { .frame { transition: none; } }
+
+/* ==========================================================================
+   SLICE — one skeleton, themed entirely by the per-direction token blocks
+   below. Every value in here resolves to a variable; there are no literal
+   colors, sizes or radii in the slice rules.
+   ========================================================================== */
+.slice {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+
+  /* marketing responsive tier, expressed in cqi so the phone toggle and a
+     real 390px viewport produce the same result. The wide-frame result
+     saturates at the shipped desktop ceiling (64px / 48px / 20px). */
+  --t-xl: clamp(2.25rem, 1.5rem + 3.75cqi, 4rem);
+  --t-l: clamp(1.875rem, 1.25rem + 3.125cqi, 3rem);
+  --t-lead: clamp(1.0625rem, 1rem + 0.3125cqi, 1.25rem);
+  --s-sec-y: clamp(2.5rem, 1.3333rem + 5.8333cqi, 6rem);
+  --s-hero-y: clamp(3rem, 1.3333rem + 8.3333cqi, 8rem);
+  --s-lead: clamp(2rem, 1.1667rem + 4.1667cqi, 4rem);
+  --s-gut: clamp(1rem, 0.3333rem + 3.3333cqi, 2rem);
+}
+.slice *:where(h3, h4, p, ul, li) { margin: 0; }
+.slice ul { list-style: none; padding: 0; }
+
+/* mock site header — chrome only, decorative, nothing focusable */
+.mk-header {
+  display: flex; align-items: center; gap: var(--s-gut);
+  padding: 0 var(--s-gut); height: 64px;
+  background: var(--chrome); border-bottom: var(--chrome-edge);
+}
+.mk-lock { display: inline-flex; align-items: center; gap: 7px; margin-right: auto; }
+.mk-lock .mark { width: 22px; height: 22px; flex: none; }
+.word {
+  font-size: 20px; font-weight: 650; letter-spacing: -0.02em;
+  background-image: var(--logo-grad);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+.mk-nav { display: flex; align-items: center; gap: 14px; }
+.mk-dest { font-size: 13.5px; font-weight: 550; color: var(--ink-dim); }
+.mk-dest.on {
+  color: var(--brand-ink); box-shadow: inset 0 -2px 0 0 var(--brand);
+  padding-bottom: 4px;
+}
+.mk-icobtn {
+  width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink-dim); border: var(--ghost-bd); border-radius: var(--r-md);
+  background: var(--ghost-bg);
+}
+@container slice (max-width: 700px) {
+  .mk-header { height: 56px; gap: 10px; }
+  .mk-nav { gap: 8px; }
+  /* Phone chrome per the spine: brand lockup, the Beta destination, and the
+     two triggers — the full download block never renders in a 56px bar. And
+     below 1024px every real control measures 44px, so the mock shows that. */
+  .mk-nav .btn { display: none; }
+  .mk-dest.on { display: none; }
+  .mk-icobtn { width: 44px; height: 44px; }
+}
+
+/* bands + wrappers */
+.band { padding-block: var(--s-sec-y); }
+.band.alt { background: var(--band); border-block: var(--band-edge); }
+.hero {
+  padding-block: var(--s-hero-y) var(--s-sec-y);
+  background: var(--hero-bg);
+  border-bottom: var(--hero-edge);
+}
+.wrap { margin: 0 auto; padding-inline: var(--s-gut); max-width: 1280px; }
+.wrap.hero-w { max-width: 960px; text-align: center; }
+.wrap.demo-w { max-width: 1024px; }
+
+.eyebrow {
+  font-size: 12px; font-weight: 650; letter-spacing: 0.045em;
+  text-transform: uppercase; color: var(--eyebrow-ink);
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.eyebrow::before {
+  content: ""; width: 18px; height: var(--eyebrow-rule-h);
+  border-radius: 999px; background: var(--eyebrow-rule);
+  display: var(--eyebrow-rule-show);
+}
+.d-xl {
+  font-size: var(--t-xl); font-weight: 700; line-height: 1.05;
+  letter-spacing: -0.02em; color: var(--ink); text-wrap: balance;
+}
+.d-l {
+  font-size: var(--t-l); font-weight: 700; line-height: 1.1;
+  letter-spacing: -0.02em; color: var(--ink); text-wrap: balance;
+}
+.lead { font-size: var(--t-lead); line-height: 1.5; color: var(--ink-dim); }
+.sec-lead { text-align: center; margin-bottom: var(--s-lead); }
+.sec-lead .d-l { margin-top: 12px; }
+.sec-lead .lead { margin: 16px auto 0; max-width: 60ch; }
+.hero-w .d-xl { margin-top: 16px; }
+.hero-w .lead { margin: 18px auto 0; max-width: 600px; }
+
+/* buttons — rendered as spans: the slice is a static composition */
+.cta-row {
+  margin-top: 32px; display: flex; flex-direction: column;
+  align-items: center; gap: 12px;
+}
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 13.5px; font-weight: 600; letter-spacing: -0.005em;
+  border-radius: var(--r-md); padding: 0 14px; height: 34px;
+}
+.btn-primary {
+  background: var(--brand); color: var(--brand-on);
+  border: 1px solid var(--brand); box-shadow: var(--btn-elev);
+}
+.btn.lg { height: 46px; padding: 0 22px; font-size: 15px; }
+.link { font-size: 13.5px; font-weight: 550; color: var(--brand-ink); text-decoration: underline; text-underline-offset: 3px; }
+.hero-note { margin-top: 10px; font-size: 13px; color: var(--ink-faint); }
+
+/* pillars */
+.grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+@container slice (max-width: 820px) { .grid-3 { grid-template-columns: 1fr; gap: 20px; } }
+.pillar { text-align: center; }
+.pillar h4 { margin-top: 14px; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; }
+.pillar p { margin-top: 8px; font-size: 14px; line-height: 1.55; color: var(--ink-dim); }
+.tile {
+  width: 44px; height: 44px; margin: 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-lg); background: var(--tile-bg); color: var(--tile-ink);
+  border: var(--tile-bd);
+}
+
+/* feature cards */
+.grid-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@container slice (max-width: 980px) { .grid-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container slice (max-width: 620px) { .grid-cards { grid-template-columns: 1fr; } }
+.card {
+  height: 100%; padding: 20px;
+  background: var(--card); border: var(--card-bd);
+  border-radius: var(--r-lg); box-shadow: var(--card-elev);
+}
+.card .tile { width: 36px; height: 36px; margin: 0; border-radius: var(--r-md); }
+.card h4 { margin-top: 14px; font-size: 15px; font-weight: 650; letter-spacing: -0.012em; }
+.card p { margin-top: 6px; font-size: 13.5px; line-height: 1.55; color: var(--ink-dim); }
+
+/* AI import demo */
+.demo-fig { margin: 0; }
+.win {
+  overflow: hidden; border-radius: var(--r-xl);
+  border: var(--card-bd); background: var(--card);
+  box-shadow: var(--win-elev);
+}
+.win-bar {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 13px; background: var(--chrome); border-bottom: var(--chrome-edge);
+}
+.win-bar i { width: 9px; height: 9px; border-radius: 999px; background: var(--dot); flex: none; }
+.win-bar span { margin-left: 6px; font-size: 12.5px; color: var(--ink-faint); }
+.win-body { display: grid; grid-template-columns: 1fr 1.4fr; }
+@container slice (max-width: 780px) { .win-body { grid-template-columns: 1fr; } }
+.col-stmt {
+  position: relative; overflow: hidden; padding: 18px;
+  background: var(--stmt-bg);
+  border-right: var(--card-bd);
+}
+.col-cat { padding: 18px; background: var(--card); }
+@container slice (max-width: 780px) {
+  .col-stmt { border-right: 0; border-bottom: var(--card-bd); }
+}
+.col-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 14px;
+}
+.col-head .t {
+  font-size: 12px; font-weight: 650; letter-spacing: 0.045em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.col-head .m { font-size: 13px; color: var(--ink-faint); flex: none; font-variant-numeric: tabular-nums; }
+.stmt-list li {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 5px 0; font-size: 13px;
+}
+/* Raw-export look without a code font: the spine bans monospace on money.
+   Uppercase + letterspacing carries the "bank export" register instead. */
+.stmt-list .d { font-weight: 600; letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stmt-list .a, .txn .a { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The scan line is painted as a 2px band inside a full-column layer and moved
+   with `transform` only, so the animation stays GPU-composited — animating
+   `top` on a 3.4s loop would relayout the column on every frame. */
+.scan {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to bottom,
+    transparent calc(50% - 1px), var(--scan) calc(50% - 1px),
+    var(--scan) calc(50% + 1px), transparent calc(50% + 1px));
+}
+.cat-list { display: flex; flex-direction: column; gap: 8px; }
+.txn {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 11px; font-size: 13.5px;
+  background: var(--txn-bg); border: var(--txn-bd); border-radius: var(--r-md);
+  opacity: 1;
+}
+.txn .l { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.txn .m { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill {
+  flex: none; padding: 2px 7px; border-radius: var(--r-md);
+  font-size: 12px; font-weight: 650; letter-spacing: 0.045em; text-transform: uppercase;
+}
+.ai-sum {
+  margin-top: 14px; padding: 10px 12px; border-radius: var(--r-md);
+  display: flex; align-items: center; gap: 8px;
+  background: var(--good-bg); color: var(--good-ink);
+  font-size: 13.5px; font-weight: 600;
+  border: var(--sum-bd);
+}
+.ai-sum .ico16 { flex: none; }
+.demo-cap { margin-top: 12px; font-size: 12.5px; color: var(--ink-faint); text-align: center; }
+
+/* icons */
+.ico16 { width: 16px; height: 16px; }
+.ico20 { width: 20px; height: 20px; }
+.ico22 { width: 22px; height: 22px; }
+svg[class^="ico"], svg[class*=" ico"] { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.mark { fill: none; stroke: none; }
+
+/* Motion is additive: the static composition is complete without it, and every
+   animation below maps to the one thing the demo has to communicate — the
+   statement being read, then the categorized rows arriving. Nothing else moves. */
+@media (prefers-reduced-motion: no-preference) {
+  .panel:not([hidden]) .scan { animation: scanDown 3.4s ease-in-out infinite; }
+  .panel:not([hidden]) .txn { animation: txnIn .45s ease-out both; }
+  .panel:not([hidden]) .ai-sum { animation: txnIn .45s ease-out 2.5s both; }
+}
+@keyframes scanDown { 0%, 6% { transform: translateY(-50%); } 94%, 100% { transform: translateY(50%); } }
+@keyframes txnIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ==========================================================================
+   DIRECTION A — WARM & CALM
+   The shipped Quiet Ledger spine, unchanged. Warm paper, pure-white cards,
+   hairline-only separation, shadow: none, crisp radii.
+   ========================================================================== */
+.slice[data-dir="a"] {
+  --bg: #FAF8F5;
+  --card: #FFFFFF;
+  --band: #F5F2EC;
+  --chrome: #F5F2EC;
+  --line: #E8E3DA;
+  --line-strong: #D8D1C5;
+  --ink: #1C1917;
+  --ink-dim: #6B635A;
+  --ink-faint: #71685F;
+  --brand: #5B54D6;
+  --brand-ink: #4A43BE;
+  --brand-on: #FFFFFF;
+  --brand-soft: #EFEDFB;
+  --track: #EFEAE1;
+  --good-bg: #E8F3EA;
+  --good-ink: #14672F;
+  --r-sm: 4px; --r-md: 5px; --r-lg: 7px; --r-xl: 10px;
+
+  --hero-bg: #FAF8F5;
+  --hero-edge: 1px solid var(--line);
+  --band-edge: 1px solid var(--line);
+  --chrome-edge: 1px solid var(--line);
+  --card-bd: 1px solid var(--line);
+  --card-elev: none;
+  --win-elev: none;
+  --btn-elev: none;
+  --ghost-bd: 1px solid var(--line-strong);
+  --ghost-bg: var(--card);
+  --tile-bg: var(--brand-soft);
+  --tile-ink: var(--brand-ink);
+  --tile-bd: 1px solid transparent;
+  --eyebrow-ink: var(--brand-ink);
+  --eyebrow-rule: var(--brand);
+  --eyebrow-rule-h: 2px;
+  --eyebrow-rule-show: none;
+  --stmt-bg: #F5F2EC;
+  --txn-bg: #FBF9F6;
+  --txn-bd: 1px solid var(--line);
+  --sum-bd: 1px solid transparent;
+  --scan: rgba(91, 84, 214, .55);
+  --dot: #D8D1C5;
+  --focus-ring: #5B54D6;
+}
+
+/* ==========================================================================
+   DIRECTION B — CRISP & MODERN
+   Brighter base, boundaries carried by a stronger hairline instead of tone,
+   squarer corners, deeper brand ink. Still no shadows anywhere.
+   ========================================================================== */
+.slice[data-dir="b"] {
+  --bg: #FFFFFF;
+  --card: #FFFFFF;
+  --band: #F7F5F1;
+  --chrome: #FFFFFF;
+  --line: #E4DFD6;
+  --line-strong: #CBC3B5;
+  --ink: #16130F;
+  --ink-dim: #605850;
+  --ink-faint: #6A6159;
+  --brand: #4A43BE;
+  --brand-ink: #3D36A4;
+  --brand-on: #FFFFFF;
+  --brand-soft: #ECEAFA;
+  --track: #EFEAE1;
+  --good-bg: #E4F1E7;
+  --good-ink: #115B29;
+  --r-sm: 3px; --r-md: 4px; --r-lg: 5px; --r-xl: 8px;
+
+  --hero-bg: #FFFFFF;
+  --hero-edge: 1px solid var(--line-strong);
+  --band-edge: 1px solid var(--line-strong);
+  --chrome-edge: 1px solid var(--line-strong);
+  --card-bd: 1px solid var(--line-strong);
+  --card-elev: none;
+  --win-elev: none;
+  --btn-elev: none;
+  --ghost-bd: 1px solid var(--line-strong);
+  --ghost-bg: transparent;
+  --tile-bg: transparent;
+  --tile-ink: var(--brand-ink);
+  --tile-bd: 1px solid var(--line-strong);
+  --eyebrow-ink: var(--brand-ink);
+  --eyebrow-rule: var(--brand);
+  --eyebrow-rule-h: 2px;
+  --eyebrow-rule-show: inline-block;
+  --stmt-bg: #F7F5F1;
+  --txn-bg: #FFFFFF;
+  --txn-bd: 1px solid var(--line-strong);
+  --sum-bd: 1px solid #BFD9C6;
+  --scan: rgba(74, 67, 190, .6);
+  --dot: #CBC3B5;
+  --focus-ring: #4A43BE;
+}
+/* B's one structural move: the card boundary is the strong hairline, so the
+   band sections carry a second, squarer edge rather than a tonal wash. */
+.slice[data-dir="b"] .card { border-top-width: 2px; border-top-color: var(--line-strong); }
+.slice[data-dir="b"] .pillar .tile { border-width: 1.5px; }
+
+/* ==========================================================================
+   DIRECTION C — RICH & PREMIUM
+   Deeper warm paper, one controlled elevation on cards, and a low-alpha wash
+   of the logo gradient behind the hero only. Both of those are named spine
+   departures — see the direction's Trade-offs list.
+   ========================================================================== */
+.slice[data-dir="c"] {
+  --bg: #F3EEE5;
+  --card: #FFFFFF;
+  --band: #EDE6DA;
+  --chrome: #F7F3EB;
+  --line: #E1D9CA;
+  --line-strong: #CFC5B2;
+  --ink: #17140F;
+  --ink-dim: #635A4E;
+  --ink-faint: #6A6154;
+  --brand: #524BCB;
+  --brand-ink: #433CAF;
+  --brand-on: #FFFFFF;
+  --brand-soft: #EBE9FB;
+  --track: #E6DFD2;
+  --good-bg: #E5F1E8;
+  --good-ink: #125C2A;
+  --r-sm: 5px; --r-md: 6px; --r-lg: 9px; --r-xl: 13px;
+
+  /* Three soft light sources — the logo's own periwinkle, violet and pink —
+     rather than one concentric radial, which banded visibly. Each fades to
+     zero before the fold, so the wash reads as light on paper and never as a
+     surface gradient with an edge. */
+  --hero-bg:
+    radial-gradient(72% 62% at 17% -10%, rgba(129, 140, 248, .20), rgba(129, 140, 248, 0) 72%),
+    radial-gradient(66% 58% at 85% -6%, rgba(244, 114, 182, .16), rgba(244, 114, 182, 0) 74%),
+    radial-gradient(96% 74% at 50% -22%, rgba(167, 139, 250, .12), rgba(167, 139, 250, 0) 78%),
+    #F3EEE5;
+  --hero-edge: 1px solid var(--line);
+  --band-edge: 1px solid var(--line);
+  --chrome-edge: 1px solid var(--line);
+  --card-bd: 1px solid var(--line);
+  --card-elev: 0 1px 2px rgba(58, 44, 24, .05), 0 10px 22px -10px rgba(58, 44, 24, .13);
+  --win-elev: 0 1px 2px rgba(58, 44, 24, .06), 0 22px 44px -22px rgba(58, 44, 24, .22);
+  --btn-elev: 0 1px 2px rgba(40, 32, 90, .18);
+  --ghost-bd: 1px solid var(--line-strong);
+  --ghost-bg: rgba(255, 255, 255, .7);
+  --tile-bg: var(--brand-soft);
+  --tile-ink: var(--brand-ink);
+  --tile-bd: 1px solid rgba(82, 75, 203, .16);
+  --eyebrow-ink: var(--brand-ink);
+  --eyebrow-rule: var(--logo-grad);
+  --eyebrow-rule-h: 3px;
+  --eyebrow-rule-show: inline-block;
+  --stmt-bg: #FAF6EF;
+  --txn-bg: #FDFBF7;
+  --txn-bd: 1px solid var(--line);
+  --sum-bd: 1px solid #C8DECE;
+  --scan: rgba(82, 75, 203, .55);
+  --dot: #CFC5B2;
+  --focus-ring: #524BCB;
+}
+/* C's controlled elevation is scoped to the two containers that earn it —
+   the feature card and the demo window. Pillars stay flat, so the page has
+   one depth step rather than a field of floating boxes. */
+.slice[data-dir="c"] .pillar .tile { box-shadow: 0 1px 2px rgba(58, 44, 24, .06); }
+
+/* forced colors: hairline elevation, tinted badges and the hero wash are
+   exactly what HCM overrides, so the artifact states its own fallbacks. */
+@media (forced-colors: active) {
+  .card, .win, .txn, .frame, .tab, .toggle, .dir-col, .swatches li { border: 1px solid CanvasText; }
+  .slice { --hero-bg: Canvas; }
+  .card, .win, .btn-primary { box-shadow: none; }
+  .word { -webkit-text-fill-color: CanvasText; color: CanvasText; }
+  .tab[aria-selected="true"] { border-width: 2px; }
+}
+</style>
+</head>
+<body data-width="fit">
+
+<!-- Inline icon sprite. Line icons only — no emoji, no icon font, no network. -->
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <defs>
+    <linearGradient id="nx-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#818CF8"/>
+      <stop offset="50%" stop-color="#A78BFA"/>
+      <stop offset="100%" stop-color="#F472B6"/>
+    </linearGradient>
+  </defs>
+  <symbol id="i-mark" viewBox="0 0 32 32">
+    <rect x="3" y="3" width="7" height="26" rx="2" fill="#818CF8"/>
+    <rect x="22" y="3" width="7" height="26" rx="2" fill="#F472B6"/>
+    <polygon points="3,29 10,29 29,3 22,3" fill="url(#nx-grad)"/>
+  </symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24">
+    <path d="M10.5 3.6l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z"/>
+    <path d="M18 14.4l.75 2 2 .75-2 .75-.75 2-.75-2-2-.75 2-.75z"/>
+  </symbol>
+  <symbol id="i-target" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="4.2"/>
+    <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24">
+    <path d="M12 3.4l8.4 4.4-8.4 4.4-8.4-4.4z"/>
+    <path d="M3.6 12.4L12 16.8l8.4-4.4"/><path d="M3.6 16.6L12 21l8.4-4.4"/>
+  </symbol>
+  <symbol id="i-pie" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.4"/><path d="M12 12V3.6"/><path d="M12 12l7.3 4.2"/>
+  </symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24">
+    <rect x="3.2" y="6" width="17.6" height="13.2" rx="2.4"/>
+    <path d="M3.2 10.4h17.6"/>
+    <circle cx="17" cy="14.8" r="1" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24">
+    <path d="M3.6 17.4l5.4-5.4 3.4 3.4 7.2-7.2"/><path d="M14.8 8.2h4.8V13"/>
+  </symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24">
+    <path d="M12 3.3l7.6 2.7v5.4c0 4.6-3.2 7.1-7.6 8.6-4.4-1.5-7.6-4-7.6-8.6V6z"/>
+    <path d="M9.2 12.2l2.1 2.1 3.7-4"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24">
+    <path d="M4.8 12.6l4.6 4.6L19.4 7.2" stroke-width="2.2"/>
+  </symbol>
+  <symbol id="i-download" viewBox="0 0 24 24">
+    <path d="M12 3.8v10.6"/><path d="M7.6 10.4L12 14.8l4.4-4.4"/><path d="M4.6 19.4h14.8"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4"/>
+    <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/>
+  </symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.4"/><path d="M3.6 12h16.8"/>
+    <path d="M12 3.6c2.4 2.7 2.4 14.1 0 16.8M12 3.6c-2.4 2.7-2.4 14.1 0 16.8"/>
+  </symbol>
+</svg>
+
+<header class="bar">
+  <div class="bar-in">
+    <div class="bar-top">
+      <span class="bar-lock">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><use href="#i-mark"/></svg>
+        <span class="bar-title">Light-mode directions <span class="sub">· marketing site · comparison artifact</span></span>
+      </span>
+      <button type="button" class="toggle" id="widthToggle" aria-pressed="false">
+        <span class="dot" aria-hidden="true"></span>
+        <span>Phone width (390px)</span>
+      </button>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Light-mode visual directions" aria-orientation="horizontal">
+      <button type="button" class="tab" role="tab" id="tab-a" aria-controls="panel-a" aria-selected="true" tabindex="0">
+        <span class="k">Direction A</span><span class="n">Warm &amp; Calm</span>
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-b" aria-controls="panel-b" aria-selected="false" tabindex="-1">
+        <span class="k">Direction B</span><span class="n">Crisp &amp; Modern</span>
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-c" aria-controls="panel-c" aria-selected="false" tabindex="-1">
+        <span class="k">Direction C</span><span class="n">Rich &amp; Premium</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+
+  <section class="intro" aria-labelledby="intro-h">
+    <h1 id="intro-h">Three light-mode directions for the Nixus marketing site</h1>
+    <p>
+      <strong>This is a comparison artifact, not production UI.</strong> Nothing here is wired to
+      <code>apps/web</code>, no file in the app was touched, and
+      <strong>DESIGN.md remains authoritative</strong> until a direction is chosen and the spine is
+      amended to match it. No winner is implied — the three tabs are peers.
+    </p>
+    <p>
+      Each tab renders the <strong>same representative page slice</strong>: the site header, the hero,
+      the three value pillars, the AI statement-import demo, and six of the eight feature cards.
+      Copy, section order, grid, and component anatomy are identical across all three, so the only
+      variable is visual treatment — surface, depth, boundary and radius.
+    </p>
+    <div class="callout">
+      <p>
+        <strong>The problem being tested.</strong> Live light mode repeats cool pale blue/lavender
+        surfaces across large sections, sets low-depth white cards on top of them, and centres nearly
+        every composition. The result reads washed out: the cards barely separate from their band, and
+        the page has no tonal rhythm to break the scroll.
+      </p>
+      <p>
+        All three directions treat that as a <em>surface and boundary</em> problem rather than a
+        text-contrast problem. They differ in which device does the separating work — tone (A), a
+        stronger hairline (B), or one controlled elevation plus atmosphere (C).
+      </p>
+    </div>
+    <ul class="shared">
+      <li><b>Shared by all three:</b> the Nixus logo gradient on the mark and wordmark; the periwinkle brand family reserved for brand and action only; status colours untouched; no shadow on any hairline-separated element in A and B.</li>
+      <li><b>Money is set in the UI face with tabular figures</b>, never a code font — including the raw statement column, which gets its export look from uppercase and letterspacing instead.</li>
+      <li><b>Type is the system UI stack</b> because this file makes no network requests; production bundles Inter locally. Judge palette, depth and boundaries here — not letterforms.</li>
+      <li><b>Light only.</b> No dark mode is proposed or shown.</li>
+      <li><b>The slice is a static rendering.</b> Nothing inside a frame is focusable, so keyboard-testing the tabs is not polluted by mock controls.</li>
+    </ul>
+    <p style="margin-top:14px">
+      Use <kbd>&larr;</kbd> / <kbd>&rarr;</kbd> on the tabs to flip between directions in place — the
+      fastest way to see a palette difference is to switch without the page moving. The
+      <strong>Phone width</strong> toggle constrains each frame to 390px; the slice reflows from its own
+      container, so the toggle and a real 390px browser window produce the same layout.
+    </p>
+  </section>
+
+  <main>
+
+  <!-- ====================================================================
+       DIRECTION A — WARM & CALM
+       ==================================================================== -->
+  <section class="panel" id="panel-a" role="tabpanel" aria-labelledby="tab-a" tabindex="0">
+    <div class="dir-head">
+      <p class="dir-tag">Direction A</p>
+      <h2>Warm &amp; Calm — closest to the shipped Quiet Ledger spine</h2>
+      <p class="dir-sum">
+        Zero new tokens. Warm paper <code>#FAF8F5</code> instead of cool pale blue, pure-white cards
+        one tonal step above it, hairline-only separation, <code>shadow: none</code>, and the crisp
+        5/7px radii. The washed-out reading is repaired by making every band <em>warm</em> and
+        alternating paper against chrome, so a white card always has something to sit on.
+      </p>
+      <ul class="swatches">
+        <li><i style="background:#FAF8F5"></i>page <b>#FAF8F5</b></li>
+        <li><i style="background:#F5F2EC"></i>band <b>#F5F2EC</b></li>
+        <li><i style="background:#FFFFFF"></i>card <b>#FFFFFF</b></li>
+        <li><i style="background:#E8E3DA"></i>line <b>#E8E3DA</b></li>
+        <li><i style="background:#5B54D6"></i>brand <b>#5B54D6</b></li>
+        <li><i style="background:#1C1917"></i>ink <b>#1C1917</b></li>
+      </ul>
+      <div class="dir-cols">
+        <div class="dir-col">
+          <p class="dir-lab">What changes</p>
+          <ul>
+            <li>Cool pale blue/lavender bands become <code>bg</code> paper and <code>chrome</code>, alternating section to section — that alternation is the only new rhythm device.</li>
+            <li>Cards are pure white on paper, so the boundary is a real luminance step rather than a faint ring.</li>
+            <li>Eyebrows sit in <code>brand-ink</code> with no rule; the brand is spent on the one primary action and the active destination underline.</li>
+            <li>Radii, hairlines, and the no-shadow baseline are exactly as the spine already specifies.</li>
+          </ul>
+        </div>
+        <div class="dir-col">
+          <p class="dir-lab">Trade-offs</p>
+          <ul>
+            <li>Lowest risk and no spine amendment — but the least visually distinctive of the three, and the least likely to read as &ldquo;premium&rdquo; to a first-time visitor.</li>
+            <li>All depth rests on one <code>bg</code>&#8202;&#8596;&#8202;<code>card</code> luminance step. That step is small, and hairlines measure 1.2&ndash;1.6:1, so a low-vision visitor gets little help from either.</li>
+            <li>Band alternation is the only device breaking a long scroll; below the fold the marketing page can still feel flat.</li>
+            <li>Warm paper is the correct register but it is <em>quiet</em> — this direction wins on calm and loses on impact.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <p class="frame-note"><span class="w">Rendered slice</span> Static composition — nothing inside the frame is focusable.</p>
+    <div class="frame">
+      <div class="slice" data-dir="a">
+
+        <div class="mk-header" aria-hidden="true">
+          <span class="mk-lock">
+            <svg class="mark" viewBox="0 0 32 32"><use href="#i-mark"/></svg>
+            <span class="word">ixus</span>
+          </span>
+          <span class="mk-nav">
+            <span class="mk-dest on">Features</span>
+            <span class="mk-dest">Beta</span>
+            <span class="mk-icobtn"><svg class="ico16"><use href="#i-sun"/></svg></span>
+            <span class="mk-icobtn"><svg class="ico16"><use href="#i-globe"/></svg></span>
+            <span class="btn btn-primary"><svg class="ico16"><use href="#i-download"/></svg>Download</span>
+          </span>
+        </div>
+
+        <section class="hero">
+          <div class="wrap hero-w">
+            <p class="eyebrow">Local-first · No bank passwords</p>
+            <h3 class="d-xl">Stay on top of your money — not buried in spreadsheets.</h3>
+            <p class="lead">Nixus automates the upkeep: upload a credit card statement, get categorized expenses, see your next move. Budget, TFSA, RRSP, net worth — on your machine, without Plaid.</p>
+            <div class="cta-row" aria-hidden="true">
+              <span class="btn btn-primary lg"><svg class="ico20"><use href="#i-download"/></svg>Download for macOS</span>
+              <span class="link">Or download for Windows</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="band alt" aria-labelledby="pillars-a">
+          <div class="wrap">
+            <div class="sec-lead">
+              <p class="eyebrow">Why Nixus</p>
+              <h3 class="d-l" id="pillars-a">Rearview apps show your money. Nixus helps you stay on top of it.</h3>
+              <p class="lead">Built for spreadsheet trackers who won't hand bank credentials to the cloud.</p>
+            </div>
+            <ul class="grid-3">
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-sparkles"/></svg></span>
+                <h4>Automation without bank access</h4>
+                <p>Upload screenshots or PDFs — no Plaid, no passwords. AI extracts and categorizes in seconds.</p>
+              </li>
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-target"/></svg></span>
+                <h4>Next action, not another chart</h4>
+                <p>Emergency fund runway, savings capacity, and one clear priority — not just dashboards.</p>
+              </li>
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-layers"/></svg></span>
+                <h4>One app for life upkeep</h4>
+                <p>Finance and car maintenance today — same shell, same local data. More modules over time.</p>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="band" aria-labelledby="demo-a">
+          <div class="wrap demo-w">
+            <div class="sec-lead">
+              <p class="eyebrow">See it work</p>
+              <h3 class="d-l" id="demo-a">Statement in. Categorized out.</h3>
+              <p class="lead">The monthly chore you dread — compressed to a few seconds. No bank login required.</p>
+            </div>
+            <figure class="demo-fig">
+              <div class="win" aria-hidden="true">
+                <div class="win-bar"><i></i><i></i><i></i><span>Nixus — AI Import</span></div>
+                <div class="win-body">
+                  <div class="col-stmt">
+                    <div class="col-head"><span class="t">Tangerine Money-Back CC</span><span class="m">Apr 1 – Apr 30</span></div>
+                    <ul class="stmt-list">
+                      <li><span class="d">COSTCO WHOLESALE #482</span><span class="a">$184.32</span></li>
+                      <li><span class="d">TIM HORTONS #1273</span><span class="a">$6.45</span></li>
+                      <li><span class="d">PETRO-CANADA 0214</span><span class="a">$72.10</span></li>
+                      <li><span class="d">NETFLIX.COM</span><span class="a">$18.99</span></li>
+                      <li><span class="d">WEALTHSIMPLE INVEST</span><span class="a">$50.00</span></li>
+                    </ul>
+                    <span class="scan"></span>
+                  </div>
+                  <div class="col-cat">
+                    <div class="col-head"><span class="t">Categorized</span><span class="m">5 transactions</span></div>
+                    <ul class="cat-list">
+                      <li class="txn" style="animation-delay:.5s"><span class="l"><span class="m">Costco</span><span class="pill" style="background:#E8F3EA;color:#14672F">Groceries</span></span><span class="a">$184.32</span></li>
+                      <li class="txn" style="animation-delay:.9s"><span class="l"><span class="m">Tim Hortons</span><span class="pill" style="background:#FBF0DF;color:#8F4208">Dining Out</span></span><span class="a">$6.45</span></li>
+                      <li class="txn" style="animation-delay:1.3s"><span class="l"><span class="m">Petro-Canada</span><span class="pill" style="background:#EFEDFB;color:#4A43BE">Gas</span></span><span class="a">$72.10</span></li>
+                      <li class="txn" style="animation-delay:1.7s"><span class="l"><span class="m">Netflix</span><span class="pill" style="background:#EFEAE1;color:#6B635A">Subscriptions</span></span><span class="a">$18.99</span></li>
+                      <li class="txn" style="animation-delay:2.1s"><span class="l"><span class="m">Wealthsimple</span><span class="pill" style="background:#F7E9F3;color:#8A2E6B">Investing</span></span><span class="a">$50.00</span></li>
+                    </ul>
+                    <p class="ai-sum"><svg class="ico16"><use href="#i-check"/></svg>5 transactions categorized in 2.4 seconds</p>
+                  </div>
+                </div>
+              </div>
+              <figcaption class="demo-cap">AI parsing demo: a credit card statement becomes categorized expenses in seconds.</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section class="band alt" aria-labelledby="feat-a">
+          <div class="wrap">
+            <div class="sec-lead">
+              <p class="eyebrow">What's inside</p>
+              <h3 class="d-l" id="feat-a">A financial copilot on your machine</h3>
+              <p class="lead">Deterministic insights where it matters. AI where it helps. Confirm before anything changes.</p>
+            </div>
+            <ul class="grid-cards">
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-sparkles"/></svg></span><h4>Document Automation</h4><p>CC screenshots or PDFs → categorized expenses. No bank sync required.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-target"/></svg></span><h4>Financial Health</h4><p>Runway, savings rate, and one priority action — rule-based, not guesswork.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-pie"/></svg></span><h4>Budget Builder</h4><p>Monthly budgets with category groups. See where you stand at a glance.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-wallet"/></svg></span><h4>Canadian Accounts</h4><p>Chequing, credit cards, TFSA, RRSP, USD — one view built for Canada.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-trend"/></svg></span><h4>Net Worth History</h4><p>Track cash, housing, crypto, and investments over time — by category.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-shield"/></svg></span><h4>Local-First Privacy</h4><p>SQLite on your machine. Open source. Only the AI requests you trigger leave your device.</p></article></li>
+            </ul>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       DIRECTION B — CRISP & MODERN
+       ==================================================================== -->
+  <section class="panel" id="panel-b" role="tabpanel" aria-labelledby="tab-b" tabindex="0" hidden>
+    <div class="dir-head">
+      <p class="dir-tag">Direction B</p>
+      <h2>Crisp &amp; Modern — brighter base, tighter boundaries</h2>
+      <p class="dir-sum">
+        A white page with warm-neutral bands, and separation moved off tone onto the hairline:
+        <code>line-strong</code> becomes the default card border, with a 2px top edge that makes each
+        card read as a drawn object. Corners tighten to 4/5px, brand deepens to <code>#4A43BE</code>
+        for higher-contrast type, and each eyebrow gets a short brand rule.
+      </p>
+      <ul class="swatches">
+        <li><i style="background:#FFFFFF"></i>page <b>#FFFFFF</b></li>
+        <li><i style="background:#F7F5F1"></i>band <b>#F7F5F1</b></li>
+        <li><i style="background:#FFFFFF"></i>card <b>#FFFFFF</b></li>
+        <li><i style="background:#CBC3B5"></i>line-strong <b>#CBC3B5</b></li>
+        <li><i style="background:#4A43BE"></i>brand <b>#4A43BE</b></li>
+        <li><i style="background:#16130F"></i>ink <b>#16130F</b></li>
+      </ul>
+      <div class="dir-cols">
+        <div class="dir-col">
+          <p class="dir-lab">What changes</p>
+          <ul>
+            <li>Page surface goes to <code>#FFFFFF</code>; the warmth survives only in the bands and the hairlines, which is what makes it read brighter and more precise.</li>
+            <li>Card borders promote from <code>line</code> to <code>line-strong</code>, with a 2px top edge — boundaries you can see at arm's length rather than infer.</li>
+            <li>Radii tighten one step across the board; icon tiles lose their fill and become outlined, so the brand tint stops repeating.</li>
+            <li>Deeper brand ink lifts eyebrow, link and destination contrast, and the eyebrow rule gives each section a fixed left anchor.</li>
+          </ul>
+        </div>
+        <div class="dir-col">
+          <p class="dir-lab">Trade-offs</p>
+          <ul>
+            <li>Highest legibility of the three and the most software-grade precision — but it reads closer to a well-built devtool than to a well-set financial statement, which is the register the spine picked deliberately.</li>
+            <li>Promoting <code>line-strong</code> to the default card border is a spine change, not a re-theme: <code>{components.card}</code> currently specifies <code>line</code>.</li>
+            <li>On a white page a white card has <em>no</em> tonal step; the border is doing all the work, so the card boundary now depends entirely on a device the spine calls &ldquo;reinforcement&rdquo;.</li>
+            <li>Losing paper on the page surface removes the single largest carrier of the calm register. The outlined tiles also make the page quieter in colour, which can read as under-designed.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <p class="frame-note"><span class="w">Rendered slice</span> Static composition — nothing inside the frame is focusable.</p>
+    <div class="frame">
+      <div class="slice" data-dir="b">
+
+        <div class="mk-header" aria-hidden="true">
+          <span class="mk-lock">
+            <svg class="mark" viewBox="0 0 32 32"><use href="#i-mark"/></svg>
+            <span class="word">ixus</span>
+          </span>
+          <span class="mk-nav">
+            <span class="mk-dest on">Features</span>
+            <span class="mk-dest">Beta</span>
+            <span class="mk-icobtn"><svg class="ico16"><use href="#i-sun"/></svg></span>
+            <span class="mk-icobtn"><svg class="ico16"><use href="#i-globe"/></svg></span>
+            <span class="btn btn-primary"><svg class="ico16"><use href="#i-download"/></svg>Download</span>
+          </span>
+        </div>
+
+        <section class="hero">
+          <div class="wrap hero-w">
+            <p class="eyebrow">Local-first · No bank passwords</p>
+            <h3 class="d-xl">Stay on top of your money — not buried in spreadsheets.</h3>
+            <p class="lead">Nixus automates the upkeep: upload a credit card statement, get categorized expenses, see your next move. Budget, TFSA, RRSP, net worth — on your machine, without Plaid.</p>
+            <div class="cta-row" aria-hidden="true">
+              <span class="btn btn-primary lg"><svg class="ico20"><use href="#i-download"/></svg>Download for macOS</span>
+              <span class="link">Or download for Windows</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="band alt" aria-labelledby="pillars-b">
+          <div class="wrap">
+            <div class="sec-lead">
+              <p class="eyebrow">Why Nixus</p>
+              <h3 class="d-l" id="pillars-b">Rearview apps show your money. Nixus helps you stay on top of it.</h3>
+              <p class="lead">Built for spreadsheet trackers who won't hand bank credentials to the cloud.</p>
+            </div>
+            <ul class="grid-3">
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-sparkles"/></svg></span>
+                <h4>Automation without bank access</h4>
+                <p>Upload screenshots or PDFs — no Plaid, no passwords. AI extracts and categorizes in seconds.</p>
+              </li>
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-target"/></svg></span>
+                <h4>Next action, not another chart</h4>
+                <p>Emergency fund runway, savings capacity, and one clear priority — not just dashboards.</p>
+              </li>
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-layers"/></svg></span>
+                <h4>One app for life upkeep</h4>
+                <p>Finance and car maintenance today — same shell, same local data. More modules over time.</p>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="band" aria-labelledby="demo-b">
+          <div class="wrap demo-w">
+            <div class="sec-lead">
+              <p class="eyebrow">See it work</p>
+              <h3 class="d-l" id="demo-b">Statement in. Categorized out.</h3>
+              <p class="lead">The monthly chore you dread — compressed to a few seconds. No bank login required.</p>
+            </div>
+            <figure class="demo-fig">
+              <div class="win" aria-hidden="true">
+                <div class="win-bar"><i></i><i></i><i></i><span>Nixus — AI Import</span></div>
+                <div class="win-body">
+                  <div class="col-stmt">
+                    <div class="col-head"><span class="t">Tangerine Money-Back CC</span><span class="m">Apr 1 – Apr 30</span></div>
+                    <ul class="stmt-list">
+                      <li><span class="d">COSTCO WHOLESALE #482</span><span class="a">$184.32</span></li>
+                      <li><span class="d">TIM HORTONS #1273</span><span class="a">$6.45</span></li>
+                      <li><span class="d">PETRO-CANADA 0214</span><span class="a">$72.10</span></li>
+                      <li><span class="d">NETFLIX.COM</span><span class="a">$18.99</span></li>
+                      <li><span class="d">WEALTHSIMPLE INVEST</span><span class="a">$50.00</span></li>
+                    </ul>
+                    <span class="scan"></span>
+                  </div>
+                  <div class="col-cat">
+                    <div class="col-head"><span class="t">Categorized</span><span class="m">5 transactions</span></div>
+                    <ul class="cat-list">
+                      <li class="txn" style="animation-delay:.5s"><span class="l"><span class="m">Costco</span><span class="pill" style="background:#E4F1E7;color:#115B29">Groceries</span></span><span class="a">$184.32</span></li>
+                      <li class="txn" style="animation-delay:.9s"><span class="l"><span class="m">Tim Hortons</span><span class="pill" style="background:#FAEEDC;color:#8A3F07">Dining Out</span></span><span class="a">$6.45</span></li>
+                      <li class="txn" style="animation-delay:1.3s"><span class="l"><span class="m">Petro-Canada</span><span class="pill" style="background:#ECEAFA;color:#3D36A4">Gas</span></span><span class="a">$72.10</span></li>
+                      <li class="txn" style="animation-delay:1.7s"><span class="l"><span class="m">Netflix</span><span class="pill" style="background:#EEEAE2;color:#605850">Subscriptions</span></span><span class="a">$18.99</span></li>
+                      <li class="txn" style="animation-delay:2.1s"><span class="l"><span class="m">Wealthsimple</span><span class="pill" style="background:#F6E7F1;color:#832B66">Investing</span></span><span class="a">$50.00</span></li>
+                    </ul>
+                    <p class="ai-sum"><svg class="ico16"><use href="#i-check"/></svg>5 transactions categorized in 2.4 seconds</p>
+                  </div>
+                </div>
+              </div>
+              <figcaption class="demo-cap">AI parsing demo: a credit card statement becomes categorized expenses in seconds.</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section class="band alt" aria-labelledby="feat-b">
+          <div class="wrap">
+            <div class="sec-lead">
+              <p class="eyebrow">What's inside</p>
+              <h3 class="d-l" id="feat-b">A financial copilot on your machine</h3>
+              <p class="lead">Deterministic insights where it matters. AI where it helps. Confirm before anything changes.</p>
+            </div>
+            <ul class="grid-cards">
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-sparkles"/></svg></span><h4>Document Automation</h4><p>CC screenshots or PDFs → categorized expenses. No bank sync required.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-target"/></svg></span><h4>Financial Health</h4><p>Runway, savings rate, and one priority action — rule-based, not guesswork.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-pie"/></svg></span><h4>Budget Builder</h4><p>Monthly budgets with category groups. See where you stand at a glance.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-wallet"/></svg></span><h4>Canadian Accounts</h4><p>Chequing, credit cards, TFSA, RRSP, USD — one view built for Canada.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-trend"/></svg></span><h4>Net Worth History</h4><p>Track cash, housing, crypto, and investments over time — by category.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-shield"/></svg></span><h4>Local-First Privacy</h4><p>SQLite on your machine. Open source. Only the AI requests you trigger leave your device.</p></article></li>
+            </ul>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ====================================================================
+       DIRECTION C — RICH & PREMIUM
+       ==================================================================== -->
+  <section class="panel" id="panel-c" role="tabpanel" aria-labelledby="tab-c" tabindex="0" hidden>
+    <div class="dir-head">
+      <p class="dir-tag">Direction C</p>
+      <h2>Rich &amp; Premium — atmosphere and one controlled elevation</h2>
+      <p class="dir-sum">
+        A deeper warm paper <code>#F3EEE5</code> so white cards have somewhere to rise from, a single
+        soft warm shadow on the two containers that earn it, a low-alpha wash of the Nixus logo
+        gradient behind the hero only, and gradient eyebrow rules. Radii step up one notch to 6/9px.
+        The intent is depth without noise — still flat prose, still calm.
+      </p>
+      <ul class="swatches">
+        <li><i style="background:#F3EEE5"></i>page <b>#F3EEE5</b></li>
+        <li><i style="background:#EDE6DA"></i>band <b>#EDE6DA</b></li>
+        <li><i style="background:#FFFFFF"></i>card <b>#FFFFFF</b></li>
+        <li><i style="background:#E1D9CA"></i>line <b>#E1D9CA</b></li>
+        <li><i style="background:#524BCB"></i>brand <b>#524BCB</b></li>
+        <li><i style="background:linear-gradient(135deg,#818CF8,#A78BFA 50%,#F472B6)"></i>hero wash <b>logo gradient @ 12–20%</b></li>
+      </ul>
+      <div class="dir-cols">
+        <div class="dir-col">
+          <p class="dir-lab">What changes</p>
+          <ul>
+            <li>The page surface drops two steps to a fuller paper, which widens the <code>bg</code>&#8202;&#8596;&#8202;<code>card</code> luminance step that A depends on and B gives up.</li>
+            <li>One controlled elevation, scoped to the feature card and the demo window. Pillars stay flat, so the page has a single depth step instead of a field of floating boxes.</li>
+            <li>Three soft washes of the logo gradient — periwinkle, violet, pink — sit behind the hero at 12&ndash;20% alpha and fade to paper before the fold. Warm-weighted, no hard edge, no band repeat.</li>
+            <li>Eyebrow rules carry the logo gradient; the primary button gains a 1px seat shadow so it reads as pressable rather than painted.</li>
+          </ul>
+        </div>
+        <div class="dir-col">
+          <p class="dir-lab">Trade-offs</p>
+          <ul>
+            <li>The strongest answer to &ldquo;washed out&rdquo; — and the most expensive: it spends two spine rules, <code>shadow: none</code> and &ldquo;no gradients on surfaces&rdquo;. Adopting it means amending DESIGN.md, not re-theming it.</li>
+            <li>Once one card is allowed a shadow, &ldquo;the elevation recipe lives inside the component&rdquo; has to be re-enforced or 55 call sites will re-add <code>shadow-sm</code> everywhere.</li>
+            <li>The wash needs a <code>forced-colors</code> fallback and a re-run of <code>ink-faint</code>'s four-surface contrast check, because the hero is now a fifth surface.</li>
+            <li>Deeper paper narrows the headroom under warm ink; every text pair needs re-measuring, and the direction risks reading decorative if the alpha ever creeps up.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <p class="frame-note"><span class="w">Rendered slice</span> Static composition — nothing inside the frame is focusable.</p>
+    <div class="frame">
+      <div class="slice" data-dir="c">
+
+        <div class="mk-header" aria-hidden="true">
+          <span class="mk-lock">
+            <svg class="mark" viewBox="0 0 32 32"><use href="#i-mark"/></svg>
+            <span class="word">ixus</span>
+          </span>
+          <span class="mk-nav">
+            <span class="mk-dest on">Features</span>
+            <span class="mk-dest">Beta</span>
+            <span class="mk-icobtn"><svg class="ico16"><use href="#i-sun"/></svg></span>
+            <span class="mk-icobtn"><svg class="ico16"><use href="#i-globe"/></svg></span>
+            <span class="btn btn-primary"><svg class="ico16"><use href="#i-download"/></svg>Download</span>
+          </span>
+        </div>
+
+        <section class="hero">
+          <div class="wrap hero-w">
+            <p class="eyebrow">Local-first · No bank passwords</p>
+            <h3 class="d-xl">Stay on top of your money — not buried in spreadsheets.</h3>
+            <p class="lead">Nixus automates the upkeep: upload a credit card statement, get categorized expenses, see your next move. Budget, TFSA, RRSP, net worth — on your machine, without Plaid.</p>
+            <div class="cta-row" aria-hidden="true">
+              <span class="btn btn-primary lg"><svg class="ico20"><use href="#i-download"/></svg>Download for macOS</span>
+              <span class="link">Or download for Windows</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="band alt" aria-labelledby="pillars-c">
+          <div class="wrap">
+            <div class="sec-lead">
+              <p class="eyebrow">Why Nixus</p>
+              <h3 class="d-l" id="pillars-c">Rearview apps show your money. Nixus helps you stay on top of it.</h3>
+              <p class="lead">Built for spreadsheet trackers who won't hand bank credentials to the cloud.</p>
+            </div>
+            <ul class="grid-3">
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-sparkles"/></svg></span>
+                <h4>Automation without bank access</h4>
+                <p>Upload screenshots or PDFs — no Plaid, no passwords. AI extracts and categorizes in seconds.</p>
+              </li>
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-target"/></svg></span>
+                <h4>Next action, not another chart</h4>
+                <p>Emergency fund runway, savings capacity, and one clear priority — not just dashboards.</p>
+              </li>
+              <li class="pillar">
+                <span class="tile"><svg class="ico22"><use href="#i-layers"/></svg></span>
+                <h4>One app for life upkeep</h4>
+                <p>Finance and car maintenance today — same shell, same local data. More modules over time.</p>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="band" aria-labelledby="demo-c">
+          <div class="wrap demo-w">
+            <div class="sec-lead">
+              <p class="eyebrow">See it work</p>
+              <h3 class="d-l" id="demo-c">Statement in. Categorized out.</h3>
+              <p class="lead">The monthly chore you dread — compressed to a few seconds. No bank login required.</p>
+            </div>
+            <figure class="demo-fig">
+              <div class="win" aria-hidden="true">
+                <div class="win-bar"><i></i><i></i><i></i><span>Nixus — AI Import</span></div>
+                <div class="win-body">
+                  <div class="col-stmt">
+                    <div class="col-head"><span class="t">Tangerine Money-Back CC</span><span class="m">Apr 1 – Apr 30</span></div>
+                    <ul class="stmt-list">
+                      <li><span class="d">COSTCO WHOLESALE #482</span><span class="a">$184.32</span></li>
+                      <li><span class="d">TIM HORTONS #1273</span><span class="a">$6.45</span></li>
+                      <li><span class="d">PETRO-CANADA 0214</span><span class="a">$72.10</span></li>
+                      <li><span class="d">NETFLIX.COM</span><span class="a">$18.99</span></li>
+                      <li><span class="d">WEALTHSIMPLE INVEST</span><span class="a">$50.00</span></li>
+                    </ul>
+                    <span class="scan"></span>
+                  </div>
+                  <div class="col-cat">
+                    <div class="col-head"><span class="t">Categorized</span><span class="m">5 transactions</span></div>
+                    <ul class="cat-list">
+                      <li class="txn" style="animation-delay:.5s"><span class="l"><span class="m">Costco</span><span class="pill" style="background:#E5F1E8;color:#125C2A">Groceries</span></span><span class="a">$184.32</span></li>
+                      <li class="txn" style="animation-delay:.9s"><span class="l"><span class="m">Tim Hortons</span><span class="pill" style="background:#FAEEDA;color:#8B4008">Dining Out</span></span><span class="a">$6.45</span></li>
+                      <li class="txn" style="animation-delay:1.3s"><span class="l"><span class="m">Petro-Canada</span><span class="pill" style="background:#EBE9FB;color:#433CAF">Gas</span></span><span class="a">$72.10</span></li>
+                      <li class="txn" style="animation-delay:1.7s"><span class="l"><span class="m">Netflix</span><span class="pill" style="background:#EAE3D6;color:#635A4E">Subscriptions</span></span><span class="a">$18.99</span></li>
+                      <li class="txn" style="animation-delay:2.1s"><span class="l"><span class="m">Wealthsimple</span><span class="pill" style="background:#F6E6F1;color:#852D68">Investing</span></span><span class="a">$50.00</span></li>
+                    </ul>
+                    <p class="ai-sum"><svg class="ico16"><use href="#i-check"/></svg>5 transactions categorized in 2.4 seconds</p>
+                  </div>
+                </div>
+              </div>
+              <figcaption class="demo-cap">AI parsing demo: a credit card statement becomes categorized expenses in seconds.</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section class="band alt" aria-labelledby="feat-c">
+          <div class="wrap">
+            <div class="sec-lead">
+              <p class="eyebrow">What's inside</p>
+              <h3 class="d-l" id="feat-c">A financial copilot on your machine</h3>
+              <p class="lead">Deterministic insights where it matters. AI where it helps. Confirm before anything changes.</p>
+            </div>
+            <ul class="grid-cards">
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-sparkles"/></svg></span><h4>Document Automation</h4><p>CC screenshots or PDFs → categorized expenses. No bank sync required.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-target"/></svg></span><h4>Financial Health</h4><p>Runway, savings rate, and one priority action — rule-based, not guesswork.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-pie"/></svg></span><h4>Budget Builder</h4><p>Monthly budgets with category groups. See where you stand at a glance.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-wallet"/></svg></span><h4>Canadian Accounts</h4><p>Chequing, credit cards, TFSA, RRSP, USD — one view built for Canada.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-trend"/></svg></span><h4>Net Worth History</h4><p>Track cash, housing, crypto, and investments over time — by category.</p></article></li>
+              <li><article class="card"><span class="tile"><svg class="ico20"><use href="#i-shield"/></svg></span><h4>Local-First Privacy</h4><p>SQLite on your machine. Open source. Only the AI requests you trigger leave your device.</p></article></li>
+            </ul>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </section>
+
+  </main>
+</div>
+
+<script>
+/* --------------------------------------------------------------------------
+   Tab controller. Progressive enhancement: without JS all three panels are
+   inert `hidden` siblings except A, and the artifact still reads top to
+   bottom as Direction A plus every rationale block.
+   -------------------------------------------------------------------------- */
+(function () {
+  "use strict";
+
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+  if (tabs.length === 0) return;
+
+  function panelFor(tab) {
+    return document.getElementById(tab.getAttribute("aria-controls"));
+  }
+
+  function select(tab, moveFocus) {
+    tabs.forEach(function (t) {
+      var isTarget = t === tab;
+      t.setAttribute("aria-selected", isTarget ? "true" : "false");
+      t.tabIndex = isTarget ? 0 : -1;
+      var panel = panelFor(t);
+      if (panel) panel.hidden = !isTarget;
+    });
+    if (moveFocus) tab.focus();
+    try {
+      history.replaceState(null, "", "#" + tab.id.replace("tab-", "dir-"));
+    } catch (e) { /* file:// without history support — the tab still switches */ }
+  }
+
+  tabs.forEach(function (tab, i) {
+    tab.addEventListener("click", function () { select(tab, false); });
+    tab.addEventListener("keydown", function (event) {
+      var next = null;
+      switch (event.key) {
+        case "ArrowRight": next = tabs[(i + 1) % tabs.length]; break;
+        case "ArrowLeft": next = tabs[(i - 1 + tabs.length) % tabs.length]; break;
+        case "Home": next = tabs[0]; break;
+        case "End": next = tabs[tabs.length - 1]; break;
+        default: return;
+      }
+      event.preventDefault();
+      select(next, true);
+    });
+  });
+
+  // Deep link: #dir-a | #dir-b | #dir-c
+  var hash = (window.location.hash || "").replace("#dir-", "");
+  var fromHash = hash ? document.getElementById("tab-" + hash) : null;
+  select(fromHash && tabs.indexOf(fromHash) !== -1 ? fromHash : tabs[0], false);
+
+  // Phone-width toggle. The slice reflows from its own container, so this and
+  // a real 390px viewport resolve to the same layout.
+  var toggle = document.getElementById("widthToggle");
+  if (toggle) {
+    toggle.addEventListener("click", function () {
+      var on = toggle.getAttribute("aria-pressed") === "true";
+      toggle.setAttribute("aria-pressed", on ? "false" : "true");
+      document.body.setAttribute("data-width", on ? "fit" : "phone");
+    });
+  }
+})();
+</script>
+</body>
+</html>

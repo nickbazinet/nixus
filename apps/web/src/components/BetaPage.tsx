@@ -13,9 +13,20 @@ import { homePath, localeFromLanguage } from "@/lib/localePaths";
 
 import { BetaGetStarted } from "./BetaGetStarted";
 import { BetaScreenshots } from "./BetaScreenshots";
+import { EditorialHeading } from "./EditorialHeading";
 import { FoundingPitch } from "./FoundingPitch";
 import { LimitationsList } from "./LimitationsList";
 
+/**
+ * The band is sized for product imagery (1024px, matching the AI-demo
+ * showcase); prose sits left on `.mkt-measure-prose` inside it. That imbalance
+ * is the composition, so the two measures are separate classes rather than one
+ * shared `max-w`.
+ *
+ * `.mkt-rule` opens each movement — one rule treatment for the whole page,
+ * which is why every `EditorialHeading` here passes `rule={false}` rather than
+ * stacking the primitive's own hairline on top of it.
+ */
 export function BetaPage() {
   const { t, i18n } = useTranslation();
   const locale = localeFromLanguage(i18n.language);
@@ -24,18 +35,18 @@ export function BetaPage() {
 
   return (
     <div data-testid="beta-page" className="mkt-section-y bg-background">
-      <div className="mkt-page-x mx-auto max-w-[720px]">
-        <header className="mkt-section-lead text-center">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
-            {t("betaPage.eyebrow")}
-          </p>
-          <h1 className="text-display-l text-foreground">
-            {t("betaPage.hero.heading")}
-          </h1>
-          <p className="mx-auto mt-4 max-w-[540px] text-lead text-muted-foreground">
-            {t("betaPage.hero.lead")}
-          </p>
-          <div className="mt-8 flex justify-center">
+      <div className="mkt-page-x mx-auto max-w-[1024px]">
+        <header className="mkt-section-lead mkt-measure-prose">
+          <EditorialHeading
+            id="beta-hero-heading"
+            level="h1"
+            align="left"
+            rule={false}
+            eyebrow={t("betaPage.eyebrow")}
+            heading={t("betaPage.hero.heading")}
+            description={t("betaPage.hero.lead")}
+          />
+          <div className="mt-8">
             <a
               href={programMailto}
               data-testid="beta-hero-cta"
@@ -46,24 +57,30 @@ export function BetaPage() {
           </div>
         </header>
 
-        <FoundingPitch showCta={false} />
+        <div className="mkt-measure-prose">
+          <FoundingPitch showCta={false} />
+        </div>
+
         <BetaScreenshots />
 
         <section
           id="expect"
           aria-labelledby="beta-expect-heading"
-          className="mkt-section-lead"
+          className="mkt-section-lead mkt-measure-prose"
         >
-          <h2
+          <div aria-hidden="true" className="mkt-rule" />
+          <EditorialHeading
             id="beta-expect-heading"
-            className="mb-3 text-xl font-semibold text-foreground"
-          >
-            {t("betaPage.expect.heading")}
-          </h2>
-          <p className="mb-6 text-sm text-muted-foreground">
-            {t("betaPage.expect.intro")}
-          </p>
-          <LimitationsList />
+            level="h2"
+            align="left"
+            rule={false}
+            eyebrow={t("beta.eyebrow")}
+            heading={t("betaPage.expect.heading")}
+            description={t("betaPage.expect.intro")}
+          />
+          <div className="mt-8">
+            <LimitationsList />
+          </div>
         </section>
 
         <BetaGetStarted faqHomeHref={faqHomeHref} />
@@ -71,17 +88,18 @@ export function BetaPage() {
         <section
           id="feedback"
           aria-labelledby="beta-feedback-heading"
-          className="mkt-section-lead"
+          className="mkt-section-lead mkt-measure-prose"
         >
+          <div aria-hidden="true" className="mkt-rule" />
           <h2
             id="beta-feedback-heading"
-            className="mb-6 text-xl font-semibold text-foreground"
+            className="text-xl font-semibold text-foreground"
           >
             {t("betaPage.feedback.heading")}
           </h2>
           <div
             data-testid="beta-feedback-card"
-            className="rounded-lg border border-border bg-card p-5 sm:p-6 md:p-8"
+            className="mt-6 rounded-lg border border-border bg-card p-5 sm:p-6 md:p-8"
           >
             <p className="text-sm leading-relaxed text-muted-foreground">
               {t("betaPage.feedback.body")}
@@ -104,29 +122,35 @@ export function BetaPage() {
           </div>
         </section>
 
-        <section aria-labelledby="beta-faq-heading">
+        <section
+          aria-labelledby="beta-faq-heading"
+          className="mkt-measure-prose"
+        >
+          <div aria-hidden="true" className="mkt-rule" />
           <h2
             id="beta-faq-heading"
-            className="mb-6 text-xl font-semibold text-foreground"
+            className="text-xl font-semibold text-foreground"
           >
             {t("betaPage.faq.heading")}
           </h2>
-          <Accordion>
-            {betaQuickFaqIds.map((id) => (
-              <AccordionItem key={id} value={id}>
-                <AccordionTrigger className="mkt-tap items-center">
-                  <span className="pr-4 text-base font-medium">
-                    {t(`faq.${id}.question`)}
-                  </span>
-                </AccordionTrigger>
-                <AccordionContent>
-                  <p className="text-muted-foreground">
-                    {t(`faq.${id}.answer`)}
-                  </p>
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
+          <div className="mt-6">
+            <Accordion>
+              {betaQuickFaqIds.map((id) => (
+                <AccordionItem key={id} value={id}>
+                  <AccordionTrigger className="mkt-tap items-center">
+                    <span className="pr-4 text-base font-medium">
+                      {t(`faq.${id}.question`)}
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <p className="text-muted-foreground">
+                      {t(`faq.${id}.answer`)}
+                    </p>
+                  </AccordionContent>
+                </AccordionItem>
+              ))}
+            </Accordion>
+          </div>
           <a
             href={faqHomeHref}
             className="mkt-tap mt-6 inline-flex items-center text-sm font-medium text-primary underline-offset-4 hover:underline"
