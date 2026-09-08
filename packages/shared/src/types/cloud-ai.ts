@@ -15,7 +15,11 @@ export type CloudAiOperation =
 
 export type CloudAiImageFormat = "png" | "jpeg";
 
-export type CloudAiDocumentFormat = "pdf";
+/**
+ * Kept to the Bedrock-native subset the desktop offers, so a format that reaches the
+ * Lambda is one the model can parse rather than one it rejects after a quota unit is spent.
+ */
+export type CloudAiDocumentFormat = "pdf" | "csv" | "txt" | "xls" | "xlsx";
 
 export interface CloudAiTextContent {
   readonly type: "text";

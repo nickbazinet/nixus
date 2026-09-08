@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type {
   CloudAiContent,
+  CloudAiDocumentFormat,
   CloudAiErrorResponse,
   CloudAiFrame,
   CloudAiInvokeRequest,
@@ -34,6 +35,38 @@ describe("@nixus/api-bedrock consumption of the shared cloud-AI contract", () =>
     expect(request.client_request_id).toBe(
       "9f8b1e0c-77a2-4f4e-8a1d-1c9f5b3e2d10"
     );
+  });
+
+  /* The chat-attachment shape the desktop now sends: media on the newest user turn, with
+   * a non-pdf format, both of which the contract had to widen to permit. */
+  it("compiles a chat request carrying one attachment on the newest user turn", () => {
+    const request: CloudAiInvokeRequest = {
+      operation: "chat",
+      system: "You are a budgeting assistant.",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "How is my budget?" }] },
+        { role: "assistant", content: [{ type: "text", text: "It looks fine." }] },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this file?" },
+            { type: "document", format: "csv", data_base64: "ZG9jLWNzdg==" },
+          ],
+        },
+      ],
+      client_request_id: "9f8b1e0c-77a2-4f4e-8a1d-1c9f5b3e2d10",
+    };
+
+    const formats: readonly CloudAiDocumentFormat[] = [
+      "pdf",
+      "csv",
+      "txt",
+      "xls",
+      "xlsx",
+    ];
+
+    expect(request.messages[2]!.content).toHaveLength(2);
+    expect(formats).toContain("csv");
   });
 
   it("compiles status, frame, and pre-output error fixtures against the same root export", () => {
