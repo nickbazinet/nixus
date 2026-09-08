@@ -128,3 +128,35 @@ export function hostedAiIsRetryable(code: HostedAiErrorCode): boolean {
 export function hostedAiNeedsSignIn(code: HostedAiErrorCode): boolean {
   return code === "reauthentication_required" || code === "unauthorized";
 }
+
+/**
+ * `AppError::Validation`'s `field` values that `ai/attachment.rs` uses to say WHY an
+ * attachment was refused, mapped to their i18n key.
+ *
+ * The reason travels as the field rather than the message because the Rust message is
+ * fixed English: each refusal needs its own localized wording, since the user's next
+ * action differs (pick a different file vs. shrink this one).
+ */
+const CHAT_ATTACHMENT_MESSAGE_KEYS = {
+  attachment_unsupported_type: "chat.attachmentUnsupportedType",
+  attachment_empty: "chat.attachmentEmpty",
+  attachment_too_large: "chat.attachmentTooLarge",
+  attachment_unreadable: "chat.attachmentUnreadable",
+} as const;
+
+export type ChatAttachmentRejection = keyof typeof CHAT_ATTACHMENT_MESSAGE_KEYS;
+
+/** The i18n key for an attachment refusal, or `null` when the rejection is something else. */
+export function chatAttachmentMessageKey(error: unknown): string | null {
+  if (!isRecord(error)) return null;
+  if (error.type !== "validation") return null;
+  const field = error.field;
+  if (typeof field !== "string") return null;
+  // Own-property only: a `field` of "constructor" or "toString" resolves to an inherited
+  // function through a plain-object lookup, which would defeat the `?? null` and hand a
+  // non-key to `t()`.
+  if (!Object.prototype.hasOwnProperty.call(CHAT_ATTACHMENT_MESSAGE_KEYS, field)) {
+    return null;
+  }
+  return CHAT_ATTACHMENT_MESSAGE_KEYS[field as ChatAttachmentRejection];
+}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import en from "@/locales/en.json";
 import fr from "@/locales/fr.json";
 import {
+  chatAttachmentMessageKey,
   hostedAiIsRetryable,
   hostedAiMessageKey,
   hostedAiNeedsSignIn,
@@ -166,6 +167,84 @@ describe("retry and sign-in affordances match the closed table", () => {
       expect(typeof hostedAiIsRetryable(code)).toBe("boolean");
       expect(typeof hostedAiNeedsSignIn(code)).toBe("boolean");
       expect(hostedAiMessageKey(code)).toMatch(/^hostedAi\./);
+    }
+  });
+});
+
+describe("chatAttachmentMessageKey", () => {
+  const REASONS = [
+    "attachment_unsupported_type",
+    "attachment_empty",
+    "attachment_too_large",
+    "attachment_unreadable",
+  ] as const;
+
+  it("maps every Rust refusal reason to a key that exists in both locales", () => {
+    for (const field of REASONS) {
+      const key = chatAttachmentMessageKey({
+        type: "validation",
+        message: "refused",
+        field,
+      });
+
+      expect(key, field).not.toBeNull();
+      expect((en as Record<string, string>)[key!], field).toBeTruthy();
+      expect((fr as Record<string, string>)[key!], field).toBeTruthy();
+    }
+  });
+
+  it("gives each reason its own key", () => {
+    const keys = REASONS.map((field) =>
+      chatAttachmentMessageKey({ type: "validation", message: "m", field })
+    );
+
+    expect(new Set(keys).size).toBe(REASONS.length);
+  });
+
+  /* A validation error about some other field is a different problem, and claiming it as an
+   * attachment refusal would show attachment copy for, say, a bad category name. */
+  it("ignores a validation error about another field", () => {
+    expect(
+      chatAttachmentMessageKey({
+        type: "validation",
+        message: "m",
+        field: "category_name",
+      })
+    ).toBeNull();
+    expect(
+      chatAttachmentMessageKey({ type: "validation", message: "m" })
+    ).toBeNull();
+  });
+
+  /* A plain-object lookup inherits from Object.prototype, so these `field` values resolve to
+   * functions rather than undefined and would sail past a `?? null` fallback into `t()`. */
+  it("ignores inherited prototype keys", () => {
+    for (const field of [
+      "constructor",
+      "toString",
+      "hasOwnProperty",
+      "valueOf",
+      "__proto__",
+      "isPrototypeOf",
+      "propertyIsEnumerable",
+      "toLocaleString",
+    ]) {
+      expect(
+        chatAttachmentMessageKey({ type: "validation", message: "m", field }),
+        field
+      ).toBeNull();
+    }
+  });
+
+  it("ignores every non-validation rejection shape", () => {
+    for (const error of [
+      { type: "hosted_ai", code: "quota_exhausted", field: "attachment_empty" },
+      { type: "not_configured" },
+      "attachment_empty",
+      null,
+      undefined,
+    ]) {
+      expect(chatAttachmentMessageKey(error)).toBeNull();
     }
   });
 });
