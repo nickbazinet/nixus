@@ -14,7 +14,6 @@ import {
   type BedrockStreamEvent,
 } from "./bedrock-client.ts";
 import {
-  FIXED_DOCUMENT_NAME,
   OPERATION_LIMITS,
   type PreparedMessage,
 } from "./validation.ts";
@@ -128,22 +127,39 @@ describe("message translation into Converse shapes", () => {
     ]);
   });
 
-  it("always supplies the fixed neutral document name", () => {
+  /* The adapter forwards the name the validation boundary resolved from the operation, and
+   * invents nothing: a hardcoded name here would silently override the per-operation rule. */
+  it("forwards the document name resolved at the validation boundary", () => {
     const bytes = new Uint8Array([9]);
-    const converse = toConverseMessages([
-      { role: "user", content: [{ type: "document", format: "pdf", bytes }] },
-    ]);
 
-    expect(converse[0]!.content).toEqual([
-      {
-        document: {
-          format: "pdf",
-          name: FIXED_DOCUMENT_NAME,
-          source: { bytes },
+    for (const name of ["statement", "attachment"]) {
+      const converse = toConverseMessages([
+        { role: "user", content: [{ type: "document", format: "pdf", name, bytes }] },
+      ]);
+
+      expect(converse[0]!.content, name).toEqual([
+        { document: { format: "pdf", name, source: { bytes } } },
+      ]);
+    }
+  });
+
+  /* Each declared format must reach Converse as itself, or a CSV is handed to the model
+   * labelled as a PDF and parsed as nothing. */
+  it("translates every declared document format into its Converse counterpart", () => {
+    const bytes = new Uint8Array([1]);
+
+    for (const format of ["pdf", "csv", "txt", "xls", "xlsx"] as const) {
+      const converse = toConverseMessages([
+        {
+          role: "user",
+          content: [{ type: "document", format, name: "attachment", bytes }],
         },
-      },
-    ]);
-    expect(FIXED_DOCUMENT_NAME).toBe("statement");
+      ]);
+
+      expect(converse[0]!.content, format).toEqual([
+        { document: { format, name: "attachment", source: { bytes } } },
+      ]);
+    }
   });
 
   it("keeps a mixed statement_import message in wire order", () => {
@@ -153,7 +169,7 @@ describe("message translation into Converse shapes", () => {
         role: "user",
         content: [
           { type: "text", text: "categorize" },
-          { type: "document", format: "pdf", bytes },
+          { type: "document", format: "pdf", name: "statement", bytes },
         ],
       },
     ]);

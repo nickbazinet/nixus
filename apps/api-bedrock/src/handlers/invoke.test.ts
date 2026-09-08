@@ -409,6 +409,9 @@ describe("input size is bounded from the request, before any reservation", () =>
       {
         type: "document",
         format: "pdf",
+        // statement_import's own document name, resolved from the operation and carried
+        // through the handler unchanged.
+        name: "statement",
         bytes: new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52]),
       },
     ]);

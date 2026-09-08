@@ -11,7 +11,6 @@ import type {
 import type { CloudAiStopReason } from "@nixus/shared";
 
 import {
-  FIXED_DOCUMENT_NAME,
   type PreparedContent,
   type PreparedMessage,
 } from "./validation.ts";
@@ -91,9 +90,9 @@ function toConverseContent(block: PreparedContent): ContentBlock {
       return {
         document: {
           format: block.format,
-          // Never a client-supplied file name (AD-8): a caller-controlled name is
-          // both a prompt-injection vector and a path leak.
-          name: FIXED_DOCUMENT_NAME,
+          // Resolved from the operation at the validation boundary (AD-8), never from the
+          // caller: a client-supplied name is a prompt-injection vector and a path leak.
+          name: block.name,
           source: { bytes: block.bytes },
         },
       };
