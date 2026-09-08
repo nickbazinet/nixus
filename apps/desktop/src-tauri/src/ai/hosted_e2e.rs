@@ -324,12 +324,32 @@ fn chat_request() -> AiRequest {
     }
 }
 
+fn chat_with_attachment() -> AiRequest {
+    AiRequest {
+        operation: AiOperation::Chat,
+        system: "You are helpful.".to_string(),
+        turns: vec![
+            AiTurn::user("How is my budget?"),
+            AiTurn {
+                role: crate::ai::backend::AiRole::Assistant,
+                text: "It looks fine.".to_string(),
+            },
+            AiTurn::user("What is in this file?"),
+        ],
+        attachment: Some(crate::ai::backend::AiAttachment::Document {
+            format: crate::ai::backend::AiDocumentFormat::Csv,
+            bytes: b"date,amount\n2026-01-01,1000\n".to_vec(),
+        }),
+    }
+}
+
 fn statement_request() -> AiRequest {
     AiRequest {
         operation: AiOperation::StatementImport,
         system: "Extract.".to_string(),
         turns: vec![AiTurn::user("Extract all transactions.")],
         attachment: Some(crate::ai::backend::AiAttachment::Document {
+            format: crate::ai::backend::AiDocumentFormat::Pdf,
             bytes: b"%PDF-1.7 fake".to_vec(),
         }),
     }
@@ -937,6 +957,127 @@ fn a_403_never_triggers_a_refresh() {
         1,
         "a 403 must not consume the refresh budget"
     );
+}
+
+/// The chat feature's end-to-end proof: a real premium routing decision, against a real
+/// HTTP server, with the attachment landing on the newest user turn in the exact shape
+/// `apps/api-bedrock`'s validator accepts. Unit tests on either side can agree with each
+/// other and still both be wrong about the wire.
+#[test]
+fn a_chat_attachment_reaches_the_gateway_on_the_newest_user_turn() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let text = run(chat_with_attachment(), &deltas).expect("hosted invocation succeeds");
+
+    assert_eq!(text, "Your budget looks fine.");
+
+    let body: serde_json::Value =
+        serde_json::from_str(&gateway.bodies.lock().unwrap()[0]).expect("valid JSON body");
+    let messages = body["messages"].as_array().expect("messages");
+
+    assert_eq!(body["operation"], "chat");
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0]["content"].as_array().unwrap().len(), 1);
+    assert_eq!(messages[1]["content"].as_array().unwrap().len(), 1);
+
+    let newest = messages[2]["content"].as_array().unwrap();
+    assert_eq!(newest.len(), 2);
+    assert_eq!(newest[0]["type"], "text");
+    assert_eq!(newest[1]["type"], "document");
+    assert_eq!(newest[1]["format"], "csv");
+    assert!(newest[1].get("name").is_none());
+}
+
+/// No file name and no path may leave the machine, whatever the user called the file.
+#[test]
+fn a_chat_attachment_sends_no_file_name_or_path_over_the_wire() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    run(chat_with_attachment(), &deltas).expect("succeeds");
+
+    let raw = gateway.bodies.lock().unwrap()[0].clone();
+
+    assert!(!raw.contains("\"name\""));
+    assert!(!raw.contains(".csv"));
+    assert!(!raw.contains("/Users/"));
+}
+
+/// A pre-output rejection of an attached turn must obey the closed table exactly as an
+/// unattached one does: an attachment changes the payload, never the routing.
+#[test]
+fn an_attached_chat_turn_obeys_the_closed_fallback_table() {
+    let gateway = spawn_gateway(
+        premium_status(),
+        InvokeReply::Error {
+            status: 413,
+            code: "payload_too_large",
+        },
+    );
+    let _harness = Harness::new(&gateway);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let error = run(chat_with_attachment(), &deltas).expect_err("413 never falls back");
+
+    match error {
+        AppError::HostedAi { code, recoverable, .. } => {
+            assert_eq!(code, "payload_too_large");
+            assert!(!recoverable);
+        }
+        other => panic!("expected HostedAi, got {other:?}"),
+    }
+    assert_eq!(
+        gateway.invoke_calls.load(Ordering::SeqCst),
+        1,
+        "a size rejection must not be retried"
+    );
+}
+
+/// Invariant 2 across the hosted path: `statement_import` takes PDF documents only, and the
+/// port refuses a wider chat format before a request leaves the machine — so no quota unit is
+/// spent discovering that the server would have rejected it too.
+#[test]
+fn a_non_pdf_document_never_reaches_the_gateway_as_a_statement_import() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    let request = AiRequest {
+        operation: AiOperation::StatementImport,
+        system: "Extract.".to_string(),
+        turns: vec![AiTurn::user("Extract all transactions.")],
+        attachment: Some(crate::ai::backend::AiAttachment::Document {
+            format: crate::ai::backend::AiDocumentFormat::Csv,
+            bytes: b"date,amount\n".to_vec(),
+        }),
+    };
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let error = run(request, &deltas).expect_err("a csv is not a statement");
+
+    assert!(matches!(error, AppError::AiService { .. }), "got {error:?}");
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        0,
+        "the port must refuse it before any network call"
+    );
+    assert_eq!(gateway.invoke_calls.load(Ordering::SeqCst), 0);
+    assert!(deltas.lock().unwrap().is_empty());
+}
+
+/// The complement: the same CSV IS legal on chat, which is what proves the refusal above is
+/// specific to statement import rather than a blanket ban on the wider formats.
+#[test]
+fn the_same_csv_is_accepted_on_a_chat_turn() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::new(&gateway);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    run(chat_with_attachment(), &deltas).expect("chat accepts a csv");
+
+    assert_eq!(gateway.invoke_calls.load(Ordering::SeqCst), 1);
 }
 
 /// The narrow read the account menu consumes. Driven through the same stub gateway as

@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::ai::backend::{AiAttachment, AiImageFormat, AiRequest, AiRole, DeltaSink};
+use crate::ai::backend::{self, AiAttachment, AiImageFormat, AiRequest, AiRole, DeltaSink};
 use crate::ai::hosted_state::{self, HostedAiStatus};
 use crate::commands::auth::{self, HostedAiAuth};
 use crate::error::AppError;
@@ -197,6 +197,7 @@ fn new_client_request_id() -> String {
 
 fn wire_body(request: &AiRequest) -> WireInvokeRequest {
     let mut messages: Vec<WireMessage> = Vec::with_capacity(request.turns.len());
+    let carrier = backend::attachment_turn_index(&request.turns);
 
     for (index, turn) in request.turns.iter().enumerate() {
         let mut content = vec![WireContent::Text {
@@ -206,7 +207,7 @@ fn wire_body(request: &AiRequest) -> WireInvokeRequest {
         // Text first, then the media block: matches the contract's
         // statement_import example, which the server validates positionally by
         // count rather than order.
-        if index == 0 {
+        if Some(index) == carrier {
             if let Some(attachment) = &request.attachment {
                 content.push(match attachment {
                     AiAttachment::Image { format, bytes } => WireContent::Image {
@@ -216,8 +217,8 @@ fn wire_body(request: &AiRequest) -> WireInvokeRequest {
                         },
                         data_base64: STANDARD.encode(bytes),
                     },
-                    AiAttachment::Document { bytes } => WireContent::Document {
-                        format: "pdf",
+                    AiAttachment::Document { format, bytes } => WireContent::Document {
+                        format: format.wire_name(),
                         data_base64: STANDARD.encode(bytes),
                     },
                 });
@@ -650,7 +651,7 @@ fn interrupted(committed: bool, request: &AiRequest) -> HostedOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::backend::{AiOperation, AiTurn};
+    use crate::ai::backend::{AiDocumentFormat, AiOperation, AiTurn};
     use crate::error::AppError;
 
     /// `base_url()` reads a process-wide env var, so the tests that set it must not
@@ -698,6 +699,7 @@ mod tests {
             system: "Extract.".to_string(),
             turns: vec![AiTurn::user("Extract all transactions.")],
             attachment: Some(AiAttachment::Document {
+                format: AiDocumentFormat::Pdf,
                 bytes: vec![1, 2, 3, 4],
             }),
         }
@@ -776,7 +778,7 @@ mod tests {
         }
     }
 
-    /// A media block must never carry a client-supplied document name.
+    /// A document block must never carry a client-supplied document name.
     #[test]
     fn a_document_block_carries_no_name_field() {
         let body = body_json(&statement_request());
@@ -791,6 +793,90 @@ mod tests {
             .collect();
         keys.sort();
         assert_eq!(keys, vec!["data_base64", "format", "type"]);
+    }
+
+    fn chat_with_attachment(format: AiDocumentFormat) -> AiRequest {
+        AiRequest {
+            operation: AiOperation::Chat,
+            system: "You are helpful.".to_string(),
+            turns: vec![
+                AiTurn::user("first question"),
+                AiTurn {
+                    role: AiRole::Assistant,
+                    text: "first answer".to_string(),
+                },
+                AiTurn::user("what is in this file?"),
+            ],
+            attachment: Some(AiAttachment::Document {
+                format,
+                bytes: vec![5, 6],
+            }),
+        }
+    }
+
+    /// The server rejects a chat media block that is not on the newest user message, so
+    /// a body built against turn zero would be a 400 that never falls back.
+    #[test]
+    fn a_chat_attachment_is_sent_on_the_newest_user_message_only() {
+        let body = body_json(&chat_with_attachment(AiDocumentFormat::Csv));
+        let messages = body["messages"].as_array().expect("messages");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["content"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[1]["content"].as_array().unwrap().len(), 1);
+
+        let newest = messages[2]["content"].as_array().unwrap();
+        assert_eq!(newest.len(), 2);
+        assert_eq!(newest[0]["type"], "text");
+        assert_eq!(newest[1]["type"], "document");
+        assert_eq!(newest[1]["format"], "csv");
+        assert_eq!(newest[1]["data_base64"], STANDARD.encode([5u8, 6]));
+    }
+
+    /// Each format must travel as its own literal: sending everything as `pdf` makes the
+    /// server accept the request and the model read a spreadsheet as a broken PDF.
+    #[test]
+    fn every_document_format_travels_as_its_own_wire_literal() {
+        for (format, expected) in [
+            (AiDocumentFormat::Pdf, "pdf"),
+            (AiDocumentFormat::Csv, "csv"),
+            (AiDocumentFormat::Txt, "txt"),
+            (AiDocumentFormat::Xls, "xls"),
+            (AiDocumentFormat::Xlsx, "xlsx"),
+        ] {
+            let body = body_json(&chat_with_attachment(format));
+            assert_eq!(body["messages"][2]["content"][1]["format"], expected);
+        }
+    }
+
+    /// A chat turn without a file must be byte-identical to what it was before
+    /// attachments existed, or every existing conversation changes shape.
+    #[test]
+    fn a_chat_body_without_an_attachment_carries_only_text_blocks() {
+        let body = body_json(&chat_with_attachment(AiDocumentFormat::Csv));
+        let unattached = body_json(&AiRequest {
+            attachment: None,
+            ..chat_with_attachment(AiDocumentFormat::Csv)
+        });
+
+        assert_ne!(body["messages"], unattached["messages"]);
+        for message in unattached["messages"].as_array().unwrap() {
+            let content = message["content"].as_array().unwrap();
+            assert_eq!(content.len(), 1);
+            assert_eq!(content[0]["type"], "text");
+        }
+    }
+
+    /// The basename never reaches the wire: the type has no field for it, and this is the
+    /// serialized proof (AD-11).
+    #[test]
+    fn a_chat_attachment_never_puts_a_file_name_on_the_wire() {
+        let serialized =
+            serde_json::to_string(&wire_body(&chat_with_attachment(AiDocumentFormat::Xlsx)))
+                .unwrap();
+
+        assert!(!serialized.contains("name"));
+        assert!(!serialized.contains(".xlsx"));
     }
 
     #[test]

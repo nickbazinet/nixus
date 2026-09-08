@@ -49,6 +49,42 @@ impl AiOperation {
     pub fn streams_incrementally(self) -> bool {
         matches!(self, AiOperation::Chat)
     }
+
+    /// The fixed Bedrock document name for this operation, mirroring `DOCUMENT_NAMES` in
+    /// `apps/api-bedrock` so hosted and BYO present the identical label for the same bytes.
+    ///
+    /// `statement_import` keeps `statement`: the label is part of what the model reads, so
+    /// changing it would alter an extraction prompt this feature must leave untouched.
+    pub fn document_name(self) -> &'static str {
+        match self {
+            AiOperation::StatementImport => "statement",
+            AiOperation::Chat | AiOperation::ProjectAdvice | AiOperation::TrendsInsight => {
+                "attachment"
+            }
+        }
+    }
+
+    /// Whether this operation may carry this attachment at all.
+    ///
+    /// Document formats are per-operation, not global: `statement_import` is a fixed
+    /// PDF-or-screenshot pipeline, and letting chat's wider set through here would send a
+    /// spreadsheet into a parser built for statements — which the server would reject only
+    /// after a quota unit had been spent.
+    pub fn permits(self, attachment: &AiAttachment) -> bool {
+        match (self, attachment) {
+            (AiOperation::ProjectAdvice | AiOperation::TrendsInsight, _) => false,
+            (_, AiAttachment::Image { .. }) => true,
+            (
+                AiOperation::StatementImport,
+                AiAttachment::Document {
+                    format: AiDocumentFormat::Pdf,
+                    ..
+                },
+            ) => true,
+            (AiOperation::StatementImport, AiAttachment::Document { .. }) => false,
+            (AiOperation::Chat, AiAttachment::Document { .. }) => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,18 +108,45 @@ impl AiTurn {
     }
 }
 
-/// A statement attachment, already read into memory. Deliberately carries no file
+/// An attachment, already read into memory. Deliberately carries no file
 /// name or path: neither may reach a prompt, a log, or the wire (AD-11).
 #[derive(Debug, Clone)]
 pub enum AiAttachment {
-    Image { format: AiImageFormat, bytes: Vec<u8> },
-    Document { bytes: Vec<u8> },
+    Image {
+        format: AiImageFormat,
+        bytes: Vec<u8>,
+    },
+    Document {
+        format: AiDocumentFormat,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AiImageFormat {
     Png,
     Jpeg,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiDocumentFormat {
+    Pdf,
+    Csv,
+    Txt,
+    Xls,
+    Xlsx,
+}
+
+impl AiDocumentFormat {
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            AiDocumentFormat::Pdf => "pdf",
+            AiDocumentFormat::Csv => "csv",
+            AiDocumentFormat::Txt => "txt",
+            AiDocumentFormat::Xls => "xls",
+            AiDocumentFormat::Xlsx => "xlsx",
+        }
+    }
 }
 
 /// A finalized request. The desktop owns the prompts and the parsing; the server
@@ -190,6 +253,29 @@ pub fn route_pre_output(code: &str, refresh_allowed: bool) -> PreOutputRoute {
     }
 }
 
+/// Refuses an attachment the operation does not accept, before either adapter is reached.
+///
+/// Enforced here rather than in each adapter so hosted and BYO cannot diverge: the hosted
+/// server applies the same per-operation rule, and letting a mismatch through would spend a
+/// round-trip (and, past the commit point, a quota unit) on a request it will reject.
+fn check_attachment(request: &AiRequest) -> Result<(), AppError> {
+    let Some(attachment) = &request.attachment else {
+        return Ok(());
+    };
+
+    if request.operation.permits(attachment) {
+        return Ok(());
+    }
+
+    Err(AppError::AiService {
+        message: format!(
+            "That attachment is not accepted for {}.",
+            request.operation.wire_name()
+        ),
+        recoverable: false,
+    })
+}
+
 /// The single entry point every AI surface calls.
 ///
 /// Hosted Bedrock takes precedence whenever a signed-in premium user has quota —
@@ -201,6 +287,7 @@ pub async fn invoke(
     request: AiRequest,
     on_delta: DeltaSink<'_>,
 ) -> Result<String, AppError> {
+    check_attachment(&request)?;
     let outcome = hosted_bedrock::try_invoke(&request, on_delta).await;
     settle(byo, &request, on_delta, outcome, true).await
 }
@@ -283,19 +370,28 @@ async fn invoke_byo(
     }
 }
 
-fn attachment_block(attachment: &AiAttachment) -> Result<ContentBlock, AppError> {
+fn attachment_block(
+    operation: AiOperation,
+    attachment: &AiAttachment,
+) -> Result<ContentBlock, AppError> {
     let build_error = |message: String| AppError::AiService {
         message,
         recoverable: false,
     };
 
     match attachment {
-        AiAttachment::Document { bytes } => Ok(ContentBlock::Document(
+        AiAttachment::Document { format, bytes } => Ok(ContentBlock::Document(
             DocumentBlock::builder()
-                .format(DocumentFormat::Pdf)
-                // Fixed, neutral name. A client-supplied file name is both a
+                .format(match format {
+                    AiDocumentFormat::Pdf => DocumentFormat::Pdf,
+                    AiDocumentFormat::Csv => DocumentFormat::Csv,
+                    AiDocumentFormat::Txt => DocumentFormat::Txt,
+                    AiDocumentFormat::Xls => DocumentFormat::Xls,
+                    AiDocumentFormat::Xlsx => DocumentFormat::Xlsx,
+                })
+                // Fixed per operation. A client-supplied file name is both a
                 // prompt-injection vector and a path leak (AD-8/AD-11).
-                .name("statement")
+                .name(operation.document_name())
                 .source(DocumentSource::Bytes(Blob::new(bytes.clone())))
                 .build()
                 .map_err(|e| build_error(format!("Failed to build document block: {}", e)))?,
@@ -313,8 +409,20 @@ fn attachment_block(attachment: &AiAttachment) -> Result<ContentBlock, AppError>
     }
 }
 
+/// Which turn carries the attachment: the newest user turn, never turn zero.
+///
+/// Statement import sends exactly one user turn, so this is unchanged there. Chat sends
+/// the whole conversation, and an attachment pinned to turn zero would attach itself to
+/// the oldest question in the thread instead of the one the user just asked.
+pub fn attachment_turn_index(turns: &[AiTurn]) -> Option<usize> {
+    turns
+        .iter()
+        .rposition(|turn| matches!(turn.role, AiRole::User))
+}
+
 fn byo_bedrock_messages(request: &AiRequest) -> Result<Vec<Message>, AppError> {
     let mut messages: Vec<Message> = Vec::with_capacity(request.turns.len());
+    let carrier = attachment_turn_index(&request.turns);
 
     for (index, turn) in request.turns.iter().enumerate() {
         let mut builder = Message::builder().role(match turn.role {
@@ -322,11 +430,9 @@ fn byo_bedrock_messages(request: &AiRequest) -> Result<Vec<Message>, AppError> {
             AiRole::Assistant => ConversationRole::Assistant,
         });
 
-        // The attachment rides on the first turn, matching the wire contract's
-        // single-user-message shape for statement_import.
-        if index == 0 {
+        if Some(index) == carrier {
             if let Some(attachment) = &request.attachment {
-                builder = builder.content(attachment_block(attachment)?);
+                builder = builder.content(attachment_block(request.operation, attachment)?);
             }
         }
 
@@ -751,6 +857,7 @@ mod tests {
             system: "s".to_string(),
             turns: vec![AiTurn::user("extract")],
             attachment: Some(AiAttachment::Document {
+                format: AiDocumentFormat::Pdf,
                 bytes: vec![1, 2, 3],
             }),
         };
@@ -758,6 +865,343 @@ mod tests {
         let messages = byo_bedrock_messages(&request).expect("messages build");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content().len(), 2, "media block plus text block");
+    }
+
+    fn document_request(turns: Vec<AiTurn>, format: AiDocumentFormat) -> AiRequest {
+        AiRequest {
+            operation: AiOperation::Chat,
+            system: "s".to_string(),
+            turns,
+            attachment: Some(AiAttachment::Document {
+                format,
+                bytes: vec![7, 8, 9],
+            }),
+        }
+    }
+
+    /// The whole point of the chat feature: a conversation carries history, so pinning
+    /// the attachment to turn zero would attach the file to the user's FIRST question
+    /// instead of the one they just asked with the file selected.
+    #[test]
+    fn an_attachment_rides_the_newest_user_turn_not_the_first() {
+        let request = document_request(
+            vec![
+                AiTurn::user("first"),
+                AiTurn {
+                    role: AiRole::Assistant,
+                    text: "answer".to_string(),
+                },
+                AiTurn::user("what is in this file?"),
+            ],
+            AiDocumentFormat::Csv,
+        );
+
+        let messages = byo_bedrock_messages(&request).expect("messages build");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].content().len(), 1, "the oldest turn stays text-only");
+        assert_eq!(messages[1].content().len(), 1);
+        assert_eq!(messages[2].content().len(), 2, "media rides the newest user turn");
+        assert!(messages[2].content()[0].as_document().is_ok());
+    }
+
+    /// A trailing assistant prefill turn must not steal the attachment: the newest USER
+    /// turn is the carrier, which is not always the last message.
+    #[test]
+    fn a_trailing_assistant_turn_does_not_carry_the_attachment() {
+        let request = document_request(
+            vec![
+                AiTurn::user("look at this"),
+                AiTurn {
+                    role: AiRole::Assistant,
+                    text: "prefill".to_string(),
+                },
+            ],
+            AiDocumentFormat::Txt,
+        );
+
+        let messages = byo_bedrock_messages(&request).expect("messages build");
+
+        assert_eq!(messages[0].content().len(), 2);
+        assert_eq!(messages[1].content().len(), 1);
+    }
+
+    /// The post-tool chat invocation, which is the history `commands/chat.rs` rebuilds for its
+    /// second `stream_chat_response` call: the original question, the assistant's tool-call
+    /// turn, then the tool result stored as a fresh user turn.
+    ///
+    /// Approved matrix row "Tool round-trip: the attachment remains available on the post-tool
+    /// invocation". Because each invocation is routed independently, the attachment is
+    /// re-supplied — and the newest-user rule must then land it on the tool-result turn, not
+    /// back on the original question. Getting this wrong is silent: the model still answers,
+    /// just without ever seeing the file on the call that produces the visible reply.
+    #[test]
+    fn the_post_tool_invocation_carries_the_attachment_on_the_tool_result_turn() {
+        let request = document_request(
+            vec![
+                AiTurn::user("what is in this file?"),
+                AiTurn {
+                    role: AiRole::Assistant,
+                    text: "```tool_call\n{\"tool\":\"query_expenses\"}\n```".to_string(),
+                },
+                AiTurn::user("Tool result for query_expenses: 3 expense(s) found"),
+            ],
+            AiDocumentFormat::Csv,
+        );
+
+        let messages = byo_bedrock_messages(&request).expect("messages build");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(*messages[2].role(), ConversationRole::User);
+
+        // Exactly on the newest turn: text plus the media block.
+        assert_eq!(messages[2].content().len(), 2);
+        assert!(messages[2].content()[0].as_document().is_ok());
+
+        // And absent from every earlier turn, so the file is not sent twice.
+        assert_eq!(messages[0].content().len(), 1);
+        assert!(messages[0].content()[0].as_text().is_ok());
+        assert_eq!(messages[1].content().len(), 1);
+        assert!(messages[1].content()[0].as_text().is_ok());
+    }
+
+    /// Statement import sends exactly one user turn, so the newest-user rule must resolve
+    /// to the same message it always did — the behavior this feature may not change.
+    #[test]
+    fn a_single_user_turn_is_still_the_carrier() {
+        assert_eq!(attachment_turn_index(&[AiTurn::user("only")]), Some(0));
+    }
+
+    #[test]
+    fn a_history_with_no_user_turn_has_no_carrier() {
+        assert_eq!(
+            attachment_turn_index(&[AiTurn {
+                role: AiRole::Assistant,
+                text: "orphan".to_string(),
+            }]),
+            None
+        );
+        assert_eq!(attachment_turn_index(&[]), None);
+    }
+
+    /// Every offered chat document format must reach Bedrock as its own format, or a CSV is
+    /// silently parsed as a PDF and the model reads nothing.
+    #[test]
+    fn each_document_format_builds_its_own_bedrock_block() {
+        for (format, expected) in [
+            (AiDocumentFormat::Pdf, DocumentFormat::Pdf),
+            (AiDocumentFormat::Csv, DocumentFormat::Csv),
+            (AiDocumentFormat::Txt, DocumentFormat::Txt),
+            (AiDocumentFormat::Xls, DocumentFormat::Xls),
+            (AiDocumentFormat::Xlsx, DocumentFormat::Xlsx),
+        ] {
+            let block = attachment_block(
+                AiOperation::Chat,
+                &AiAttachment::Document {
+                    format,
+                    bytes: vec![1],
+                },
+            )
+            .expect("block builds");
+
+            let document = block.as_document().expect("a document block");
+            assert_eq!(document.format(), &expected, "{:?}", format);
+        }
+    }
+
+    #[test]
+    fn document_wire_names_match_the_shared_contract() {
+        assert_eq!(AiDocumentFormat::Pdf.wire_name(), "pdf");
+        assert_eq!(AiDocumentFormat::Csv.wire_name(), "csv");
+        assert_eq!(AiDocumentFormat::Txt.wire_name(), "txt");
+        assert_eq!(AiDocumentFormat::Xls.wire_name(), "xls");
+        assert_eq!(AiDocumentFormat::Xlsx.wire_name(), "xlsx");
+    }
+
+    /// INVARIANT 1 — the provider document name is per operation, and `statement_import`
+    /// keeps the exact label it had before chat attachments existed. The name is part of
+    /// what the model reads, so renaming it would change statement-import behavior.
+    #[test]
+    fn statement_import_keeps_the_statement_document_name_and_chat_gets_a_neutral_one() {
+        assert_eq!(AiOperation::StatementImport.document_name(), "statement");
+        assert_eq!(AiOperation::Chat.document_name(), "attachment");
+    }
+
+    /// The same invariant through the block builder, which is what actually reaches Bedrock:
+    /// the accessor above could stay correct while the builder ignored it.
+    #[test]
+    fn the_built_document_block_carries_its_operations_name() {
+        for (operation, expected) in [
+            (AiOperation::StatementImport, "statement"),
+            (AiOperation::Chat, "attachment"),
+        ] {
+            let block = attachment_block(
+                operation,
+                &AiAttachment::Document {
+                    format: AiDocumentFormat::Pdf,
+                    bytes: vec![1],
+                },
+            )
+            .expect("block builds");
+
+            assert_eq!(
+                block.as_document().expect("a document block").name(),
+                expected,
+                "{:?}",
+                operation
+            );
+        }
+    }
+
+    /// A document name must never be a file name, whatever the operation.
+    #[test]
+    fn no_operations_document_name_looks_like_a_file_name() {
+        for operation in [
+            AiOperation::Chat,
+            AiOperation::StatementImport,
+            AiOperation::ProjectAdvice,
+            AiOperation::TrendsInsight,
+        ] {
+            let name = operation.document_name();
+            assert!(!name.contains('.'), "{name}");
+            assert!(!name.contains('/'), "{name}");
+            assert!(!name.contains('\\'), "{name}");
+        }
+    }
+
+    fn document(format: AiDocumentFormat) -> AiAttachment {
+        AiAttachment::Document {
+            format,
+            bytes: vec![1],
+        }
+    }
+
+    /// INVARIANT 2 — document formats are per operation. `statement_import` must keep
+    /// accepting exactly PDF documents plus PNG/JPEG images, as it did before chat gained
+    /// the four extra formats.
+    #[test]
+    fn statement_import_accepts_only_pdf_documents_plus_its_images() {
+        let operation = AiOperation::StatementImport;
+
+        assert!(operation.permits(&document(AiDocumentFormat::Pdf)));
+        for format in [
+            AiDocumentFormat::Csv,
+            AiDocumentFormat::Txt,
+            AiDocumentFormat::Xls,
+            AiDocumentFormat::Xlsx,
+        ] {
+            assert!(
+                !operation.permits(&document(format)),
+                "{format:?} must not reach the statement-import pipeline"
+            );
+        }
+
+        for format in [AiImageFormat::Png, AiImageFormat::Jpeg] {
+            assert!(operation.permits(&AiAttachment::Image {
+                format,
+                bytes: vec![1]
+            }));
+        }
+    }
+
+    #[test]
+    fn chat_accepts_all_five_document_formats_and_both_image_formats() {
+        let operation = AiOperation::Chat;
+
+        for format in [
+            AiDocumentFormat::Pdf,
+            AiDocumentFormat::Csv,
+            AiDocumentFormat::Txt,
+            AiDocumentFormat::Xls,
+            AiDocumentFormat::Xlsx,
+        ] {
+            assert!(operation.permits(&document(format)), "{format:?}");
+        }
+        for format in [AiImageFormat::Png, AiImageFormat::Jpeg] {
+            assert!(operation.permits(&AiAttachment::Image {
+                format,
+                bytes: vec![1]
+            }));
+        }
+    }
+
+    /// The text-only surfaces take no attachment at all, which is what the hosted validator
+    /// already enforces; the port must agree rather than send one and be rejected.
+    #[test]
+    fn the_text_only_surfaces_permit_no_attachment() {
+        for operation in [AiOperation::ProjectAdvice, AiOperation::TrendsInsight] {
+            assert!(!operation.permits(&document(AiDocumentFormat::Pdf)));
+            assert!(!operation.permits(&AiAttachment::Image {
+                format: AiImageFormat::Png,
+                bytes: vec![1]
+            }));
+        }
+    }
+
+    /// The guard runs at the port, so a mismatch is refused before either adapter — no
+    /// round-trip, no quota unit, and no chance of hosted and BYO disagreeing.
+    #[test]
+    fn the_port_refuses_a_non_pdf_document_on_statement_import() {
+        let error = check_attachment(&AiRequest {
+            operation: AiOperation::StatementImport,
+            system: "s".to_string(),
+            turns: vec![AiTurn::user("extract")],
+            attachment: Some(document(AiDocumentFormat::Csv)),
+        })
+        .expect_err("a csv is not a statement");
+
+        match error {
+            AppError::AiService { recoverable, .. } => assert!(!recoverable),
+            other => panic!("expected AiService, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_port_admits_every_legal_operation_and_attachment_pairing() {
+        let cases = [
+            (AiOperation::StatementImport, document(AiDocumentFormat::Pdf)),
+            (AiOperation::Chat, document(AiDocumentFormat::Xlsx)),
+            (
+                AiOperation::StatementImport,
+                AiAttachment::Image {
+                    format: AiImageFormat::Jpeg,
+                    bytes: vec![1],
+                },
+            ),
+        ];
+
+        for (operation, attachment) in cases {
+            assert!(
+                check_attachment(&AiRequest {
+                    operation,
+                    system: "s".to_string(),
+                    turns: vec![AiTurn::user("t")],
+                    attachment: Some(attachment),
+                })
+                .is_ok(),
+                "{operation:?}"
+            );
+        }
+    }
+
+    /// A request with no attachment must pass the guard untouched: that is every existing
+    /// invocation of all four surfaces.
+    #[test]
+    fn the_port_guard_ignores_a_request_with_no_attachment() {
+        for operation in [
+            AiOperation::Chat,
+            AiOperation::StatementImport,
+            AiOperation::ProjectAdvice,
+            AiOperation::TrendsInsight,
+        ] {
+            assert!(check_attachment(&AiRequest {
+                operation,
+                system: "s".to_string(),
+                turns: vec![AiTurn::user("t")],
+                attachment: None,
+            })
+            .is_ok());
+        }
     }
 
     #[test]
@@ -942,6 +1386,52 @@ mod boundary_guards {
         }
     }
 
+    /// The user's chat turn persists exactly the typed message, and nothing about the file.
+    ///
+    /// A source guard because the alternative is a full Tauri command harness with a live
+    /// `AppHandle` and `DbState`, which this suite has no fixture for. The assertion is
+    /// pinned to the one `insert_message` call that writes the user's turn: `&message` is
+    /// the typed text, so interpolating the path or the basename into that argument — the
+    /// realistic way persistence would creep in — no longer compiles past this test.
+    #[test]
+    fn the_user_chat_turn_persists_only_the_typed_message() {
+        let source = production_source("commands/chat.rs");
+
+        assert!(
+            source.contains(r#"insert_message(&conn, conv_id, "user", &message, "chat")"#),
+            "the user turn must persist exactly the typed message"
+        );
+
+        for forbidden in [
+            r#"insert_message(&conn, conv_id, "user", &attachment"#,
+            "attachment_path,",
+            "&attachment_path",
+            "file_name,",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "commands/chat.rs must not persist `{forbidden}`"
+            );
+        }
+    }
+
+    /// The path exists only as a local in `send_chat_message`, so it must never be handed to
+    /// the db layer, the audit log, or the conversation title.
+    #[test]
+    fn the_attachment_path_never_reaches_a_persistence_call() {
+        let source = production_source("commands/chat.rs");
+
+        for line in source.lines() {
+            let persists = line.contains("insert_message(")
+                || line.contains("insert_audit_log(")
+                || line.contains("create_conversation(");
+            assert!(
+                !(persists && line.contains("attachment")),
+                "a persistence call must not carry the attachment: {line}"
+            );
+        }
+    }
+
     /// Collapses each logging macro invocation onto one logical line, so a call
     /// spread across several source lines is scanned as a whole.
     ///
@@ -1021,13 +1511,27 @@ mod boundary_guards {
             // left the most likely leak site unguarded.
             "commands/import.rs",
             "commands/chat.rs",
+            // Owns the chat attachment path, so it is the other place a basename or a
+            // directory name could reach a log line.
+            "ai/attachment.rs",
         ] {
             let source = production_source(module);
             for statement in logging_statements(&source) {
                 assert_no_forbidden_argument(
                     module,
                     &statement,
-                    &["file_path", "path", "staging_path", "source_path"],
+                    &[
+                        "file_path",
+                        "path",
+                        "staging_path",
+                        "source_path",
+                        // The basename is as much of a leak as the path. `ai/chat.rs` already
+                        // logs whether an attachment is present, so the next edit there is the
+                        // one most likely to reach for its name.
+                        "file_name",
+                        "basename",
+                        ".name",
+                    ],
                 );
             }
         }
