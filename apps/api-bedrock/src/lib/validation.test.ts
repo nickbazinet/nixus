@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  FIXED_DOCUMENT_NAME,
+  DOCUMENT_NAMES,
   MAX_DECODED_MEDIA_BYTES,
   OPERATION_LIMITS,
   OPERATIONS,
@@ -224,7 +224,7 @@ describe("closed message and content schema", () => {
 
 describe("per-operation content rules", () => {
   it("refuses an image or document block on every text-only operation", () => {
-    for (const operation of ["chat", "project_advice", "trends_insight"] as const) {
+    for (const operation of ["project_advice", "trends_insight"] as const) {
       for (const block of [
         { type: "image", format: "png", data_base64: "AAAA" },
         { type: "document", format: "pdf", data_base64: "AAAA" },
@@ -361,12 +361,12 @@ describe("per-operation content rules", () => {
       expectFailure(
         statementBody({ type: "image", format: "gif", data_base64: base64OfBytes(8) })
       ).message
-    ).toMatch(/format must be one of: png, jpeg/);
+    ).toMatch(/format for operation 'statement_import' must be one of: png, jpeg/);
     expect(
       expectFailure(
         statementBody({ type: "document", format: "docx", data_base64: base64OfBytes(8) })
       ).message
-    ).toMatch(/format must be one of: pdf/);
+    ).toMatch(/format for operation 'statement_import' must be one of: pdf/);
   });
 
   it("never accepts a client-supplied document name", () => {
@@ -380,7 +380,6 @@ describe("per-operation content rules", () => {
         })
       ).message
     ).toContain("name");
-    expect(FIXED_DOCUMENT_NAME).toBe("statement");
   });
 });
 
@@ -608,6 +607,308 @@ describe("role alternation is rejected as validation, not as an outage", () => {
         client_request_id: REQUEST_ID,
       });
       expect(expectFailure(body).code, operation).toBe("validation");
+    }
+  });
+});
+
+/*
+ * Chat attachments. Unlike statement_import, chat carries history, so the rules are
+ * positional rather than shape-exact: at most one media block, on the newest user turn.
+ */
+describe("chat attachment rules", () => {
+  function chatWithAttachment(media: Record<string, unknown>): string {
+    return chatBody({
+      messages: [
+        { role: "user", content: [{ type: "text", text: "earlier" }] },
+        { role: "assistant", content: [{ type: "text", text: "earlier answer" }] },
+        { role: "user", content: [{ type: "text", text: "what is in this?" }, media] },
+      ],
+    });
+  }
+
+  it("accepts one media block on the newest user message", () => {
+    const prepared = expectSuccess(
+      chatWithAttachment({
+        type: "document",
+        format: "csv",
+        data_base64: base64OfBytes(64),
+      })
+    );
+
+    const newest = prepared.messages[2]!;
+    expect(newest.role).toBe("user");
+    expect(newest.content).toHaveLength(2);
+    const media = newest.content[1]!;
+    expect(media.type).toBe("document");
+    expect(media.type === "document" && media.format).toBe("csv");
+    expect(media.type === "document" && media.bytes.byteLength).toBe(64);
+  });
+
+  it("accepts every document format the contract declares", () => {
+    for (const format of ["pdf", "csv", "txt", "xls", "xlsx"] as const) {
+      const prepared = expectSuccess(
+        chatWithAttachment({ type: "document", format, data_base64: base64OfBytes(8) })
+      );
+      const media = prepared.messages[2]!.content[1]!;
+      expect(media.type === "document" && media.format, format).toBe(format);
+    }
+  });
+
+  it("accepts an image attachment on a chat turn", () => {
+    const prepared = expectSuccess(
+      chatWithAttachment({ type: "image", format: "png", data_base64: base64OfBytes(8) })
+    );
+
+    expect(prepared.messages[2]!.content[1]!.type).toBe("image");
+  });
+
+  /*
+   * The desktop never persists attachment bytes, so media on an older turn could only come
+   * from a caller replaying something the app cannot have re-derived.
+   */
+  it("refuses media on any message other than the newest user turn", () => {
+    const failure = expectFailure(
+      chatBody({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "earlier" },
+              { type: "document", format: "pdf", data_base64: base64OfBytes(8) },
+            ],
+          },
+          { role: "assistant", content: [{ type: "text", text: "answer" }] },
+          { role: "user", content: [{ type: "text", text: "newest" }] },
+        ],
+      })
+    );
+
+    expect(failure.code).toBe("validation");
+    expect(failure.status).toBe(400);
+    // Positioned, so a caller can locate the offending block in its own payload.
+    expect(failure.message).toContain("messages[0].content[1]");
+    expect(failure.message).toContain("newest");
+  });
+
+  it("refuses media on an assistant turn", () => {
+    const failure = expectFailure(
+      chatBody({
+        messages: [
+          { role: "user", content: [{ type: "text", text: "ask" }] },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "answer" },
+              { type: "image", format: "png", data_base64: base64OfBytes(8) },
+            ],
+          },
+        ],
+      })
+    );
+
+    expect(failure.code).toBe("validation");
+  });
+
+  /* One file per message: two would double the effective media ceiling for one quota unit. */
+  it("refuses more than one media block", () => {
+    const failure = expectFailure(
+      chatBody({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "two files" },
+              { type: "document", format: "csv", data_base64: base64OfBytes(8) },
+              { type: "document", format: "pdf", data_base64: base64OfBytes(8) },
+            ],
+          },
+        ],
+      })
+    );
+
+    expect(failure.code).toBe("validation");
+    expect(failure.message).toContain("at most one");
+  });
+
+  it("refuses an attachment with no accompanying text block", () => {
+    const failure = expectFailure(
+      chatBody({
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "document", format: "pdf", data_base64: base64OfBytes(8) }],
+          },
+        ],
+      })
+    );
+
+    expect(failure.code).toBe("validation");
+  });
+
+  it("refuses a document format outside the contract", () => {
+    for (const format of ["docx", "doc", "html", "md", "png"]) {
+      const failure = expectFailure(
+        chatWithAttachment({ type: "document", format, data_base64: base64OfBytes(8) })
+      );
+      expect(failure.code, format).toBe("validation");
+    }
+  });
+
+  /* The 4 MiB media boundary is unchanged by chat gaining attachments. */
+  it("refuses a chat attachment over the decoded media ceiling", () => {
+    const failure = expectFailure(
+      chatWithAttachment({
+        type: "document",
+        format: "csv",
+        data_base64: base64OfBytes(MAX_DECODED_MEDIA_BYTES + 1),
+      })
+    );
+
+    expect(failure.code).toBe("payload_too_large");
+    expect(failure.status).toBe(413);
+  });
+
+  it("accepts a chat attachment exactly at the decoded media ceiling", () => {
+    const prepared = expectSuccess(
+      chatWithAttachment({
+        type: "document",
+        format: "csv",
+        data_base64: base64OfBytes(MAX_DECODED_MEDIA_BYTES),
+      })
+    );
+
+    const media = prepared.messages[2]!.content[1]!;
+    expect(media.type === "document" && media.bytes.byteLength).toBe(
+      MAX_DECODED_MEDIA_BYTES
+    );
+  });
+
+  /*
+   * A text-only chat request must validate exactly as it did before attachments existed:
+   * every conversation in the app is one of these.
+   */
+  it("leaves a text-only chat request unaffected", () => {
+    const prepared = expectSuccess(chatBody());
+
+    expect(prepared.operation).toBe("chat");
+    expect(prepared.messages[0]!.content).toHaveLength(1);
+  });
+});
+
+/*
+ * Document formats and document names are per operation, not global. Widening either for
+ * chat's benefit would change what statement_import sends to the model, which is the one
+ * thing this feature may not do.
+ */
+describe("per-operation document formats and names", () => {
+  function documentBody(
+    operation: string,
+    format: string,
+    extra: Record<string, unknown> = {}
+  ): string {
+    return JSON.stringify({
+      operation,
+      system: "s",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "read this" },
+            { type: "document", format, data_base64: base64OfBytes(16) },
+          ],
+        },
+      ],
+      client_request_id: REQUEST_ID,
+      ...extra,
+    });
+  }
+
+  const WIDER_FORMATS = ["csv", "txt", "xls", "xlsx"] as const;
+
+  /* INVARIANT — statement_import keeps exactly the documents it accepted before chat
+   * attachments existed. Its prompt and parser were built for statement PDFs. */
+  it("accepts a pdf document for statement_import", () => {
+    const prepared = expectSuccess(documentBody("statement_import", "pdf"));
+    const media = prepared.messages[0]!.content[1]!;
+
+    expect(media.type === "document" && media.format).toBe("pdf");
+  });
+
+  it("refuses every wider chat document format on statement_import", () => {
+    for (const format of WIDER_FORMATS) {
+      const failure = expectFailure(documentBody("statement_import", format));
+
+      expect(failure.code, format).toBe("validation");
+      expect(failure.status, format).toBe(400);
+      // Names the operation, so the message does not read as a universal ban on the format.
+      expect(failure.message, format).toContain("statement_import");
+      expect(failure.message, format).toContain("pdf");
+    }
+  });
+
+  /* The complement, which is what proves the refusal above is operation-specific rather
+   * than the contract simply not supporting these formats. */
+  it("accepts every wider format on chat", () => {
+    for (const format of WIDER_FORMATS) {
+      const prepared = expectSuccess(documentBody("chat", format));
+      const media = prepared.messages[0]!.content[1]!;
+
+      expect(media.type === "document" && media.format, format).toBe(format);
+    }
+  });
+
+  it("still accepts png and jpeg images for statement_import", () => {
+    for (const format of ["png", "jpeg"] as const) {
+      const prepared = expectSuccess(
+        statementBody({ type: "image", format, data_base64: base64OfBytes(16) })
+      );
+
+      expect(prepared.messages[0]!.content[1]!.type, format).toBe("image");
+    }
+  });
+
+  /* INVARIANT — the Bedrock document name is per operation. statement_import keeps
+   * `statement`; chat gets a neutral `attachment` because a chat file is not a statement. */
+  it("resolves the document name from the operation", () => {
+    expect(DOCUMENT_NAMES.statement_import).toBe("statement");
+    expect(DOCUMENT_NAMES.chat).toBe("attachment");
+  });
+
+  it("stamps each operation's name onto its prepared document block", () => {
+    expect(
+      expectSuccess(documentBody("statement_import", "pdf")).messages[0]!.content[1]
+    ).toMatchObject({ type: "document", name: "statement" });
+    expect(
+      expectSuccess(documentBody("chat", "csv")).messages[0]!.content[1]
+    ).toMatchObject({ type: "document", name: "attachment" });
+  });
+
+  /* A name that could be read as a path or a file name would defeat the whole reason the
+   * caller is not allowed to supply one. */
+  it("never resolves a name that looks like a file name or a path", () => {
+    for (const operation of OPERATIONS) {
+      const name = DOCUMENT_NAMES[operation];
+
+      expect(name, operation).not.toContain(".");
+      expect(name, operation).not.toContain("/");
+      expect(name, operation).not.toContain("\\");
+    }
+  });
+
+  it("gives every operation a resolved name", () => {
+    for (const operation of OPERATIONS) {
+      expect(DOCUMENT_NAMES[operation], operation).toBeTruthy();
+    }
+  });
+
+  /* The two text-only surfaces take no document at all, and the empty format list must read
+   * as "not permitted for this operation" rather than an empty allow-list message. */
+  it("refuses a document on the text-only operations by naming the operation", () => {
+    for (const operation of ["project_advice", "trends_insight"] as const) {
+      const failure = expectFailure(documentBody(operation, "pdf"));
+
+      expect(failure.code, operation).toBe("validation");
+      expect(failure.message, operation).toContain(operation);
     }
   });
 });

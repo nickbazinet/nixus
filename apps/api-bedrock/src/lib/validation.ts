@@ -53,15 +53,43 @@ export const OPERATION_LIMITS: Readonly<
 
 export const MAX_DECODED_MEDIA_BYTES = 4 * MIB;
 
-/** Fixed, neutral Bedrock document name. A client-supplied file name is a prompt-injection vector and is never accepted or forwarded. */
-export const FIXED_DOCUMENT_NAME = "statement";
+/**
+ * The fixed Bedrock document name per operation. Never a client-supplied file name: that
+ * is both a prompt-injection vector and a path leak.
+ *
+ * Operation-specific because the label is part of what the model reads. `statement_import`
+ * keeps `statement`, unchanged from before chat attachments existed, so the extraction
+ * prompt it has always seen is untouched.
+ */
+export const DOCUMENT_NAMES: Readonly<Record<CloudAiOperation, string>> = {
+  chat: "attachment",
+  statement_import: "statement",
+  project_advice: "attachment",
+  trends_insight: "attachment",
+};
 
 const IMAGE_FORMATS: readonly CloudAiImageFormat[] = ["png", "jpeg"];
-const DOCUMENT_FORMATS: readonly CloudAiDocumentFormat[] = ["pdf"];
+
+/**
+ * Document formats per operation, not one global list.
+ *
+ * `statement_import` is deliberately PDF-only: it is a fixed pipeline whose prompt and
+ * parser were built and tuned for statement PDFs and screenshots, so widening it for
+ * chat's benefit would change a surface this feature must leave alone. An empty list
+ * means the operation takes no document at all.
+ */
+const DOCUMENT_FORMATS: Readonly<
+  Record<CloudAiOperation, readonly CloudAiDocumentFormat[]>
+> = {
+  chat: ["pdf", "csv", "txt", "xls", "xlsx"],
+  statement_import: ["pdf"],
+  project_advice: [],
+  trends_insight: [],
+};
+
 const ROLES: readonly CloudAiRole[] = ["user", "assistant"];
 
 const TEXT_ONLY_OPERATIONS: readonly CloudAiOperation[] = [
-  "chat",
   "project_advice",
   "trends_insight",
 ];
@@ -89,6 +117,8 @@ export type PreparedContent =
   | {
       readonly type: "document";
       readonly format: CloudAiDocumentFormat;
+      /** Resolved from the operation here, so the Bedrock adapter never has to know it. */
+      readonly name: string;
       readonly bytes: Uint8Array;
     };
 
@@ -219,13 +249,17 @@ function validateContentBlock(
       };
     }
 
+    // Unreachable for an empty list: TEXT_ONLY_OPERATIONS above already returned for both
+    // operations whose format list is empty, and IMAGE_FORMATS is never empty.
     const allowedFormats: readonly string[] =
-      type === "image" ? IMAGE_FORMATS : DOCUMENT_FORMATS;
+      type === "image" ? IMAGE_FORMATS : DOCUMENT_FORMATS[operation];
     if (typeof raw.format !== "string" || !allowedFormats.includes(raw.format)) {
       return {
         code: "validation",
         status: 400,
-        message: `${where} format must be one of: ${allowedFormats.join(", ")}.`,
+        // Names the operation because the same format is legal on another one: a `csv`
+        // rejected here is rejected for `statement_import` specifically, not universally.
+        message: `${where} format for operation '${operation}' must be one of: ${allowedFormats.join(", ")}.`,
       };
     }
 
@@ -266,7 +300,12 @@ function validateContentBlock(
 
     return type === "image"
       ? { type: "image", format: raw.format as CloudAiImageFormat, bytes }
-      : { type: "document", format: raw.format as CloudAiDocumentFormat, bytes };
+      : {
+          type: "document",
+          format: raw.format as CloudAiDocumentFormat,
+          name: DOCUMENT_NAMES[operation],
+          bytes,
+        };
   }
 
   return {
@@ -280,6 +319,64 @@ function isFailure(
   value: PreparedContent | PreOutputFailure
 ): value is PreOutputFailure {
   return "code" in value;
+}
+
+function isMedia(block: PreparedContent): boolean {
+  return block.type === "image" || block.type === "document";
+}
+
+function newestUserMessageIndex(messages: readonly PreparedMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]!.role === "user") return index;
+  }
+  return -1;
+}
+
+/**
+ * Chat carries conversation history, so unlike `statement_import` it cannot be pinned to
+ * a single message. The attachment is ephemeral read-only context for the turn the user
+ * just sent: allowing it on an older turn would let a caller replay media the desktop
+ * never persisted, and allowing several would multiply the media ceiling per request.
+ */
+function validateChatShape(
+  messages: readonly PreparedMessage[]
+): PreOutputFailure | undefined {
+  const mediaCount = messages.reduce(
+    (total, message) => total + message.content.filter(isMedia).length,
+    0
+  );
+  if (mediaCount === 0) return undefined;
+  if (mediaCount > 1) {
+    return {
+      code: "validation",
+      status: 400,
+      message: "chat accepts at most one image-or-document block per request.",
+    };
+  }
+
+  const newest = newestUserMessageIndex(messages);
+  const carrier = messages.findIndex((message) => message.content.some(isMedia));
+  if (carrier !== newest) {
+    const block = messages[carrier]!.content.findIndex(isMedia);
+    return {
+      code: "validation",
+      status: 400,
+      // Carries the offending position, like every block-level failure above: without it a
+      // misplaced attachment is the one rejection a caller cannot locate in its own payload.
+      message: `messages[${carrier}].content[${block}] is an image-or-document block, which must be on the newest 'user' message.`,
+    };
+  }
+
+  if (!messages[carrier]!.content.some((block) => block.type === "text")) {
+    return {
+      code: "validation",
+      status: 400,
+      message:
+        "chat's attachment-carrying message must also contain a text block.",
+    };
+  }
+
+  return undefined;
 }
 
 function validateStatementImportShape(
@@ -301,9 +398,7 @@ function validateStatementImportShape(
     };
   }
   const textBlocks = message.content.filter((block) => block.type === "text");
-  const mediaBlocks = message.content.filter(
-    (block) => block.type === "image" || block.type === "document"
-  );
+  const mediaBlocks = message.content.filter(isMedia);
   if (
     textBlocks.length !== 1 ||
     mediaBlocks.length !== 1 ||
@@ -442,6 +537,11 @@ export function validateInvokeRequest(rawBody: string | undefined): ValidationRe
 
   if (typedOperation === "statement_import") {
     const failure = validateStatementImportShape(messages);
+    if (failure) return { ok: false, failure };
+  }
+
+  if (typedOperation === "chat") {
+    const failure = validateChatShape(messages);
     if (failure) return { ok: false, failure };
   }
 
