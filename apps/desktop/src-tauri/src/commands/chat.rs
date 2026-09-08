@@ -4,8 +4,9 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 use tracing::{error, info};
 
+use crate::ai::attachment as chat_attachment;
 use crate::ai::chat as chat_ai;
-use crate::ai::backend::AiTurn;
+use crate::ai::backend::{AiAttachment, AiTurn};
 use crate::ai::{clone_provider, AiState};
 use crate::db::account as account_db;
 use crate::db::asset as asset_db;
@@ -24,6 +25,22 @@ use crate::models::{CreateAccountInput, CreateExpenseInput};
 pub struct SendMessageResult {
     pub conversation_id: i64,
     pub user_message_id: i64,
+}
+
+/// What the composer needs to show a selected file. The basename lives in volatile
+/// React state only: it is never persisted, logged, or sent to a provider (AD-11).
+#[derive(Serialize)]
+pub struct ChatAttachmentInfo {
+    pub file_name: String,
+}
+
+/// Checked at selection time so an unusable file never reaches `send_chat_message`,
+/// and therefore never spends a quota unit.
+#[tauri::command(rename_all = "snake_case")]
+pub fn validate_chat_attachment(file_path: String) -> Result<ChatAttachmentInfo, AppError> {
+    Ok(ChatAttachmentInfo {
+        file_name: chat_attachment::inspect(&file_path)?,
+    })
 }
 
 // Filtering internal tool messages out of the history can leave two user turns adjacent, and
@@ -205,7 +222,17 @@ pub async fn send_chat_message(
     message: String,
     conversation_id: Option<i64>,
     agent_id: String,
+    attachment_path: Option<String>,
 ) -> Result<SendMessageResult, AppError> {
+    // Read and re-validate before anything is written: an unusable file must not leave
+    // a conversation row behind, and must never reach the port (and so never charge a
+    // quota unit). The bytes stay in this function's frame — the path is dropped here
+    // and never persisted or logged (AD-11).
+    let attachment: Option<AiAttachment> = match attachment_path.as_deref() {
+        Some(path) => Some(chat_attachment::read(path)?),
+        None => None,
+    };
+
     // Snapshot the BYO provider before any await point. Chat's tool protocol is
     // Bedrock-shaped, but that rule lives once in the backend port's support
     // matrix; `None` is no longer terminal because hosted Bedrock may serve a
@@ -256,8 +283,11 @@ pub async fn send_chat_message(
     let first_response = chat_ai::stream_chat_response(
         byo.as_ref(),
         &app,
-        history,
-        &system_prompt,
+        chat_ai::ChatInvocation {
+            turns: history,
+            system_prompt: system_prompt.clone(),
+            attachment: attachment.clone(),
+        },
     )
     .await
     .map_err(|e| {
@@ -301,8 +331,11 @@ pub async fn send_chat_message(
         chat_ai::stream_chat_response(
             byo.as_ref(),
             &app,
-            history2,
-            &system_prompt,
+            chat_ai::ChatInvocation {
+                turns: history2,
+                system_prompt,
+                attachment,
+            },
         )
         .await
         .map_err(|e| {

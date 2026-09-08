@@ -264,6 +264,7 @@ pub fn run() {
             commands::import::import_cc_statement,
             commands::import::confirm_import,
             commands::chat::send_chat_message,
+            commands::chat::validate_chat_attachment,
             commands::chat::get_chat_messages,
             commands::chat::execute_chat_action,
             commands::chat::list_conversations,

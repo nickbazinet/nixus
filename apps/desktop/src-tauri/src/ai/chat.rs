@@ -2,7 +2,7 @@ use aws_sdk_bedrockruntime::types::ConversationRole;
 use tauri::{AppHandle, Emitter};
 use tracing::info;
 
-use crate::ai::backend::{self, AiOperation, AiRequest, AiRole, AiTurn};
+use crate::ai::backend::{self, AiAttachment, AiOperation, AiRequest, AiRole, AiTurn};
 use crate::ai::AiProvider;
 use crate::error::AppError;
 
@@ -239,6 +239,14 @@ pub fn format_maintenance_history_result(
     out
 }
 
+/// One chat invocation's inputs. Grouped because all three are re-derived per invocation:
+/// the tool loop rebuilds history and re-supplies the attachment for its follow-up call.
+pub struct ChatInvocation {
+    pub turns: Vec<AiTurn>,
+    pub system_prompt: String,
+    pub attachment: Option<AiAttachment>,
+}
+
 /// Streams one chat invocation through the provider port.
 ///
 /// The `chat:response-chunk` event contract is unchanged: incremental chunks with
@@ -247,10 +255,19 @@ pub fn format_maintenance_history_result(
 pub async fn stream_chat_response(
     byo: Option<&AiProvider>,
     app: &AppHandle,
-    turns: Vec<AiTurn>,
-    system_prompt: &str,
+    invocation: ChatInvocation,
 ) -> Result<String, AppError> {
-    info!("Sending chat message to AI ({} turns)", turns.len());
+    let ChatInvocation {
+        turns,
+        system_prompt,
+        attachment,
+    } = invocation;
+
+    info!(
+        "Sending chat message to AI ({} turns, attachment={})",
+        turns.len(),
+        attachment.is_some()
+    );
 
     let emit_chunk = move |text: &str| {
         let _ = app.emit(
@@ -266,9 +283,9 @@ pub async fn stream_chat_response(
         byo,
         AiRequest {
             operation: AiOperation::Chat,
-            system: system_prompt.to_string(),
+            system: system_prompt,
             turns,
-            attachment: None,
+            attachment,
         },
         &emit_chunk,
     )
