@@ -1,9 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { format, subMonths } from "date-fns";
 import { fr as frLocale } from "date-fns/locale";
-import { Send } from "lucide-react";
 import {
   Alert,
   AlertDescription,
@@ -11,15 +10,15 @@ import {
   Button,
   Card,
   EmptyState,
-  Input,
-  Label,
   focusRing,
 } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 import { SURFACE_HEADING_ID } from "@/components/shared/PageHeader";
+import { ChatComposer } from "@/components/chat/ChatComposer";
 import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
 import { ConversationListPanel } from "@/components/chat/ConversationListPanel";
 import { useChat } from "@/hooks/useChat";
+import { useChatAttachment } from "@/hooks/useChatAttachment";
 import { AGENTS, setLastUsedAgentId } from "@/lib/agents";
 import { hostedAiMessageKey, hostedAiNeedsSignIn } from "@/lib/appError";
 
@@ -45,13 +44,21 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
     streaming,
     loading,
     chatError,
+    setChatError,
     sendMessage,
     confirmAction,
     cancelAction,
   } = useChat({ initialConversationId, agentId });
 
-  const [input, setInput] = useState("");
+  const attachments = useChatAttachment();
+  const [sendCount, setSendCount] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  /* Narrowed to the attachment refusal on purpose: the composer's clear is about the file the user
+   * just changed, and must not silently discard a not_configured or hosted_ai alert. */
+  const clearSendError = useCallback(() => {
+    setChatError((prev) => (prev?.type === "attachment" ? null : prev));
+  }, [setChatError]);
 
   const dateLocale = i18n.language.startsWith("fr") ? frLocale : undefined;
   const today = useMemo(() => new Date(), []);
@@ -62,16 +69,25 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  /* The one boundary every send passes through — the composer's submit AND the starter buttons,
+   * which call this directly. Clearing here rather than in the composer is what stops a starter
+   * send from leaving a previous attachment refusal standing beside its answer. */
   const send = (text: string) => {
     const trimmed = text.trim();
     if (trimmed !== "" && !streaming) {
-      sendMessage(trimmed);
-      setInput("");
+      clearSendError();
+      sendMessage(trimmed, attachments.attachment ?? undefined);
+      attachments.remove();
+      setSendCount((n) => n + 1);
     }
   };
 
+  /* An attachment refusal is drawn by the composer, not in the message area, and it withdraws both
+   * optimistic turns — so it leaves a genuinely empty conversation and the starters have to stay.
+   * Every other error DOES occupy the message area, where the starter card would collide with it. */
+  const messageAreaError = chatError !== null && chatError.type !== "attachment";
   const showStarters =
-    messages.length === 0 && !chatError && initialConversationId === undefined && agent;
+    messages.length === 0 && !messageAreaError && initialConversationId === undefined && agent;
   const starterPrompts = [
     t("chat.starterTracking"),
     t("chat.starterVsLastMonth", { month: previousMonth }),
@@ -192,40 +208,16 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-line px-page-x py-3" data-testid="chat-input-area">
-        <div className="mx-auto flex max-w-2xl items-center gap-2">
-          <Label htmlFor="agent-chat-input" className="sr-only">
-            {t("chat.placeholder")}
-          </Label>
-          <Input
-            id="agent-chat-input"
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send(input);
-              }
-            }}
-            placeholder={t("chat.placeholder")}
-            disabled={streaming || loading}
-            aria-disabled={streaming || loading || undefined}
-            data-testid="chat-input"
-            autoFocus
-          />
-          <Button
-            size="icon"
-            onClick={() => send(input)}
-            disabled={streaming || loading || input.trim() === ""}
-            aria-disabled={streaming || loading || input.trim() === "" || undefined}
-            aria-label={t("chat.placeholder")}
-            data-testid="chat-send-button"
-          >
-            <Send aria-hidden="true" />
-          </Button>
-        </div>
-      </div>
+      <ChatComposer
+        onSend={send}
+        busy={streaming || loading}
+        attachments={attachments}
+        sendErrorKey={
+          chatError?.type === "attachment" ? chatError.messageKey ?? null : null
+        }
+        onClearSendError={clearSendError}
+        sendCount={sendCount}
+      />
     </div>
   );
 }

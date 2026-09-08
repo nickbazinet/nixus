@@ -36,6 +36,38 @@ function mockApi(page: Page) {
             unknown
           >[]
       ),
+    setPickedFile: (path: string | null) =>
+      page.evaluate(
+        (p) =>
+          ((window as unknown as MockWindow).__MOCK_SET_PICKED_FILE__ as (
+            v: string | null
+          ) => void)(p),
+        path
+      ),
+    setAttachmentRejection: (field: string | null) =>
+      page.evaluate(
+        (f) =>
+          ((window as unknown as MockWindow).__MOCK_SET_ATTACHMENT_REJECTION__ as (
+            v: string | null
+          ) => void)(f),
+        field
+      ),
+    setSendAttachmentRejection: (field: string | null) =>
+      page.evaluate(
+        (f) =>
+          ((
+            window as unknown as MockWindow
+          ).__MOCK_SET_SEND_ATTACHMENT_REJECTION__ as (v: string | null) => void)(f),
+        field
+      ),
+    sentAttachmentPaths: () =>
+      page.evaluate(
+        () =>
+          (window as unknown as MockWindow).__MOCK_SENT_ATTACHMENT_PATHS__ as (
+            | string
+            | null
+          )[]
+      ),
   };
 }
 
@@ -65,6 +97,26 @@ async function setupTauriMock(page: Page) {
     const executedActionParams: Record<string, unknown>[] = [];
     w.__MOCK_EXECUTED_ACTION_PARAMS__ = executedActionParams;
 
+    // The native picker returns null unless a test scripts a path, which is exactly the
+    // "user cancelled the picker" state.
+    let pickedFile: string | null = null;
+    w.__MOCK_SET_PICKED_FILE__ = (path: string | null) => {
+      pickedFile = path;
+    };
+    let attachmentRejection: string | null = null;
+    w.__MOCK_SET_ATTACHMENT_REJECTION__ = (field: string | null) => {
+      attachmentRejection = field;
+    };
+    /* The real boundary refuses again inside `send_chat_message`, so a file that passed the
+     * pick-time check can still be rejected at send time — a different code path, and the one
+     * whose refusal outlives the attempt if nothing clears it. */
+    let sendAttachmentRejection: string | null = null;
+    w.__MOCK_SET_SEND_ATTACHMENT_REJECTION__ = (field: string | null) => {
+      sendAttachmentRejection = field;
+    };
+    const sentAttachmentPaths: (string | null)[] = [];
+    w.__MOCK_SENT_ATTACHMENT_PATHS__ = sentAttachmentPaths;
+
     w.__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args: Record<string, unknown>) => {
         if (cmd === "plugin:event|listen") {
@@ -75,6 +127,9 @@ async function setupTauriMock(page: Page) {
           if (cb) eventListeners[event].push(cb);
           return Promise.resolve(handlerId);
         }
+        // Must precede the blanket plugin branch below, or every pick resolves null and
+        // no attachment can ever be selected.
+        if (cmd === "plugin:dialog|open") return Promise.resolve(pickedFile);
         // Every other plugin command resolves null on purpose: a truthy updater check makes
         // UpdateChecker render an always-open dialog that aria-hides the entire app.
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
@@ -83,7 +138,34 @@ async function setupTauriMock(page: Page) {
           case "check_picker_gate":
             return Promise.resolve({ needs_picker: false });
 
+          case "validate_chat_attachment": {
+            if (attachmentRejection !== null) {
+              return Promise.reject({
+                type: "validation",
+                message: "refused",
+                field: attachmentRejection,
+              });
+            }
+            const path = args.file_path as string;
+            return Promise.resolve({
+              file_name: path.split(/[\\/]/).pop(),
+              file_size: 2048,
+            });
+          }
+
           case "send_chat_message": {
+            sentAttachmentPaths.push(
+              (args.attachment_path as string | null) ?? null
+            );
+
+            if (sendAttachmentRejection !== null) {
+              return Promise.reject({
+                type: "validation",
+                message: "refused",
+                field: sendAttachmentRejection,
+              });
+            }
+
             if (nextResponseType === "manual") {
               return Promise.resolve({ conversation_id: 1, user_message_id: 1 });
             }
@@ -189,7 +271,11 @@ test.describe("AI Chat Page — Story 7.1", () => {
 
     await expect(page.getByTestId("chat-input-area")).toBeVisible();
     await expect(page.getByTestId("chat-input")).toBeVisible();
-    await expect(page.getByTestId("chat-send-button")).toBeVisible();
+    const send = page.getByTestId("chat-send-button");
+    await expect(send).toBeVisible();
+    // An icon-only control needs its own name; borrowing the input's placeholder announced
+    // "Ask about your finances..." on the button that sends.
+    await expect(send).toHaveAttribute("aria-label", "Send message");
   });
 
   test("the agent name is a heading and a nav link, never two of the same role [AC1]", async ({
@@ -491,6 +577,29 @@ test.describe("Floating Chat Bar — Story 7.3", () => {
     await expect(page.getByTestId("floating-chat-bar")).not.toBeVisible();
   });
 
+  /* Attachments are a full-chat affordance by approved decision: the bar is a one-shot quick ask
+   * with no room to show, replace, or remove a selected file. */
+  test("the bar offers no attach control", async ({ page }) => {
+    await page.keyboard.press("Meta+k");
+    const bar = page.getByTestId("floating-chat-bar");
+    await expect(bar).toBeVisible();
+
+    await expect(bar.getByTestId("chat-attach-button")).toHaveCount(0);
+    await expect(bar.getByTestId("chat-attachment-chip")).toHaveCount(0);
+    await expect(bar.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  test("a send from the bar carries no attachment path", async ({ page }) => {
+    const mock = mockApi(page);
+    await page.keyboard.press("Meta+k");
+
+    await page.getByTestId("floating-chat-input").fill("How is my budget?");
+    await page.getByTestId("floating-chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+    expect(await mock.sentAttachmentPaths()).toEqual([null]);
+  });
+
   test("'Open the full chat' is a link and navigates to the agent chat [AC4]", async ({ page }) => {
     await page.keyboard.press("Meta+k");
     const link = page.getByTestId("open-full-chat-link");
@@ -499,5 +608,512 @@ test.describe("Floating Chat Bar — Story 7.3", () => {
     await link.click();
     await expect(page).toHaveURL(AGENT_PATH);
     await expect(page.getByTestId("floating-chat-bar")).not.toBeVisible();
+  });
+});
+
+// === AI chat file uploads ===
+
+const PICKED_FILE = "/Users/tester/Documents/january-expenses.csv";
+
+/* An export name a bank or a scanner really produces. Underscores, deliberately: a hyphen is a CSS
+ * break opportunity, so a hyphenated name wraps instead of overflowing and never exercises the width
+ * guard. This one has no break opportunity at all and outruns the composer's `max-w-2xl` column at
+ * both 1024 and 1280 — a shorter name fits the column and stops exercising truncation. */
+const LONG_FILE_NAME =
+  "RBC_Visa_Infinite_Avion_consolidated_monthly_credit_card_statement_january_2026_reviewed_categorized_final_v3.csv";
+const LONG_PICKED_FILE = `/Users/tester/Documents/${LONG_FILE_NAME}`;
+
+/**
+ * How far the attachment chip reaches past the composer column that lays it out, plus how much of
+ * the chip, the truncating stem, and the extension is clipped. Growing past that column IS the
+ * overflow this measures; a stem narrower than its own text is what separates truncation from a
+ * clip; and the extension is measured separately because it is the part that may NOT be dropped.
+ */
+async function chipFit(page: Page) {
+  return page.getByTestId("chat-attachment-chip").evaluate((el) => {
+    const column = el.parentElement;
+    const stem = el.querySelector<HTMLElement>('[data-testid="chat-attachment-stem"]');
+    const extension = el.querySelector<HTMLElement>(
+      '[data-testid="chat-attachment-extension"]'
+    );
+    if (column === null || stem === null || extension === null) {
+      throw new Error("the chip is not laid out inside a column, or renders no split name");
+    }
+    const chipRect = el.getBoundingClientRect();
+    const extensionRect = extension.getBoundingClientRect();
+    return {
+      pastColumnPx: Math.round(chipRect.right - column.getBoundingClientRect().right),
+      chipClippedPx: el.scrollWidth - el.clientWidth,
+      stemClippedPx: stem.scrollWidth - stem.clientWidth,
+      extensionWidthPx: Math.round(extensionRect.width),
+      extensionClippedPx: extension.scrollWidth - extension.clientWidth,
+      extensionPastChipPx: Math.round(extensionRect.right - chipRect.right),
+    };
+  });
+}
+
+test.describe("AI Chat attachments", () => {
+  test.beforeEach(async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto(AGENT_PATH);
+  });
+
+  test("the composer offers a labelled attach control beside the input", async ({ page }) => {
+    const attach = page.getByTestId("chat-attach-button");
+    await expect(attach).toBeVisible();
+    await expect(attach).toHaveAttribute("aria-label", "Attach a file");
+    // No file selected yet, so nothing about one is shown.
+    await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
+    await expect(page.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  test("cancelling the picker leaves the draft and the selection untouched", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(null);
+
+    await page.getByTestId("chat-input").fill("How is my budget?");
+    await page.getByTestId("chat-attach-button").click();
+
+    await expect(page.getByTestId("chat-input")).toHaveValue("How is my budget?");
+    await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
+    await expect(page.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  test("a supported file is shown by basename and can be removed", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+
+    await page.getByTestId("chat-attach-button").click();
+
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+    // The basename only: the directory it came from is never surfaced.
+    await expect(page.getByTestId("chat-attachment-name")).toHaveText(
+      "january-expenses.csv"
+    );
+    await expect(page.getByTestId("chat-attachment-chip")).not.toContainText(
+      "/Users/tester"
+    );
+
+    const remove = page.getByTestId("chat-attachment-remove");
+    await expect(remove).toHaveAttribute("aria-label", "Remove the attached file");
+    await remove.click();
+    await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
+  });
+
+  test("a selected file is sent with the message and then cleared", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+
+    await page.getByTestId("chat-input").fill("What is in this file?");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-message-assistant")).toContainText("$125.50", {
+      timeout: 5000,
+    });
+    expect(await mock.sentAttachmentPaths()).toEqual([PICKED_FILE]);
+
+    // Cleared after sending, so the next message does not silently re-send the same file.
+    await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
+    await page.getByTestId("chat-input").fill("And now?");
+    await page.getByTestId("chat-input").press("Enter");
+    expect(await mock.sentAttachmentPaths()).toEqual([PICKED_FILE, null]);
+  });
+
+  test("a message with no file sends no attachment path", async ({ page }) => {
+    const mock = mockApi(page);
+
+    await page.getByTestId("chat-input").fill("How is my budget?");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+    expect(await mock.sentAttachmentPaths()).toEqual([null]);
+  });
+
+  /* Every refusal reason gets its own localized line: a shared message would tell the user
+   * to shrink a file whose type was never supported in the first place. */
+  const REJECTIONS = [
+    { field: "attachment_unsupported_type", copy: "That file type can't be attached" },
+    { field: "attachment_empty", copy: "That file is empty" },
+    { field: "attachment_too_large", copy: "That file is over 4 MB" },
+    { field: "attachment_unreadable", copy: "That file couldn't be read" },
+  ] as const;
+
+  for (const { field, copy } of REJECTIONS) {
+    test(`a ${field} refusal shows its own localized error and attaches nothing`, async ({
+      page,
+    }) => {
+      const mock = mockApi(page);
+      await mock.setPickedFile(PICKED_FILE);
+      await mock.setAttachmentRejection(field);
+
+      await page.getByTestId("chat-attach-button").click();
+
+      await expect(page.getByTestId("chat-attachment-error")).toContainText(copy);
+      await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
+    });
+  }
+
+  test("a refused file is never sent, and the error clears once a valid one replaces it", async ({
+    page,
+  }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setAttachmentRejection("attachment_too_large");
+
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+
+    await page.getByTestId("chat-input").fill("Anything?");
+    await page.getByTestId("chat-input").press("Enter");
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+    expect(await mock.sentAttachmentPaths()).toEqual([null]);
+
+    await mock.setAttachmentRejection(null);
+    await page.getByTestId("chat-attach-button").click();
+
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+    await expect(page.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  test("a refused replacement drops the file that was already selected", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+
+    await mock.setAttachmentRejection("attachment_empty");
+    await page.getByTestId("chat-attach-button").click();
+
+    // A refused replacement drops the previous selection rather than silently keeping it.
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+    await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
+  });
+
+  test("attaching cannot be started while a response is streaming", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setResponse("manual");
+
+    await page.getByTestId("chat-input").fill("How is my budget?");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-attach-button")).toBeDisabled();
+    await mock.emitChunk("", true);
+    await expect(page.getByTestId("chat-attach-button")).toBeEnabled();
+  });
+
+  /* The whole reason attachments are read-only context: a file that implies a write must
+   * still go through the same explicit confirmation card. */
+  test("a file-driven action still requires the confirmation card [AC2]", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setResponse("action");
+
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+
+    await page.getByTestId("chat-input").fill("Add the expense from this file");
+    await page.getByTestId("chat-input").press("Enter");
+
+    const card = page.getByTestId("action-confirmation-card");
+    await expect(card).toBeVisible({ timeout: 5000 });
+    expect(await mock.executedActions()).toEqual([]);
+
+    await page.getByTestId("action-confirm-button").click();
+    expect(await mock.executedActions()).toEqual(["create_expense"]);
+    expect(await mock.sentAttachmentPaths()).toEqual([PICKED_FILE]);
+  });
+
+  /* `send_chat_message` re-runs the real check, so a file that cleared the pick-time one can still
+   * be refused at send time. That refusal lands in `useChat.chatError`, which nothing used to
+   * reset — so it outlived the attempt it described. */
+  test("a send-time refusal is reported and withdraws the turn it refused", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setSendAttachmentRejection("attachment_too_large");
+
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+
+    await page.getByTestId("chat-input").fill("What is in this file?");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-attachment-error")).toContainText(
+      "That file is over 4 MB"
+    );
+    // Nothing was written and no quota was spent, so neither optimistic turn may remain.
+    await expect(page.getByTestId("chat-message-user")).toHaveCount(0);
+    await expect(page.getByTestId("chat-message-assistant")).toHaveCount(0);
+
+    /* Withdrawing both turns leaves the conversation empty, and this refusal lives in the composer
+     * rather than the message area — so the starter card is the correct thing to be looking at.
+     * Suppressing it on any `chatError` left the user an empty pane with nothing to act on. */
+    await expect(page.getByTestId("chat-starter-prompt").first()).toBeVisible();
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+  });
+
+  test("retrying the send clears the previous send-time refusal", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setSendAttachmentRejection("attachment_too_large");
+
+    await page.getByTestId("chat-attach-button").click();
+    await page.getByTestId("chat-input").fill("What is in this file?");
+    await page.getByTestId("chat-input").press("Enter");
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+
+    await mock.setSendAttachmentRejection(null);
+    await page.getByTestId("chat-input").fill("Never mind, how is my budget?");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  /* The starter buttons call the route's `send` directly, never the composer's submit, so a clear
+   * living in the composer left this one path leaking a stale refusal next to a good answer. */
+  test("a starter prompt send clears the previous send-time refusal", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setSendAttachmentRejection("attachment_too_large");
+
+    await page.getByTestId("chat-attach-button").click();
+    await page.getByTestId("chat-input").fill("What is in this file?");
+    await page.getByTestId("chat-input").press("Enter");
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+
+    await mock.setSendAttachmentRejection(null);
+    await page.getByTestId("chat-starter-prompt").first().click();
+
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  test("a newly valid file replaces a send-time refusal instead of stacking with it", async ({
+    page,
+  }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setSendAttachmentRejection("attachment_unreadable");
+
+    await page.getByTestId("chat-attach-button").click();
+    await page.getByTestId("chat-input").fill("What is in this file?");
+    await page.getByTestId("chat-input").press("Enter");
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+
+    await mock.setSendAttachmentRejection(null);
+    await page.getByTestId("chat-attach-button").click();
+
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+    await expect(page.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  /* Both refusals share one slot through `attachments.errorKey ?? sendErrorKey`, so clearing the
+   * pick-time one on top would let a stale send-time one underneath re-surface. */
+  test("removing a refused replacement does not resurrect the send-time refusal", async ({
+    page,
+  }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setSendAttachmentRejection("attachment_too_large");
+
+    await page.getByTestId("chat-attach-button").click();
+    await page.getByTestId("chat-input").fill("What is in this file?");
+    await page.getByTestId("chat-input").press("Enter");
+    await expect(page.getByTestId("chat-attachment-error")).toContainText(
+      "That file is over 4 MB"
+    );
+
+    // A pick-time refusal now covers the send-time one in the shared slot.
+    await mock.setSendAttachmentRejection(null);
+    await mock.setAttachmentRejection("attachment_empty");
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-error")).toContainText("That file is empty");
+
+    // Recovering from the pick-time refusal has to leave the slot empty, not the older message.
+    await mock.setAttachmentRejection(null);
+    await mock.setPickedFile(PICKED_FILE);
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+    await page.getByTestId("chat-attachment-remove").click();
+    await expect(page.getByTestId("chat-attachment-error")).toHaveCount(0);
+  });
+
+  /* The ring is drawn outside the button box (2px at a 2px offset), so the chip's own padding is
+   * the only thing that keeps it off the chip border. Measured rather than pinned to a padding
+   * value, because the clearance is what matters and the token may change. */
+  test("the focused remove control's ring clears the chip edge", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+
+    // Real keyboard focus, since the ring only paints under :focus-visible. Tab order inside the
+    // composer runs remove -> attach -> input, so the input is two steps back from the remove.
+    await page.getByTestId("chat-input").focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Shift+Tab");
+    const remove = page.getByTestId("chat-attachment-remove");
+    await expect(remove).toBeFocused();
+
+    const clearance = await remove.evaluate((el) => {
+      const chip = el.closest('[data-testid="chat-attachment-chip"]');
+      if (chip === null) throw new Error("the remove control is not inside a chip");
+      const style = getComputedStyle(el);
+      const outlineWidthPx = Number.parseFloat(style.outlineWidth);
+      const ringPx = outlineWidthPx + Number.parseFloat(style.outlineOffset);
+      const button = el.getBoundingClientRect();
+      const bounds = chip.getBoundingClientRect();
+      return {
+        outlineWidthPx,
+        ringPx,
+        topPx: Math.round(button.top - ringPx - bounds.top),
+        rightPx: Math.round(bounds.right - (button.right + ringPx)),
+        bottomPx: Math.round(bounds.bottom - (button.bottom + ringPx)),
+      };
+    });
+
+    // A ring of zero would make every clearance below pass for the wrong reason.
+    expect(clearance.ringPx).toBeGreaterThan(0);
+
+    /* At least the ring's own width of gap on each side. Expressed against the ring rather than as
+     * a pixel constant so a ring token change cannot quietly turn this into a weaker check — and
+     * because "greater than zero" is satisfied by the 1px hairline that reads as a collision. */
+    expect(clearance.topPx).toBeGreaterThanOrEqual(clearance.outlineWidthPx);
+    expect(clearance.rightPx).toBeGreaterThanOrEqual(clearance.outlineWidthPx);
+    expect(clearance.bottomPx).toBeGreaterThanOrEqual(clearance.outlineWidthPx);
+  });
+
+  /* A basename is whatever the filesystem holds, and the composer's `max-w-2xl` column is the only
+   * thing bounding it. An unbroken 60+ character name has no break opportunity, so before the chip
+   * carried width guards it grew past that column and pushed the remove control out with it. */
+  test("an unbroken 60+ character basename truncates inside the composer column", async ({
+    page,
+  }) => {
+    const mock = mockApi(page);
+    await page.setViewportSize({ width: 1024, height: 680 });
+    await mock.setPickedFile(LONG_PICKED_FILE);
+
+    await page.getByTestId("chat-attach-button").click();
+
+    const chip = page.getByTestId("chat-attachment-chip");
+    await expect(chip).toBeVisible();
+
+    const fit = await chipFit(page);
+    expect(fit.pastColumnPx).toBeLessThanOrEqual(0);
+    expect(fit.chipClippedPx).toBeLessThanOrEqual(0);
+    expect(fit.stemClippedPx).toBeGreaterThan(0);
+
+    /* The extension says whether the PDF or the CSV of the same statement is attached, so it may
+     * not be what truncation eats: it keeps full width inside the chip while the stem gives way. */
+    expect(fit.extensionClippedPx).toBeLessThanOrEqual(0);
+    expect(fit.extensionWidthPx).toBeGreaterThan(0);
+    expect(fit.extensionPastChipPx).toBeLessThanOrEqual(0);
+    const extension = page.getByTestId("chat-attachment-extension");
+    await expect(extension).toBeVisible();
+    await expect(extension).toHaveText(".csv");
+
+    const documentScrollPx = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(documentScrollPx).toBeLessThanOrEqual(0);
+
+    // Hidden characters have to stay recoverable, and the tooltip is a pointer user's only route.
+    const name = page.getByTestId("chat-attachment-name");
+    await expect(name).toHaveAttribute("title", LONG_FILE_NAME);
+    // Splitting the name across two spans must not cost a screen reader the whole basename.
+    await expect(name).toHaveText(LONG_FILE_NAME);
+
+    // Truncation must not cost either control its reachability.
+    await expect(page.getByTestId("chat-attach-button")).toBeVisible();
+    const remove = page.getByTestId("chat-attachment-remove");
+    await expect(remove).toBeVisible();
+    await remove.click();
+    await expect(chip).toHaveCount(0);
+  });
+
+  /* 1280 is the other size the app is laid out for, and a wider column changes which element the
+   * chip is bounded by — the guard has to hold at both, not just at the minimum. */
+  test("the same basename stays inside the composer column at 1280 x 800", async ({ page }) => {
+    const mock = mockApi(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await mock.setPickedFile(LONG_PICKED_FILE);
+
+    await page.getByTestId("chat-attach-button").click();
+
+    const chip = page.getByTestId("chat-attachment-chip");
+    await expect(chip).toBeVisible();
+
+    const fit = await chipFit(page);
+    expect(fit.pastColumnPx).toBeLessThanOrEqual(0);
+    expect(fit.stemClippedPx).toBeGreaterThan(0);
+    expect(fit.extensionPastChipPx).toBeLessThanOrEqual(0);
+    await expect(page.getByTestId("chat-attachment-extension")).toHaveText(".csv");
+    await expect(page.getByTestId("chat-attachment-name")).toHaveAttribute(
+      "title",
+      LONG_FILE_NAME
+    );
+    await expect(page.getByTestId("chat-attachment-remove")).toBeVisible();
+  });
+
+  /* The composer owns the draft but the starter buttons bypass it, so before the sendCount
+   * signal a starter click answered one question while the typed one stayed in the box. */
+  test("a starter prompt click empties a typed draft", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("a half-typed other question");
+
+    await page.getByTestId("chat-starter-prompt").first().click();
+
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("chat-input")).toHaveValue("");
+  });
+
+  test("a normal send empties the typed draft", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("How is my budget?");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("chat-input")).toHaveValue("");
+  });
+
+  /* Finding 1's cancel contract, end to end: dismissing the picker must leave both the draft
+   * and a standing send-time refusal alone. */
+  test("cancelling the picker leaves a typed draft and a standing refusal intact", async ({
+    page,
+  }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+    await mock.setAttachmentRejection("attachment_too_large");
+
+    await page.getByTestId("chat-attach-button").click();
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+
+    await page.getByTestId("chat-input").fill("still typing this");
+    await mock.setPickedFile(null);
+    await page.getByTestId("chat-attach-button").click();
+
+    await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
+    await expect(page.getByTestId("chat-input")).toHaveValue("still typing this");
+  });
+
+  test("a reopened conversation shows no trace of a previous attachment", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setPickedFile(PICKED_FILE);
+
+    await page.getByTestId("chat-attach-button").click();
+    await page.getByTestId("chat-input").fill("What is in this file?");
+    await page.getByTestId("chat-input").press("Enter");
+    await expect(page.getByTestId("chat-message-assistant")).toBeVisible({ timeout: 5000 });
+
+    // get_chat_messages is the persisted record, and it carries text only.
+    await page.goto(`${AGENT_PATH}?conversation=1`);
+
+    await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
+    await expect(page.getByTestId("chat-input-area")).not.toContainText(
+      "january-expenses.csv"
+    );
   });
 });

@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { ActionPayload } from "@/components/chat/ChatMessageBubble";
 import { queryKeys } from "@/lib/constants";
 import {
+  chatAttachmentMessageKey,
   isHostedAiError,
   parseAppError,
   type HostedAiErrorCode,
@@ -15,12 +16,23 @@ export interface ChatError {
   type?: string;
   /** Present only when `type` is `hosted_ai`; drives the typed alert copy. */
   code?: HostedAiErrorCode;
+  /** Present only when `type` is `attachment`; the i18n key for the refusal reason. */
+  messageKey?: string;
 }
 
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   actionHandled?: boolean;
+}
+
+/**
+ * A file selected for the next message. Lives only here and in the composer's React
+ * state: nothing about it is persisted, so a reopened conversation has no trace of it.
+ */
+export interface ChatAttachment {
+  readonly path: string;
+  readonly name: string;
 }
 
 interface ChatResponseChunk {
@@ -144,7 +156,7 @@ export function useChat(options?: UseChatOptions) {
   }, []);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, attachment?: ChatAttachment) => {
       if (!text.trim() || streaming) return;
 
       setMessages((prev) => [...prev, { role: "user", content: text }]);
@@ -161,6 +173,7 @@ export function useChat(options?: UseChatOptions) {
             message: text,
             conversation_id: conversationId,
             agent_id: currentAgentId ?? "budget-helper",
+            attachment_path: attachment?.path ?? null,
           }
         );
         setConversationId(result.conversation_id);
@@ -191,6 +204,20 @@ export function useChat(options?: UseChatOptions) {
             type: "not_configured",
           });
           dropEmptyPlaceholder();
+          return;
+        }
+
+        // The attachment was refused at the real boundary, so nothing was written and no
+        // quota unit was spent. The optimistic user turn is withdrawn too: leaving it
+        // would show a message the conversation never received.
+        const attachmentKey = chatAttachmentMessageKey(err);
+        if (attachmentKey) {
+          setChatError({
+            message: parsed.message ?? "",
+            type: "attachment",
+            messageKey: attachmentKey,
+          });
+          setMessages((prev) => prev.slice(0, -2));
           return;
         }
 
