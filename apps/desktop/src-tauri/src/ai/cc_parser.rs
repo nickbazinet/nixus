@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::info;
 
-use crate::ai::backend::{self, AiAttachment, AiImageFormat, AiOperation, AiRequest, AiTurn};
+use crate::ai::backend::{
+    self, AiAttachment, AiDocumentFormat, AiImageFormat, AiOperation, AiRequest, AiTurn,
+};
 use crate::ai::AiProvider;
 use crate::error::AppError;
 use crate::models::{BudgetCategory, BudgetGroup, MerchantHint};
@@ -162,7 +164,10 @@ fn parse_proposed_category(value: Option<serde_json::Value>) -> Option<ProposedC
 /// extension is rejected here rather than silently sent as a PNG.
 fn attachment_for(ext: &str, bytes: Vec<u8>) -> Result<AiAttachment, AppError> {
     match ext {
-        "pdf" => Ok(AiAttachment::Document { bytes }),
+        "pdf" => Ok(AiAttachment::Document {
+            format: AiDocumentFormat::Pdf,
+            bytes,
+        }),
         "png" => Ok(AiAttachment::Image {
             format: AiImageFormat::Png,
             bytes,

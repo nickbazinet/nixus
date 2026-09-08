@@ -1,3 +1,4 @@
+pub mod attachment;
 pub mod backend;
 pub mod cc_parser;
 pub mod chat;
