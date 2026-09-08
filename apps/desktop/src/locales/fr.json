@@ -1401,5 +1401,13 @@
   "hostedAi.unauthorized": "Votre session a expiré. Veuillez vous reconnecter.",
   "hostedAi.premiumRequired": "L'IA Nixus Cloud n'est pas activée sur votre compte.",
   "hostedAi.quotaExhausted": "Vous avez utilisé toutes vos requêtes IA Nixus Cloud pour ce mois-ci.",
-  "hostedAi.unavailable": "L'IA Nixus Cloud n'est pas disponible pour le moment. Veuillez réessayer sous peu."
+  "hostedAi.unavailable": "L'IA Nixus Cloud n'est pas disponible pour le moment. Veuillez réessayer sous peu.",
+  "chat.attachFile": "Joindre un fichier",
+  "chat.send": "Envoyer le message",
+  "chat.removeAttachment": "Retirer le fichier joint",
+  "chat.attachmentFilterName": "Document ou image",
+  "chat.attachmentUnsupportedType": "Ce type de fichier ne peut pas être joint. Utilisez un PDF, une image, un CSV, un fichier texte ou un classeur Excel.",
+  "chat.attachmentEmpty": "Ce fichier est vide. Choisissez-en un autre.",
+  "chat.attachmentTooLarge": "Ce fichier dépasse 4 Mo. Choisissez-en un plus petit.",
+  "chat.attachmentUnreadable": "Ce fichier n'a pas pu être lu. Choisissez-en un autre."
 }

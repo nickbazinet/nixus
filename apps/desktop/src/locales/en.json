@@ -1401,5 +1401,13 @@
   "hostedAi.unauthorized": "Your sign-in has expired. Please sign in again.",
   "hostedAi.premiumRequired": "Nixus Cloud AI isn't enabled on your account.",
   "hostedAi.quotaExhausted": "You've used all of this month's Nixus Cloud AI requests.",
-  "hostedAi.unavailable": "Nixus Cloud AI isn't available right now. Please try again shortly."
+  "hostedAi.unavailable": "Nixus Cloud AI isn't available right now. Please try again shortly.",
+  "chat.attachFile": "Attach a file",
+  "chat.send": "Send message",
+  "chat.removeAttachment": "Remove the attached file",
+  "chat.attachmentFilterName": "Document or image",
+  "chat.attachmentUnsupportedType": "That file type can't be attached. Use a PDF, image, CSV, text file, or Excel workbook.",
+  "chat.attachmentEmpty": "That file is empty. Pick another one.",
+  "chat.attachmentTooLarge": "That file is over 4 MB. Pick a smaller one.",
+  "chat.attachmentUnreadable": "That file couldn't be read. Pick another one."
 }
