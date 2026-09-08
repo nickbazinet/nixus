@@ -373,3 +373,12 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-gh-actions-job-98631539207.md`
   summary: Turn the existing hero-preload prerender comment into deterministic static HTML coverage for home and heroless routes.
   evidence: `verify-prerender.ts` describes preload, priority, colour-scheme, and heroless-route assertions but does not implement them; the current browser regression test covers the reported CI failure, while static contract hardening is independently reviewable.
+- source_spec: `_bmad-output/implementation-artifacts/spec-ai-chat-file-uploads.md`
+  summary: Make the date-sensitive windowed expense average test independent of the current calendar date.
+  evidence: `cargo test` passes 1076 tests but `db::aggregates::tests::windowed_expense_average_excludes_months_outside_the_window` fails because its hardcoded June/July 2026 fixtures have moved outside the trailing window by September 2026; the failure predates this feature.
+- source_spec: `_bmad-output/implementation-artifacts/spec-ai-chat-file-uploads.md`
+  summary: Remove parallel-load flakiness and excessive runtime from the full desktop Playwright suite.
+  evidence: Feature-focused chat tests pass 49/49, while full-suite attempts either fail different unrelated maintenance/expense/project tests that pass in isolation or exceed the 10-minute runner timeout; the varying signature indicates pre-existing suite contention.
+- source_spec: `_bmad-output/implementation-artifacts/spec-ai-chat-file-uploads.md`
+  summary: Restore repository-wide Rust clippy cleanliness without mixing unrelated command-module edits into this feature.
+  evidence: `cargo clippy --all-targets -- -D warnings` reports 229 pre-existing `needless_borrow` findings and several unrelated `useless_vec` findings across command and dataset modules; changed attachment code compiles and its focused tests pass.
