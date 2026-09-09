@@ -60,6 +60,58 @@ interface MockSeedProject {
   target_date: string | null;
 }
 
+/** Field-for-field what `get_project_image` returns, so the mock cannot drift from the IPC model. */
+interface MockProjectImage {
+  project_id: number;
+  mime_type: "image/png" | "image/jpeg";
+  original_filename: string;
+  byte_size: number;
+  uploaded_at: string;
+  image_base64: string;
+}
+
+/**
+ * Everything the project-image surface reads or writes, grouped into one trailing knob rather than
+ * three more positional parameters on an already ten-argument helper.
+ */
+interface MockImageState {
+  /** Images already stored, keyed one-to-one on `project_id` exactly as `project_images` is. */
+  seed: MockProjectImage[];
+  /** Project ids whose `get_project_image` rejects — the load-failed state, not "no picture". */
+  readRejects: number[];
+  /** What the native picker resolves. `null` is a dismissed dialog, which is the default. */
+  pickedPath: string | null;
+}
+
+const NO_IMAGES: MockImageState = {
+  seed: [],
+  readRejects: [],
+  pickedPath: null,
+};
+
+/**
+ * A real 69-byte 1x1 RGB PNG. Genuinely decodable on purpose: a placeholder payload would make the
+ * browser fire `onError` and every populated-state assertion would silently be testing the
+ * unavailable fallback instead.
+ */
+const ONE_PIXEL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO45ucEAANkAWfD6YMNAAAAAElFTkSuQmCC";
+const ONE_PIXEL_PNG_BYTES = 69;
+
+function seededImage(
+  projectId: number,
+  filename = "cover.png"
+): MockProjectImage {
+  return {
+    project_id: projectId,
+    mime_type: "image/png",
+    original_filename: filename,
+    byte_size: ONE_PIXEL_PNG_BYTES,
+    uploaded_at: "2026-03-04 10:15:00",
+    image_base64: ONE_PIXEL_PNG_BASE64,
+  };
+}
+
 const SURPLUS_CENTS = 50_000;
 
 async function setupTauriMock(
@@ -89,7 +141,10 @@ async function setupTauriMock(
   // A signed-in cloud account Rust confirmed premium. Independent of `aiConfigured`: the two are
   // separate signals everywhere except the availability gate itself. `delayMs` holds the entitlement
   // read unresolved, which is the first-paint window every premium user actually sees.
-  premium: MockPremium = { granted: false }
+  premium: MockPremium = { granted: false },
+  // The one image knob. Defaults to "nothing stored, picker dismissed", so every pre-existing spec
+  // keeps exercising the surface as it behaves for a project that has never had a picture.
+  images: MockImageState = NO_IMAGES
 ) {
   await page.addInitScript(
     ({
@@ -102,6 +157,9 @@ async function setupTauriMock(
       aiConfigured,
       adviceOutcome,
       premium,
+      images,
+      storedImageBase64,
+      storedImageBytes,
     }) => {
       interface MockProject {
         id: number;
@@ -210,6 +268,14 @@ async function setupTauriMock(
       (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ =
         { unregisterListener: () => {} };
 
+      // Keyed one-to-one on `project_id`, which is what the PRIMARY KEY on `project_images` means:
+      // a write replaces rather than accumulates, so replace can never leave two rows behind.
+      const projectImages: MockProjectImage[] = images.seed.map((seed) => ({
+        ...seed,
+      }));
+      const imageReadRejects = new Set(images.readRejects);
+      const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         transformCallback: (cb: unknown) => {
           const id = Math.floor(Math.random() * 1e9);
@@ -217,6 +283,10 @@ async function setupTauriMock(
           return id;
         },
         invoke: (cmd: string, args: Record<string, unknown>) => {
+          // Must precede the blanket plugin branch, or every image pick resolves null and no file
+          // can ever be selected. Not logged, matching how every other plugin call is handled.
+          if (cmd === "plugin:dialog|open")
+            return Promise.resolve(images.pickedPath);
           if (cmd.startsWith("plugin:")) return Promise.resolve(null);
           invokeLog.push(cmd);
           switch (cmd) {
@@ -550,6 +620,61 @@ async function setupTauriMock(
               },
             });
 
+          // The four image commands. Mocked here rather than in the spec that needs them because
+          // `ProjectDetail` mounts the image card on every expand: without `get_project_image` the
+          // `default:` branch below rejects and every unrelated expand renders the load-failed copy.
+          case "get_project_image": {
+            const projectId = args.project_id as number;
+            if (imageReadRejects.has(projectId))
+              return Promise.reject({
+                type: "database",
+                message: "Could not read the stored image",
+              });
+            const stored = projectImages.find(
+              (image) => image.project_id === projectId
+            );
+            // `null` is the normal "no picture yet" answer, never a failure.
+            return Promise.resolve(stored ? { ...stored } : null);
+          }
+
+          // Returns a bare basename, so no directory component can reach the UI.
+          case "validate_project_image":
+            return Promise.resolve(basename(args.file_path as string));
+
+          case "set_project_image": {
+            const projectId = args.project_id as number;
+            const written: MockProjectImage = {
+              project_id: projectId,
+              mime_type: "image/png",
+              original_filename: basename(args.file_path as string),
+              byte_size: storedImageBytes,
+              uploaded_at: "2026-03-04 10:15:00",
+              image_base64: storedImageBase64,
+            };
+            const index = projectImages.findIndex(
+              (image) => image.project_id === projectId
+            );
+            if (index === -1) projectImages.push(written);
+            else projectImages[index] = written;
+            // Metadata only on the way back: the payload never rides on a write response.
+            return Promise.resolve({
+              project_id: written.project_id,
+              mime_type: written.mime_type,
+              original_filename: written.original_filename,
+              byte_size: written.byte_size,
+              uploaded_at: written.uploaded_at,
+            });
+          }
+
+          // Idempotent, exactly like the Rust command: removing nothing is not an error.
+          case "remove_project_image": {
+            const index = projectImages.findIndex(
+              (image) => image.project_id === (args.project_id as number)
+            );
+            if (index !== -1) projectImages.splice(index, 1);
+            return Promise.resolve(null);
+          }
+
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
           }
@@ -567,6 +692,9 @@ async function setupTauriMock(
       aiConfigured,
       adviceOutcome,
       premium,
+      images,
+      storedImageBase64: ONE_PIXEL_PNG_BASE64,
+      storedImageBytes: ONE_PIXEL_PNG_BYTES,
     }
   );
 }
@@ -1845,5 +1973,180 @@ test.describe("AI advisory when a project is off track", () => {
     await page.getByTestId("project-advice-button").click();
     await expect(page.getByTestId("project-advice-panel")).toBeVisible();
     expect(await adviceCallCount(page)).toBe(2);
+  });
+});
+
+test.describe("Project image card", () => {
+  const IMAGE_PROJECT: MockSeedProject = {
+    id: 1,
+    name: "Car down payment",
+    target_cents: 600_000,
+    target_date: null,
+  };
+
+  async function openImageCard(page: Page, images: MockImageState) {
+    await setupTauriMock(
+      page,
+      [],
+      SURPLUS_CENTS,
+      [],
+      null,
+      [IMAGE_PROJECT],
+      [],
+      false,
+      "success",
+      { granted: false },
+      images
+    );
+    await page.goto("/wealth/projects");
+    await expect(page.getByTestId("project-row")).toHaveCount(1);
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-detail")).toBeVisible();
+    return page.getByTestId("project-image-card");
+  }
+
+  test("a stored image renders as a data URL with alt text naming the project", async ({
+    page,
+  }) => {
+    await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id, "downpayment.png")],
+    });
+
+    const img = page.getByTestId("project-image");
+    await expect(img).toBeVisible();
+    expect(await img.getAttribute("src")).toMatch(
+      /^data:image\/(png|jpeg);base64,/
+    );
+    const alt = await img.getAttribute("alt");
+    expect(alt).not.toBe("");
+    expect(alt).toContain(IMAGE_PROJECT.name);
+
+    // Proves the SQLite `YYYY-MM-DD HH:MM:SS` timestamp is parsed rather than printed raw.
+    await expect(page.getByTestId("project-image-meta")).toContainText(
+      "downpayment.png · added Mar 4, 2026"
+    );
+    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
+  });
+
+  test("the card sits above the money figures inside the expanded detail", async ({
+    page,
+  }) => {
+    await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+
+    const firstChild = await page
+      .getByTestId("project-detail")
+      .evaluate((el) => el.firstElementChild?.getAttribute("data-testid") ?? null);
+    expect(firstChild).toBe("project-image-card");
+  });
+
+  test("a project with no image renders the compact invitation", async ({
+    page,
+  }) => {
+    await openImageCard(page, NO_IMAGES);
+
+    const empty = page.getByTestId("project-image-empty");
+    await expect(empty).toContainText("No image yet");
+    await expect(page.getByTestId("project-image-add-button")).toBeVisible();
+    await expect(page.getByTestId("project-image")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-load-failed")).toHaveCount(0);
+  });
+
+  // The state that exists because `retry: false` settles a refusal immediately: without the
+  // `isError` test running first, this project would be told it has no picture at all.
+  test("a rejected read says the image could not be loaded, never that there is none", async ({
+    page,
+  }) => {
+    await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+      readRejects: [IMAGE_PROJECT.id],
+    });
+
+    await expect(page.getByTestId("project-image-load-failed")).toContainText(
+      "The saved image couldn't be loaded."
+    );
+    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-add-button")).toHaveCount(0);
+    await expect(page.getByTestId("project-image")).toHaveCount(0);
+  });
+
+  test("the card carries no shadow, because elevation is for floating layers only", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+
+    const shadowed = await card.evaluate((root) =>
+      [root, ...Array.from(root.querySelectorAll("*"))]
+        .map((el) => el.getAttribute("class") ?? "")
+        .filter((cls) => /(^|\s)shadow-/.test(cls))
+    );
+    expect(shadowed).toEqual([]);
+  });
+
+  test("Remove is reachable only through the overflow menu, never beside Replace", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+
+    // Exactly two controls sit in the card: Replace, and the menu trigger that hides Remove.
+    await expect(card.getByRole("button")).toHaveCount(2);
+    await expect(card.getByTestId("project-image-replace-button")).toBeVisible();
+    await expect(card.getByText("Remove image")).toHaveCount(0);
+    await expect(
+      page.getByRole("menuitem", { name: "Remove image" })
+    ).toHaveCount(0);
+
+    await card.getByTestId("project-image-menu").click();
+
+    const remove = page.getByRole("menuitem", { name: "Remove image" });
+    await expect(remove).toBeVisible();
+    // Portaled out of the card, which is what "not a sibling of Replace" means structurally.
+    await expect(card.getByTestId("remove-project-image-button")).toHaveCount(0);
+  });
+
+  test("every interactive control in the card has a non-empty accessible name", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+
+    // `ariaSnapshot` renders Playwright's own computed accessible name, so an unnamed control shows
+    // up as a bare `- button` with no quoted string — which is exactly what this rejects.
+    const namesInside = async (region: ReturnType<Page["getByTestId"]>) => {
+      const lines = (await region.ariaSnapshot()).split("\n");
+      return lines
+        .map((line) => /^\s*-\s+(button|link|menuitem|checkbox|textbox)\b(.*)$/.exec(line))
+        .filter((match): match is RegExpExecArray => match !== null)
+        .map((match) => ({ role: match[1], rest: match[2].trim() }));
+    };
+
+    const cardControls = await namesInside(card);
+    expect(cardControls.length).toBeGreaterThan(0);
+    for (const control of cardControls) {
+      expect(control.rest, `${control.role} in the card has no accessible name`).toMatch(
+        /^"[^"]+"/
+      );
+    }
+
+    await card.getByTestId("project-image-menu").click();
+    const menuControls = await namesInside(page.getByTestId("remove-project-image-button"));
+    expect(menuControls.length).toBeGreaterThan(0);
+    for (const control of menuControls) {
+      expect(control.rest, `${control.role} in the menu has no accessible name`).toMatch(
+        /^"[^"]+"/
+      );
+    }
   });
 });

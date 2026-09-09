@@ -35,6 +35,7 @@ import {
   SlideOver,
 } from "@nixus/shared";
 import { ProjectContributionForm } from "@/components/projects/ProjectContributionForm";
+import { ProjectImageCard } from "@/components/projects/ProjectImageCard";
 import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
 import {
   useDeleteProjectContribution,
@@ -174,6 +175,11 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
 
   return (
     <div className="mt-2.5 space-y-3" data-testid="project-detail">
+      {/* First, so the picture is what identifies the goal on arrival — and quiet, so the figures
+          below it stay the loudest thing on the surface. The fetch is gated by this component's
+          conditional mount in `ProjectRow`, not by a prop. */}
+      <ProjectImageCard project={project} />
+
       <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
         <span className="text-caption text-ink-dim">
           {t("projects.savedLabel")}{" "}
