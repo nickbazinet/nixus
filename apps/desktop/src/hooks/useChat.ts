@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ActionPayload } from "@/components/chat/ChatMessageBubble";
 import { queryKeys } from "@/lib/constants";
+import { chatActionInvalidationKeys } from "@/lib/chatActions";
 import {
   chatAttachmentMessageKey,
   isHostedAiError,
@@ -39,13 +40,6 @@ interface ChatResponseChunk {
   chunk: string;
   done: boolean;
 }
-
-const ACTION_INVALIDATION_MAP: Record<string, string[][]> = {
-  create_expense: [["expenses"], ["dashboard"], ["budgets"], ["budget-status"], ["budget-summary"], ["spending-breakdown"]],
-  update_balance: [["accounts"], ["dashboard"], ["net-worth-current"]],
-  create_account: [["accounts"], ["dashboard"]],
-  update_asset_value: [["assets"], ["net-worth-current"]],
-};
 
 interface UseChatOptions {
   initialConversationId?: number;
@@ -268,7 +262,7 @@ export function useChat(options?: UseChatOptions) {
           return [...updated, { role: "assistant" as const, content: result.message }];
         });
 
-        const keys = ACTION_INVALIDATION_MAP[payload.action_type] ?? [];
+        const keys = chatActionInvalidationKeys(payload.action_type);
         for (const key of keys) {
           queryClient.invalidateQueries({ queryKey: key });
         }
@@ -283,13 +277,33 @@ export function useChat(options?: UseChatOptions) {
     [conversationId, queryClient]
   );
 
-  const cancelAction = useCallback((msgIndex: number) => {
-    setMessages((prev) => {
-      const updated = [...prev];
-      updated[msgIndex] = { ...updated[msgIndex], actionHandled: true };
-      return [...updated, { role: "assistant" as const, content: "Action cancelled." }];
-    });
-  }, []);
+  /* Persisted, not just local: the command writes the fixed server-side note the model reads next
+   * turn, which is what stops it re-proposing the identical card. It accepts only conversation and
+   * action type — no caller text can reach the transcript the model treats as instruction. Marked
+   * handled before the await so the user's intent holds even if persistence fails. */
+  const cancelAction = useCallback(
+    async (msgIndex: number, payload: ActionPayload) => {
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[msgIndex] = { ...updated[msgIndex], actionHandled: true };
+        return [...updated, { role: "assistant" as const, content: "Action cancelled." }];
+      });
+
+      try {
+        await invoke("record_chat_action_cancelled", {
+          conversation_id: conversationId ?? 0,
+          action_type: payload.action_type,
+        });
+      } catch (err: unknown) {
+        const e = err as { message?: string };
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: `Error: ${e.message ?? "Action failed"}` },
+        ]);
+      }
+    },
+    [conversationId]
+  );
 
   return { messages, streaming, loading, chatError, setChatError, sendMessage, confirmAction, cancelAction };
 }

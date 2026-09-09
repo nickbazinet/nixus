@@ -152,7 +152,7 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
                 isStreaming={streaming}
                 actionHandled={lastAiMsg.actionHandled}
                 onConfirm={(payload) => confirmAction(messages.indexOf(lastAiMsg), payload)}
-                onCancel={() => cancelAction(messages.indexOf(lastAiMsg))}
+                onCancel={(payload) => cancelAction(messages.indexOf(lastAiMsg), payload)}
               />
             )}
           </div>
