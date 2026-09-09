@@ -5,6 +5,11 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button, Card, CardContent } from "@nixus/shared";
 import { cn } from "@/lib/utils";
+import {
+  hasValidChatActionParams,
+  isChatActionType,
+  type ChatActionType,
+} from "@/lib/chatActions";
 
 // remark-gfm defaults singleTilde to true, which renders "~$430" (approximately
 // $430) as struck-through — the assistant appears to cross out dollar figures.
@@ -14,7 +19,7 @@ const THINKING_DOT_DELAYS = ["-0.3s", "-0.15s", ""];
 
 export interface ActionPayload {
   action: true;
-  action_type: string;
+  action_type: ChatActionType;
   display: {
     label: string;
     details: { field: string; value: string }[];
@@ -28,15 +33,29 @@ interface ChatMessageBubbleProps {
   isStreaming?: boolean;
   actionHandled?: boolean;
   onConfirm?: (payload: ActionPayload) => void;
-  onCancel?: () => void;
+  onCancel?: (payload: ActionPayload) => void;
 }
 
+/**
+ * The action card a message proposes, or `null` when it proposes none the app can run.
+ *
+ * An `action_type` outside `CHAT_ACTION_TYPES`, or params that type's guard rejects, yields `null` on
+ * purpose: the backend refuses both, so drawing the card would give the user a Confirm whose only
+ * outcome is an error. Surrounding prose still renders, so the turn is intact — it just stops
+ * offering an action that cannot happen.
+ */
 export function parseActionFromContent(content: string): ActionPayload | null {
   const actionMatch = content.match(/```action\s*\n?([\s\S]*?)```/);
   if (actionMatch) {
     try {
       const parsed = JSON.parse(actionMatch[1].trim());
-      if (parsed.action === true && parsed.action_type && parsed.display && parsed.params) {
+      if (
+        parsed.action === true &&
+        isChatActionType(parsed.action_type) &&
+        parsed.display &&
+        parsed.params &&
+        hasValidChatActionParams(parsed.action_type, parsed.params)
+      ) {
         return parsed as ActionPayload;
       }
     } catch {
@@ -190,7 +209,7 @@ export function ChatMessageBubble({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onCancel?.()}
+                  onClick={() => onCancel?.(actionPayload)}
                   disabled={actionHandled}
                   aria-disabled={actionHandled || undefined}
                   data-testid="action-cancel-button"
