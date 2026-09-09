@@ -47,8 +47,9 @@ export interface ChatAttachmentState {
  * Owns the one ephemeral attachment a chat message may carry.
  *
  * The path and basename live in this state and nowhere else: they are never written to
- * the database, a log, or a prompt (AD-11). A successful send calls `remove`, so the next
- * message does not silently re-send the same file.
+ * the database, a log, or a prompt (AD-11). It is session-scoped, not per-message — a send
+ * deliberately leaves it in place so a follow-up turn still has the file as context, and only the
+ * explicit remove or a conversation switch (which remounts the panel) clears it.
  */
 export function useChatAttachment(): ChatAttachmentState {
   const { t } = useTranslation();

@@ -52,7 +52,7 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
 
   const attachments = useChatAttachment();
   const [sendCount, setSendCount] = useState(0);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageAreaRef = useRef<HTMLDivElement>(null);
 
   /* Narrowed to the attachment refusal on purpose: the composer's clear is about the file the user
    * just changed, and must not silently discard a not_configured or hosted_ai alert. */
@@ -65,9 +65,17 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
   const freshnessDate = format(today, "PPP", { locale: dateLocale });
   const previousMonth = format(subMonths(today, 1), "LLLL", { locale: dateLocale });
 
+  /* Scroll the log, never `scrollIntoView`: that walks up to whatever ancestor happens to be
+   * scrollable, and once a long card history outgrew this pane it scrolled the app shell instead —
+   * dragging the composer up off the viewport and leaving dead space under it.
+   *
+   * `streaming` is a dependency because the freshness line appears when a turn ENDS, not when a
+   * message changes — without it the log settles a line short of the bottom. */
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    const log = messageAreaRef.current;
+    if (log === null) return;
+    log.scrollTop = log.scrollHeight;
+  }, [messages, streaming]);
 
   /* The one boundary every send passes through — the composer's submit AND the starter buttons,
    * which call this directly. Clearing here rather than in the composer is what stops a starter
@@ -77,7 +85,6 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
     if (trimmed !== "" && !streaming) {
       clearSendError();
       sendMessage(trimmed, attachments.attachment ?? undefined);
-      attachments.remove();
       setSendCount((n) => n + 1);
     }
   };
@@ -125,7 +132,8 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
       {/* role="log" without aria-live: streaming announcements are published per sentence by the
         * bubble itself, so a live region here would re-announce every token. */}
       <div
-        className="flex-1 space-y-3 overflow-y-auto px-page-x py-4"
+        ref={messageAreaRef}
+        className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-page-x py-4"
         role="log"
         data-testid="chat-message-area"
       >
@@ -197,7 +205,7 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
             isStreaming={streaming && msg.role === "assistant" && i === messages.length - 1}
             actionHandled={msg.actionHandled}
             onConfirm={(payload) => confirmAction(i, payload)}
-            onCancel={() => cancelAction(i)}
+            onCancel={(payload) => cancelAction(i, payload)}
           />
         ))}
         {messages.length > 0 && !streaming && (
@@ -205,7 +213,6 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
             {t("chat.freshness", { date: freshnessDate })}
           </p>
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       <ChatComposer

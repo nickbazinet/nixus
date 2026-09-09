@@ -28,6 +28,14 @@ function mockApi(page: Page) {
       page.evaluate(
         () => (window as unknown as MockWindow).__MOCK_EXECUTED_ACTIONS__ as string[]
       ),
+    cancelledActions: () =>
+      page.evaluate(
+        () =>
+          (window as unknown as MockWindow).__MOCK_CANCELLED_ACTIONS__ as {
+            conversation_id: number;
+            action_type: string;
+          }[]
+      ),
     executedActionParams: () =>
       page.evaluate(
         () =>
@@ -83,7 +91,13 @@ async function setupTauriMock(page: Page) {
       for (const cb of cbs) cb({ event, payload, id: Math.random() });
     }
 
-    let nextResponseType: "query" | "action" | "approximate" | "manual" = "query";
+    let nextResponseType:
+      | "query"
+      | "action"
+      | "category-action"
+      | "unsupported-action"
+      | "approximate"
+      | "manual" = "query";
     const w = window as unknown as Record<string, unknown>;
     w.__MOCK_SET_RESPONSE__ = (type: string) => {
       nextResponseType = type as typeof nextResponseType;
@@ -96,6 +110,8 @@ async function setupTauriMock(page: Page) {
     w.__MOCK_EXECUTED_ACTIONS__ = executedActions;
     const executedActionParams: Record<string, unknown>[] = [];
     w.__MOCK_EXECUTED_ACTION_PARAMS__ = executedActionParams;
+    const cancelledActions: { conversation_id: number; action_type: string }[] = [];
+    w.__MOCK_CANCELLED_ACTIONS__ = cancelledActions;
 
     // The native picker returns null unless a test scripts a path, which is exactly the
     // "user cancelled the picker" state.
@@ -186,6 +202,32 @@ async function setupTauriMock(page: Page) {
                 },
                 params: { merchant: "Costco", amount_cents: 4500, category_name: "Groceries", date: "2026-03-15" },
               }) + '\n```';
+            } else if (nextResponseType === "category-action") {
+              response = 'I can add that category.\n```action\n' + JSON.stringify({
+                action: true,
+                action_type: "create_budget_category",
+                display: {
+                  label: "Add Budget Category",
+                  details: [
+                    { field: "Category", value: "House" },
+                    { field: "Group", value: "Needs" },
+                    { field: "Target", value: "$1.00" },
+                  ],
+                },
+                params: { category_name: "House", group_name: "Needs" },
+              }) + '\n```';
+            } else if (nextResponseType === "unsupported-action") {
+              /* Shaped exactly like a real card but for a type `ACTION_TYPES` does not contain —
+               * what the model actually produced for the "House" category. */
+              response = 'I can add that for you.\n```action\n' + JSON.stringify({
+                action: true,
+                action_type: "create_category",
+                display: {
+                  label: "Add Category",
+                  details: [{ field: "Category", value: "House" }],
+                },
+                params: { category_name: "House" },
+              }) + '\n```';
             } else if (nextResponseType === "approximate") {
               response = "Rent runs ~$430 and groceries ~$260 a month.";
             } else {
@@ -203,9 +245,19 @@ async function setupTauriMock(page: Page) {
             return Promise.resolve({ conversation_id: 1, user_message_id: 1 });
           }
 
+          case "record_chat_action_cancelled":
+            cancelledActions.push({
+              conversation_id: args.conversation_id as number,
+              action_type: args.action_type as string,
+            });
+            return Promise.resolve(null);
+
           case "execute_chat_action":
             executedActions.push(args.action_type as string);
             executedActionParams.push(args.params as Record<string, unknown>);
+            if (args.action_type === "create_budget_category") {
+              return Promise.resolve({ success: true, message: "Done. House added to Needs." });
+            }
             return Promise.resolve({ success: true, message: "Done. $45.00 expense added for Costco." });
 
           case "list_conversations":
@@ -490,6 +542,67 @@ test.describe("AI Chat Page — Story 7.2", () => {
     const messages = page.getByTestId("chat-message-assistant");
     await expect(messages.last()).toContainText("Action cancelled");
     expect(await mock.executedActions()).toEqual([]);
+
+    /* The cancellation is persisted, not just drawn: without this the model never learns the card
+     * was refused and proposes the identical one again next turn. */
+    expect(await mock.cancelledActions()).toEqual([
+      { conversation_id: 1, action_type: "create_expense" },
+    ]);
+  });
+
+  /* The reproduced bug: an action_type outside the backend's closed set still drew a card, so every
+   * Confirm failed and the model kept re-proposing it. The answer must survive; only the dead
+   * offer of an action disappears. */
+  test("an action type the backend cannot run renders no confirmation card", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setResponse("unsupported-action");
+
+    await page.getByTestId("chat-input").fill("Add a House category");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("chat-message-assistant")).toContainText(
+      "I can add that for you",
+      { timeout: 5000 }
+    );
+    await expect(page.getByTestId("action-confirmation-card")).toHaveCount(0);
+    await expect(page.getByTestId("action-confirm-button")).toHaveCount(0);
+    expect(await mock.executedActions()).toEqual([]);
+  });
+
+  /* `create_budget_category` is the type that used to have no frontend branch at all, so the card
+   * either never rendered or rendered dead. This drives the whole path end to end: the card the
+   * model proposes, the params the confirm forwards, and the success line coming back. */
+  test("a create_budget_category card confirms into exactly one backend call", async ({ page }) => {
+    const mock = mockApi(page);
+    await mock.setResponse("category-action");
+
+    await page.getByTestId("chat-input").fill("Add a House category under Needs");
+    await page.getByTestId("chat-input").press("Enter");
+
+    const card = page.getByTestId("action-confirmation-card");
+    await expect(card).toBeVisible({ timeout: 5000 });
+    await expect(card).toContainText("Add Budget Category");
+    await expect(card).toContainText("House");
+    await expect(card).toContainText("Needs");
+    await expect(card).toContainText("$1.00");
+
+    // Nothing is written before the user approves, whatever the card is for.
+    expect(await mock.executedActions()).toEqual([]);
+
+    await page.getByTestId("action-confirm-button").click();
+    await expect(page.getByTestId("chat-message-assistant").last()).toContainText(
+      "House added to Needs"
+    );
+
+    /* Exactly one call: a card that re-fires on a single confirm would create duplicate categories,
+     * and the backend's idempotency would hide it from any weaker assertion. */
+    expect(await mock.executedActions()).toEqual(["create_budget_category"]);
+    expect(await mock.executedActionParams()).toEqual([
+      { category_name: "House", group_name: "Needs" },
+    ]);
+
+    // The confirm path appends `Error: ...` on failure, so its absence is what proves success.
+    await expect(page.getByTestId("chat-message-area")).not.toContainText("Error:");
   });
 
   test("after cancel, buttons on the card are disabled [AC5]", async ({ page }) => {
@@ -700,7 +813,7 @@ test.describe("AI Chat attachments", () => {
     await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
   });
 
-  test("a selected file is sent with the message and then cleared", async ({ page }) => {
+  test("a selected file remains available for follow-up turns until removed", async ({ page }) => {
     const mock = mockApi(page);
     await mock.setPickedFile(PICKED_FILE);
 
@@ -715,11 +828,15 @@ test.describe("AI Chat attachments", () => {
     });
     expect(await mock.sentAttachmentPaths()).toEqual([PICKED_FILE]);
 
-    // Cleared after sending, so the next message does not silently re-send the same file.
-    await expect(page.getByTestId("chat-attachment-chip")).toHaveCount(0);
-    await page.getByTestId("chat-input").fill("And now?");
+    await expect(page.getByTestId("chat-attachment-chip")).toBeVisible();
+    await page.getByTestId("chat-input").fill("Use House for the housing rows");
     await page.getByTestId("chat-input").press("Enter");
-    expect(await mock.sentAttachmentPaths()).toEqual([PICKED_FILE, null]);
+    expect(await mock.sentAttachmentPaths()).toEqual([PICKED_FILE, PICKED_FILE]);
+
+    await page.getByTestId("chat-attachment-remove").click();
+    await page.getByTestId("chat-input").fill("Now answer without the file");
+    await page.getByTestId("chat-input").press("Enter");
+    expect(await mock.sentAttachmentPaths()).toEqual([PICKED_FILE, PICKED_FILE, null]);
   });
 
   test("a message with no file sends no attachment path", async ({ page }) => {
@@ -1097,6 +1214,75 @@ test.describe("AI Chat attachments", () => {
 
     await expect(page.getByTestId("chat-attachment-error")).toBeVisible();
     await expect(page.getByTestId("chat-input")).toHaveValue("still typing this");
+  });
+
+  /* The reproduced layout bug: a long card history made the app shell itself the scroller, so the
+   * composer slid up off the viewport with dead space beneath it. The log has to be the only thing
+   * that scrolls, and the composer has to stay pinned no matter how much history accumulates. */
+  test("a long card history scrolls only inside the log, composer stays pinned", async ({
+    page,
+  }) => {
+    const mock = mockApi(page);
+    await page.setViewportSize({ width: 1024, height: 680 });
+    await mock.setResponse("action");
+
+    const cards = page.getByTestId("action-confirmation-card");
+    for (let turn = 1; turn <= 8; turn++) {
+      await page.getByTestId("chat-input").fill(`Add expense number ${turn}`);
+      await page.getByTestId("chat-input").press("Enter");
+      await expect(cards).toHaveCount(turn, { timeout: 5000 });
+    }
+
+    const log = page.getByTestId("chat-message-area");
+    const overflow = await log.evaluate((el) => ({
+      scrollablePx: el.scrollHeight - el.clientHeight,
+      overscrollBehaviorY: getComputedStyle(el).overscrollBehaviorY,
+    }));
+
+    // Without real overflow the rest of this proves nothing: the layout would be untested.
+    expect(overflow.scrollablePx).toBeGreaterThan(0);
+    expect(overflow.overscrollBehaviorY).toBe("contain");
+
+    const pinned = async (label: string) => {
+      const state = await page.evaluate(() => {
+        const composer = document.querySelector('[data-testid="chat-input-area"]');
+        if (composer === null) throw new Error("the composer is not rendered");
+        return {
+          documentScrollTopPx: document.documentElement.scrollTop,
+          windowScrollYPx: window.scrollY,
+          composerGapPx: Math.round(
+            window.innerHeight - composer.getBoundingClientRect().bottom
+          ),
+        };
+      });
+      expect(state.documentScrollTopPx, label).toBe(0);
+      expect(state.windowScrollYPx, label).toBe(0);
+      // Sub-pixel layout rounding is tolerable; a shifted-up composer is tens of pixels out.
+      expect(Math.abs(state.composerGapPx), label).toBeLessThanOrEqual(2);
+    };
+
+    await pinned("after accumulating cards");
+
+    // Scrolling back through the history must not drag the page with it.
+    await log.evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await pinned("after scrolling the log to the top");
+
+    // And a fresh streaming turn must not either, which is when the auto-scroll runs.
+    await mock.setResponse("query");
+    await page.getByTestId("chat-input").fill("How is my budget?");
+    await page.getByTestId("chat-input").press("Enter");
+    await expect(page.getByTestId("chat-message-assistant").last()).toContainText("$125.50", {
+      timeout: 5000,
+    });
+    await pinned("after a streaming turn");
+
+    // The auto-scroll still parks the newest turn in view, in the log and only the log.
+    const atBottom = await log.evaluate(
+      (el) => el.scrollHeight - el.clientHeight - el.scrollTop
+    );
+    expect(atBottom).toBeLessThanOrEqual(2);
   });
 
   test("a reopened conversation shows no trace of a previous attachment", async ({ page }) => {
