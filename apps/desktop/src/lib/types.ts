@@ -736,6 +736,29 @@ export interface Project {
   updated_at: string;
 }
 
+// Mirrors `models::ProjectImage`. Deliberately NOT a field on `Project`: the payload is up to
+// ~4 MiB of base64 per project, so it travels only on the dedicated per-project read and never
+// inside a list response. `mime_type` is only "image/png" or "image/jpeg", derived in Rust from
+// the proven file format — the frontend never sends it.
+export interface ProjectImage {
+  project_id: number;
+  mime_type: string;
+  original_filename: string;
+  byte_size: number;
+  uploaded_at: string;
+  image_base64: string;
+}
+
+// Mirrors `models::ProjectImageMeta`: the same row WITHOUT the payload, which is what a write
+// returns. `uploaded_at` is SQLite's clock value read back from the stored row.
+export interface ProjectImageMeta {
+  project_id: number;
+  mime_type: string;
+  original_filename: string;
+  byte_size: number;
+  uploaded_at: string;
+}
+
 export interface CreateProjectInput {
   name: string;
   target_cents: number;

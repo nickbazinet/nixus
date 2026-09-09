@@ -8,6 +8,8 @@ import type {
   Project,
   ProjectAllocationInput,
   ProjectContribution,
+  ProjectImage,
+  ProjectImageMeta,
   ProjectPace,
   ProjectSavedTotal,
   SavingsProjectsSummary,
@@ -124,6 +126,68 @@ export function useProjectContributions(projectId: number, enabled = true) {
         project_id: projectId,
       }),
     enabled,
+  });
+}
+
+// The image payload is read only here and never inside `get_projects`: it is up to ~4 MiB of
+// base64 per project, so a list response carrying it would pay that cost for every row on the
+// page. `enabled` mirrors `useProjectContributions` above, and `null` is the normal "no picture
+// yet" answer rather than a failure, so the caller renders the empty invitation for it.
+//
+// All four cache options are load-bearing, because `main.tsx` builds a bare `new QueryClient()`
+// with no defaults: `staleTime: Infinity` with `refetchOnWindowFocus: false` stops the payload
+// being re-read every time the window regains focus while a row stays expanded, `gcTime: 60_000`
+// drops it shortly after the row collapses instead of holding megabytes for five minutes, and
+// `retry: false` means a refusal is reported once rather than three more times.
+export function useProjectImage(projectId: number, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.projectImage(projectId),
+    queryFn: () =>
+      invoke<ProjectImage | null>("get_project_image", {
+        project_id: projectId,
+      }),
+    enabled,
+    staleTime: Infinity,
+    gcTime: 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+// Only this project's image key goes stale. The payload appears in no list response, no saved
+// total, no earmark and no pace figure, so invalidating anything else would assert a data
+// dependency that does not exist. Cross-profile safety is NOT handled here: `lib/datasetSwitch.ts`
+// calls `queryClient.clear()` on a dataset switch, which is what stops one profile's cached image
+// from surfacing under another profile's identical project id. Anyone narrowing that to key-by-key
+// invalidation must include `projectImage` or reintroduce that leak.
+export function useSetProjectImage() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { project_id: number; file_path: string }) =>
+      invoke<ProjectImageMeta>("set_project_image", {
+        project_id: input.project_id,
+        file_path: input.file_path,
+      }),
+    onSuccess: (_meta, input) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projectImage(input.project_id),
+      });
+    },
+  });
+}
+
+export function useRemoveProjectImage() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: number) =>
+      invoke<null>("remove_project_image", { project_id: projectId }),
+    onSuccess: (_removed, projectId) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projectImage(projectId),
+      });
+    },
   });
 }
 

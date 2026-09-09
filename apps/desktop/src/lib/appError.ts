@@ -160,3 +160,46 @@ export function chatAttachmentMessageKey(error: unknown): string | null {
   }
   return CHAT_ATTACHMENT_MESSAGE_KEYS[field as ChatAttachmentRejection];
 }
+
+/**
+ * `AppError::Validation`'s `field` values a project-image write or validation can carry.
+ *
+ * The six `project_image_*` literals come from `projects/image.rs` and describe the FILE. The
+ * seventh, `project_id`, comes from the write path's archived/missing-project guard and
+ * describes the PROJECT, so it gets its own key: "pick another file" is the wrong instruction
+ * when the goal itself is gone. `content_mismatch` and `dimensions` stay separate for the same
+ * reason — the validator emits `content_mismatch` for a corrupt or truncated header and
+ * `dimensions` only once a real width and height were determined and exceeded 12 megapixels.
+ */
+const PROJECT_IMAGE_MESSAGE_KEYS = {
+  project_image_unsupported_type: "projects.image.unsupportedType",
+  project_image_empty: "projects.image.empty",
+  project_image_too_large: "projects.image.tooLarge",
+  project_image_unreadable: "projects.image.unreadable",
+  project_image_content_mismatch: "projects.image.contentMismatch",
+  project_image_dimensions: "projects.image.dimensions",
+  project_id: "projects.image.projectUnavailable",
+} as const;
+
+export type ProjectImageRejection = keyof typeof PROJECT_IMAGE_MESSAGE_KEYS;
+
+/**
+ * The i18n key for a project-image refusal, or `null` when the rejection is something else.
+ *
+ * `null` rather than falling back to `unreadable`: a database failure or an unmapped field is
+ * not a bad file, and telling someone their perfectly good photograph "could not be read" sends
+ * them to replace a file that was never the problem. Callers render a generic failure instead.
+ */
+export function projectImageMessageKey(error: unknown): string | null {
+  if (!isRecord(error)) return null;
+  if (error.type !== "validation") return null;
+  const field = error.field;
+  if (typeof field !== "string") return null;
+  // Own-property only, for the same reason as the attachment map above.
+  if (
+    !Object.prototype.hasOwnProperty.call(PROJECT_IMAGE_MESSAGE_KEYS, field)
+  ) {
+    return null;
+  }
+  return PROJECT_IMAGE_MESSAGE_KEYS[field as ProjectImageRejection];
+}
