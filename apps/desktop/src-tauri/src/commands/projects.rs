@@ -1,5 +1,7 @@
 use std::sync::Mutex;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use rusqlite::Connection;
 use tauri::State;
 
 use crate::ai::{clone_provider, project_advice, AiState};
@@ -13,10 +15,11 @@ use crate::error::AppError;
 use crate::models::{
     AccountEarmarkBreakdown, AccountHeadroom, BudgetCategoryStatus, CategoryCompareRow,
     CreateProjectContributionInput, CreateProjectInput, Project, ProjectAdviceRequest,
-    ProjectAdviceResponse, ProjectAllocationInput, ProjectContribution, ProjectPace,
-    ProjectSavedTotal, SavingsProjectsSummary, SuggestedAllocationResponse, UpdateProjectInput,
+    ProjectAdviceResponse, ProjectAllocationInput, ProjectContribution, ProjectImage,
+    ProjectImageMeta, ProjectPace, ProjectSavedTotal, SavingsProjectsSummary,
+    SuggestedAllocationResponse, UpdateProjectInput,
 };
-use crate::projects::{allocation, pace, settlement};
+use crate::projects::{allocation, image, pace, settlement};
 
 // How many over-target categories the prompt may name. Two is the whole budget's worth of advice a
 // person can act on this month; a longer list reads as a lecture and invites the model to pad.
@@ -621,8 +624,193 @@ pub async fn generate_project_advice(
     .await
 }
 
+const PROJECT_IMAGE_ENTITY: &str = "project_image";
+
+/// Reads and validates the picked file into everything the store needs, touching no
+/// database at all.
+///
+/// Split out from `set_project_image` because the ordering is load-bearing: the file read
+/// happens here, *before* the `DbState` guard is taken, so a non-reentrant mutex is never
+/// held across a multi-megabyte read while every other command waits. It is also the only
+/// way the read-then-store path is reachable from `cargo test`, since `tauri::State` has no
+/// public constructor.
+///
+/// The mime type comes from the proven format, never from an argument, so the value bound
+/// into `project_images` can only be one of the two `project_images_mime_allowed` admits.
+pub(crate) fn read_project_image_for_store(
+    file_path: &str,
+) -> Result<(&'static str, String, Vec<u8>), AppError> {
+    let (format, bytes) = image::read(file_path)?;
+    // The basename comes back through `inspect` rather than a second hand-rolled
+    // `file_name()` branch: `inspect` already refuses a path carrying no usable name, and it
+    // re-runs only a metadata stat, never a second read of the file.
+    let original_filename = image::inspect(file_path)?;
+
+    Ok((format.mime_type(), original_filename, bytes))
+}
+
+/// Exactly the four metadata fields, built by hand rather than by serializing a model, so
+/// the audit trail cannot grow an image payload because someone later added a field to
+/// `ProjectImage`. `project_id` is omitted because `entity_id` already carries it.
+fn project_image_audit_value(meta: &ProjectImageMeta) -> String {
+    serde_json::json!({
+        "mime_type": meta.mime_type,
+        "original_filename": meta.original_filename,
+        "byte_size": meta.byte_size,
+        "uploaded_at": meta.uploaded_at,
+    })
+    .to_string()
+}
+
+/// The read path over a plain `&Connection`, which is what makes it testable.
+pub(crate) fn get_project_image_inner(
+    conn: &Connection,
+    project_id: i64,
+) -> Result<Option<ProjectImage>, AppError> {
+    let Some(row) = projects_db::get_project_image(conn, project_id)? else {
+        return Ok(None);
+    };
+
+    Ok(Some(ProjectImage {
+        project_id: row.project_id,
+        mime_type: row.mime_type,
+        original_filename: row.original_filename,
+        byte_size: row.byte_size,
+        uploaded_at: row.uploaded_at,
+        image_base64: STANDARD.encode(&row.image_bytes),
+    }))
+}
+
+/// Stores already-validated bytes and records the write.
+///
+/// `byte_size` is never a parameter: `upsert_project_image` binds `bytes.len()` itself,
+/// because `project_images_byte_size_matches_payload` rejects any disagreement and a
+/// caller-supplied length is exactly how that disagreement would arise.
+pub(crate) fn set_project_image_inner(
+    conn: &Connection,
+    project_id: i64,
+    mime_type: &str,
+    original_filename: &str,
+    bytes: &[u8],
+) -> Result<ProjectImageMeta, AppError> {
+    let row =
+        projects_db::upsert_project_image(conn, project_id, mime_type, original_filename, bytes)?;
+
+    let meta = ProjectImageMeta {
+        project_id: row.project_id,
+        mime_type: row.mime_type,
+        original_filename: row.original_filename,
+        byte_size: row.byte_size,
+        uploaded_at: row.uploaded_at,
+    };
+
+    let details = project_image_audit_value(&meta);
+    if let Err(e) = audit_db::insert_audit_log(
+        conn,
+        PROJECT_IMAGE_ENTITY,
+        project_id,
+        "set",
+        None,
+        Some(&details),
+    ) {
+        tracing::error!("Failed to write audit log: {}", e);
+    }
+
+    Ok(meta)
+}
+
+pub(crate) fn remove_project_image_inner(
+    conn: &Connection,
+    project_id: i64,
+) -> Result<(), AppError> {
+    // Read before deleting so the audit trail can record what was released. This loads the
+    // payload and drops it — at most 4 MiB — because `get_project_image` is the only reader
+    // and a metadata-only accessor would have no second caller.
+    let Some(previous) = projects_db::get_project_image(conn, project_id)? else {
+        // Removal is idempotent by design, and an audit entry for a state that never changed
+        // would be a lie.
+        return Ok(());
+    };
+
+    projects_db::delete_project_image(conn, project_id)?;
+
+    let old_json = project_image_audit_value(&ProjectImageMeta {
+        project_id: previous.project_id,
+        mime_type: previous.mime_type,
+        original_filename: previous.original_filename,
+        byte_size: previous.byte_size,
+        uploaded_at: previous.uploaded_at,
+    });
+    if let Err(e) = audit_db::insert_audit_log(
+        conn,
+        PROJECT_IMAGE_ENTITY,
+        project_id,
+        "remove",
+        Some(&old_json),
+        None,
+    ) {
+        tracing::error!("Failed to write audit log: {}", e);
+    }
+
+    Ok(())
+}
+
+/// Refuses an unusable file before any write, so the picker can surface the reason at the
+/// moment of choosing. Returns the basename it will display; no directory component ever
+/// crosses back.
+#[tauri::command(rename_all = "snake_case")]
+pub fn validate_project_image(file_path: String) -> Result<String, AppError> {
+    image::inspect(&file_path)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_project_image(
+    state: State<DbState>,
+    project_id: i64,
+) -> Result<Option<ProjectImage>, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    get_project_image_inner(&conn, project_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn set_project_image(
+    state: State<DbState>,
+    project_id: i64,
+    file_path: String,
+) -> Result<ProjectImageMeta, AppError> {
+    // One read, before the lock. Every project command is synchronous on the main thread and
+    // `DbState`'s mutex is not reentrant, so holding it across the file read would stall
+    // every other command for the duration of that read.
+    let (mime_type, original_filename, bytes) = read_project_image_for_store(&file_path)?;
+
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    set_project_image_inner(&conn, project_id, mime_type, &original_filename, &bytes)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn remove_project_image(state: State<DbState>, project_id: i64) -> Result<(), AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    remove_project_image_inner(&conn, project_id)
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tempfile::TempDir;
+
     use super::*;
 
     fn headroom(unallocated_cents: i64) -> AccountHeadroom {
@@ -770,5 +958,357 @@ mod tests {
 
         assert_eq!(safe[0].unallocated_cents, 0);
         assert_eq!(adjusted_required_monthly_cents(600_000, Some(6), &safe), None);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Project image
+    //
+    // Every test below runs against a real migrated database on a temp file, not the
+    // hand-rolled in-memory fixture: all four `project_images` CHECK constraints stay live,
+    // so a wrong `byte_size` or mime string fails here rather than in production.
+    // ---------------------------------------------------------------------------
+
+    const CAPTURE_SENTINEL: &str = "tracing-capture-is-live";
+
+    fn migrated_db_with_a_project() -> (TempDir, Connection) {
+        let dir = TempDir::new().expect("temp dir");
+        let conn = crate::db::init_db(dir.path()).expect("init_db succeeds");
+        conn.execute(
+            "INSERT INTO projects (id, name, target_cents) VALUES (1, 'Kitchen', 500000)",
+            [],
+        )
+        .expect("seed project");
+        (dir, conn)
+    }
+
+    /// A 13-byte IHDR carrying the declared size, then the fixed colour-type tail — the same
+    /// header shape `projects::image` parses. Nothing past the header is read, so no pixel
+    /// data or CRC is needed, but the bytes must be a genuine PNG header or `image::read`
+    /// refuses the file.
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+        bytes
+    }
+
+    fn stored_image(conn: &Connection) -> Option<ProjectImage> {
+        get_project_image_inner(conn, 1).expect("the image read succeeds")
+    }
+
+    fn decoded(image: &ProjectImage) -> Vec<u8> {
+        STANDARD
+            .decode(&image.image_base64)
+            .expect("the wire payload is valid base64")
+    }
+
+    /// Every persisted audit column that could carry a payload, as one string: a leak
+    /// assertion has to cover `old_value` and `new_value` both, not whichever one the test
+    /// happened to think of.
+    fn all_audit_text(conn: &Connection) -> String {
+        let mut statement = conn
+            .prepare(
+                "SELECT entity_type, entity_id, action,
+                        COALESCE(old_value, ''), COALESCE(new_value, '')
+                 FROM audit_log ORDER BY id",
+            )
+            .expect("the audit query prepares");
+        let rows: Vec<String> = statement
+            .query_map([], |row| {
+                Ok(format!(
+                    "{}|{}|{}|{}|{}",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?
+                ))
+            })
+            .expect("the audit rows map")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the audit rows read");
+
+        rows.join("\n")
+    }
+
+    fn image_audit_values(conn: &Connection, action: &str) -> (Option<String>, Option<String>) {
+        let matching: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM audit_log
+                 WHERE entity_type = 'project_image' AND entity_id = 1 AND action = ?1",
+                [action],
+                |row| row.get(0),
+            )
+            .expect("the audit count reads");
+        assert_eq!(matching, 1, "exactly one {action} audit row is expected");
+
+        conn.query_row(
+            "SELECT old_value, new_value FROM audit_log
+             WHERE entity_type = 'project_image' AND entity_id = 1 AND action = ?1",
+            [action],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the audit row reads")
+    }
+
+    /// The audit value's key set, sorted — an exact-key assertion is what makes "no payload
+    /// in the audit trail" structural rather than a substring guess.
+    fn audit_keys(value: &str) -> Vec<String> {
+        let parsed: serde_json::Value =
+            serde_json::from_str(value).expect("the audit value is JSON");
+        let mut keys: Vec<String> = parsed
+            .as_object()
+            .expect("the audit value is a JSON object")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    struct SharedSink(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedSink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("the capture buffer is usable")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs `body` with every `tracing` event on this thread captured, returning its value
+    /// alongside the captured text.
+    ///
+    /// The leak guarantee this serves is about the SUCCESS path: a refusal message is easy to
+    /// inspect by hand, but a stray `info!("stored {path}")` would only ever show up here.
+    fn captured_tracing<T>(body: impl FnOnce() -> T) -> (T, String) {
+        let buffer = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let sink = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(move || SharedSink(Arc::clone(&sink)))
+            .finish();
+
+        let value = tracing::subscriber::with_default(subscriber, body);
+
+        let captured =
+            String::from_utf8_lossy(&buffer.lock().expect("the capture buffer is usable"))
+                .to_string();
+        (value, captured)
+    }
+
+    #[test]
+    fn storing_a_png_reports_its_own_mime_and_payload_length_and_reads_back_byte_identically() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let payload = png_bytes(64, 64);
+
+        let meta = set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+            .expect("the image is stored");
+
+        assert_eq!(meta.project_id, 1);
+        assert_eq!(meta.mime_type, "image/png");
+        assert_eq!(meta.original_filename, "cover.png");
+        assert_eq!(
+            meta.byte_size,
+            i64::try_from(payload.len()).expect("a header-sized payload fits an i64")
+        );
+        assert!(
+            !meta.uploaded_at.is_empty(),
+            "uploaded_at comes from SQLite's clock, not from the caller"
+        );
+
+        let image = stored_image(&conn).expect("the stored image is readable");
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.byte_size, meta.byte_size);
+        assert_eq!(
+            decoded(&image),
+            payload,
+            "the wire payload must decode byte-identically to the source"
+        );
+    }
+
+    #[test]
+    fn the_set_audit_row_carries_only_metadata_and_never_the_payload() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let payload = png_bytes(64, 64);
+
+        set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+            .expect("the image is stored");
+
+        let (old_value, new_value) = image_audit_values(&conn, "set");
+        assert_eq!(old_value, None, "a store has no prior value to record");
+        let new_value = new_value.expect("the set audit row records the new metadata");
+
+        assert_eq!(
+            audit_keys(&new_value),
+            vec!["byte_size", "mime_type", "original_filename", "uploaded_at"],
+            "the audit value must carry exactly the four metadata fields"
+        );
+
+        let audit = all_audit_text(&conn);
+        assert!(
+            !audit.contains("image_bytes"),
+            "no payload key may reach the audit trail: {audit}"
+        );
+        assert!(
+            !audit.contains(&STANDARD.encode(&payload)),
+            "no base64 payload may reach the audit trail: {audit}"
+        );
+    }
+
+    #[test]
+    fn the_read_then_store_path_leaks_no_source_path_into_the_audit_trail_or_the_logs() {
+        let (dir, conn) = migrated_db_with_a_project();
+        let marker = format!("nixus-image-leak-marker-{}", std::process::id());
+        let source_dir = dir.path().join(&marker);
+        std::fs::create_dir_all(&source_dir).expect("the marker directory is created");
+        let source = source_dir.join("cover.png");
+        std::fs::write(&source, png_bytes(48, 48)).expect("the source image is written");
+        let file_path = source.to_str().expect("a utf-8 temp path");
+
+        let (meta, logs) = captured_tracing(|| {
+            let (mime_type, original_filename, bytes) =
+                read_project_image_for_store(file_path).expect("the source image is accepted");
+            let meta = set_project_image_inner(&conn, 1, mime_type, &original_filename, &bytes)
+                .expect("the image is stored");
+            // Emitted inside the capture so the absence assertions below cannot pass on an
+            // empty buffer: a capture that silently recorded nothing would prove nothing.
+            tracing::error!("{}", CAPTURE_SENTINEL);
+            meta
+        });
+
+        assert!(
+            logs.contains(CAPTURE_SENTINEL),
+            "the tracing capture must be live, got: {logs}"
+        );
+        assert!(
+            !logs.contains(&marker),
+            "no source path may reach a log line: {logs}"
+        );
+        let audit = all_audit_text(&conn);
+        assert!(
+            !audit.contains(&marker),
+            "no source path may reach a persisted row: {audit}"
+        );
+        assert_eq!(
+            meta.original_filename, "cover.png",
+            "only the basename is ever stored"
+        );
+    }
+
+    #[test]
+    fn get_project_image_inner_returns_none_for_a_project_without_one() {
+        let (_dir, conn) = migrated_db_with_a_project();
+
+        assert!(
+            stored_image(&conn).is_none(),
+            "a project without a picture is the normal state, not a failure"
+        );
+    }
+
+    #[test]
+    fn removing_an_image_clears_it_and_records_metadata_only() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let payload = png_bytes(64, 64);
+        set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+            .expect("the image is stored");
+
+        remove_project_image_inner(&conn, 1).expect("the image is removed");
+
+        assert!(stored_image(&conn).is_none(), "the image is gone");
+
+        let (old_value, new_value) = image_audit_values(&conn, "remove");
+        let old_value = old_value.expect("the remove audit row records what was released");
+        assert_eq!(
+            new_value, None,
+            "nothing survives to record as the new value"
+        );
+        assert_eq!(
+            audit_keys(&old_value),
+            vec!["byte_size", "mime_type", "original_filename", "uploaded_at"]
+        );
+        assert!(
+            !all_audit_text(&conn).contains(&STANDARD.encode(&payload)),
+            "removal must not be the moment a payload enters the audit trail"
+        );
+    }
+
+    #[test]
+    fn removing_an_image_that_was_never_there_is_a_silent_no_op() {
+        let (_dir, conn) = migrated_db_with_a_project();
+
+        remove_project_image_inner(&conn, 1).expect("removal is idempotent");
+
+        assert_eq!(
+            all_audit_text(&conn),
+            "",
+            "a state that never changed leaves no audit row"
+        );
+    }
+
+    // `validate_project_image` is a pure delegation and a `#[tauri::command]` body cannot be
+    // driven from a test, so its inner path is what the assertion reaches.
+    #[test]
+    fn the_validate_path_returns_a_bare_basename_with_no_directory_component() {
+        let dir = TempDir::new().expect("temp dir");
+        let nested = dir.path().join("Pictures").join("2026");
+        std::fs::create_dir_all(&nested).expect("the nested directories are created");
+        let source = nested.join("kitchen-cover.png");
+        std::fs::write(&source, png_bytes(32, 32)).expect("the source image is written");
+
+        let name = image::inspect(source.to_str().expect("a utf-8 temp path"))
+            .expect("the source image is accepted");
+
+        assert_eq!(name, "kitchen-cover.png");
+        assert!(!name.contains(std::path::MAIN_SEPARATOR), "got {name}");
+        assert!(!name.contains('/'), "got {name}");
+    }
+
+    /// A refused write must never be a destructive one: the archived guard fires ahead of the
+    /// upsert, so the bytes already stored stay exactly where they were.
+    #[test]
+    fn a_write_refused_by_the_archived_guard_leaves_the_previous_image_intact() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let original = png_bytes(64, 64);
+        set_project_image_inner(&conn, 1, "image/png", "cover.png", &original)
+            .expect("the first image is stored");
+        conn.execute(
+            "UPDATE projects SET archived_at = datetime('now') WHERE id = 1",
+            [],
+        )
+        .expect("the project is archived");
+
+        let replacement = png_bytes(128, 96);
+        assert_ne!(
+            replacement, original,
+            "the replacement must differ, or byte-identity would prove nothing"
+        );
+        let error =
+            set_project_image_inner(&conn, 1, "image/jpeg", "replacement.jpg", &replacement)
+                .expect_err("an archived project refuses a write");
+
+        assert!(
+            matches!(&error, AppError::Validation { field: Some(field), .. } if field == "project_id"),
+            "expected the project_id guard, got {error:?}"
+        );
+
+        let image = stored_image(&conn).expect("the previous image survives the refusal");
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(image.original_filename, "cover.png");
+        assert_eq!(
+            decoded(&image),
+            original,
+            "a failed write must not destroy the stored payload"
+        );
     }
 }

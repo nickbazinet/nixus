@@ -46,6 +46,28 @@ fn is_restorable_source(
     !(active_dataset_dir == global_root && source.starts_with(global_root.join("datasets")))
 }
 
+/// Flushes the WAL into the main database file so a copy of that one file is complete.
+///
+/// Extracted from `export_backup` purely so the export path is reachable from `cargo test`:
+/// that command is `async` and blocks on a native dialog, so nothing can drive it. It stays
+/// called from inside the guard block below, which is what preserves the one-guard
+/// invariant documented there.
+pub(crate) fn checkpoint_for_export(conn: &Connection) -> Result<(), AppError> {
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+
+    Ok(())
+}
+
+/// The copy itself, extracted for the same reason and called only after the dialog has
+/// yielded a destination.
+pub(crate) fn copy_db_to_path(db_path: &Path, save_path: &Path) -> Result<(), AppError> {
+    std::fs::copy(db_path, save_path).map_err(|e| AppError::File {
+        message: format!("Failed to copy database: {}", e),
+    })?;
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn export_backup(app_handle: AppHandle) -> Result<Option<BackupResult>, AppError> {
     let db_state = app_handle.state::<DbState>();
@@ -59,7 +81,7 @@ pub async fn export_backup(app_handle: AppHandle) -> Result<Option<BackupResult>
             message: e.to_string(),
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        checkpoint_for_export(conn)?;
         let id = active.id.as_deref().ok_or(AppError::NotConfigured)?;
         dataset_db_path(&root, id)
     };
@@ -86,9 +108,7 @@ pub async fn export_backup(app_handle: AppHandle) -> Result<Option<BackupResult>
     };
 
     // Copy the database file
-    std::fs::copy(&db_path, &save_path).map_err(|e| AppError::File {
-        message: format!("Failed to copy database: {}", e),
-    })?;
+    copy_db_to_path(&db_path, &save_path)?;
 
     let path_str = save_path.to_string_lossy().to_string();
     info!("Database backup exported to {}", path_str);
@@ -372,5 +392,58 @@ mod tests {
             root,
             &active_dir
         ));
+    }
+
+    /// Drives the production export path — `checkpoint_for_export`, then `copy_db_to_path`,
+    /// in that order — and proves a stored project image survives the round trip.
+    ///
+    /// The checkpoint belongs inside the tested path: both this export and dataset migration
+    /// copy only the main database file, so a multi-megabyte BLOB left stranded in `-wal` is
+    /// exactly the failure this test has to be able to see.
+    #[test]
+    fn an_exported_backup_restores_a_project_image_byte_identically() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join(DB_FILE_NAME);
+        let backup_path = dir.path().join("nkbaz-finance-backup.db");
+
+        let mut conn = crate::db::init_db(dir.path()).expect("init_db succeeds");
+        conn.execute(
+            "INSERT INTO projects (id, name, target_cents) VALUES (1, 'Kitchen', 500000)",
+            [],
+        )
+        .expect("seed project");
+        // Incompressible, and large enough to span pages the WAL would otherwise hold.
+        let payload: Vec<u8> = conn
+            .query_row("SELECT randomblob(262144)", [], |row| row.get(0))
+            .expect("incompressible payload");
+        crate::db::projects::upsert_project_image(&conn, 1, "image/png", "cover.png", &payload)
+            .expect("the image is stored");
+
+        checkpoint_for_export(&conn).expect("the checkpoint succeeds");
+        copy_db_to_path(&db_path, &backup_path).expect("the copy succeeds");
+
+        conn.execute("DELETE FROM project_images", [])
+            .expect("the live image is wiped");
+        assert!(
+            crate::db::projects::get_project_image(&conn, 1)
+                .expect("the image read succeeds")
+                .is_none(),
+            "the wipe must really remove the image, or the restore below would prove nothing"
+        );
+
+        crate::db::backup::restore_from_file(&mut conn, &db_path, &backup_path)
+            .expect("the restore succeeds");
+
+        let restored = crate::db::projects::get_project_image(&conn, 1)
+            .expect("the image read succeeds")
+            .expect("the image survives the backup round trip");
+        assert_eq!(
+            restored.image_bytes, payload,
+            "the restored BLOB must be byte-identical"
+        );
+        assert_eq!(
+            restored.byte_size,
+            i64::try_from(payload.len()).expect("the payload length fits an i64")
+        );
     }
 }

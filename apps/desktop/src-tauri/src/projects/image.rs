@@ -52,9 +52,6 @@ pub enum ProjectImageFormat {
 }
 
 impl ProjectImageFormat {
-    // WHY allowed: `mod projects` is private and this feature's production caller,
-    // `commands::projects::set_project_image`, arrives in todo 4, which removes this.
-    #[allow(dead_code)]
     pub fn mime_type(self) -> &'static str {
         match self {
             ProjectImageFormat::Png => "image/png",
@@ -105,9 +102,6 @@ fn format_for_path(path: &Path) -> Result<ProjectImageFormat, AppError> {
 ///
 /// The basename crosses IPC into volatile React state only; it is never persisted from
 /// here, and no directory component ever leaves this function (AD-11).
-// WHY allowed: `mod projects` is private and this feature's production caller,
-// `commands::projects::validate_project_image`, arrives in todo 4, which removes this.
-#[allow(dead_code)]
 pub fn inspect(file_path: &str) -> Result<String, AppError> {
     let path = Path::new(file_path);
     format_for_path(path)?;
@@ -139,9 +133,6 @@ pub fn inspect(file_path: &str) -> Result<String, AppError> {
 /// materialized, and the read itself is bounded to one byte past the ceiling so a file
 /// that grew between `inspect` and here is never fully buffered — that extra byte is
 /// what makes the length check able to see the growth.
-// WHY allowed: `mod projects` is private and this feature's production caller,
-// `commands::projects::set_project_image`, arrives in todo 4, which removes this.
-#[allow(dead_code)]
 pub fn read(file_path: &str) -> Result<(ProjectImageFormat, Vec<u8>), AppError> {
     let format = format_for_path(Path::new(file_path))?;
     inspect(file_path)?;

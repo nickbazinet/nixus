@@ -941,6 +941,32 @@ pub struct UpdateProjectInput {
     pub color: Option<String>,
 }
 
+/// The single image a project card shows, crossing IPC only through
+/// `get_project_image` — never inside a list response, and only while the row is expanded.
+///
+/// `image_base64` is what the webview puts in a `data:` URL; storage keeps the raw bytes
+/// and the encoding happens at this boundary, so the payload has exactly one wire form.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectImage {
+    pub project_id: i64,
+    pub mime_type: String,
+    pub original_filename: String,
+    pub byte_size: i64,
+    pub uploaded_at: String,
+    pub image_base64: String,
+}
+
+/// The same shape without the payload: what a write returns, so storing an image never
+/// echoes multiple megabytes back across IPC, and what the audit trail serializes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectImageMeta {
+    pub project_id: i64,
+    pub mime_type: String,
+    pub original_filename: String,
+    pub byte_size: i64,
+    pub uploaded_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectContribution {
     pub id: i64,

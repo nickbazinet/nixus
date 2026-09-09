@@ -361,6 +361,10 @@ pub fn run() {
             commands::projects::generate_project_advice,
             commands::projects::skip_suggested_allocation_for_month,
             commands::projects::clear_suggested_allocation_skip,
+            commands::projects::validate_project_image,
+            commands::projects::get_project_image,
+            commands::projects::set_project_image,
+            commands::projects::remove_project_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

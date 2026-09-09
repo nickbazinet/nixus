@@ -164,9 +164,6 @@ pub fn archive_project(conn: &Connection, id: i64) -> Result<Project, AppError> 
 // Db-layer internal: it never crosses the IPC boundary, so it carries no serde derives. Todo 4's
 // `models::ProjectImage` is the IPC shape and maps from this one, which is why the payload stays a
 // raw `Vec<u8>` here and is base64-encoded only at the command layer.
-// WHY allowed: `mod db` is private and this feature's production consumer,
-// `commands::projects::get_project_image_inner`, arrives in todo 4, which removes this.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ProjectImageRow {
     pub project_id: i64,
@@ -179,9 +176,6 @@ pub struct ProjectImageRow {
 
 // The same row minus the payload, and db-layer internal for the same reason. The write path returns
 // this so a store never echoes multiple megabytes back to its caller.
-// WHY allowed: `mod db` is private and this feature's production consumer,
-// `commands::projects::set_project_image_inner`, arrives in todo 4, which removes this.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ProjectImageMetaRow {
     pub project_id: i64,
@@ -196,9 +190,6 @@ pub struct ProjectImageMetaRow {
 // not a failure, and the caller renders an invitation rather than a problem.
 //
 // No `archived_at` guard: an archived project keeps its image and must stay able to show it.
-// WHY allowed: `mod db` is private and this feature's production consumer,
-// `commands::projects::get_project_image_inner`, arrives in todo 4, which removes this.
-#[allow(dead_code)]
 pub fn get_project_image(
     conn: &Connection,
     project_id: i64,
@@ -229,9 +220,6 @@ pub fn get_project_image(
 // `byte_size` is bound from `bytes.len()` and never from an argument, because
 // `project_images_byte_size_matches_payload` rejects any disagreement — and a caller-supplied length
 // is exactly how that disagreement would arise.
-// WHY allowed: `mod db` is private and this feature's production consumer,
-// `commands::projects::set_project_image_inner`, arrives in todo 4, which removes this.
-#[allow(dead_code)]
 pub fn upsert_project_image(
     conn: &Connection,
     project_id: i64,
@@ -299,9 +287,6 @@ pub fn upsert_project_image(
 // Returns whether a row was removed rather than the `rows == 0 -> AppError::Database` convention the
 // project writes above use, because "there was no image" is the caller's expected answer on a retry,
 // not a failure. That makes removal idempotent.
-// WHY allowed: `mod db` is private and this feature's production consumer,
-// `commands::projects::remove_project_image_inner`, arrives in todo 4, which removes this.
-#[allow(dead_code)]
 pub fn delete_project_image(conn: &Connection, project_id: i64) -> Result<bool, AppError> {
     let rows = conn.execute(
         "DELETE FROM project_images WHERE project_id = ?1",
