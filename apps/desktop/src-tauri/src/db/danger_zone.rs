@@ -31,6 +31,7 @@ pub const WIPE_TABLES: &[&str] = &[
     "passive_assets",
     "net_worth_snapshots",
     "project_contributions",
+    "project_images",
     "projects",
     "accounts",
     "audit_log",
@@ -118,6 +119,9 @@ mod tests {
             INSERT INTO projects (id, name, target_cents) VALUES (1, 'Car', 500000);
             INSERT INTO project_contributions (project_id, account_id, amount_cents, source, date)
                 VALUES (1, 1, 25000, 'manual', '2026-08-01');
+            INSERT INTO project_images
+                (project_id, image_bytes, mime_type, original_filename, byte_size)
+                VALUES (1, x'89504e470d0a1a0a', 'image/png', 'cover.png', 8);
             INSERT INTO config (key, value) VALUES ('onboarding_completed', 'true');
             ",
         )

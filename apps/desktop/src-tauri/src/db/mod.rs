@@ -74,6 +74,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../../migrations/024_income_entry_recurring_template.sql"),
     ),
     (25, include_str!("../../migrations/025_projects.sql")),
+    (26, include_str!("../../migrations/026_project_images.sql")),
 ];
 
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
@@ -188,5 +189,149 @@ mod tests {
             matches!(error, AppError::Database { .. }),
             "expected AppError::Database, got {error:?}"
         );
+    }
+
+    /// Test-only fixture carrying every column a `project_images` CHECK reads, so each
+    /// test can violate exactly one guard and prove that guard by name.
+    struct ImageInsert {
+        mime_type: &'static str,
+        byte_size: i64,
+        bytes: Vec<u8>,
+    }
+
+    impl ImageInsert {
+        fn valid() -> Self {
+            Self {
+                mime_type: "image/png",
+                byte_size: 4,
+                bytes: vec![1, 2, 3, 4],
+            }
+        }
+    }
+
+    fn migrated_db_with_a_project() -> (TempDir, Connection) {
+        let dir = TempDir::new().expect("temp dir");
+        let conn = init_db(dir.path()).expect("init_db succeeds");
+        conn.execute(
+            "INSERT INTO projects (id, name, target_cents) VALUES (1, 'Kitchen', 500000)",
+            [],
+        )
+        .expect("seed project");
+        (dir, conn)
+    }
+
+    fn insert_image(conn: &Connection, row: &ImageInsert) -> Result<usize, rusqlite::Error> {
+        conn.execute(
+            "INSERT INTO project_images
+                 (project_id, image_bytes, mime_type, original_filename, byte_size)
+             VALUES (1, ?1, ?2, 'cover.png', ?3)",
+            rusqlite::params![row.bytes, row.mime_type, row.byte_size],
+        )
+    }
+
+    fn violated_constraint(row: &ImageInsert) -> String {
+        let (_dir, conn) = migrated_db_with_a_project();
+        insert_image(&conn, row)
+            .expect_err("the row must violate a storage guard")
+            .to_string()
+    }
+
+    #[test]
+    fn migration_26_creates_the_project_images_table() {
+        let dir = TempDir::new().expect("temp dir");
+        let conn = init_db(dir.path()).expect("init_db succeeds");
+
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .expect("schema_version read");
+        assert_eq!(
+            version, 26,
+            "migration 26 must be the newest applied version"
+        );
+
+        let tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'project_images'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("sqlite_master read");
+        assert_eq!(tables, 1, "project_images must exist after migration 26");
+    }
+
+    #[test]
+    fn project_images_rejects_a_zero_byte_size_naming_the_positive_guard() {
+        let error = violated_constraint(&ImageInsert {
+            byte_size: 0,
+            bytes: Vec::new(),
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_byte_size_positive"),
+            "expected the positive guard by name, got: {error}"
+        );
+    }
+
+    /// The payload is genuinely oversized: a small blob carrying an inflated `byte_size`
+    /// would trip the payload-equality guard instead and prove nothing about the ceiling.
+    #[test]
+    fn project_images_rejects_a_payload_over_four_mib_naming_the_ceiling_guard() {
+        let error = violated_constraint(&ImageInsert {
+            byte_size: 4_194_305,
+            bytes: vec![0u8; 4_194_305],
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_byte_size_ceiling"),
+            "expected the ceiling guard by name, got: {error}"
+        );
+    }
+
+    #[test]
+    fn project_images_rejects_a_byte_size_that_disagrees_with_the_payload() {
+        let error = violated_constraint(&ImageInsert {
+            byte_size: 9,
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_byte_size_matches_payload"),
+            "expected the payload-equality guard by name, got: {error}"
+        );
+    }
+
+    #[test]
+    fn project_images_rejects_a_mime_type_outside_the_allowed_set() {
+        let error = violated_constraint(&ImageInsert {
+            mime_type: "image/gif",
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_mime_allowed"),
+            "expected the mime guard by name, got: {error}"
+        );
+    }
+
+    /// Production never hard-deletes a project — `projects.archived_at` is a soft delete —
+    /// so this DELETE is NOT a live app path. The cascade is the safety net for the
+    /// danger-zone wipe and for any future hard delete, and this test keeps it wired.
+    #[test]
+    fn deleting_a_project_row_cascades_its_image_as_a_wipe_and_hard_delete_safety_net() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        assert_eq!(
+            insert_image(&conn, &ImageInsert::valid()).expect("image row stored"),
+            1
+        );
+
+        conn.execute("DELETE FROM projects WHERE id = ?1", rusqlite::params![1])
+            .expect("hard delete succeeds");
+
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM project_images", [], |r| r.get(0))
+            .expect("count images");
+        assert_eq!(remaining, 0, "ON DELETE CASCADE must remove the image row");
     }
 }
