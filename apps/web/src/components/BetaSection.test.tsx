@@ -29,7 +29,7 @@ describe("<BetaSection />", () => {
     const cta = screen.getByTestId("beta-invite-cta");
     expect(cta).toHaveAttribute(
       "href",
-      "mailto:nixus@gmail.com?subject=Nixus%20Founding%20User%20Program",
+      "mailto:nixusapp@gmail.com?subject=Nixus%20Founding%20User%20Program",
     );
   });
 

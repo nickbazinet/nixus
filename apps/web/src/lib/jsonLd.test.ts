@@ -101,7 +101,7 @@ describe("siteGraph", () => {
   });
 
   it("publishes the canonical contact address", () => {
-    expect(siteGraph("en")["@graph"][1].email).toBe("nixus@gmail.com");
+    expect(siteGraph("en")["@graph"][1].email).toBe("nixusapp@gmail.com");
   });
 });
 

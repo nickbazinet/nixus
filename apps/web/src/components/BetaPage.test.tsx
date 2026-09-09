@@ -85,7 +85,7 @@ describe("<BetaPage />", () => {
   it("links both program CTAs to the canonical address and subject", () => {
     renderWithProviders(<BetaPage />);
     const expected =
-      "mailto:nixus@gmail.com?subject=Nixus%20Founding%20User%20Program";
+      "mailto:nixusapp@gmail.com?subject=Nixus%20Founding%20User%20Program";
 
     expect(screen.getByTestId("beta-hero-cta")).toHaveAttribute("href", expected);
     expect(screen.getByTestId("beta-feedback-cta")).toHaveAttribute(
@@ -117,7 +117,7 @@ describe("<BetaPage />", () => {
       ).toBeInTheDocument();
       expect(screen.getByTestId("beta-hero-cta")).toHaveAttribute(
         "href",
-        "mailto:nixus@gmail.com?subject=Programme%20des%20utilisateurs%20fondateurs%20Nixus",
+        "mailto:nixusapp@gmail.com?subject=Programme%20des%20utilisateurs%20fondateurs%20Nixus",
       );
     } finally {
       await act(async () => {

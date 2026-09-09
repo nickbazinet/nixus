@@ -5,7 +5,7 @@ import i18n from "@/lib/i18n";
 import { renderWithProviders } from "@/lib/test-utils";
 import { SiteFooter } from "./SiteFooter";
 
-const CONTACT_EMAIL = "nixus@gmail.com";
+const CONTACT_EMAIL = "nixusapp@gmail.com";
 
 describe("SiteFooter", () => {
   it("renders a GitHub link pointing to the repo", () => {
@@ -16,6 +16,36 @@ describe("SiteFooter", () => {
       "href",
       "https://github.com/nickbazinet/nixus",
     );
+  });
+
+  it("groups the Instagram profile beside GitHub", () => {
+    renderWithProviders(<SiteFooter />);
+    const socialLinks = screen.getByRole("group", { name: /social links/i });
+    const github = screen.getByRole("link", { name: /github/i });
+    const instagram = screen.getByRole("link", { name: /^instagram$/i });
+
+    expect(socialLinks).toContainElement(github);
+    expect(socialLinks).toContainElement(instagram);
+    expect(instagram).toHaveAttribute(
+      "href",
+      "https://www.instagram.com/nixusapp/",
+    );
+    expect(instagram).toHaveAttribute("target", "_blank");
+    expect(instagram).toHaveAttribute("rel", "noopener noreferrer");
+  });
+
+  it("groups the Facebook profile beside Instagram and GitHub", () => {
+    renderWithProviders(<SiteFooter />);
+    const socialLinks = screen.getByRole("group", { name: /social links/i });
+    const facebook = screen.getByRole("link", { name: /^facebook$/i });
+
+    expect(socialLinks).toContainElement(facebook);
+    expect(facebook).toHaveAttribute(
+      "href",
+      "https://www.facebook.com/people/Nixus/61594399344720/",
+    );
+    expect(facebook).toHaveAttribute("target", "_blank");
+    expect(facebook).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it("renders a mailto contact link to the new support address", () => {

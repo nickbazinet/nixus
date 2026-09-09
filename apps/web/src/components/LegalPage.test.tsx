@@ -122,9 +122,9 @@ describe("contact address", () => {
   it("uses the canonical contact address on legal pages", () => {
     renderWithProviders(<TermsPage locale="en" />);
 
-    expect(screen.getByRole("link", { name: "nixus@gmail.com" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "nixusapp@gmail.com" })).toHaveAttribute(
       "href",
-      "mailto:nixus@gmail.com",
+      "mailto:nixusapp@gmail.com",
     );
   });
 });

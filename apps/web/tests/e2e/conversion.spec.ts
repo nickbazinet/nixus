@@ -40,7 +40,7 @@ test.describe("phone and tablet conversion path", () => {
     ).toHaveAttribute("aria-current", "page");
     await expect(page.getByTestId("beta-hero-cta")).toHaveAttribute(
       "href",
-      "mailto:nixus@gmail.com?subject=Nixus%20Founding%20User%20Program",
+      "mailto:nixusapp@gmail.com?subject=Nixus%20Founding%20User%20Program",
     );
   });
 

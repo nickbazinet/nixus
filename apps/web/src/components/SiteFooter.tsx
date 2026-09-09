@@ -1,11 +1,14 @@
 import { useTranslation } from "react-i18next";
 import { BuyMeACoffeeIcon, BUY_ME_A_COFFEE_URL, Separator } from "@nixus/shared";
+import { Facebook, Github, Instagram } from "lucide-react";
 
 import { CONTACT_EMAIL, contactMailto } from "@/content/contact";
 import { PRIVACY_PAGE_PATHS, TERMS_PAGE_PATHS } from "./LegalPage";
 import { localeFromLanguage } from "@/lib/localePaths";
 
 const GITHUB_URL = "https://github.com/nickbazinet/nixus";
+const INSTAGRAM_URL = "https://www.instagram.com/nixusapp/";
+const FACEBOOK_URL = "https://www.facebook.com/people/Nixus/61594399344720/";
 
 // Every footer destination is a 44px touch target below 1024px, so the stacked
 // layout needs no extra gap — the targets themselves supply the rhythm. The
@@ -14,6 +17,8 @@ const GITHUB_URL = "https://github.com/nickbazinet/nixus";
 // French copyright pushed the row 4px past the viewport.
 const LINK_CLASS =
   "mkt-tap inline-flex max-w-full items-center justify-center rounded-sm underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/50";
+const ICON_LINK_CLASS =
+  "mkt-tap inline-flex items-center justify-center rounded-sm outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50";
 
 export function SiteFooter() {
   const { t, i18n } = useTranslation();
@@ -31,14 +36,39 @@ export function SiteFooter() {
               aria-label={t("footer.aria")}
               className="flex min-w-0 max-w-full flex-col items-center gap-0 lg:flex-row lg:items-center lg:gap-4"
             >
-              <a
-                href={GITHUB_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={LINK_CLASS}
+              <span
+                role="group"
+                aria-label={t("footer.socialAria")}
+                className="flex items-center gap-2"
               >
-                {t("footer.linkGithub")}
-              </a>
+                <a
+                  href={GITHUB_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={t("footer.linkGithub")}
+                  className={ICON_LINK_CLASS}
+                >
+                  <Github aria-hidden="true" className="size-4" />
+                </a>
+                <a
+                  href={INSTAGRAM_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={t("footer.linkInstagram")}
+                  className={ICON_LINK_CLASS}
+                >
+                  <Instagram aria-hidden="true" className="size-4" />
+                </a>
+                <a
+                  href={FACEBOOK_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={t("footer.linkFacebook")}
+                  className={ICON_LINK_CLASS}
+                >
+                  <Facebook aria-hidden="true" className="size-4" />
+                </a>
+              </span>
               <Separator
                 orientation="vertical"
                 className="hidden h-4 lg:block"
@@ -62,7 +92,7 @@ export function SiteFooter() {
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={t("footer.linkBuyMeACoffee")}
-                className="mkt-tap inline-flex items-center justify-center rounded-sm outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+                className={ICON_LINK_CLASS}
               >
                 <BuyMeACoffeeIcon className="size-4" />
               </a>

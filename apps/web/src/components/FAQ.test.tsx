@@ -14,7 +14,7 @@ import { trackEvent } from "@/lib/analytics";
 
 const mockedTrackEvent = vi.mocked(trackEvent);
 const enKeys = en as Record<string, string>;
-const CONTACT_EMAIL = "nixus@gmail.com";
+const CONTACT_EMAIL = "nixusapp@gmail.com";
 
 const questionFor = (id: string) => enKeys[`faq.${id}.question`]!;
 

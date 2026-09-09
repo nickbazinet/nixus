@@ -44,7 +44,7 @@ describe("<FoundingPitch />", () => {
 
     expect(screen.getByTestId("founding-pitch-cta")).toHaveAttribute(
       "href",
-      "mailto:nixus@gmail.com?subject=Nixus%20Founding%20User%20Program",
+      "mailto:nixusapp@gmail.com?subject=Nixus%20Founding%20User%20Program",
     );
     expect(
       screen.getByText(
@@ -68,7 +68,7 @@ describe("<FoundingPitch />", () => {
       expect(screen.getByText(/Excel ou Google Sheets/i)).toBeInTheDocument();
       expect(screen.getByTestId("founding-pitch-cta")).toHaveAttribute(
         "href",
-        "mailto:nixus@gmail.com?subject=Programme%20des%20utilisateurs%20fondateurs%20Nixus",
+        "mailto:nixusapp@gmail.com?subject=Programme%20des%20utilisateurs%20fondateurs%20Nixus",
       );
     } finally {
       await act(async () => {

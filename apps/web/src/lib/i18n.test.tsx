@@ -85,8 +85,8 @@ describe("contact translations", () => {
     ] as const;
 
     for (const key of keys) {
-      expect(en[key]).toBe("nixus@gmail.com");
-      expect(fr[key]).toBe("nixus@gmail.com");
+      expect(en[key]).toBe("nixusapp@gmail.com");
+      expect(fr[key]).toBe("nixusapp@gmail.com");
     }
   });
 });
