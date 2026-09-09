@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::config;
 use crate::error::AppError;
@@ -159,6 +159,156 @@ pub fn archive_project(conn: &Connection, id: i64) -> Result<Project, AppError> 
     }
 
     get_project_by_id(conn, id)
+}
+
+// Db-layer internal: it never crosses the IPC boundary, so it carries no serde derives. Todo 4's
+// `models::ProjectImage` is the IPC shape and maps from this one, which is why the payload stays a
+// raw `Vec<u8>` here and is base64-encoded only at the command layer.
+// WHY allowed: `mod db` is private and this feature's production consumer,
+// `commands::projects::get_project_image_inner`, arrives in todo 4, which removes this.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct ProjectImageRow {
+    pub project_id: i64,
+    pub image_bytes: Vec<u8>,
+    pub mime_type: String,
+    pub original_filename: String,
+    pub byte_size: i64,
+    pub uploaded_at: String,
+}
+
+// The same row minus the payload, and db-layer internal for the same reason. The write path returns
+// this so a store never echoes multiple megabytes back to its caller.
+// WHY allowed: `mod db` is private and this feature's production consumer,
+// `commands::projects::set_project_image_inner`, arrives in todo 4, which removes this.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct ProjectImageMetaRow {
+    pub project_id: i64,
+    pub mime_type: String,
+    pub original_filename: String,
+    pub byte_size: i64,
+    pub uploaded_at: String,
+}
+
+// The only path that loads the payload, so image bytes can never ride along in a list response.
+// `Ok(None)` rather than an error for "no image": a project without a picture is the normal state,
+// not a failure, and the caller renders an invitation rather than a problem.
+//
+// No `archived_at` guard: an archived project keeps its image and must stay able to show it.
+// WHY allowed: `mod db` is private and this feature's production consumer,
+// `commands::projects::get_project_image_inner`, arrives in todo 4, which removes this.
+#[allow(dead_code)]
+pub fn get_project_image(
+    conn: &Connection,
+    project_id: i64,
+) -> Result<Option<ProjectImageRow>, AppError> {
+    conn.query_row(
+        "SELECT project_id, image_bytes, mime_type, original_filename, byte_size, uploaded_at
+         FROM project_images WHERE project_id = ?1",
+        params![project_id],
+        |row| {
+            Ok(ProjectImageRow {
+                project_id: row.get(0)?,
+                image_bytes: row.get(1)?,
+                mime_type: row.get(2)?,
+                original_filename: row.get(3)?,
+                byte_size: row.get(4)?,
+                uploaded_at: row.get(5)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(AppError::from)
+}
+
+// One statement rather than delete-then-insert, so a replace is atomic: a failed write leaves the
+// previous image exactly as it was instead of destroying it first. `project_id` is the primary key,
+// which is what makes `ON CONFLICT(project_id)` the whole at-most-one-image rule.
+//
+// `byte_size` is bound from `bytes.len()` and never from an argument, because
+// `project_images_byte_size_matches_payload` rejects any disagreement — and a caller-supplied length
+// is exactly how that disagreement would arise.
+// WHY allowed: `mod db` is private and this feature's production consumer,
+// `commands::projects::set_project_image_inner`, arrives in todo 4, which removes this.
+#[allow(dead_code)]
+pub fn upsert_project_image(
+    conn: &Connection,
+    project_id: i64,
+    mime_type: &str,
+    original_filename: &str,
+    bytes: &[u8],
+) -> Result<ProjectImageMetaRow, AppError> {
+    // Same guard shape as `validate_contribution_input`: a missing or archived project is a
+    // field-scoped validation error the form can render, not a raw foreign-key failure. Writing is
+    // the only image operation gated on `archived_at IS NULL` — see `delete_project_image`.
+    let project_is_active: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?1 AND archived_at IS NULL)",
+        params![project_id],
+        |row| row.get(0),
+    )?;
+    if !project_is_active {
+        return Err(AppError::Validation {
+            message: "Project not found".to_string(),
+            field: Some("project_id".to_string()),
+        });
+    }
+
+    // `usize -> i64` is unreachable-failure territory for any payload this process could hold, but
+    // `as` would silently wrap where `try_from` reports, and the ceiling is the schema's job.
+    let byte_size = i64::try_from(bytes.len()).map_err(|_| AppError::Database {
+        message: "Image payload is too large to store".to_string(),
+    })?;
+
+    conn.execute(
+        "INSERT INTO project_images
+             (project_id, image_bytes, mime_type, original_filename, byte_size, uploaded_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
+         ON CONFLICT(project_id) DO UPDATE SET
+             image_bytes = excluded.image_bytes,
+             mime_type = excluded.mime_type,
+             original_filename = excluded.original_filename,
+             byte_size = excluded.byte_size,
+             uploaded_at = excluded.uploaded_at",
+        params![project_id, bytes, mime_type, original_filename, byte_size],
+    )?;
+
+    // Read back rather than echo the arguments: `uploaded_at` is SQLite's clock.
+    conn.query_row(
+        "SELECT project_id, mime_type, original_filename, byte_size, uploaded_at
+         FROM project_images WHERE project_id = ?1",
+        params![project_id],
+        |row| {
+            Ok(ProjectImageMetaRow {
+                project_id: row.get(0)?,
+                mime_type: row.get(1)?,
+                original_filename: row.get(2)?,
+                byte_size: row.get(3)?,
+                uploaded_at: row.get(4)?,
+            })
+        },
+    )
+    .map_err(AppError::from)
+}
+
+// Deliberately carries NO archived guard, unlike `upsert_project_image`. `projects` is soft-delete
+// only — `archived_at` — with no production hard delete, so gating removal on `archived_at IS NULL`
+// would make an archived project's bytes permanently unreachable: the user could neither replace
+// them nor release them. Archiving preserves the image; removal stays available.
+//
+// Returns whether a row was removed rather than the `rows == 0 -> AppError::Database` convention the
+// project writes above use, because "there was no image" is the caller's expected answer on a retry,
+// not a failure. That makes removal idempotent.
+// WHY allowed: `mod db` is private and this feature's production consumer,
+// `commands::projects::remove_project_image_inner`, arrives in todo 4, which removes this.
+#[allow(dead_code)]
+pub fn delete_project_image(conn: &Connection, project_id: i64) -> Result<bool, AppError> {
+    let rows = conn.execute(
+        "DELETE FROM project_images WHERE project_id = ?1",
+        params![project_id],
+    )?;
+
+    Ok(rows > 0)
 }
 
 // Db-layer internal: it never crosses the IPC boundary, so it carries no serde derives.
@@ -799,9 +949,11 @@ pub fn clear_suggestion_skipped_month(conn: &Connection) -> Result<(), AppError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::init_db;
     use crate::financial_health::evaluator::WaterfallStep;
     use crate::projects::allocation::{compute_suggested_allocation, AllocationInput};
     use crate::projects::pace::{compute_project_pace, PaceInput};
+    use tempfile::TempDir;
 
     fn projects_test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -2881,6 +3033,380 @@ mod tests {
         assert_eq!(
             get_confirmed_suggestion_for_month(&conn, "2026-09").unwrap(),
             None
+        );
+    }
+
+    /// Test-only fixture carrying every column a `project_images` CHECK reads, so each
+    /// test can violate exactly one guard and prove that guard by name.
+    struct ImageInsert {
+        mime_type: &'static str,
+        byte_size: i64,
+        bytes: Vec<u8>,
+    }
+
+    impl ImageInsert {
+        fn valid() -> Self {
+            Self {
+                mime_type: "image/png",
+                byte_size: 4,
+                bytes: vec![1, 2, 3, 4],
+            }
+        }
+    }
+
+    fn migrated_db_with_a_project() -> (TempDir, Connection) {
+        let dir = TempDir::new().expect("temp dir");
+        let conn = init_db(dir.path()).expect("init_db succeeds");
+        conn.execute(
+            "INSERT INTO projects (id, name, target_cents) VALUES (1, 'Kitchen', 500000)",
+            [],
+        )
+        .expect("seed project");
+        (dir, conn)
+    }
+
+    fn insert_image(conn: &Connection, row: &ImageInsert) -> Result<usize, rusqlite::Error> {
+        conn.execute(
+            "INSERT INTO project_images
+                 (project_id, image_bytes, mime_type, original_filename, byte_size)
+             VALUES (1, ?1, ?2, 'cover.png', ?3)",
+            rusqlite::params![row.bytes, row.mime_type, row.byte_size],
+        )
+    }
+
+    fn violated_constraint(row: &ImageInsert) -> String {
+        let (_dir, conn) = migrated_db_with_a_project();
+        insert_image(&conn, row)
+            .expect_err("the row must violate a storage guard")
+            .to_string()
+    }
+
+    #[test]
+    fn migration_26_creates_the_project_images_table() {
+        let dir = TempDir::new().expect("temp dir");
+        let conn = init_db(dir.path()).expect("init_db succeeds");
+
+        let version: i64 = conn
+            .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
+            .expect("schema_version read");
+        assert_eq!(
+            version, 26,
+            "migration 26 must be the newest applied version"
+        );
+
+        let tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'project_images'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("sqlite_master read");
+        assert_eq!(tables, 1, "project_images must exist after migration 26");
+    }
+
+    #[test]
+    fn project_images_rejects_a_zero_byte_size_naming_the_positive_guard() {
+        let error = violated_constraint(&ImageInsert {
+            byte_size: 0,
+            bytes: Vec::new(),
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_byte_size_positive"),
+            "expected the positive guard by name, got: {error}"
+        );
+    }
+
+    /// The payload is genuinely oversized: a small blob carrying an inflated `byte_size`
+    /// would trip the payload-equality guard instead and prove nothing about the ceiling.
+    #[test]
+    fn project_images_rejects_a_payload_over_four_mib_naming_the_ceiling_guard() {
+        let error = violated_constraint(&ImageInsert {
+            byte_size: 4_194_305,
+            bytes: vec![0u8; 4_194_305],
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_byte_size_ceiling"),
+            "expected the ceiling guard by name, got: {error}"
+        );
+    }
+
+    #[test]
+    fn project_images_rejects_a_byte_size_that_disagrees_with_the_payload() {
+        let error = violated_constraint(&ImageInsert {
+            byte_size: 9,
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_byte_size_matches_payload"),
+            "expected the payload-equality guard by name, got: {error}"
+        );
+    }
+
+    #[test]
+    fn project_images_rejects_a_mime_type_outside_the_allowed_set() {
+        let error = violated_constraint(&ImageInsert {
+            mime_type: "image/gif",
+            ..ImageInsert::valid()
+        });
+
+        assert!(
+            error.contains("project_images_mime_allowed"),
+            "expected the mime guard by name, got: {error}"
+        );
+    }
+
+    /// Production never hard-deletes a project — `projects.archived_at` is a soft delete —
+    /// so this DELETE is NOT a live app path. The cascade is the safety net for the
+    /// danger-zone wipe and for any future hard delete, and this test keeps it wired.
+    #[test]
+    fn deleting_a_project_row_cascades_its_image_as_a_wipe_and_hard_delete_safety_net() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        assert_eq!(
+            insert_image(&conn, &ImageInsert::valid()).expect("image row stored"),
+            1
+        );
+
+        conn.execute("DELETE FROM projects WHERE id = ?1", rusqlite::params![1])
+            .expect("hard delete succeeds");
+
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM project_images", [], |r| r.get(0))
+            .expect("count images");
+        assert_eq!(remaining, 0, "ON DELETE CASCADE must remove the image row");
+    }
+
+    fn image_row_count(conn: &Connection, project_id: i64) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM project_images WHERE project_id = ?1",
+            params![project_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn upsert_project_image_round_trips_the_payload_and_its_metadata() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let payload = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff];
+
+        let meta =
+            upsert_project_image(&conn, 1, "image/png", "kitchen cover.png", &payload).unwrap();
+
+        assert_eq!(meta.project_id, 1);
+        assert_eq!(meta.mime_type, "image/png");
+        assert_eq!(meta.original_filename, "kitchen cover.png");
+        assert_eq!(meta.byte_size, 10);
+        assert!(
+            !meta.uploaded_at.is_empty(),
+            "uploaded_at must carry SQLite's timestamp, got {:?}",
+            meta.uploaded_at
+        );
+
+        let stored = get_project_image(&conn, 1)
+            .unwrap()
+            .expect("the stored image is readable");
+
+        assert_eq!(stored.project_id, 1);
+        assert_eq!(stored.image_bytes, payload);
+        assert_eq!(stored.mime_type, "image/png");
+        assert_eq!(stored.original_filename, "kitchen cover.png");
+        assert_eq!(stored.byte_size, 10);
+        assert_eq!(stored.uploaded_at, meta.uploaded_at);
+    }
+
+    // `.optional()` is what makes "no picture yet" the normal `None` rather than a
+    // `QueryReturnedNoRows` error the caller would have to render as a failure.
+    #[test]
+    fn get_project_image_returns_none_for_a_project_without_one() {
+        let (_dir, conn) = migrated_db_with_a_project();
+
+        assert!(
+            get_project_image(&conn, 1).unwrap().is_none(),
+            "a project with no image reads as None, not as an error"
+        );
+    }
+
+    // Every field the second call supplies differs from the first, so a partial `DO UPDATE SET`
+    // that forgot a column would leave a stale value behind and fail here.
+    #[test]
+    fn a_second_upsert_replaces_the_image_rather_than_duplicating_it() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        upsert_project_image(&conn, 1, "image/png", "first.png", &[1, 2, 3]).unwrap();
+
+        let replaced =
+            upsert_project_image(&conn, 1, "image/jpeg", "second.jpg", &[9, 8, 7, 6]).unwrap();
+
+        assert_eq!(
+            image_row_count(&conn, 1),
+            1,
+            "the primary key must hold the project to exactly one image"
+        );
+        assert_eq!(replaced.mime_type, "image/jpeg");
+        assert_eq!(replaced.original_filename, "second.jpg");
+        assert_eq!(replaced.byte_size, 4);
+
+        let stored = get_project_image(&conn, 1)
+            .unwrap()
+            .expect("the replacement is readable");
+        assert_eq!(stored.image_bytes, vec![9, 8, 7, 6]);
+        assert_eq!(stored.mime_type, "image/jpeg");
+        assert_eq!(stored.original_filename, "second.jpg");
+    }
+
+    #[test]
+    fn delete_project_image_reports_the_removal_once_and_then_reports_nothing_to_remove() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        upsert_project_image(&conn, 1, "image/png", "cover.png", &[1, 2, 3]).unwrap();
+
+        assert!(
+            delete_project_image(&conn, 1).unwrap(),
+            "the first delete removes the row"
+        );
+        assert!(
+            !delete_project_image(&conn, 1).unwrap(),
+            "a repeated delete is a no-op reported as false, not an error"
+        );
+        assert!(
+            get_project_image(&conn, 1).unwrap().is_none(),
+            "the image must be gone after the delete"
+        );
+    }
+
+    #[test]
+    fn upsert_project_image_rejects_a_project_that_does_not_exist() {
+        let (_dir, conn) = migrated_db_with_a_project();
+
+        expect_validation_field(
+            upsert_project_image(&conn, 4_242, "image/png", "ghost.png", &[1, 2, 3]).unwrap_err(),
+            "project_id",
+        );
+
+        assert_eq!(image_row_count(&conn, 4_242), 0);
+    }
+
+    // Writing is the one image operation gated on the project being active: an archived goal
+    // cannot gain a new picture. Removal deliberately is not gated — see the test below.
+    #[test]
+    fn upsert_project_image_rejects_an_archived_project() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        archive_project(&conn, 1).unwrap();
+
+        expect_validation_field(
+            upsert_project_image(&conn, 1, "image/png", "cover.png", &[1, 2, 3]).unwrap_err(),
+            "project_id",
+        );
+
+        assert_eq!(image_row_count(&conn, 1), 0);
+    }
+
+    // The deliberate asymmetry, made falsifiable: `projects` is soft-delete only, so adding an
+    // archived guard to `delete_project_image` would strand an archived project's bytes forever —
+    // unviewable through no fault of the user and unreleasable. This test fails the moment such a
+    // guard appears.
+    #[test]
+    fn delete_project_image_still_succeeds_for_an_archived_project() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        upsert_project_image(&conn, 1, "image/png", "cover.png", &[1, 2, 3]).unwrap();
+        archive_project(&conn, 1).unwrap();
+
+        assert!(
+            delete_project_image(&conn, 1).unwrap(),
+            "an archived project's image must stay removable"
+        );
+        assert!(
+            get_project_image(&conn, 1).unwrap().is_none(),
+            "the archived project's bytes are released, not stranded"
+        );
+    }
+
+    /// Sums the whole WAL family rather than `.db` alone: `open_configured` sets
+    /// `journal_mode=WAL`, so a `.db`-only reading cannot tell freelist reuse from WAL
+    /// accumulation. The checkpoint runs here rather than at the call site so the mandated
+    /// "TRUNCATE first, then stat" order cannot be got wrong at one measurement point and
+    /// right at the other. Sidecars are sized defensively because a TRUNCATE checkpoint can
+    /// leave `-wal` at zero bytes or absent, and an `unwrap` on an absent file would panic
+    /// instead of failing an assertion.
+    fn checkpointed_wal_family_bytes(conn: &Connection, db_path: &std::path::Path) -> u64 {
+        let busy: i64 = conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+            .expect("checkpoint runs");
+        assert_eq!(
+            busy, 0,
+            "a blocked checkpoint leaves frames in the WAL and makes the measurement meaningless"
+        );
+
+        let file_len =
+            |path: std::path::PathBuf| std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        let sidecar = |suffix: &str| {
+            let mut name = db_path.as_os_str().to_os_string();
+            name.push(suffix);
+            file_len(std::path::PathBuf::from(name))
+        };
+
+        file_len(db_path.to_path_buf()) + sidecar("-wal") + sidecar("-shm")
+    }
+
+    /// The executable form of the storage high-water mark: repeated upload/remove cycles must
+    /// leave the footprint where the first cycle left it, reclaimed through SQLite's freelist
+    /// alone. No image path may call `VACUUM` — every project command is synchronous on the
+    /// main thread, so a full-database rewrite would freeze the window — which makes the
+    /// freelist the only mechanism, and this test the only proof that it recycles.
+    ///
+    /// The payload comes from `randomblob`, so it is incompressible: a zero-filled buffer
+    /// could be flattened by a compressing filesystem and would weaken the measurement.
+    #[test]
+    fn repeated_image_upload_and_removal_cycles_do_not_grow_the_on_disk_footprint() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let db_path = _dir.path().join("nkbaz-finance.db");
+
+        // Read rather than assume: `open_configured` never sets a page size, so hardcoding 4096
+        // would make the tolerance wrong on any build whose default differs.
+        let page_size = conn
+            .query_row("PRAGMA page_size", [], |row| row.get::<_, i64>(0))
+            .map(|size| u64::try_from(size).expect("a page size is positive"))
+            .expect("page size read");
+
+        let payload: Vec<u8> = conn
+            .query_row("SELECT randomblob(1048576)", [], |row| row.get(0))
+            .expect("incompressible payload");
+        assert_eq!(payload.len(), 1_048_576);
+
+        let mut after_first_cycle: Option<u64> = None;
+        for cycle in 1..=5 {
+            upsert_project_image(&conn, 1, "image/png", "cover.png", &payload).unwrap();
+            assert!(
+                delete_project_image(&conn, 1).unwrap(),
+                "cycle {cycle}: the image must be removed"
+            );
+
+            // Freed pages must reach the freelist, or the next cycle extends the file instead of
+            // reusing them — which is exactly the leak the footprint assertion below would catch.
+            let freelist: i64 = conn
+                .query_row("PRAGMA freelist_count", [], |row| row.get(0))
+                .expect("freelist read");
+            assert!(
+                freelist > 0,
+                "cycle {cycle}: the removed blob's pages must be on the freelist, got {freelist}"
+            );
+
+            if cycle == 1 {
+                after_first_cycle = Some(checkpointed_wal_family_bytes(&conn, &db_path));
+            }
+        }
+
+        let after_first_cycle =
+            after_first_cycle.expect("cycle 1 always records the first measurement");
+        let after_fifth_cycle = checkpointed_wal_family_bytes(&conn, &db_path);
+
+        assert!(
+            after_fifth_cycle.abs_diff(after_first_cycle) <= page_size,
+            "five upload/remove cycles must stay within one {page_size}-byte page of the first \
+             cycle's footprint, but went {after_first_cycle} -> {after_fifth_cycle}"
         );
     }
 }
