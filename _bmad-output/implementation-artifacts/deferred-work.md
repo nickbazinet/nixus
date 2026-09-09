@@ -382,3 +382,6 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-ai-chat-file-uploads.md`
   summary: Restore repository-wide Rust clippy cleanliness without mixing unrelated command-module edits into this feature.
   evidence: `cargo clippy --all-targets -- -D warnings` reports 229 pre-existing `needless_borrow` findings and several unrelated `useless_vec` findings across command and dataset modules; changed attachment code compiles and its focused tests pass.
+- source_spec: `_bmad-output/implementation-artifacts/spec-ai-chat-file-uploads.md`
+  summary: Add an atomic bulk budget-history import action for spreadsheet-derived monthly category totals.
+  evidence: The confirmed chat-action protocol intentionally executes one write per approval; importing hundreds of monthly totals safely needs batching, rollback/partial-failure semantics, duplicate detection, and a review UI rather than hundreds of independent confirmation cards.

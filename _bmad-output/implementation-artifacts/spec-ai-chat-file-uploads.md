@@ -68,6 +68,8 @@ context:
 
 ## Spec Change Log
 
+- 2026-09-08 — Runtime feedback showed that follow-up turns lost the volatile file context, unsupported category actions rendered dead confirmation cards, and long card histories could scroll the app shell. The implementation now keeps one visible attachment for the live conversation until removal, supports idempotent confirmed category creation with persisted outcomes, rejects unsupported cards, and confines scrolling to the message log. The approved non-persistence and confirmation boundaries remain unchanged.
+
 ## Design Notes
 
 Bedrock Converse already supports the required document formats, so format-aware content blocks are preferable to local extraction. Use a fixed neutral provider document name such as `attachment`; the UI may show the selected basename only in volatile React state. Re-send the attachment for the post-tool invocation because each invocation is routed independently and still needs the source context.
