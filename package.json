@@ -4,6 +4,8 @@
   "scripts": {
     "desktop:dev": "pnpm --filter @nixus/desktop dev",
     "desktop:build": "pnpm --filter @nixus/desktop build",
-    "desktop:tauri": "pnpm --filter @nixus/desktop tauri"
+    "desktop:tauri": "pnpm --filter @nixus/desktop tauri",
+    "release": "node scripts/release.mjs",
+    "release:dry-run": "node scripts/release.mjs patch --dry-run"
   }
 }
