@@ -2221,6 +2221,19 @@ test.describe("Project image card", () => {
         /^"[^"]+"/
       );
     }
+
+    // Non-empty is not enough: the row carries its own actions menu as well as the image's, and two
+    // triggers announcing the identical name leaves a screen-reader user unable to tell them apart.
+    // Only the quoted name is compared — ARIA state suffixes like `[expanded]` would otherwise make
+    // two identically-named triggers look distinct purely because one of them is open.
+    const rowNames = (await namesInside(page.getByTestId("project-row")))
+      .map((control) => /^"([^"]+)"/.exec(control.rest)?.[1])
+      .filter((name): name is string => name !== undefined);
+    expect(rowNames.length).toBeGreaterThan(1);
+    expect(
+      new Set(rowNames).size,
+      `duplicate accessible names in the row: ${rowNames.join(" | ")}`
+    ).toBe(rowNames.length);
   });
 
   test("adding an image renders the picture that was picked", async ({
@@ -2406,8 +2419,17 @@ test.describe("Project image card", () => {
     const card = await openImageCard(page, {
       ...NO_IMAGES,
       seed: [seededImage(IMAGE_PROJECT.id)],
+      pickedPath: PICKED_PATH,
+      validateRejectField: "project_image_too_large",
     });
     await expect(page.getByTestId("project-image")).toBeVisible();
+
+    // Raise a real refusal first, so the "no error remains" assertion at the end cannot pass
+    // vacuously on a fixture that never displayed one.
+    await card.getByTestId("project-image-replace-button").click();
+    await expect(page.getByTestId("project-image-error")).toHaveText(
+      "That image is larger than 4 MB. Pick a smaller one."
+    );
 
     await card.getByTestId("project-image-menu").click();
     await page.getByRole("menuitem", { name: "Remove image" }).click();
@@ -2489,7 +2511,7 @@ test.describe("Project image card", () => {
    *
    * THIS PROVES LAYOUT AND WIRING ONLY — NOT MEMORY. Every payload here is the 69-byte mocked PNG
    * handed back by an in-page IPC stub, so nothing about this test says anything about resident cost
-   * with real photographs. That measurement needs a real build and is taken in todo 9. */
+   * with real photographs. That measurement needs a real build and is measured against a real build. */
   test("ten expanded rows each render their own image and the page stays interactive", async ({
     page,
   }) => {

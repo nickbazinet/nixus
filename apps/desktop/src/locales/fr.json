@@ -1398,6 +1398,7 @@
   "projects.image.addAction": "Ajouter une image",
   "projects.image.replaceAction": "Remplacer l'image",
   "projects.image.removeAction": "Retirer l'image",
+  "projects.image.menuLabel": "Options de l'image pour {{name}}",
   "projects.image.removeTitle": "Retirer cette image ?",
   "projects.image.removeDescription": "Le projet conserve sa progression et son historique. Seule l'image est retirée.",
   "projects.image.alt": "Image pour {{name}}",

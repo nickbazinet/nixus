@@ -24,16 +24,12 @@ import {
   useRemoveProjectImage,
   useSetProjectImage,
 } from "@/hooks/useProjects";
-import { useProjectImagePicker } from "@/hooks/useProjectImagePicker";
+import {
+  GENERIC_FAILURE_KEY,
+  useProjectImagePicker,
+} from "@/hooks/useProjectImagePicker";
 import { projectImageMessageKey } from "@/lib/appError";
 import type { Project } from "@/lib/types";
-
-/**
- * The only generic key among the twenty shipped. Used when a rejection carries no field this build
- * recognizes, because naming a specific cause the backend did not report — "that file could not be
- * read" about a file that read fine — sends the user to fix the wrong thing.
- */
-const SAVE_FAILED_KEY = "projects.image.saveFailed";
 
 /** One bar, matching the single meta line the resolved card actually shows. */
 const IMAGE_SKELETON_ROWS = 1;
@@ -91,7 +87,7 @@ export function ProjectImageCard({ project }: ProjectImageCardProps) {
       { project_id: project.id, file_path: filePath },
       {
         onError: (error: unknown) => {
-          setWriteErrorKey(projectImageMessageKey(error) ?? SAVE_FAILED_KEY);
+          setWriteErrorKey(projectImageMessageKey(error) ?? GENERIC_FAILURE_KEY);
         },
       }
     );
@@ -104,9 +100,15 @@ export function ProjectImageCard({ project }: ProjectImageCardProps) {
 
   const handleRemove = () => {
     removeImage.mutate(project.id, {
-      onSuccess: () => setConfirmingRemove(false),
+      onSuccess: () => {
+        // Safe only because `picked` is already null here, so `reset()` cannot re-fire the write.
+        // Without this, a prior refusal stays on screen beside "No image yet".
+        setWriteErrorKey(null);
+        reset();
+        setConfirmingRemove(false);
+      },
       onError: (error: unknown) => {
-        setWriteErrorKey(projectImageMessageKey(error) ?? SAVE_FAILED_KEY);
+        setWriteErrorKey(projectImageMessageKey(error) ?? GENERIC_FAILURE_KEY);
         setConfirmingRemove(false);
       },
     });
@@ -197,9 +199,8 @@ export function ProjectImageCard({ project }: ProjectImageCardProps) {
                 {t("projects.image.replaceAction")}
               </Button>
               {/* Removal is demoted into the overflow menu behind a confirm, never a styled peer of
-                  Replace. The trigger reuses the row-actions name because the twenty shipped keys
-                  carry no overflow label, and naming it after the destructive item would make the
-                  demotion cosmetic. */}
+                  Replace. Its own accessible name, distinct from the row's own actions menu, so the
+                  two triggers in one row are tellable apart by a screen reader. */}
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -208,7 +209,7 @@ export function ProjectImageCard({ project }: ProjectImageCardProps) {
                       size="icon-sm"
                       className="text-ink-faint hover:text-ink"
                       disabled={busy}
-                      aria-label={t("projects.rowActions", { name: project.name })}
+                      aria-label={t("projects.image.menuLabel", { name: project.name })}
                       data-testid="project-image-menu"
                     />
                   }

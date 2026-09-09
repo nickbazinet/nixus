@@ -190,5 +190,4 @@ mod tests {
             "expected AppError::Database, got {error:?}"
         );
     }
-
 }

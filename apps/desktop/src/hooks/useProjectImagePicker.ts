@@ -16,7 +16,7 @@ export const PROJECT_IMAGE_EXTENSIONS = ["png", "jpg", "jpeg"] as const;
  * one of the seven mapped refusals: naming a cause the backend did not report — "that file could
  * not be read" about a file that read fine — sends the user to fix the wrong thing.
  */
-const GENERIC_FAILURE_KEY = "projects.image.saveFailed";
+export const GENERIC_FAILURE_KEY = "projects.image.saveFailed";
 
 export interface PickedProjectImage {
   /** Absolute path, held in state only and never persisted, logged, or sent anywhere else. */
