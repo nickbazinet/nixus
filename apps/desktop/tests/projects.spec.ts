@@ -81,12 +81,26 @@ interface MockImageState {
   readRejects: number[];
   /** What the native picker resolves. `null` is a dismissed dialog, which is the default. */
   pickedPath: string | null;
+  /**
+   * The `field` `validate_project_image` refuses with, or `null` to accept the picked file. Every
+   * file-level refusal belongs here rather than on the write: the picker validates before anything
+   * is stored, so a refusal on this path can never reach `set_project_image`.
+   */
+  validateRejectField: string | null;
+  /**
+   * The `field` `set_project_image` refuses with, or `null` to let the write land. Validation has
+   * already passed by the time this fires, which is the only way to reach the
+   * archived/missing-project guard (`project_id`) or to fail a replace with an image on screen.
+   */
+  writeRejectField: string | null;
 }
 
 const NO_IMAGES: MockImageState = {
   seed: [],
   readRejects: [],
   pickedPath: null,
+  validateRejectField: null,
+  writeRejectField: null,
 };
 
 /**
@@ -97,6 +111,15 @@ const NO_IMAGES: MockImageState = {
 const ONE_PIXEL_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO45ucEAANkAWfD6YMNAAAAAElFTkSuQmCC";
 const ONE_PIXEL_PNG_BYTES = 69;
+
+/**
+ * What a successful `set_project_image` stores: a real 73-byte 2x2 RGB PNG, deliberately a DIFFERENT
+ * payload from the seeded one. Reusing the seeded bytes would make "the original image is still
+ * showing byte-for-byte after a failed replace" pass even when the replace had actually landed.
+ */
+const WRITTEN_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR42mP4z8AARAwQCgAf7gP9Y167WwAAAABJRU5ErkJggg==";
+const WRITTEN_PNG_BYTES = 73;
 
 function seededImage(
   projectId: number,
@@ -158,8 +181,8 @@ async function setupTauriMock(
       adviceOutcome,
       premium,
       images,
-      storedImageBase64,
-      storedImageBytes,
+      writtenImageBase64,
+      writtenImageBytes,
     }) => {
       interface MockProject {
         id: number;
@@ -275,6 +298,16 @@ async function setupTauriMock(
       }));
       const imageReadRejects = new Set(images.readRejects);
       const basename = (path: string) => path.split(/[\\/]/).pop() ?? path;
+      // One entry per native picker round trip. The picker is deliberately absent from
+      // `__INVOKE_LOG__`, so this is the only anchor a spec has for "the pick has been processed"
+      // when the outcome is a dismissal that writes nothing and changes nothing on screen.
+      const pickerCalls: (string | null)[] = [];
+      (window as unknown as Record<string, unknown>).__PICKER_CALLS__ = pickerCalls;
+      const refusal = (field: string) => ({
+        type: "validation",
+        message: `Refused by ${field}`,
+        field,
+      });
 
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         transformCallback: (cb: unknown) => {
@@ -285,8 +318,10 @@ async function setupTauriMock(
         invoke: (cmd: string, args: Record<string, unknown>) => {
           // Must precede the blanket plugin branch, or every image pick resolves null and no file
           // can ever be selected. Not logged, matching how every other plugin call is handled.
-          if (cmd === "plugin:dialog|open")
+          if (cmd === "plugin:dialog|open") {
+            pickerCalls.push(images.pickedPath);
             return Promise.resolve(images.pickedPath);
+          }
           if (cmd.startsWith("plugin:")) return Promise.resolve(null);
           invokeLog.push(cmd);
           switch (cmd) {
@@ -639,17 +674,23 @@ async function setupTauriMock(
 
           // Returns a bare basename, so no directory component can reach the UI.
           case "validate_project_image":
+            if (images.validateRejectField !== null)
+              return Promise.reject(refusal(images.validateRejectField));
             return Promise.resolve(basename(args.file_path as string));
 
           case "set_project_image": {
             const projectId = args.project_id as number;
+            // Refused after validation already passed, so any image already stored must survive
+            // untouched — which is exactly what the replace-failure spec reads back.
+            if (images.writeRejectField !== null)
+              return Promise.reject(refusal(images.writeRejectField));
             const written: MockProjectImage = {
               project_id: projectId,
               mime_type: "image/png",
               original_filename: basename(args.file_path as string),
-              byte_size: storedImageBytes,
+              byte_size: writtenImageBytes,
               uploaded_at: "2026-03-04 10:15:00",
-              image_base64: storedImageBase64,
+              image_base64: writtenImageBase64,
             };
             const index = projectImages.findIndex(
               (image) => image.project_id === projectId
@@ -693,8 +734,8 @@ async function setupTauriMock(
       adviceOutcome,
       premium,
       images,
-      storedImageBase64: ONE_PIXEL_PNG_BASE64,
-      storedImageBytes: ONE_PIXEL_PNG_BYTES,
+      writtenImageBase64: WRITTEN_PNG_BASE64,
+      writtenImageBytes: WRITTEN_PNG_BYTES,
     }
   );
 }
@@ -1976,6 +2017,24 @@ test.describe("AI advisory when a project is off track", () => {
   });
 });
 
+/** One entry per native picker round trip, which is the only trace a dismissal leaves. */
+async function pickerCalls(page: Page) {
+  return page.evaluate(
+    () =>
+      (window as unknown as Record<string, (string | null)[]>)
+        .__PICKER_CALLS__ ?? []
+  );
+}
+
+/** How far the document can scroll sideways. Anything above zero is a layout escape. */
+async function horizontalOverflowPx(page: Page) {
+  return page.evaluate(() => {
+    const root = document.scrollingElement;
+    if (root === null) throw new Error("the document has no scrolling element");
+    return root.scrollWidth - root.clientWidth;
+  });
+}
+
 test.describe("Project image card", () => {
   const IMAGE_PROJECT: MockSeedProject = {
     id: 1,
@@ -1984,14 +2043,24 @@ test.describe("Project image card", () => {
     target_date: null,
   };
 
-  async function openImageCard(page: Page, images: MockImageState) {
+  /** A path with a directory component, so a leaked one would be visible in the meta line. */
+  const PICKED_PATH = "/Users/someone/Pictures/beach-house.png";
+
+  /** Valid base64 that is not an image, which is what makes the browser fire `onError`. */
+  const UNDECODABLE_BASE64 = "bm90IGFuIGltYWdlIGF0IGFsbA==";
+
+  async function gotoProjects(
+    page: Page,
+    images: MockImageState,
+    seed: MockSeedProject[] = [IMAGE_PROJECT]
+  ) {
     await setupTauriMock(
       page,
       [],
       SURPLUS_CENTS,
       [],
       null,
-      [IMAGE_PROJECT],
+      seed,
       [],
       false,
       "success",
@@ -1999,7 +2068,11 @@ test.describe("Project image card", () => {
       images
     );
     await page.goto("/wealth/projects");
-    await expect(page.getByTestId("project-row")).toHaveCount(1);
+    await expect(page.getByTestId("project-row")).toHaveCount(seed.length);
+  }
+
+  async function openImageCard(page: Page, images: MockImageState) {
+    await gotoProjects(page, images);
     await page.getByTestId("project-expand-toggle").click();
     await expect(page.getByTestId("project-detail")).toBeVisible();
     return page.getByTestId("project-image-card");
@@ -2148,5 +2221,325 @@ test.describe("Project image card", () => {
         /^"[^"]+"/
       );
     }
+  });
+
+  test("adding an image renders the picture that was picked", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      pickedPath: PICKED_PATH,
+    });
+    await expect(page.getByTestId("project-image-empty")).toBeVisible();
+
+    await card.getByTestId("project-image-add-button").click();
+
+    const img = page.getByTestId("project-image");
+    await expect(img).toBeVisible();
+    // Exactly the payload the write stored, which is a different PNG from anything seeded — so this
+    // cannot pass on a stale render of the previous state.
+    expect(await img.getAttribute("src")).toBe(
+      `data:image/png;base64,${WRITTEN_PNG_BASE64}`
+    );
+    // Non-zero only once the browser really decoded those bytes, which is what keeps the written
+    // fixture honest instead of a string that merely looks like a PNG.
+    await expect
+      .poll(async () =>
+        img.evaluate(
+          (node) => node instanceof HTMLImageElement && node.naturalWidth > 0
+        )
+      )
+      .toBe(true);
+    const meta = page.getByTestId("project-image-meta");
+    await expect(meta).toContainText("beach-house.png");
+    // The stored basename and nothing else: no directory the file came from may reach the UI.
+    await expect(meta).not.toContainText("Pictures");
+    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-error")).toHaveCount(0);
+  });
+
+  // The mount boundary, read at the invoke layer rather than inferred from the DOM: the payload is
+  // the expensive part of this feature, and a collapsed row must not pay for it.
+  test("a collapsed row never reads the image payload", async ({ page }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+
+    // Anchored on a load-time invoke of the collapsed surface, so the absence below is read after
+    // the page settled rather than before it started asking for anything.
+    await expect
+      .poll(async () => await invokedCommands(page))
+      .toContain("get_project_saved_totals");
+    expect(await invokedCommands(page)).not.toContain("get_project_image");
+
+    // The same read appears the moment the row mounts its detail, which is what makes the absence
+    // above a mount-boundary proof rather than a mock that simply never answers.
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-image")).toBeVisible();
+    expect(await invokedCommands(page)).toContain("get_project_image");
+  });
+
+  test("a dismissed picker writes nothing and leaves the invitation alone", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, NO_IMAGES);
+
+    await card.getByTestId("project-image-add-button").click();
+
+    // A dismissal changes nothing on screen, so the picker round trip is the only observable end of
+    // the attempt — polling it is what makes the absence below a settled reading, not a race.
+    await expect.poll(async () => (await pickerCalls(page)).length).toBe(1);
+    expect(await invokedCommands(page)).not.toContain("set_project_image");
+    await expect(page.getByTestId("project-image-empty")).toBeVisible();
+    await expect(page.getByTestId("project-image-error")).toHaveCount(0);
+    await expect(card.getByTestId("project-image-add-button")).toBeEnabled();
+  });
+
+  /* Six file-level refusals, six distinct sentences. A shared message would send the user to shrink
+   * a file whose type was never supported, or to re-export a photograph that was only too large. */
+  const VALIDATOR_REFUSALS = [
+    {
+      field: "project_image_unsupported_type",
+      copy: "That file type can't be used as a project image. Use a PNG or JPEG.",
+    },
+    { field: "project_image_empty", copy: "That file is empty. Pick another one." },
+    {
+      field: "project_image_too_large",
+      copy: "That image is larger than 4 MB. Pick a smaller one.",
+    },
+    {
+      field: "project_image_unreadable",
+      copy: "That file could not be read. Pick another one.",
+    },
+    {
+      field: "project_image_content_mismatch",
+      copy: "That file's contents are not a usable PNG or JPEG image.",
+    },
+    {
+      field: "project_image_dimensions",
+      copy: "That image is larger than 12 megapixels. Pick a smaller one.",
+    },
+  ] as const;
+
+  for (const { field, copy } of VALIDATOR_REFUSALS) {
+    test(`a ${field} refusal shows its own sentence and never reaches the write`, async ({
+      page,
+    }) => {
+      const card = await openImageCard(page, {
+        ...NO_IMAGES,
+        pickedPath: PICKED_PATH,
+        validateRejectField: field,
+      });
+
+      await card.getByTestId("project-image-add-button").click();
+
+      await expect(page.getByTestId("project-image-error")).toHaveText(copy);
+      // Validation runs before any write, so a refused file costs nothing and stores nothing.
+      expect(await invokedCommands(page)).not.toContain("set_project_image");
+      await expect(page.getByTestId("project-image-empty")).toBeVisible();
+      await expect(page.getByTestId("project-image")).toHaveCount(0);
+    });
+  }
+
+  // The seventh refusal, and the only one that is about the project rather than the file — so it is
+  // unreachable from the validator and can only be observed on the write.
+  test("a write the archived-project guard refuses says the project is unavailable", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      pickedPath: PICKED_PATH,
+      writeRejectField: "project_id",
+    });
+
+    await card.getByTestId("project-image-add-button").click();
+
+    await expect(page.getByTestId("project-image-error")).toHaveText(
+      "This project is no longer available."
+    );
+    // The file passed validation, so unlike the six above this refusal did reach the write.
+    await expect
+      .poll(async () => await invokedCommands(page))
+      .toContain("set_project_image");
+    await expect(page.getByTestId("project-image-empty")).toBeVisible();
+    await expect(page.getByTestId("project-image")).toHaveCount(0);
+  });
+
+  test("a failed replace leaves the original image byte-for-byte on screen", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id, "original.png")],
+      pickedPath: PICKED_PATH,
+      writeRejectField: "project_id",
+    });
+
+    // The precondition that keeps the comparison below from being a tautology: if a landed write
+    // stored the same bytes the seed holds, `src` could not move even when the replace succeeded.
+    expect(WRITTEN_PNG_BASE64).not.toBe(ONE_PIXEL_PNG_BASE64);
+
+    const img = page.getByTestId("project-image");
+    await expect(img).toBeVisible();
+    const srcBefore = await img.getAttribute("src");
+    expect(srcBefore).toBe(`data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`);
+
+    await card.getByTestId("project-image-replace-button").click();
+
+    await expect(page.getByTestId("project-image-error")).toBeVisible();
+    await expect
+      .poll(async () => await invokedCommands(page))
+      .toContain("set_project_image");
+    // Byte-identical, not merely "an image is still showing": a landed write stores a DIFFERENT PNG
+    // from the seeded one, so a replace that half-succeeded would move this string.
+    expect(await img.getAttribute("src")).toBe(srcBefore);
+    await expect(page.getByTestId("project-image-meta")).toContainText(
+      "original.png"
+    );
+    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
+  });
+
+  test("removing an image takes a confirmation, then the invitation comes back", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+    await expect(page.getByTestId("project-image")).toBeVisible();
+
+    await card.getByTestId("project-image-menu").click();
+    await page.getByRole("menuitem", { name: "Remove image" }).click();
+
+    const dialog = page.getByTestId("remove-project-image-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("Remove this image?");
+    // Opening the confirmation deletes nothing: the destructive call may only follow the second act.
+    expect(await invokedCommands(page)).not.toContain("remove_project_image");
+    await expect(page.getByTestId("project-image")).toBeVisible();
+
+    await page.getByTestId("confirm-remove-project-image-button").click();
+
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByTestId("project-image-empty")).toContainText(
+      "No image yet"
+    );
+    await expect(page.getByTestId("project-image")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-error")).toHaveCount(0);
+    expect(await invokedCommands(page)).toContain("remove_project_image");
+  });
+
+  test("a payload the browser cannot decode explains itself instead of drawing a broken image", async ({
+    page,
+  }) => {
+    const card = await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [
+        { ...seededImage(IMAGE_PROJECT.id), image_base64: UNDECODABLE_BASE64 },
+      ],
+    });
+
+    await expect(card.getByTestId("project-image-unavailable")).toContainText(
+      "This image can't be displayed right now."
+    );
+    // Zero `<img>` in the card is what "no broken-image glyph" means mechanically.
+    await expect(card.locator("img")).toHaveCount(0);
+    // A payload that failed to decode is not a failed read and not an absent image.
+    await expect(page.getByTestId("project-image-load-failed")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-meta")).toBeVisible();
+  });
+
+  test("at the minimum window the image stacks above the details with no sideways scroll", async ({
+    page,
+  }) => {
+    // The `minWidth`/`minHeight` the app ships in `tauri.conf.json`, so this is the narrowest window
+    // a user can actually produce.
+    await page.setViewportSize({ width: 1024, height: 680 });
+    await openImageCard(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+    await expect(page.getByTestId("project-image")).toBeVisible();
+
+    const stacked = await page
+      .getByTestId("project-detail")
+      .evaluate((detail) => {
+        const edges = (testId: string) =>
+          detail
+            .querySelector(`[data-testid="${testId}"]`)
+            ?.getBoundingClientRect() ?? null;
+        const image = edges("project-image");
+        const meta = edges("project-image-meta");
+        const money = edges("project-saved-amount");
+        if (image === null || meta === null || money === null) return null;
+        return {
+          imageAboveMeta: image.bottom <= meta.top,
+          cardAboveMoney: meta.bottom <= money.top,
+        };
+      });
+    expect(stacked).toEqual({ imageAboveMeta: true, cardAboveMoney: true });
+
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+
+  /* Ten rows expanded at once, which is the shape a real list takes because each row owns its own
+   * `expanded` flag and nothing collapses its neighbours.
+   *
+   * THIS PROVES LAYOUT AND WIRING ONLY — NOT MEMORY. Every payload here is the 69-byte mocked PNG
+   * handed back by an in-page IPC stub, so nothing about this test says anything about resident cost
+   * with real photographs. That measurement needs a real build and is taken in todo 9. */
+  test("ten expanded rows each render their own image and the page stays interactive", async ({
+    page,
+  }) => {
+    const seeded = Array.from({ length: 10 }, (_, index) => ({
+      id: index + 1,
+      name: `Goal ${index + 1}`,
+      target_cents: 100_000 * (index + 1),
+      target_date: null,
+    }));
+    await gotoProjects(
+      page,
+      {
+        ...NO_IMAGES,
+        seed: seeded.map((project) =>
+          seededImage(project.id, `goal-${project.id}.png`)
+        ),
+      },
+      seeded
+    );
+
+    const toggles = page.getByTestId("project-expand-toggle");
+    for (let index = 0; index < seeded.length; index += 1) {
+      await toggles.nth(index).click();
+    }
+
+    const images = page.getByTestId("project-image");
+    await expect(images).toHaveCount(seeded.length);
+    // `naturalWidth` rather than mere presence: it is only non-zero once the browser really decoded
+    // that row's own data URL.
+    await expect
+      .poll(async () =>
+        images.evaluateAll((nodes) =>
+          nodes.map(
+            (node) =>
+              node instanceof HTMLImageElement &&
+              node.naturalWidth > 0 &&
+              (node.getAttribute("src") ?? "").startsWith(
+                "data:image/png;base64,"
+              )
+          )
+        )
+      )
+      .toEqual(seeded.map(() => true));
+    // Ten distinct filenames, so no two cards can be showing one shared cache entry.
+    const metas = await page.getByTestId("project-image-meta").allInnerTexts();
+    expect(new Set(metas).size).toBe(seeded.length);
+
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+
+    await page.getByTestId("add-project-button").click();
+    await expect(page.getByTestId("project-form")).toBeVisible();
   });
 });
