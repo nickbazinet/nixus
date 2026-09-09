@@ -56,12 +56,13 @@ describe("chat action source of truth", () => {
     );
   });
 
-  /* Only `create_budget_category` carries a param guard in this patch. Pinning that the others
-   * still pass anything is what stops a later edit from quietly broadening the gate and killing
-   * cards that were working. */
+  /* Only the category and batch action types carry a param guard in this patch. Pinning that
+   * the others still pass anything is what stops a later edit from quietly broadening the gate
+   * and killing cards that were working. */
   it("leaves the unguarded action types accepting any params", () => {
+    const guarded = ["create_budget_category", "batch_actions"];
     for (const type of CHAT_ACTION_TYPES) {
-      if (type === "create_budget_category") continue;
+      if (guarded.includes(type)) continue;
       expect(hasValidChatActionParams(type, {}), type).toBe(true);
       expect(hasValidChatActionParams(type, { anything: "at all" }), type).toBe(true);
     }
@@ -110,5 +111,44 @@ describe("chat action source of truth", () => {
     expect(isChatActionType(undefined)).toBe(false);
     expect(isChatActionType(null)).toBe(false);
     expect(isChatActionType(42)).toBe(false);
+  });
+
+  it("accepts a batch of actions the backend can act on", () => {
+    expect(
+      hasValidChatActionParams("batch_actions", {
+        actions: [
+          {
+            action_type: "create_budget_category",
+            params: { category_name: "House Related", group_name: "Housing" },
+          },
+          {
+            action_type: "create_expense",
+            params: { merchant: "Costco", amount_cents: 4500, category_name: "Groceries", date: "2026-03-14" },
+          },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("rejects a batch the backend would refuse", () => {
+    const refused: Record<string, unknown>[] = [
+      {},
+      { actions: [] },
+      { actions: "not-an-array" },
+      { actions: [{ params: { category_name: "House", group_name: "Needs" } }] },
+      { actions: [{ action_type: "create_category", params: {} }] },
+      { actions: [{ action_type: "batch_actions", params: { actions: [] } }] },
+      {
+        actions: [
+          { action_type: "create_budget_category", params: { category_name: "House" } },
+        ],
+      },
+    ];
+    for (const params of refused) {
+      expect(
+        hasValidChatActionParams("batch_actions", params),
+        JSON.stringify(params)
+      ).toBe(false);
+    }
   });
 });

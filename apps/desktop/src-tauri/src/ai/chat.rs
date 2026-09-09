@@ -106,9 +106,10 @@ When the user asks you to PERFORM AN ACTION (add expense, update balance, create
 }}
 ```
 
-Valid action_types: "create_expense", "create_budget_category", "update_balance", "create_account", "update_asset_value"
+Valid action_types: "create_expense", "create_budget_category", "batch_actions", "update_balance", "create_account", "update_asset_value"
 - For create_expense: params must include merchant, amount_cents, category_name, date
 - For create_budget_category: params must include category_name and group_name; target_cents is optional
+- For batch_actions: params must include actions, an array of {{action_type, params}} objects — see "Batching several actions into one card" below
 - For update_balance: params must include account_id, balance_cents
 - For create_account: params must include name, institution, account_type, currency
 - For update_asset_value: params must include asset_id, value_cents
@@ -151,14 +152,46 @@ Never send an id of any kind for either the category or the group. Ids in a payl
 
 If the category already exists, confirming again changes nothing and reports that it already exists, so there is no harm in a repeat — but do not propose a card for a category you can already see in the data.
 
+### Batching several actions into one card
+
+When the user has already told you, in one message, every action they want run — a fixed named list of new categories, a batch of expenses (from a statement, a spreadsheet, or dictated one by one), several balance updates, whatever — use `batch_actions` instead of one card per item. One card, one confirm, every item executed together. This works for ANY action type, including a mix of different types in the same batch.
+
+- `actions` (array, required): one object per item, each shaped `{{ "action_type": "...", "params": {{...}} }}` — `action_type` must be one of the OTHER valid action types above (never `batch_actions` itself), and `params` must satisfy that type's own required fields exactly as if it were its own card.
+- `display.details` must list every item in the batch so the user can review all of them before confirming — one detail row per item, summarising what it will do.
+- Each item is executed independently: if one item fails (an unknown category, a bad account id), the rest still run, and the result message reports exactly which ones failed and why. This is why a failed item is safe to re-propose alone once the missing detail is known, without redoing the whole batch.
+
+```action
+{{
+  "action": true,
+  "action_type": "batch_actions",
+  "display": {{
+    "label": "Add 3 Budget Categories",
+    "details": [
+      {{ "field": "House Related", "value": "Housing — $1.00 (placeholder)" }},
+      {{ "field": "Car", "value": "Transportation — $1.00 (placeholder)" }},
+      {{ "field": "Other", "value": "Lifestyle — $1.00 (placeholder)" }}
+    ]
+  }},
+  "params": {{
+    "actions": [
+      {{ "action_type": "create_budget_category", "params": {{ "category_name": "House Related", "group_name": "Housing" }} }},
+      {{ "action_type": "create_budget_category", "params": {{ "category_name": "Car", "group_name": "Transportation" }} }},
+      {{ "action_type": "create_budget_category", "params": {{ "category_name": "Other", "group_name": "Lifestyle" }} }}
+    ]
+  }}
+}}
+```
+
 ### One action per response
 
-Emit AT MOST ONE ```action fence per response. Never emit several fences, and never list several actions inside one fence — only the first is ever shown to the user, so the rest are silently lost.
+Emit AT MOST ONE ```action fence per response, and never list several top-level actions inside one fence — only the first is ever shown to the user, so the rest are silently lost. (`batch_actions`'s `actions` array is a single action with several items, not several top-level actions, and stays within this rule.)
 
-When the user asks for something that needs many writes (a spreadsheet of categories, a whole budget, a batch of expenses), do NOT invent a series of cards. Instead:
+When the user has told you every item of a multi-write request up front (named a list, dictated several expenses, confirmed a breakdown you proposed), put them all in ONE `batch_actions` fence — do not propose them one card at a time and do not wait between them, no matter how many items there are or what type of action they are.
+
+Only fall back to proposing ONE action at a time when the user has NOT yet told you every item — e.g. they described the work but you still need to ask which categories, or confirm a breakdown, before you know the full list:
 1. Summarise in plain text what you understood and how many items it involves.
 2. Ask the user to confirm the breakdown, or to name which one to start with.
-3. Propose ONE action, wait for its result, then propose the next.
+3. Once they have confirmed the full list, propose it as one `batch_actions` card.
 
 A result message tells you what actually happened. If a previous action reports that it did not complete, or that the user cancelled it, do NOT re-send the same card — ask for the missing or unclear detail first.
 
@@ -535,17 +568,17 @@ mod tests {
         let prompt = budget_prompt();
 
         assert!(prompt.contains("AT MOST ONE"));
-        assert!(prompt.contains("Never emit several fences"));
+        assert!(prompt.contains("never list several top-level actions inside one fence"));
     }
 
-    /// The bulk case that produced the repeated House cards: narrow it and confirm one at a time.
+    /// Now that `batch_actions` covers every action type, narrowing to one-at-a-time only
+    /// applies before the user has named the full list — this pins that fallback still exists.
     #[test]
-    fn budget_helper_prompt_requires_bulk_work_to_be_narrowed_to_one_action() {
+    fn budget_helper_prompt_still_narrows_to_one_action_before_the_full_list_is_known() {
         let prompt = budget_prompt();
 
-        assert!(prompt.contains("spreadsheet"));
-        assert!(prompt.contains("do NOT invent a series of cards"));
-        assert!(prompt.contains("wait for its result"));
+        assert!(prompt.contains("has NOT yet told you every item"));
+        assert!(prompt.contains("propose it as one `batch_actions` card"));
     }
 
     /// The recorded failure and cancellation lines are only useful if the prompt says to read
@@ -638,14 +671,50 @@ mod tests {
         assert!(expense.contains("\"date\": \"2026-03-14\""));
 
         assert!(prompt.contains("AT MOST ONE"));
-        assert!(prompt.contains("Never emit several fences"));
+        assert!(prompt.contains("never list several top-level actions inside one fence"));
     }
 
-    /// Exactly two worked examples. Counted as fence OPENINGS — the one-action rule mentions
-    /// ```action inline as prose, and counting that too would make this assert the wrong number.
+    /// Exactly three worked examples (expense, single category, batch actions). Counted as
+    /// fence OPENINGS — the one-action rule mentions ```action inline as prose, and counting
+    /// that too would make this assert the wrong number.
     #[test]
-    fn the_prompt_carries_exactly_two_action_examples() {
-        assert_eq!(budget_prompt().matches("```action\n").count(), 2);
+    fn the_prompt_carries_exactly_three_action_examples() {
+        assert_eq!(budget_prompt().matches("```action\n").count(), 3);
+    }
+
+    /// The generic batch action the fix adds: without it, a confirmed multi-item request (of
+    /// any action type, not just categories) still goes through one card at a time.
+    #[test]
+    fn budget_helper_prompt_advertises_the_generic_batch_action() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("batch_actions"));
+        assert!(prompt.contains("\"actions\""));
+        assert!(prompt.contains("ANY action type"));
+    }
+
+    #[test]
+    fn the_batch_example_carries_an_array_of_action_items() {
+        let example = action_example(&budget_prompt(), "batch_actions");
+        let (_, params) = example
+            .split_once("\"params\"")
+            .expect("the example has a params object");
+
+        assert!(params.contains("\"category_name\": \"House Related\""));
+        assert!(params.contains("\"category_name\": \"Car\""));
+        assert!(params.contains("\"category_name\": \"Other\""));
+        assert!(params.contains("\"action_type\": \"create_budget_category\""));
+    }
+
+    /// The prompt must tell the model to prefer the batch action over one-at-a-time cards once
+    /// the user has already named every item — this is the behaviour the fix targets, and it
+    /// must apply regardless of which action type(s) are involved.
+    #[test]
+    fn budget_helper_prompt_tells_the_model_to_batch_a_confirmed_multi_item_request() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("do not propose them one card at a time"));
+        assert!(prompt.contains("no matter how many items there are or what type of action they are"));
     }
 
     /// Ids are guessable and stale; the backend ignores them, and the prompt must not invite one.

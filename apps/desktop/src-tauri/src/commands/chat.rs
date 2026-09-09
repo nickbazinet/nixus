@@ -742,9 +742,10 @@ pub struct ActionResult {
 
 /// The confirmed actions the model may propose. Closed so an unrecognized `action_type` is a
 /// validation failure rather than a silently ignored write.
-const ACTION_TYPES: [&str; 5] = [
+const ACTION_TYPES: [&str; 6] = [
     "create_expense",
     "create_budget_category",
+    "batch_actions",
     "update_balance",
     "create_account",
     "update_asset_value",
@@ -780,6 +781,7 @@ fn run_chat_action(
     match action_type {
         "create_expense" => create_expense_action(conn, params),
         "create_budget_category" => create_budget_category_action(conn, params),
+        "batch_actions" => batch_actions_action(conn, params),
         "update_balance" => {
             let account_id = params["account_id"].as_i64().ok_or_else(|| AppError::Validation {
                 message: "account_id is required".to_string(),
@@ -824,6 +826,73 @@ fn run_chat_action(
         }
         other => Err(unknown_action(other)),
     }
+}
+
+/// Sanity cap on a single confirmed batch. Not a hard product limit — just a guard against a
+/// runaway request stalling the UI on one Tauri call; a user with more items than this splits
+/// across two confirms.
+const MAX_BATCH_ACTIONS: usize = 200;
+
+/// Runs every item in one confirmed `batch_actions` card through the SAME dispatch every
+/// single-item card uses, so a batch of expenses, categories, balances, etc. — in any mix —
+/// gets identical validation and idempotency to confirming each one individually.
+///
+/// Best-effort, not all-or-nothing: unlike a homogeneous batch the user reviewed as one fixed
+/// list, this batch can mix independent records (expenses, accounts...) where one bad row (an
+/// unknown category, say) must not erase the rest that were fine. Every item's own outcome is
+/// reported so the model can see exactly what to fix and re-propose only the failures.
+fn batch_actions_action(
+    conn: &rusqlite::Connection,
+    params: &serde_json::Value,
+) -> Result<String, AppError> {
+    let items = params
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .filter(|arr| !arr.is_empty())
+        .ok_or_else(|| AppError::Validation {
+            message: "actions must be a non-empty array".to_string(),
+            field: Some("actions".to_string()),
+        })?;
+
+    if items.len() > MAX_BATCH_ACTIONS {
+        return Err(AppError::Validation {
+            message: format!("A batch may contain at most {} actions", MAX_BATCH_ACTIONS),
+            field: Some("actions".to_string()),
+        });
+    }
+
+    let mut succeeded: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+
+    for (index, item) in items.iter().enumerate() {
+        let position = index + 1;
+        let item_type = item.get("action_type").and_then(|v| v.as_str()).unwrap_or("");
+
+        if item_type.is_empty() {
+            failed.push(format!("#{}: action_type is required", position));
+            continue;
+        }
+        if item_type == "batch_actions" {
+            failed.push(format!("#{}: a batch cannot contain another batch", position));
+            continue;
+        }
+
+        let item_params = item.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        match run_chat_action(conn, item_type, &item_params) {
+            Ok(message) => succeeded.push(message),
+            Err(error) => failed.push(format!("#{} ({}): {}", position, item_type, error)),
+        }
+    }
+
+    let mut message = format!(
+        "Done. {} of {} action(s) completed.",
+        succeeded.len(),
+        items.len()
+    );
+    if !failed.is_empty() {
+        message.push_str(&format!(" Failed: {}", failed.join("; ")));
+    }
+    Ok(message)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1297,6 +1366,109 @@ mod tests {
         assert_eq!(category_rows(&conn)[0].0, "House");
     }
 
+    /* batch_actions — the generic batch that lets a confirmed list of actions, of any single
+     * type or a mix, land in one card instead of one card per item. */
+
+    fn action_item(action_type: &str, params: serde_json::Value) -> serde_json::Value {
+        json!({ "action_type": action_type, "params": params })
+    }
+
+    #[test]
+    fn batch_actions_action_runs_every_item_through_the_normal_dispatch() {
+        let conn = budget_action_test_db();
+
+        let message = batch_actions_action(
+            &conn,
+            &json!({
+                "actions": [
+                    action_item("create_budget_category", json!({ "category_name": "House Related", "group_name": "Needs" })),
+                    action_item("create_budget_category", json!({ "category_name": "Car", "group_name": "Wants" })),
+                ]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            category_rows(&conn),
+            vec![
+                ("House Related".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS),
+                ("Car".to_string(), 2, DEFAULT_CATEGORY_TARGET_CENTS),
+            ]
+        );
+        assert!(message.contains("2 of 2"));
+    }
+
+    #[test]
+    fn batch_actions_action_rejects_an_empty_or_missing_list() {
+        let conn = budget_action_test_db();
+
+        for params in [json!({}), json!({ "actions": [] }), json!({ "actions": "House" })] {
+            let err = batch_actions_action(&conn, &params).unwrap_err();
+            assert_eq!(validation_field(&err), Some("actions"), "{params}");
+        }
+        assert!(category_rows(&conn).is_empty());
+    }
+
+    /// Best-effort, not all-or-nothing: a mixed batch can carry independent records, so one bad
+    /// row must not erase the others that were fine — unlike the old homogeneous category batch,
+    /// this reports the failure and keeps every success.
+    #[test]
+    fn batch_actions_action_keeps_successful_items_when_one_item_fails() {
+        let conn = budget_action_test_db();
+
+        let message = batch_actions_action(
+            &conn,
+            &json!({
+                "actions": [
+                    action_item("create_budget_category", json!({ "category_name": "House Related", "group_name": "Needs" })),
+                    action_item("create_budget_category", json!({ "category_name": "Car", "group_name": "Nonexistent" })),
+                ]
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(category_rows(&conn), vec![("House Related".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS)]);
+        assert!(message.contains("1 of 2"));
+        assert!(message.contains("Failed"));
+    }
+
+    #[test]
+    fn batch_actions_action_rejects_a_nested_batch() {
+        let conn = budget_action_test_db();
+
+        let message = batch_actions_action(
+            &conn,
+            &json!({ "actions": [action_item("batch_actions", json!({ "actions": [] }))] }),
+        )
+        .unwrap();
+
+        assert!(message.contains("0 of 1"));
+        assert!(message.contains("cannot contain another batch"));
+    }
+
+    #[test]
+    fn batch_actions_action_supports_a_mix_of_action_types() {
+        let conn = budget_action_test_db();
+        conn.execute(
+            "INSERT INTO chat_conversations (id, title) VALUES (7, 'Mixed batch')",
+            [],
+        )
+        .unwrap();
+
+        let message = batch_actions_action(
+            &conn,
+            &json!({
+                "actions": [
+                    action_item("create_budget_category", json!({ "category_name": "Vacation Fund", "group_name": "Wants" })),
+                ]
+            }),
+        )
+        .unwrap();
+
+        assert!(message.contains("1 of 1"));
+        assert_eq!(category_rows(&conn).len(), 1);
+    }
+
     /* Dispatch and outcome persistence. */
 
     #[test]
@@ -1334,8 +1506,9 @@ mod tests {
     }
 
     #[test]
-    fn the_closed_action_set_advertises_the_category_action() {
+    fn the_closed_action_set_advertises_the_category_and_batch_actions() {
         assert!(ACTION_TYPES.contains(&"create_budget_category"));
+        assert!(ACTION_TYPES.contains(&"batch_actions"));
     }
 
     /// The failure text has to reach the history the model reads next turn, or the outcome is

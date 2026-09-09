@@ -10,6 +10,7 @@
 export const CHAT_ACTION_TYPES = [
   "create_expense",
   "create_budget_category",
+  "batch_actions",
   "update_balance",
   "create_account",
   "update_asset_value",
@@ -46,6 +47,24 @@ const CHAT_ACTION_INVALIDATION: Record<ChatActionType, readonly (readonly string
     ["top-budget-categories"],
     ["dashboard"],
   ],
+  /* A batch may mix any of the other action types, so its items are not known ahead of time —
+   * this invalidates the union of everything any single action type could touch, which is the
+   * only way to stay correct without inspecting each item's own action_type here. */
+  batch_actions: [
+    ["expenses"],
+    ["budgets"],
+    ["budget-status"],
+    ["budget-summary"],
+    ["spending-breakdown"],
+    ["budget-groups"],
+    ["budget-categories"],
+    ["all-budget-categories"],
+    ["top-budget-categories"],
+    ["accounts"],
+    ["net-worth-current"],
+    ["assets"],
+    ["dashboard"],
+  ],
   update_balance: [["accounts"], ["dashboard"], ["net-worth-current"]],
   create_account: [["accounts"], ["dashboard"]],
   update_asset_value: [["assets"], ["net-worth-current"]],
@@ -80,14 +99,32 @@ function hasValidCategoryParams(params: Record<string, unknown>): boolean {
 }
 
 /**
- * Param guards by action type. Partial on purpose: only `create_budget_category` is checked, since
- * it is the type whose malformed legacy cards reached the user. A type with no entry is accepted on
- * its type alone, exactly as before — do not fill these in without a reason to.
+ * Whether `batch_actions` params carry a non-empty array where every item names one of the
+ * OTHER action types (never `batch_actions` itself) and passes that type's own param guard.
+ */
+function hasValidBatchActionsParams(params: Record<string, unknown>): boolean {
+  const actions = params.actions;
+  if (!Array.isArray(actions) || actions.length === 0) return false;
+  return actions.every((item): boolean => {
+    if (typeof item !== "object" || item === null) return false;
+    const { action_type, params: itemParams } = item as Record<string, unknown>;
+    if (!isChatActionType(action_type) || action_type === "batch_actions") return false;
+    if (typeof itemParams !== "object" || itemParams === null) return false;
+    return hasValidChatActionParams(action_type, itemParams as Record<string, unknown>);
+  });
+}
+
+/**
+ * Param guards by action type. Partial on purpose: only the category and batch action types are
+ * checked, since those are the types whose malformed legacy cards reached the user. A type with
+ * no entry is accepted on its type alone, exactly as before — do not fill these in without a
+ * reason to.
  */
 const CHAT_ACTION_PARAM_GUARDS: Partial<
   Record<ChatActionType, (params: Record<string, unknown>) => boolean>
 > = {
   create_budget_category: hasValidCategoryParams,
+  batch_actions: hasValidBatchActionsParams,
 };
 
 export function hasValidChatActionParams(
