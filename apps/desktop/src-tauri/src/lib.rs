@@ -267,6 +267,7 @@ pub fn run() {
             commands::chat::validate_chat_attachment,
             commands::chat::get_chat_messages,
             commands::chat::execute_chat_action,
+            commands::chat::record_chat_action_cancelled,
             commands::chat::list_conversations,
             commands::onboarding::check_onboarding_status,
             commands::onboarding::complete_onboarding,

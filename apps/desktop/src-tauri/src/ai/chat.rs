@@ -106,14 +106,61 @@ When the user asks you to PERFORM AN ACTION (add expense, update balance, create
 }}
 ```
 
-Valid action_types: "create_expense", "update_balance", "create_account", "update_asset_value"
+Valid action_types: "create_expense", "create_budget_category", "update_balance", "create_account", "update_asset_value"
 - For create_expense: params must include merchant, amount_cents, category_name, date
+- For create_budget_category: params must include category_name and group_name; target_cents is optional
 - For update_balance: params must include account_id, balance_cents
 - For create_account: params must include name, institution, account_type, currency
 - For update_asset_value: params must include asset_id, value_cents
 
 For create_expense, `category_name` must be the exact full name of one category listed in the data — never a numeric ID and never a fragment. If two listed categories share that name, or none matches, ask the user which category to use.
 If you cannot determine a required field, ask the user for clarification instead of guessing.
+
+### Creating a budget category
+
+`create_budget_category` adds ONE new category to an EXISTING budget group.
+
+- `category_name` (string, required): the new category's name.
+- `group_name` (string, required): must be one of the group names listed under "Budget Groups" in the data. There is no way to create a group, and a name that is not listed will be refused — if you cannot tell which group the user means, ASK instead of guessing.
+- `target_cents` (integer, optional): the monthly target. Omit it and the category is created with a $1.00 placeholder the user can edit later. If you do send it, it must be a whole number of cents greater than zero.
+
+The card the user approves is what `display.details` says, so it must name the group and state the target — including when you omit `target_cents` and the placeholder applies. This is the exact shape, with the target omitted:
+
+```action
+{{
+  "action": true,
+  "action_type": "create_budget_category",
+  "display": {{
+    "label": "Add Budget Category",
+    "details": [
+      {{ "field": "Category", "value": "House" }},
+      {{ "field": "Group", "value": "Needs" }},
+      {{ "field": "Target", "value": "$1.00 (placeholder)" }}
+    ]
+  }},
+  "params": {{
+    "category_name": "House",
+    "group_name": "Needs"
+  }}
+}}
+```
+
+When the user DID name a target, send `target_cents` and show that figure instead of the placeholder text.
+
+Never send an id of any kind for either the category or the group. Ids in a payload are ignored, and names are the only reference.
+
+If the category already exists, confirming again changes nothing and reports that it already exists, so there is no harm in a repeat — but do not propose a card for a category you can already see in the data.
+
+### One action per response
+
+Emit AT MOST ONE ```action fence per response. Never emit several fences, and never list several actions inside one fence — only the first is ever shown to the user, so the rest are silently lost.
+
+When the user asks for something that needs many writes (a spreadsheet of categories, a whole budget, a batch of expenses), do NOT invent a series of cards. Instead:
+1. Summarise in plain text what you understood and how many items it involves.
+2. Ask the user to confirm the breakdown, or to name which one to start with.
+3. Propose ONE action, wait for its result, then propose the next.
+
+A result message tells you what actually happened. If a previous action reports that it did not complete, or that the user cancelled it, do NOT re-send the same card — ask for the missing or unclear detail first.
 
 For data QUERIES (not actions), respond with plain text as normal.
 
@@ -433,6 +480,185 @@ mod tests {
         let out = format_tool_result(&vacation_filters(), &[vacation_row()]);
 
         assert!(out.contains("query_expenses"));
+    }
+
+    fn budget_prompt() -> String {
+        build_system_prompt("budget-helper", "2026-08-25", "Budget Groups:\n  - Needs\n")
+    }
+
+    /* The prompt contract for the category card. The model was already emitting
+     * `create_budget_category` before the prompt named it, so these pin the shape the backend
+     * now accepts rather than the shape it guessed. */
+
+    #[test]
+    fn budget_helper_prompt_advertises_the_category_action() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("create_budget_category"));
+    }
+
+    /// Both names are required server-side, so the prompt has to ask for both or every card is
+    /// a validation failure the user sees as a dead button.
+    #[test]
+    fn budget_helper_prompt_requires_both_names_for_a_category_card() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("category_name"));
+        assert!(prompt.contains("group_name"));
+    }
+
+    /// The optional target and its placeholder: without this the model either omits a required
+    /// field or invents a figure the user never approved.
+    #[test]
+    fn budget_helper_prompt_states_the_target_is_optional_with_a_one_dollar_default() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("target_cents"));
+        assert!(prompt.contains("optional"));
+        assert!(prompt.contains("$1.00"));
+    }
+
+    /// A group is never auto-created, so an undeterminable group must become a question rather
+    /// than a guessed name the resolver will refuse.
+    #[test]
+    fn budget_helper_prompt_tells_the_model_to_ask_when_the_group_is_unclear() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("ASK instead of guessing"));
+        assert!(prompt.contains("no way to create a group"));
+    }
+
+    /// Only the first fence is ever rendered, so a multi-fence response silently drops writes
+    /// the user believes they approved.
+    #[test]
+    fn budget_helper_prompt_permits_at_most_one_action_fence() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("AT MOST ONE"));
+        assert!(prompt.contains("Never emit several fences"));
+    }
+
+    /// The bulk case that produced the repeated House cards: narrow it and confirm one at a time.
+    #[test]
+    fn budget_helper_prompt_requires_bulk_work_to_be_narrowed_to_one_action() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("spreadsheet"));
+        assert!(prompt.contains("do NOT invent a series of cards"));
+        assert!(prompt.contains("wait for its result"));
+    }
+
+    /// The recorded failure and cancellation lines are only useful if the prompt says to read
+    /// them instead of resending.
+    #[test]
+    fn budget_helper_prompt_tells_the_model_not_to_resend_a_failed_or_cancelled_card() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("did not complete"));
+        assert!(prompt.contains("cancelled"));
+        assert!(prompt.contains("do NOT re-send the same card"));
+    }
+
+    /// The ```action fence for one action_type, so an assertion about what a card omits cannot be
+    /// satisfied by the same token appearing in the surrounding prose or in another example.
+    fn action_example(prompt: &str, action_type: &str) -> String {
+        let needle = format!("\"action_type\": \"{}\"", action_type);
+        prompt
+            .split("```action")
+            .find(|block| block.contains(&needle))
+            .map(|block| {
+                block
+                    .split_once("```")
+                    .map(|(fence, _)| fence.to_string())
+                    .unwrap_or_else(|| block.to_string())
+            })
+            .unwrap_or_else(|| panic!("no action example for {action_type}"))
+    }
+
+    #[test]
+    fn the_prompt_carries_an_action_example_for_creating_a_category() {
+        let example = action_example(&budget_prompt(), "create_budget_category");
+
+        assert!(example.contains("\"action\": true"));
+        assert!(example.contains("\"label\": \"Add Budget Category\""));
+    }
+
+    /// The three details the user reads before approving. Without the group on the card they are
+    /// confirming a write whose destination they cannot see.
+    #[test]
+    fn the_category_example_shows_category_group_and_target_details() {
+        let example = action_example(&budget_prompt(), "create_budget_category");
+
+        assert!(example.contains("{ \"field\": \"Category\", \"value\": \"House\" }"));
+        assert!(example.contains("{ \"field\": \"Group\", \"value\": \"Needs\" }"));
+        assert!(
+            example.contains("{ \"field\": \"Target\", \"value\": \"$1.00 (placeholder)\" }")
+        );
+    }
+
+    /// The visible placeholder wording, pinned separately: a card that shows a bare "$1.00" reads
+    /// as a figure the user chose rather than one the backend supplied.
+    #[test]
+    fn the_category_example_labels_the_default_target_as_a_placeholder() {
+        let example = action_example(&budget_prompt(), "create_budget_category");
+
+        assert!(example.contains("$1.00 (placeholder)"));
+    }
+
+    #[test]
+    fn the_category_example_params_carry_both_required_names() {
+        let example = action_example(&budget_prompt(), "create_budget_category");
+        let (_, params) = example
+            .split_once("\"params\"")
+            .expect("the example has a params object");
+
+        assert!(params.contains("\"category_name\": \"House\""));
+        assert!(params.contains("\"group_name\": \"Needs\""));
+    }
+
+    /// The example must actually exercise the documented default: a `target_cents` here would
+    /// demonstrate the opposite of the omission the surrounding text describes.
+    #[test]
+    fn the_category_example_omits_the_optional_target() {
+        let example = action_example(&budget_prompt(), "create_budget_category");
+
+        assert!(!example.contains("target_cents"), "{example}");
+    }
+
+    /// The example is one fence among the prompt's examples, and adding it must not have loosened
+    /// the one-action rule or displaced the expense example the other actions are modelled on.
+    #[test]
+    fn adding_the_category_example_leaves_the_expense_example_and_one_action_rule_intact() {
+        let prompt = budget_prompt();
+        let expense = action_example(&prompt, "create_expense");
+
+        assert!(expense.contains("\"merchant\": \"Costco\""));
+        assert!(expense.contains("\"amount_cents\": 4500"));
+        assert!(expense.contains("\"category_name\": \"Groceries\""));
+        assert!(expense.contains("\"date\": \"2026-03-14\""));
+
+        assert!(prompt.contains("AT MOST ONE"));
+        assert!(prompt.contains("Never emit several fences"));
+    }
+
+    /// Exactly two worked examples. Counted as fence OPENINGS — the one-action rule mentions
+    /// ```action inline as prose, and counting that too would make this assert the wrong number.
+    #[test]
+    fn the_prompt_carries_exactly_two_action_examples() {
+        assert_eq!(budget_prompt().matches("```action\n").count(), 2);
+    }
+
+    /// Ids are guessable and stale; the backend ignores them, and the prompt must not invite one.
+    ///
+    /// Phrased without naming any id field on purpose — the sibling test below asserts no id
+    /// token appears anywhere in the prompt, and spelling one out here would both break that
+    /// guard and hand the model the very field name to try.
+    #[test]
+    fn budget_helper_prompt_forbids_sending_any_id_for_a_category_card() {
+        let prompt = budget_prompt();
+
+        assert!(prompt.contains("Never send an id of any kind"));
+        assert!(prompt.contains("names are the only reference"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ use crate::db::income as income_db;
 use crate::db::maintenance as maintenance_db;
 use crate::db::DbState;
 use crate::error::AppError;
-use crate::models::{CreateAccountInput, CreateExpenseInput};
+use crate::models::{CreateAccountInput, CreateBudgetCategory, CreateExpenseInput};
 
 #[derive(Serialize)]
 pub struct SendMessageResult {
@@ -118,13 +118,32 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
         ));
     }
 
+    // Listed before the categories so the model sees the groups a new category may be filed
+    // under. `create_budget_category` requires an existing group name and never creates one,
+    // so an invented name is a refused card.
+    let groups = budget_db::get_budget_groups(&conn).unwrap_or_default();
+    if groups.is_empty() {
+        ctx.push_str("Budget Groups: none yet.\n\n");
+    } else {
+        ctx.push_str("Budget Groups (the only valid group_name values):\n");
+        for group in &groups {
+            ctx.push_str(&format!("  - {}\n", group.name));
+        }
+        ctx.push('\n');
+    }
+
     // Budget categories with spending
     if let Ok(categories) = budget_db::get_budget_status(&conn, year, month) {
         ctx.push_str("Budget Categories:\n");
         for cat in &categories {
+            let group_name = groups
+                .iter()
+                .find(|group| group.id == cat.group_id)
+                .map(|group| group.name.as_str())
+                .unwrap_or("unknown");
             ctx.push_str(&format!(
-                "  - {}: target {} cents, spent {} cents\n",
-                cat.name, cat.target_cents, cat.spent_cents
+                "  - {} (group: {}): target {} cents, spent {} cents\n",
+                cat.name, group_name, cat.target_cents, cat.spent_cents
             ));
         }
         ctx.push('\n');
@@ -403,6 +422,122 @@ fn invalid_category_name(message: impl Into<String>) -> AppError {
     }
 }
 
+fn invalid_group_name(message: impl Into<String>) -> AppError {
+    AppError::Validation {
+        message: message.into(),
+        field: Some("group_name".to_string()),
+    }
+}
+
+/// The placeholder a category gets when the user never named a target, matching the
+/// statement-import flow's own placeholder. `create_budget_category` rejects zero, so the
+/// default cannot be 0 and the user edits it in the budget screen afterwards.
+const DEFAULT_CATEGORY_TARGET_CENTS: i64 = 100;
+
+fn required_name(params: &serde_json::Value, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
+/// The group a new category is filed under. Never auto-created: a group is a structural
+/// choice the user owns, and inventing one silently reshapes their budget.
+fn resolve_action_group_id(
+    conn: &rusqlite::Connection,
+    params: &serde_json::Value,
+) -> Result<i64, AppError> {
+    let name = required_name(params, "group_name").ok_or_else(|| {
+        invalid_group_name("group_name is required — ask which budget group to use")
+    })?;
+
+    match budget_db::resolve_group_id_by_name(conn, &name)? {
+        budget_db::GroupNameMatch::Unique(id) => Ok(id),
+        budget_db::GroupNameMatch::Missing => Err(invalid_group_name(format!(
+            "No budget group named \"{}\" — ask the user which existing group to use",
+            name
+        ))),
+        budget_db::GroupNameMatch::Ambiguous => Err(invalid_group_name(format!(
+            "More than one budget group is named \"{}\" — ask for a more specific group",
+            name
+        ))),
+    }
+}
+
+/// Target in cents, defaulting to the placeholder when the model omitted it.
+///
+/// An explicitly supplied non-positive or non-integer target is refused rather than
+/// silently replaced by the default: the user saw that figure on the confirmation card.
+fn action_target_cents(params: &serde_json::Value) -> Result<i64, AppError> {
+    let invalid = || AppError::Validation {
+        message: "target_cents must be a whole number of cents greater than 0".to_string(),
+        field: Some("target_cents".to_string()),
+    };
+
+    match params.get("target_cents") {
+        None | Some(serde_json::Value::Null) => Ok(DEFAULT_CATEGORY_TARGET_CENTS),
+        Some(value) => {
+            let cents = match value {
+                serde_json::Value::Number(number) => number.as_i64().ok_or_else(invalid)?,
+                serde_json::Value::String(text) => text.trim().parse().map_err(|_| invalid())?,
+                _ => return Err(invalid()),
+            };
+            if cents <= 0 {
+                return Err(invalid());
+            }
+            Ok(cents)
+        }
+    }
+}
+
+/// Creates the category the confirmation card described, or reports that it already exists.
+///
+/// Idempotent by name because the model re-proposes an identical card whenever it cannot see
+/// the outcome of the last one: a second confirm of the same name is the user asking for a
+/// state that already holds, so it succeeds without a second row. Ambiguity is still a
+/// validation failure — two categories share that name and neither is "the" one.
+fn create_budget_category_action(
+    conn: &rusqlite::Connection,
+    params: &serde_json::Value,
+) -> Result<String, AppError> {
+    let name = required_name(params, "category_name")
+        .ok_or_else(|| invalid_category_name("category_name is required"))?;
+
+    // Resolved before the group so a repeat confirm is a no-op even when the model dropped or
+    // changed the group name on the second card.
+    match budget_db::resolve_active_category_id_by_name(conn, &name)? {
+        budget_db::CategoryNameMatch::Unique(_) => {
+            return Ok(format!("\"{}\" already exists in your budget.", name));
+        }
+        budget_db::CategoryNameMatch::Ambiguous => {
+            return Err(invalid_category_name(format!(
+                "More than one budget category is already named \"{}\"",
+                name
+            )));
+        }
+        budget_db::CategoryNameMatch::Missing => {}
+    }
+
+    let group_id = resolve_action_group_id(conn, params)?;
+    let target_cents = action_target_cents(params)?;
+
+    let category = budget_db::create_budget_category(
+        conn,
+        &CreateBudgetCategory {
+            group_id,
+            name,
+            target_cents,
+        },
+    )?;
+
+    Ok(format!(
+        "Done. Category \"{}\" added with a ${:.2} target.",
+        category.name,
+        category.target_cents as f64 / 100.0
+    ))
+}
+
 fn expense_filters_from_params(
     params: &serde_json::Value,
 ) -> Result<expense_db::ExpenseSearchFilters, AppError> {
@@ -605,6 +740,92 @@ pub struct ActionResult {
     pub message: String,
 }
 
+/// The confirmed actions the model may propose. Closed so an unrecognized `action_type` is a
+/// validation failure rather than a silently ignored write.
+const ACTION_TYPES: [&str; 5] = [
+    "create_expense",
+    "create_budget_category",
+    "update_balance",
+    "create_account",
+    "update_asset_value",
+];
+
+/// Recorded verbatim when a confirmed action fails, and when the user cancels one.
+///
+/// Fixed and server-generated: these become part of the history the model reads next turn, so
+/// interpolating the failure's own message would let a rejected payload write its text into the
+/// conversation. Their whole job is to make the outcome visible — without them a failure is
+/// volatile and the model re-proposes the identical card forever.
+const ACTION_FAILED_TEXT: &str = "That action did not complete and nothing was changed. Ask the user for the missing or unclear detail, then propose a corrected action — do not repeat the same card.";
+
+const ACTION_CANCELLED_TEXT: &str =
+    "The user cancelled that action and nothing was changed. Do not propose the same action again unless they ask for it.";
+
+fn unknown_action(action_type: &str) -> AppError {
+    AppError::Validation {
+        message: format!("Unknown action type: {}", action_type),
+        field: None,
+    }
+}
+
+/// Runs one confirmed action, returning the message the user sees on success.
+///
+/// Split out from the command so success and failure share one persistence path: before this
+/// existed, an early `?` returned before anything was written and the outcome vanished.
+fn run_chat_action(
+    conn: &rusqlite::Connection,
+    action_type: &str,
+    params: &serde_json::Value,
+) -> Result<String, AppError> {
+    match action_type {
+        "create_expense" => create_expense_action(conn, params),
+        "create_budget_category" => create_budget_category_action(conn, params),
+        "update_balance" => {
+            let account_id = params["account_id"].as_i64().ok_or_else(|| AppError::Validation {
+                message: "account_id is required".to_string(),
+                field: Some("account_id".to_string()),
+            })?;
+            let balance_cents = params["balance_cents"].as_i64().ok_or_else(|| AppError::Validation {
+                message: "balance_cents is required".to_string(),
+                field: Some("balance_cents".to_string()),
+            })?;
+            let (_, account) = account_db::update_account_balance(conn, account_id, balance_cents)?;
+            Ok(format!(
+                "Done. {} balance updated to ${:.2}.",
+                account.name,
+                account.balance_cents as f64 / 100.0
+            ))
+        }
+        "create_account" => {
+            let input = CreateAccountInput {
+                name: params["name"].as_str().unwrap_or("").to_string(),
+                institution: params["institution"].as_str().unwrap_or("").to_string(),
+                account_type: params["account_type"].as_str().unwrap_or("chequing").to_string(),
+                currency: params["currency"].as_str().unwrap_or("CAD").to_string(),
+            };
+            let account = account_db::insert_account(conn, &input)?;
+            Ok(format!("Done. Account \"{}\" created.", account.name))
+        }
+        "update_asset_value" => {
+            let asset_id = params["asset_id"].as_i64().ok_or_else(|| AppError::Validation {
+                message: "asset_id is required".to_string(),
+                field: Some("asset_id".to_string()),
+            })?;
+            let value_cents = params["value_cents"].as_i64().ok_or_else(|| AppError::Validation {
+                message: "value_cents is required".to_string(),
+                field: Some("value_cents".to_string()),
+            })?;
+            let (_, asset) = asset_db::update_asset_value(conn, asset_id, value_cents)?;
+            Ok(format!(
+                "Done. {} value updated to ${:.2}.",
+                asset.name,
+                asset.value_cents as f64 / 100.0
+            ))
+        }
+        other => Err(unknown_action(other)),
+    }
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn execute_chat_action(
     state: State<DbState>,
@@ -617,64 +838,30 @@ pub fn execute_chat_action(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let result_msg = match action_type.as_str() {
-        "create_expense" => create_expense_action(conn, &params)?,
-        "update_balance" => {
-            let account_id = params["account_id"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "account_id is required".to_string(),
-                field: Some("account_id".to_string()),
-            })?;
-            let balance_cents = params["balance_cents"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "balance_cents is required".to_string(),
-                field: Some("balance_cents".to_string()),
-            })?;
-            let (_, account) = account_db::update_account_balance(&conn, account_id, balance_cents)?;
-            format!(
-                "Done. {} balance updated to ${:.2}.",
-                account.name,
-                account.balance_cents as f64 / 100.0
-            )
-        }
-        "create_account" => {
-            let input = CreateAccountInput {
-                name: params["name"].as_str().unwrap_or("").to_string(),
-                institution: params["institution"].as_str().unwrap_or("").to_string(),
-                account_type: params["account_type"].as_str().unwrap_or("chequing").to_string(),
-                currency: params["currency"].as_str().unwrap_or("CAD").to_string(),
-            };
-            let account = account_db::insert_account(&conn, &input)?;
-            format!("Done. Account \"{}\" created.", account.name)
-        }
-        "update_asset_value" => {
-            let asset_id = params["asset_id"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "asset_id is required".to_string(),
-                field: Some("asset_id".to_string()),
-            })?;
-            let value_cents = params["value_cents"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "value_cents is required".to_string(),
-                field: Some("value_cents".to_string()),
-            })?;
-            let (_, asset) = asset_db::update_asset_value(&conn, asset_id, value_cents)?;
-            format!(
-                "Done. {} value updated to ${:.2}.",
-                asset.name,
-                asset.value_cents as f64 / 100.0
-            )
-        }
-        _ => {
-            return Err(AppError::Validation {
-                message: format!("Unknown action type: {}", action_type),
-                field: None,
-            });
+    let result_msg = match run_chat_action(conn, &action_type, &params) {
+        Ok(message) => message,
+        Err(error) => {
+            // The failure has to outlive this call, or the next turn's history looks as though
+            // the card was never confirmed and the model proposes it again unchanged. A failure
+            // to record the failure must not mask the original error.
+            let _ = chat_db::insert_message(
+                conn,
+                conversation_id,
+                "assistant",
+                ACTION_FAILED_TEXT,
+                "chat",
+            );
+            info!("Chat action failed: {}", action_type);
+            return Err(error);
         }
     };
 
     // Audit log
     let details = serde_json::to_string(&params).unwrap_or_default();
-    audit_db::insert_audit_log(&conn, &action_type, 0, "chat_action", None, Some(&details))?;
+    audit_db::insert_audit_log(conn, &action_type, 0, "chat_action", None, Some(&details))?;
 
     // Insert success message into chat
-    chat_db::insert_message(&conn, conversation_id, "assistant", &result_msg, "chat")?;
+    chat_db::insert_message(conn, conversation_id, "assistant", &result_msg, "chat")?;
 
     // The action type only: `result_msg` carries the merchant and amount, which is
     // transaction content and must not reach an app log (AD-11). The user's own
@@ -685,6 +872,39 @@ pub fn execute_chat_action(
         success: true,
         message: result_msg,
     })
+}
+
+/// Records that the user declined a confirmed action, so the model stops re-proposing it.
+///
+/// Deliberately narrow: it takes no message text. The inserted line is a fixed server-owned
+/// constant, so the webview cannot write arbitrary assistant turns into the conversation the
+/// model then reads as its own prior words.
+#[tauri::command(rename_all = "snake_case")]
+pub fn record_chat_action_cancelled(
+    state: State<DbState>,
+    conversation_id: i64,
+    action_type: String,
+) -> Result<(), AppError> {
+    if !ACTION_TYPES.contains(&action_type.as_str()) {
+        return Err(unknown_action(&action_type));
+    }
+
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    chat_db::insert_message(
+        conn,
+        conversation_id,
+        "assistant",
+        ACTION_CANCELLED_TEXT,
+        "chat",
+    )?;
+
+    info!("Chat action cancelled: {}", action_type);
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -768,6 +988,398 @@ mod tests {
 
     fn roles(turns: &[(ConversationRole, String)]) -> Vec<ConversationRole> {
         turns.iter().map(|(role, _)| role.clone()).collect()
+    }
+
+    /// Groups plus categories plus the chat tables, so one fixture can cover the action itself
+    /// AND the history the model reads afterwards.
+    fn budget_action_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE budget_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE budget_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL REFERENCES budget_groups(id),
+                name TEXT NOT NULL,
+                target_cents INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at TEXT
+            );
+            CREATE TABLE chat_conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT,
+                agent_id TEXT NOT NULL DEFAULT 'budget-helper',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                message_type TEXT NOT NULL DEFAULT 'chat',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO budget_groups (id, name, sort_order) VALUES (1, 'Needs', 1);
+            INSERT INTO budget_groups (id, name, sort_order) VALUES (2, 'Wants', 2);
+            INSERT INTO chat_conversations (id, title) VALUES (5, 'House budget');",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn category_rows(conn: &Connection) -> Vec<(String, i64, i64)> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, group_id, target_cents FROM budget_categories
+                 WHERE deleted_at IS NULL ORDER BY id",
+            )
+            .unwrap();
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn house_params() -> serde_json::Value {
+        json!({ "category_name": "House", "group_name": "Needs" })
+    }
+
+    /* create_budget_category — the action the model was already proposing and the backend
+     * rejected as unknown. */
+
+    #[test]
+    fn create_budget_category_action_creates_the_category_in_the_named_group() {
+        let conn = budget_action_test_db();
+
+        let message = create_budget_category_action(
+            &conn,
+            &json!({ "category_name": "House", "group_name": "Wants", "target_cents": 250_000 }),
+        )
+        .unwrap();
+
+        assert_eq!(category_rows(&conn), vec![("House".to_string(), 2, 250_000)]);
+        assert!(message.contains("House"));
+        assert!(message.contains("$2500.00"));
+    }
+
+    /// An omitted target must not fail the >0 rule `create_budget_category` enforces; the user
+    /// edits the placeholder in the budget screen.
+    #[test]
+    fn create_budget_category_action_defaults_an_omitted_target_to_one_dollar() {
+        let conn = budget_action_test_db();
+
+        create_budget_category_action(&conn, &house_params()).unwrap();
+
+        assert_eq!(
+            category_rows(&conn),
+            vec![("House".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS)]
+        );
+    }
+
+    #[test]
+    fn create_budget_category_action_defaults_an_explicit_null_target() {
+        let conn = budget_action_test_db();
+
+        create_budget_category_action(
+            &conn,
+            &json!({ "category_name": "House", "group_name": "Needs", "target_cents": null }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            category_rows(&conn),
+            vec![("House".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS)]
+        );
+    }
+
+    /// The idempotency the whole fix turns on: the model re-proposes an identical card whenever
+    /// it cannot see the previous outcome, so a second confirm must succeed WITHOUT a second row.
+    #[test]
+    fn create_budget_category_action_is_a_no_op_success_on_an_exact_repeat() {
+        let conn = budget_action_test_db();
+        create_budget_category_action(&conn, &house_params()).unwrap();
+
+        let message = create_budget_category_action(&conn, &house_params()).unwrap();
+
+        assert_eq!(category_rows(&conn).len(), 1, "no duplicate row");
+        assert!(message.contains("already exists"), "{message}");
+    }
+
+    #[test]
+    fn create_budget_category_action_treats_a_differently_cased_repeat_as_the_same_category() {
+        let conn = budget_action_test_db();
+        create_budget_category_action(&conn, &house_params()).unwrap();
+
+        let message = create_budget_category_action(
+            &conn,
+            &json!({ "category_name": "  hOuSe ", "group_name": "Needs" }),
+        )
+        .unwrap();
+
+        assert_eq!(category_rows(&conn).len(), 1);
+        assert!(message.contains("already exists"), "{message}");
+    }
+
+    /// A repeat whose group name drifted must still be a no-op rather than a group failure: the
+    /// category already exists, so the group is no longer a question.
+    #[test]
+    fn create_budget_category_action_no_ops_a_repeat_even_when_the_group_name_changed() {
+        let conn = budget_action_test_db();
+        create_budget_category_action(&conn, &house_params()).unwrap();
+
+        let message = create_budget_category_action(
+            &conn,
+            &json!({ "category_name": "House", "group_name": "Nonexistent" }),
+        )
+        .unwrap();
+
+        assert_eq!(category_rows(&conn).len(), 1);
+        assert!(message.contains("already exists"), "{message}");
+    }
+
+    #[test]
+    fn create_budget_category_action_rejects_an_ambiguous_existing_category() {
+        let conn = budget_action_test_db();
+        conn.execute(
+            "INSERT INTO budget_categories (group_id, name) VALUES (1, 'House'), (2, 'house')",
+            [],
+        )
+        .unwrap();
+
+        let err = create_budget_category_action(&conn, &house_params()).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("category_name"));
+        assert_eq!(category_rows(&conn).len(), 2, "nothing created");
+    }
+
+    #[test]
+    fn create_budget_category_action_rejects_a_missing_group() {
+        let conn = budget_action_test_db();
+
+        let err = create_budget_category_action(
+            &conn,
+            &json!({ "category_name": "House", "group_name": "Housing" }),
+        )
+        .unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("group_name"));
+        assert!(category_rows(&conn).is_empty(), "nothing created");
+    }
+
+    #[test]
+    fn create_budget_category_action_rejects_an_ambiguous_group() {
+        let conn = budget_action_test_db();
+        conn.execute("INSERT INTO budget_groups (name) VALUES ('needs')", [])
+            .unwrap();
+
+        let err = create_budget_category_action(&conn, &house_params()).unwrap_err();
+
+        assert_eq!(validation_field(&err), Some("group_name"));
+        assert!(category_rows(&conn).is_empty());
+    }
+
+    /// Groups are the user's structure. A card with no group must ASK, never auto-create one.
+    #[test]
+    fn create_budget_category_action_requires_a_group_name() {
+        let conn = budget_action_test_db();
+
+        for params in [
+            json!({ "category_name": "House" }),
+            json!({ "category_name": "House", "group_name": "   " }),
+            json!({ "category_name": "House", "group_name": null }),
+            json!({ "category_name": "House", "group_name": 1 }),
+        ] {
+            let err = create_budget_category_action(&conn, &params).unwrap_err();
+            assert_eq!(validation_field(&err), Some("group_name"), "{params}");
+        }
+
+        assert!(category_rows(&conn).is_empty());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM budget_groups", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            2,
+            "no group may be auto-created"
+        );
+    }
+
+    #[test]
+    fn create_budget_category_action_requires_a_category_name() {
+        let conn = budget_action_test_db();
+
+        for params in [
+            json!({ "group_name": "Needs" }),
+            json!({ "category_name": "  ", "group_name": "Needs" }),
+            json!({ "category_name": 7, "group_name": "Needs" }),
+        ] {
+            let err = create_budget_category_action(&conn, &params).unwrap_err();
+            assert_eq!(validation_field(&err), Some("category_name"), "{params}");
+        }
+    }
+
+    /// An explicit target the user saw on the card must be honoured or refused — never silently
+    /// swapped for the placeholder.
+    #[test]
+    fn create_budget_category_action_rejects_a_non_positive_or_fractional_target() {
+        let conn = budget_action_test_db();
+
+        for target in [json!(0), json!(-1), json!(1.5), json!("abc"), json!(true)] {
+            let params =
+                json!({ "category_name": "House", "group_name": "Needs", "target_cents": target });
+            let err = create_budget_category_action(&conn, &params).unwrap_err();
+
+            match &err {
+                AppError::Validation { field, .. } => {
+                    assert_eq!(field.as_deref(), Some("target_cents"), "{target}")
+                }
+                other => panic!("expected validation for {target}, got {other:?}"),
+            }
+        }
+
+        assert!(category_rows(&conn).is_empty());
+    }
+
+    #[test]
+    fn create_budget_category_action_accepts_a_quoted_integer_target() {
+        let conn = budget_action_test_db();
+
+        create_budget_category_action(
+            &conn,
+            &json!({ "category_name": "House", "group_name": "Needs", "target_cents": "4500" }),
+        )
+        .unwrap();
+
+        assert_eq!(category_rows(&conn), vec![("House".to_string(), 1, 4_500)]);
+    }
+
+    /// Ids are guessable and can be carried over from an earlier turn, so names are the only
+    /// reference: a payload's own group_id must not decide where the category lands.
+    #[test]
+    fn create_budget_category_action_ignores_model_supplied_ids() {
+        let conn = budget_action_test_db();
+
+        create_budget_category_action(
+            &conn,
+            &json!({
+                "category_name": "House",
+                "group_name": "Wants",
+                "group_id": 1,
+                "category_id": 99,
+                "budget_category_id": 99,
+                "id": 99
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(
+            category_rows(&conn),
+            vec![("House".to_string(), 2, DEFAULT_CATEGORY_TARGET_CENTS)],
+            "group_name must win over a supplied group_id"
+        );
+    }
+
+    #[test]
+    fn create_budget_category_action_trims_the_stored_name() {
+        let conn = budget_action_test_db();
+
+        create_budget_category_action(
+            &conn,
+            &json!({ "category_name": "  House  ", "group_name": "Needs" }),
+        )
+        .unwrap();
+
+        assert_eq!(category_rows(&conn)[0].0, "House");
+    }
+
+    /* Dispatch and outcome persistence. */
+
+    #[test]
+    fn run_chat_action_dispatches_the_category_action() {
+        let conn = budget_action_test_db();
+
+        let message = run_chat_action(&conn, "create_budget_category", &house_params()).unwrap();
+
+        assert!(message.contains("House"));
+        assert_eq!(category_rows(&conn).len(), 1);
+    }
+
+    #[test]
+    fn run_chat_action_rejects_an_action_outside_the_closed_set() {
+        let conn = budget_action_test_db();
+
+        let err = run_chat_action(&conn, "delete_everything", &json!({})).unwrap_err();
+
+        assert!(validation_message(&err).contains("Unknown action type"));
+    }
+
+    /// Every advertised action must dispatch: an action the prompt names but the match does not
+    /// handle is exactly the bug being fixed.
+    #[test]
+    fn every_action_type_in_the_closed_set_is_dispatched() {
+        let conn = budget_action_test_db();
+
+        for action_type in ACTION_TYPES {
+            let err = run_chat_action(&conn, action_type, &json!({})).unwrap_err();
+            assert!(
+                !validation_message(&err).contains("Unknown action type"),
+                "{action_type} is advertised but not dispatched"
+            );
+        }
+    }
+
+    #[test]
+    fn the_closed_action_set_advertises_the_category_action() {
+        assert!(ACTION_TYPES.contains(&"create_budget_category"));
+    }
+
+    /// The failure text has to reach the history the model reads next turn, or the outcome is
+    /// volatile and the identical card comes back.
+    #[test]
+    fn a_recorded_failure_is_visible_to_the_model_history() {
+        let conn = budget_action_test_db();
+
+        chat_db::insert_message(&conn, 5, "user", "add a House category", "chat").unwrap();
+        chat_db::insert_message(&conn, 5, "assistant", ACTION_FAILED_TEXT, "chat").unwrap();
+
+        let history = chat_db::get_conversation_messages_for_ai(&conn, 5).unwrap();
+
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1].role, "assistant");
+        assert_eq!(history[1].content, ACTION_FAILED_TEXT);
+    }
+
+    #[test]
+    fn a_recorded_cancellation_is_visible_to_the_model_history() {
+        let conn = budget_action_test_db();
+
+        chat_db::insert_message(&conn, 5, "user", "add a House category", "chat").unwrap();
+        chat_db::insert_message(&conn, 5, "assistant", ACTION_CANCELLED_TEXT, "chat").unwrap();
+
+        let history = chat_db::get_conversation_messages_for_ai(&conn, 5).unwrap();
+
+        assert_eq!(history.last().unwrap().content, ACTION_CANCELLED_TEXT);
+    }
+
+    /// Both lines are server-owned constants. If either ever became a format string over the
+    /// failure or a caller-supplied string, a rejected payload could write its own text into the
+    /// conversation the model reads as its prior words.
+    #[test]
+    fn the_recorded_outcome_lines_are_fixed_and_carry_no_payload_detail() {
+        for text in [ACTION_FAILED_TEXT, ACTION_CANCELLED_TEXT] {
+            assert!(!text.contains('{'), "{text}");
+            assert!(!text.contains("}}"), "{text}");
+            assert!(!text.is_empty());
+        }
+        assert_ne!(ACTION_FAILED_TEXT, ACTION_CANCELLED_TEXT);
+        // Each must tell the model not to simply resend, which is the behavior being corrected.
+        assert!(ACTION_FAILED_TEXT.contains("do not repeat"));
+        assert!(ACTION_CANCELLED_TEXT.contains("Do not propose"));
     }
 
     #[test]
