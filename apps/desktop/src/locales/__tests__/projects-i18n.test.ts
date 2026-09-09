@@ -103,6 +103,26 @@ const REQUIRED_KEYS = [
   "projects.adviceError",
   "projects.adviceRetry",
   "projects.adviceSkeleton",
+  "projects.image.emptyTitle",
+  "projects.image.emptyDescription",
+  "projects.image.addAction",
+  "projects.image.replaceAction",
+  "projects.image.removeAction",
+  "projects.image.removeTitle",
+  "projects.image.removeDescription",
+  "projects.image.alt",
+  "projects.image.metaLine",
+  "projects.image.unavailable",
+  "projects.image.loadFailed",
+  "projects.image.saveFailed",
+  "projects.image.filterName",
+  "projects.image.unsupportedType",
+  "projects.image.empty",
+  "projects.image.tooLarge",
+  "projects.image.unreadable",
+  "projects.image.contentMismatch",
+  "projects.image.dimensions",
+  "projects.image.projectUnavailable",
 ] as const;
 
 // Keys outside the `projects.` namespace that the surface renders. The prefix-based parity checks
@@ -164,7 +184,7 @@ describe("projects i18n parity", () => {
   });
 
   it("keeps the interpolation placeholders identical across locales", () => {
-    for (const key of ["projects.savedOfTarget", "projects.meterLabel", "projects.remainingBadge", "projects.rowActions", "projects.percentComplete", "projects.expandProject", "projects.collapseProject", "projects.dashboardMeterValue", "projects.moveUp", "projects.moveDown", "projects.suggestionAmountLabel", "projects.suggestionRemainder", "projects.suggestionOverBy", "projects.suggestionMonthsToTarget", "projects.suggestionConfirmed", "projects.suggestionConfirmFailed", "projects.suggestionSkipped", "projects.suggestionCadenceNote", "projects.suggestionSettledConfirmedBody", "projects.suggestionSettledRemainder", "projects.suggestionSettledSkippedBody", "projects.suggestionSettledNext", "projects.paceBadgeGood", "projects.paceBadgeCaution", "projects.paceBadgeOver", "projects.paceLine", "projects.paceWeeklyLine"]) {
+    for (const key of ["projects.savedOfTarget", "projects.meterLabel", "projects.remainingBadge", "projects.rowActions", "projects.percentComplete", "projects.expandProject", "projects.collapseProject", "projects.dashboardMeterValue", "projects.moveUp", "projects.moveDown", "projects.suggestionAmountLabel", "projects.suggestionRemainder", "projects.suggestionOverBy", "projects.suggestionMonthsToTarget", "projects.suggestionConfirmed", "projects.suggestionConfirmFailed", "projects.suggestionSkipped", "projects.suggestionCadenceNote", "projects.suggestionSettledConfirmedBody", "projects.suggestionSettledRemainder", "projects.suggestionSettledSkippedBody", "projects.suggestionSettledNext", "projects.paceBadgeGood", "projects.paceBadgeCaution", "projects.paceBadgeOver", "projects.paceLine", "projects.paceWeeklyLine", "projects.image.alt", "projects.image.metaLine"]) {
       const placeholders = (value: string) =>
         [...value.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]).sort();
       expect(placeholders(fr[key]), `Placeholder drift on ${key}`).toEqual(
