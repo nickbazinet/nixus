@@ -412,6 +412,46 @@ pub fn resolve_active_category_id_by_name(
     }
 }
 
+/// Write actions store a single foreign key, so ambiguity is a validation outcome
+/// rather than a reason to pick the first row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupNameMatch {
+    Unique(i64),
+    Missing,
+    Ambiguous,
+}
+
+/// The group counterpart of `resolve_active_category_id_by_name`.
+///
+/// Groups have no soft delete, so there is no `deleted_at` filter here — that is the only
+/// difference from the category resolver, and inventing one would silently match nothing.
+// SQLite `LOWER` folds ASCII only: accented or non-Latin names must match stored case.
+pub fn resolve_group_id_by_name(
+    conn: &Connection,
+    name: &str,
+) -> Result<GroupNameMatch, AppError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(GroupNameMatch::Missing);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id FROM budget_groups
+         WHERE LOWER(TRIM(name)) = LOWER(?1)
+         ORDER BY id ASC
+         LIMIT 2",
+    )?;
+    let ids = stmt
+        .query_map(params![trimmed], |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    match ids.as_slice() {
+        [] => Ok(GroupNameMatch::Missing),
+        [id] => Ok(GroupNameMatch::Unique(*id)),
+        _ => Ok(GroupNameMatch::Ambiguous),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,6 +662,119 @@ mod tests {
         assert_eq!(
             resolve_active_category_id_by_name(&conn, "Cloud").unwrap(),
             CategoryNameMatch::Missing
+        );
+    }
+
+    fn insert_group(conn: &Connection, id: i64, name: &str) {
+        conn.execute(
+            "INSERT INTO budget_groups (id, name, sort_order) VALUES (?1, ?2, ?1)",
+            params![id, name],
+        )
+        .unwrap();
+    }
+
+    /* The group resolver's full three-way matrix. A category action stores one group_id, so
+     * guessing on a duplicate name would file the category under an arbitrary group. */
+
+    #[test]
+    fn resolve_group_id_by_name_returns_unique_id_for_exact_name() {
+        let conn = budget_test_db();
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Needs").unwrap(),
+            GroupNameMatch::Unique(1)
+        );
+    }
+
+    #[test]
+    fn resolve_group_id_by_name_is_case_insensitive_and_trims_input() {
+        let conn = budget_test_db();
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "  nEeDs  ").unwrap(),
+            GroupNameMatch::Unique(1)
+        );
+    }
+
+    #[test]
+    fn resolve_group_id_by_name_matches_a_stored_name_with_surrounding_whitespace() {
+        let conn = budget_test_db();
+        insert_group(&conn, 7, "  Wants  ");
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Wants").unwrap(),
+            GroupNameMatch::Unique(7)
+        );
+    }
+
+    #[test]
+    fn resolve_group_id_by_name_reports_missing_for_unknown_name() {
+        let conn = budget_test_db();
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "House").unwrap(),
+            GroupNameMatch::Missing
+        );
+    }
+
+    #[test]
+    fn resolve_group_id_by_name_reports_missing_for_blank_name() {
+        let conn = budget_test_db();
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "   ").unwrap(),
+            GroupNameMatch::Missing
+        );
+    }
+
+    /// A fragment must not resolve: "Need" is not "Needs", and matching it would file a
+    /// category under a group the user never named.
+    #[test]
+    fn resolve_group_id_by_name_rejects_partial_matches() {
+        let conn = budget_test_db();
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Need").unwrap(),
+            GroupNameMatch::Missing
+        );
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Needs and wants").unwrap(),
+            GroupNameMatch::Missing
+        );
+    }
+
+    #[test]
+    fn resolve_group_id_by_name_reports_ambiguous_for_duplicate_names() {
+        let conn = budget_test_db();
+        insert_group(&conn, 8, "needs");
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Needs").unwrap(),
+            GroupNameMatch::Ambiguous
+        );
+    }
+
+    /// Groups carry no soft delete, so every row counts. Asserted explicitly because the
+    /// category resolver DOES filter one, and copying its query here would match nothing.
+    #[test]
+    fn resolve_group_id_by_name_considers_every_group_row() {
+        let conn = budget_test_db();
+        insert_group(&conn, 9, "Wants");
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Wants").unwrap(),
+            GroupNameMatch::Unique(9)
+        );
+    }
+
+    /// The resolver answers about groups only: a category sharing the name must not satisfy it.
+    #[test]
+    fn resolve_group_id_by_name_never_matches_a_category_name() {
+        let conn = budget_test_db();
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Groceries").unwrap(),
+            GroupNameMatch::Missing
         );
     }
 
