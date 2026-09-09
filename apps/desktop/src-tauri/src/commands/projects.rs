@@ -16,7 +16,7 @@ use crate::models::{
     AccountEarmarkBreakdown, AccountHeadroom, BudgetCategoryStatus, CategoryCompareRow,
     CreateProjectContributionInput, CreateProjectInput, Project, ProjectAdviceRequest,
     ProjectAdviceResponse, ProjectAllocationInput, ProjectContribution, ProjectImage,
-    ProjectImageMeta, ProjectPace, ProjectSavedTotal, SavingsProjectsSummary,
+    ProjectImageMeta, ProjectPace, ProjectSavedTotal, ProjectThumbnail, SavingsProjectsSummary,
     SuggestedAllocationResponse, UpdateProjectInput,
 };
 use crate::projects::{allocation, image, pace, settlement};
@@ -681,11 +681,52 @@ pub(crate) fn get_project_image_inner(
     }))
 }
 
+/// Every active project's thumbnail in one read, backfilling any that are missing.
+///
+/// ONE call for the whole list, not one per row: that is the entire reason this command exists
+/// separately from `get_project_image`, which stays behind an expanded row because it carries
+/// up to 4 MiB. Every payload here is capped at `MAX_PROJECT_THUMBNAIL_BYTES`.
+///
+/// The backfill covers images stored before migration 027, and runs one image at a time rather
+/// than loading every candidate at once. A candidate whose thumbnail cannot be produced is
+/// skipped and left NULL: it is re-attempted on a later read, which costs one decode per app
+/// session (the hook caches with `staleTime: Infinity`) and never costs the user a picture.
+pub(crate) fn get_project_thumbnails_inner(
+    conn: &Connection,
+) -> Result<Vec<ProjectThumbnail>, AppError> {
+    for project_id in projects_db::get_project_ids_needing_thumbnails(conn)? {
+        let Some(stored) = projects_db::get_project_image(conn, project_id)? else {
+            continue;
+        };
+        let Some(format) = image::ProjectImageFormat::from_mime_type(&stored.mime_type) else {
+            continue;
+        };
+        let Some((bytes, mime_type)) = image::thumbnail(&stored.image_bytes, format) else {
+            continue;
+        };
+
+        projects_db::set_project_thumbnail(conn, project_id, (&bytes, mime_type))?;
+    }
+
+    Ok(projects_db::get_project_thumbnails(conn)?
+        .into_iter()
+        .map(|row| ProjectThumbnail {
+            project_id: row.project_id,
+            mime_type: row.thumbnail_mime,
+            image_base64: STANDARD.encode(&row.thumbnail_bytes),
+        })
+        .collect())
+}
+
 /// Stores already-validated bytes and records the write.
 ///
 /// `byte_size` is never a parameter: `upsert_project_image` binds `bytes.len()` itself,
 /// because `project_images_byte_size_matches_payload` rejects any disagreement and a
 /// caller-supplied length is exactly how that disagreement would arise.
+///
+/// The thumbnail is derived here and rides the same statement. A picture whose derivative
+/// could not be produced is stored anyway with a NULL thumbnail — the row falls back to its
+/// placeholder tile rather than the upload being refused for a file the user can see.
 pub(crate) fn set_project_image_inner(
     conn: &Connection,
     project_id: i64,
@@ -693,8 +734,21 @@ pub(crate) fn set_project_image_inner(
     original_filename: &str,
     bytes: &[u8],
 ) -> Result<ProjectImageMeta, AppError> {
-    let row =
-        projects_db::upsert_project_image(conn, project_id, mime_type, original_filename, bytes)?;
+    let derived = image::ProjectImageFormat::from_mime_type(mime_type)
+        .and_then(|format| image::thumbnail(bytes, format));
+
+    let row = projects_db::upsert_project_image(
+        conn,
+        project_id,
+        &projects_db::ProjectImageWrite {
+            mime_type,
+            original_filename,
+            bytes,
+            thumbnail: derived
+                .as_ref()
+                .map(|(thumbnail, thumbnail_mime)| (thumbnail.as_slice(), *thumbnail_mime)),
+        },
+    )?;
 
     let meta = ProjectImageMeta {
         project_id: row.project_id,
@@ -774,6 +828,16 @@ pub fn get_project_image(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     get_project_image_inner(&conn, project_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_project_thumbnails(state: State<DbState>) -> Result<Vec<ProjectThumbnail>, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    get_project_thumbnails_inner(&conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -1310,5 +1374,165 @@ mod tests {
             original,
             "a failed write must not destroy the stored payload"
         );
+    }
+
+    /// The stored derivative read straight out of SQLite, so a test can tell "returned by the
+    /// command" from "written to the row" — which is the whole difference the backfill makes.
+    fn persisted_thumbnail(conn: &Connection, project_id: i64) -> Option<(Vec<u8>, String)> {
+        let (bytes, mime_type): (Option<Vec<u8>>, Option<String>) = conn
+            .query_row(
+                "SELECT thumbnail_bytes, thumbnail_mime FROM project_images WHERE project_id = ?1",
+                rusqlite::params![project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("the image row exists");
+
+        Some((bytes?, mime_type?))
+    }
+
+    fn thumbnail_payload(thumbnail: &ProjectThumbnail) -> Vec<u8> {
+        STANDARD
+            .decode(&thumbnail.image_base64)
+            .expect("the wire payload is valid base64")
+    }
+
+    /// Migration 027 shipped after 026, so a picture stored by an earlier build has NULL
+    /// thumbnail columns. One list read has to fix that permanently, not just for that response.
+    #[test]
+    fn an_image_stored_without_a_thumbnail_is_backfilled_by_one_batch_read() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let source =
+            image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
+        // Straight through the db layer with no derivative, which is exactly the row shape every
+        // image written before migration 027 has.
+        projects_db::upsert_project_image(
+            &conn,
+            1,
+            &projects_db::ProjectImageWrite {
+                mime_type: "image/png",
+                original_filename: "cover.png",
+                bytes: &source,
+                thumbnail: None,
+            },
+        )
+        .expect("the pre-027 write succeeds");
+        assert_eq!(persisted_thumbnail(&conn, 1), None);
+
+        let thumbnails = get_project_thumbnails_inner(&conn).expect("the batch read succeeds");
+
+        assert_eq!(thumbnails.len(), 1);
+        let (stored_bytes, stored_mime) =
+            persisted_thumbnail(&conn, 1).expect("the derivative is now on the row");
+        assert_eq!(stored_mime, "image/png");
+        assert_eq!(thumbnail_payload(&thumbnails[0]), stored_bytes);
+        // Untouched by the backfill: only the two derivative columns may change, or a late
+        // thumbnail would rewrite the moment the user actually uploaded.
+        assert_eq!(
+            stored_image(&conn)
+                .expect("the picture is still there")
+                .original_filename,
+            "cover.png"
+        );
+    }
+
+    /// The list surface's two guarantees in one read: active projects only, and a bounded payload
+    /// for each. The size assertion is what breaks if the command ever ships full-size bytes.
+    #[test]
+    fn the_batch_read_covers_active_projects_only_and_bounds_every_payload() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        for (id, name) in [(2, "Roof"), (3, "Boat")] {
+            conn.execute(
+                "INSERT INTO projects (id, name, target_cents) VALUES (?1, ?2, 900000)",
+                rusqlite::params![id, name],
+            )
+            .expect("seed project");
+        }
+        // Incompressible on purpose: the stored picture has to be far larger than the 64 KiB
+        // ceiling, or the bound below could pass simply because the fixture is small.
+        let source = image::rendered_test_image(
+            image::THUMBNAIL_EDGE,
+            image::THUMBNAIL_EDGE,
+            true,
+            image::ProjectImageFormat::Png,
+        );
+        assert!(
+            u64::try_from(source.len()).unwrap() > image::MAX_PROJECT_THUMBNAIL_BYTES,
+            "the fixture must exceed the ceiling it is used to test, got {}",
+            source.len()
+        );
+        for project_id in [1, 2, 3] {
+            set_project_image_inner(&conn, project_id, "image/png", "cover.png", &source)
+                .expect("the write succeeds");
+        }
+        // Archived only after its picture was stored, because the write guard refuses an archived
+        // project outright — this is the real order in which such a row comes to exist.
+        conn.execute(
+            "UPDATE projects SET archived_at = datetime('now') WHERE id = 3",
+            [],
+        )
+        .expect("the third project is archived");
+
+        let thumbnails = get_project_thumbnails_inner(&conn).expect("the batch read succeeds");
+
+        assert_eq!(
+            thumbnails
+                .iter()
+                .map(|thumbnail| thumbnail.project_id)
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "an archived project is off the list, so its tile is never paid for"
+        );
+        for thumbnail in &thumbnails {
+            let payload = thumbnail_payload(thumbnail);
+            assert!(
+                u64::try_from(payload.len()).unwrap() <= image::MAX_PROJECT_THUMBNAIL_BYTES,
+                "project {} shipped {} bytes",
+                thumbnail.project_id,
+                payload.len()
+            );
+            assert_ne!(
+                payload, source,
+                "the payload must be the derivative, never the stored picture"
+            );
+        }
+    }
+
+    /// The rule the whole design bends around: a derivative that could not be produced must not
+    /// cost the user the picture. `png_bytes` is a header the validator accepts with no pixel
+    /// data behind it, so the decoder genuinely disagrees with the validator here.
+    #[test]
+    fn an_image_whose_thumbnail_cannot_be_produced_is_still_stored() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let undecodable = png_bytes(64, 64);
+
+        let meta = set_project_image_inner(&conn, 1, "image/png", "cover.png", &undecodable)
+            .expect("the upload succeeds despite the derivative failing");
+
+        assert_eq!(meta.byte_size, i64::try_from(undecodable.len()).unwrap());
+        assert_eq!(persisted_thumbnail(&conn, 1), None);
+        assert!(decoded(&stored_image(&conn).expect("the picture is stored")) == undecodable);
+        assert!(
+            get_project_thumbnails_inner(&conn)
+                .expect("the batch read succeeds")
+                .is_empty(),
+            "a NULL thumbnail is an absent entry, so the row falls back to its placeholder"
+        );
+    }
+
+    /// Without the thumbnail riding the same upsert statement, this row would keep showing the
+    /// PREVIOUS picture's tile after a replace.
+    #[test]
+    fn replacing_a_picture_never_leaves_the_previous_thumbnail_behind() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let decodable =
+            image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
+        set_project_image_inner(&conn, 1, "image/png", "first.png", &decodable)
+            .expect("the first image is stored");
+        assert!(persisted_thumbnail(&conn, 1).is_some());
+
+        set_project_image_inner(&conn, 1, "image/png", "second.png", &png_bytes(64, 64))
+            .expect("the replacement is stored");
+
+        assert_eq!(persisted_thumbnail(&conn, 1), None);
     }
 }

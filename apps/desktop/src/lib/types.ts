@@ -759,6 +759,16 @@ export interface ProjectImageMeta {
   uploaded_at: string;
 }
 
+// Mirrors `models::ProjectThumbnail`: the downscaled derivative the collapsed project row shows.
+// Three fields and no more, because this is the only image shape that travels for EVERY row at
+// once — `image_base64` decodes to at most 64 KiB, which is what keeps one batch read bounded
+// however many projects there are. The full-size `ProjectImage` stays behind an expanded row.
+export interface ProjectThumbnail {
+  project_id: number;
+  mime_type: string;
+  image_base64: string;
+}
+
 export interface CreateProjectInput {
   name: string;
   target_cents: number;

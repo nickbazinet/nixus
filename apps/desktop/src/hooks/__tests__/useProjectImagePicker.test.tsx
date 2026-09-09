@@ -18,6 +18,7 @@ import {
 } from "@/hooks/useProjectImagePicker";
 import {
   useProjectImage,
+  useProjectThumbnails,
   useRemoveProjectImage,
   useSetProjectImage,
 } from "@/hooks/useProjects";
@@ -515,6 +516,98 @@ describe("useProjectImage", () => {
   });
 });
 
+describe("useProjectThumbnails", () => {
+  let query: ReturnType<typeof useProjectThumbnails>;
+  let container: HTMLDivElement;
+  let root: Root;
+  let queryClient: QueryClient;
+
+  function Harness() {
+    query = useProjectThumbnails();
+    return null;
+  }
+
+  /* Several rows sharing one client, which is what proves the list costs ONE read: every
+   * `ProjectRow` calls this hook, so a per-row key would surface here as one call per row. */
+  function renderRows(count: number) {
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          {Array.from({ length: count }, (_unused, index) => (
+            <Harness key={index} />
+          ))}
+        </QueryClientProvider>
+      );
+    });
+  }
+
+  function thumbnailQueryOptions(): Record<string, unknown> {
+    const forThumbnails = recordedQueryOptions.filter((options) => {
+      const key = options.queryKey;
+      return Array.isArray(key) && key[0] === "project-thumbnails";
+    });
+    const last = forThumbnails[forThumbnails.length - 1];
+    if (last === undefined) {
+      throw new Error("useQuery was never called for the thumbnails");
+    }
+    return last;
+  }
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    invokeMock.mockReset();
+    recordedQueryOptions.length = 0;
+    queryClient = new QueryClient();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    queryClient.clear();
+  });
+
+  it("reads every thumbnail in one argument-free call however many rows ask for it", async () => {
+    // Given two projects have a stored thumbnail
+    invokeMock.mockResolvedValue([
+      { project_id: 7, mime_type: "image/png", image_base64: "iVBORw0KGgo=" },
+      { project_id: 8, mime_type: "image/jpeg", image_base64: "/9j/4AAQ" },
+    ]);
+
+    // When three rows mount against the same client
+    renderRows(3);
+    await waitUntil(() => query.isSuccess, "the thumbnail query to resolve");
+
+    // Then the whole list cost exactly one IPC round trip, with no per-project argument
+    expect(callsOf("get_project_thumbnails")).toEqual([{}]);
+    expect(query.data).toHaveLength(2);
+  });
+
+  it("sends the options a bare QueryClient cannot supply on its own", async () => {
+    invokeMock.mockResolvedValue([]);
+
+    renderRows(1);
+    await waitUntil(() => !query.isPending, "the thumbnail query to settle");
+
+    const options = thumbnailQueryOptions();
+    expect(options.queryKey).toEqual(queryKeys.projectThumbnails);
+    expect(options.staleTime).toBe(Infinity);
+    expect(options.refetchOnWindowFocus).toBe(false);
+  });
+
+  /* A shared root with the per-project image key would let one row's write drag the whole list
+   * back over IPC, and a shared root with `projects` would do it on every list refresh. */
+  it("is a list-wide key sharing no prefix with the per-project image or the projects list", () => {
+    expect(queryKeys.projectThumbnails).toEqual(["project-thumbnails"]);
+    expect(queryKeys.projectThumbnails[0]).not.toBe(queryKeys.projects[0]);
+    expect(queryKeys.projectThumbnails[0]).not.toBe(
+      queryKeys.projectImage(7)[0]
+    );
+  });
+});
+
 describe("the project image mutations", () => {
   let setImage: ReturnType<typeof useSetProjectImage>;
   let removeImage: ReturnType<typeof useRemoveProjectImage>;
@@ -559,9 +652,11 @@ describe("the project image mutations", () => {
     invalidateSpy.mockRestore();
   });
 
-  /* The payload lives in no list response, no saved total, no earmark and no pace figure, so a
-   * second invalidation here would assert a data dependency that does not exist. */
-  it("sends only a project id and a path, and invalidates only this project's image", async () => {
+  /* The payload lives in no saved total, no earmark and no pace figure, so the list is the ONLY
+   * other key that may appear: the row's tile is derived from the same bytes, and without it the
+   * list would keep showing the previous picture until the next launch. Still an exact deep-equal,
+   * so a third invalidation fails here. */
+  it("sends only a project id and a path, and invalidates this project's image and the row tiles", async () => {
     // Given the backend stores the file and returns its metadata
     invokeMock.mockResolvedValue({
       project_id: 7,
@@ -580,10 +675,13 @@ describe("the project image mutations", () => {
     expect(callsOf("set_project_image")).toEqual([
       { project_id: 7, file_path: PICKED_PATH },
     ]);
-    expect(invalidatedKeys()).toEqual([queryKeys.projectImage(7)]);
+    expect(invalidatedKeys()).toEqual([
+      queryKeys.projectImage(7),
+      queryKeys.projectThumbnails,
+    ]);
   });
 
-  it("removes by project id alone and invalidates only this project's image", async () => {
+  it("removes by project id alone and invalidates its image and the row tiles", async () => {
     invokeMock.mockResolvedValue(null);
 
     await act(async () => {
@@ -591,7 +689,10 @@ describe("the project image mutations", () => {
     });
 
     expect(callsOf("remove_project_image")).toEqual([{ project_id: 7 }]);
-    expect(invalidatedKeys()).toEqual([queryKeys.projectImage(7)]);
+    expect(invalidatedKeys()).toEqual([
+      queryKeys.projectImage(7),
+      queryKeys.projectThumbnails,
+    ]);
   });
 
   it("invalidates nothing when the write is refused", async () => {

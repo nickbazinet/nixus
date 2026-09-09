@@ -9,6 +9,7 @@ use crate::models::{
     ProjectContribution, ProjectSavedTotal, SavingsProjectsSummary, UpdateProjectInput,
 };
 use crate::projects::allocation::AllocationProject;
+use crate::projects::image::{ProjectImageFormat, MAX_PROJECT_THUMBNAIL_BYTES};
 use crate::projects::pace::ProjectPaceRow;
 use crate::projects::settlement::ConfirmedSuggestionMonth;
 
@@ -185,6 +186,58 @@ pub struct ProjectImageMetaRow {
     pub uploaded_at: String,
 }
 
+// Everything one image write persists, grouped so the write takes three parameters instead of six.
+// It is also what keeps the derivative honest: the thumbnail is ONE optional value rather than two
+// independently-nullable arguments that could disagree about whether there is a thumbnail at all.
+//
+// `thumbnail` is `(bytes, mime_type)` in that order, matching what `projects::image::thumbnail`
+// returns, and `None` means "this picture has no usable derivative" — a valid state, not a failure.
+#[derive(Debug)]
+pub struct ProjectImageWrite<'a> {
+    pub mime_type: &'a str,
+    pub original_filename: &'a str,
+    pub bytes: &'a [u8],
+    pub thumbnail: Option<(&'a [u8], &'a str)>,
+}
+
+// Only the columns the project list needs, which is what makes ONE read for every row bounded: no
+// `image_bytes`, no filename, no timestamp.
+#[derive(Debug)]
+pub struct ProjectThumbnailRow {
+    pub project_id: i64,
+    pub thumbnail_bytes: Vec<u8>,
+    pub thumbnail_mime: String,
+}
+
+// The two rules migration 026 gets from named CHECK constraints and migration 027 cannot: SQLite's
+// ALTER TABLE ADD COLUMN takes only a column definition, so the ceiling and the mime allow-list are
+// enforced here instead. Every path that binds these two columns goes through this function, which
+// is what stops that difference from becoming a hole.
+//
+// Both refusals are `Database`, deliberately NOT `Validation`: the six validator field literals plus
+// `project_id` are a closed contract with `projectImageMessageKey` in the frontend, and a thumbnail
+// the app derived itself being wrong is a bug in this crate, not something the user picked.
+fn validated_thumbnail<'a>(
+    thumbnail: Option<(&'a [u8], &'a str)>,
+) -> Result<Option<(&'a [u8], &'a str)>, AppError> {
+    let Some((bytes, mime_type)) = thumbnail else {
+        return Ok(None);
+    };
+
+    if ProjectImageFormat::from_mime_type(mime_type).is_none() {
+        return Err(AppError::Database {
+            message: "Thumbnail mime type is not a stored image type".to_string(),
+        });
+    }
+    if !u64::try_from(bytes.len()).is_ok_and(|size| size <= MAX_PROJECT_THUMBNAIL_BYTES) {
+        return Err(AppError::Database {
+            message: "Thumbnail is larger than the stored ceiling".to_string(),
+        });
+    }
+
+    Ok(Some((bytes, mime_type)))
+}
+
 // The only path that loads the payload, so image bytes can never ride along in a list response.
 // `Ok(None)` rather than an error for "no image": a project without a picture is the normal state,
 // not a failure, and the caller renders an invitation rather than a problem.
@@ -220,12 +273,13 @@ pub fn get_project_image(
 // `byte_size` is bound from `bytes.len()` and never from an argument, because
 // `project_images_byte_size_matches_payload` rejects any disagreement — and a caller-supplied length
 // is exactly how that disagreement would arise.
+//
+// The thumbnail travels on this same statement rather than a follow-up write so that a replace can
+// never leave the PREVIOUS picture's thumbnail attached to the new one.
 pub fn upsert_project_image(
     conn: &Connection,
     project_id: i64,
-    mime_type: &str,
-    original_filename: &str,
-    bytes: &[u8],
+    write: &ProjectImageWrite<'_>,
 ) -> Result<ProjectImageMetaRow, AppError> {
     // Same guard shape as `validate_contribution_input`: a missing or archived project is a
     // field-scoped validation error the form can render, not a raw foreign-key failure. Writing is
@@ -244,21 +298,33 @@ pub fn upsert_project_image(
 
     // `usize -> i64` is unreachable-failure territory for any payload this process could hold, but
     // `as` would silently wrap where `try_from` reports, and the ceiling is the schema's job.
-    let byte_size = i64::try_from(bytes.len()).map_err(|_| AppError::Database {
+    let byte_size = i64::try_from(write.bytes.len()).map_err(|_| AppError::Database {
         message: "Image payload is too large to store".to_string(),
     })?;
+    let thumbnail = validated_thumbnail(write.thumbnail)?;
 
     conn.execute(
         "INSERT INTO project_images
-             (project_id, image_bytes, mime_type, original_filename, byte_size, uploaded_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
+             (project_id, image_bytes, mime_type, original_filename, byte_size, uploaded_at,
+              thumbnail_bytes, thumbnail_mime)
+         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), ?6, ?7)
          ON CONFLICT(project_id) DO UPDATE SET
              image_bytes = excluded.image_bytes,
              mime_type = excluded.mime_type,
              original_filename = excluded.original_filename,
              byte_size = excluded.byte_size,
-             uploaded_at = excluded.uploaded_at",
-        params![project_id, bytes, mime_type, original_filename, byte_size],
+             uploaded_at = excluded.uploaded_at,
+             thumbnail_bytes = excluded.thumbnail_bytes,
+             thumbnail_mime = excluded.thumbnail_mime",
+        params![
+            project_id,
+            write.bytes,
+            write.mime_type,
+            write.original_filename,
+            byte_size,
+            thumbnail.map(|(bytes, _)| bytes),
+            thumbnail.map(|(_, mime_type)| mime_type),
+        ],
     )?;
 
     // Read back rather than echo the arguments: `uploaded_at` is SQLite's clock.
@@ -294,6 +360,80 @@ pub fn delete_project_image(conn: &Connection, project_id: i64) -> Result<bool, 
     )?;
 
     Ok(rows > 0)
+}
+
+// The lazy-backfill write: it touches ONLY the two derivative columns, so a row whose thumbnail
+// arrives late keeps the `uploaded_at` the user actually uploaded at.
+//
+// The tuple is required rather than optional because no caller ever needs to clear a thumbnail on
+// its own: a new picture overwrites both columns through `upsert_project_image`, and removing a
+// picture takes the whole row with it.
+pub fn set_project_thumbnail(
+    conn: &Connection,
+    project_id: i64,
+    thumbnail: (&[u8], &str),
+) -> Result<(), AppError> {
+    let (bytes, mime_type) = validated_thumbnail(Some(thumbnail))?.ok_or(AppError::Database {
+        message: "Thumbnail was dropped by its own guard".to_string(),
+    })?;
+
+    conn.execute(
+        "UPDATE project_images SET thumbnail_bytes = ?2, thumbnail_mime = ?3
+         WHERE project_id = ?1",
+        params![project_id, bytes, mime_type],
+    )?;
+
+    Ok(())
+}
+
+// Active projects only: an archived project is off the list, so shipping its thumbnail would pay
+// for a tile nothing renders. This is also the whole reason the read joins `projects` at all.
+//
+// Rows without a thumbnail are omitted rather than returned as `None`, because the frontend's
+// "no tile for this project" answer is the absence of an entry either way, and a nullable payload
+// would invite a caller to treat a missing derivative as a missing project.
+pub fn get_project_thumbnails(conn: &Connection) -> Result<Vec<ProjectThumbnailRow>, AppError> {
+    let mut statement = conn.prepare(
+        "SELECT pi.project_id, pi.thumbnail_bytes, pi.thumbnail_mime
+         FROM project_images pi
+         JOIN projects p ON p.id = pi.project_id
+         WHERE p.archived_at IS NULL
+           AND pi.thumbnail_bytes IS NOT NULL
+           AND pi.thumbnail_mime IS NOT NULL
+         ORDER BY pi.project_id",
+    )?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok(ProjectThumbnailRow {
+                project_id: row.get(0)?,
+                thumbnail_bytes: row.get(1)?,
+                thumbnail_mime: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+// Ids only, never the payloads. The backfill has to load a full-size image to derive a thumbnail
+// from it, so returning the candidates' bytes here would hold every one of them in memory at once —
+// exactly the profile the whole thumbnail design exists to avoid. The caller fetches them one at a
+// time through `get_project_image`.
+pub fn get_project_ids_needing_thumbnails(conn: &Connection) -> Result<Vec<i64>, AppError> {
+    let mut statement = conn.prepare(
+        "SELECT pi.project_id
+         FROM project_images pi
+         JOIN projects p ON p.id = pi.project_id
+         WHERE p.archived_at IS NULL AND pi.thumbnail_bytes IS NULL
+         ORDER BY pi.project_id",
+    )?;
+
+    let ids = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+
+    Ok(ids)
 }
 
 // Db-layer internal: it never crosses the IPC boundary, so it carries no serde derives.
@@ -3050,6 +3190,21 @@ mod tests {
         (dir, conn)
     }
 
+    /// A write with no derivative, which is what every image test predating migration 027 was
+    /// exercising and what a picture whose thumbnail could not be produced still looks like.
+    fn image_write<'a>(
+        mime_type: &'a str,
+        original_filename: &'a str,
+        bytes: &'a [u8],
+    ) -> ProjectImageWrite<'a> {
+        ProjectImageWrite {
+            mime_type,
+            original_filename,
+            bytes,
+            thumbnail: None,
+        }
+    }
+
     fn insert_image(conn: &Connection, row: &ImageInsert) -> Result<usize, rusqlite::Error> {
         conn.execute(
             "INSERT INTO project_images
@@ -3074,9 +3229,11 @@ mod tests {
         let version: i64 = conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .expect("schema_version read");
+        // This pins the last `MIGRATIONS` entry, which is what forces a new migration to be
+        // exercised here instead of shipping unnoticed.
         assert_eq!(
-            version, 26,
-            "migration 26 must be the newest applied version"
+            version, 27,
+            "the newest applied version must be the last MIGRATIONS entry"
         );
 
         let tables: i64 = conn
@@ -3087,6 +3244,38 @@ mod tests {
             )
             .expect("sqlite_master read");
         assert_eq!(tables, 1, "project_images must exist after migration 26");
+    }
+
+    /// Both columns must be NULLABLE, because a row predating 027 has no derivative and a picture
+    /// whose derivative could not be produced still has to be storable. A `NOT NULL` on either
+    /// column would turn every such upload into a failure.
+    #[test]
+    fn migration_27_adds_nullable_thumbnail_columns_to_project_images() {
+        let (_dir, conn) = migrated_db_with_a_project();
+
+        let mut statement = conn
+            .prepare("SELECT name, type, \"notnull\" FROM pragma_table_info('project_images')")
+            .expect("the pragma prepares");
+        let columns: Vec<(String, String, i64)> = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("the pragma query runs")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("the pragma rows read");
+
+        assert!(
+            columns.contains(&("thumbnail_bytes".to_string(), "BLOB".to_string(), 0)),
+            "expected a nullable thumbnail_bytes BLOB, got {columns:?}"
+        );
+        assert!(
+            columns.contains(&("thumbnail_mime".to_string(), "TEXT".to_string(), 0)),
+            "expected a nullable thumbnail_mime TEXT, got {columns:?}"
+        );
+
+        // The nullability is what makes this write legal at all, so it is proven rather than
+        // inferred from the pragma.
+        upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3]))
+            .expect("a picture with no derivative is storable");
+        assert_eq!(get_project_ids_needing_thumbnails(&conn).unwrap(), vec![1]);
     }
 
     #[test]
@@ -3180,7 +3369,7 @@ mod tests {
         let payload = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff];
 
         let meta =
-            upsert_project_image(&conn, 1, "image/png", "kitchen cover.png", &payload).unwrap();
+            upsert_project_image(&conn, 1, &image_write("image/png", "kitchen cover.png", &payload)).unwrap();
 
         assert_eq!(meta.project_id, 1);
         assert_eq!(meta.mime_type, "image/png");
@@ -3221,10 +3410,10 @@ mod tests {
     #[test]
     fn a_second_upsert_replaces_the_image_rather_than_duplicating_it() {
         let (_dir, conn) = migrated_db_with_a_project();
-        upsert_project_image(&conn, 1, "image/png", "first.png", &[1, 2, 3]).unwrap();
+        upsert_project_image(&conn, 1, &image_write("image/png", "first.png", &[1, 2, 3])).unwrap();
 
         let replaced =
-            upsert_project_image(&conn, 1, "image/jpeg", "second.jpg", &[9, 8, 7, 6]).unwrap();
+            upsert_project_image(&conn, 1, &image_write("image/jpeg", "second.jpg", &[9, 8, 7, 6])).unwrap();
 
         assert_eq!(
             image_row_count(&conn, 1),
@@ -3246,7 +3435,7 @@ mod tests {
     #[test]
     fn delete_project_image_reports_the_removal_once_and_then_reports_nothing_to_remove() {
         let (_dir, conn) = migrated_db_with_a_project();
-        upsert_project_image(&conn, 1, "image/png", "cover.png", &[1, 2, 3]).unwrap();
+        upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3])).unwrap();
 
         assert!(
             delete_project_image(&conn, 1).unwrap(),
@@ -3267,7 +3456,7 @@ mod tests {
         let (_dir, conn) = migrated_db_with_a_project();
 
         expect_validation_field(
-            upsert_project_image(&conn, 4_242, "image/png", "ghost.png", &[1, 2, 3]).unwrap_err(),
+            upsert_project_image(&conn, 4_242, &image_write("image/png", "ghost.png", &[1, 2, 3])).unwrap_err(),
             "project_id",
         );
 
@@ -3282,7 +3471,7 @@ mod tests {
         archive_project(&conn, 1).unwrap();
 
         expect_validation_field(
-            upsert_project_image(&conn, 1, "image/png", "cover.png", &[1, 2, 3]).unwrap_err(),
+            upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3])).unwrap_err(),
             "project_id",
         );
 
@@ -3296,7 +3485,7 @@ mod tests {
     #[test]
     fn delete_project_image_still_succeeds_for_an_archived_project() {
         let (_dir, conn) = migrated_db_with_a_project();
-        upsert_project_image(&conn, 1, "image/png", "cover.png", &[1, 2, 3]).unwrap();
+        upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3])).unwrap();
         archive_project(&conn, 1).unwrap();
 
         assert!(
@@ -3307,6 +3496,119 @@ mod tests {
             get_project_image(&conn, 1).unwrap().is_none(),
             "the archived project's bytes are released, not stranded"
         );
+    }
+
+    /// A thumbnail migration 027 must refuse, in both shapes: over the ceiling, and outside the
+    /// mime allow-list. Migration 026 gets these from named CHECK constraints; 027 cannot add
+    /// one, so `validated_thumbnail` is the ONLY thing standing behind them and both write paths
+    /// have to go through it.
+    #[test]
+    fn a_thumbnail_over_the_ceiling_or_outside_the_allow_list_is_refused_by_both_write_paths() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let oversized = vec![9u8; usize::try_from(MAX_PROJECT_THUMBNAIL_BYTES).unwrap() + 1];
+        let refused: [(&[u8], &str); 3] = [
+            (&oversized, "image/png"),
+            (&[1, 2, 3], "image/webp"),
+            (&[1, 2, 3], ""),
+        ];
+
+        for thumbnail in refused {
+            let error = upsert_project_image(
+                &conn,
+                1,
+                &ProjectImageWrite {
+                    mime_type: "image/png",
+                    original_filename: "cover.png",
+                    bytes: &[1, 2, 3],
+                    thumbnail: Some(thumbnail),
+                },
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, AppError::Database { .. }),
+                "expected a Database refusal for {}, got {error:?}",
+                thumbnail.1
+            );
+        }
+        assert_eq!(image_row_count(&conn, 1), 0, "no partial row is left behind");
+
+        upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3]))
+            .expect("the picture itself is still storable without a derivative");
+        for thumbnail in refused {
+            assert!(
+                matches!(
+                    set_project_thumbnail(&conn, 1, thumbnail).unwrap_err(),
+                    AppError::Database { .. }
+                ),
+                "the backfill path must refuse {} too",
+                thumbnail.1
+            );
+        }
+
+        assert!(
+            get_project_thumbnails(&conn).unwrap().is_empty(),
+            "nothing a refused write attempted may surface on the list"
+        );
+    }
+
+    /// The boundary itself, so an off-by-one in the guard cannot reject a legal thumbnail — the
+    /// ladder in `projects::image` deliberately aims to land right at this ceiling.
+    #[test]
+    fn a_thumbnail_exactly_at_the_ceiling_is_accepted_and_read_back() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let exact = vec![7u8; usize::try_from(MAX_PROJECT_THUMBNAIL_BYTES).unwrap()];
+
+        upsert_project_image(
+            &conn,
+            1,
+            &ProjectImageWrite {
+                mime_type: "image/png",
+                original_filename: "cover.png",
+                bytes: &[1, 2, 3],
+                thumbnail: Some((&exact, "image/jpeg")),
+            },
+        )
+        .expect("a thumbnail at the ceiling is legal");
+
+        let rows = get_project_thumbnails(&conn).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].project_id, 1);
+        // JPEG while the picture itself is PNG: the derivative carries its OWN format, because
+        // the ladder trades format for size.
+        assert_eq!(rows[0].thumbnail_mime, "image/jpeg");
+        assert_eq!(rows[0].thumbnail_bytes, exact);
+        assert!(
+            get_project_ids_needing_thumbnails(&conn).unwrap().is_empty(),
+            "a row that has a thumbnail is not a backfill candidate"
+        );
+    }
+
+    /// The backfill's candidate list. An archived project must not be a candidate: deriving a
+    /// thumbnail nothing will ever render would decode a multi-megabyte picture for nothing.
+    #[test]
+    fn only_active_projects_missing_a_thumbnail_are_backfill_candidates() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        conn.execute(
+            "INSERT INTO projects (id, name, target_cents) VALUES (2, 'Roof', 900000)",
+            [],
+        )
+        .expect("seed project");
+        for project_id in [1, 2] {
+            upsert_project_image(
+                &conn,
+                project_id,
+                &image_write("image/png", "cover.png", &[1, 2, 3]),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            get_project_ids_needing_thumbnails(&conn).unwrap(),
+            vec![1, 2]
+        );
+
+        archive_project(&conn, 2).unwrap();
+
+        assert_eq!(get_project_ids_needing_thumbnails(&conn).unwrap(), vec![1]);
     }
 
     /// Sums the whole WAL family rather than `.db` alone: `open_configured` sets
@@ -3363,7 +3665,7 @@ mod tests {
 
         let mut after_first_cycle: Option<u64> = None;
         for cycle in 1..=5 {
-            upsert_project_image(&conn, 1, "image/png", "cover.png", &payload).unwrap();
+            upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &payload)).unwrap();
             assert!(
                 delete_project_image(&conn, 1).unwrap(),
                 "cycle {cycle}: the image must be removed"

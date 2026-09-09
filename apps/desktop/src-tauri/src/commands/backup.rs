@@ -416,7 +416,16 @@ mod tests {
         let payload: Vec<u8> = conn
             .query_row("SELECT randomblob(262144)", [], |row| row.get(0))
             .expect("incompressible payload");
-        crate::db::projects::upsert_project_image(&conn, 1, "image/png", "cover.png", &payload)
+        crate::db::projects::upsert_project_image(
+            &conn,
+            1,
+            &crate::db::projects::ProjectImageWrite {
+                mime_type: "image/png",
+                original_filename: "cover.png",
+                bytes: &payload,
+                thumbnail: None,
+            },
+        )
             .expect("the image is stored");
 
         checkpoint_for_export(&conn).expect("the checkpoint succeeds");

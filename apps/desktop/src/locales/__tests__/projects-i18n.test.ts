@@ -113,6 +113,8 @@ const REQUIRED_KEYS = [
   "projects.image.removeDescription",
   "projects.image.alt",
   "projects.image.metaLine",
+  "projects.image.thumbnailAlt",
+  "projects.image.thumbnailEmpty",
   "projects.image.unavailable",
   "projects.image.loadFailed",
   "projects.image.saveFailed",
@@ -185,7 +187,7 @@ describe("projects i18n parity", () => {
   });
 
   it("keeps the interpolation placeholders identical across locales", () => {
-    for (const key of ["projects.savedOfTarget", "projects.meterLabel", "projects.remainingBadge", "projects.rowActions", "projects.percentComplete", "projects.expandProject", "projects.collapseProject", "projects.dashboardMeterValue", "projects.moveUp", "projects.moveDown", "projects.suggestionAmountLabel", "projects.suggestionRemainder", "projects.suggestionOverBy", "projects.suggestionMonthsToTarget", "projects.suggestionConfirmed", "projects.suggestionConfirmFailed", "projects.suggestionSkipped", "projects.suggestionCadenceNote", "projects.suggestionSettledConfirmedBody", "projects.suggestionSettledRemainder", "projects.suggestionSettledSkippedBody", "projects.suggestionSettledNext", "projects.paceBadgeGood", "projects.paceBadgeCaution", "projects.paceBadgeOver", "projects.paceLine", "projects.paceWeeklyLine", "projects.image.alt", "projects.image.metaLine", "projects.image.menuLabel"]) {
+    for (const key of ["projects.savedOfTarget", "projects.meterLabel", "projects.remainingBadge", "projects.rowActions", "projects.percentComplete", "projects.expandProject", "projects.collapseProject", "projects.dashboardMeterValue", "projects.moveUp", "projects.moveDown", "projects.suggestionAmountLabel", "projects.suggestionRemainder", "projects.suggestionOverBy", "projects.suggestionMonthsToTarget", "projects.suggestionConfirmed", "projects.suggestionConfirmFailed", "projects.suggestionSkipped", "projects.suggestionCadenceNote", "projects.suggestionSettledConfirmedBody", "projects.suggestionSettledRemainder", "projects.suggestionSettledSkippedBody", "projects.suggestionSettledNext", "projects.paceBadgeGood", "projects.paceBadgeCaution", "projects.paceBadgeOver", "projects.paceLine", "projects.paceWeeklyLine", "projects.image.alt", "projects.image.metaLine", "projects.image.menuLabel", "projects.image.thumbnailAlt"]) {
       const placeholders = (value: string) =>
         [...value.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]).sort();
       expect(placeholders(fr[key]), `Placeholder drift on ${key}`).toEqual(

@@ -1403,6 +1403,8 @@
   "projects.image.removeDescription": "The project keeps its progress and history. Only the picture is removed.",
   "projects.image.alt": "Image for {{name}}",
   "projects.image.metaLine": "{{filename}} · added {{date}}",
+  "projects.image.thumbnailAlt": "Thumbnail of the image for {{name}}",
+  "projects.image.thumbnailEmpty": "No image",
   "projects.image.unavailable": "This image can't be displayed right now.",
   "projects.image.loadFailed": "The saved image couldn't be loaded.",
   "projects.image.saveFailed": "The image couldn't be saved. Please try again.",

@@ -86,6 +86,7 @@ export const queryKeys = {
   projectAdvice: (projectId: number) =>
     ["project-advice", projectId] as const,
   projectImage: (id: number) => ["project-image", id] as const,
+  projectThumbnails: ["project-thumbnails"] as const,
   projectSavedTotals: ["project-saved-totals"] as const,
   accountEarmarks: (accountId: number) =>
     ["account-earmarks", accountId] as const,

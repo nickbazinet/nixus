@@ -967,6 +967,19 @@ pub struct ProjectImageMeta {
     pub uploaded_at: String,
 }
 
+/// One project's downscaled thumbnail, as the project list renders it.
+///
+/// Deliberately three fields and no more: this is the only image shape that travels for EVERY
+/// row at once, so a filename or a timestamp here would be paid for by every project on the
+/// page to render a 56px tile that shows neither. `image_base64` is capped at 64 KiB of source
+/// bytes, which is what keeps one batch read bounded regardless of row count.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectThumbnail {
+    pub project_id: i64,
+    pub mime_type: String,
+    pub image_base64: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectContribution {
     pub id: i64,

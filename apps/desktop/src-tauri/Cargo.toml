@@ -47,6 +47,10 @@ rand = "0.9"
 tiny_http = "0.12.0"
 # Needed for reqwest's bytes_stream() when reading the hosted-AI NDJSON response.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# Project-image thumbnails only. Default features are OFF and only the two codecs the
+# project-image validator admits are enabled; every other decoder would be attack surface
+# for a format this app refuses anyway.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 # Must remain the LAST table in this file: bare keys after a [target...] table would
 # be silently absorbed into it. The "deep-link" feature is required so a forwarded

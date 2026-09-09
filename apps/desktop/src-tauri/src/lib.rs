@@ -363,6 +363,7 @@ pub fn run() {
             commands::projects::clear_suggested_allocation_skip,
             commands::projects::validate_project_image,
             commands::projects::get_project_image,
+            commands::projects::get_project_thumbnails,
             commands::projects::set_project_image,
             commands::projects::remove_project_image,
         ])

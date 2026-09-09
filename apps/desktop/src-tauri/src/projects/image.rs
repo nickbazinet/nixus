@@ -1,14 +1,21 @@
-//! Validation for the single image a project card displays.
+//! Validation for the single image a project card displays, and the downscaled derivative
+//! the project list renders.
 //!
-//! Deliberately stricter than `ai::attachment`, and deliberately independent of it: that
-//! boundary accepts documents and trusts the extension alone, while a project image must
-//! be provably a PNG or a JPEG whose declared pixel count the webview can actually
-//! decode. Nothing here decodes image data — only the container header is parsed, by
-//! hand, so the crate takes on no image-decoding dependency.
+//! Validation is deliberately stricter than `ai::attachment`, and deliberately independent
+//! of it: that boundary accepts documents and trusts the extension alone, while a project
+//! image must be provably a PNG or a JPEG whose declared pixel count the webview can
+//! actually decode. The validation half parses only the container header, by hand, so a
+//! file is accepted or refused without any pixel data being decoded.
+//!
+//! `thumbnail` is the one place that does decode pixels, because a real PNG or JPEG cannot
+//! be resampled by hand safely.
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::path::Path;
+
+use image::imageops::FilterType;
+use image::{load_from_memory_with_format, DynamicImage, ImageFormat};
 
 use crate::error::AppError;
 
@@ -23,6 +30,20 @@ pub const MAX_PROJECT_IMAGE_BYTES: u64 = 4 * 1024 * 1024;
 /// the byte ceiling while still taking the renderer down in a way an `<img> onError`
 /// handler cannot catch.
 pub const MAX_PROJECT_IMAGE_PIXELS: u64 = 12_000_000;
+
+/// The ceiling on one stored thumbnail. This is what makes a single batch read for the whole
+/// project list bounded: ten rows cost at most 640 KiB of blob, against up to 4 MiB *per row*
+/// for the full-size payload only an expanded card ever fetches.
+pub const MAX_PROJECT_THUMBNAIL_BYTES: u64 = 64 * 1024;
+
+/// The longest edge a thumbnail may have. The list renders it in a 56px tile, so 256 still has
+/// headroom on a 4x display while costing a fraction of the source.
+pub const THUMBNAIL_EDGE: u32 = 256;
+
+/// The single fallback edge, reached only when re-encoding at `THUMBNAIL_EDGE` still exceeds
+/// the ceiling. Halving the edge quarters the pixel count, which is the largest reduction
+/// available before the tile looks soft at 2x.
+const THUMBNAIL_FALLBACK_EDGE: u32 = 128;
 
 /// The reason an image was refused, as the `field` of the returned
 /// `AppError::Validation`. The frontend maps it to localized copy, so these strings are a
@@ -56,6 +77,17 @@ impl ProjectImageFormat {
         match self {
             ProjectImageFormat::Png => "image/png",
             ProjectImageFormat::Jpeg => "image/jpeg",
+        }
+    }
+
+    /// The inverse of `mime_type`, so a stored row can be turned back into the format that
+    /// wrote it. `None` for anything else: `project_images_mime_allowed` admits only these
+    /// two, so an unknown value cannot come from this application.
+    pub fn from_mime_type(mime_type: &str) -> Option<Self> {
+        match mime_type {
+            "image/png" => Some(ProjectImageFormat::Png),
+            "image/jpeg" => Some(ProjectImageFormat::Jpeg),
+            _ => None,
         }
     }
 }
@@ -255,6 +287,117 @@ fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32), AppError> {
 
         cursor = segment_end;
     }
+}
+
+fn image_format(format: ProjectImageFormat) -> ImageFormat {
+    match format {
+        ProjectImageFormat::Png => ImageFormat::Png,
+        ProjectImageFormat::Jpeg => ImageFormat::Jpeg,
+    }
+}
+
+/// Scales down only, preserving the aspect ratio. The guard is load-bearing:
+/// `DynamicImage::resize` also scales *up*, so a picture already smaller than the tile would be
+/// blown into a file larger than the original it was meant to shrink.
+fn downscaled(decoded: &DynamicImage, edge: u32) -> DynamicImage {
+    if decoded.width() <= edge && decoded.height() <= edge {
+        return decoded.clone();
+    }
+
+    decoded.resize(edge, edge, FilterType::Triangle)
+}
+
+fn encoded(decoded: &DynamicImage, format: ProjectImageFormat) -> Option<Vec<u8>> {
+    let mut buffer = Cursor::new(Vec::new());
+
+    match format {
+        // JPEG carries no alpha channel and its encoder refuses an RGBA buffer outright rather
+        // than flattening it, so dropping this conversion makes the whole JPEG half of the
+        // ladder below unreachable for any transparent PNG.
+        ProjectImageFormat::Jpeg => DynamicImage::ImageRgb8(decoded.to_rgb8())
+            .write_to(&mut buffer, ImageFormat::Jpeg)
+            .ok()?,
+        ProjectImageFormat::Png => decoded.write_to(&mut buffer, ImageFormat::Png).ok()?,
+    }
+
+    Some(buffer.into_inner())
+}
+
+/// The downscaled derivative the project list renders, with its own mime type, or `None` when
+/// one could not be produced.
+///
+/// `None` is a valid outcome and never an error. The picture has already been validated and is
+/// about to be stored, so refusing the upload because a derivative could not be made would
+/// lose a file the user can see perfectly well in the expanded card; the row shows a
+/// placeholder tile instead. The returned mime type is NOT always the source's — see the
+/// ladder in `thumbnail_within`.
+pub fn thumbnail(bytes: &[u8], format: ProjectImageFormat) -> Option<(Vec<u8>, &'static str)> {
+    thumbnail_within(bytes, format, MAX_PROJECT_THUMBNAIL_BYTES)
+}
+
+/// Walks the ladder: keep the source format at full thumbnail size, then trade the source
+/// format for JPEG's far smaller output, then trade resolution. Each rung must be encoded to be
+/// measured, because the previous rung's size is the only thing that says it was needed.
+///
+/// The ceiling is a parameter purely so every rung is reachable from a test: under the
+/// production 64 KiB value the last two rungs would need a fixture whose encoded size lands in
+/// a narrow band no realistic image is guaranteed to hit, leaving them untested.
+fn thumbnail_within(
+    bytes: &[u8],
+    format: ProjectImageFormat,
+    ceiling: u64,
+) -> Option<(Vec<u8>, &'static str)> {
+    let decoded = load_from_memory_with_format(bytes, image_format(format)).ok()?;
+
+    let mut attempted: Option<(ProjectImageFormat, u32)> = None;
+    for rung in [
+        (format, THUMBNAIL_EDGE),
+        (ProjectImageFormat::Jpeg, THUMBNAIL_EDGE),
+        (ProjectImageFormat::Jpeg, THUMBNAIL_FALLBACK_EDGE),
+    ] {
+        // A JPEG source makes the first two rungs the same encode.
+        if attempted == Some(rung) {
+            continue;
+        }
+        attempted = Some(rung);
+
+        let (target, edge) = rung;
+        // `continue`, not `return`: a colour type PNG refuses is exactly what the JPEG rung
+        // below exists to recover from.
+        let Some(candidate) = encoded(&downscaled(&decoded, edge), target) else {
+            continue;
+        };
+        if u64::try_from(candidate.len()).is_ok_and(|size| size <= ceiling) {
+            return Some((candidate, target.mime_type()));
+        }
+    }
+
+    None
+}
+
+/// Shared test fixture: a genuinely decodable image, unlike the header stubs the validator tests
+/// build. It lives outside `mod tests` because the command layer proves the batch read and the
+/// lazy backfill against real pixel data and must use the same fixture rather than its own.
+///
+/// `noise` fills every pixel from a cheap deterministic hash of its coordinates, which is what
+/// forces a large encoded size — a flat colour compresses to almost nothing in both formats and
+/// could never reach the ceiling.
+#[cfg(test)]
+pub(crate) fn rendered_test_image(
+    width: u32,
+    height: u32,
+    noise: bool,
+    format: ProjectImageFormat,
+) -> Vec<u8> {
+    let pixels = image::RgbImage::from_fn(width, height, |x, y| {
+        if !noise {
+            return image::Rgb([16, 32, 48]);
+        }
+        let mixed = (x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503)).to_le_bytes();
+        image::Rgb([mixed[0], mixed[1], mixed[2]])
+    });
+
+    encoded(&DynamicImage::ImageRgb8(pixels), format).expect("the fixture encodes")
 }
 
 #[cfg(test)]
@@ -573,5 +716,155 @@ mod tests {
         let absent = dir.join("gone.png");
         let rendered = read(absent.to_str().unwrap()).unwrap_err().to_string();
         assert!(!rendered.contains(marker), "{rendered}");
+    }
+
+    fn thumbnail_size(bytes: &[u8]) -> (u32, u32) {
+        let decoded = image::load_from_memory(bytes).expect("the thumbnail decodes");
+        (decoded.width(), decoded.height())
+    }
+
+    /// The other half of the `mime_type` contract. `upsert_project_image` stores the string and
+    /// the lazy backfill has to get a format back out of it, so a one-way mapping would leave
+    /// every pre-027 row permanently without a thumbnail.
+    #[test]
+    fn every_stored_mime_type_maps_back_to_its_format() {
+        for format in [ProjectImageFormat::Png, ProjectImageFormat::Jpeg] {
+            assert_eq!(
+                ProjectImageFormat::from_mime_type(format.mime_type()),
+                Some(format)
+            );
+        }
+
+        assert_eq!(ProjectImageFormat::from_mime_type("image/webp"), None);
+        assert_eq!(ProjectImageFormat::from_mime_type("image/PNG"), None);
+    }
+
+    #[test]
+    fn a_png_thumbnail_keeps_the_source_format_and_fits_the_ceiling() {
+        let source = rendered_test_image(800, 600, false, ProjectImageFormat::Png);
+
+        let (bytes, mime) = thumbnail(&source, ProjectImageFormat::Png).expect("a thumbnail");
+
+        assert_eq!(mime, "image/png");
+        assert_eq!(thumbnail_size(&bytes), (THUMBNAIL_EDGE, 192));
+        assert!(u64::try_from(bytes.len()).unwrap() <= MAX_PROJECT_THUMBNAIL_BYTES);
+    }
+
+    #[test]
+    fn a_jpeg_thumbnail_keeps_the_source_format_and_fits_the_ceiling() {
+        let source = rendered_test_image(800, 600, false, ProjectImageFormat::Jpeg);
+
+        let (bytes, mime) = thumbnail(&source, ProjectImageFormat::Jpeg).expect("a thumbnail");
+
+        assert_eq!(mime, "image/jpeg");
+        assert_eq!(thumbnail_size(&bytes), (THUMBNAIL_EDGE, 192));
+        assert!(u64::try_from(bytes.len()).unwrap() <= MAX_PROJECT_THUMBNAIL_BYTES);
+    }
+
+    /// A square thumbnail of a panorama is a cropped thumbnail, and cropping is out of scope:
+    /// the tile letterboxes rather than deciding for the user what to cut.
+    #[test]
+    fn a_non_square_source_keeps_its_aspect_ratio() {
+        let source = rendered_test_image(800, 200, false, ProjectImageFormat::Png);
+
+        let (bytes, _) = thumbnail(&source, ProjectImageFormat::Png).expect("a thumbnail");
+
+        assert_eq!(thumbnail_size(&bytes), (THUMBNAIL_EDGE, 64));
+    }
+
+    /// The upscale guard. Without it a 48x32 avatar becomes a 256x171 thumbnail — more bytes
+    /// than the picture it derives from, and blurrier.
+    #[test]
+    fn a_source_already_smaller_than_the_target_is_not_scaled_up() {
+        let source = rendered_test_image(48, 32, false, ProjectImageFormat::Png);
+
+        let (bytes, _) = thumbnail(&source, ProjectImageFormat::Png).expect("a thumbnail");
+
+        assert_eq!(thumbnail_size(&bytes), (48, 32));
+    }
+
+    /// The production ceiling, not an injected one: 256x256 of noise is incompressible, so its
+    /// PNG re-encode lands near 190 KiB and only a JPEG rung can satisfy 64 KiB.
+    #[test]
+    fn a_source_whose_own_format_cannot_fit_the_real_ceiling_falls_back_to_jpeg() {
+        let source = rendered_test_image(
+            THUMBNAIL_EDGE,
+            THUMBNAIL_EDGE,
+            true,
+            ProjectImageFormat::Png,
+        );
+
+        let (bytes, mime) = thumbnail(&source, ProjectImageFormat::Png).expect("a thumbnail");
+
+        assert_eq!(mime, "image/jpeg");
+        assert!(u64::try_from(bytes.len()).unwrap() <= MAX_PROJECT_THUMBNAIL_BYTES);
+    }
+
+    /// A transparent source, which is the case that makes the RGBA flatten in `encoded`
+    /// load-bearing: the JPEG encoder rejects an RGBA buffer, so without it every JPEG rung
+    /// fails and this picture would silently get no thumbnail at all.
+    #[test]
+    fn a_transparent_png_can_still_fall_back_to_jpeg() {
+        let pixels = image::RgbaImage::from_fn(THUMBNAIL_EDGE, THUMBNAIL_EDGE, |x, y| {
+            let mixed = (x.wrapping_mul(2_654_435_761) ^ y.wrapping_mul(40_503)).to_le_bytes();
+            image::Rgba([mixed[0], mixed[1], mixed[2], 128])
+        });
+        let source = encoded(&DynamicImage::ImageRgba8(pixels), ProjectImageFormat::Png)
+            .expect("the fixture encodes");
+
+        let (bytes, mime) = thumbnail(&source, ProjectImageFormat::Png).expect("a thumbnail");
+
+        assert_eq!(mime, "image/jpeg");
+        assert!(u64::try_from(bytes.len()).unwrap() <= MAX_PROJECT_THUMBNAIL_BYTES);
+    }
+
+    /// Every rung, driven deterministically by setting each ceiling one byte under the previous
+    /// rung's own measured size. That is what proves the ORDER — format is traded before
+    /// resolution — rather than merely proving something under 64 KiB comes back.
+    #[test]
+    fn the_ladder_trades_format_before_resolution_and_gives_up_last() {
+        let source = rendered_test_image(
+            THUMBNAIL_EDGE,
+            THUMBNAIL_EDGE,
+            true,
+            ProjectImageFormat::Png,
+        );
+
+        let (as_png, png_mime) =
+            thumbnail_within(&source, ProjectImageFormat::Png, u64::MAX).expect("rung 1");
+        assert_eq!(png_mime, "image/png", "the source format is preferred");
+
+        let below_png = u64::try_from(as_png.len()).unwrap() - 1;
+        let (as_jpeg, jpeg_mime) =
+            thumbnail_within(&source, ProjectImageFormat::Png, below_png).expect("rung 2");
+        assert_eq!(jpeg_mime, "image/jpeg");
+        assert_eq!(
+            thumbnail_size(&as_jpeg),
+            (THUMBNAIL_EDGE, THUMBNAIL_EDGE),
+            "rung 2 trades the format, never the resolution"
+        );
+
+        let below_jpeg = u64::try_from(as_jpeg.len()).unwrap() - 1;
+        let (halved, halved_mime) =
+            thumbnail_within(&source, ProjectImageFormat::Png, below_jpeg).expect("rung 3");
+        assert_eq!(halved_mime, "image/jpeg");
+        assert_eq!(
+            thumbnail_size(&halved),
+            (THUMBNAIL_FALLBACK_EDGE, THUMBNAIL_FALLBACK_EDGE)
+        );
+
+        let below_halved = u64::try_from(halved.len()).unwrap() - 1;
+        assert!(thumbnail_within(&source, ProjectImageFormat::Png, below_halved).is_none());
+    }
+
+    /// Undecodable input is an absent thumbnail, never an error: `read` accepts a file on its
+    /// container header alone, so the two verdicts genuinely disagree, and the upload must
+    /// survive that disagreement.
+    #[test]
+    fn input_the_decoder_refuses_yields_no_thumbnail_rather_than_an_error() {
+        assert!(thumbnail(b"this is not image data", ProjectImageFormat::Png).is_none());
+        assert!(thumbnail(&[], ProjectImageFormat::Jpeg).is_none());
+        // A header the shipped validator accepts, with no pixel data behind it.
+        assert!(thumbnail(&png_declaring(64, 64), ProjectImageFormat::Png).is_none());
     }
 }

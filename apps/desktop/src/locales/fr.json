@@ -1403,6 +1403,8 @@
   "projects.image.removeDescription": "Le projet conserve sa progression et son historique. Seule l'image est retirée.",
   "projects.image.alt": "Image pour {{name}}",
   "projects.image.metaLine": "{{filename}} · ajoutée le {{date}}",
+  "projects.image.thumbnailAlt": "Vignette de l'image pour {{name}}",
+  "projects.image.thumbnailEmpty": "Aucune image",
   "projects.image.unavailable": "Cette image ne peut pas être affichée pour le moment.",
   "projects.image.loadFailed": "L'image enregistrée n'a pas pu être chargée.",
   "projects.image.saveFailed": "L'image n'a pas pu être enregistrée. Veuillez réessayer.",

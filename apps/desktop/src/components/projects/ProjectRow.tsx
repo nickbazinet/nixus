@@ -20,6 +20,7 @@ import {
   Money,
 } from "@nixus/shared";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
+import { ProjectRowThumbnail } from "@/components/projects/ProjectRowThumbnail";
 import { useProjectPace } from "@/hooks/useProjects";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import {
@@ -147,6 +148,7 @@ export function ProjectRow({
               <ChevronRight className="text-ink-dim" aria-hidden="true" />
             )}
           </Button>
+          <ProjectRowThumbnail project={project} />
           <span className="truncate text-label text-ink" data-testid="project-name">
             {project.name}
           </span>

@@ -12,6 +12,7 @@ import type {
   ProjectImageMeta,
   ProjectPace,
   ProjectSavedTotal,
+  ProjectThumbnail,
   SavingsProjectsSummary,
   SuggestedAllocationResponse,
   UpdateProjectInput,
@@ -154,12 +155,33 @@ export function useProjectImage(projectId: number, enabled = true) {
   });
 }
 
+// One query for the whole list rather than one per row, exactly like `useProjectPace` below: every
+// `ProjectRow` calls this and react-query collapses them onto a single key, so a page of ten rows
+// costs ONE IPC round trip. That is the guarantee the batch command exists for.
+//
+// `staleTime: Infinity` with `refetchOnWindowFocus: false` because a thumbnail only changes when
+// this app changes it, and both image mutations already invalidate this key. No `gcTime` override:
+// unlike the full-size payload these are bounded at 64 KiB each, so the default retention is
+// cheap, and dropping them early would re-read the whole list on every remount.
+export function useProjectThumbnails() {
+  return useQuery({
+    queryKey: queryKeys.projectThumbnails,
+    queryFn: () => invoke<ProjectThumbnail[]>("get_project_thumbnails"),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+}
+
 // Only this project's image key goes stale. The payload appears in no list response, no saved
 // total, no earmark and no pace figure, so invalidating anything else would assert a data
 // dependency that does not exist. Cross-profile safety is NOT handled here: `lib/datasetSwitch.ts`
 // calls `queryClient.clear()` on a dataset switch, which is what stops one profile's cached image
 // from surfacing under another profile's identical project id. Anyone narrowing that to key-by-key
 // invalidation must include `projectImage` or reintroduce that leak.
+//
+// The thumbnail list is the one genuine second dependency: the row's tile is derived from the same
+// bytes, so a write that did not invalidate it would leave the list showing the old picture until
+// the next launch.
 export function useSetProjectImage() {
   const queryClient = useQueryClient();
 
@@ -172,6 +194,9 @@ export function useSetProjectImage() {
     onSuccess: (_meta, input) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.projectImage(input.project_id),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projectThumbnails,
       });
     },
   });
@@ -186,6 +211,9 @@ export function useRemoveProjectImage() {
     onSuccess: (_removed, projectId) => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.projectImage(projectId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projectThumbnails,
       });
     },
   });

@@ -121,6 +121,15 @@ const WRITTEN_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR42mP4z8AARAwQCgAf7gP9Y167WwAAAABJRU5ErkJggg==";
 const WRITTEN_PNG_BYTES = 73;
 
+/**
+ * What `get_project_thumbnails` returns for every stored image: a real 73-byte 4x3 RGB PNG, and a
+ * THIRD payload distinct from both the seeded and the written ones on purpose. If the row tile
+ * reused either of those, a regression that fed the row a full-size `get_project_image` payload
+ * would render identically and no assertion could see it. Keep it decodable and keep it distinct.
+ */
+const THUMBNAIL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAEElEQVR42mPgOREFRww4OQAQmg4pdqj/QAAAAABJRU5ErkJggg==";
+
 function seededImage(
   projectId: number,
   filename = "cover.png"
@@ -183,6 +192,7 @@ async function setupTauriMock(
       images,
       writtenImageBase64,
       writtenImageBytes,
+      thumbnailImageBase64,
     }) => {
       interface MockProject {
         id: number;
@@ -716,6 +726,20 @@ async function setupTauriMock(
             return Promise.resolve(null);
           }
 
+          // ONE call for the whole collapsed list, derived from the same store the four commands
+          // above write, so an add or a removal moves the row tile without a second knob. The
+          // payload is deliberately NOT the stored `image_base64`: Rust ships a downscaled
+          // derivative here, and reusing the full-size bytes would make the mock lie about the
+          // one guarantee this command exists to provide.
+          case "get_project_thumbnails":
+            return Promise.resolve(
+              projectImages.map((image) => ({
+                project_id: image.project_id,
+                mime_type: image.mime_type,
+                image_base64: thumbnailImageBase64,
+              }))
+            );
+
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
           }
@@ -736,6 +760,7 @@ async function setupTauriMock(
       images,
       writtenImageBase64: WRITTEN_PNG_BASE64,
       writtenImageBytes: WRITTEN_PNG_BYTES,
+      thumbnailImageBase64: THUMBNAIL_PNG_BASE64,
     }
   );
 }
@@ -2291,6 +2316,86 @@ test.describe("Project image card", () => {
     await page.getByTestId("project-expand-toggle").click();
     await expect(page.getByTestId("project-image")).toBeVisible();
     expect(await invokedCommands(page)).toContain("get_project_image");
+  });
+
+  test("a project row shows its thumbnail as a data URL naming the project", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id, "downpayment.png")],
+    });
+
+    const tile = page.getByTestId("project-thumbnail");
+    await expect(tile).toBeVisible();
+    // The DERIVATIVE, not the stored picture: this is the assertion a regression that fed the row
+    // a full-size payload would fail, which is why the mock keeps three distinct fixtures.
+    expect(await tile.getAttribute("src")).toBe(
+      `data:image/png;base64,${THUMBNAIL_PNG_BASE64}`
+    );
+    expect(THUMBNAIL_PNG_BASE64).not.toBe(ONE_PIXEL_PNG_BASE64);
+    // Decodable, so this is not silently asserting a broken image.
+    await expect
+      .poll(async () => await tile.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+      .toBeGreaterThan(0);
+
+    const alt = await tile.getAttribute("alt");
+    expect(alt).not.toBe("");
+    expect(alt).toContain(IMAGE_PROJECT.name);
+    await expect(page.getByTestId("project-thumbnail-empty")).toHaveCount(0);
+
+    // Presentational only: the tile must not become a control competing with the row's own.
+    expect(await tile.evaluate((el) => el.closest("button, a") !== null)).toBe(
+      false
+    );
+    // Every control the row shipped before the tile existed is still there.
+    for (const testId of [
+      "project-expand-toggle",
+      "project-name",
+      "project-status-badge",
+      "project-row-menu",
+      "project-progress-bar",
+    ]) {
+      await expect(page.getByTestId(testId)).toBeVisible();
+    }
+  });
+
+  test("a project with no image shows the neutral placeholder tile", async ({
+    page,
+  }) => {
+    await gotoProjects(page, NO_IMAGES);
+
+    const placeholder = page.getByTestId("project-thumbnail-empty");
+    await expect(placeholder).toBeVisible();
+    // Named rather than silent, and named from `src/locales/en.json`: the tile carries meaning
+    // ("this goal has no picture"), so it is an img role, not decorative wallpaper.
+    await expect(placeholder).toHaveAttribute("aria-label", "No image");
+    await expect(page.getByTestId("project-thumbnail")).toHaveCount(0);
+    await expect(page.getByTestId("project-name")).toBeVisible();
+  });
+
+  test("the collapsed list reads thumbnails once for every row and no full-size payload", async ({
+    page,
+  }) => {
+    const rows: MockSeedProject[] = [1, 2, 3].map((id) => ({
+      id,
+      name: `Goal ${id}`,
+      target_cents: 400_000,
+      target_date: null,
+    }));
+    await gotoProjects(
+      page,
+      { ...NO_IMAGES, seed: rows.map((row) => seededImage(row.id)) },
+      rows
+    );
+
+    await expect(page.getByTestId("project-thumbnail")).toHaveCount(rows.length);
+    const commands = await invokedCommands(page);
+    // ONE batch read regardless of row count — three rows, one call. A per-row read would be 3.
+    expect(
+      commands.filter((command) => command === "get_project_thumbnails")
+    ).toHaveLength(1);
+    expect(commands).not.toContain("get_project_image");
   });
 
   test("a dismissed picker writes nothing and leaves the invitation alone", async ({
