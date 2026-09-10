@@ -1,25 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  MoreHorizontal,
-  Pencil,
-  Archive,
   ArrowDown,
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  ImageOff,
 } from "lucide-react";
-import {
-  Badge,
-  Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  Meter,
-  Money,
-} from "@nixus/shared";
+import { Alert, Badge, Button, Meter, Money } from "@nixus/shared";
 import { ProjectDetail } from "@/components/projects/ProjectDetail";
+import { ProjectRowMenu } from "@/components/projects/ProjectRowMenu";
 import { ProjectRowThumbnail } from "@/components/projects/ProjectRowThumbnail";
 import { useProjectPace } from "@/hooks/useProjects";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
@@ -70,6 +60,9 @@ export function ProjectRow({
   const maskProps = useMaskProps();
   const { hidden } = useValuesHidden();
   const [expanded, setExpanded] = useState(false);
+  // Shared by the tile (add/replace) and the menu (remove): neither has room for a sentence, and two
+  // independent alerts in one row would let a stale refusal sit beside a fresh one.
+  const [imageErrorKey, setImageErrorKey] = useState<string | null>(null);
   const moveUpRef = useRef<HTMLButtonElement | null>(null);
   const moveDownRef = useRef<HTMLButtonElement | null>(null);
   const pendingMoveFocus = useRef<MoveDirection | null>(null);
@@ -148,7 +141,10 @@ export function ProjectRow({
               <ChevronRight className="text-ink-dim" aria-hidden="true" />
             )}
           </Button>
-          <ProjectRowThumbnail project={project} />
+          <ProjectRowThumbnail
+            project={project}
+            onImageErrorKey={setImageErrorKey}
+          />
           <span className="truncate text-label text-ink" data-testid="project-name">
             {project.name}
           </span>
@@ -207,37 +203,12 @@ export function ProjectRow({
                   })}
             </Badge>
           )}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t("projects.rowActions", { name: project.name })}
-                  data-testid="project-row-menu"
-                />
-              }
-            >
-              <MoreHorizontal aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => onEdit(project)}
-                data-testid="edit-project-button"
-              >
-                <Pencil aria-hidden="true" />
-                {t("projects.editProject")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() => onArchive(project)}
-                data-testid="archive-project-button"
-              >
-                <Archive aria-hidden="true" />
-                {t("projects.archive")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ProjectRowMenu
+            project={project}
+            onEdit={onEdit}
+            onArchive={onArchive}
+            onImageErrorKey={setImageErrorKey}
+          />
         </div>
       </div>
       {project.target_cents > 0 && (
@@ -248,6 +219,16 @@ export function ProjectRow({
           valueText={hidden ? t("common.amountHidden") : progressSentence}
           data-testid="project-progress-bar"
         />
+      )}
+      {imageErrorKey !== null && (
+        <Alert
+          variant="over"
+          icon={<ImageOff />}
+          className="mt-2"
+          data-testid="project-image-error"
+        >
+          {t(imageErrorKey)}
+        </Alert>
       )}
       {expanded && <ProjectDetail project={project} savedCents={savedCents} />}
     </div>
