@@ -314,6 +314,8 @@ pub fn run() {
             commands::maintenance::log_maintenance_service,
             commands::maintenance::log_custom_service,
             commands::maintenance::get_service_history,
+            commands::maintenance::update_service_log,
+            commands::maintenance::delete_service_log,
             commands::maintenance::get_maintenance_alert_summary,
             commands::maintenance::get_vehicle_catalog_status,
             commands::maintenance::get_vehicle_makes,
