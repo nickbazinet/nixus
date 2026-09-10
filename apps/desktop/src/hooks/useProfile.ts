@@ -6,6 +6,7 @@ import type {
   Subdivision,
   TfsaAccumulatedLimit,
   UpdateUserProfileInput,
+  UserAvatar,
   UserProfile,
 } from "@/lib/types";
 
@@ -68,6 +69,48 @@ export function useSaveUserProfile() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.tfsaAccumulatedLimit,
       });
+    },
+  });
+}
+
+// `enabled` is the caller's, unlike `useUserProfile` above: this one also serves
+// the always-mounted account trigger, which may not read the avatar while a local
+// profile is open — the command resolves the Cognito subject, so it opens the OS
+// secure store and can POST a token refresh for a profile that has no account.
+//
+// `staleTime: Infinity` for the same reason `useAuthSession` uses it: the only
+// thing that changes an avatar is the mutation below, which writes the new value
+// into this cache entry itself, so any shorter window would re-open the keyring on
+// every window focus for a value that cannot have gone stale.
+//
+// `retry: false` because a rejection here is deterministic — no session, or a
+// refused subject — and the correct answer, render the placeholder, is already
+// known on the first attempt.
+export function useUserAvatar({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.userAvatar,
+    queryFn: () => invoke<UserAvatar | null>("get_user_avatar"),
+    enabled,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+// Only the picked path crosses IPC; Rust reads, validates, downscales and stores,
+// and answers with the derivative alone.
+//
+// `setQueryData`, not `invalidateQueries`: the response IS the new server state for
+// the one key this write affects, so invalidating would spend a second command —
+// and another keyring read — fetching bytes already in hand, and would blank both
+// round renderings for that round trip.
+export function useSetUserAvatar() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (filePath: string) =>
+      invoke<UserAvatar>("set_user_avatar", { file_path: filePath }),
+    onSuccess: (avatar) => {
+      queryClient.setQueryData(queryKeys.userAvatar, avatar);
     },
   });
 }

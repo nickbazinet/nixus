@@ -455,4 +455,64 @@ mod tests {
             i64::try_from(payload.len()).expect("the payload length fits an i64")
         );
     }
+
+    /// Read-only evidence for the avatar store: a dataset backup is a copy of ONE file, so an
+    /// account's profile picture must be absent from it.
+    ///
+    /// Asserted rather than reasoned about, because the exclusion is structural and therefore
+    /// invisible: nothing in `export_backup` mentions avatars, so a later change that reached for
+    /// `global_root` instead of the dataset directory — or added the avatar table to the dataset
+    /// schema — would start shipping one account's face inside a file the user hands to another
+    /// machine, and no existing test would notice.
+    #[test]
+    fn an_exported_backup_carries_no_avatar_data() {
+        let root = TempDir::new().expect("temp dir");
+        let db_path = root.path().join(DB_FILE_NAME);
+        let backup_path = root.path().join("nkbaz-finance-backup.db");
+
+        let conn = crate::db::init_db(root.path()).expect("init_db succeeds");
+
+        // A populated avatar store, sitting exactly where the app puts it: beside the dataset,
+        // under the global root's `profiles/` directory.
+        let profiles = crate::profile_store::profiles_dir(root.path());
+        crate::avatar_store::save_avatar(
+            &profiles,
+            "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            &crate::projects::image::rendered_test_image(
+                64,
+                64,
+                false,
+                crate::projects::image::ProjectImageFormat::Png,
+            ),
+            "image/png",
+        )
+        .expect("the avatar is stored");
+        assert!(
+            crate::avatar_store::avatars_db_path(&profiles).is_file(),
+            "the fixture must exist, or the exclusion below proves nothing"
+        );
+
+        checkpoint_for_export(&conn).expect("the checkpoint succeeds");
+        copy_db_to_path(&db_path, &backup_path).expect("the copy succeeds");
+
+        let exported = Connection::open(&backup_path).expect("the backup opens");
+        let avatar_tables: i64 = exported
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'user_avatars'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("the schema read succeeds");
+        assert_eq!(
+            avatar_tables, 0,
+            "the dataset schema must never carry the avatar table"
+        );
+
+        // The backup is the dataset file itself, never the avatar database.
+        assert_ne!(backup_path, crate::avatar_store::avatars_db_path(&profiles));
+        assert!(
+            crate::avatar_store::avatars_db_path(&profiles).is_file(),
+            "an export must leave the avatar store untouched"
+        );
+    }
 }

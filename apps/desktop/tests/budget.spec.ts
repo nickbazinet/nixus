@@ -234,6 +234,10 @@ async function setupTauriMock(page: Page) {
               migrations_applied: 3,
             });
 
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return Promise.resolve(null);
           default:
             return Promise.reject(
               `Unknown command: ${cmd}`

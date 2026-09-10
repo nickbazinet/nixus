@@ -22,7 +22,7 @@ import {
   useRemoveProjectImage,
   useSetProjectImage,
 } from "@/hooks/useProjects";
-import { projectImageMessageKey } from "@/lib/appError";
+import { projectImageMessageKey, userAvatarMessageKey } from "@/lib/appError";
 import { queryKeys } from "@/lib/constants";
 import en from "@/locales/en.json";
 import fr from "@/locales/fr.json";
@@ -38,8 +38,10 @@ const recordedQueryOptions: Record<string, unknown>[] = [];
 /* A sentinel value, not the shipped English string: an assertion against "Images" would still
  * pass if the label were hardcoded, which is exactly the regression this pins. */
 const LOCALIZED_FILTER_LABEL = "«localized images»";
+const LOCALIZED_AVATAR_FILTER_LABEL = "«localized avatar images»";
 const TRANSLATIONS: Record<string, string> = {
   "projects.image.filterName": LOCALIZED_FILTER_LABEL,
+  "profile.avatar.filterName": LOCALIZED_AVATAR_FILTER_LABEL,
 };
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -709,5 +711,140 @@ describe("the project image mutations", () => {
     });
 
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+/* The profile picture reuses this hook rather than duplicating file access. These tests pin the
+ * part that is easy to get wrong: the overrides must actually replace the project copy and the
+ * project error map, while every safety property — validate before write, no path leaves state,
+ * one dialog per click — stays inherited unchanged. */
+describe("useProjectImagePicker with profile-picture overrides", () => {
+  const AVATAR_GENERIC_FAILURE_KEY = "profile.avatar.saveFailed";
+  const AVATAR_OPTIONS = {
+    filterNameKey: "profile.avatar.filterName",
+    messageKey: userAvatarMessageKey,
+    genericFailureKey: AVATAR_GENERIC_FAILURE_KEY,
+  } as const;
+
+  let state: ProjectImagePickerState;
+  let container: HTMLDivElement;
+  let root: Root;
+
+  function Harness() {
+    state = useProjectImagePicker(AVATAR_OPTIONS);
+    return null;
+  }
+
+  async function pick(): Promise<ProjectImagePickOutcome> {
+    let outcome: ProjectImagePickOutcome = "cancelled";
+    await act(async () => {
+      outcome = await state.pick();
+    });
+    return outcome;
+  }
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    invokeMock.mockReset();
+    openMock.mockReset();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root.render(<Harness />);
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("labels the native dialog with the profile filter, not the project one", async () => {
+    // Given the user opens the picker from the profile page
+    openMock.mockResolvedValue(PICKED_PATH);
+    invokeMock.mockResolvedValue("face.png");
+
+    // When the dialog opens
+    await pick();
+
+    // Then it carries the profile's own localized label and the shared extension list
+    expect(openMock).toHaveBeenCalledTimes(1);
+    const [options] = openMock.mock.calls[0] as [
+      { filters: { name: string; extensions: string[] }[] },
+    ];
+    expect(options.filters[0]?.name).toBe(LOCALIZED_AVATAR_FILTER_LABEL);
+    expect(options.filters[0]?.name).not.toBe(LOCALIZED_FILTER_LABEL);
+    expect(options.filters[0]?.extensions).toEqual([
+      ...PROJECT_IMAGE_EXTENSIONS,
+    ]);
+  });
+
+  /* The shared validator is the same one, so the FIELDS are identical — only the copy differs.
+   * Mapping them back to `projects.image.*` here would put "project image" on the profile page. */
+  it("maps a shared refusal field to profile copy rather than project copy", async () => {
+    // Given the shared validator refuses a disguised file
+    openMock.mockResolvedValue(PICKED_PATH);
+    invokeMock.mockRejectedValue({
+      type: "validation",
+      message: "refused",
+      field: "project_image_content_mismatch",
+    });
+
+    // When the user picks it from the profile page
+    const outcome = await pick();
+
+    // Then the reported key is the profile's, and the copy exists in both locales
+    expect(outcome).toBe("refused");
+    expect(state.errorKey).toBe("profile.avatar.contentMismatch");
+    expect(state.errorKey).not.toBe("projects.image.contentMismatch");
+    expect(EN[state.errorKey as string]).toBeTruthy();
+    expect(FR[state.errorKey as string]).toBeTruthy();
+    expect(state.picked).toBeNull();
+  });
+
+  it("falls back to the profile generic failure, never the project one", async () => {
+    // Given a rejection carrying no field this build recognizes
+    openMock.mockResolvedValue(PICKED_PATH);
+    invokeMock.mockRejectedValue({ type: "database", message: "locked" });
+
+    // When the pick settles
+    const outcome = await pick();
+
+    // Then the generic message is the profile's own
+    expect(outcome).toBe("refused");
+    expect(state.errorKey).toBe(AVATAR_GENERIC_FAILURE_KEY);
+    expect(state.errorKey).not.toBe(GENERIC_FAILURE_KEY);
+    expect(EN[AVATAR_GENERIC_FAILURE_KEY]).toBeTruthy();
+    expect(FR[AVATAR_GENERIC_FAILURE_KEY]).toBeTruthy();
+  });
+
+  /* Inherited unchanged, and asserted because the override plumbing runs through the same
+   * callback: a botched refactor could easily validate after handing the path back. */
+  it("still validates through the shared command before any write", async () => {
+    openMock.mockResolvedValue(PICKED_PATH);
+    invokeMock.mockResolvedValue("face.png");
+
+    const outcome = await pick();
+
+    expect(outcome).toBe("selected");
+    expect(callsOf("validate_project_image")).toEqual([
+      { file_path: PICKED_PATH },
+    ]);
+    expect(callsOf("set_user_avatar")).toEqual([]);
+    expect(state.picked).toEqual({ path: PICKED_PATH, name: "face.png" });
+  });
+
+  it("still opens only one dialog for two clicks in the same tick", async () => {
+    openMock.mockResolvedValue(PICKED_PATH);
+    invokeMock.mockResolvedValue("face.png");
+
+    let outcomes: ProjectImagePickOutcome[] = [];
+    await act(async () => {
+      outcomes = await Promise.all([state.pick(), state.pick()]);
+    });
+
+    expect(openMock).toHaveBeenCalledTimes(1);
+    expect(outcomes).toContain("cancelled");
   });
 });

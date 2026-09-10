@@ -39,6 +39,18 @@ interface MockSubdivision {
   name_fr?: string;
 }
 
+/**
+ * `UserAvatar` as `commands::profile` serialises it: the stored derivative and nothing else.
+ *
+ * Redeclared here with exactly three fields on purpose. A `cognito_sub` on this shape would be the
+ * regression the Rust boundary exists to prevent, so the mock cannot express one.
+ */
+interface MockUserAvatar {
+  mime_type: string;
+  image_base64: string;
+  uploaded_at: string;
+}
+
 /** `get_active_profile`'s wire shape. The Cognito subject is deliberately absent from it (AD-10). */
 interface MockActiveProfile {
   dataset_id: string;
@@ -101,6 +113,29 @@ interface AuthOptions {
   cloudAiPremium?: CommandOutcome;
   /** Seeds `i18nextLng` before the app boots, so the FR locale is active on first paint. */
   language?: string;
+  /**
+   * What `get_user_avatar` answers on the first read. Omit for "no picture yet" (`null`).
+   *
+   * The mock keeps this in `sessionStorage`, so a successful upload survives the page loads the
+   * assertions below cost — which is what makes the "survives restart" half of AC #1 assertable
+   * rather than merely inferred from the write having been sent.
+   */
+  avatar?: MockUserAvatar | null;
+  get_user_avatar?: CommandOutcome;
+  /** What the native picker resolves. `null` is a dismissed dialog, which is the default. */
+  pickedPath?: string | null;
+  /**
+   * The `field` `validate_project_image` refuses with, or omit to accept the picked file. Every
+   * file-level refusal belongs here rather than on the write: the picker validates before anything
+   * is stored, so a refusal on this path can never reach `set_user_avatar`.
+   */
+  validateRejectField?: string | null;
+  /**
+   * The `field` `set_user_avatar` refuses with, or omit to let the write land. Validation has
+   * already passed by the time this fires, which is the only way to reach the
+   * derivative-failure guard (`user_avatar_unprocessable`) with a picture already on screen.
+   */
+  writeRejectField?: string | null;
 }
 
 interface IpcCall {
@@ -142,6 +177,38 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
     };
 
     const session = opts.session;
+
+    // Kept in `sessionStorage` so one upload outlives the page loads the assertions cost, which is
+    // what turns "survives restart" into something a locator can see. The init script re-runs on
+    // every navigation, so rehydrating here is what makes the run one continuous session.
+    const AVATAR_KEY = "__nixus_profile_avatar__";
+    const loadAvatar = (): MockUserAvatar | null => {
+      try {
+        const raw = sessionStorage.getItem(AVATAR_KEY);
+        if (raw !== null) return JSON.parse(raw) as MockUserAvatar | null;
+      } catch {
+        // Storage unavailable: the seeded value still serves this page load.
+      }
+      return opts.avatar ?? null;
+    };
+    let storedAvatar = loadAvatar();
+    const persistAvatar = () => {
+      try {
+        sessionStorage.setItem(AVATAR_KEY, JSON.stringify(storedAvatar));
+      } catch {
+        // Nothing to do: the in-memory value still serves this page load.
+      }
+    };
+
+    /** A real 73-byte 2x2 RGB PNG, deliberately a DIFFERENT payload from any seeded one. */
+    const WRITTEN_AVATAR_BASE64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR42mP4z8AARAwQCgAf7gP9Y167WwAAAABJRU5ErkJggg==";
+
+    const refusal = (field: string) => ({
+      type: "validation",
+      message: `refused: ${field}`,
+      field,
+    });
 
     const ipcCalls: IpcCall[] = [];
     (window as unknown as Record<string, unknown>).__IPC_CALLS = ipcCalls;
@@ -210,6 +277,11 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       transformCallback: () => 1,
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        // Must precede the blanket plugin branch, or every pick resolves null and no file can ever
+        // be selected. Not logged, matching how every other plugin call is handled.
+        if (cmd === "plugin:dialog|open") {
+          return Promise.resolve(opts.pickedPath ?? null);
+        }
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
         ipcCalls.push({ cmd, args: args ?? null });
@@ -379,6 +451,36 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               total_saved_cents: 0,
               total_target_cents: 0,
             });
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return opts.get_user_avatar === undefined
+              ? Promise.resolve(storedAvatar)
+              : settle(opts.get_user_avatar);
+
+          // Returns a bare basename, so no directory component can reach the UI. Shared with the
+          // project-image path on purpose: `avatar_store::derive_from_file` reuses the same
+          // validator, so a second command here would be a fork the product does not have.
+          case "validate_project_image":
+            if (opts.validateRejectField != null)
+              return Promise.reject(refusal(opts.validateRejectField));
+            return Promise.resolve(
+              (args.file_path as string).split(/[/\\]/).pop() ?? "",
+            );
+
+          case "set_user_avatar":
+            // Refused after validation already passed, so any picture already stored must survive
+            // untouched — which is exactly what the failed-replace spec reads back.
+            if (opts.writeRejectField != null)
+              return Promise.reject(refusal(opts.writeRejectField));
+            storedAvatar = {
+              mime_type: "image/png",
+              image_base64: WRITTEN_AVATAR_BASE64,
+              uploaded_at: "2026-09-10T10:15:00+00:00",
+            };
+            persistAvatar();
+            return Promise.resolve(storedAvatar);
+
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
         }
@@ -1845,5 +1947,590 @@ test.describe("/profile income bracket and currency", () => {
 
     await chooseOption(page, "profile-income-currency", "JPY");
     await expect(hint).toHaveCount(0);
+  });
+});
+
+test.describe("profile picture", () => {
+  /** A real 69-byte 1x1 RGB PNG. Decodable on purpose: a fake payload fires `onError` and every
+   *  populated-state assertion below would silently be testing the broken-image fallback. */
+  const SEEDED_AVATAR_BASE64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO45ucEAANkAWfD6YMNAAAAAElFTkSuQmCC";
+  /** What a successful upload stores, mirroring the mock. A DIFFERENT payload from the seeded one,
+   *  so "the original survived a failed replace" cannot pass when the replace actually landed. */
+  const WRITTEN_AVATAR_BASE64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR42mP4z8AARAwQCgAf7gP9Y167WwAAAABJRU5ErkJggg==";
+
+  const SEEDED_AVATAR: MockUserAvatar = {
+    mime_type: "image/png",
+    image_base64: SEEDED_AVATAR_BASE64,
+    uploaded_at: "2026-09-01T08:00:00+00:00",
+  };
+
+  const PICKED_PATH = "/Users/tester/Pictures/2026/face.png";
+
+  /** The signed-in, cloud-linked, entitlement-resolvable baseline every test here starts from. */
+  const SIGNED_IN = {
+    session: LOGGED_IN,
+    activeProfile: CLOUD_PROFILE_SIGNED_IN,
+  } as const;
+
+  async function gotoProfile(page: Page, options: AuthOptions) {
+    await setupTauriMock(page, options);
+    await page.goto("/profile");
+    await expect(page.getByTestId("profile-avatar")).toBeVisible();
+  }
+
+  /**
+   * Whether an element is actually a circle, so "round" is asserted rather than assumed.
+   *
+   * Compared against the box rather than to a literal: `rounded-full` compiles to
+   * `calc(infinity * 1px)` in Tailwind v4, so the computed value is a huge px figure and never the
+   * `50%` a naive assertion would expect — while `rounded-md`'s 6px fails this on any avatar-sized
+   * box, which is what makes it a real discriminator.
+   */
+  function isRound(page: Page, testId: string) {
+    return page.getByTestId(testId).evaluate((node) => {
+      const radius = Number.parseFloat(getComputedStyle(node).borderRadius);
+      const { width, height } = node.getBoundingClientRect();
+      return (
+        Number.isFinite(radius) &&
+        width > 0 &&
+        radius >= Math.max(width, height) / 2
+      );
+    });
+  }
+
+  test("an account with no picture keeps the placeholder on both surfaces and reports nothing", async ({
+    page,
+  }) => {
+    // Given a signed-in account that has never uploaded a picture
+    await gotoProfile(page, { ...SIGNED_IN, avatar: null });
+
+    // Then /profile offers the add action against the placeholder, with no error surface
+    await expect(page.getByTestId("profile-avatar-placeholder")).toBeVisible();
+    await expect(page.getByTestId("profile-avatar-image")).toHaveCount(0);
+    await expect(page.getByTestId("profile-avatar-upload")).toHaveAccessibleName(
+      "Add a picture",
+    );
+    await expect(page.getByTestId("profile-avatar-error")).toHaveCount(0);
+
+    // And the account trigger keeps the CircleUser it always had
+    await page.goto("/");
+    await expect(page.getByTestId("profile-menu-icon")).toBeVisible();
+    await expect(page.getByTestId("profile-menu-avatar")).toHaveCount(0);
+  });
+
+  test("a stored picture renders round on /profile and in the account trigger", async ({
+    page,
+  }) => {
+    // Given the signed-in account already has a picture
+    await gotoProfile(page, { ...SIGNED_IN, avatar: SEEDED_AVATAR });
+
+    // Then the page shows it as a round image with real alt text, and the placeholder is gone
+    const image = page.getByTestId("profile-avatar-image");
+    await expect(image).toBeVisible();
+    await expect(image).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${SEEDED_AVATAR_BASE64}`,
+    );
+    await expect(image).toHaveAttribute("alt", "Your profile picture");
+    await expect(page.getByTestId("profile-avatar-placeholder")).toHaveCount(0);
+    expect(await isRound(page, "profile-avatar-image")).toBe(true);
+    // The action becomes a replace, because there is now something to replace.
+    await expect(page.getByTestId("profile-avatar-upload")).toHaveAccessibleName(
+      "Replace picture",
+    );
+
+    // And the same face replaces the placeholder in the always-mounted trigger
+    await page.goto("/");
+    const trigger = page.getByTestId("profile-menu-avatar");
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${SEEDED_AVATAR_BASE64}`,
+    );
+    await expect(page.getByTestId("profile-menu-icon")).toHaveCount(0);
+    expect(await isRound(page, "profile-menu-avatar")).toBe(true);
+    // Decorative there: the trigger's own accessible name already names the account.
+    await expect(trigger).toHaveAttribute("alt", "");
+  });
+
+  test("uploading a valid picture sends only the path, then paints both surfaces and survives a reload", async ({
+    page,
+  }) => {
+    // Given an account with no picture and a valid file waiting in the picker
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: null,
+      pickedPath: PICKED_PATH,
+    });
+
+    // When the user uploads it
+    await page.getByTestId("profile-avatar-upload").click();
+
+    // Then the stored derivative paints in place of the placeholder
+    const image = page.getByTestId("profile-avatar-image");
+    await expect(image).toBeVisible();
+    await expect(image).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${WRITTEN_AVATAR_BASE64}`,
+    );
+    await expect(page.getByTestId("profile-avatar-placeholder")).toHaveCount(0);
+    await expect(page.getByTestId("profile-avatar-error")).toHaveCount(0);
+
+    // And exactly the picked path crossed IPC — never bytes, and never a subject
+    expect(await readIpcArgs(page, "set_user_avatar")).toEqual([
+      { file_path: PICKED_PATH },
+    ]);
+    // Validation ran before the write, so a bad file could never have reached the store
+    const commands = await readIpcCommands(page);
+    expect(commands.indexOf("validate_project_image")).toBeLessThan(
+      commands.indexOf("set_user_avatar"),
+    );
+
+    // And it is still there after a reload, which is what "survives restart" means here
+    await page.reload();
+    await expect(page.getByTestId("profile-avatar-image")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${WRITTEN_AVATAR_BASE64}`,
+    );
+
+    // And the account trigger reads the same stored picture
+    await page.goto("/");
+    await expect(page.getByTestId("profile-menu-avatar")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${WRITTEN_AVATAR_BASE64}`,
+    );
+  });
+
+  test("replacing a picture writes once and leaves the previous payload nowhere on screen", async ({
+    page,
+  }) => {
+    // Given an account that already has a picture
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: SEEDED_AVATAR,
+      pickedPath: PICKED_PATH,
+    });
+    await expect(page.getByTestId("profile-avatar-image")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${SEEDED_AVATAR_BASE64}`,
+    );
+
+    // When the user replaces it
+    await page.getByTestId("profile-avatar-upload").click();
+
+    // Then the new derivative is on screen and the old payload is gone entirely
+    await expect(page.getByTestId("profile-avatar-image")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${WRITTEN_AVATAR_BASE64}`,
+    );
+    await expect(
+      page.locator(`img[src*="${SEEDED_AVATAR_BASE64}"]`),
+    ).toHaveCount(0);
+    // One write, not two: the replace is an upsert, never an add on top of a remove
+    expect(await readIpcArgs(page, "set_user_avatar")).toEqual([
+      { file_path: PICKED_PATH },
+    ]);
+  });
+
+  /* The picker refuses before anything is stored, so this is the path that must NOT reach the
+   * write — and must not cost the user the picture they already had. */
+  test("a file the validator refuses is reported in profile copy with no write and no loss", async ({
+    page,
+  }) => {
+    // Given a stored picture and an oversized file in the picker
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: SEEDED_AVATAR,
+      pickedPath: PICKED_PATH,
+      validateRejectField: "project_image_too_large",
+    });
+
+    // When the user tries to replace with it
+    await page.getByTestId("profile-avatar-upload").click();
+
+    // Then the refusal names the cause in profile-owned copy, not project copy
+    const error = page.getByTestId("profile-avatar-error");
+    await expect(error).toHaveText(
+      "That picture is larger than 4 MB. Pick a smaller one.",
+    );
+    await expect(error).not.toContainText("project");
+    // And nothing was written, and the previous picture is still exactly as it was
+    expect(await readIpcCommands(page)).not.toContain("set_user_avatar");
+    await expect(page.getByTestId("profile-avatar-image")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${SEEDED_AVATAR_BASE64}`,
+    );
+    // The page stays usable: the rest of the profile is untouched by a picture refusal
+    await expect(page.getByTestId("profile-first-name")).toBeVisible();
+  });
+
+  /* The one refusal with no project counterpart: the source passed every check and no derivative
+   * under the stored ceiling could be produced from it. */
+  test("a picture that cannot be downscaled reports its own cause and keeps the previous one", async ({
+    page,
+  }) => {
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: SEEDED_AVATAR,
+      pickedPath: PICKED_PATH,
+      writeRejectField: "user_avatar_unprocessable",
+    });
+
+    await page.getByTestId("profile-avatar-upload").click();
+
+    await expect(page.getByTestId("profile-avatar-error")).toHaveText(
+      "That picture could not be prepared for use. Pick another one.",
+    );
+    await expect(page.getByTestId("profile-avatar-image")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${SEEDED_AVATAR_BASE64}`,
+    );
+  });
+
+  test("an unmapped rejection degrades to the generic profile failure, never to a file diagnosis", async ({
+    page,
+  }) => {
+    // Given a write that fails for a reason this build has no wording for. A database fault is not
+    // a bad file, so naming a file cause would send the user to replace a picture that was fine.
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: null,
+      pickedPath: PICKED_PATH,
+      writeRejectField: "some_field_this_build_never_heard_of",
+    });
+
+    await page.getByTestId("profile-avatar-upload").click();
+
+    await expect(page.getByTestId("profile-avatar-error")).toHaveText(
+      "That picture couldn't be saved. Please try again.",
+    );
+  });
+
+  test("a dismissed picker changes nothing and reports nothing", async ({
+    page,
+  }) => {
+    // Given a stored picture and a picker the user dismisses
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: SEEDED_AVATAR,
+      pickedPath: null,
+    });
+
+    await page.getByTestId("profile-avatar-upload").click();
+
+    await expect(page.getByTestId("profile-avatar-error")).toHaveCount(0);
+    expect(await readIpcCommands(page)).not.toContain("validate_project_image");
+    expect(await readIpcCommands(page)).not.toContain("set_user_avatar");
+    await expect(page.getByTestId("profile-avatar-image")).toHaveAttribute(
+      "src",
+      `data:image/png;base64,${SEEDED_AVATAR_BASE64}`,
+    );
+  });
+
+  test("a Premium account's picture carries a ring that resolves to --premium-ink", async ({
+    page,
+  }) => {
+    // Given a Premium account with a picture
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: SEEDED_AVATAR,
+      cloudAiPremium: { kind: "resolve", value: true },
+    });
+
+    // Then the ring colour is the entitlement token itself, not an approximation of it
+    const colors = await page.evaluate(() => {
+      const normalise = (value: string) => {
+        const probe = document.createElement("div");
+        probe.style.color = value;
+        document.body.append(probe);
+        const resolved = getComputedStyle(probe).color;
+        probe.remove();
+        return resolved;
+      };
+      const image = document.querySelector(
+        '[data-testid="profile-avatar-image"]',
+      );
+      if (image === null) return null;
+      const root = getComputedStyle(document.documentElement);
+      return {
+        ring: getComputedStyle(image).borderColor,
+        ringWidth: getComputedStyle(image).borderTopWidth,
+        premium: normalise(root.getPropertyValue("--premium-ink").trim()),
+        caution: normalise(root.getPropertyValue("--caution").trim()),
+      };
+    });
+
+    expect(colors).not.toBeNull();
+    if (colors === null) return;
+    expect(colors.ring).toBe(colors.premium);
+    expect(colors.ring).not.toBe(colors.caution);
+    // A colour with no width would be invisible, which is the failure a colour-only check misses.
+    expect(colors.ringWidth).not.toBe("0px");
+    await expect(page.getByTestId("profile-avatar-image")).toHaveAttribute(
+      "data-premium",
+      "true",
+    );
+  });
+
+  test("a non-Premium account's picture gets no gold ring on either surface", async ({
+    page,
+  }) => {
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: SEEDED_AVATAR,
+      cloudAiPremium: { kind: "resolve", value: false },
+    });
+
+    const widths = await page.evaluate(() => {
+      const image = document.querySelector(
+        '[data-testid="profile-avatar-image"]',
+      );
+      return image === null ? null : getComputedStyle(image).borderTopWidth;
+    });
+    expect(widths).toBe("0px");
+    expect(
+      await page.getByTestId("profile-avatar-image").getAttribute("data-premium"),
+    ).toBeNull();
+
+    await page.goto("/");
+    expect(
+      await page.getByTestId("profile-menu-avatar").getAttribute("data-premium"),
+    ).toBeNull();
+  });
+
+  /* The gate that closes the "another subject signs in" row from the other side: a surface with no
+   * confirmed account may not read an avatar at all, so there is never a face to leak. */
+  test("no avatar is read while the session is not a confirmed logged-in account", async ({
+    page,
+  }) => {
+    for (const session of [
+      { status: "LoggedOut" } as const,
+      { status: "SessionExpired" } as const,
+    ]) {
+      await setupTauriMock(page, {
+        session,
+        activeProfile: CLOUD_PROFILE,
+        datasets: PICKER_DATASETS,
+        avatar: SEEDED_AVATAR,
+      });
+      await page.goto("/profile");
+      await expect(page.getByTestId("profile-page")).toBeVisible();
+
+      expect(await readIpcCommands(page)).not.toContain("get_user_avatar");
+      await expect(page.getByTestId("profile-avatar-image")).toHaveCount(0);
+      await expect(
+        page.locator(`img[src*="${SEEDED_AVATAR_BASE64}"]`),
+      ).toHaveCount(0);
+    }
+  });
+
+  test("a local profile never reads an account picture from the always-mounted trigger", async ({
+    page,
+  }) => {
+    // Given a local profile: it has no account, so the avatar command must never be reached
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: LOCAL_PROFILE,
+      avatar: SEEDED_AVATAR,
+    });
+    await page.goto("/");
+    await expect(page.getByTestId("profile-menu-trigger")).toBeVisible();
+
+    expect(await readIpcCommands(page)).not.toContain("get_user_avatar");
+    await expect(page.getByTestId("profile-menu-avatar")).toHaveCount(0);
+  });
+
+  test("the upload control and its refusals are fully localized in French", async ({
+    page,
+  }) => {
+    await gotoProfile(page, {
+      ...SIGNED_IN,
+      avatar: null,
+      pickedPath: PICKED_PATH,
+      validateRejectField: "project_image_content_mismatch",
+      language: "fr",
+    });
+
+    await expect(page.getByTestId("profile-avatar-upload")).toHaveAccessibleName(
+      "Ajouter une photo",
+    );
+    await page.getByTestId("profile-avatar-upload").click();
+    await expect(page.getByTestId("profile-avatar-error")).toHaveText(
+      "Le contenu de ce fichier n'est pas une image PNG ou JPEG valide.",
+    );
+    // A raw key on screen means a missing FR entry, which the locale parity test cannot see in JSX.
+    await expect(page.getByTestId("profile-avatar")).not.toContainText(
+      "profile.avatar.",
+    );
+  });
+});
+
+/**
+ * The header trigger's geometry, which is a contract rather than a styling preference: a face is
+ * unreadable at the 20px the placeholder glyph used to be, and the enlarged picture may not buy its
+ * legibility by shrinking the target it sits in or by moving the search field beside it.
+ *
+ * Measured from the live layout, never from class names: `size-8` on the picture and `size-10` on
+ * the button are two independent decisions in two different files, and a shared-package change to
+ * the `icon` variant could satisfy both class assertions while producing a 28px face in a 32px
+ * button. Only the box the browser actually resolved proves the result.
+ */
+test.describe("account trigger geometry", () => {
+  const AVATAR_PX = 32;
+  const MIN_TARGET_PX = 40;
+
+  /** The rendered box of the trigger and whichever face it is currently painting. */
+  async function measureTrigger(page: Page) {
+    return page.evaluate(() => {
+      const trigger = document.querySelector(
+        '[data-testid="profile-menu-trigger"]',
+      );
+      const face =
+        document.querySelector('[data-testid="profile-menu-avatar"]') ??
+        document.querySelector('[data-testid="profile-menu-icon"]');
+      if (trigger === null || face === null) return null;
+
+      const box = (node: Element) => {
+        const { width, height } = node.getBoundingClientRect();
+        return { width, height };
+      };
+      // The padding box, not the border box: a ring drawn outside the declared size must not be
+      // counted as picture, or a 28px face inside a 4px border would measure as a passing 32px.
+      const style = getComputedStyle(face);
+      const border =
+        Number.parseFloat(style.borderTopWidth) +
+        Number.parseFloat(style.borderBottomWidth);
+      const faceBox = box(face);
+      return {
+        trigger: box(trigger),
+        face: {
+          width: faceBox.width - border,
+          height: faceBox.height - border,
+        },
+      };
+    });
+  }
+
+  const SEEDED: MockUserAvatar = {
+    mime_type: "image/png",
+    image_base64:
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mO45ucEAANkAWfD6YMNAAAAAElFTkSuQmCC",
+    uploaded_at: "2026-09-01T08:00:00+00:00",
+  };
+
+  for (const [label, avatar] of [
+    ["placeholder", null],
+    ["picture", SEEDED],
+  ] as const) {
+    test(`renders a 32px ${label} inside a target of at least 40px`, async ({
+      page,
+    }) => {
+      // Given a signed-in account, with and without a stored picture
+      await setupTauriMock(page, {
+        session: LOGGED_IN,
+        activeProfile: CLOUD_PROFILE_SIGNED_IN,
+        avatar,
+      });
+
+      // When the shell paints the always-mounted trigger
+      await page.goto("/");
+      await expect(page.getByTestId("profile-menu-trigger")).toBeVisible();
+      const measured = await measureTrigger(page);
+
+      // Then the face is 32px and the target it sits in is at least 40px in both axes
+      expect(measured).not.toBeNull();
+      if (measured === null) return;
+      expect(Math.round(measured.face.width)).toBe(AVATAR_PX);
+      expect(Math.round(measured.face.height)).toBe(AVATAR_PX);
+      expect(measured.trigger.width).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+      expect(measured.trigger.height).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+    });
+  }
+
+  test("a Premium ring costs the picture no pixels", async ({ page }) => {
+    // Given the same account, entitled and not
+    const measure = async (premium: boolean) => {
+      await setupTauriMock(page, {
+        session: LOGGED_IN,
+        activeProfile: CLOUD_PROFILE_SIGNED_IN,
+        avatar: SEEDED,
+        cloudAiPremium: { kind: "resolve", value: premium },
+      });
+      await page.goto("/");
+      await expect(page.getByTestId("profile-menu-avatar")).toBeVisible();
+      return measureTrigger(page);
+    };
+
+    // When each renders
+    const entitled = await measure(true);
+    const plain = await measure(false);
+
+    // Then the ring is drawn outside the picture rather than taken out of it
+    expect(entitled).not.toBeNull();
+    expect(plain).not.toBeNull();
+    if (entitled === null || plain === null) return;
+    expect(entitled.face).toEqual(plain.face);
+    expect(Math.round(entitled.face.width)).toBe(AVATAR_PX);
+    // And it still fits the target, so the ring cannot overflow the affordance it decorates
+    expect(entitled.trigger.width).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+  });
+
+  test("enlarging the trigger leaves the search field where it was", async ({
+    page,
+  }) => {
+    // Given the header, whose search field is centred independently of this trigger
+    const searchBox = async (avatar: MockUserAvatar | null) => {
+      await setupTauriMock(page, {
+        session: LOGGED_IN,
+        activeProfile: CLOUD_PROFILE_SIGNED_IN,
+        avatar,
+      });
+      await page.goto("/");
+      await expect(page.getByTestId("profile-menu-trigger")).toBeVisible();
+      return page.getByTestId("topbar-search-trigger").boundingBox();
+    };
+
+    // When the trigger carries a placeholder, then a picture
+    const withPlaceholder = await searchBox(null);
+    const withPicture = await searchBox(SEEDED);
+
+    // Then the field is byte-identical in both, so the avatar never shifted the header
+    expect(withPlaceholder).not.toBeNull();
+    expect(withPicture).toEqual(withPlaceholder);
+  });
+
+  test("the trigger stays vertically centred in the header band", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      avatar: SEEDED,
+    });
+    await page.goto("/");
+    await expect(page.getByTestId("profile-menu-trigger")).toBeVisible();
+
+    // The 40px target has to fit the 56px bar with even room above and below it, or the enlarged
+    // trigger crops against the chrome edge instead of merely looking off-centre.
+    const centred = await page.evaluate(() => {
+      const trigger = document
+        .querySelector('[data-testid="profile-menu-trigger"]')
+        ?.getBoundingClientRect();
+      const header = document.querySelector("header")?.getBoundingClientRect();
+      if (trigger === undefined || header === undefined) return null;
+      return {
+        above: trigger.top - header.top,
+        below: header.bottom - trigger.bottom,
+        fits: trigger.height <= header.height,
+      };
+    });
+
+    expect(centred).not.toBeNull();
+    if (centred === null) return;
+    expect(centred.fits).toBe(true);
+    expect(Math.abs(centred.above - centred.below)).toBeLessThanOrEqual(1);
+    expect(centred.above).toBeGreaterThan(0);
   });
 });

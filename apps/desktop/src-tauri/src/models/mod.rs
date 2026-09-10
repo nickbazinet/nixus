@@ -890,6 +890,18 @@ pub struct UpdateUserProfileInput {
     pub subdivision_code: Option<String>,
 }
 
+// The stored 256px/64 KiB derivative, base64'd for an `<img src="data:...">`.
+// Deliberately carries no `cognito_sub`: the subject is resolved in Rust and never
+// crosses IPC in either direction, so echoing it here would hand the webview the
+// identity key the whole boundary exists to withhold. No filename either — the
+// source is never retained, so there is nothing to name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAvatar {
+    pub mime_type: String,
+    pub image_base64: String,
+    pub uploaded_at: String,
+}
+
 // `eligible_from_year` is returned rather than only the total because the UI
 // interpolates it into the caption, and `known_through_year` is returned so
 // support can tell "withheld because past the table bound" from "withheld

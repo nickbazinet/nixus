@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ArrowLeftRight, CircleUser, LogIn, LogOut, User } from "lucide-react";
+import { ArrowLeftRight, LogIn, LogOut, User } from "lucide-react";
 import {
   Badge,
   Button,
@@ -21,6 +21,8 @@ import {
   useSignIn,
   useSignOut,
 } from "@/hooks/useAuth";
+import { useUserAvatar } from "@/hooks/useProfile";
+import { AccountAvatar } from "@/components/auth/AccountAvatar";
 import { useActiveProfile } from "@/hooks/useDatasets";
 
 type SessionState =
@@ -110,6 +112,11 @@ export function ProfileMenu() {
   // named badge inside its menu. The hook owns profile/session gating and costs no extra IPC.
   const isPremium = usePremiumEntitlement();
 
+  // Gated on a confirmed account for the same reason the session read is: `get_user_avatar`
+  // resolves the Cognito subject, so an ungated read would open the OS secure store — and possibly
+  // POST a token refresh — for a local profile that has no account at all.
+  const avatar = useUserAvatar({ enabled: account !== null });
+
   const startCloudFlow = () => {
     signIn.mutate(
       { intent: { kind: "Login" }, entry: "SignIn" },
@@ -145,7 +152,11 @@ export function ProfileMenu() {
             <Button
               variant="ghost"
               size="icon"
+              // `size-10` overrides the variant's own `size-8`: a 32px picture needs a target bigger
+              // than 32px. Safe to grow only because TopBar pins this absolutely, outside the
+              // `justify-center` row the search field is distributed in.
               className={cn(
+                "size-10",
                 state === "session-expired" && "text-caution-ink",
               )}
               aria-label={t(
@@ -161,15 +172,20 @@ export function ProfileMenu() {
             />
           }
         >
-          <CircleUser
-            aria-hidden="true"
-            className={cn("size-5", showPremium && "text-premium-ink")}
-            data-testid="profile-menu-icon"
+          <AccountAvatar
+            avatar={avatar.data}
+            premium={showPremium}
+            sizeClassName="size-8"
+            // Decorative: the trigger's own `aria-label` already names the account this picture
+            // belongs to, so an alt here would only say it twice.
+            alt=""
+            imageTestId="profile-menu-avatar"
+            placeholderTestId="profile-menu-icon"
           />
         </DropdownMenuTrigger>
 
         {/* The explicit width is load-bearing: DropdownMenuContent is `w-(--anchor-width) min-w-32`,
-         * so anchored to a 32px icon button it collapses to the 128px floor and truncates every
+         * so anchored to a 40px icon button it collapses to the 128px floor and truncates every
          * address the panel exists to show. */}
         <DropdownMenuContent
           align="end"

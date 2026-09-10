@@ -48,6 +48,37 @@ const REQUIRED_KEYS = [
   "profile.tfsaAccumulatedLimit",
   "profile.tfsaAccumulatedLimitCaption",
   "profile.tfsaAccumulatedLimitNote",
+  "profile.avatar.label",
+  "profile.avatar.alt",
+  "profile.avatar.addAction",
+  "profile.avatar.replaceAction",
+  "profile.avatar.uploading",
+  "profile.avatar.hint",
+  "profile.avatar.filterName",
+  "profile.avatar.saveFailed",
+  "profile.avatar.unsupportedType",
+  "profile.avatar.empty",
+  "profile.avatar.tooLarge",
+  "profile.avatar.unreadable",
+  "profile.avatar.contentMismatch",
+  "profile.avatar.dimensions",
+  "profile.avatar.unprocessable",
+] as const;
+
+/**
+ * Every `field` a profile-picture refusal can carry, as `userAvatarMessageKey` maps them. The
+ * enforcement side is `avatar_store::derive_from_file`, which reuses `projects/image.rs` — so this
+ * list is what proves the shared validator's seven causes each reach profile-owned copy rather
+ * than collapsing into the generic fallback.
+ */
+const AVATAR_REFUSAL_KEYS = [
+  "profile.avatar.unsupportedType",
+  "profile.avatar.empty",
+  "profile.avatar.tooLarge",
+  "profile.avatar.unreadable",
+  "profile.avatar.contentMismatch",
+  "profile.avatar.dimensions",
+  "profile.avatar.unprocessable",
 ] as const;
 
 const PREMIUM_COPY_KEYS = ["profile.premiumBadge"] as const;
@@ -73,6 +104,7 @@ const ARIA_LABEL_KEYS = [
   "profile.accountMenuPremium",
   "profile.loading",
   "profile.sessionExpiredAction",
+  "profile.avatar.alt",
 ] as const;
 
 const PLACEHOLDER_KEYS = [
@@ -84,7 +116,11 @@ const PLACEHOLDER_KEYS = [
  * Pending-state copy uses the single-character ellipsis, not three periods. A mixed convention is
  * invisible in review and permanent once shipped.
  */
-const ELLIPSIS_KEYS = ["profile.loading", "profile.saving"] as const;
+const ELLIPSIS_KEYS = [
+  "profile.loading",
+  "profile.saving",
+  "profile.avatar.uploading",
+] as const;
 
 function profileKeys(locale: Record<string, string>): string[] {
   return Object.keys(locale).filter((key) => key.startsWith(PROFILE_PREFIX));
@@ -272,6 +308,66 @@ describe("profile menu i18n", () => {
       expect(premiumKeys.sort(), `unexpected premium copy in ${name}`).toEqual([
         "profile.premiumBadge",
       ]);
+    }
+  });
+
+  it.each(AVATAR_REFUSAL_KEYS)(
+    "gives %s its own non-empty wording in both locales",
+    (key) => {
+      expect(en[key]?.trim(), `${key} is blank in en.json`).toBeTruthy();
+      expect(fr[key]?.trim(), `${key} is blank in fr.json`).toBeTruthy();
+    },
+  );
+
+  it("keeps every avatar refusal distinguishable within each locale", () => {
+    // Two causes sharing one sentence is the failure this guards: the shared validator reports six
+    // distinct fields plus the derivation failure, and the user's next action differs across them
+    // ("pick a smaller file" versus "pick a different file").
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      const messages = AVATAR_REFUSAL_KEYS.map((key) => locale[key]);
+      expect(new Set(messages).size, `duplicate refusal copy in ${name}`).toBe(
+        AVATAR_REFUSAL_KEYS.length,
+      );
+    }
+  });
+
+  it("never names a filesystem path or the account identifier in avatar copy (AD-11)", () => {
+    // The picked path and the Cognito subject are the two values this feature must never surface.
+    // Rust withholds both; copy that asked the user to check "C:\..." would reintroduce the idea.
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      for (const key of profileKeys(locale).filter((k) =>
+        k.startsWith("profile.avatar."),
+      )) {
+        expect(locale[key], `${key} looks path-like in ${name}`).not.toMatch(
+          /[/\\]{1,}[A-Za-z]|[A-Za-z]:\\/,
+        );
+        expect(
+          locale[key].toLowerCase(),
+          `${key} mentions the subject in ${name}`,
+        ).not.toContain("cognito");
+      }
+    }
+  });
+
+  it("ships exactly the declared avatar keys", () => {
+    const declared = [
+      ...REQUIRED_KEYS.filter((key) => key.startsWith("profile.avatar.")),
+    ].sort();
+
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      const shipped = profileKeys(locale)
+        .filter((key) => key.startsWith("profile.avatar."))
+        .sort();
+      expect(shipped, `unexpected avatar copy in ${name}`).toEqual(declared);
     }
   });
 

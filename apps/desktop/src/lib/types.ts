@@ -722,6 +722,16 @@ export interface UpdateUserProfileInput {
   subdivision_code: string | null;
 }
 
+// Mirrors `models::UserAvatar`: the stored 256px/64 KiB derivative, ready for an
+// `<img src="data:...">`. Deliberately carries no `cognito_sub` — the subject is
+// resolved in Rust and never crosses IPC — and no filename, because the source the
+// user picked is never retained.
+export interface UserAvatar {
+  mime_type: string;
+  image_base64: string;
+  uploaded_at: string;
+}
+
 // name_fr is optional by design: FR coverage of the bundled ISO 3166 dataset is
 // incomplete, so the UI falls back to the always-present name_en.
 export interface Country {

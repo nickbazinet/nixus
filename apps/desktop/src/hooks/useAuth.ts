@@ -72,6 +72,10 @@ export function useAuthSession({ enabled = true }: { enabled?: boolean } = {}) {
         // previous account's profile rendered while refetching, which is a
         // visible cross-account leak.
         queryClient.removeQueries({ queryKey: queryKeys.profile });
+        // The same rule, and the most visible instance of it: an invalidated
+        // avatar keeps the previous subject's FACE on the account trigger and on
+        // /profile while the incoming one is still in flight.
+        queryClient.removeQueries({ queryKey: queryKeys.userAvatar });
         queryClient.removeQueries({
           queryKey: queryKeys.tfsaAccumulatedLimit,
         });

@@ -497,14 +497,46 @@ describe("useAuth", () => {
     expect(invalidatedKeys()).not.toContainEqual(["tfsa-accumulated-limit"]);
   });
 
-  it("unsubscribes the callback listener on unmount", async () => {
+  // The most visible cross-account leak this feature could ship: TanStack Query serves a stale
+  // entry while it refetches, so an invalidated avatar keeps the previous subject's FACE on the
+  // always-mounted account trigger — and on /profile — under the account that just signed in.
+  it("removes the profile picture when a different account signs in", async () => {
     invokeMock.mockResolvedValue({ status: "LoggedOut" });
 
     render(<SessionHarness />);
     await settleQueries(() => listenMock.mock.calls.length > 0);
+    queryClient.setQueryData(queryKeys.userAvatar, {
+      mime_type: "image/png",
+      image_base64: "cHJldmlvdXMtc3ViamVjdA==",
+      uploaded_at: "2026-09-01T00:00:00+00:00",
+    });
 
-    expect(unlistenMocks.length).toBeGreaterThan(0);
+    act(() => {
+      fireCallbackEvent();
+    });
 
+    expect(removedKeys()).toContainEqual(["user-avatar"]);
+    expect(invalidatedKeys()).not.toContainEqual(["user-avatar"]);
+    expect(queryClient.getQueryData(queryKeys.userAvatar)).toBeUndefined();
+  });
+
+  it("sweeps the profile picture away with the rest of the account on sign-out", async () => {
+    invokeMock.mockResolvedValue(null);
+    queryClient.setQueryData(queryKeys.userAvatar, {
+      mime_type: "image/png",
+      image_base64: "cHJldmlvdXMtc3ViamVjdA==",
+      uploaded_at: "2026-09-01T00:00:00+00:00",
+    });
+
+    await act(async () => {
+      await signOut.mutateAsync();
+    });
+
+    expect(clearSpy).toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.userAvatar)).toBeUndefined();
+  });
+
+  it("unsubscribes the callback listener on unmount", async () => {
     act(() => root.unmount());
     unmounted = true;
 

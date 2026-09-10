@@ -105,6 +105,10 @@ async function setupRetirementMock(page: Page, opts: RetirementMockOptions = {})
           case "set_retirement_age_override":
             ageOverride = args?.years as number;
             return Promise.resolve(null);
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return Promise.resolve(null);
           default:
             return Promise.resolve(null);
         }

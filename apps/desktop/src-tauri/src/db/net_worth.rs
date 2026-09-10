@@ -1,3 +1,4 @@
+use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection};
 
 use crate::db::account;
@@ -197,71 +198,96 @@ pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, 
     Ok(snapshot)
 }
 
-pub fn get_net_worth_history(
+/// A period spans this many calendar months *including* the current one, so 6M on September 10
+/// starts April 1 and the seventh month back (March) is out of range. A rolling `-6 months`
+/// offset would keep March 15 in view and make 6M indistinguishable from 1Y.
+fn period_month_span(period: &str) -> Option<u32> {
+    match period {
+        "6m" => Some(6),
+        "1y" => Some(12),
+        _ => None, // "all"
+    }
+}
+
+fn calendar_window_start(reference: NaiveDate, month_span: u32) -> Option<NaiveDate> {
+    let months_back = i32::try_from(month_span).ok()? - 1;
+    let month_index = reference.year() * 12 + reference.month0() as i32 - months_back;
+    NaiveDate::from_ymd_opt(
+        month_index.div_euclid(12),
+        month_index.rem_euclid(12) as u32 + 1,
+        1,
+    )
+}
+
+fn period_cutoff(period: &str, reference: NaiveDate) -> Result<Option<String>, AppError> {
+    let Some(month_span) = period_month_span(period) else {
+        return Ok(None);
+    };
+    let start = calendar_window_start(reference, month_span).ok_or_else(|| AppError::Database {
+        message: format!("Failed to compute {} window from {}", period, reference),
+    })?;
+    Ok(Some(start.format("%Y-%m-%d").to_string()))
+}
+
+fn today(conn: &Connection) -> Result<NaiveDate, AppError> {
+    let today: String = conn.query_row("SELECT date('now')", [], |row| row.get(0))?;
+    NaiveDate::parse_from_str(&today, "%Y-%m-%d").map_err(|e| AppError::Database {
+        message: format!("Failed to parse current date '{}': {}", today, e),
+    })
+}
+
+fn read_history(
     conn: &Connection,
     period: &str,
+    reference: NaiveDate,
 ) -> Result<Vec<NetWorthSnapshot>, AppError> {
-    let date_filter = match period {
-        "6m" => Some("-6 months"),
-        "1y" => Some("-12 months"),
-        _ => None, // "all"
-    };
+    let cutoff = period_cutoff(period, reference)?;
 
-    let (query, use_param) = match date_filter {
-        Some(offset) => (
-            format!(
-                "SELECT id, total_cents, snapshot_date, breakdown_json, created_at \
-                 FROM net_worth_snapshots WHERE snapshot_date >= date('now', '{}') \
-                 ORDER BY snapshot_date ASC",
-                offset
-            ),
-            false,
-        ),
-        None => (
+    let query = match cutoff {
+        Some(_) => {
+            "SELECT id, total_cents, snapshot_date, breakdown_json, created_at \
+             FROM net_worth_snapshots WHERE snapshot_date >= ?1 ORDER BY snapshot_date ASC"
+        }
+        None => {
             "SELECT id, total_cents, snapshot_date, breakdown_json, created_at \
              FROM net_worth_snapshots ORDER BY snapshot_date ASC"
-                .to_string(),
-            false,
-        ),
+        }
     };
-    let _ = use_param;
 
-    let mut stmt = conn.prepare(&query)?;
-    let snapshots = stmt
-        .query_map([], |row| {
-            Ok(NetWorthSnapshot {
-                id: row.get(0)?,
-                total_cents: row.get(1)?,
-                snapshot_date: row.get(2)?,
-                breakdown_json: row.get(3)?,
-                created_at: row.get(4)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut stmt = conn.prepare(query)?;
+    let map_row = |row: &rusqlite::Row<'_>| {
+        Ok(NetWorthSnapshot {
+            id: row.get(0)?,
+            total_cents: row.get(1)?,
+            snapshot_date: row.get(2)?,
+            breakdown_json: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    };
+
+    let snapshots = match cutoff {
+        Some(cutoff) => stmt
+            .query_map(params![cutoff], map_row)?
+            .collect::<Result<Vec<_>, _>>()?,
+        None => stmt.query_map([], map_row)?.collect::<Result<Vec<_>, _>>()?,
+    };
 
     Ok(snapshots)
 }
 
-pub fn get_net_worth_change(
-    conn: &Connection,
-    period: &str,
-) -> Result<NetWorthChange, AppError> {
-    let history = get_net_worth_history(conn, period)?;
-
-    if history.len() < 2 {
-        return Ok(NetWorthChange {
+fn compute_change(history: &[NetWorthSnapshot]) -> NetWorthChange {
+    let [first, .., last] = history else {
+        return NetWorthChange {
             absolute_change_cents: 0,
             percentage_change: 0.0,
             direction: "flat".to_string(),
-        });
-    }
+        };
+    };
 
-    let first = history.first().unwrap().total_cents;
-    let last = history.last().unwrap().total_cents;
-    let diff = last - first;
+    let diff = last.total_cents - first.total_cents;
 
-    let percentage = if first != 0 {
-        (diff as f64 / first as f64) * 100.0
+    let percentage = if first.total_cents != 0 {
+        (diff as f64 / first.total_cents as f64) * 100.0
     } else {
         0.0
     };
@@ -274,11 +300,25 @@ pub fn get_net_worth_change(
         "flat"
     };
 
-    Ok(NetWorthChange {
+    NetWorthChange {
         absolute_change_cents: diff,
         percentage_change: percentage,
         direction: direction.to_string(),
-    })
+    }
+}
+
+pub fn get_net_worth_history(
+    conn: &Connection,
+    period: &str,
+) -> Result<Vec<NetWorthSnapshot>, AppError> {
+    read_history(conn, period, today(conn)?)
+}
+
+pub fn get_net_worth_change(
+    conn: &Connection,
+    period: &str,
+) -> Result<NetWorthChange, AppError> {
+    Ok(compute_change(&get_net_worth_history(conn, period)?))
 }
 
 #[cfg(test)]
@@ -461,5 +501,136 @@ mod tests {
         let breakdown: NetWorthBreakdown = serde_json::from_str(&snapshot.breakdown_json).unwrap();
         assert_eq!(breakdown.cash_cents, 500000);
         assert_eq!(breakdown.other_cents, 0);
+    }
+
+    const SEPTEMBER_10: &str = "2026-09-10";
+
+    fn reference(date: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap()
+    }
+
+    fn seed_snapshots(conn: &Connection, dates: &[&str]) {
+        for (index, date) in dates.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO net_worth_snapshots (total_cents, snapshot_date, breakdown_json) VALUES (?1, ?2, '{}')",
+                params![1000 * (index as i64 + 1), date],
+            )
+            .unwrap();
+        }
+    }
+
+    fn dates_in(conn: &Connection, period: &str, today: &str) -> Vec<String> {
+        read_history(conn, period, reference(today))
+            .unwrap()
+            .into_iter()
+            .map(|snapshot| snapshot.snapshot_date)
+            .collect()
+    }
+
+    #[test]
+    fn six_month_window_excludes_the_seventh_calendar_month() {
+        // Given a snapshot in the seventh calendar month back and a September reference date
+        let conn = setup_test_db();
+        seed_snapshots(&conn, &["2026-03-15", "2026-04-01", "2026-09-05"]);
+
+        // When 6M history is read
+        let dates = dates_in(&conn, "6m", SEPTEMBER_10);
+
+        // Then March is out of range and the window starts no earlier than April 1
+        assert_eq!(dates, vec!["2026-04-01", "2026-09-05"]);
+    }
+
+    #[test]
+    fn six_month_window_includes_the_first_day_of_the_sixth_month_back() {
+        // Given a snapshot exactly on the window boundary
+        let conn = setup_test_db();
+        seed_snapshots(&conn, &["2026-03-31", "2026-04-01"]);
+
+        // When 6M history is read
+        let dates = dates_in(&conn, "6m", SEPTEMBER_10);
+
+        // Then the boundary day is included and the day before it is not
+        assert_eq!(dates, vec!["2026-04-01"]);
+    }
+
+    #[test]
+    fn six_month_window_includes_the_current_month() {
+        // Given a snapshot dated later in the reference month than the reference day
+        let conn = setup_test_db();
+        seed_snapshots(&conn, &["2026-09-30"]);
+
+        // When 6M and 1Y history are read
+        // Then both include it
+        assert_eq!(dates_in(&conn, "6m", SEPTEMBER_10), vec!["2026-09-30"]);
+        assert_eq!(dates_in(&conn, "1y", SEPTEMBER_10), vec!["2026-09-30"]);
+    }
+
+    #[test]
+    fn one_year_window_keeps_the_month_six_month_drops() {
+        // Given a March snapshot plus one just outside the twelve-month window
+        let conn = setup_test_db();
+        seed_snapshots(&conn, &["2025-09-30", "2025-10-01", "2026-03-15"]);
+
+        // When 1Y history is read
+        let dates = dates_in(&conn, "1y", SEPTEMBER_10);
+
+        // Then March survives and the window starts at October 1 of the prior year
+        assert_eq!(dates, vec!["2025-10-01", "2026-03-15"]);
+    }
+
+    #[test]
+    fn all_period_applies_no_cutoff() {
+        // Given snapshots spanning several years
+        let conn = setup_test_db();
+        seed_snapshots(&conn, &["2019-01-01", "2026-03-15", "2026-09-05"]);
+
+        // When ALL history is read
+        let dates = dates_in(&conn, "all", SEPTEMBER_10);
+
+        // Then every snapshot is returned in ascending order
+        assert_eq!(dates, vec!["2019-01-01", "2026-03-15", "2026-09-05"]);
+    }
+
+    #[test]
+    fn window_start_crosses_the_year_boundary() {
+        // Given a February reference date, where the window start falls in the previous year
+        assert_eq!(
+            period_cutoff("6m", reference("2026-02-14")).unwrap(),
+            Some("2025-09-01".to_string())
+        );
+        assert_eq!(
+            period_cutoff("1y", reference("2026-01-31")).unwrap(),
+            Some("2025-02-01".to_string())
+        );
+        assert_eq!(period_cutoff("all", reference(SEPTEMBER_10)).unwrap(), None);
+    }
+
+    #[test]
+    fn change_uses_the_same_window_as_history() {
+        // Given a March snapshot far below the April-onward values
+        let conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO net_worth_snapshots (total_cents, snapshot_date, breakdown_json) VALUES (100000, '2026-03-15', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO net_worth_snapshots (total_cents, snapshot_date, breakdown_json) VALUES (200000, '2026-04-01', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO net_worth_snapshots (total_cents, snapshot_date, breakdown_json) VALUES (250000, '2026-09-05', '{}')",
+            [],
+        )
+        .unwrap();
+
+        // When the change is computed over each window
+        let six_month = compute_change(&read_history(&conn, "6m", reference(SEPTEMBER_10)).unwrap());
+        let one_year = compute_change(&read_history(&conn, "1y", reference(SEPTEMBER_10)).unwrap());
+
+        // Then 6M is measured from April, not from the excluded March snapshot
+        assert_eq!(six_month.absolute_change_cents, 50000);
+        assert_eq!(one_year.absolute_change_cents, 150000);
     }
 }

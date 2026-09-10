@@ -33,6 +33,23 @@ export interface PickedProjectImage {
  */
 export type ProjectImagePickOutcome = "cancelled" | "selected" | "refused";
 
+/**
+ * The copy and error-mapping a surface brings to the shared picker.
+ *
+ * Overrides rather than a second hook: the file access, the re-entrancy guard and the
+ * validate-before-write ordering are the parts that must not be duplicated, while "project image"
+ * is the wrong noun on the profile page and the refusal fields map to different keys there. Every
+ * field defaults to the project-image contract, so the original call site passes nothing.
+ */
+export interface ProjectImagePickerOptions {
+  /** i18n key for the native dialog's filter name. */
+  readonly filterNameKey?: string;
+  /** Maps a Tauri rejection to an i18n key, or `null` when this build cannot name the cause. */
+  readonly messageKey?: (error: unknown) => string | null;
+  /** Shown when `messageKey` returns `null`. */
+  readonly genericFailureKey?: string;
+}
+
 export interface ProjectImagePickerState {
   readonly picked: PickedProjectImage | null;
   /** i18n key for the current refusal, or `null` when there is nothing to report. */
@@ -44,13 +61,20 @@ export interface ProjectImagePickerState {
 }
 
 /**
- * Owns the one file a project-image upload is about to send.
+ * Owns the one file an image upload is about to send.
  *
- * The path never leaves this state: `set_project_image` receives it, reads the bytes in Rust, and
- * stores only the basename — so the frontend needs no filesystem access of its own. Validation
- * runs here, before any write, so a refusal costs nothing and cannot destroy an existing image.
+ * The path never leaves this state: the write command receives it, reads the bytes in Rust, and
+ * keeps no source — so the frontend needs no filesystem access of its own. Validation runs here,
+ * before any write, so a refusal costs nothing and cannot destroy an existing image.
  */
-export function useProjectImagePicker(): ProjectImagePickerState {
+export function useProjectImagePicker(
+  options: ProjectImagePickerOptions = {},
+): ProjectImagePickerState {
+  const {
+    filterNameKey = "projects.image.filterName",
+    messageKey = projectImageMessageKey,
+    genericFailureKey = GENERIC_FAILURE_KEY,
+  } = options;
   const { t } = useTranslation();
   const [picked, setPicked] = useState<PickedProjectImage | null>(null);
   const [errorKey, setErrorKey] = useState<string | null>(null);
@@ -71,7 +95,7 @@ export function useProjectImagePicker(): ProjectImagePickerState {
           multiple: false,
           filters: [
             {
-              name: t("projects.image.filterName"),
+              name: t(filterNameKey),
               extensions: [...PROJECT_IMAGE_EXTENSIONS],
             },
           ],
@@ -81,7 +105,7 @@ export function useProjectImagePicker(): ProjectImagePickerState {
         // swallowed, or the add button looks inert with no explanation. Generic, because no file
         // was ever reached and every specific refusal would be a guess.
         setPicked(null);
-        setErrorKey(GENERIC_FAILURE_KEY);
+        setErrorKey(genericFailureKey);
         return "refused";
       }
 
@@ -97,14 +121,14 @@ export function useProjectImagePicker(): ProjectImagePickerState {
         return "selected";
       } catch (err: unknown) {
         setPicked(null);
-        setErrorKey(projectImageMessageKey(err) ?? GENERIC_FAILURE_KEY);
+        setErrorKey(messageKey(err) ?? genericFailureKey);
         return "refused";
       }
     } finally {
       pickingRef.current = false;
       setPicking(false);
     }
-  }, [t]);
+  }, [t, filterNameKey, messageKey, genericFailureKey]);
 
   const reset = useCallback(() => {
     setPicked(null);

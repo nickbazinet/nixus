@@ -103,7 +103,11 @@ fn corrupt_path(dir: &Path, sub: &str) -> PathBuf {
 // `json_store`'s `with_extension("json.tmp")` temp-path scheme correct.
 // The offending value is never echoed into the message: it is an identity key
 // and `AppError::Validation`'s message crosses IPC to the UI.
-fn validate_sub(sub: &str) -> Result<(), AppError> {
+//
+// Crate-visible because `avatar_store` writes under the same `profiles/` directory
+// and must not carry a second charset rule: one authority, whichever store the
+// subject reaches.
+pub(crate) fn validate_sub(sub: &str) -> Result<(), AppError> {
     let ok = !sub.is_empty()
         && sub.len() <= 128
         && sub

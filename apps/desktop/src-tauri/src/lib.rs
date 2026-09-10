@@ -1,4 +1,5 @@
 mod ai;
+mod avatar_store;
 mod budget;
 mod commands;
 mod credentials;
@@ -343,6 +344,8 @@ pub fn run() {
             commands::cloud_ai::get_cloud_ai_premium,
             commands::profile::get_user_profile,
             commands::profile::save_user_profile,
+            commands::profile::get_user_avatar,
+            commands::profile::set_user_avatar,
             commands::profile::get_countries,
             commands::profile::get_subdivisions,
             commands::profile::get_tfsa_accumulated_limit,

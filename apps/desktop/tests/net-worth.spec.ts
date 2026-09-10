@@ -48,6 +48,10 @@ async function setupEmptyNetWorthMock(page: Page) {
             return Promise.resolve([]);
           case "get_financial_health_summary":
             return Promise.resolve(healthMock);
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return Promise.resolve(null);
           default:
             return Promise.resolve(null);
         }
@@ -72,13 +76,48 @@ async function setupSeededNetWorthMock(page: Page) {
     });
 
     const snapshots = [
-      { id: 1, total_cents: 70000000, snapshot_date: "2025-07-01", breakdown_json: breakdown, created_at: "2025-07-01" },
-      { id: 2, total_cents: 72000000, snapshot_date: "2025-09-01", breakdown_json: breakdown, created_at: "2025-09-01" },
-      { id: 3, total_cents: 73000000, snapshot_date: "2025-11-01", breakdown_json: breakdown, created_at: "2025-11-01" },
-      { id: 4, total_cents: 74000000, snapshot_date: "2026-01-01", breakdown_json: breakdown, created_at: "2026-01-01" },
-      { id: 5, total_cents: 76000000, snapshot_date: "2026-02-01", breakdown_json: breakdown, created_at: "2026-02-01" },
-      { id: 6, total_cents: 77300000, snapshot_date: "2026-03-01", breakdown_json: breakdown, created_at: "2026-03-01" },
+      { id: 1, total_cents: 70000000, snapshot_date: "2025-09-01", breakdown_json: breakdown, created_at: "2025-09-01" },
+      { id: 2, total_cents: 72000000, snapshot_date: "2025-12-01", breakdown_json: breakdown, created_at: "2025-12-01" },
+      { id: 3, total_cents: 73000000, snapshot_date: "2026-03-15", breakdown_json: breakdown, created_at: "2026-03-15" },
+      { id: 4, total_cents: 74000000, snapshot_date: "2026-04-01", breakdown_json: breakdown, created_at: "2026-04-01" },
+      { id: 5, total_cents: 76000000, snapshot_date: "2026-07-01", breakdown_json: breakdown, created_at: "2026-07-01" },
+      { id: 6, total_cents: 77300000, snapshot_date: "2026-09-01", breakdown_json: breakdown, created_at: "2026-09-01" },
     ];
+
+    // Mirrors db/net_worth.rs: a period spans this many calendar months including the reference
+    // month, so 6M anchored at 2026-09-10 starts 2026-04-01 and March 15 is the excluded seventh.
+    const REFERENCE_DATE = "2026-09-10";
+    const cutoffFor = (period: string): string | null => {
+      const monthSpan = period === "6m" ? 6 : period === "1y" ? 12 : null;
+      if (monthSpan === null) return null;
+      const [year, month] = REFERENCE_DATE.split("-").map(Number) as [number, number];
+      const monthIndex = year * 12 + (month - 1) - (monthSpan - 1);
+      const cutoffMonth = String((monthIndex % 12) + 1).padStart(2, "0");
+      return `${Math.floor(monthIndex / 12)}-${cutoffMonth}-01`;
+    };
+
+    const historyFor = (period: string) => {
+      const cutoff = cutoffFor(period);
+      return cutoff === null
+        ? snapshots
+        : snapshots.filter((s) => s.snapshot_date >= cutoff);
+    };
+
+    const changeFor = (period: string) => {
+      const rows = historyFor(period);
+      const first = rows[0];
+      const last = rows[rows.length - 1];
+      if (rows.length < 2 || !first || !last) {
+        return { absolute_change_cents: 0, percentage_change: 0, direction: "flat" };
+      }
+      const diff = last.total_cents - first.total_cents;
+      return {
+        absolute_change_cents: diff,
+        percentage_change:
+          first.total_cents === 0 ? 0 : (diff / first.total_cents) * 100,
+        direction: diff > 0 ? "up" : diff < 0 ? "down" : "flat",
+      };
+    };
 
     let targetMonths = 6;
 
@@ -156,7 +195,7 @@ async function setupSeededNetWorthMock(page: Page) {
         (window as unknown as Record<string, unknown>)[`_${id}`] = cb;
         return id;
       },
-      invoke: (cmd: string, args?: { months?: number }) => {
+      invoke: (cmd: string, args?: { months?: number; period?: string }) => {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
           case "check_picker_gate":
@@ -169,13 +208,9 @@ async function setupSeededNetWorthMock(page: Page) {
               assets_cents: 47500000,
             });
           case "get_net_worth_history":
-            return Promise.resolve(snapshots);
+            return Promise.resolve(historyFor(args?.period ?? "1y"));
           case "get_net_worth_change":
-            return Promise.resolve({
-              absolute_change_cents: 7300000,
-              percentage_change: 10.43,
-              direction: "up",
-            });
+            return Promise.resolve(changeFor(args?.period ?? "1y"));
           case "get_recent_net_worth_snapshots":
             return Promise.resolve(snapshots.map((s) => ({
               total_cents: s.total_cents,
@@ -195,6 +230,10 @@ async function setupSeededNetWorthMock(page: Page) {
               return Promise.reject("Validation error");
             }
             targetMonths = args.months;
+            return Promise.resolve(null);
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
             return Promise.resolve(null);
           default:
             return Promise.resolve(null);
@@ -247,15 +286,29 @@ test.describe("Net Worth Page", () => {
     await expect(page.getByTestId("period-tabs-all")).toContainText("ALL");
   });
 
-  test("clicking a different period tab updates chart", async ({ page }) => {
+  test("switching 1Y to 6M drops the seventh calendar month from the data", async ({
+    page,
+  }) => {
     await setupSeededNetWorthMock(page);
     await page.goto("/wealth/net-worth");
 
-    // Default is 1Y
-    const tab6m = page.getByTestId("period-tabs-6m");
-    await tab6m.click();
+    // The chart's sr-only table is the rendered dataset in readable form; asserting on it proves the
+    // series actually changed, which chart visibility alone cannot.
+    const trendTable = page.getByRole("table", {
+      name: "Net worth at each snapshot",
+    });
 
-    // Chart should still be visible after period change
+    await expect(trendTable.getByRole("row")).toHaveCount(6);
+    await expect(trendTable).toContainText("Mar 15 '26");
+    await expect(trendTable).toContainText("Dec 1 '25");
+
+    await page.getByTestId("period-tabs-6m").click();
+
+    await expect(trendTable.getByRole("row")).toHaveCount(4);
+    await expect(trendTable).not.toContainText("Mar 15 '26");
+    await expect(trendTable).not.toContainText("Dec 1 '25");
+    await expect(trendTable).toContainText("Apr 1 '26");
+    await expect(trendTable).toContainText("Sep 1 '26");
     await expect(page.getByTestId("trend-chart")).toBeVisible();
   });
 

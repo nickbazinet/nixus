@@ -1,14 +1,17 @@
 use std::path::PathBuf;
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use chrono::Datelike;
 use tauri::{AppHandle, State};
 
+use crate::avatar_store;
 use crate::datasets;
 use crate::db::account as account_db;
 use crate::db::DbState;
 use crate::error::AppError;
 use crate::models::{
-    Country, Subdivision, TfsaAccumulatedLimit, UpdateUserProfileInput, UserProfile,
+    Country, Subdivision, TfsaAccumulatedLimit, UpdateUserProfileInput, UserAvatar, UserProfile,
 };
 use crate::profile_store;
 use crate::tfsa;
@@ -139,6 +142,47 @@ pub fn get_countries() -> Result<Vec<Country>, AppError> {
 #[tauri::command(rename_all = "snake_case")]
 pub fn get_subdivisions(country_code: String) -> Result<Vec<Subdivision>, AppError> {
     Ok(profile_store::subdivisions_for(country_code.trim()).to_vec())
+}
+
+fn encoded_avatar(stored: avatar_store::StoredAvatar) -> UserAvatar {
+    UserAvatar {
+        mime_type: stored.mime_type,
+        image_base64: STANDARD.encode(&stored.image_bytes),
+        uploaded_at: stored.uploaded_at,
+    }
+}
+
+// The avatar pair follows `get_user_profile`'s posture exactly: the `sub` is
+// resolved BEFORE the directory, so a no-session call opens no database, and
+// neither takes `State<DbState>` — an avatar belongs to the Cognito account, so
+// keeping it out of `nkbaz-finance.db` is what keeps it out of dataset backups
+// and out of the dataset lifecycle. No audit-log row for the same reason
+// `save_user_profile` writes none: there is no `Connection` and no `i64 entity_id`
+// on this side, and the payload may never reach an audit row regardless.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_user_avatar(app: AppHandle) -> Result<Option<UserAvatar>, AppError> {
+    let sub = crate::commands::auth::current_subject().await?;
+    let dir = resolve_profiles_dir(&app)?;
+
+    Ok(avatar_store::load_avatar(&dir, &sub)?.map(encoded_avatar))
+}
+
+// The session check precedes the read of the picked path, so an unauthenticated
+// call never opens a file the webview named. Only the derivative is stored — the
+// source is dropped inside `derive_from_file` and never persisted anywhere.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn set_user_avatar(app: AppHandle, file_path: String) -> Result<UserAvatar, AppError> {
+    let sub = crate::commands::auth::current_subject().await?;
+    let dir = resolve_profiles_dir(&app)?;
+
+    let (image_bytes, mime_type) = avatar_store::derive_from_file(&file_path)?;
+
+    Ok(encoded_avatar(avatar_store::save_avatar(
+        &dir,
+        &sub,
+        &image_bytes,
+        mime_type,
+    )?))
 }
 
 

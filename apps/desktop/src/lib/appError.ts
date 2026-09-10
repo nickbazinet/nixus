@@ -203,3 +203,45 @@ export function projectImageMessageKey(error: unknown): string | null {
   }
   return PROJECT_IMAGE_MESSAGE_KEYS[field as ProjectImageRejection];
 }
+
+/**
+ * The same refusals a profile-picture upload can carry, mapped to profile-owned copy.
+ *
+ * The six `project_image_*` literals are shared deliberately: `avatar_store::derive_from_file`
+ * calls the same validator rather than forking it, so the fields are identical while the wording
+ * is not — "project image" is the wrong noun on the profile page, and the avatar's 256px
+ * derivative makes `dimensions` mean something different to the user than it does for a project
+ * cover. The seventh, `user_avatar_unprocessable`, has no project counterpart: it means the source
+ * passed every check but no derivative under the stored ceiling could be produced, so telling the
+ * user their file "is not a usable PNG or JPEG" would send them to replace a file that was fine.
+ */
+const USER_AVATAR_MESSAGE_KEYS = {
+  project_image_unsupported_type: "profile.avatar.unsupportedType",
+  project_image_empty: "profile.avatar.empty",
+  project_image_too_large: "profile.avatar.tooLarge",
+  project_image_unreadable: "profile.avatar.unreadable",
+  project_image_content_mismatch: "profile.avatar.contentMismatch",
+  project_image_dimensions: "profile.avatar.dimensions",
+  user_avatar_unprocessable: "profile.avatar.unprocessable",
+} as const;
+
+export type UserAvatarRejection = keyof typeof USER_AVATAR_MESSAGE_KEYS;
+
+/**
+ * The i18n key for a profile-picture refusal, or `null` when the rejection is something else.
+ *
+ * `null` rather than a nearest-neighbour guess, for the same reason `projectImageMessageKey`
+ * returns it: a keyring failure or a rejected session is not a bad file, and the caller renders a
+ * generic failure instead of sending the user to pick a different picture.
+ */
+export function userAvatarMessageKey(error: unknown): string | null {
+  if (!isRecord(error)) return null;
+  if (error.type !== "validation") return null;
+  const field = error.field;
+  if (typeof field !== "string") return null;
+  // Own-property only, for the same reason as the two maps above.
+  if (!Object.prototype.hasOwnProperty.call(USER_AVATAR_MESSAGE_KEYS, field)) {
+    return null;
+  }
+  return USER_AVATAR_MESSAGE_KEYS[field as UserAvatarRejection];
+}

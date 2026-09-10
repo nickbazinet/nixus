@@ -154,6 +154,10 @@ async function setupSpendingTrendsMock(
               }
               return resolveInsight();
             }
+            // The account trigger is mounted on every screen, so this read must be answered even where
+            // the surface under test has nothing to do with an account (see project-context.md, Testing).
+            case "get_user_avatar":
+              return Promise.resolve(null);
             default:
               return Promise.resolve(null);
           }

@@ -9,6 +9,8 @@ import {
   hostedAiNeedsSignIn,
   isHostedAiError,
   parseAppError,
+  projectImageMessageKey,
+  userAvatarMessageKey,
   type HostedAiErrorCode,
 } from "../appError";
 
@@ -245,6 +247,87 @@ describe("chatAttachmentMessageKey", () => {
       undefined,
     ]) {
       expect(chatAttachmentMessageKey(error)).toBeNull();
+    }
+  });
+});
+
+describe("userAvatarMessageKey", () => {
+  /* The six shared literals come from `projects/image.rs`, which `avatar_store::derive_from_file`
+   * reuses rather than forking; the seventh comes from `avatar_store::UNPROCESSABLE`. Pinned here
+   * because the Rust side pins the same strings — a rename on either side otherwise compiles,
+   * ships, and silently degrades every refusal to the generic fallback. */
+  const RUST_FIELDS = [
+    "project_image_unsupported_type",
+    "project_image_empty",
+    "project_image_too_large",
+    "project_image_unreadable",
+    "project_image_content_mismatch",
+    "project_image_dimensions",
+    "user_avatar_unprocessable",
+  ] as const;
+
+  it.each(RUST_FIELDS)("maps %s to profile-owned copy that exists in both locales", (field) => {
+    const key = userAvatarMessageKey({ type: "validation", message: "m", field });
+
+    expect(key, `${field} is unmapped`).not.toBeNull();
+    expect(key?.startsWith("profile.avatar."), `${field} maps outside profile copy`).toBe(true);
+    expect((en as Record<string, string>)[key as string], `${key} missing in en`).toBeTruthy();
+    expect((fr as Record<string, string>)[key as string], `${key} missing in fr`).toBeTruthy();
+  });
+
+  /* Two causes collapsing onto one key would give the user one sentence for two different next
+   * actions, which is exactly what the separate Rust fields exist to prevent. */
+  it("gives every cause a distinct key", () => {
+    const keys = RUST_FIELDS.map((field) =>
+      userAvatarMessageKey({ type: "validation", message: "m", field })
+    );
+
+    expect(new Set(keys).size).toBe(RUST_FIELDS.length);
+  });
+
+  /* The project map and the avatar map read the same fields and must NOT return the same copy:
+   * "project image" is the wrong noun on the profile page. */
+  it("does not reuse project-image copy for the shared fields", () => {
+    for (const field of RUST_FIELDS.filter((f) => f.startsWith("project_image_"))) {
+      const error = { type: "validation", message: "m", field };
+
+      expect(userAvatarMessageKey(error)).not.toBe(projectImageMessageKey(error));
+    }
+  });
+
+  /* `project_id` belongs to the project write path's archived-goal guard. An avatar upload has no
+   * project, so mapping it here would render copy about a goal the user was never editing. */
+  it("returns null for a field this surface cannot cause", () => {
+    for (const field of ["project_id", "attachment_empty", "cognito_sub", "unknown"]) {
+      expect(userAvatarMessageKey({ type: "validation", message: "m", field }), field).toBeNull();
+    }
+  });
+
+  it("ignores inherited prototype keys", () => {
+    for (const field of [
+      "constructor",
+      "toString",
+      "hasOwnProperty",
+      "valueOf",
+      "__proto__",
+      "isPrototypeOf",
+    ]) {
+      expect(
+        userAvatarMessageKey({ type: "validation", message: "m", field }),
+        field
+      ).toBeNull();
+    }
+  });
+
+  it("ignores every non-validation rejection shape", () => {
+    for (const error of [
+      { type: "auth", message: "signed out", field: "user_avatar_unprocessable" },
+      { type: "database", message: "locked" },
+      "user_avatar_unprocessable",
+      null,
+      undefined,
+    ]) {
+      expect(userAvatarMessageKey(error)).toBeNull();
     }
   });
 });

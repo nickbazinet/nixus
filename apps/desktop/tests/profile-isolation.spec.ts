@@ -238,10 +238,17 @@ async function setupIsolationMock(page: Page, options: IsolationOptions) {
         unregisterListener: () => {},
       };
 
+      // Every non-plugin command this page load has issued, so a test can assert a command was
+      // never reached at all. Resets on a real page load, which is why the switching helpers below
+      // navigate client-side.
+      const invoked: string[] = [];
+      (window as unknown as Record<string, unknown>).__INVOKED_COMMANDS = invoked;
+
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         transformCallback: () => 1,
         invoke: (cmd: string, args?: Record<string, unknown>) => {
           if (cmd.startsWith("plugin:")) return Promise.resolve(null);
+          invoked.push(cmd);
 
           switch (cmd) {
             // ---- dataset registry and switching --------------------------------------------
@@ -400,6 +407,10 @@ async function setupIsolationMock(page: Page, options: IsolationOptions) {
                 schema_version: 10,
                 migrations_applied: 10,
               });
+            // The account trigger is mounted on every screen, so this read must be answered even where
+            // the surface under test has nothing to do with an account (see project-context.md, Testing).
+            case "get_user_avatar":
+              return Promise.resolve(null);
             default:
               return Promise.reject(`Unknown command: ${cmd}`);
           }
@@ -429,6 +440,15 @@ async function readSelections(page: Page): Promise<string[]> {
     if (raw === null) return [];
     return (JSON.parse(raw) as { selections: string[] }).selections;
   }, MOCK_STATE_KEY);
+}
+
+/** Every non-plugin command issued since the last real page load, in order. */
+async function readInvokedCommands(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () =>
+      (window as unknown as { __INVOKED_COMMANDS?: string[] })
+        .__INVOKED_COMMANDS ?? [],
+  );
 }
 
 async function readStorage(page: Page, keys: string[]): Promise<(string | null)[]> {
@@ -852,5 +872,44 @@ test.describe("isolation across repeated switching", () => {
     await switchProfile(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
     await expect(banner).toBeVisible();
     expect(await readStorage(page, [FINANCE_DISMISSED_KEY])).toEqual([null]);
+  });
+});
+
+/**
+ * The account picture is scoped to the Cognito subject, not to a dataset, which makes it the one
+ * piece of state in this spec that must NOT follow a profile switch — and must never be read at all
+ * while a local profile is open.
+ *
+ * That distinction is worth its own test because it is invisible from the outside: every other
+ * assertion in this file proves a value moved WITH the switch, so a regression that made the avatar
+ * dataset-scoped, or that read it for an account-less profile, would pass all of them.
+ */
+test.describe("the account picture is never read for an account-less profile", () => {
+  test("switching between local profiles never invokes get_user_avatar and paints no face", async ({
+    page,
+  }) => {
+    await setupIsolationMock(page, {
+      datasets: [DEFAULT_ENTRY],
+      seeds: POPULATED_SEEDS,
+    });
+
+    await launchAndCreateSecondProfile(page);
+    await selectProfileRow(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
+    await expectFinanceIsolated(page, DEFAULT_PROFILE);
+
+    // Both profiles here are local, so the always-mounted account trigger has no account to read
+    // for: the command resolves a Cognito subject and would open the OS secure store for nothing.
+    await expect(page.getByTestId("profile-menu-avatar")).toHaveCount(0);
+    expect(await readInvokedCommands(page)).not.toContain("get_user_avatar");
+
+    await switchProfile(page, CREATED_PROFILE.label, /localhost:1420\/$/);
+    await expectFinanceIsolated(page, CREATED_PROFILE);
+
+    await expect(page.getByTestId("profile-menu-avatar")).toHaveCount(0);
+    expect(await readInvokedCommands(page)).not.toContain("get_user_avatar");
+
+    // And the switch itself still happened, so the assertions above are about a real switch rather
+    // than a page that never moved.
+    expect(await readSelections(page)).toEqual(["default", CREATED_ID]);
   });
 });

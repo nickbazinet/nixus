@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Card, CardContent, Skeleton } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SignInRequired } from "@/components/profile/SignInRequired";
+import { ProfileAvatarField } from "@/components/profile/ProfileAvatarField";
 import { ProfileForm } from "@/components/profile/ProfileForm";
 import { useAuthSession } from "@/hooks/useAuth";
 
@@ -48,6 +49,10 @@ function ProfilePage() {
         {guard === "logged-in" && account && (
           <Card>
             <CardContent>
+              <div className="mb-4">
+                <ProfileAvatarField />
+              </div>
+
               <div className="space-y-1">
                 <p className="text-caption text-ink-dim">{t("profile.email")}</p>
                 {/* Read text, not a control: a `Label` with no `htmlFor` target is an a11y defect,

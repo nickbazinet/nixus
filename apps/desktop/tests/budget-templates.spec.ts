@@ -128,6 +128,10 @@ async function setupTauriMock(page: Page, outcomes: TemplateOutcomes = {}) {
             return Promise.resolve({ absolute_change_cents: 0, percentage_change: 0, direction: "flat" });
           case "get_db_status":
             return Promise.resolve({ db_path: "mock.db", wal_mode: true, schema_version: 10, migrations_applied: 10 });
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return Promise.resolve(null);
           default:
             return Promise.reject(`Unknown command: ${cmd}`);
         }

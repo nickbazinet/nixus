@@ -60,6 +60,10 @@ async function setupYearSummaryMock(page: Page, yearlyOverrides: Record<string, 
             case "get_yearly_summary":
               if (args?.year === 2025) return Promise.resolve(s2025);
               return Promise.resolve(s2026);
+            // The account trigger is mounted on every screen, so this read must be answered even where
+            // the surface under test has nothing to do with an account (see project-context.md, Testing).
+            case "get_user_avatar":
+              return Promise.resolve(null);
             default:
               return Promise.resolve(null);
           }

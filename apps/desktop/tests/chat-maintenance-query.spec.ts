@@ -158,6 +158,10 @@ async function setupTauriMock(page: Page) {
           case "get_chat_messages":
             return Promise.resolve([]);
 
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return Promise.resolve(null);
           default:
             return Promise.resolve(null);
         }

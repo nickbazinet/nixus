@@ -75,6 +75,7 @@ export const queryKeys = {
   },
   cloudAiPremium: ["cloud-ai-premium"] as const,
   profile: ["profile"] as const,
+  userAvatar: ["user-avatar"] as const,
   countries: ["countries"] as const,
   subdivisions: (countryCode: string) =>
     ["subdivisions", countryCode] as const,

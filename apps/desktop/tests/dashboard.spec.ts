@@ -103,6 +103,10 @@ async function setupEmptyDashboardMock(page: Page) {
                 total_saved_cents: 0,
                 total_target_cents: 0,
               });
+            // The account trigger is mounted on every screen, so this read must be answered even where
+            // the surface under test has nothing to do with an account (see project-context.md, Testing).
+            case "get_user_avatar":
+              return Promise.resolve(null);
             default:
               return Promise.resolve(null);
           }
@@ -238,6 +242,10 @@ async function setupSeededDashboardMock(page: Page) {
               total_saved_cents: 0,
               total_target_cents: 0,
             });
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return Promise.resolve(null);
           default:
             return Promise.resolve(null);
         }
@@ -314,6 +322,10 @@ async function setupPacingDashboardMock(page: Page) {
               total_saved_cents: 0,
               total_target_cents: 0,
             });
+          // The account trigger is mounted on every screen, so this read must be answered even where
+          // the surface under test has nothing to do with an account (see project-context.md, Testing).
+          case "get_user_avatar":
+            return Promise.resolve(null);
           default:
             return Promise.resolve(null);
         }
@@ -476,6 +488,10 @@ test.describe("Dashboard — Story 5.1", () => {
                 total_saved_cents: 0,
                 total_target_cents: 0,
               });
+            // The account trigger is mounted on every screen, so this read must be answered even where
+            // the surface under test has nothing to do with an account (see project-context.md, Testing).
+            case "get_user_avatar":
+              return Promise.resolve(null);
             default:
               return Promise.resolve(null);
           }
@@ -759,6 +775,10 @@ test.describe("Dashboard — Suggested Next Step Card", () => {
                 total_saved_cents: 0,
                 total_target_cents: 0,
               });
+            // The account trigger is mounted on every screen, so this read must be answered even where
+            // the surface under test has nothing to do with an account (see project-context.md, Testing).
+            case "get_user_avatar":
+              return Promise.resolve(null);
             default:
               return Promise.resolve(null);
           }
@@ -909,6 +929,10 @@ async function setupSavingsDashboardMock(
               return Promise.resolve(null);
             case "get_savings_projects_summary":
               return Promise.resolve(savings);
+            // The account trigger is mounted on every screen, so this read must be answered even where
+            // the surface under test has nothing to do with an account (see project-context.md, Testing).
+            case "get_user_avatar":
+              return Promise.resolve(null);
             default:
               return Promise.resolve(null);
           }
