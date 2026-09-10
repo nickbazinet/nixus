@@ -93,6 +93,12 @@ interface MockImageState {
    * archived/missing-project guard (`project_id`) or to fail a replace with an image on screen.
    */
   writeRejectField: string | null;
+  /**
+   * The `field` `remove_project_image` refuses with, or `null` to let the deletion land. Its own
+   * knob rather than a reuse of `writeRejectField`: removal is reached from the row menu while the
+   * write is reached from the tile, so a shared switch could not fail one without arming the other.
+   */
+  removeRejectField: string | null;
 }
 
 const NO_IMAGES: MockImageState = {
@@ -101,6 +107,7 @@ const NO_IMAGES: MockImageState = {
   pickedPath: null,
   validateRejectField: null,
   writeRejectField: null,
+  removeRejectField: null,
 };
 
 /**
@@ -719,6 +726,8 @@ async function setupTauriMock(
 
           // Idempotent, exactly like the Rust command: removing nothing is not an error.
           case "remove_project_image": {
+            if (images.removeRejectField !== null)
+              return Promise.reject(refusal(images.removeRejectField));
             const index = projectImages.findIndex(
               (image) => image.project_id === (args.project_id as number)
             );
@@ -1084,6 +1093,15 @@ async function pickSuggestionAccount(page: Page) {
   await page.getByRole("option", { name: "Chequing — RBC" }).click();
 }
 
+// The panel arrives collapsed, so every spec that reads or drives its body has to open it first.
+async function expandSuggestionPanel(page: Page) {
+  await page.getByTestId("suggested-allocation-toggle").click();
+  await expect(page.getByTestId("suggested-allocation-toggle")).toHaveAttribute(
+    "aria-expanded",
+    "true"
+  );
+}
+
 function today() {
   const now = new Date();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -1095,11 +1113,195 @@ function currentMonth() {
   return today().slice(0, 7);
 }
 
+// Every unconditionally-rendered part of the card's body and footer. Listed by name so a part that
+// silently stops rendering — or leaks into the collapsed state — fails a test instead of passing one.
+const COLLAPSIBLE_SUGGESTION_PARTS = [
+  "suggested-allocation-intro",
+  "suggested-allocation-row",
+  "suggested-allocation-summary",
+  "suggested-allocation-surplus",
+  "suggested-allocation-total",
+  "suggested-allocation-account",
+  "suggested-allocation-skip",
+  "suggested-allocation-confirm",
+  "suggested-allocation-cadence",
+] as const;
+
+// The card is a disclosure, closed on arrival: the recommendation must not push the project list
+// down for a user who came to read their goals. Everything below the header is genuinely unmounted
+// while it is closed, which is what the `toHaveCount(0)` assertions pin.
+test.describe("Disclosing the suggested monthly split", () => {
+  test.beforeEach(async ({ page }) => {
+    await setupTauriMock(page, TWO_PROJECT_SUGGESTION);
+    await page.goto("/wealth/projects");
+    await expect(page.getByTestId("suggested-allocation-panel")).toBeVisible();
+  });
+
+  test("the card arrives collapsed, with only its title and toggle on screen", async ({
+    page,
+  }) => {
+    await expect(page.getByTestId("suggested-allocation-title")).toContainText(
+      "Suggested monthly split"
+    );
+    await expect(
+      page.getByTestId("suggested-allocation-toggle")
+    ).toHaveAttribute("aria-expanded", "false");
+
+    for (const testId of COLLAPSIBLE_SUGGESTION_PARTS) {
+      await expect(page.getByTestId(testId)).toHaveCount(0);
+    }
+  });
+
+  // `CardHeader` ships a `grid` by default, which stacked the badge above the label. This pins the
+  // rendered geometry rather than a class list, because only a real row layout can put the three
+  // boxes on a shared centre line in the order the review asked for.
+  test("the header keeps the logo, toggle, and title on one row at the minimum window", async ({
+    page,
+  }) => {
+    // The `minWidth`/`minHeight` from `tauri.conf.json`: the narrowest row a user can produce.
+    await page.setViewportSize({ width: 1024, height: 680 });
+
+    const header = page
+      .getByTestId("suggested-allocation-panel")
+      .locator('[data-slot="card-header"]');
+    const logo = header.locator('span[aria-hidden="true"]');
+    const titleRow = header.locator(
+      'div:has(> [data-testid="suggested-allocation-toggle"])'
+    );
+    await expect(logo).toHaveCount(1);
+    await expect(titleRow).toHaveCount(1);
+
+    const boxes = await Promise.all(
+      [
+        logo,
+        titleRow,
+        page.getByTestId("suggested-allocation-toggle"),
+        page.getByTestId("suggested-allocation-title"),
+      ].map(async (locator) => {
+        const box = await locator.boundingBox();
+        if (box === null) throw new Error("a header part is not rendered");
+        return box;
+      })
+    );
+    const [logoBox, rowBox, toggleBox, titleBox] = boxes;
+    const centreY = (box: { y: number; height: number }) =>
+      box.y + box.height / 2;
+
+    // Two pixels is sub-pixel rounding on the centre line; a stacked header is off by tens.
+    for (const box of [rowBox, toggleBox, titleBox]) {
+      expect(Math.abs(centreY(box) - centreY(logoBox))).toBeLessThanOrEqual(2);
+    }
+    // Centres can coincide by accident, so also require the label to overlap the badge's own band
+    // of pixels — two stacked rows never do.
+    expect(titleBox.y).toBeLessThan(logoBox.y + logoBox.height);
+    expect(logoBox.y).toBeLessThan(titleBox.y + titleBox.height);
+
+    expect(logoBox.x + logoBox.width).toBeLessThanOrEqual(toggleBox.x);
+    expect(toggleBox.x + toggleBox.width).toBeLessThanOrEqual(titleBox.x);
+    // The chevron belongs to the title, not to the far edge: one `gap-1.5` of slack, no more.
+    expect(titleBox.x - (toggleBox.x + toggleBox.width)).toBeLessThanOrEqual(12);
+
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+
+  test("opening it renders every pre-existing body and footer control", async ({
+    page,
+  }) => {
+    await expandSuggestionPanel(page);
+
+    for (const testId of COLLAPSIBLE_SUGGESTION_PARTS) {
+      await expect(page.getByTestId(testId).first()).toBeVisible();
+    }
+    await expect(page.getByTestId("suggested-allocation-row")).toHaveCount(2);
+    await expect(page.getByLabel("Amount for Car down payment")).toHaveValue(
+      "300.00"
+    );
+  });
+
+  test("closing it again hides the body and footer but keeps the title", async ({
+    page,
+  }) => {
+    await expandSuggestionPanel(page);
+    await page.getByTestId("suggested-allocation-toggle").click();
+
+    await expect(
+      page.getByTestId("suggested-allocation-toggle")
+    ).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("suggested-allocation-title")).toBeVisible();
+    for (const testId of COLLAPSIBLE_SUGGESTION_PARTS) {
+      await expect(page.getByTestId(testId)).toHaveCount(0);
+    }
+  });
+
+  // Keyboard, not a synthesised click: the toggle has to be a real button, and Enter on a div would
+  // do nothing at all.
+  test("the toggle opens and closes from the keyboard", async ({ page }) => {
+    const toggle = page.getByTestId("suggested-allocation-toggle");
+
+    await toggle.press("Enter");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByTestId("suggested-allocation-intro")).toBeVisible();
+
+    await toggle.press(" ");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("suggested-allocation-intro")).toHaveCount(0);
+  });
+
+  test("the toggle's accessible name states the action it offers in each state", async ({
+    page,
+  }) => {
+    await expect(
+      page.getByRole("button", { name: "Show the suggested monthly split" })
+    ).toBeVisible();
+
+    await expandSuggestionPanel(page);
+
+    await expect(
+      page.getByRole("button", { name: "Hide the suggested monthly split" })
+    ).toBeVisible();
+  });
+
+  test("the toggle states its available action in French", async ({ page }) => {
+    await page.getByText("Français", { exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+    await expect(
+      page.getByRole("button", {
+        name: "Afficher la répartition mensuelle suggérée",
+      })
+    ).toBeVisible();
+
+    await page.getByTestId("suggested-allocation-toggle").click();
+
+    await expect(
+      page.getByRole("button", {
+        name: "Masquer la répartition mensuelle suggérée",
+      })
+    ).toBeVisible();
+  });
+
+  test("reopening the card keeps an edited amount rather than resetting it", async ({
+    page,
+  }) => {
+    await expandSuggestionPanel(page);
+    await setAmount(page, "Car down payment", "125.00");
+    await page.getByTestId("suggested-allocation-toggle").click();
+    await expandSuggestionPanel(page);
+
+    await expect(page.getByLabel("Amount for Car down payment")).toHaveValue(
+      "125.00"
+    );
+    await expect(page.getByTestId("suggested-allocation-total")).toContainText(
+      "$325.00"
+    );
+  });
+});
+
 test.describe("Suggested allocation review", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page, TWO_PROJECT_SUGGESTION);
     await page.goto("/wealth/projects");
     await expect(page.getByTestId("suggested-allocation-panel")).toBeVisible();
+    await expandSuggestionPanel(page);
   });
 
   test("lists one pre-filled editable amount per suggested project with the surplus and total", async ({
@@ -1200,6 +1402,7 @@ test.describe("Confirming or skipping a suggested allocation", () => {
     await createProject(page, "Car down payment", "5000.00");
     await createProject(page, "Kitchen renovation", "1200.00");
     await expect(page.getByTestId("suggested-allocation-panel")).toBeVisible();
+    await expandSuggestionPanel(page);
   });
 
   test("confirm is disabled until a source account is chosen", async ({
@@ -1358,6 +1561,7 @@ test.describe("Remembering this month's decision", () => {
     await createProject(page, "Car down payment", "5000.00");
     await createProject(page, "Kitchen renovation", "1200.00");
     await expect(page.getByTestId("suggested-allocation-panel")).toBeVisible();
+    await expandSuggestionPanel(page);
   });
 
   test("the active panel says when the question comes back", async ({ page }) => {
@@ -1426,6 +1630,9 @@ test.describe("Remembering this month's decision", () => {
     await page.getByTestId("settled-allocation-reopen").click();
 
     await expect(page.getByTestId("suggested-allocation-panel")).toBeVisible();
+    await expect(
+      page.getByTestId("suggested-allocation-toggle")
+    ).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByTestId("settled-allocation-card")).toHaveCount(0);
     expect(await storedContributions(page)).toEqual(storedBefore);
     const commands = await invokedCommands(page);
@@ -1442,6 +1649,9 @@ test.describe("Remembering this month's decision", () => {
     await page.getByTestId("settled-allocation-reopen").click();
 
     await expect(page.getByTestId("suggested-allocation-panel")).toBeVisible();
+    await expect(
+      page.getByTestId("suggested-allocation-toggle")
+    ).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByTestId("settled-allocation-card")).toHaveCount(0);
     expect(await storedConfig(page)).toEqual({
       projects_suggestion_skipped_month: "",
@@ -2060,7 +2270,7 @@ async function horizontalOverflowPx(page: Page) {
   });
 }
 
-test.describe("Project image card", () => {
+test.describe("Project image editing from the row thumbnail", () => {
   const IMAGE_PROJECT: MockSeedProject = {
     id: 1,
     name: "Car down payment",
@@ -2068,11 +2278,11 @@ test.describe("Project image card", () => {
     target_date: null,
   };
 
-  /** A path with a directory component, so a leaked one would be visible in the meta line. */
+  /** A path with a directory component, so a leaked one would be visible in the UI. */
   const PICKED_PATH = "/Users/someone/Pictures/beach-house.png";
 
-  /** Valid base64 that is not an image, which is what makes the browser fire `onError`. */
-  const UNDECODABLE_BASE64 = "bm90IGFuIGltYWdlIGF0IGFsbA==";
+  const ADD_NAME = `Add an image for ${IMAGE_PROJECT.name}`;
+  const REPLACE_NAME = `Replace the image for ${IMAGE_PROJECT.name}`;
 
   async function gotoProjects(
     page: Page,
@@ -2096,229 +2306,60 @@ test.describe("Project image card", () => {
     await expect(page.getByTestId("project-row")).toHaveCount(seed.length);
   }
 
-  async function openImageCard(page: Page, images: MockImageState) {
-    await gotoProjects(page, images);
-    await page.getByTestId("project-expand-toggle").click();
-    await expect(page.getByTestId("project-detail")).toBeVisible();
-    return page.getByTestId("project-image-card");
+  /** The one control the whole feature hangs off: the row tile, as a real button. */
+  function tileButton(page: Page) {
+    return page.getByTestId("project-thumbnail-button");
   }
 
-  test("a stored image renders as a data URL with alt text naming the project", async ({
+  // The acceptance criterion the relocation exists for: expansion is financial detail only, and the
+  // ~4 MiB payload command is never sent at all — read at the invoke layer, not inferred from the DOM.
+  test("an expanded row shows no image panel and reads no full-size payload", async ({
     page,
   }) => {
-    await openImageCard(page, {
+    await gotoProjects(page, {
       ...NO_IMAGES,
       seed: [seededImage(IMAGE_PROJECT.id, "downpayment.png")],
     });
 
-    const img = page.getByTestId("project-image");
-    await expect(img).toBeVisible();
-    expect(await img.getAttribute("src")).toMatch(
-      /^data:image\/(png|jpeg);base64,/
-    );
-    const alt = await img.getAttribute("alt");
-    expect(alt).not.toBe("");
-    expect(alt).toContain(IMAGE_PROJECT.name);
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-detail")).toBeVisible();
+    // Anchored on a figure the detail always renders, so the absences below are read after the
+    // expansion settled rather than before it started asking for anything.
+    await expect(page.getByTestId("project-saved-amount")).toBeVisible();
 
-    // Proves the SQLite `YYYY-MM-DD HH:MM:SS` timestamp is parsed rather than printed raw.
-    await expect(page.getByTestId("project-image-meta")).toContainText(
-      "downpayment.png · added Mar 4, 2026"
-    );
-    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
-  });
-
-  test("the card sits above the money figures inside the expanded detail", async ({
-    page,
-  }) => {
-    await openImageCard(page, {
-      ...NO_IMAGES,
-      seed: [seededImage(IMAGE_PROJECT.id)],
-    });
-
-    const firstChild = await page
-      .getByTestId("project-detail")
-      .evaluate((el) => el.firstElementChild?.getAttribute("data-testid") ?? null);
-    expect(firstChild).toBe("project-image-card");
-  });
-
-  test("a project with no image renders the compact invitation", async ({
-    page,
-  }) => {
-    await openImageCard(page, NO_IMAGES);
-
-    const empty = page.getByTestId("project-image-empty");
-    await expect(empty).toContainText("No image yet");
-    await expect(page.getByTestId("project-image-add-button")).toBeVisible();
+    await expect(page.getByTestId("project-image-card")).toHaveCount(0);
     await expect(page.getByTestId("project-image")).toHaveCount(0);
-    await expect(page.getByTestId("project-image-load-failed")).toHaveCount(0);
-  });
-
-  // The state that exists because `retry: false` settles a refusal immediately: without the
-  // `isError` test running first, this project would be told it has no picture at all.
-  test("a rejected read says the image could not be loaded, never that there is none", async ({
-    page,
-  }) => {
-    await openImageCard(page, {
-      ...NO_IMAGES,
-      seed: [seededImage(IMAGE_PROJECT.id)],
-      readRejects: [IMAGE_PROJECT.id],
-    });
-
-    await expect(page.getByTestId("project-image-load-failed")).toContainText(
-      "The saved image couldn't be loaded."
-    );
-    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-meta")).toHaveCount(0);
     await expect(page.getByTestId("project-image-add-button")).toHaveCount(0);
-    await expect(page.getByTestId("project-image")).toHaveCount(0);
-  });
-
-  test("the card carries no shadow, because elevation is for floating layers only", async ({
-    page,
-  }) => {
-    const card = await openImageCard(page, {
-      ...NO_IMAGES,
-      seed: [seededImage(IMAGE_PROJECT.id)],
-    });
-
-    const shadowed = await card.evaluate((root) =>
-      [root, ...Array.from(root.querySelectorAll("*"))]
-        .map((el) => el.getAttribute("class") ?? "")
-        .filter((cls) => /(^|\s)shadow-/.test(cls))
-    );
-    expect(shadowed).toEqual([]);
-  });
-
-  test("Remove is reachable only through the overflow menu, never beside Replace", async ({
-    page,
-  }) => {
-    const card = await openImageCard(page, {
-      ...NO_IMAGES,
-      seed: [seededImage(IMAGE_PROJECT.id)],
-    });
-
-    // Exactly two controls sit in the card: Replace, and the menu trigger that hides Remove.
-    await expect(card.getByRole("button")).toHaveCount(2);
-    await expect(card.getByTestId("project-image-replace-button")).toBeVisible();
-    await expect(card.getByText("Remove image")).toHaveCount(0);
-    await expect(
-      page.getByRole("menuitem", { name: "Remove image" })
-    ).toHaveCount(0);
-
-    await card.getByTestId("project-image-menu").click();
-
-    const remove = page.getByRole("menuitem", { name: "Remove image" });
-    await expect(remove).toBeVisible();
-    // Portaled out of the card, which is what "not a sibling of Replace" means structurally.
-    await expect(card.getByTestId("remove-project-image-button")).toHaveCount(0);
-  });
-
-  test("every interactive control in the card has a non-empty accessible name", async ({
-    page,
-  }) => {
-    const card = await openImageCard(page, {
-      ...NO_IMAGES,
-      seed: [seededImage(IMAGE_PROJECT.id)],
-    });
-
-    // `ariaSnapshot` renders Playwright's own computed accessible name, so an unnamed control shows
-    // up as a bare `- button` with no quoted string — which is exactly what this rejects.
-    const namesInside = async (region: ReturnType<Page["getByTestId"]>) => {
-      const lines = (await region.ariaSnapshot()).split("\n");
-      return lines
-        .map((line) => /^\s*-\s+(button|link|menuitem|checkbox|textbox)\b(.*)$/.exec(line))
-        .filter((match): match is RegExpExecArray => match !== null)
-        .map((match) => ({ role: match[1], rest: match[2].trim() }));
-    };
-
-    const cardControls = await namesInside(card);
-    expect(cardControls.length).toBeGreaterThan(0);
-    for (const control of cardControls) {
-      expect(control.rest, `${control.role} in the card has no accessible name`).toMatch(
-        /^"[^"]+"/
-      );
-    }
-
-    await card.getByTestId("project-image-menu").click();
-    const menuControls = await namesInside(page.getByTestId("remove-project-image-button"));
-    expect(menuControls.length).toBeGreaterThan(0);
-    for (const control of menuControls) {
-      expect(control.rest, `${control.role} in the menu has no accessible name`).toMatch(
-        /^"[^"]+"/
-      );
-    }
-
-    // Non-empty is not enough: the row carries its own actions menu as well as the image's, and two
-    // triggers announcing the identical name leaves a screen-reader user unable to tell them apart.
-    // Only the quoted name is compared — ARIA state suffixes like `[expanded]` would otherwise make
-    // two identically-named triggers look distinct purely because one of them is open.
-    const rowNames = (await namesInside(page.getByTestId("project-row")))
-      .map((control) => /^"([^"]+)"/.exec(control.rest)?.[1])
-      .filter((name): name is string => name !== undefined);
-    expect(rowNames.length).toBeGreaterThan(1);
-    expect(
-      new Set(rowNames).size,
-      `duplicate accessible names in the row: ${rowNames.join(" | ")}`
-    ).toBe(rowNames.length);
-  });
-
-  test("adding an image renders the picture that was picked", async ({
-    page,
-  }) => {
-    const card = await openImageCard(page, {
-      ...NO_IMAGES,
-      pickedPath: PICKED_PATH,
-    });
-    await expect(page.getByTestId("project-image-empty")).toBeVisible();
-
-    await card.getByTestId("project-image-add-button").click();
-
-    const img = page.getByTestId("project-image");
-    await expect(img).toBeVisible();
-    // Exactly the payload the write stored, which is a different PNG from anything seeded — so this
-    // cannot pass on a stale render of the previous state.
-    expect(await img.getAttribute("src")).toBe(
-      `data:image/png;base64,${WRITTEN_PNG_BASE64}`
-    );
-    // Non-zero only once the browser really decoded those bytes, which is what keeps the written
-    // fixture honest instead of a string that merely looks like a PNG.
-    await expect
-      .poll(async () =>
-        img.evaluate(
-          (node) => node instanceof HTMLImageElement && node.naturalWidth > 0
-        )
-      )
-      .toBe(true);
-    const meta = page.getByTestId("project-image-meta");
-    await expect(meta).toContainText("beach-house.png");
-    // The stored basename and nothing else: no directory the file came from may reach the UI.
-    await expect(meta).not.toContainText("Pictures");
-    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
-    await expect(page.getByTestId("project-image-error")).toHaveCount(0);
-  });
-
-  // The mount boundary, read at the invoke layer rather than inferred from the DOM: the payload is
-  // the expensive part of this feature, and a collapsed row must not pay for it.
-  test("a collapsed row never reads the image payload", async ({ page }) => {
-    await gotoProjects(page, {
-      ...NO_IMAGES,
-      seed: [seededImage(IMAGE_PROJECT.id)],
-    });
-
-    // Anchored on a load-time invoke of the collapsed surface, so the absence below is read after
-    // the page settled rather than before it started asking for anything.
-    await expect
-      .poll(async () => await invokedCommands(page))
-      .toContain("get_project_saved_totals");
+    await expect(page.getByTestId("project-image-replace-button")).toHaveCount(0);
     expect(await invokedCommands(page)).not.toContain("get_project_image");
 
-    // The same read appears the moment the row mounts its detail, which is what makes the absence
-    // above a mount-boundary proof rather than a mock that simply never answers.
+    // The row tile survives the collapse it never depended on.
     await page.getByTestId("project-expand-toggle").click();
-    await expect(page.getByTestId("project-image")).toBeVisible();
-    expect(await invokedCommands(page)).toContain("get_project_image");
+    await expect(page.getByTestId("project-detail")).toHaveCount(0);
+    await expect(tileButton(page)).toBeVisible();
   });
 
-  test("a project row shows its thumbnail as a data URL naming the project", async ({
+  test("an empty tile is a real button whose name offers to add an image", async ({
+    page,
+  }) => {
+    await gotoProjects(page, NO_IMAGES);
+
+    const button = tileButton(page);
+    await expect(button).toBeVisible();
+    // A native <button>, not a div wearing a click handler — which is what makes Enter and Space
+    // work without this spec having to re-implement them.
+    expect(await button.evaluate((node) => node.tagName)).toBe("BUTTON");
+    await expect(page.getByRole("button", { name: ADD_NAME })).toBeVisible();
+    await expect(page.getByRole("button", { name: REPLACE_NAME })).toHaveCount(0);
+
+    // The placeholder tile is INSIDE the control now, not a sibling of it.
+    await expect(button.getByTestId("project-thumbnail-empty")).toBeVisible();
+    await expect(page.getByTestId("project-thumbnail")).toHaveCount(0);
+    await expect(page.getByTestId("project-name")).toBeVisible();
+  });
+
+  test("a populated tile is a button whose name offers to replace, showing the derivative", async ({
     page,
   }) => {
     await gotoProjects(page, {
@@ -2326,10 +2367,12 @@ test.describe("Project image card", () => {
       seed: [seededImage(IMAGE_PROJECT.id, "downpayment.png")],
     });
 
-    const tile = page.getByTestId("project-thumbnail");
-    await expect(tile).toBeVisible();
-    // The DERIVATIVE, not the stored picture: this is the assertion a regression that fed the row
-    // a full-size payload would fail, which is why the mock keeps three distinct fixtures.
+    await expect(page.getByRole("button", { name: REPLACE_NAME })).toBeVisible();
+    await expect(page.getByRole("button", { name: ADD_NAME })).toHaveCount(0);
+
+    const tile = tileButton(page).getByTestId("project-thumbnail");
+    // The DERIVATIVE, not the stored picture: this is the assertion a regression that fed the row a
+    // full-size payload would fail, which is why the mock keeps three distinct fixtures.
     expect(await tile.getAttribute("src")).toBe(
       `data:image/png;base64,${THUMBNAIL_PNG_BASE64}`
     );
@@ -2338,17 +2381,12 @@ test.describe("Project image card", () => {
     await expect
       .poll(async () => await tile.evaluate((el) => (el as HTMLImageElement).naturalWidth))
       .toBeGreaterThan(0);
-
-    const alt = await tile.getAttribute("alt");
-    expect(alt).not.toBe("");
-    expect(alt).toContain(IMAGE_PROJECT.name);
+    // Decorative inside a named control: the button's own name carries the meaning, so an alt would
+    // only make a screen reader say the same thing twice.
+    expect(await tile.getAttribute("alt")).toBe("");
     await expect(page.getByTestId("project-thumbnail-empty")).toHaveCount(0);
 
-    // Presentational only: the tile must not become a control competing with the row's own.
-    expect(await tile.evaluate((el) => el.closest("button, a") !== null)).toBe(
-      false
-    );
-    // Every control the row shipped before the tile existed is still there.
+    // Every control the row shipped before the tile became interactive is still there.
     for (const testId of [
       "project-expand-toggle",
       "project-name",
@@ -2360,58 +2398,92 @@ test.describe("Project image card", () => {
     }
   });
 
-  test("a project with no image shows the neutral placeholder tile", async ({
+  test("the tile carries no shadow, because elevation is for floating layers only", async ({
     page,
   }) => {
-    await gotoProjects(page, NO_IMAGES);
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
 
-    const placeholder = page.getByTestId("project-thumbnail-empty");
-    await expect(placeholder).toBeVisible();
-    // Named rather than silent, and named from `src/locales/en.json`: the tile carries meaning
-    // ("this goal has no picture"), so it is an img role, not decorative wallpaper.
-    await expect(placeholder).toHaveAttribute("aria-label", "No image");
-    await expect(page.getByTestId("project-thumbnail")).toHaveCount(0);
-    await expect(page.getByTestId("project-name")).toBeVisible();
-  });
-
-  test("the collapsed list reads thumbnails once for every row and no full-size payload", async ({
-    page,
-  }) => {
-    const rows: MockSeedProject[] = [1, 2, 3].map((id) => ({
-      id,
-      name: `Goal ${id}`,
-      target_cents: 400_000,
-      target_date: null,
-    }));
-    await gotoProjects(
-      page,
-      { ...NO_IMAGES, seed: rows.map((row) => seededImage(row.id)) },
-      rows
+    const shadowed = await tileButton(page).evaluate((root) =>
+      [root, ...Array.from(root.querySelectorAll("*"))]
+        .map((el) => el.getAttribute("class") ?? "")
+        .filter((cls) => /(^|\s)shadow-/.test(cls))
     );
-
-    await expect(page.getByTestId("project-thumbnail")).toHaveCount(rows.length);
-    const commands = await invokedCommands(page);
-    // ONE batch read regardless of row count — three rows, one call. A per-row read would be 3.
-    expect(
-      commands.filter((command) => command === "get_project_thumbnails")
-    ).toHaveLength(1);
-    expect(commands).not.toContain("get_project_image");
+    expect(shadowed).toEqual([]);
   });
 
-  test("a dismissed picker writes nothing and leaves the invitation alone", async ({
+  test("clicking an empty tile stores the picked file and the tile becomes the thumbnail", async ({
     page,
   }) => {
-    const card = await openImageCard(page, NO_IMAGES);
+    await gotoProjects(page, { ...NO_IMAGES, pickedPath: PICKED_PATH });
+    await expect(page.getByTestId("project-thumbnail-empty")).toBeVisible();
 
-    await card.getByTestId("project-image-add-button").click();
+    await tileButton(page).click();
+
+    const tile = page.getByTestId("project-thumbnail");
+    await expect(tile).toBeVisible();
+    expect(await tile.getAttribute("src")).toBe(
+      `data:image/png;base64,${THUMBNAIL_PNG_BASE64}`
+    );
+    // Non-zero only once the browser really decoded those bytes.
+    await expect
+      .poll(async () =>
+        tile.evaluate(
+          (node) => node instanceof HTMLImageElement && node.naturalWidth > 0
+        )
+      )
+      .toBe(true);
+    expect(await invokedCommands(page)).toContain("set_project_image");
+    // The name flips with the state, so the control now offers the other action.
+    await expect(page.getByRole("button", { name: REPLACE_NAME })).toBeVisible();
+    await expect(page.getByTestId("project-thumbnail-empty")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-error")).toHaveCount(0);
+    // No directory the file came from may reach the row.
+    await expect(page.getByTestId("project-row")).not.toContainText("Pictures");
+  });
+
+  test("the tile is operable by keyboard and replaces the stored image", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id, "original.png")],
+      pickedPath: PICKED_PATH,
+    });
+
+    // `press` focuses the element and dispatches a real key: a div with an onClick handler would
+    // not open the picker here, which is the whole point of the control being a button.
+    await tileButton(page).press("Enter");
+
+    await expect.poll(async () => await pickerCalls(page)).toEqual([PICKED_PATH]);
+    await expect
+      .poll(async () => await invokedCommands(page))
+      .toContain("set_project_image");
+    await expect(tileButton(page).getByTestId("project-thumbnail")).toBeVisible();
+    await expect(page.getByTestId("project-image-error")).toHaveCount(0);
+  });
+
+  test("a dismissed picker writes nothing and leaves the tile unchanged", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+    const tile = page.getByTestId("project-thumbnail");
+    const srcBefore = await tile.getAttribute("src");
+
+    await tileButton(page).click();
 
     // A dismissal changes nothing on screen, so the picker round trip is the only observable end of
     // the attempt — polling it is what makes the absence below a settled reading, not a race.
     await expect.poll(async () => (await pickerCalls(page)).length).toBe(1);
     expect(await invokedCommands(page)).not.toContain("set_project_image");
-    await expect(page.getByTestId("project-image-empty")).toBeVisible();
+    expect(await tile.getAttribute("src")).toBe(srcBefore);
     await expect(page.getByTestId("project-image-error")).toHaveCount(0);
-    await expect(card.getByTestId("project-image-add-button")).toBeEnabled();
+    await expect(tileButton(page)).toBeEnabled();
   });
 
   /* Six file-level refusals, six distinct sentences. A shared message would send the user to shrink
@@ -2441,22 +2513,22 @@ test.describe("Project image card", () => {
   ] as const;
 
   for (const { field, copy } of VALIDATOR_REFUSALS) {
-    test(`a ${field} refusal shows its own sentence and never reaches the write`, async ({
+    test(`a ${field} refusal shows its own sentence in the row and never reaches the write`, async ({
       page,
     }) => {
-      const card = await openImageCard(page, {
+      await gotoProjects(page, {
         ...NO_IMAGES,
         pickedPath: PICKED_PATH,
         validateRejectField: field,
       });
 
-      await card.getByTestId("project-image-add-button").click();
+      await tileButton(page).click();
 
       await expect(page.getByTestId("project-image-error")).toHaveText(copy);
       // Validation runs before any write, so a refused file costs nothing and stores nothing.
       expect(await invokedCommands(page)).not.toContain("set_project_image");
-      await expect(page.getByTestId("project-image-empty")).toBeVisible();
-      await expect(page.getByTestId("project-image")).toHaveCount(0);
+      await expect(page.getByTestId("project-thumbnail-empty")).toBeVisible();
+      await expect(page.getByTestId("project-thumbnail")).toHaveCount(0);
     });
   }
 
@@ -2465,13 +2537,13 @@ test.describe("Project image card", () => {
   test("a write the archived-project guard refuses says the project is unavailable", async ({
     page,
   }) => {
-    const card = await openImageCard(page, {
+    await gotoProjects(page, {
       ...NO_IMAGES,
       pickedPath: PICKED_PATH,
       writeRejectField: "project_id",
     });
 
-    await card.getByTestId("project-image-add-button").click();
+    await tileButton(page).click();
 
     await expect(page.getByTestId("project-image-error")).toHaveText(
       "This project is no longer available."
@@ -2480,63 +2552,106 @@ test.describe("Project image card", () => {
     await expect
       .poll(async () => await invokedCommands(page))
       .toContain("set_project_image");
-    await expect(page.getByTestId("project-image-empty")).toBeVisible();
-    await expect(page.getByTestId("project-image")).toHaveCount(0);
+    await expect(page.getByTestId("project-thumbnail-empty")).toBeVisible();
+    await expect(page.getByTestId("project-thumbnail")).toHaveCount(0);
   });
 
-  test("a failed replace leaves the original image byte-for-byte on screen", async ({
+  test("a failed replace leaves the original thumbnail byte-for-byte on screen", async ({
     page,
   }) => {
-    const card = await openImageCard(page, {
+    await gotoProjects(page, {
       ...NO_IMAGES,
       seed: [seededImage(IMAGE_PROJECT.id, "original.png")],
       pickedPath: PICKED_PATH,
       writeRejectField: "project_id",
     });
 
-    // The precondition that keeps the comparison below from being a tautology: if a landed write
-    // stored the same bytes the seed holds, `src` could not move even when the replace succeeded.
-    expect(WRITTEN_PNG_BASE64).not.toBe(ONE_PIXEL_PNG_BASE64);
+    const tile = page.getByTestId("project-thumbnail");
+    await expect(tile).toBeVisible();
+    const srcBefore = await tile.getAttribute("src");
+    expect(srcBefore).toBe(`data:image/png;base64,${THUMBNAIL_PNG_BASE64}`);
 
-    const img = page.getByTestId("project-image");
-    await expect(img).toBeVisible();
-    const srcBefore = await img.getAttribute("src");
-    expect(srcBefore).toBe(`data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`);
-
-    await card.getByTestId("project-image-replace-button").click();
+    await tileButton(page).click();
 
     await expect(page.getByTestId("project-image-error")).toBeVisible();
     await expect
       .poll(async () => await invokedCommands(page))
       .toContain("set_project_image");
-    // Byte-identical, not merely "an image is still showing": a landed write stores a DIFFERENT PNG
-    // from the seeded one, so a replace that half-succeeded would move this string.
-    expect(await img.getAttribute("src")).toBe(srcBefore);
-    await expect(page.getByTestId("project-image-meta")).toContainText(
-      "original.png"
-    );
-    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
+    expect(await tile.getAttribute("src")).toBe(srcBefore);
+    await expect(page.getByRole("button", { name: REPLACE_NAME })).toBeVisible();
+    await expect(page.getByTestId("project-thumbnail-empty")).toHaveCount(0);
   });
 
-  test("removing an image takes a confirmation, then the invitation comes back", async ({
+  test("Remove image lives only in the row menu, never beside the tile", async ({
     page,
   }) => {
-    const card = await openImageCard(page, {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+
+    // Nothing destructive is a peer of the tile: the row's own controls are the tile, the expand
+    // toggle, the two move buttons and the actions trigger — no Remove among them.
+    await expect(page.getByRole("button", { name: /Remove/i })).toHaveCount(0);
+    await expect(
+      page.getByRole("menuitem", { name: "Remove image" })
+    ).toHaveCount(0);
+
+    await page.getByTestId("project-row-menu").click();
+
+    const remove = page.getByRole("menuitem", { name: "Remove image" });
+    await expect(remove).toBeVisible();
+    // Demoted BELOW the two pre-existing items rather than promoted above them.
+    const menuOrder = await page
+      .getByRole("menu")
+      .evaluate((menu) =>
+        Array.from(menu.querySelectorAll("[data-testid]")).map((node) =>
+          node.getAttribute("data-testid")
+        )
+      );
+    expect(menuOrder).toEqual([
+      "edit-project-button",
+      "remove-project-image-button",
+      "archive-project-button",
+    ]);
+    // Portaled out of the row, which is what "not a sibling of the tile" means structurally.
+    await expect(
+      page.getByTestId("project-row").getByTestId("remove-project-image-button")
+    ).toHaveCount(0);
+  });
+
+  test("a project with no image offers no removal at all", async ({ page }) => {
+    await gotoProjects(page, NO_IMAGES);
+
+    await page.getByTestId("project-row-menu").click();
+
+    await expect(page.getByTestId("edit-project-button")).toBeVisible();
+    await expect(page.getByTestId("archive-project-button")).toBeVisible();
+    await expect(page.getByTestId("remove-project-image-button")).toHaveCount(0);
+    await expect(
+      page.getByRole("menuitem", { name: "Remove image" })
+    ).toHaveCount(0);
+  });
+
+  test("removing an image takes a confirmation, then the empty tile comes back", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
       ...NO_IMAGES,
       seed: [seededImage(IMAGE_PROJECT.id)],
       pickedPath: PICKED_PATH,
       validateRejectField: "project_image_too_large",
     });
-    await expect(page.getByTestId("project-image")).toBeVisible();
+    await expect(page.getByTestId("project-thumbnail")).toBeVisible();
 
     // Raise a real refusal first, so the "no error remains" assertion at the end cannot pass
     // vacuously on a fixture that never displayed one.
-    await card.getByTestId("project-image-replace-button").click();
+    await tileButton(page).click();
     await expect(page.getByTestId("project-image-error")).toHaveText(
       "That image is larger than 4 MB. Pick a smaller one."
     );
 
-    await card.getByTestId("project-image-menu").click();
+    await page.getByTestId("project-row-menu").click();
     await page.getByRole("menuitem", { name: "Remove image" }).click();
 
     const dialog = page.getByTestId("remove-project-image-dialog");
@@ -2544,80 +2659,144 @@ test.describe("Project image card", () => {
     await expect(dialog).toContainText("Remove this image?");
     // Opening the confirmation deletes nothing: the destructive call may only follow the second act.
     expect(await invokedCommands(page)).not.toContain("remove_project_image");
-    await expect(page.getByTestId("project-image")).toBeVisible();
+    await expect(page.getByTestId("project-thumbnail")).toBeVisible();
 
     await page.getByTestId("confirm-remove-project-image-button").click();
 
     await expect(dialog).not.toBeVisible();
-    await expect(page.getByTestId("project-image-empty")).toContainText(
-      "No image yet"
-    );
-    await expect(page.getByTestId("project-image")).toHaveCount(0);
+    await expect(page.getByTestId("project-thumbnail-empty")).toBeVisible();
+    await expect(page.getByTestId("project-thumbnail")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: ADD_NAME })).toBeVisible();
     await expect(page.getByTestId("project-image-error")).toHaveCount(0);
     expect(await invokedCommands(page)).toContain("remove_project_image");
   });
 
-  test("a payload the browser cannot decode explains itself instead of drawing a broken image", async ({
-    page,
-  }) => {
-    const card = await openImageCard(page, {
-      ...NO_IMAGES,
-      seed: [
-        { ...seededImage(IMAGE_PROJECT.id), image_base64: UNDECODABLE_BASE64 },
-      ],
-    });
-
-    await expect(card.getByTestId("project-image-unavailable")).toContainText(
-      "This image can't be displayed right now."
-    );
-    // Zero `<img>` in the card is what "no broken-image glyph" means mechanically.
-    await expect(card.locator("img")).toHaveCount(0);
-    // A payload that failed to decode is not a failed read and not an absent image.
-    await expect(page.getByTestId("project-image-load-failed")).toHaveCount(0);
-    await expect(page.getByTestId("project-image-empty")).toHaveCount(0);
-    await expect(page.getByTestId("project-image-meta")).toBeVisible();
-  });
-
-  test("at the minimum window the image stacks above the details with no sideways scroll", async ({
-    page,
-  }) => {
-    // The `minWidth`/`minHeight` the app ships in `tauri.conf.json`, so this is the narrowest window
-    // a user can actually produce.
-    await page.setViewportSize({ width: 1024, height: 680 });
-    await openImageCard(page, {
+  test("dismissing the confirmation deletes nothing", async ({ page }) => {
+    await gotoProjects(page, {
       ...NO_IMAGES,
       seed: [seededImage(IMAGE_PROJECT.id)],
     });
-    await expect(page.getByTestId("project-image")).toBeVisible();
 
-    const stacked = await page
-      .getByTestId("project-detail")
-      .evaluate((detail) => {
-        const edges = (testId: string) =>
-          detail
-            .querySelector(`[data-testid="${testId}"]`)
-            ?.getBoundingClientRect() ?? null;
-        const image = edges("project-image");
-        const meta = edges("project-image-meta");
-        const money = edges("project-saved-amount");
-        if (image === null || meta === null || money === null) return null;
-        return {
-          imageAboveMeta: image.bottom <= meta.top,
-          cardAboveMoney: meta.bottom <= money.top,
-        };
-      });
-    expect(stacked).toEqual({ imageAboveMeta: true, cardAboveMoney: true });
+    await page.getByTestId("project-row-menu").click();
+    await page.getByRole("menuitem", { name: "Remove image" }).click();
+    await expect(page.getByTestId("remove-project-image-dialog")).toBeVisible();
 
-    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+    await page
+      .getByTestId("remove-project-image-dialog")
+      .getByRole("button", { name: "Cancel" })
+      .click();
+
+    await expect(
+      page.getByTestId("remove-project-image-dialog")
+    ).not.toBeVisible();
+    expect(await invokedCommands(page)).not.toContain("remove_project_image");
+    await expect(page.getByTestId("project-thumbnail")).toBeVisible();
+  });
+
+  test("a refused removal keeps the thumbnail and surfaces the existing copy", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+      removeRejectField: "project_id",
+    });
+    const tile = page.getByTestId("project-thumbnail");
+    const srcBefore = await tile.getAttribute("src");
+
+    await page.getByTestId("project-row-menu").click();
+    await page.getByRole("menuitem", { name: "Remove image" }).click();
+    await page.getByTestId("confirm-remove-project-image-button").click();
+
+    await expect(page.getByTestId("project-image-error")).toHaveText(
+      "This project is no longer available."
+    );
+    await expect(
+      page.getByTestId("remove-project-image-dialog")
+    ).not.toBeVisible();
+    expect(await tile.getAttribute("src")).toBe(srcBefore);
+    await expect(page.getByTestId("project-thumbnail-empty")).toHaveCount(0);
+  });
+
+  test("every control the row exposes has its own non-empty accessible name", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+    });
+
+    // `ariaSnapshot` renders Playwright's own computed accessible name, so an unnamed control shows
+    // up as a bare `- button` with no quoted string — which is exactly what this rejects.
+    const namesInside = async (region: ReturnType<Page["getByTestId"]>) => {
+      const lines = (await region.ariaSnapshot()).split("\n");
+      return lines
+        .map((line) => /^\s*-\s+(button|link|menuitem|checkbox|textbox)\b(.*)$/.exec(line))
+        .filter((match): match is RegExpExecArray => match !== null)
+        .map((match) => ({ role: match[1], rest: match[2].trim() }));
+    };
+
+    const rowControls = await namesInside(page.getByTestId("project-row"));
+    expect(rowControls.length).toBeGreaterThan(1);
+    for (const control of rowControls) {
+      expect(control.rest, `${control.role} in the row has no accessible name`).toMatch(
+        /^"[^"]+"/
+      );
+    }
+
+    // Non-empty is not enough: the tile now sits beside the expand toggle, the move controls and the
+    // actions trigger, and two controls announcing the identical name leaves a screen-reader user
+    // unable to tell them apart. Only the quoted name is compared — ARIA state suffixes like
+    // `[expanded]` would otherwise make two identically-named triggers look distinct.
+    const rowNames = rowControls
+      .map((control) => /^"([^"]+)"/.exec(control.rest)?.[1])
+      .filter((name): name is string => name !== undefined);
+    expect(
+      new Set(rowNames).size,
+      `duplicate accessible names in the row: ${rowNames.join(" | ")}`
+    ).toBe(rowNames.length);
+    expect(rowNames).toContain(REPLACE_NAME);
+
+    await page.getByTestId("project-row-menu").click();
+    const menuControls = await namesInside(
+      page.getByTestId("remove-project-image-button")
+    );
+    expect(menuControls.length).toBeGreaterThan(0);
+    for (const control of menuControls) {
+      expect(control.rest, `${control.role} in the menu has no accessible name`).toMatch(
+        /^"[^"]+"/
+      );
+    }
+  });
+
+  test("the collapsed list reads thumbnails once for every row and no full-size payload", async ({
+    page,
+  }) => {
+    const rows: MockSeedProject[] = [1, 2, 3].map((id) => ({
+      id,
+      name: `Goal ${id}`,
+      target_cents: 400_000,
+      target_date: null,
+    }));
+    await gotoProjects(
+      page,
+      { ...NO_IMAGES, seed: rows.map((row) => seededImage(row.id)) },
+      rows
+    );
+
+    await expect(page.getByTestId("project-thumbnail")).toHaveCount(rows.length);
+    const commands = await invokedCommands(page);
+    // ONE batch read regardless of row count — three rows, one call. A per-row read would be 3, and
+    // so would a tile that reached for the full-size command to decide what to draw.
+    expect(
+      commands.filter((command) => command === "get_project_thumbnails")
+    ).toHaveLength(1);
+    expect(commands).not.toContain("get_project_image");
   });
 
   /* Ten rows expanded at once, which is the shape a real list takes because each row owns its own
-   * `expanded` flag and nothing collapses its neighbours.
-   *
-   * THIS PROVES LAYOUT AND WIRING ONLY — NOT MEMORY. Every payload here is the 69-byte mocked PNG
-   * handed back by an in-page IPC stub, so nothing about this test says anything about resident cost
-   * with real photographs. That measurement needs a real build and is measured against a real build. */
-  test("ten expanded rows each render their own image and the page stays interactive", async ({
+   * `expanded` flag and nothing collapses its neighbours. */
+  test("ten expanded rows keep their tiles, read no payload, and leave the page interactive", async ({
     page,
   }) => {
     const seeded = Array.from({ length: 10 }, (_, index) => ({
@@ -2641,14 +2820,15 @@ test.describe("Project image card", () => {
     for (let index = 0; index < seeded.length; index += 1) {
       await toggles.nth(index).click();
     }
+    await expect(page.getByTestId("project-detail")).toHaveCount(seeded.length);
 
-    const images = page.getByTestId("project-image");
-    await expect(images).toHaveCount(seeded.length);
+    const tiles = page.getByTestId("project-thumbnail");
+    await expect(tiles).toHaveCount(seeded.length);
     // `naturalWidth` rather than mere presence: it is only non-zero once the browser really decoded
     // that row's own data URL.
     await expect
       .poll(async () =>
-        images.evaluateAll((nodes) =>
+        tiles.evaluateAll((nodes) =>
           nodes.map(
             (node) =>
               node instanceof HTMLImageElement &&
@@ -2660,13 +2840,120 @@ test.describe("Project image card", () => {
         )
       )
       .toEqual(seeded.map(() => true));
-    // Ten distinct filenames, so no two cards can be showing one shared cache entry.
-    const metas = await page.getByTestId("project-image-meta").allInnerTexts();
-    expect(new Set(metas).size).toBe(seeded.length);
+    // Ten expanded rows, and not one of them asked for a full-size payload.
+    expect(await invokedCommands(page)).not.toContain("get_project_image");
+    // Ten distinct accessible names, so no two tiles are addressing one shared project.
+    const tileNames = await tileButton(page).evaluateAll((nodes) =>
+      nodes.map((node) => node.getAttribute("aria-label"))
+    );
+    expect(new Set(tileNames).size).toBe(seeded.length);
 
     expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
 
     await page.getByTestId("add-project-button").click();
     await expect(page.getByTestId("project-form")).toBeVisible();
+  });
+
+  test("at the minimum window the row holds its shape with no sideways scroll", async ({
+    page,
+  }) => {
+    // The `minWidth`/`minHeight` the app ships in `tauri.conf.json`, so this is the narrowest window
+    // a user can actually produce.
+    await page.setViewportSize({ width: 1024, height: 680 });
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [seededImage(IMAGE_PROJECT.id)],
+      pickedPath: PICKED_PATH,
+      validateRejectField: "project_image_too_large",
+    });
+    await expect(page.getByTestId("project-thumbnail")).toBeVisible();
+
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-detail")).toBeVisible();
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+
+    // The tile keeps the geometry the list gives it, at the size the row shipped with.
+    const box = await tileButton(page).boundingBox();
+    expect(box?.width).toBe(56);
+    expect(box?.height).toBe(56);
+
+    // A refusal is a full-width block below the meter, so it cannot squeeze the header either.
+    await tileButton(page).click();
+    await expect(page.getByTestId("project-image-error")).toBeVisible();
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+
+  // Committed rather than run as a throwaway probe, because visual evidence nobody can regenerate is
+  // not evidence. Every artifact below is reproducible with:
+  //   pnpm --filter @nixus/desktop exec playwright test tests/projects.spec.ts -g "visual evidence"
+  test("visual evidence: the row tile settles correctly in both themes", async ({
+    page,
+  }) => {
+    const EVIDENCE = "../../.omo/evidence";
+    await page.setViewportSize({ width: 1024, height: 680 });
+
+    await gotoProjects(
+      page,
+      { ...NO_IMAGES, seed: [seededImage(1, "downpayment.png")] },
+      [
+        { id: 1, name: "BC Trip", target_cents: 500_000, target_date: "2027-06-01" },
+        { id: 2, name: "New Summer Car", target_cents: 4_000_000, target_date: null },
+      ]
+    );
+
+    // A real tile on the project that has a picture, a placeholder on the one that does not, both
+    // interactive, and NO full-size read for either.
+    await expect(page.getByTestId("project-thumbnail")).toHaveCount(1);
+    await expect(page.getByTestId("project-thumbnail-empty")).toHaveCount(1);
+    await expect(tileButton(page)).toHaveCount(2);
+    expect(await invokedCommands(page)).not.toContain("get_project_image");
+
+    const tile = tileButton(page).first();
+    const styles = () =>
+      tile.evaluate((node) => {
+        const computed = getComputedStyle(node);
+        return {
+          background: computed.backgroundColor,
+          outlineStyle: computed.outlineStyle,
+          outlineWidth: computed.outlineWidth,
+          focusVisible: node.matches(":focus-visible"),
+        };
+      });
+
+    const lightBackground = (await styles()).background;
+    await page.screenshot({
+      path: `${EVIDENCE}/visual-row-thumbnails-light.png`,
+      animations: "disabled",
+    });
+
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    // `transition-colors` means a screenshot taken now catches a frame partway through the fade,
+    // which is how an earlier capture ended up showing a light tile on a dark row. Waiting for the
+    // settled token is what makes the artifact deterministic rather than timing-dependent.
+    await expect.poll(async () => (await styles()).background).not.toBe(lightBackground);
+    await page.screenshot({
+      path: `${EVIDENCE}/visual-row-thumbnails-dark.png`,
+      animations: "disabled",
+    });
+
+    // Keyboard, never `.focus()`: programmatic focus does not satisfy `:focus-visible`, so a ring
+    // captured that way is absent and the artifact would assert something untrue.
+    // Forward-only: Shift+Tab then Tab is net-zero movement, so it parks on whatever already had
+    // focus instead of walking the tab order until the tile is reached.
+    for (let attempt = 0; attempt < 60 && !(await styles()).focusVisible; attempt += 1) {
+      await page.keyboard.press("Tab");
+    }
+    const focused = await styles();
+    expect(focused.focusVisible, "keyboard focus must reach the tile").toBe(true);
+    // Presence and geometry only. The ring's COLOUR resolves from a pre-existing app-wide token bug
+    // in packages/shared, outside this feature, so asserting it here would pin someone else's defect.
+    expect(focused.outlineStyle).toBe("solid");
+    expect(focused.outlineWidth).toBe("2px");
+    await page.screenshot({
+      path: `${EVIDENCE}/visual-row-thumbnail-dark-focus-ring.png`,
+      animations: "disabled",
+    });
+
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
   });
 });
