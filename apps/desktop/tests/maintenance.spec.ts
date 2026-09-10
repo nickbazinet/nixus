@@ -27,9 +27,10 @@ async function setupMaintenanceTauriMock(
       available: boolean;
       stale?: boolean;
     };
+    failCommands?: string[];
   }
 ) {
-  await page.addInitScript(({ seedVehicles, yearlyMock, catalog }) => {
+  await page.addInitScript(({ seedVehicles, yearlyMock, catalog, failCommands }) => {
     const catalogAvailable = catalog?.available ?? false;
     const catalogStale = catalog?.stale ?? false;
     const DEFAULT_TASKS = [
@@ -456,8 +457,47 @@ async function setupMaintenanceTauriMock(
       return tasks;
     }
 
+    // Mirrors db/maintenance.rs::recompute_task_anchors — the anchor is the newest remaining log
+    // for the task under the history list's own ordering, or null when none is left.
+    function recomputeMockTaskAnchors(
+      taskId: number | null,
+      vehicle: MockVehicle
+    ): MockMaintenanceTask | null {
+      if (taskId === null) return null;
+
+      const task = (tasksByVehicle.get(vehicle.id) ?? []).find(
+        (entry) => entry.id === taskId
+      );
+      if (!task) return null;
+
+      const newest = serviceLogs
+        .filter((entry) => entry.task_id === taskId)
+        .sort((a, b) => {
+          const byDate = b.service_date.localeCompare(a.service_date);
+          if (byDate !== 0) return byDate;
+          const byCreated = b.created_at.localeCompare(a.created_at);
+          if (byCreated !== 0) return byCreated;
+          return b.id - a.id;
+        })[0];
+
+      task.last_service_date = newest?.service_date ?? null;
+      task.last_service_odometer_km = newest?.odometer_km ?? null;
+      task.updated_at = new Date().toISOString();
+      Object.assign(task, evaluateMockTask(task, vehicle));
+      return task;
+    }
+
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        // Opt-in rejection, in the real command's AppError shape, so a failure path can be driven
+        // without a second mock.
+        if (failCommands.includes(cmd)) {
+          return Promise.reject({
+            type: "database",
+            message: `${cmd} failed`,
+          });
+        }
+
         switch (cmd) {
           case "get_maintenance_task_baselines":
             return Promise.resolve(DEFAULT_TASKS);
@@ -916,6 +956,127 @@ async function setupMaintenanceTauriMock(
             });
           }
 
+          case "update_service_log": {
+            const input = args.input as {
+              log_id: number;
+              service_date: string;
+              odometer_km: number;
+              notes?: string | null;
+              custom_service_name?: string | null;
+            };
+
+            if (!input.service_date?.trim()) {
+              return Promise.reject({
+                type: "validation",
+                message: "Service date is required",
+                field: "service_date",
+              });
+            }
+
+            if (input.odometer_km < 0) {
+              return Promise.reject({
+                type: "validation",
+                message: "Odometer must be zero or greater",
+                field: "odometer_km",
+              });
+            }
+
+            const log = serviceLogs.find((entry) => entry.id === input.log_id);
+            if (!log) {
+              return Promise.reject({
+                type: "database",
+                message: "Service log not found",
+              });
+            }
+
+            const editedName = input.custom_service_name?.trim();
+            if (log.task_id !== null && editedName) {
+              return Promise.reject({
+                type: "validation",
+                message: "A scheduled service cannot be renamed",
+                field: "custom_service_name",
+              });
+            }
+            if (log.task_id === null && !editedName) {
+              return Promise.reject({
+                type: "validation",
+                message: "Service name is required",
+                field: "custom_service_name",
+              });
+            }
+
+            const vehicle = vehicles.find((v) => v.id === log.vehicle_id);
+            if (!vehicle) {
+              return Promise.reject({
+                type: "not_found",
+                message: "Vehicle not found",
+              });
+            }
+
+            const previousOdometer = vehicle.odometer_km;
+            const odometerUpdated = input.odometer_km > vehicle.odometer_km;
+            if (odometerUpdated) {
+              vehicle.odometer_km = input.odometer_km;
+              vehicle.updated_at = new Date().toISOString();
+            }
+
+            log.service_date = input.service_date;
+            log.odometer_km = input.odometer_km;
+            log.notes = input.notes?.trim() ? input.notes.trim() : null;
+            if (log.task_id === null) {
+              log.custom_service_name = editedName ?? log.custom_service_name;
+            }
+
+            const editedTask = recomputeMockTaskAnchors(log.task_id, vehicle);
+            if (odometerUpdated) {
+              for (const task of tasksByVehicle.get(vehicle.id) ?? []) {
+                Object.assign(task, evaluateMockTask(task, vehicle));
+              }
+            }
+
+            persistMockState();
+            return Promise.resolve({
+              log: {
+                id: log.id,
+                vehicle_id: log.vehicle_id,
+                task_id: log.task_id,
+                custom_service_name: log.custom_service_name,
+                service_date: log.service_date,
+                odometer_km: log.odometer_km,
+                notes: log.notes,
+                created_at: log.created_at,
+              },
+              task: editedTask ? { ...editedTask } : undefined,
+              odometer_updated: odometerUpdated,
+              previous_odometer_km: odometerUpdated ? previousOdometer : undefined,
+              new_odometer_km: odometerUpdated ? input.odometer_km : undefined,
+            });
+          }
+
+          case "delete_service_log": {
+            const logId = args.log_id as number;
+            const index = serviceLogs.findIndex((entry) => entry.id === logId);
+            if (index === -1) {
+              return Promise.reject({
+                type: "database",
+                message: "Service log not found",
+              });
+            }
+
+            const [removed] = serviceLogs.splice(index, 1);
+            const vehicle = vehicles.find((v) => v.id === removed.vehicle_id);
+            const remainingTask = vehicle
+              ? recomputeMockTaskAnchors(removed.task_id, vehicle)
+              : null;
+
+            persistMockState();
+            return Promise.resolve({
+              deleted_log_id: logId,
+              vehicle_id: removed.vehicle_id,
+              task: remainingTask ? { ...remainingTask } : undefined,
+            });
+          }
+
           case "get_service_history": {
             const vehicleId = args.vehicle_id as number;
             const vehicle = vehicles.find((v) => v.id === vehicleId);
@@ -931,7 +1092,9 @@ async function setupMaintenanceTauriMock(
               .sort((a, b) => {
                 const dateCompare = b.service_date.localeCompare(a.service_date);
                 if (dateCompare !== 0) return dateCompare;
-                return b.created_at.localeCompare(a.created_at);
+                const createdCompare = b.created_at.localeCompare(a.created_at);
+                if (createdCompare !== 0) return createdCompare;
+                return b.id - a.id;
               });
 
             return Promise.resolve(entries.map((entry) => ({ ...entry })));
@@ -1083,6 +1246,7 @@ async function setupMaintenanceTauriMock(
     seedVehicles: options?.seedVehicles ?? null,
     yearlyMock: yearlySummaryMock,
     catalog: options?.catalog ?? { available: false },
+    failCommands: options?.failCommands ?? [],
   });
 }
 
@@ -1777,7 +1941,7 @@ test.describe("Service History", () => {
     await expect(historyRow).toBeVisible();
     await expect(historyRow).toContainText("Engine oil & filter");
     await expect(historyRow).toContainText("16,000 km");
-    await expect(historyRow.locator("td").first()).toHaveText(/\w{3} \d{1,2}/);
+    await expect(historyRow.locator("td").nth(1)).toHaveText(/^\w{3} \d{1,2}$/);
   });
 
   test("custom service log appears in history without updating managed tasks", async ({
@@ -1812,6 +1976,313 @@ test.describe("Service History", () => {
     ).toBeVisible();
     await expect(taskNextDue(oilRow)).toContainText("Not yet serviced");
   });
+});
+
+test.describe("Service History Edit and Delete", () => {
+  test.beforeEach(async ({ page }) => {
+    await prepareCarPage(page);
+    await createVehicle(page, "10000");
+  });
+
+  async function openHistoryTab(page: Page) {
+    await openVehicleDetail(page, 1, { showAllTasks: false });
+    const detail = vehicleDetail(page);
+    await detail.getByTestId("detail-tab-history").click();
+    await expect(detail.getByTestId("service-history-table")).toBeVisible();
+    return detail;
+  }
+
+  async function logOilService(page: Page, odometerKm: string) {
+    const form = await openLogServiceForm(page);
+    await fillLogServiceOdometer(form, odometerKm);
+    await submitLogServiceForm(form);
+    await expect(page.getByText("Service logged").first()).toBeVisible();
+  }
+
+  async function logCustomService(page: Page, name: string, odometerKm: string) {
+    await vehicleDetail(page).getByTestId("log-custom-service-button").click();
+    const form = page.getByTestId("log-custom-service-form");
+    await expect(form).toBeVisible();
+    await form.getByTestId("custom-service-name").fill(name);
+    await form.getByTestId("custom-service-odometer").fill(odometerKm);
+    await form.getByTestId("custom-service-save").click();
+    await expect(form).not.toBeVisible();
+  }
+
+  test("edit opens a pre-filled form and the refreshed row shows the saved change", async ({
+    page,
+  }) => {
+    await logOilService(page, "16000");
+    const detail = await openHistoryTab(page);
+
+    const row = detail.locator("[data-testid^='service-history-row-']").first();
+    await expect(row).toContainText("16,000 km");
+    await row.getByTestId(/^service-history-edit-/).click();
+
+    const form = page.getByTestId("edit-service-log-form");
+    await expect(form).toBeVisible();
+    await expect(form).toContainText("Engine oil & filter");
+    await expect(form.getByTestId("edit-service-log-odometer")).toHaveValue("16000");
+    const todayLabel = new Date().toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    await expect(form.getByTestId("edit-service-log-date")).toContainText(todayLabel);
+
+    await form.getByTestId("edit-service-log-odometer").fill("16500");
+    await form.getByTestId("edit-service-log-notes").fill("Corrected reading");
+    await form.getByTestId("edit-service-log-save").click();
+
+    await expect(page.getByText("Service updated.")).toBeVisible();
+    await expect(page.getByTestId("edit-service-log-slide-over")).not.toBeVisible();
+    await expect(row).toContainText("16,500 km");
+    await expect(row).toContainText("Corrected reading");
+  });
+
+  test("edit action is keyboard reachable and carries a translated accessible name", async ({
+    page,
+  }) => {
+    await logOilService(page, "16000");
+    const detail = await openHistoryTab(page);
+
+    const editButton = detail.getByTestId(/^service-history-edit-/).first();
+    await expect(editButton).toHaveAttribute(
+      "aria-label",
+      /Edit Engine oil & filter/
+    );
+    await expect(editButton).toBeInViewport();
+
+    // `press` focuses the control and activates it in one actionable step, so this proves Enter
+    // opens the editor rather than only a click doing so.
+    await editButton.press("Enter");
+    const panel = page.getByTestId("edit-service-log-slide-over");
+    await expect(page.getByTestId("edit-service-log-form")).toBeVisible();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        })
+    );
+    await expect
+      .poll(() =>
+        panel.evaluate((element) =>
+          element
+            .getAnimations()
+            .every((animation) => animation.playState === "finished")
+        )
+      )
+      .toBe(true);
+    const viewport = page.viewportSize();
+    expect(viewport).not.toBeNull();
+    if (viewport) {
+      await expect
+        .poll(async () => {
+          const box = await panel.boundingBox();
+          return box ? box.x + box.width : Number.POSITIVE_INFINITY;
+        })
+        .toBeLessThanOrEqual(viewport.width);
+      const settledBox = await panel.boundingBox();
+      expect(settledBox).not.toBeNull();
+      if (settledBox) expect(settledBox.x).toBeGreaterThanOrEqual(0);
+    }
+
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const panel = document.querySelector(
+            '[data-testid="edit-service-log-slide-over"]'
+          );
+          return panel !== null && panel.contains(document.activeElement);
+        })
+      )
+      .toBe(true);
+  });
+
+  test("editing a custom entry renames it in the history list", async ({ page }) => {
+    await openVehicleDetail(page, 1, { showAllTasks: false });
+    await logCustomService(page, "AC recharge", "12000");
+    const detail = await openHistoryTab(page);
+
+    const row = detail.locator("[data-testid^='service-history-row-']").first();
+    await expect(row).toContainText("AC recharge");
+    await row.getByTestId(/^service-history-edit-/).click();
+
+    const form = page.getByTestId("edit-service-log-form");
+    await expect(form.getByTestId("edit-service-log-name")).toHaveValue("AC recharge");
+    await form.getByTestId("edit-service-log-name").fill("A/C recharge");
+    await form.getByTestId("edit-service-log-save").click();
+
+    await expect(page.getByText("Service updated.")).toBeVisible();
+    await expect(row).toContainText("A/C recharge");
+  });
+
+  test("delete asks for confirmation naming the service and removes only that row", async ({
+    page,
+  }) => {
+    await logOilService(page, "16000");
+    await openVehicleDetail(page, 1, { showAllTasks: false });
+    await logCustomService(page, "AC recharge", "16200");
+    const detail = await openHistoryTab(page);
+
+    const rows = detail.locator("[data-testid^='service-history-row-']");
+    await expect(rows).toHaveCount(2);
+    const customRow = rows.filter({ hasText: "AC recharge" });
+    await customRow.getByTestId(/^service-history-delete-/).click();
+
+    const dialog = page.getByTestId("delete-service-log-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("AC recharge");
+    await dialog.getByTestId("confirm-delete-service-log-button").click();
+
+    await expect(page.getByText("Service deleted.")).toBeVisible();
+    await expect(dialog).not.toBeVisible();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("Engine oil & filter");
+  });
+
+  test("cancelling delete runs no command and leaves the row unchanged", async ({
+    page,
+  }) => {
+    await logOilService(page, "16000");
+    const detail = await openHistoryTab(page);
+
+    const row = detail.locator("[data-testid^='service-history-row-']").first();
+    await row.getByTestId(/^service-history-delete-/).click();
+    const dialog = page.getByTestId("delete-service-log-dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByText("Service deleted.")).not.toBeVisible();
+    await expect(
+      detail.locator("[data-testid^='service-history-row-']")
+    ).toHaveCount(1);
+    await expect(row).toContainText("16,000 km");
+  });
+
+  test("editing the latest scheduled log re-anchors the schedule without lowering the odometer", async ({
+    page,
+  }) => {
+    await logOilService(page, "20000");
+    await goToGarage(page);
+    await expect(
+      page.getByTestId("garage-vehicle-row-1").getByTestId("odometer-display-1")
+    ).toContainText("20,000 km");
+
+    const detail = await openHistoryTab(page);
+    const row = detail.locator("[data-testid^='service-history-row-']").first();
+    await row.getByTestId(/^service-history-edit-/).click();
+    const form = page.getByTestId("edit-service-log-form");
+    await form.getByTestId("edit-service-log-odometer").fill("12100");
+    await form.getByTestId("edit-service-log-save").click();
+    await expect(page.getByText("Service updated.")).toBeVisible();
+
+    await expect(
+      page.getByTestId("garage-vehicle-row-1").getByTestId("odometer-display-1")
+    ).toContainText("20,000 km");
+
+    await showAllMaintenanceTasks(page);
+    const oilRow = detail
+      .getByTestId("maintenance-task-row")
+      .filter({ hasText: "Engine oil & filter" });
+    await expect(taskNextDue(oilRow)).toContainText("100 km remaining");
+  });
+
+  test("deleting the only scheduled log returns the task to not yet serviced", async ({
+    page,
+  }) => {
+    await logOilService(page, "16000");
+    const detail = await openHistoryTab(page);
+
+    const row = detail.locator("[data-testid^='service-history-row-']").first();
+    await row.getByTestId(/^service-history-delete-/).click();
+    await page.getByTestId("confirm-delete-service-log-button").click();
+    await expect(page.getByText("Service deleted.")).toBeVisible();
+    await expect(detail.getByTestId("service-history-table")).toContainText(
+      "No service logged yet."
+    );
+
+    await showAllMaintenanceTasks(page);
+    const oilRow = detail
+      .getByTestId("maintenance-task-row")
+      .filter({ hasText: "Engine oil & filter" });
+    await expect(taskNextDue(oilRow)).toContainText("Not yet serviced");
+    await expect(
+      page.getByTestId("garage-vehicle-row-1").getByTestId("odometer-display-1")
+    ).toContainText("16,000 km");
+  });
+
+  test("history keeps its date, service, odometer, and notes columns", async ({
+    page,
+  }) => {
+    await logOilService(page, "16000");
+    const detail = await openHistoryTab(page);
+
+    const table = detail.getByTestId("service-history-table");
+    for (const column of ["Date", "Service", "Odometer", "Notes"]) {
+      await expect(
+        table.getByRole("columnheader", { name: column, exact: true })
+      ).toBeVisible();
+    }
+
+    const cells = detail
+      .locator("[data-testid^='service-history-row-']")
+      .first()
+      .locator("td");
+    await expect(cells.nth(0)).toHaveText(/^\w{3} \d{1,2}$/);
+    await expect(cells.nth(1)).toHaveText("Engine oil & filter");
+    await expect(cells.nth(2)).toHaveText("16,000 km");
+    await expect(cells.last().getByTestId(/^service-history-edit-/)).toBeVisible();
+    await expect(cells.last().getByTestId(/^service-history-delete-/)).toBeVisible();
+  });
+
+
+  test("a rejected update reports the failure and leaves the editor and row intact", async ({
+    page,
+  }) => {
+    await prepareCarPage(page, { failCommands: ["update_service_log"] });
+    await createVehicle(page, "10000");
+    await logOilService(page, "16000");
+    const detail = await openHistoryTab(page);
+
+    const row = detail.locator("[data-testid^='service-history-row-']").first();
+    await row.getByTestId(/^service-history-edit-/).click();
+    const form = page.getByTestId("edit-service-log-form");
+    await expect(form).toBeVisible();
+    await form.getByTestId("edit-service-log-odometer").fill("16500");
+    await form.getByTestId("edit-service-log-save").click();
+
+    await expect(page.getByText("Could not save the change.")).toBeVisible();
+    await expect(page.getByText("Service updated.")).not.toBeVisible();
+    await expect(form).toBeVisible();
+    await expect(form.getByTestId("edit-service-log-odometer")).toHaveValue(
+      "16500"
+    );
+
+    await form.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByTestId("edit-service-log-slide-over")).not.toBeVisible();
+    await expect(row).toContainText("16,000 km");
+  });
+
+  test("a rejected delete reports the failure and leaves the row listed", async ({
+    page,
+  }) => {
+    await prepareCarPage(page, { failCommands: ["delete_service_log"] });
+    await createVehicle(page, "10000");
+    await logOilService(page, "16000");
+    const detail = await openHistoryTab(page);
+
+    const rows = detail.locator("[data-testid^='service-history-row-']");
+    await rows.first().getByTestId(/^service-history-delete-/).click();
+    await page.getByTestId("confirm-delete-service-log-button").click();
+
+    await expect(page.getByText("Could not delete the service.")).toBeVisible();
+    await expect(page.getByText("Service deleted.")).not.toBeVisible();
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText("16,000 km");
+  });
+
 });
 
 test.describe("Vehicle Edit and Delete", () => {
