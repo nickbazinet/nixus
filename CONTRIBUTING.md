@@ -342,4 +342,4 @@ CI reads the version from `tauri.conf.json`.
 
 ## Feedback and beta testing
 
-Product feedback is welcome even if you're not contributing code. See the [README](README.md#help-shape-nixus) for beta testing details, or email [support@nixus.nicolasbazinet.net](mailto:support@nixus.nicolasbazinet.net).
+Product feedback is welcome even if you're not contributing code. See the [README](README.md#help-shape-nixus) for beta testing details, or email [nixuspp@gmail.com](mailto:nixusapp@gmail.com).
