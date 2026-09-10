@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { format, parseISO } from "date-fns";
-import { Target } from "lucide-react";
+import { ChevronDown, ChevronRight, Target } from "lucide-react";
 import {
   Alert,
   AlertDescription,
@@ -46,6 +46,7 @@ interface SuggestedAllocationPanelProps {
   onConfirm: (allocations: SuggestedAllocationDraft[]) => void;
   onSkip: () => void;
   isSubmitting?: boolean;
+  initialExpanded?: boolean;
 }
 
 function seedDrafts(
@@ -63,6 +64,7 @@ export function SuggestedAllocationPanel({
   onConfirm,
   onSkip,
   isSubmitting = false,
+  initialExpanded = false,
 }: SuggestedAllocationPanelProps) {
   const { t, i18n } = useTranslation();
   const formatCurrency = useFormatCurrency();
@@ -74,6 +76,9 @@ export function SuggestedAllocationPanel({
   // One account for the whole batch, and never defaulted: silently attributing money to an account
   // the user did not choose is the trust failure this feature exists to avoid.
   const [accountId, setAccountId] = useState("");
+  // Collapsed on arrival: the recommendation is an offer, not a task, so it must not push the project
+  // list off screen for a user who came here to read their goals.
+  const [expanded, setExpanded] = useState(initialExpanded);
   const seededFrom = useRef(suggestions);
   // MoneyInput keeps its own display string, seeded on mount. Bumping this remounts the fields so a
   // re-seeded draft is what the user actually sees, not just what the total counts.
@@ -129,146 +134,185 @@ export function SuggestedAllocationPanel({
       className="mb-section-gap border-l-3 border-l-brand"
       data-testid="suggested-allocation-panel"
     >
-      <CardHeader className="flex-row items-center gap-3">
+      <CardHeader className="flex items-center gap-3">
         <span
           aria-hidden="true"
           className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-ink"
         >
           <Target className="size-4" />
         </span>
-        <CardTitle className="text-h2">
-          {t("projects.suggestionTitle")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Alert variant="info" className="mb-3 rounded-md">
-          <AlertDescription data-testid="suggested-allocation-intro">
-            {t("projects.suggestionIntro")}
-          </AlertDescription>
-        </Alert>
-        {suggestions.map((suggestion, index) => (
-          <SuggestedAllocationRow
-            key={`${suggestion.project_id}-${seedVersion}`}
-            suggestion={suggestion}
-            valueCents={drafts[suggestion.project_id] ?? 0}
-            onChange={(cents) =>
-              setDrafts((prev) => ({ ...prev, [suggestion.project_id]: cents }))
+        <div className="flex items-center gap-1.5">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => setExpanded(!expanded)}
+            aria-label={
+              expanded
+                ? t("projects.collapseSuggestion")
+                : t("projects.expandSuggestion")
             }
-            hasOverage={!ok}
-            striped={index % 2 === 1}
-          />
-        ))}
-      </CardContent>
+            aria-expanded={expanded}
+            data-testid="suggested-allocation-toggle"
+          >
+            {expanded ? (
+              <ChevronDown className="text-ink-dim" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="text-ink-dim" aria-hidden="true" />
+            )}
+          </Button>
+          <CardTitle
+            className="text-h2"
+            data-testid="suggested-allocation-title"
+          >
+            {t("projects.suggestionTitle")}
+          </CardTitle>
+        </div>
+      </CardHeader>
+      {expanded && (
+        <>
+          <CardContent>
+            <Alert variant="info" className="mb-3 rounded-md">
+              <AlertDescription data-testid="suggested-allocation-intro">
+                {t("projects.suggestionIntro")}
+              </AlertDescription>
+            </Alert>
+            {suggestions.map((suggestion, index) => (
+              <SuggestedAllocationRow
+                key={`${suggestion.project_id}-${seedVersion}`}
+                suggestion={suggestion}
+                valueCents={drafts[suggestion.project_id] ?? 0}
+                onChange={(cents) =>
+                  setDrafts((prev) => ({
+                    ...prev,
+                    [suggestion.project_id]: cents,
+                  }))
+                }
+                hasOverage={!ok}
+                striped={index % 2 === 1}
+              />
+            ))}
+          </CardContent>
 
-      <CardFooter className="flex-col items-stretch gap-3">
-        <div
-          role="status"
-          aria-live="polite"
-          data-testid="suggested-allocation-summary"
-        >
-          <div className="flex items-center justify-between gap-3 text-label text-ink">
-            <span className="flex items-center gap-1">
-              {t("projects.suggestionSurplus")}
-              <MetricInfoTooltip
-                ariaLabel={t("projects.suggestionSurplusInfoAria")}
-                content={t("projects.suggestionSurplusInfoPlain")}
-                testId="suggested-allocation-surplus-info"
-              />
-            </span>
-            <span data-testid="suggested-allocation-surplus">
-              <Money
-                cents={availableSurplusCents}
-                locale={i18n.language}
-                {...maskProps}
-              />
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3 text-label text-ink">
-            <span>{t("projects.suggestionTotal")}</span>
-            <span data-testid="suggested-allocation-total">
-              <Money cents={totalCents} locale={i18n.language} {...maskProps} />
-            </span>
-          </div>
-          {ok ? (
-            <p
-              className="text-caption text-ink-dim"
-              data-testid="suggested-allocation-remainder"
+          <CardFooter className="flex-col items-stretch gap-3">
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="suggested-allocation-summary"
             >
-              {t("projects.suggestionRemainder", {
-                amount: formatCurrency(availableSurplusCents - totalCents),
+              <div className="flex items-center justify-between gap-3 text-label text-ink">
+                <span className="flex items-center gap-1">
+                  {t("projects.suggestionSurplus")}
+                  <MetricInfoTooltip
+                    ariaLabel={t("projects.suggestionSurplusInfoAria")}
+                    content={t("projects.suggestionSurplusInfoPlain")}
+                    testId="suggested-allocation-surplus-info"
+                  />
+                </span>
+                <span data-testid="suggested-allocation-surplus">
+                  <Money
+                    cents={availableSurplusCents}
+                    locale={i18n.language}
+                    {...maskProps}
+                  />
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-label text-ink">
+                <span>{t("projects.suggestionTotal")}</span>
+                <span data-testid="suggested-allocation-total">
+                  <Money
+                    cents={totalCents}
+                    locale={i18n.language}
+                    {...maskProps}
+                  />
+                </span>
+              </div>
+              {ok ? (
+                <p
+                  className="text-caption text-ink-dim"
+                  data-testid="suggested-allocation-remainder"
+                >
+                  {t("projects.suggestionRemainder", {
+                    amount: formatCurrency(availableSurplusCents - totalCents),
+                  })}
+                </p>
+              ) : (
+                <p
+                  id={ALLOCATION_OVERAGE_ID}
+                  className="text-caption text-over"
+                  data-testid="suggested-allocation-overage"
+                >
+                  {t("projects.suggestionOverBy", {
+                    amount: formatCurrency(overageCents),
+                  })}
+                </p>
+              )}
+            </div>
+
+            <div
+              className="space-y-1.5"
+              data-testid="suggested-allocation-account"
+            >
+              <Label htmlFor={ACCOUNT_FIELD_ID} required>
+                {t("projects.suggestionAccountLabel")}
+              </Label>
+              <Select
+                value={accountId}
+                onValueChange={(next) => setAccountId(next ?? "")}
+                items={accountItems}
+              >
+                <SelectTrigger id={ACCOUNT_FIELD_ID} aria-required="true">
+                  <SelectValue
+                    placeholder={t("projects.suggestionAccountLabel")}
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {orderedAccounts.map((account) => (
+                    <SelectItem key={account.id} value={String(account.id)}>
+                      {account.name} — {account.institution}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {accountId === "" && (
+                <p
+                  className="text-caption text-ink-dim"
+                  data-testid="suggested-allocation-account-hint"
+                >
+                  {t("projects.suggestionAccountRequired")}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onSkip}
+                data-testid="suggested-allocation-skip"
+              >
+                {t("projects.suggestionSkip")}
+              </Button>
+              <Button
+                size="sm"
+                disabled={!canConfirm}
+                onClick={handleConfirm}
+                data-testid="suggested-allocation-confirm"
+              >
+                {t("projects.suggestionConfirm")}
+              </Button>
+            </div>
+
+            <p
+              className="text-right text-caption text-ink-dim"
+              data-testid="suggested-allocation-cadence"
+            >
+              {t("projects.suggestionCadenceNote", {
+                date: format(parseISO(nextSuggestionDate), "MMMM d"),
               })}
             </p>
-          ) : (
-            <p
-              id={ALLOCATION_OVERAGE_ID}
-              className="text-caption text-over"
-              data-testid="suggested-allocation-overage"
-            >
-              {t("projects.suggestionOverBy", {
-                amount: formatCurrency(overageCents),
-              })}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-1.5" data-testid="suggested-allocation-account">
-          <Label htmlFor={ACCOUNT_FIELD_ID} required>
-            {t("projects.suggestionAccountLabel")}
-          </Label>
-          <Select
-            value={accountId}
-            onValueChange={(next) => setAccountId(next ?? "")}
-            items={accountItems}
-          >
-            <SelectTrigger id={ACCOUNT_FIELD_ID} aria-required="true">
-              <SelectValue placeholder={t("projects.suggestionAccountLabel")} />
-            </SelectTrigger>
-            <SelectContent>
-              {orderedAccounts.map((account) => (
-                <SelectItem key={account.id} value={String(account.id)}>
-                  {account.name} — {account.institution}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {accountId === "" && (
-            <p
-              className="text-caption text-ink-dim"
-              data-testid="suggested-allocation-account-hint"
-            >
-              {t("projects.suggestionAccountRequired")}
-            </p>
-          )}
-        </div>
-
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onSkip}
-            data-testid="suggested-allocation-skip"
-          >
-            {t("projects.suggestionSkip")}
-          </Button>
-          <Button
-            size="sm"
-            disabled={!canConfirm}
-            onClick={handleConfirm}
-            data-testid="suggested-allocation-confirm"
-          >
-            {t("projects.suggestionConfirm")}
-          </Button>
-        </div>
-
-        <p
-          className="text-right text-caption text-ink-dim"
-          data-testid="suggested-allocation-cadence"
-        >
-          {t("projects.suggestionCadenceNote", {
-            date: format(parseISO(nextSuggestionDate), "MMMM d"),
-          })}
-        </p>
-      </CardFooter>
+          </CardFooter>
+        </>
+      )}
     </Card>
   );
 }

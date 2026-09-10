@@ -193,6 +193,7 @@ function ProjectsPage() {
           onConfirm={confirmSuggestion}
           onSkip={skipSuggestionForMonth}
           isSubmitting={confirmAllocations.isPending}
+          initialExpanded={reopenedSettlement}
         />
       )}
 
