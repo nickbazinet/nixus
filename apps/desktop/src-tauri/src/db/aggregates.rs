@@ -161,8 +161,8 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO expenses (amount_cents, date) VALUES
              (10000, '2020-01-10'),
-             (100000, '2026-06-10'),
-             (100000, '2026-07-10');",
+             (100000, date('now', 'start of month', '-2 months', '+9 days')),
+             (100000, date('now', 'start of month', '-1 month', '+9 days'));",
         )
         .unwrap();
 
