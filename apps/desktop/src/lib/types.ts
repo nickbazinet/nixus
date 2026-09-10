@@ -641,6 +641,28 @@ export interface LogServiceResult {
   new_odometer_km?: number;
 }
 
+export interface UpdateServiceLogInput {
+  log_id: number;
+  service_date: string;
+  odometer_km: number;
+  notes?: string | null;
+  custom_service_name?: string | null;
+}
+
+export interface UpdateServiceLogResult {
+  log: MaintenanceServiceLog;
+  task?: MaintenanceTaskWithStatus;
+  odometer_updated: boolean;
+  previous_odometer_km?: number;
+  new_odometer_km?: number;
+}
+
+export interface DeleteServiceLogResult {
+  deleted_log_id: number;
+  vehicle_id: number;
+  task?: MaintenanceTaskWithStatus;
+}
+
 export interface MostUrgentTask {
   task_type_key: string;
   status: MaintenanceTaskStatus;

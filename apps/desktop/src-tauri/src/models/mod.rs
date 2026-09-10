@@ -775,6 +775,38 @@ pub struct LogServiceResult {
     pub new_odometer_km: Option<i64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateServiceLogInput {
+    pub log_id: i64,
+    pub service_date: String,
+    pub odometer_km: i64,
+    pub notes: Option<String>,
+    // Editable for a custom entry only. A scheduled entry's identity is its task, which this
+    // command never reassigns.
+    #[serde(default)]
+    pub custom_service_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateServiceLogResult {
+    pub log: MaintenanceServiceLog,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<MaintenanceTaskWithStatus>,
+    pub odometer_updated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_odometer_km: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_odometer_km: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteServiceLogResult {
+    pub deleted_log_id: i64,
+    pub vehicle_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<MaintenanceTaskWithStatus>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MostUrgentTask {
     pub task_type_key: String,
