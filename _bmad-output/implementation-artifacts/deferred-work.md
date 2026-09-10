@@ -385,3 +385,15 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-ai-chat-file-uploads.md`
   summary: Add an atomic bulk budget-history import action for spreadsheet-derived monthly category totals.
   evidence: The confirmed chat-action protocol intentionally executes one write per approval; importing hundreds of monthly totals safely needs batching, rollback/partial-failure semantics, duplicate detection, and a review UI rather than hundreds of independent confirmation cards.
+- source_spec: `_bmad-output/implementation-artifacts/spec-edit-delete-maintenance-services.md`
+  summary: Make scheduled-service creation derive task anchors from the newest service log instead of the most recently inserted log.
+  evidence: Edit/delete now recompute anchors by service date, but the pre-existing create path still assigns anchors directly from the inserted row; logging a backdated service can temporarily move a task to an older anchor until a later edit/delete self-heals it.
+- source_spec: `_bmad-output/implementation-artifacts/spec-edit-delete-maintenance-services.md`
+  summary: Carry custom maintenance task names into service-history entries instead of exposing generated custom task keys.
+  evidence: Scheduled logs for user-added tasks still return only `task_type_key`; the existing formatter can therefore render a generated `custom_*` key, and fixing it requires extending the service-history IPC model beyond this story's identity-preservation boundary.
+- source_spec: `_bmad-output/implementation-artifacts/spec-edit-delete-maintenance-services.md`
+  summary: Make the windowed expense-average Rust test independent of the current calendar date.
+  evidence: The full Rust suite passes 1199 tests but the unrelated aggregate test fails because its hardcoded June/July 2026 fixtures have moved outside the trailing window by September 2026; all 56 focused maintenance database tests and 3 maintenance command-audit tests pass.
+- source_spec: `_bmad-output/implementation-artifacts/spec-edit-delete-maintenance-services.md`
+  summary: Remove parallel-load flakiness from the full desktop Playwright suite.
+  evidence: The maintenance spec passes 52/52, while the full 712-test run failed three unrelated picker/profile/projects cases that pass independently; the disjoint load-sensitive failures indicate pre-existing suite contention rather than a maintenance regression.
