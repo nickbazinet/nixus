@@ -1,5 +1,10 @@
 /** Screenshot slots — assets live under `public/beta/`. */
-export type BetaScreenshotId = "budget" | "aiImport" | "netWorth";
+export type BetaScreenshotId =
+  | "budget"
+  | "aiImport"
+  | "netWorth"
+  | "projects"
+  | "retirement";
 
 export type BetaScreenshot = {
   id: BetaScreenshotId;
@@ -11,6 +16,8 @@ export const betaScreenshots: readonly BetaScreenshot[] = [
   { id: "budget", src: "/beta/budget.png" },
   { id: "aiImport", src: "/beta/ai-chat.png" },
   { id: "netWorth", src: "/beta/accounts.png" },
+  { id: "projects", src: "/beta/projects.png" },
+  { id: "retirement", src: "/beta/retirement.png" },
 ] as const;
 
 export type BetaQuickFaqId = "bankConnection" | "dataStorage" | "isItFree";

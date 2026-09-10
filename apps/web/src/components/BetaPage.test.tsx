@@ -131,6 +131,21 @@ describe("<BetaPage />", () => {
     expect(screen.getByTestId("beta-screenshot-budget")).toBeInTheDocument();
     expect(screen.getByTestId("beta-screenshot-aiImport")).toBeInTheDocument();
     expect(screen.getByTestId("beta-screenshot-netWorth")).toBeInTheDocument();
+    expect(screen.getByTestId("beta-screenshot-projects")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("beta-screenshot-retirement"),
+    ).toBeInTheDocument();
+    expect(
+      screen
+        .getAllByTestId(/^beta-screenshot-/)
+        .map((figure) => figure.id),
+    ).toEqual([
+      "beta-screenshot-budget",
+      "beta-screenshot-aiImport",
+      "beta-screenshot-netWorth",
+      "beta-screenshot-projects",
+      "beta-screenshot-retirement",
+    ]);
     expect(
       screen.getByAltText(enKeys["betaPage.screenshots.budget.alt"]!),
     ).toHaveAttribute("src", "/beta/budget.png");
@@ -140,6 +155,12 @@ describe("<BetaPage />", () => {
     expect(
       screen.getByAltText("Nixus accounts and allocation by type"),
     ).toHaveAttribute("src", "/beta/accounts.png");
+    expect(
+      screen.getByAltText(enKeys["betaPage.screenshots.projects.alt"]!),
+    ).toHaveAttribute("src", "/beta/projects.png");
+    expect(
+      screen.getByAltText(enKeys["betaPage.screenshots.retirement.alt"]!),
+    ).toHaveAttribute("src", "/beta/retirement.png");
     for (const image of screen.getAllByRole("img")) {
       expect(image).toHaveClass("h-auto", "w-full");
       expect(image).not.toHaveClass("object-cover", "aspect-[16/10]");
@@ -151,7 +172,13 @@ describe("<BetaPage />", () => {
   it("frames every screenshot in ProductFrame with no crop or placeholder", () => {
     renderWithProviders(<BetaPage />);
 
-    for (const id of ["budget", "aiImport", "netWorth"] as const) {
+    for (const id of [
+      "budget",
+      "aiImport",
+      "netWorth",
+      "projects",
+      "retirement",
+    ] as const) {
       const frame = screen.getByTestId(`beta-screenshot-${id}`);
       expect(frame.tagName.toLowerCase()).toBe("figure");
       expect(frame).toHaveClass("mkt-product-frame");
@@ -167,7 +194,13 @@ describe("<BetaPage />", () => {
   it("keeps each screenshot caption visible and naming its figure", () => {
     renderWithProviders(<BetaPage />);
 
-    for (const id of ["budget", "aiImport", "netWorth"] as const) {
+    for (const id of [
+      "budget",
+      "aiImport",
+      "netWorth",
+      "projects",
+      "retirement",
+    ] as const) {
       const caption = enKeys[`betaPage.screenshots.${id}.caption`]!;
       const frame = screen.getByRole("figure", { name: caption });
       expect(frame).toBe(screen.getByTestId(`beta-screenshot-${id}`));
@@ -260,7 +293,13 @@ describe("<BetaPage />", () => {
       renderWithProviders(<BetaPage />);
       const frKeys = fr as Record<string, string>;
 
-      for (const id of ["budget", "aiImport", "netWorth"] as const) {
+      for (const id of [
+        "budget",
+        "aiImport",
+        "netWorth",
+        "projects",
+        "retirement",
+      ] as const) {
         const frame = screen.getByRole("figure", {
           name: frKeys[`betaPage.screenshots.${id}.caption`]!,
         });
