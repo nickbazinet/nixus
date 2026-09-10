@@ -1,5 +1,5 @@
 use chrono::{Local, NaiveDate};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::AppError;
 use crate::maintenance::defaults::{baseline_for, DEFAULT_TASKS};
@@ -9,11 +9,12 @@ use crate::maintenance::evaluator::{
     TaskEvalInput, TaskStatus,
 };
 use crate::models::{
-    AddMaintenanceTaskInput, CreateMaintenanceTaskInput, CreateVehicleInput, LogCustomServiceInput,
-    LogCustomServiceResult, LogMaintenanceServiceInput,
-    LogServiceResult, MaintenanceAlertSummary, MaintenanceServiceLog, MaintenanceServiceLogEntry,
-    MaintenanceTask, MaintenanceTaskWithStatus, MostUrgentTask, UpdateVehicleInput, Vehicle,
-    VehicleAlertRow, VehicleWithTasks,
+    AddMaintenanceTaskInput, CreateMaintenanceTaskInput, CreateVehicleInput,
+    DeleteServiceLogResult, LogCustomServiceInput, LogCustomServiceResult,
+    LogMaintenanceServiceInput, LogServiceResult, MaintenanceAlertSummary, MaintenanceServiceLog,
+    MaintenanceServiceLogEntry, MaintenanceTask, MaintenanceTaskWithStatus, MostUrgentTask,
+    UpdateServiceLogInput, UpdateServiceLogResult, UpdateVehicleInput, Vehicle, VehicleAlertRow,
+    VehicleWithTasks,
 };
 
 fn validate_vehicle_fields(
@@ -580,6 +581,14 @@ fn validate_service_date(service_date: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+fn normalize_optional_text(value: &Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
 fn row_to_service_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<MaintenanceServiceLog> {
     Ok(MaintenanceServiceLog {
         id: row.get(0)?,
@@ -593,7 +602,10 @@ fn row_to_service_log(row: &rusqlite::Row<'_>) -> rusqlite::Result<MaintenanceSe
     })
 }
 
-fn get_service_log_by_id(conn: &Connection, id: i64) -> Result<MaintenanceServiceLog, AppError> {
+pub fn get_service_log_by_id(
+    conn: &Connection,
+    id: i64,
+) -> Result<MaintenanceServiceLog, AppError> {
     conn.query_row(
         "SELECT id, vehicle_id, task_id, custom_service_name, service_date, odometer_km, notes, created_at
          FROM maintenance_service_logs WHERE id = ?1",
@@ -641,7 +653,7 @@ pub fn get_service_history(
          FROM maintenance_service_logs l
          LEFT JOIN maintenance_tasks t ON l.task_id = t.id
          WHERE l.vehicle_id = ?1
-         ORDER BY l.service_date DESC, l.created_at DESC",
+         ORDER BY l.service_date DESC, l.created_at DESC, l.id DESC",
     )?;
 
     let entries = stmt
@@ -904,12 +916,7 @@ pub fn log_maintenance_service(
     let task = get_task_by_id(conn, input.task_id)?;
     let vehicle = get_vehicle_by_id(conn, task.vehicle_id)?;
 
-    let notes = input
-        .notes
-        .as_ref()
-        .map(|n| n.trim())
-        .filter(|n| !n.is_empty())
-        .map(|n| n.to_string());
+    let notes = normalize_optional_text(&input.notes);
 
     let odometer_will_update = input.odometer_km > vehicle.odometer_km;
     let previous_odometer_km = if odometer_will_update {
@@ -1012,12 +1019,7 @@ pub fn log_custom_service(
 
     let vehicle = get_vehicle_by_id(conn, input.vehicle_id)?;
 
-    let notes = input
-        .notes
-        .as_ref()
-        .map(|n| n.trim())
-        .filter(|n| !n.is_empty())
-        .map(|n| n.to_string());
+    let notes = normalize_optional_text(&input.notes);
 
     let odometer_will_update = input.odometer_km > vehicle.odometer_km;
     let previous_odometer_km = if odometer_will_update {
@@ -1077,6 +1079,205 @@ pub fn log_custom_service(
                 odometer_updated: odometer_will_update,
                 previous_odometer_km,
                 new_odometer_km,
+            })
+        }
+        Err(e) => {
+            let _ = tx.rollback();
+            Err(e)
+        }
+    }
+}
+
+// The anchor is whatever log now sits newest for the task under the same ordering the history list
+// uses, so an edit or a delete of the newest entry falls back to the one below it, and an empty
+// history returns the task to never-serviced.
+fn recompute_task_anchors(conn: &Connection, task_id: i64) -> Result<(), AppError> {
+    let newest = conn
+        .query_row(
+            "SELECT service_date, odometer_km
+             FROM maintenance_service_logs
+             WHERE task_id = ?1
+             ORDER BY service_date DESC, created_at DESC, id DESC
+             LIMIT 1",
+            params![task_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?;
+
+    let (last_service_date, last_service_odometer_km) = match newest {
+        Some((date, odometer_km)) => (Some(date), Some(odometer_km)),
+        None => (None, None),
+    };
+
+    conn.execute(
+        "UPDATE maintenance_tasks
+         SET last_service_date = ?1, last_service_odometer_km = ?2, updated_at = datetime('now')
+         WHERE id = ?3",
+        params![last_service_date, last_service_odometer_km, task_id],
+    )?;
+
+    Ok(())
+}
+
+fn resolve_edited_service_name(
+    existing: &MaintenanceServiceLog,
+    input: &UpdateServiceLogInput,
+) -> Result<Option<String>, AppError> {
+    let provided = normalize_optional_text(&input.custom_service_name);
+
+    if existing.task_id.is_some() {
+        if provided.is_some() {
+            return Err(AppError::Validation {
+                message: "A scheduled service cannot be renamed".to_string(),
+                field: Some("custom_service_name".to_string()),
+            });
+        }
+        return Ok(None);
+    }
+
+    provided
+        .ok_or_else(|| AppError::Validation {
+            message: "Service name is required".to_string(),
+            field: Some("custom_service_name".to_string()),
+        })
+        .map(Some)
+}
+
+pub fn update_service_log(
+    conn: &Connection,
+    input: &UpdateServiceLogInput,
+) -> Result<UpdateServiceLogResult, AppError> {
+    validate_service_date(&input.service_date)?;
+
+    if input.odometer_km < 0 {
+        return Err(AppError::Validation {
+            message: "Odometer must be zero or greater".to_string(),
+            field: Some("odometer_km".to_string()),
+        });
+    }
+
+    let existing = get_service_log_by_id(conn, input.log_id)?;
+    let vehicle = get_vehicle_by_id(conn, existing.vehicle_id)?;
+    let custom_service_name = resolve_edited_service_name(&existing, input)?;
+    let notes = normalize_optional_text(&input.notes);
+
+    // A correction downward is a correction to the log, never to the vehicle: the odometer only
+    // ever advances.
+    let odometer_will_update = input.odometer_km > vehicle.odometer_km;
+    let previous_odometer_km = odometer_will_update.then_some(vehicle.odometer_km);
+    let new_odometer_km = odometer_will_update.then_some(input.odometer_km);
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database {
+            message: e.to_string(),
+        })?;
+
+    let result = (|| -> Result<(), AppError> {
+        tx.execute(
+            "UPDATE maintenance_service_logs
+             SET service_date = ?1, odometer_km = ?2, notes = ?3, custom_service_name = ?4
+             WHERE id = ?5",
+            params![
+                input.service_date.trim(),
+                input.odometer_km,
+                notes,
+                custom_service_name,
+                input.log_id
+            ],
+        )?;
+
+        if let Some(task_id) = existing.task_id {
+            recompute_task_anchors(&tx, task_id)?;
+        }
+
+        if odometer_will_update {
+            tx.execute(
+                "UPDATE vehicles
+                 SET odometer_km = ?1, updated_at = datetime('now')
+                 WHERE id = ?2",
+                params![input.odometer_km, existing.vehicle_id],
+            )?;
+        }
+
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            tx.commit().map_err(|e| AppError::Database {
+                message: e.to_string(),
+            })?;
+
+            let log = get_service_log_by_id(conn, input.log_id)?;
+            let updated_vehicle = get_vehicle_by_id(conn, existing.vehicle_id)?;
+            let task = match existing.task_id {
+                Some(task_id) => Some(attach_task_status(
+                    &get_task_by_id(conn, task_id)?,
+                    &updated_vehicle,
+                )),
+                None => None,
+            };
+
+            Ok(UpdateServiceLogResult {
+                log,
+                task,
+                odometer_updated: odometer_will_update,
+                previous_odometer_km,
+                new_odometer_km,
+            })
+        }
+        Err(e) => {
+            let _ = tx.rollback();
+            Err(e)
+        }
+    }
+}
+
+pub fn delete_service_log(
+    conn: &Connection,
+    log_id: i64,
+) -> Result<DeleteServiceLogResult, AppError> {
+    let existing = get_service_log_by_id(conn, log_id)?;
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database {
+            message: e.to_string(),
+        })?;
+
+    let result = (|| -> Result<(), AppError> {
+        tx.execute(
+            "DELETE FROM maintenance_service_logs WHERE id = ?1",
+            params![log_id],
+        )?;
+
+        if let Some(task_id) = existing.task_id {
+            recompute_task_anchors(&tx, task_id)?;
+        }
+
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            tx.commit().map_err(|e| AppError::Database {
+                message: e.to_string(),
+            })?;
+
+            let vehicle = get_vehicle_by_id(conn, existing.vehicle_id)?;
+            let task = match existing.task_id {
+                Some(task_id) => Some(attach_task_status(
+                    &get_task_by_id(conn, task_id)?,
+                    &vehicle,
+                )),
+                None => None,
+            };
+
+            Ok(DeleteServiceLogResult {
+                deleted_log_id: log_id,
+                vehicle_id: existing.vehicle_id,
+                task,
             })
         }
         Err(e) => {
@@ -2272,5 +2473,515 @@ mod tests {
             }
             other => panic!("expected validation error, got {:?}", other),
         }
+    }
+
+    // Dates are derived from today rather than hardcoded: `validate_service_date` rejects the
+    // future, so a literal year eventually turns a passing suite red on a calendar boundary.
+    fn days_ago(days: u64) -> String {
+        Local::now()
+            .date_naive()
+            .checked_sub_days(chrono::Days::new(days))
+            .expect("date within range")
+            .format("%Y-%m-%d")
+            .to_string()
+    }
+
+    fn task_id_for(conn: &Connection, vehicle_id: i64, task_type_key: &str) -> i64 {
+        conn.query_row(
+            "SELECT id FROM maintenance_tasks WHERE vehicle_id = ?1 AND task_type_key = ?2",
+            params![vehicle_id, task_type_key],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn task_anchors(conn: &Connection, task_id: i64) -> (Option<String>, Option<i64>) {
+        conn.query_row(
+            "SELECT last_service_date, last_service_odometer_km FROM maintenance_tasks WHERE id = ?1",
+            params![task_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    }
+
+    fn sample_update_input(
+        log_id: i64,
+        service_date: &str,
+        odometer_km: i64,
+    ) -> UpdateServiceLogInput {
+        UpdateServiceLogInput {
+            log_id,
+            service_date: service_date.to_string(),
+            odometer_km,
+            notes: None,
+            custom_service_name: None,
+        }
+    }
+
+    // Any statement against maintenance_tasks aborts, so the log row's own UPDATE/DELETE has
+    // already run when the failure lands — exactly the window a missing transaction would leak.
+    fn install_task_write_guard(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TRIGGER block_task_writes BEFORE UPDATE ON maintenance_tasks
+             BEGIN SELECT RAISE(ABORT, 'task write blocked'); END;",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn update_service_log_rewrites_fields_and_recomputes_task_anchors() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let logged_on = days_ago(30);
+        let corrected_on = days_ago(20);
+
+        let logged =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &logged_on, 10_000))
+                .unwrap();
+
+        let result = update_service_log(
+            &conn,
+            &UpdateServiceLogInput {
+                log_id: logged.log.id,
+                service_date: corrected_on.clone(),
+                odometer_km: 11_500,
+                notes: Some("  Corrected reading  ".to_string()),
+                custom_service_name: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.log.id, logged.log.id);
+        assert_eq!(result.log.service_date, corrected_on);
+        assert_eq!(result.log.odometer_km, 11_500);
+        assert_eq!(result.log.notes.as_deref(), Some("Corrected reading"));
+        assert_eq!(result.log.task_id, Some(oil_task_id));
+
+        assert_eq!(
+            task_anchors(&conn, oil_task_id),
+            (Some(corrected_on), Some(11_500))
+        );
+        assert_eq!(
+            result.task.as_ref().map(|task| task.next_due_odometer_km),
+            Some(Some(19_500))
+        );
+
+        let history = get_service_history(&conn, vehicle.id).unwrap();
+        assert_eq!(history.len(), 1);
+    }
+
+    #[test]
+    fn update_service_log_advances_vehicle_odometer_only_upward() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let today = days_ago(0);
+        let logged =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &today, 20_000)).unwrap();
+        assert!(logged.odometer_updated);
+
+        let lowered =
+            update_service_log(&conn, &sample_update_input(logged.log.id, &today, 12_000)).unwrap();
+
+        assert!(!lowered.odometer_updated);
+        assert!(lowered.previous_odometer_km.is_none());
+        assert!(lowered.new_odometer_km.is_none());
+        assert_eq!(
+            get_vehicle_by_id(&conn, vehicle.id).unwrap().odometer_km,
+            20_000
+        );
+
+        let raised =
+            update_service_log(&conn, &sample_update_input(logged.log.id, &today, 33_000)).unwrap();
+
+        assert!(raised.odometer_updated);
+        assert_eq!(raised.previous_odometer_km, Some(20_000));
+        assert_eq!(raised.new_odometer_km, Some(33_000));
+        assert_eq!(
+            get_vehicle_by_id(&conn, vehicle.id).unwrap().odometer_km,
+            33_000
+        );
+    }
+
+    #[test]
+    fn update_service_log_keeps_anchors_from_newest_remaining_log() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let older_on = days_ago(200);
+        let newer_on = days_ago(20);
+
+        let older =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &older_on, 5_000))
+                .unwrap();
+        log_maintenance_service(&conn, &sample_log_input(oil_task_id, &newer_on, 18_000)).unwrap();
+
+        update_service_log(
+            &conn,
+            &sample_update_input(older.log.id, &days_ago(210), 4_000),
+        )
+        .unwrap();
+
+        assert_eq!(
+            task_anchors(&conn, oil_task_id),
+            (Some(newer_on), Some(18_000))
+        );
+    }
+
+    #[test]
+    fn update_service_log_renames_a_custom_entry_without_touching_task_anchors() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let serviced_on = days_ago(30);
+        log_maintenance_service(&conn, &sample_log_input(oil_task_id, &serviced_on, 10_000))
+            .unwrap();
+        let anchors_before = task_anchors(&conn, oil_task_id);
+
+        let custom = log_custom_service(
+            &conn,
+            &LogCustomServiceInput {
+                vehicle_id: vehicle.id,
+                custom_service_name: "AC recharge".to_string(),
+                service_date: days_ago(10),
+                odometer_km: 10_500,
+                notes: None,
+            },
+        )
+        .unwrap();
+
+        let result = update_service_log(
+            &conn,
+            &UpdateServiceLogInput {
+                log_id: custom.log.id,
+                service_date: days_ago(9),
+                odometer_km: 10_600,
+                notes: Some("Shop invoice 42".to_string()),
+                custom_service_name: Some("  A/C recharge  ".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.log.custom_service_name.as_deref(),
+            Some("A/C recharge")
+        );
+        assert_eq!(result.log.odometer_km, 10_600);
+        assert!(result.log.task_id.is_none());
+        assert!(result.task.is_none());
+        assert_eq!(task_anchors(&conn, oil_task_id), anchors_before);
+    }
+
+    #[test]
+    fn update_service_log_rejects_blank_name_on_a_custom_entry() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let custom = log_custom_service(
+            &conn,
+            &LogCustomServiceInput {
+                vehicle_id: vehicle.id,
+                custom_service_name: "AC recharge".to_string(),
+                service_date: days_ago(10),
+                odometer_km: 10_500,
+                notes: None,
+            },
+        )
+        .unwrap();
+
+        let err = update_service_log(
+            &conn,
+            &UpdateServiceLogInput {
+                log_id: custom.log.id,
+                service_date: days_ago(10),
+                odometer_km: 10_500,
+                notes: None,
+                custom_service_name: Some("   ".to_string()),
+            },
+        )
+        .unwrap_err();
+
+        match err {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field, Some("custom_service_name".to_string()))
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn update_service_log_refuses_to_rename_a_scheduled_entry() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let logged =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &days_ago(5), 10_000))
+                .unwrap();
+
+        let err = update_service_log(
+            &conn,
+            &UpdateServiceLogInput {
+                log_id: logged.log.id,
+                service_date: days_ago(5),
+                odometer_km: 10_000,
+                notes: None,
+                custom_service_name: Some("Something else".to_string()),
+            },
+        )
+        .unwrap_err();
+
+        match err {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field, Some("custom_service_name".to_string()))
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn update_service_log_rejects_future_date_and_negative_odometer() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let logged =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &days_ago(5), 10_000))
+                .unwrap();
+
+        let future = update_service_log(
+            &conn,
+            &sample_update_input(logged.log.id, "2099-01-01", 10_000),
+        )
+        .unwrap_err();
+        match future {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field, Some("service_date".to_string()))
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+
+        let negative =
+            update_service_log(&conn, &sample_update_input(logged.log.id, &days_ago(5), -1))
+                .unwrap_err();
+        match negative {
+            AppError::Validation { field, .. } => {
+                assert_eq!(field, Some("odometer_km".to_string()))
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn update_service_log_not_found() {
+        let conn = setup_test_db();
+        let err =
+            update_service_log(&conn, &sample_update_input(999, &days_ago(1), 1_000)).unwrap_err();
+
+        match err {
+            AppError::Database { message } => assert!(message.contains("not found")),
+            other => panic!("expected not found, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn update_service_log_rolls_back_when_anchor_recomputation_fails() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let logged_on = days_ago(30);
+        let logged =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &logged_on, 10_000))
+                .unwrap();
+        install_task_write_guard(&conn);
+
+        let err = update_service_log(
+            &conn,
+            &sample_update_input(logged.log.id, &days_ago(1), 44_000),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::Database { .. }));
+
+        let history = get_service_history(&conn, vehicle.id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].service_date, logged_on);
+        assert_eq!(history[0].odometer_km, 10_000);
+        assert_eq!(
+            get_vehicle_by_id(&conn, vehicle.id).unwrap().odometer_km,
+            10_000
+        );
+    }
+
+    #[test]
+    fn delete_service_log_removes_one_row_and_falls_back_to_newest_remaining() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let brake_task_id = task_id_for(&conn, vehicle.id, "brake_fluid");
+        let older_on = days_ago(200);
+        let newer_on = days_ago(20);
+
+        log_maintenance_service(&conn, &sample_log_input(oil_task_id, &older_on, 5_000)).unwrap();
+        let newest =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &newer_on, 18_000))
+                .unwrap();
+        log_maintenance_service(
+            &conn,
+            &sample_log_input(brake_task_id, &days_ago(15), 18_500),
+        )
+        .unwrap();
+        let brake_anchors_before = task_anchors(&conn, brake_task_id);
+
+        let result = delete_service_log(&conn, newest.log.id).unwrap();
+
+        assert_eq!(result.deleted_log_id, newest.log.id);
+        assert_eq!(result.vehicle_id, vehicle.id);
+        assert_eq!(
+            task_anchors(&conn, oil_task_id),
+            (Some(older_on), Some(5_000))
+        );
+        assert_eq!(
+            result.task.as_ref().map(|task| task.next_due_odometer_km),
+            Some(Some(13_000))
+        );
+        assert_eq!(task_anchors(&conn, brake_task_id), brake_anchors_before);
+
+        let history = get_service_history(&conn, vehicle.id).unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history.iter().all(|entry| entry.id != newest.log.id));
+    }
+
+    #[test]
+    fn delete_only_scheduled_log_nulls_anchors_without_lowering_vehicle_odometer() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let logged =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &days_ago(5), 26_000))
+                .unwrap();
+        assert_eq!(
+            get_vehicle_by_id(&conn, vehicle.id).unwrap().odometer_km,
+            26_000
+        );
+
+        delete_service_log(&conn, logged.log.id).unwrap();
+
+        assert_eq!(task_anchors(&conn, oil_task_id), (None, None));
+        assert_eq!(
+            get_vehicle_by_id(&conn, vehicle.id).unwrap().odometer_km,
+            26_000
+        );
+        assert!(get_service_history(&conn, vehicle.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_custom_service_log_leaves_task_anchors_untouched() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        log_maintenance_service(&conn, &sample_log_input(oil_task_id, &days_ago(30), 10_000))
+            .unwrap();
+        let anchors_before = task_anchors(&conn, oil_task_id);
+
+        let custom = log_custom_service(
+            &conn,
+            &LogCustomServiceInput {
+                vehicle_id: vehicle.id,
+                custom_service_name: "AC recharge".to_string(),
+                service_date: days_ago(10),
+                odometer_km: 10_500,
+                notes: None,
+            },
+        )
+        .unwrap();
+
+        let result = delete_service_log(&conn, custom.log.id).unwrap();
+
+        assert!(result.task.is_none());
+        assert_eq!(task_anchors(&conn, oil_task_id), anchors_before);
+        assert_eq!(get_service_history(&conn, vehicle.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn delete_service_log_not_found() {
+        let conn = setup_test_db();
+        let err = delete_service_log(&conn, 999).unwrap_err();
+
+        match err {
+            AppError::Database { message } => assert!(message.contains("not found")),
+            other => panic!("expected not found, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn tied_timestamps_pick_the_same_log_for_history_and_for_the_anchor() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let serviced_on = days_ago(10);
+
+        // Same service_date AND same created_at, so only the id can break the tie. History and the
+        // anchor recomputation must break it identically, or the schedule contradicts the list the
+        // user is reading.
+        for odometer_km in [11_000, 12_000] {
+            conn.execute(
+                "INSERT INTO maintenance_service_logs
+                   (vehicle_id, task_id, custom_service_name, service_date, odometer_km, notes, created_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, NULL, '2026-01-01 00:00:00')",
+                params![vehicle.id, oil_task_id, serviced_on, odometer_km],
+            )
+            .unwrap();
+        }
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM maintenance_service_logs WHERE task_id = ?1 ORDER BY id ASC",
+            )
+            .unwrap();
+        let ids = stmt
+            .query_map(params![oil_task_id], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        drop(stmt);
+        assert_eq!(ids.len(), 2);
+        let (oldest_id, newest_id) = (ids[0], ids[1]);
+
+        // Editing the losing row forces a recomputation without disturbing the tie.
+        update_service_log(
+            &conn,
+            &UpdateServiceLogInput {
+                log_id: oldest_id,
+                service_date: serviced_on.clone(),
+                odometer_km: 11_000,
+                notes: Some("tie breaker".to_string()),
+                custom_service_name: None,
+            },
+        )
+        .unwrap();
+
+        let history = get_service_history(&conn, vehicle.id).unwrap();
+        assert_eq!(history[0].id, newest_id);
+        assert_eq!(
+            task_anchors(&conn, oil_task_id),
+            (Some(serviced_on), Some(12_000))
+        );
+        assert_eq!(history[0].odometer_km, 12_000);
+    }
+
+    #[test]
+    fn delete_service_log_rolls_back_when_anchor_recomputation_fails() {
+        let conn = setup_test_db();
+        let vehicle = insert_vehicle(&conn, &sample_create_input(10_000)).unwrap();
+        let oil_task_id = task_id_for(&conn, vehicle.id, "engine_oil_filter");
+        let logged =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &days_ago(30), 10_000))
+                .unwrap();
+        install_task_write_guard(&conn);
+
+        let err = delete_service_log(&conn, logged.log.id).unwrap_err();
+        assert!(matches!(err, AppError::Database { .. }));
+
+        let history = get_service_history(&conn, vehicle.id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].id, logged.log.id);
     }
 }
