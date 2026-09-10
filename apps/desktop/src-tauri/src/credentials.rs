@@ -289,6 +289,7 @@ fn clear_all_session_fields() -> Result<(), AppError> {
 // launch. macOS/Linux have no credential-size limit (the chunking exists
 // solely for Windows Credential Manager's 2560-byte cap), so the whole
 // session round-trips as one JSON blob under one keychain item instead.
+#[cfg(not(target_os = "windows"))]
 const KEYRING_AUTH_ACCOUNT_SESSION: &str = "cognito-session";
 
 #[cfg(not(target_os = "windows"))]
