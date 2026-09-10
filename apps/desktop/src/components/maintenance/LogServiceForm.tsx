@@ -3,7 +3,7 @@ import { useForm, Controller } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { Button, DatePicker, Input, Label, focusRing } from "@nixus/shared";
-import { useLogMaintenanceService } from "@/hooks/useMaintenance";
+import { useLogMaintenanceService } from "@/hooks/useServiceHistory";
 import { todayIsoDate } from "@/lib/maintenanceUtils";
 import { cn } from "@/lib/utils";
 

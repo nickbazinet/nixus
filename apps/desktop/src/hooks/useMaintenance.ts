@@ -11,13 +11,7 @@ import type {
   MaintenanceTaskBaseline,
   UpdateVehicleInput,
   MaintenanceTaskWithStatus,
-  MaintenanceServiceLogEntry,
-  LogMaintenanceServiceInput,
-  LogCustomServiceInput,
-  LogCustomServiceResult,
-  LogServiceResult,
 } from "@/lib/types";
-import { formatOdometerKm } from "@/lib/maintenanceUtils";
 
 export function useMaintenance() {
   return useQuery({
@@ -148,119 +142,6 @@ export function useUpdateVehicleOdometer() {
       });
       toast.success(t("maintenance.toast.odometerManual"), { duration: 3000 });
     },
-  });
-}
-
-export function useLogMaintenanceService() {
-  const queryClient = useQueryClient();
-  const { t } = useTranslation();
-
-  return useMutation({
-    mutationFn: (input: LogMaintenanceServiceInput) =>
-      invoke<LogServiceResult>("log_maintenance_service", { input }),
-    onSuccess: async (result) => {
-      toast.success(t("maintenance.toast.serviceLogged"));
-
-      if (result.odometer_updated && result.new_odometer_km !== undefined) {
-        toast.info(
-          t("maintenance.toast.odometerUpdated", {
-            km: formatOdometerKm(result.new_odometer_km),
-          }),
-          { duration: 4000 }
-        );
-      }
-
-      const vehicleId = result.log.vehicle_id;
-      const freshVehicle = await invoke<VehicleWithTasks>("get_vehicle", {
-        id: vehicleId,
-      });
-      queryClient.setQueryData<VehicleWithTasks[]>(
-        queryKeys.maintenance,
-        (old) => {
-          if (!old) return old;
-          return old.map((item) =>
-            item.vehicle.id === vehicleId ? freshVehicle : item
-          );
-        }
-      );
-      queryClient.setQueryData(
-        queryKeys.maintenanceVehicle(vehicleId),
-        freshVehicle
-      );
-
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.maintenance,
-        refetchType: "none",
-      });
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.maintenanceVehicle(vehicleId),
-      });
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.maintenanceHistory(vehicleId),
-      });
-    },
-  });
-}
-
-export function useLogCustomService() {
-  const queryClient = useQueryClient();
-  const { t } = useTranslation();
-
-  return useMutation({
-    mutationFn: (input: LogCustomServiceInput) =>
-      invoke<LogCustomServiceResult>("log_custom_service", { input }),
-    onSuccess: async (result) => {
-      toast.success(t("maintenance.toast.customServiceLogged"));
-
-      if (result.odometer_updated && result.new_odometer_km !== undefined) {
-        toast.info(
-          t("maintenance.toast.odometerUpdated", {
-            km: formatOdometerKm(result.new_odometer_km),
-          }),
-          { duration: 4000 }
-        );
-      }
-
-      const vehicleId = result.log.vehicle_id;
-      const freshVehicle = await invoke<VehicleWithTasks>("get_vehicle", {
-        id: vehicleId,
-      });
-      queryClient.setQueryData<VehicleWithTasks[]>(
-        queryKeys.maintenance,
-        (old) => {
-          if (!old) return old;
-          return old.map((item) =>
-            item.vehicle.id === vehicleId ? freshVehicle : item
-          );
-        }
-      );
-      queryClient.setQueryData(
-        queryKeys.maintenanceVehicle(vehicleId),
-        freshVehicle
-      );
-
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.maintenance,
-        refetchType: "none",
-      });
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.maintenanceVehicle(vehicleId),
-      });
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.maintenanceHistory(vehicleId),
-      });
-    },
-  });
-}
-
-export function useServiceHistory(vehicleId: number, enabled = true) {
-  return useQuery({
-    queryKey: queryKeys.maintenanceHistory(vehicleId),
-    queryFn: () =>
-      invoke<MaintenanceServiceLogEntry[]>("get_service_history", {
-        vehicle_id: vehicleId,
-      }),
-    enabled: vehicleId > 0 && enabled,
   });
 }
 
