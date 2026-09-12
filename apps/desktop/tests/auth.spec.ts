@@ -255,6 +255,8 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
             return Promise.resolve(activeProfile?.dataset_id ?? null);
           case "get_budget_groups":
             return Promise.resolve(groups);
+          case "get_budget_groups_for_month":
+            return Promise.resolve(groups);
           case "get_budget_categories":
             return Promise.resolve(
               categories.filter((c) => c.group_id === (args.group_id as number)),

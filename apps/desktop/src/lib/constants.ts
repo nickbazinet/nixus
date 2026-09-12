@@ -1,5 +1,7 @@
 export const queryKeys = {
   budgetGroups: ["budget-groups"] as const,
+  budgetGroupsForMonth: (year: number, month: number) =>
+    ["budget-groups", year, month] as const,
   budgetCategories: (groupId: number) =>
     ["budget-categories", groupId] as const,
   budgetStatus: (year: number, month: number) =>

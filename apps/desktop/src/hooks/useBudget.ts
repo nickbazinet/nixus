@@ -17,6 +17,15 @@ export function useBudgetGroups() {
   });
 }
 
+export function useBudgetGroupsForMonth(year: number, month: number) {
+  return useQuery({
+    queryKey: queryKeys.budgetGroupsForMonth(year, month),
+    queryFn: () =>
+      invoke<BudgetGroup[]>("get_budget_groups_for_month", { year, month }),
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useCreateBudgetGroup() {
   const queryClient = useQueryClient();
 

@@ -37,6 +37,7 @@ pub fn create_budget_group(
                 name: row.get(1)?,
                 sort_order: row.get(2)?,
                 created_at: row.get(3)?,
+                is_deleted: false,
             })
         },
     )
@@ -44,8 +45,9 @@ pub fn create_budget_group(
 }
 
 pub fn get_budget_groups(conn: &Connection) -> Result<Vec<BudgetGroup>, AppError> {
-    let mut stmt =
-        conn.prepare("SELECT id, name, sort_order, created_at FROM budget_groups ORDER BY sort_order")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, sort_order, created_at FROM budget_groups WHERE deleted_at IS NULL ORDER BY sort_order",
+    )?;
 
     let groups = stmt
         .query_map([], |row| {
@@ -54,6 +56,48 @@ pub fn get_budget_groups(conn: &Connection) -> Result<Vec<BudgetGroup>, AppError
                 name: row.get(1)?,
                 sort_order: row.get(2)?,
                 created_at: row.get(3)?,
+                is_deleted: false,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(groups)
+}
+
+/// The group counterpart of `get_budget_status`: an archived group whose
+/// categories have expenses in this month must still render (with its name),
+/// the same way an archived category still renders under a live group.
+pub fn get_budget_groups_for_month(
+    conn: &Connection,
+    year: i32,
+    month: i32,
+) -> Result<Vec<BudgetGroup>, AppError> {
+    let year_str = format!("{:04}", year);
+    let month_str = format!("{:02}", month);
+
+    let mut stmt = conn.prepare(
+        "SELECT bg.id, bg.name, bg.sort_order, bg.created_at,
+                CASE WHEN bg.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
+         FROM budget_groups bg
+         WHERE bg.deleted_at IS NULL
+            OR EXISTS (
+                SELECT 1 FROM budget_categories bc
+                JOIN expenses e ON e.budget_category_id = bc.id
+                WHERE bc.group_id = bg.id
+                  AND strftime('%Y', e.date) = ?1
+                  AND strftime('%m', e.date) = ?2
+            )
+         ORDER BY bg.sort_order",
+    )?;
+
+    let groups = stmt
+        .query_map(params![year_str, month_str], |row| {
+            Ok(BudgetGroup {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                sort_order: row.get(2)?,
+                created_at: row.get(3)?,
+                is_deleted: row.get::<_, i32>(4)? != 0,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -167,6 +211,7 @@ pub fn update_budget_group(
                 name: row.get(1)?,
                 sort_order: row.get(2)?,
                 created_at: row.get(3)?,
+                is_deleted: false,
             })
         },
     )
@@ -290,17 +335,53 @@ pub fn delete_budget_category(conn: &Connection, id: i64) -> Result<(), AppError
 }
 
 pub fn delete_budget_group(conn: &Connection, id: i64) -> Result<(), AppError> {
-    let count: i64 = conn.query_row(
+    let is_active: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM budget_groups WHERE id = ?1 AND deleted_at IS NULL)",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    if !is_active {
+        return Err(AppError::Database {
+            message: "Budget group not found".to_string(),
+        });
+    }
+
+    let active_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM budget_categories WHERE group_id = ?1 AND deleted_at IS NULL",
         params![id],
         |row| row.get(0),
     )?;
 
-    if count > 0 {
+    if active_count > 0 {
         return Err(AppError::Validation {
             message: "Remove all categories first".to_string(),
             field: None,
         });
+    }
+
+    // Soft-deleted categories keep their row (migration 022) so past expenses
+    // still resolve a name, and that row still references this group_id — no
+    // `ON DELETE CASCADE` exists. Hard-deleting the group here would violate
+    // that foreign key. Archive the group instead, matching the same
+    // soft-delete precedent as categories and projects.
+    let total_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM budget_categories WHERE group_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    if total_count > 0 {
+        let rows = conn.execute(
+            "UPDATE budget_groups SET deleted_at = datetime('now') WHERE id = ?1 AND deleted_at IS NULL",
+            params![id],
+        )?;
+        if rows == 0 {
+            return Err(AppError::Database {
+                message: "Budget group not found".to_string(),
+            });
+        }
+        return Ok(());
     }
 
     let rows = conn.execute("DELETE FROM budget_groups WHERE id = ?1", params![id])?;
@@ -422,9 +503,6 @@ pub enum GroupNameMatch {
 }
 
 /// The group counterpart of `resolve_active_category_id_by_name`.
-///
-/// Groups have no soft delete, so there is no `deleted_at` filter here — that is the only
-/// difference from the category resolver, and inventing one would silently match nothing.
 // SQLite `LOWER` folds ASCII only: accented or non-Latin names must match stored case.
 pub fn resolve_group_id_by_name(
     conn: &Connection,
@@ -437,7 +515,7 @@ pub fn resolve_group_id_by_name(
 
     let mut stmt = conn.prepare(
         "SELECT id FROM budget_groups
-         WHERE LOWER(TRIM(name)) = LOWER(?1)
+         WHERE deleted_at IS NULL AND LOWER(TRIM(name)) = LOWER(?1)
          ORDER BY id ASC
          LIMIT 2",
     )?;
@@ -465,7 +543,8 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at TEXT
             );
             CREATE TABLE budget_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -623,6 +702,124 @@ mod tests {
         assert_eq!(hint_count, 0);
     }
 
+    #[test]
+    fn delete_budget_group_hard_deletes_when_it_never_had_categories() {
+        let conn = budget_test_db();
+        conn.execute(
+            "INSERT INTO budget_groups (id, name, sort_order) VALUES (2, 'Empty', 2)",
+            [],
+        )
+        .unwrap();
+
+        delete_budget_group(&conn, 2).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM budget_groups WHERE id = 2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn delete_budget_group_blocked_when_active_category_exists() {
+        let conn = budget_test_db();
+
+        let err = delete_budget_group(&conn, 1).unwrap_err();
+        match err {
+            AppError::Validation { message, .. } => {
+                assert!(message.contains("Remove all categories first"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_budget_group_soft_deletes_when_only_archived_categories_with_expenses_remain() {
+        let conn = budget_test_db();
+        conn.execute(
+            "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date)
+             VALUES ('Store', 1500, 1, '2026-06-10')",
+            [],
+        )
+        .unwrap();
+
+        // Category has a past expense, so its own delete only archives the row
+        // (budget.rs:delete_budget_category) rather than removing it.
+        delete_budget_category(&conn, 1).unwrap();
+
+        delete_budget_group(&conn, 1).unwrap();
+
+        let deleted_at: Option<String> = conn
+            .query_row(
+                "SELECT deleted_at FROM budget_groups WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(deleted_at.is_some());
+
+        // The archived category row must survive so the expense still resolves
+        // a category/group name — this is the exact FK relationship that a
+        // hard DELETE on budget_groups would have violated.
+        let category_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM budget_categories WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(category_count, 1);
+    }
+
+    #[test]
+    fn delete_budget_group_excludes_soft_deleted_group_from_get_budget_groups() {
+        let conn = budget_test_db();
+        conn.execute(
+            "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date)
+             VALUES ('Store', 1500, 1, '2026-06-10')",
+            [],
+        )
+        .unwrap();
+        delete_budget_category(&conn, 1).unwrap();
+
+        delete_budget_group(&conn, 1).unwrap();
+
+        let groups = get_budget_groups(&conn).unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn get_budget_groups_for_month_includes_archived_group_only_in_months_with_spending() {
+        let conn = budget_test_db();
+        conn.execute(
+            "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date)
+             VALUES ('Store', 1500, 1, '2026-06-10')",
+            [],
+        )
+        .unwrap();
+        delete_budget_category(&conn, 1).unwrap();
+        delete_budget_group(&conn, 1).unwrap();
+
+        let june_groups = get_budget_groups_for_month(&conn, 2026, 6).unwrap();
+        assert_eq!(june_groups.len(), 1);
+        assert!(june_groups[0].is_deleted);
+
+        let july_groups = get_budget_groups_for_month(&conn, 2026, 7).unwrap();
+        assert!(july_groups.is_empty());
+    }
+
+    #[test]
+    fn get_budget_groups_for_month_includes_active_groups_regardless_of_spending() {
+        let conn = budget_test_db();
+
+        let groups = get_budget_groups_for_month(&conn, 2026, 6).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert!(!groups[0].is_deleted);
+    }
+
     fn insert_category(conn: &Connection, id: i64, name: &str) {
         conn.execute(
             "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order)
@@ -754,16 +951,30 @@ mod tests {
         );
     }
 
-    /// Groups carry no soft delete, so every row counts. Asserted explicitly because the
-    /// category resolver DOES filter one, and copying its query here would match nothing.
     #[test]
-    fn resolve_group_id_by_name_considers_every_group_row() {
+    fn resolve_group_id_by_name_returns_unique_id_for_a_newly_inserted_group() {
         let conn = budget_test_db();
         insert_group(&conn, 9, "Wants");
 
         assert_eq!(
             resolve_group_id_by_name(&conn, "Wants").unwrap(),
             GroupNameMatch::Unique(9)
+        );
+    }
+
+    #[test]
+    fn resolve_group_id_by_name_ignores_soft_deleted_groups() {
+        let conn = budget_test_db();
+        insert_group(&conn, 9, "Wants");
+        conn.execute(
+            "UPDATE budget_groups SET deleted_at = datetime('now') WHERE id = 9",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(
+            resolve_group_id_by_name(&conn, "Wants").unwrap(),
+            GroupNameMatch::Missing
         );
     }
 

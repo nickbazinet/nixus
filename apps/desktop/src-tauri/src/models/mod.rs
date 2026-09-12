@@ -7,6 +7,7 @@ pub struct BudgetGroup {
     pub name: String,
     pub sort_order: i32,
     pub created_at: String,
+    pub is_deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

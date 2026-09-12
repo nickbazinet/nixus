@@ -16,7 +16,7 @@ import {
   SlideOver,
 } from "@nixus/shared";
 import { BudgetGroupCard } from "@/components/budget/BudgetGroupCard";
-import { useBudgetGroups, useCreateBudgetGroup, useBudgetStatus } from "@/hooks/useBudget";
+import { useBudgetGroupsForMonth, useCreateBudgetGroup, useBudgetStatus } from "@/hooks/useBudget";
 import { useBudgetSummary } from "@/hooks/useDashboard";
 import { useExpensesByMonth, groupExpensesByCategory } from "@/hooks/useExpenses";
 import { useApplyRecurringExpenses } from "@/hooks/useRecurringExpenses";
@@ -35,10 +35,10 @@ function BudgetPage() {
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [expenseCategoryId, setExpenseCategoryId] = useState<number | undefined>(undefined);
-  const { data: groups = [] } = useBudgetGroups();
+  const { year: selectedYear, month: selectedMonth } = usePeriod();
+  const { data: groups = [] } = useBudgetGroupsForMonth(selectedYear, selectedMonth);
   const createGroup = useCreateBudgetGroup();
 
-  const { year: selectedYear, month: selectedMonth } = usePeriod();
   const { data: statusList = [] } = useBudgetStatus(selectedYear, selectedMonth);
   const { data: monthExpenses = [] } = useExpensesByMonth(selectedYear, selectedMonth);
   const expensesByCategory = groupExpensesByCategory(monthExpenses);

@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Plus, Trash2, TriangleAlert } from "lucide-r
 import {
   Alert,
   AlertDescription,
+  Badge,
   Button,
   Card,
   CardContent,
@@ -221,11 +222,22 @@ export function BudgetGroupCard({
                 )}
               </Button>
               <h2 className="flex min-w-0 items-center gap-2 text-h2 text-ink">
-                <InlineEditText
-                  value={group.name}
-                  onSave={handleUpdateGroupName}
-                  data-testid="group-name"
-                />
+                {group.is_deleted ? (
+                  <span className="truncate" data-testid="group-name">
+                    {group.name}
+                  </span>
+                ) : (
+                  <InlineEditText
+                    value={group.name}
+                    onSave={handleUpdateGroupName}
+                    data-testid="group-name"
+                  />
+                )}
+                {group.is_deleted && (
+                  <Badge variant="neutral" data-testid="archived-group-badge">
+                    {t("budget.archivedGroup")}
+                  </Badge>
+                )}
                 {categories.length > 0 && (
                   <span className="text-caption text-ink-dim" data-testid="group-total">
                     <Money cents={groupTargetCents} locale={i18n.language} {...maskProps} />
@@ -233,16 +245,18 @@ export function BudgetGroupCard({
                 )}
               </h2>
             </div>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={handleDeleteGroup}
-              className="text-ink-faint hover:text-over"
-              data-testid="delete-group-button"
-              aria-label={t("budget.deleteGroup")}
-            >
-              <Trash2 aria-hidden="true" />
-            </Button>
+            {!group.is_deleted && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={handleDeleteGroup}
+                className="text-ink-faint hover:text-over"
+                data-testid="delete-group-button"
+                aria-label={t("budget.deleteGroup")}
+              >
+                <Trash2 aria-hidden="true" />
+              </Button>
+            )}
           </div>
           {groupError && (
             <Alert
@@ -293,87 +307,89 @@ export function BudgetGroupCard({
             </div>
           )}
 
-          {showForm ? (
-            <form
-              onSubmit={handleSubmit(onSubmit)}
-              className="space-y-3 border-t border-line pt-3"
-            >
-              <div className="space-y-1.5">
-                <Label htmlFor={nameFieldId} required>
-                  {t("budget.categoryName")}
-                </Label>
-                <Input
-                  id={nameFieldId}
-                  placeholder={t("budget.categoryNamePlaceholder")}
-                  aria-required="true"
-                  aria-invalid={!!errors.name}
-                  aria-describedby={errors.name ? `${nameFieldId}-error` : undefined}
-                  {...register("name", { required: t("budget.nameRequired") })}
-                />
-                {errors.name && (
-                  <p id={`${nameFieldId}-error`} className="text-caption text-over">
-                    {errors.name.message}
-                  </p>
-                )}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor={targetFieldId} required>
-                  {t("budget.monthlyTarget")}
-                </Label>
-                <Controller
-                  name="target_cents"
-                  control={control}
-                  rules={{
-                    validate: (v) => v > 0 || t("budget.targetRequired"),
-                  }}
-                  render={({ field }) => (
-                    <MoneyInput
-                      id={targetFieldId}
-                      value={field.value}
-                      onChange={field.onChange}
-                      onBlur={field.onBlur}
-                      aria-invalid={!!errors.target_cents}
-                      aria-required
-                      aria-describedby={
-                        errors.target_cents ? `${targetFieldId}-error` : undefined
-                      }
-                    />
+          {!group.is_deleted && (
+            showForm ? (
+              <form
+                onSubmit={handleSubmit(onSubmit)}
+                className="space-y-3 border-t border-line pt-3"
+              >
+                <div className="space-y-1.5">
+                  <Label htmlFor={nameFieldId} required>
+                    {t("budget.categoryName")}
+                  </Label>
+                  <Input
+                    id={nameFieldId}
+                    placeholder={t("budget.categoryNamePlaceholder")}
+                    aria-required="true"
+                    aria-invalid={!!errors.name}
+                    aria-describedby={errors.name ? `${nameFieldId}-error` : undefined}
+                    {...register("name", { required: t("budget.nameRequired") })}
+                  />
+                  {errors.name && (
+                    <p id={`${nameFieldId}-error`} className="text-caption text-over">
+                      {errors.name.message}
+                    </p>
                   )}
-                />
-                {errors.target_cents && (
-                  <p id={`${targetFieldId}-error`} className="text-caption text-over">
-                    {errors.target_cents.message}
-                  </p>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button type="submit" size="sm">
-                  {t("budget.saveCategory")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    reset();
-                    setShowForm(false);
-                  }}
-                >
-                  {t("common.cancel")}
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowForm(true)}
-              className="w-full justify-start text-ink-dim"
-              data-testid="add-category-button"
-            >
-              <Plus aria-hidden="true" />
-              {t("budget.addCategory")}
-            </Button>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor={targetFieldId} required>
+                    {t("budget.monthlyTarget")}
+                  </Label>
+                  <Controller
+                    name="target_cents"
+                    control={control}
+                    rules={{
+                      validate: (v) => v > 0 || t("budget.targetRequired"),
+                    }}
+                    render={({ field }) => (
+                      <MoneyInput
+                        id={targetFieldId}
+                        value={field.value}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        aria-invalid={!!errors.target_cents}
+                        aria-required
+                        aria-describedby={
+                          errors.target_cents ? `${targetFieldId}-error` : undefined
+                        }
+                      />
+                    )}
+                  />
+                  {errors.target_cents && (
+                    <p id={`${targetFieldId}-error`} className="text-caption text-over">
+                      {errors.target_cents.message}
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button type="submit" size="sm">
+                    {t("budget.saveCategory")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      reset();
+                      setShowForm(false);
+                    }}
+                  >
+                    {t("common.cancel")}
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowForm(true)}
+                className="w-full justify-start text-ink-dim"
+                data-testid="add-category-button"
+              >
+                <Plus aria-hidden="true" />
+                {t("budget.addCategory")}
+              </Button>
+            )
           )}
         </CardContent>)}
       </Card>

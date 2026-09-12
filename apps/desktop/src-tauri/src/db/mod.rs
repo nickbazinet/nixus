@@ -79,6 +79,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         27,
         include_str!("../../migrations/027_project_image_thumbnails.sql"),
     ),
+    (
+        28,
+        include_str!("../../migrations/028_budget_group_soft_delete.sql"),
+    ),
 ];
 
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {

@@ -30,6 +30,20 @@ pub fn get_budget_groups(state: State<DbState>) -> Result<Vec<BudgetGroup>, AppE
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn get_budget_groups_for_month(
+    state: State<DbState>,
+    year: i32,
+    month: i32,
+) -> Result<Vec<BudgetGroup>, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    budget_db::get_budget_groups_for_month(&conn, year, month)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn create_budget_category(
     state: State<DbState>,
     group_id: i64,

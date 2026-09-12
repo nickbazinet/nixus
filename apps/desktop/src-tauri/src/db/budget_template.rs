@@ -421,7 +421,8 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 sort_order INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                deleted_at TEXT
             );
             CREATE TABLE budget_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

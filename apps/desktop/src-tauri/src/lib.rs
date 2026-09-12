@@ -224,6 +224,7 @@ pub fn run() {
             commands::datasets::get_active_dataset_id,
             commands::budget::create_budget_group,
             commands::budget::get_budget_groups,
+            commands::budget::get_budget_groups_for_month,
             commands::budget::create_budget_category,
             commands::budget::get_budget_categories,
             commands::budget::update_budget_group,

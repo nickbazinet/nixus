@@ -3,6 +3,7 @@ export interface BudgetGroup {
   name: string;
   sort_order: number;
   created_at: string;
+  is_deleted: boolean;
 }
 
 export interface BudgetCategory {

@@ -43,6 +43,8 @@ async function mock(page: Page) {
             return Promise.resolve(data.categories);
           case "get_budget_groups":
             return Promise.resolve([{ id: 1, name: "Everyday", sort_order: 0, created_at: "" }, { id: 2, name: "Home", sort_order: 1, created_at: "" }]);
+          case "get_budget_groups_for_month":
+            return Promise.resolve([{ id: 1, name: "Everyday", sort_order: 0, created_at: "" }, { id: 2, name: "Home", sort_order: 1, created_at: "" }]);
           case "get_expenses":
             return Promise.resolve(data.expenses);
           case "get_all_budget_categories":

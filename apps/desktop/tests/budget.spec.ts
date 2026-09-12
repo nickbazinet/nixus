@@ -46,6 +46,9 @@ async function setupTauriMock(page: Page) {
           case "get_budget_groups":
             return Promise.resolve(groups);
 
+          case "get_budget_groups_for_month":
+            return Promise.resolve(groups);
+
           case "create_budget_group": {
             const name = args.name as string;
             if (!name || !name.trim()) {

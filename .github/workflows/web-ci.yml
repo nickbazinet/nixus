@@ -142,7 +142,7 @@ jobs:
     env:
       DIST: apps/web/.output/public
       BUCKET: s3://nixus-web-cdn
-      DISTRIBUTION_ID: E691EEFVS0K6N
+      DISTRIBUTION_ID: E39FCWVISAOWBF
       IMMUTABLE: "public, max-age=31536000, immutable"
       REVALIDATE: "no-cache, must-revalidate"
       MEDIA: "public, max-age=604800"
