@@ -77,6 +77,22 @@ pub fn get_budget_categories(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn reorder_budget_categories(
+    state: State<DbState>,
+    group_id: i64,
+    category_ids: Vec<i64>,
+) -> Result<Vec<BudgetCategory>, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    budget_db::reorder_budget_categories(&conn, group_id, &category_ids)?;
+
+    budget_db::get_budget_categories_by_group(&conn, group_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn update_budget_group(
     state: State<DbState>,
     id: i64,

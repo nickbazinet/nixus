@@ -71,7 +71,9 @@ async function setupTauriMock(page: Page) {
           case "get_budget_categories": {
             const groupId = args.group_id as number;
             return Promise.resolve(
-              categories.filter((c) => c.group_id === groupId)
+              categories
+                .filter((c) => c.group_id === groupId)
+                .sort((a, b) => a.sort_order - b.sort_order)
             );
           }
 
@@ -160,6 +162,36 @@ async function setupTauriMock(page: Page) {
               catToUpdate.target_cents = newTargetCents;
             }
             return Promise.resolve({ ...catToUpdate });
+          }
+
+          case "reorder_budget_categories": {
+            const reorderGroupId = args.group_id as number;
+            const submitted = args.category_ids as number[];
+            const active = categories.filter(
+              (c) => c.group_id === reorderGroupId
+            );
+            const isPermutation =
+              submitted.length === active.length &&
+              new Set(submitted).size === submitted.length &&
+              submitted.every((id) => active.some((c) => c.id === id));
+            if (!isPermutation) {
+              return Promise.reject({
+                type: "validation",
+                message:
+                  "The submitted order must contain every category in the group exactly once",
+                field: "category_ids",
+              });
+            }
+            submitted.forEach((id, index) => {
+              const category = categories.find((c) => c.id === id);
+              if (category) category.sort_order = index;
+            });
+            return Promise.resolve(
+              categories
+                .filter((c) => c.group_id === reorderGroupId)
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((c) => ({ ...c }))
+            );
           }
 
           case "delete_budget_category": {
@@ -797,5 +829,112 @@ test.describe("Budget Page", () => {
     await expect(page.getByTestId("group-error")).toContainText(
       "Remove all categories first"
     );
+  });
+
+  async function createGroup(page: Page, name: string) {
+    await page.getByTestId("add-group-button").click();
+    await page.getByLabel("Group Name").fill(name);
+    await page.getByRole("button", { name: "Save Group" }).click();
+    await expect(page.getByRole("heading", { name })).toBeVisible();
+  }
+
+  async function createCategory(page: Page, name: string, target: string) {
+    await page.getByTestId("add-category-button").click();
+    await page.getByLabel("Category Name").fill(name);
+    await page.getByLabel("Monthly Target").fill(target);
+    await page.getByRole("button", { name: "Save Category" }).click();
+    await expect(
+      page.getByTestId("budget-category-row").getByText(name)
+    ).toBeVisible();
+  }
+
+  // Reordering is pointer-events based (not native HTML5 drag-and-drop, which Tauri's macOS
+  // webview never fires a `drop` for), so tests drive it with real mouse coordinates rather
+  // than Playwright's dragTo() helper.
+  async function dragCategoryTo(page: Page, fromIndex: number, toIndex: number) {
+    const source = page.getByTestId("category-drag-handle").nth(fromIndex);
+    const sourceBox = await source.boundingBox();
+    const targetRow = page.getByTestId("budget-status-row").nth(toIndex);
+    const targetBox = await targetRow.boundingBox();
+    if (!sourceBox || !targetBox) {
+      throw new Error("missing bounding box for drag");
+    }
+
+    await page.mouse.move(
+      sourceBox.x + sourceBox.width / 2,
+      sourceBox.y + sourceBox.height / 2
+    );
+    await page.mouse.down();
+    await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + 4, {
+      steps: 5,
+    });
+    await page.mouse.up();
+  }
+
+  test("dragging the first category's handle onto a lower row reorders the list", async ({
+    page,
+  }) => {
+    await createGroup(page, "Essentials");
+    await createCategory(page, "Housing", "700");
+    await createCategory(page, "Groceries", "400");
+    await createCategory(page, "Utilities", "150");
+
+    await expect(page.getByTestId("category-name")).toHaveText([
+      "Housing",
+      "Groceries",
+      "Utilities",
+    ]);
+
+    await dragCategoryTo(page, 0, 1);
+
+    await expect(page.getByTestId("category-name")).toHaveText([
+      "Groceries",
+      "Housing",
+      "Utilities",
+    ]);
+  });
+
+  test("no drag handle is offered when a group has only one category", async ({
+    page,
+  }) => {
+    await createGroup(page, "Essentials");
+    await createCategory(page, "Housing", "700");
+
+    await expect(page.getByTestId("category-drag-handle")).toHaveCount(0);
+  });
+
+  test("a rejected category reorder reverts to the previous order and warns the user", async ({
+    page,
+  }) => {
+    await createGroup(page, "Essentials");
+    await createCategory(page, "Housing", "700");
+    await createCategory(page, "Groceries", "400");
+
+    await page.evaluate(() => {
+      const internals = (window as unknown as Record<string, unknown>)
+        .__TAURI_INTERNALS__ as {
+        invoke: (
+          cmd: string,
+          args: Record<string, unknown>
+        ) => Promise<unknown>;
+      };
+      const original = internals.invoke;
+      internals.invoke = (cmd, args) =>
+        cmd === "reorder_budget_categories"
+          ? Promise.reject({ type: "database", message: "disk is full" })
+          : original(cmd, args);
+    });
+
+    await dragCategoryTo(page, 0, 1);
+
+    await expect(page.getByTestId("category-name")).toHaveText([
+      "Housing",
+      "Groceries",
+    ]);
+    await expect(
+      page.getByText(
+        "Could not save the new order. Your previous order was kept."
+      )
+    ).toBeVisible();
   });
 });

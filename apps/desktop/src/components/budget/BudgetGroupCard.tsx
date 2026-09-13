@@ -32,6 +32,7 @@ import {
   useDeleteBudgetGroup,
 } from "@/hooks/useBudget";
 import { BudgetCategoryRow } from "@/components/budget/BudgetCategoryRow";
+import { useCategoryReorder } from "@/hooks/useCategoryReorder";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import type { BudgetGroup, BudgetCategory, BudgetCategoryStatus, Expense } from "@/lib/types";
@@ -64,6 +65,8 @@ export function BudgetGroupCard({
   const [groupError, setGroupError] = useState<string | null>(null);
 
   const { data: categories = [] } = useBudgetCategories(group.id);
+  const { orderedCategories, drag, setRowRef, beginPointerDrag } =
+    useCategoryReorder(group.id, categories);
   const createCategory = useCreateBudgetCategory();
   const updateGroup = useUpdateBudgetGroup();
   const updateCategory = useUpdateBudgetCategory();
@@ -273,7 +276,7 @@ export function BudgetGroupCard({
         <CardContent className="space-y-3">
           {(categories.length > 0 || archivedStatuses.length > 0) && (
             <div>
-              {categories.map((cat, index) => {
+              {orderedCategories.map((cat, index) => {
                 const status: BudgetCategoryStatus = statusByCategory?.get(cat.id) ?? {
                   id: cat.id,
                   group_id: cat.group_id,
@@ -292,6 +295,11 @@ export function BudgetGroupCard({
                     onUpdateTarget={(cents) => handleUpdateCategoryTarget(cat, cents)}
                     onDelete={() => setDeleteTarget(cat)}
                     onAddExpense={onAddExpense ? () => onAddExpense(cat.id) : undefined}
+                    showDragHandle={orderedCategories.length > 1}
+                    onDragHandlePointerDown={beginPointerDrag(index)}
+                    rowRef={setRowRef(index)}
+                    isDragSource={drag?.from === index}
+                    isDragOver={drag !== null && drag.over === index && drag.from !== index}
                   />
                 );
               })}

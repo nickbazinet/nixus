@@ -178,6 +178,75 @@ pub fn get_budget_categories_by_group(
     Ok(categories)
 }
 
+fn invalid_category_ids(message: &str) -> AppError {
+    AppError::Validation {
+        message: message.to_string(),
+        field: Some("category_ids".to_string()),
+    }
+}
+
+// The submitted list must be a permutation of the group's active categories, and the whole
+// rewrite is one transaction: a partially applied order would leave sort_order inconsistent with
+// what the UI just showed the user. Every check runs before the transaction opens, so a
+// rejection writes nothing. Modeled on projects.rs::reorder_projects.
+pub fn reorder_budget_categories(
+    conn: &Connection,
+    group_id: i64,
+    category_ids: &[i64],
+) -> Result<Vec<i64>, AppError> {
+    if category_ids.is_empty() {
+        return Err(invalid_category_ids("At least one category is required"));
+    }
+
+    let active = get_budget_categories_by_group(conn, group_id)?;
+
+    if category_ids.len() != active.len() {
+        return Err(invalid_category_ids(
+            "The submitted order must contain every category in the group exactly once",
+        ));
+    }
+
+    let mut seen = std::collections::HashSet::with_capacity(category_ids.len());
+    let mut ordered = Vec::with_capacity(category_ids.len());
+    for (index, id) in category_ids.iter().enumerate() {
+        if !seen.insert(*id) {
+            return Err(invalid_category_ids(&format!(
+                "Category {id} appears more than once in the submitted order"
+            )));
+        }
+        let previous = active
+            .iter()
+            .find(|category| category.id == *id)
+            .ok_or_else(|| {
+                invalid_category_ids(&format!(
+                    "Category {id} is not an active category in this group"
+                ))
+            })?;
+        let sort_order = i32::try_from(index).map_err(|_| {
+            invalid_category_ids("The submitted order contains more categories than supported")
+        })?;
+        ordered.push((previous, sort_order));
+    }
+
+    let tx = conn.unchecked_transaction()?;
+
+    let mut changed_ids = Vec::new();
+    for (previous, sort_order) in ordered {
+        tx.execute(
+            "UPDATE budget_categories SET sort_order = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            params![sort_order, previous.id],
+        )?;
+
+        if previous.sort_order != sort_order {
+            changed_ids.push(previous.id);
+        }
+    }
+
+    tx.commit()?;
+
+    Ok(changed_ids)
+}
+
 pub fn update_budget_group(
     conn: &Connection,
     id: i64,
@@ -1054,5 +1123,99 @@ mod tests {
             resolve_active_category_id_by_name(&conn, "Vacation").unwrap(),
             CategoryNameMatch::Missing
         );
+    }
+
+    #[test]
+    fn reorder_budget_categories_rewrites_sort_order_to_submitted_positions() {
+        let conn = budget_test_db();
+        insert_category(&conn, 2, "Rent");
+        insert_category(&conn, 3, "Utilities");
+
+        let changes = reorder_budget_categories(&conn, 1, &[3, 1, 2]).unwrap();
+
+        let order: Vec<i64> = conn
+            .prepare("SELECT id FROM budget_categories WHERE group_id = 1 ORDER BY sort_order")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(order, vec![3, 1, 2]);
+        assert!(!changes.is_empty());
+    }
+
+    #[test]
+    fn reorder_budget_categories_reports_no_changes_when_order_is_already_normalized() {
+        let conn = budget_test_db();
+        insert_category(&conn, 2, "Rent");
+        reorder_budget_categories(&conn, 1, &[1, 2]).unwrap();
+
+        let changes = reorder_budget_categories(&conn, 1, &[1, 2]).unwrap();
+
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn reorder_budget_categories_rejects_missing_category() {
+        let conn = budget_test_db();
+        insert_category(&conn, 2, "Rent");
+
+        let err = reorder_budget_categories(&conn, 1, &[1]).unwrap_err();
+        match err {
+            AppError::Validation { message, .. } => {
+                assert!(message.contains("exactly once"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reorder_budget_categories_rejects_duplicate_id() {
+        let conn = budget_test_db();
+        insert_category(&conn, 2, "Rent");
+
+        let err = reorder_budget_categories(&conn, 1, &[1, 1]).unwrap_err();
+        match err {
+            AppError::Validation { message, .. } => {
+                assert!(message.contains("more than once"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reorder_budget_categories_rejects_id_from_another_group() {
+        let conn = budget_test_db();
+        conn.execute(
+            "INSERT INTO budget_groups (id, name, sort_order) VALUES (2, 'Wants', 2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order)
+             VALUES (99, 2, 'Dining', 10000, 1)",
+            [],
+        )
+        .unwrap();
+
+        let err = reorder_budget_categories(&conn, 1, &[99]).unwrap_err();
+        match err {
+            AppError::Validation { message, .. } => {
+                assert!(message.contains("not an active category"));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reorder_budget_categories_rejects_soft_deleted_category() {
+        let conn = budget_test_db();
+        delete_budget_category(&conn, 1).unwrap();
+
+        let err = reorder_budget_categories(&conn, 1, &[1]).unwrap_err();
+        match err {
+            AppError::Validation { .. } => {}
+            other => panic!("expected validation error, got {other:?}"),
+        }
     }
 }

@@ -1183,6 +1183,7 @@
   "budget.deleteCategoryExplain": "\"{{name}}\" will be archived. The expenses already filed under it stay on record so past months still add up — Nixus can't move them to another category yet.",
   "budget.archiveCategoryAction": "Archive category",
   "budget.deleteGroupExplain": "\"{{name}}\" has no categories in it, so nothing else is affected. This cannot be undone.",
+  "budget.reorderFailed": "Could not save the new order. Your previous order was kept.",
   "expenses.account": "Account",
   "expenses.tableCaption": "Expenses in this category",
   "expenses.searchMerchants": "Search merchants",

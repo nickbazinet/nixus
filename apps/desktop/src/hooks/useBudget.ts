@@ -74,6 +74,26 @@ export function useCreateBudgetCategory() {
   });
 }
 
+export function useReorderBudgetCategories() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { group_id: number; category_ids: number[] }) =>
+      invoke<BudgetCategory[]>("reorder_budget_categories", {
+        group_id: input.group_id,
+        category_ids: input.category_ids,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.budgetCategories(variables.group_id),
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["budget-status"],
+      });
+    },
+  });
+}
+
 export function useUpdateBudgetGroup() {
   const queryClient = useQueryClient();
 

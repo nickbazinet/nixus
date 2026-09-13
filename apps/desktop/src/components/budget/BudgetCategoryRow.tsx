@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, GripVertical, Trash2 } from "lucide-react";
 import { Badge, Button, Meter, Money } from "@nixus/shared";
 import { ExpenseList } from "@/components/expenses/ExpenseList";
 import { InlineEditText, InlineEditMoney } from "@/components/shared/InlineEdit";
@@ -18,6 +18,11 @@ interface BudgetCategoryRowProps {
   onUpdateTarget?: (cents: number) => void;
   onDelete?: () => void;
   onAddExpense?: () => void;
+  showDragHandle?: boolean;
+  onDragHandlePointerDown?: (event: React.PointerEvent) => void;
+  isDragSource?: boolean;
+  isDragOver?: boolean;
+  rowRef?: (el: HTMLDivElement | null) => void;
 }
 
 type Pacing = "over" | "met" | "under" | "no-target";
@@ -51,6 +56,11 @@ export function BudgetCategoryRow({
   onUpdateTarget,
   onDelete,
   onAddExpense,
+  showDragHandle = false,
+  onDragHandlePointerDown,
+  isDragSource = false,
+  isDragOver = false,
+  rowRef,
 }: BudgetCategoryRowProps) {
   const { t, i18n } = useTranslation();
   const formatCurrency = useFormatCurrency();
@@ -89,7 +99,13 @@ export function BudgetCategoryRow({
 
   return (
     <div
-      className={cn("rounded-md px-2 py-2", striped && "bg-hover")}
+      ref={rowRef}
+      className={cn(
+        "rounded-md px-2 py-2",
+        striped && "bg-hover",
+        isDragSource && "opacity-40",
+        isDragOver && "border-t-2 border-brand"
+      )}
       data-testid="budget-status-row"
     >
       <div
@@ -97,6 +113,16 @@ export function BudgetCategoryRow({
         data-testid="budget-category-row"
       >
         <div className="flex min-w-0 items-center gap-1.5">
+          {showDragHandle && (
+            <span
+              onPointerDown={onDragHandlePointerDown}
+              className="shrink-0 touch-none cursor-grab select-none text-ink-faint hover:text-ink-dim active:cursor-grabbing"
+              aria-hidden="true"
+              data-testid="category-drag-handle"
+            >
+              <GripVertical className="size-4" aria-hidden="true" />
+            </span>
+          )}
           <Button
             variant="ghost"
             size="icon-xs"
