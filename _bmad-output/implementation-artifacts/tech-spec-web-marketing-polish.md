@@ -402,7 +402,7 @@ Tasks are ordered by dependency. Each is a discrete unit of work, sized for one 
 - [ ] **T15: Update SiteFooter copy + email**
   - File: `apps/web/src/components/SiteFooter.tsx`, `apps/web/src/components/SiteFooter.test.tsx`
   - Action: Remove "Built in Canada by Nbazinet · © 2026" line. Add `t('footer.copyright')` line below or in place of it. Replace the visible `support@nixus.nicolasbazinet.net` text and `mailto:support@nixus.nicolasbazinet.net` href with `support@nixus.nicolasbazinet.net`. Translate `aria-label="Footer"` and the GitHub link label via `t()`. Update tests: remove "Built in Canada by Nbazinet" assertion, add "Copyright © Nixus 2026" assertion against the EN translation, add a second test rendering with a French test wrapper that asserts the FR equivalent.
-  - Notes: GitHub URL stays as `https://github.com/nickbazinet/n-finance` (not translated; it's a URL).
+  - Notes: GitHub URL stays as `https://github.com/nickbazinet/nixus` (not translated; it's a URL).
 
 #### Phase 4 — Per-locale prerendered routes
 
