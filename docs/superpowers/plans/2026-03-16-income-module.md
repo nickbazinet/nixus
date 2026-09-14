@@ -1794,7 +1794,7 @@ function IncomeEntryRow({ entry }: { entry: IncomeEntry }) {
 
 - [ ] **Step 2: Regenerate the route tree**
 
-Run: `cd /Users/nbazinet/projects/nkbaz-finance && npx tsr generate`
+Run: `npx tsr generate` from the desktop app directory
 Expected: `routeTree.gen.ts` is updated with the `/income` route
 
 - [ ] **Step 3: Verify frontend compiles**
