@@ -1,10 +1,10 @@
 ---
 project_name: 'Nixus'
-user_name: 'Nbazinet'
+user_name: 'Contributor'
 date: '2026-05-18'
 sections_completed: ['technology_stack', 'language_rules', 'framework_rules', 'testing_rules', 'quality_rules', 'workflow_rules', 'anti_patterns']
 status: 'complete'
-rule_count: 38
+rule_count: 47
 optimized_for_llm: true
 ---
 
@@ -165,7 +165,21 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - THREE files must be updated together: `apps/desktop/package.json`, `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`
 - CI reads the version from `tauri.conf.json` — missing update there breaks the release
 
-### 11. User-Supplied Images — Bounded BLOBs in SQLite
+### 11. Application Identity Is `nixus` — Never Reintroduce the Legacy Names
+
+The desktop app ships as bundle identifier `org.nixusapp.nixus`, crate `nixus` / lib `nixus_lib`, database `nixus.db`, log `nixus.log`, keyring service `nixus`, and backup `nixus-backup-<date>.db`. Pre-rename builds used `com.nbazinet.nkbaz-finance` / `nkbaz-finance*`.
+
+- **Never hardcode a database filename.** `datasets::DB_FILE_NAME` is the only declaration; `db::init_db`, `commands::backup`, `commands::get_db_status` and every test read it from there. A second literal is how the file the app creates and the file a backup targets drift apart
+- **The three `LEGACY_*` constants are the only permitted legacy literals** — `datasets::LEGACY_APP_IDENTIFIER`, `datasets::LEGACY_DB_FILE_NAME`, `credentials::LEGACY_KEYRING_SERVICE`. Two tests in `app_migration/tests_legacy_literals.rs` enforce this: one fails if a legacy literal appears in any non-allowlisted source file, the other if one is declared as a live (non-`LEGACY_`-prefixed) constant. Do not add allowlist entries to make a new literal pass
+- **`app_migration::migrate_from_legacy_identity` must stay first in `.setup()`** — ahead of `create_dir_all`, the tracing subscriber, `bootstrap_registry`, and any connection. It relocates the app-data root by atomic rename, which is only possible while the new root does not exist. It therefore cannot log, and returns a `MigrationOutcome` the caller logs once tracing is up
+- **Never add a recursive-copy fallback to the root move.** A copy is not atomic; a partial failure would leave two roots with no way to tell which holds the user's data. A rename that cannot happen is a hard error that leaves the legacy root intact and the migration retryable
+- **Only migrate dataset directories whose name passes `datasets::is_valid_dataset_id`.** The id is a path component, so a name that predicate rejects belongs to a dataset the product cannot open by any route; renaming a file inside it would mean trusting a name that never passed path-component validation
+- **Always checkpoint before renaming a database file.** Committed transactions can live only in the `-wal` sidecar, which is named after the file it belongs to, so renaming the main file alone strands them. `app_migration` checkpoints, closes explicitly (a drop's failure is unobservable), then refuses to rename if a `-wal` survives
+- **A collision is never resolved automatically, and is never a no-op.** Both a legacy and a Nixus name holding data — root or database — leaves the Nixus one live, the legacy one untouched, and logs a warning. `MigrationOutcome` carries `root_collision` and `database_collisions` as distinct fields precisely so a stranded legacy root can never be reported as "nothing to migrate". Never merge, copy, delete or overwrite either side
+- **Credential migration is convergent and destination-wins.** A populated destination is never overwritten, and the legacy copy it supersedes is discarded so the pair converges — without that delete, every launch would repeat the same migration and the repeated-launch no-op would be unreachable. An absent destination is filled and its legacy entry deleted only after the copy reads back identically. A keyring fault never blocks launch and never appears in a log line with its value
+- **These external identifiers are NOT part of the rename and must be preserved:** the `github.com/nickbazinet/nixus` repo and updater URLs, the `repo:nickbazinet/nixus:*` AWS OIDC subject, `support@nixus.nicolasbazinet.net`, and the `RETIRED_ORIGINS` regression guards in `apps/web`
+
+### 12. User-Supplied Images — Bounded BLOBs in SQLite
 The pattern established by `project_images` (`db/projects.rs`, `projects/image.rs`, `commands/projects.rs`, `useProjectImage`). Reuse it for any future per-entity image; do not invent a second mechanism.
 
 - **Store the bytes in SQLite, never as a sibling file.** The image lives in a BLOB column on a table keyed one-to-one on its owner with `ON DELETE CASCADE`. Every existing whole-dataset operation is a copy or a delete of the one `.db` file, so a BLOB is carried correctly for free: backup export (`commands/backup.rs` → `checkpoint_for_export` then `copy_db_to_path`), restore, dataset migration (`datasets.rs`, which copies *only* the main file — a `-wal`/`-shm` sidecar belongs to the source's open connection), and the delete-all-data wipe (the table must be added to `WIPE_TABLES` in `db/danger_zone.rs`, child-first, ahead of its parent). A sidecar file would silently miss all four
@@ -201,6 +215,7 @@ apps/desktop/src/
 ### Rust Backend Structure
 ```
 apps/desktop/src-tauri/src/
+├── app_migration/      # Pre-Nixus app-data/database relocation (runs first in .setup())
 ├── commands/
 │   └── {feature}.rs    # Tauri command handlers (thin orchestration only)
 ├── db/
@@ -395,4 +410,4 @@ export function useCreateExpense() {
 - Update when technology stack or conventions change
 - Remove rules that become obvious over time
 
-_Last Updated: 2026-08-26_
+_Last Updated: 2026-09-14_
