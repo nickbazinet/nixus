@@ -1945,7 +1945,7 @@ test.describe("Service History", () => {
     await expect(historyRow).toBeVisible();
     await expect(historyRow).toContainText("Engine oil & filter");
     await expect(historyRow).toContainText("16,000 km");
-    await expect(historyRow.locator("td").nth(1)).toHaveText(/^\w{3} \d{1,2}$/);
+    await expect(historyRow.locator("td").nth(0)).toHaveText(/^\w{3} \d{1,2}$/);
   });
 
   test("custom service log appears in history without updating managed tasks", async ({

@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
+  workers: 2,
   webServer: {
     command: 'pnpm run dev',
     port: 1420,
