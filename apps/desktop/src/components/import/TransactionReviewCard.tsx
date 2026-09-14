@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Alert,
   Badge,
@@ -9,20 +10,35 @@ import {
   DatePicker,
   Input,
   Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { cn } from "@/lib/utils";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import {
+  ImportCategorySelect,
+  type ImportSelectCategory,
+  type ImportSelectGroup,
+} from "@/components/import/ImportCategorySelect";
 import type { ProposedCategory } from "@/hooks/useImport";
 
-interface BudgetCategory {
-  id: number;
-  name: string;
+/** Mirrors the create path in `import.tsx`: a usable group id is reused, anything else means a
+ *  new group named after the proposal. A stated id that is not in the loaded groups falls back to
+ *  the group-less line, so the copy never names a group it cannot confirm. */
+function proposalMessage(
+  proposal: ProposedCategory,
+  groups: ImportSelectGroup[],
+  t: TFunction
+): string {
+  if (proposal.group_id !== null && proposal.group_id > 0) {
+    const existing = groups.find((group) => group.id === proposal.group_id);
+    return existing
+      ? t("import.proposedCategoryInGroup", { name: proposal.name, group: existing.name })
+      : t("import.proposedCategory", { name: proposal.name });
+  }
+  return t("import.proposedCategoryNewGroup", {
+    name: proposal.name,
+    group: proposal.group_name?.trim() || proposal.name,
+  });
 }
 
 interface TransactionReviewCardProps {
@@ -32,7 +48,8 @@ interface TransactionReviewCardProps {
   amountCents: number;
   date: string;
   suggestedCategoryId: number | null;
-  categories: BudgetCategory[];
+  categories: ImportSelectCategory[];
+  groups: ImportSelectGroup[];
   selectedCategoryId: number | null;
   onCategoryChange: (categoryId: number) => void;
   isResolved: boolean;
@@ -54,6 +71,7 @@ export function TransactionReviewCard({
   date,
   suggestedCategoryId,
   categories,
+  groups,
   selectedCategoryId,
   onCategoryChange,
   isResolved,
@@ -136,29 +154,16 @@ export function TransactionReviewCard({
                 <Label htmlFor={categoryId} className="sr-only">
                   {t("common.category")}
                 </Label>
-                <Select
-                  value={String(selectedCategoryId ?? suggestedCategoryId ?? "")}
-                  onValueChange={(val) => onCategoryChange(Number(val))}
-                  items={categories.map((cat) => ({
-                    value: String(cat.id),
-                    label: cat.name,
-                  }))}
-                >
-                  <SelectTrigger
-                    id={categoryId}
-                    data-testid="category-select"
-                    className="w-full"
-                  >
-                    <SelectValue placeholder={t("import.selectCategory")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map((cat) => (
-                      <SelectItem key={cat.id} value={String(cat.id)}>
-                        {cat.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <ImportCategorySelect
+                  id={categoryId}
+                  value={selectedCategoryId ?? suggestedCategoryId}
+                  onChange={onCategoryChange}
+                  categories={categories}
+                  groups={groups}
+                  placeholder={t("import.selectCategory")}
+                  testId="category-select"
+                  className="w-full"
+                />
               </div>
               <Badge
                 variant={isResolved ? "good" : "caution"}
@@ -177,9 +182,7 @@ export function TransactionReviewCard({
                 data-testid="propose-category-alert"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span>
-                    {t("import.proposedCategory", { name: proposedCategory.name })}
-                  </span>
+                  <span>{proposalMessage(proposedCategory, groups, t)}</span>
                   <Button
                     type="button"
                     size="sm"

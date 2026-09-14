@@ -1,9 +1,65 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
+const MOCK_GROUPS = [
+  { id: 1, name: "Essentials", sort_order: 1, created_at: "2026-01-01", is_deleted: false },
+  { id: 2, name: "Lifestyle", sort_order: 2, created_at: "2026-01-01", is_deleted: false },
+];
+
+// `Streaming` exists in both groups on purpose: the category name alone cannot identify which
+// row the AI picked, which is exactly what the parent-group context has to resolve.
 const MOCK_CATEGORIES = [
   { id: 1, group_id: 1, name: "Groceries", target_cents: 50000, sort_order: 1, created_at: "2026-01-01" },
   { id: 2, group_id: 1, name: "Dining Out", target_cents: 30000, sort_order: 2, created_at: "2026-01-01" },
   { id: 3, group_id: 2, name: "Shopping", target_cents: 20000, sort_order: 1, created_at: "2026-01-01" },
+  { id: 4, group_id: 1, name: "Streaming", target_cents: 1500, sort_order: 3, created_at: "2026-01-01" },
+  { id: 5, group_id: 2, name: "Streaming", target_cents: 4000, sort_order: 2, created_at: "2026-01-01" },
+];
+
+// Realistic worst case for the closed control: a long category name duplicated across two long
+// group names, with enough siblings that the popup has to scroll.
+const LONG_GROUPS = [
+  { id: 1, name: "Essentials & Fixed Monthly Costs", sort_order: 1, created_at: "2026-01-01", is_deleted: false },
+  { id: 2, name: "Lifestyle & Discretionary Spending", sort_order: 2, created_at: "2026-01-01", is_deleted: false },
+];
+
+const DUPLICATE_LONG_NAME = "Streaming & Digital Subscriptions";
+
+// `group_id` 99 exists in no group list the UI ever loads, standing in for a category whose group
+// the groups query does not return.
+const ORPHANED_CATEGORY = {
+  id: 7,
+  group_id: 99,
+  name: "Unfiled Parking Costs",
+  target_cents: 6000,
+  sort_order: 1,
+  created_at: "2026-01-01",
+};
+
+const LONG_CATEGORIES = [
+  ...[
+    "Rent & Property Taxes",
+    "Groceries & Household Supplies",
+    "Hydro, Gas & Water Utilities",
+    "Internet & Mobile Phone Plans",
+    "Car Insurance & Registration",
+    "Public Transit & Commuting",
+    "Prescriptions & Dental Care",
+    "Childcare & School Fees",
+    "Home & Tenant Insurance",
+  ].map((name, i) => ({ id: 11 + i, group_id: 1, name, target_cents: 10000, sort_order: i + 1, created_at: "2026-01-01" })),
+  { id: 41, group_id: 1, name: DUPLICATE_LONG_NAME, target_cents: 4000, sort_order: 10, created_at: "2026-01-01" },
+  ...[
+    "Restaurants & Takeout Delivery",
+    "Coffee Shops & Snacks",
+    "Clothing & Personal Accessories",
+    "Gym Membership & Fitness Classes",
+    "Concerts, Movies & Live Events",
+    "Books, Games & Hobby Supplies",
+    "Travel, Flights & Hotel Stays",
+    "Gifts & Charitable Donations",
+    "Haircuts & Personal Grooming",
+  ].map((name, i) => ({ id: 21 + i, group_id: 2, name, target_cents: 10000, sort_order: i + 1, created_at: "2026-01-01" })),
+  { id: 42, group_id: 2, name: DUPLICATE_LONG_NAME, target_cents: 4000, sort_order: 10, created_at: "2026-01-01" },
 ];
 
 async function setupTauriMock(
@@ -16,6 +72,16 @@ async function setupTauriMock(
     hostedAiCode?: string;
     /** Delays the code-less `import:error` event until after the typed rejection has landed. */
     hostedEventLast?: boolean;
+    /** Two flagged rows for one merchant, so the merchant-wide assign control renders. */
+    repeatMerchant?: boolean;
+    /** One line the AI could not read, so the manual-entry form renders. */
+    unreadable?: boolean;
+    /** Swaps in the long-name, scrolling-popup fixture above. */
+    longNames?: boolean;
+    /** `get_budget_groups` answers null, as an unmocked or still-loading groups query does. */
+    groupsUnavailable?: boolean;
+    /** Adds a category whose `group_id` matches no group in the list. */
+    orphanCategory?: boolean;
   }
 ) {
   const aiError = options?.aiError ?? false;
@@ -23,6 +89,11 @@ async function setupTauriMock(
   const proposeCategory = options?.proposeCategory ?? null;
   const hostedAiCode = options?.hostedAiCode ?? null;
   const hostedEventLast = options?.hostedEventLast ?? false;
+  const repeatMerchant = options?.repeatMerchant ?? false;
+  const unreadable = options?.unreadable ?? false;
+  const longNames = options?.longNames ?? false;
+  const groupsUnavailable = options?.groupsUnavailable ?? false;
+  const orphanCategory = options?.orphanCategory ?? false;
 
   await page.addInitScript(
     ({
@@ -31,7 +102,12 @@ async function setupTauriMock(
       proposeCategory,
       hostedAiCode,
       hostedEventLast,
+      repeatMerchant,
+      unreadable,
+      longNames,
+      groupsUnavailable,
       categories,
+      groups,
     }) => {
       type EventCallback = (event: { event: string; payload: unknown; id: number }) => void;
       const eventListeners: Record<string, EventCallback[]> = {};
@@ -142,30 +218,41 @@ async function setupTauriMock(
                       { merchant: "Coffee Shop", amount_cents: 550, date: "14 MAR", suggested_category_id: 1, confidence: 0.95 },
                       { merchant: "Gas Station", amount_cents: 4200, date: "2026-03-15", suggested_category_id: 2, confidence: 0.95 },
                     ]
-                  : proposeCategory
+                  : longNames
+                    ? [
+                        { merchant: "Netflix Monthly Subscription", amount_cents: 1899, date: "2026-03-10", suggested_category_id: 41, confidence: 0.95 },
+                        { merchant: "Spotify Family Plan Renewal", amount_cents: 2099, date: "2026-03-11", suggested_category_id: 41, confidence: 0.6 },
+                      ]
+                    : repeatMerchant
                     ? [
                         { merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
-                        {
-                          merchant: "Petsmart",
-                          amount_cents: 3200,
-                          date: "2026-03-12",
-                          suggested_category_id: null,
-                          confidence: 0.0,
-                          propose_category:
-                            proposeCategory === "existingGroup"
-                              ? { name: "Pet Supplies", group_id: 1, group_name: null }
-                              : { name: "Pet Supplies", group_id: null, group_name: "Pets" },
-                        },
+                        { merchant: "Uber Eats", amount_cents: 2150, date: "2026-03-11", suggested_category_id: null, confidence: 0.4 },
+                        { merchant: "Uber Eats", amount_cents: 1875, date: "2026-03-13", suggested_category_id: null, confidence: 0.4 },
                       ]
-                    : [
-                        { merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
-                        { merchant: "Uber Eats", amount_cents: 2150, date: "2026-03-11", suggested_category_id: 2, confidence: 0.6 },
-                      ];
+                    : proposeCategory
+                      ? [
+                          { merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
+                          {
+                            merchant: "Petsmart",
+                            amount_cents: 3200,
+                            date: "2026-03-12",
+                            suggested_category_id: null,
+                            confidence: 0.0,
+                            propose_category:
+                              proposeCategory === "existingGroup"
+                                ? { name: "Pet Supplies", group_id: 1, group_name: null }
+                                : { name: "Pet Supplies", group_id: null, group_name: "Pets" },
+                          },
+                        ]
+                      : [
+                          { merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
+                          { merchant: "Uber Eats", amount_cents: 2150, date: "2026-03-11", suggested_category_id: 2, confidence: 0.6 },
+                        ];
                 emitEvent("import:complete", {
                   transactions,
                   flagged_count: badDates ? 0 : 1,
                   auto_count: badDates ? 2 : 1,
-                  unreadable: [],
+                  unreadable: unreadable ? ["03/14 ????? 12.00"] : [],
                 });
               }, 300);
               return Promise.resolve(null);
@@ -174,8 +261,18 @@ async function setupTauriMock(
             case "get_all_budget_categories":
               return Promise.resolve(categories);
 
+            case "get_budget_groups":
+              return Promise.resolve(groupsUnavailable ? null : groups);
+
             case "create_budget_group": {
-              const newGroup = { id: 100, name: args.name, sort_order: 99, created_at: "2026-01-01" };
+              const newGroup = {
+                id: 100,
+                name: String(args.name),
+                sort_order: 99,
+                created_at: "2026-01-01",
+                is_deleted: false,
+              };
+              groups.push(newGroup);
               return Promise.resolve(newGroup);
             }
 
@@ -222,7 +319,16 @@ async function setupTauriMock(
       proposeCategory,
       hostedAiCode,
       hostedEventLast,
-      categories: MOCK_CATEGORIES,
+      repeatMerchant,
+      unreadable,
+      longNames,
+      groupsUnavailable,
+      categories: longNames
+        ? LONG_CATEGORIES
+        : orphanCategory
+          ? [...MOCK_CATEGORIES, ORPHANED_CATEGORY]
+          : MOCK_CATEGORIES,
+      groups: longNames ? LONG_GROUPS : MOCK_GROUPS,
     }
   );
 }
@@ -247,6 +353,50 @@ async function computedColorOfClass(page: Page, className: string): Promise<stri
     probe.remove();
     return color;
   }, className);
+}
+
+/** Group headings only exist inside the portalled popup, which lives outside the row markup. */
+function openSelectPopup(page: Page) {
+  return page.locator("[data-slot=select-content]");
+}
+
+function optionUnderGroup(page: Page, group: string, option: string) {
+  return openSelectPopup(page)
+    .getByRole("group", { name: group })
+    .getByRole("option", { name: option });
+}
+
+async function confirmedTransactions(page: Page) {
+  const args = (await page.evaluate(
+    () => (window as unknown as Record<string, unknown>).__LAST_CONFIRM_IMPORT_ARGS__
+  )) as { transactions: { merchant: string; budget_category_id: number }[] };
+  return args.transactions;
+}
+
+/** Read through `evaluate` rather than `boundingBox()`: a fully-yielded group caption is zero-width,
+ *  which Playwright reports as not visible and returns no box for. `clipped > 0` means the text is
+ *  ellipsised at its current width. */
+async function valueRowGeometry(trigger: Locator) {
+  return trigger.evaluate((el) => {
+    const measure = (testId: string) => {
+      const node = el.querySelector(`[data-testid=${testId}]`);
+      if (node === null) throw new Error(`missing ${testId}`);
+      const rect = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return {
+        width: rect.width,
+        right: rect.right,
+        clipped: node.scrollWidth - node.clientWidth,
+        fontSize: parseFloat(style.fontSize),
+        color: style.color,
+      };
+    };
+    return {
+      triggerRight: el.getBoundingClientRect().right,
+      name: measure("category-name"),
+      group: measure("category-group-context"),
+    };
+  });
 }
 
 // === Story 6.1 Tests ===
@@ -633,6 +783,475 @@ test.describe("Import Page — AI Category Proposals", () => {
 
     await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
     await expect(card.getByTestId("create-category-button")).toHaveCount(0);
+  });
+});
+
+// === Category group context ===
+
+test.describe("Import Page — Category Group Context", () => {
+  test("a flagged row names the parent group without opening the menu", async ({ page }) => {
+    // Given a flagged transaction the AI put in Dining Out, which lives under Essentials
+    await setupTauriMock(page);
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    // When the card renders with its menu closed
+    const select = page.getByTestId("transaction-review-card").getByTestId("category-select");
+
+    // Then both the category and its parent group are readable, the group in muted text
+    await expect(select).toContainText("Dining Out");
+    await expect(select).toContainText("Essentials");
+    const groupCaption = select.getByTestId("category-group-context");
+    await expect(groupCaption).toHaveText("Essentials");
+    await expect(groupCaption).toHaveCSS(
+      "color",
+      await computedColorOfClass(page, "text-ink-dim")
+    );
+  });
+
+  test("an auto-categorized row names the parent group without opening the menu", async ({
+    page,
+  }) => {
+    // Given the auto-categorized list is expanded
+    await setupTauriMock(page);
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+    await page.getByTestId("auto-categorized-toggle").click();
+
+    // When its row renders with the menu closed
+    const select = page.getByTestId("auto-category-select");
+
+    // Then the Groceries row states Essentials as its group
+    await expect(select).toContainText("Groceries");
+    await expect(select.getByTestId("category-group-context")).toHaveText("Essentials");
+  });
+
+  test("same-named categories sit under their own group heading and keep distinct ids", async ({
+    page,
+  }) => {
+    // Given Streaming exists in both Essentials and Lifestyle
+    await setupTauriMock(page);
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await card.getByTestId("category-select").click();
+
+    // Then each name is listed once under each group
+    await expect(optionUnderGroup(page, "Essentials", "Streaming")).toBeVisible();
+    await expect(optionUnderGroup(page, "Lifestyle", "Streaming")).toBeVisible();
+
+    // When the Lifestyle one is picked
+    await optionUnderGroup(page, "Lifestyle", "Streaming").click();
+
+    // Then the closed control identifies which Streaming was chosen
+    await expect(card.getByTestId("category-select")).toContainText("Streaming");
+    await expect(card.getByTestId("category-select").getByTestId("category-group-context")).toHaveText(
+      "Lifestyle"
+    );
+
+    // And the committed row carries that group's category id, not the same-named sibling's
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(sent.find((tx) => tx.merchant === "Uber Eats")?.budget_category_id).toBe(5);
+  });
+
+  test("bulk assignment lists categories under their group and applies that exact id", async ({
+    page,
+  }) => {
+    // Given every transaction is selected
+    await setupTauriMock(page);
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    // When the Essentials copy of Streaming is applied to all of them
+    await page.getByTestId("bulk-category-select").click();
+    await expect(optionUnderGroup(page, "Lifestyle", "Streaming")).toBeVisible();
+    await optionUnderGroup(page, "Essentials", "Streaming").click();
+
+    // Then the rows show that group, and both commit the Essentials id
+    const card = page.getByTestId("transaction-review-card");
+    await expect(card.getByTestId("category-select").getByTestId("category-group-context")).toHaveText(
+      "Essentials"
+    );
+
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(sent.map((tx) => tx.budget_category_id)).toEqual([4, 4]);
+  });
+
+  test("merchant-wide assignment lists categories under their group and applies that exact id", async ({
+    page,
+  }) => {
+    // Given one merchant repeats across two flagged rows
+    await setupTauriMock(page, { repeatMerchant: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const merchantGroup = page.getByTestId("merchant-group");
+    await expect(merchantGroup).toBeVisible();
+
+    // When the Lifestyle copy of Streaming is applied to the whole merchant
+    await merchantGroup.getByTestId("group-category-select").click();
+    await expect(optionUnderGroup(page, "Essentials", "Streaming")).toBeVisible();
+    await optionUnderGroup(page, "Lifestyle", "Streaming").click();
+    await merchantGroup.getByTestId("group-apply-button").click();
+
+    // Then the merchant control and both rows name Lifestyle
+    await expect(
+      merchantGroup.getByTestId("group-category-select").getByTestId("category-group-context")
+    ).toHaveText("Lifestyle");
+    const rowGroupCaptions = merchantGroup
+      .getByTestId("category-select")
+      .getByTestId("category-group-context");
+    await expect(rowGroupCaptions).toHaveText(["Lifestyle", "Lifestyle"]);
+
+    // And both rows commit the Lifestyle id
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(
+      sent.filter((tx) => tx.merchant === "Uber Eats").map((tx) => tx.budget_category_id)
+    ).toEqual([5, 5]);
+  });
+
+  test("the unreadable-line form lists categories under their group heading", async ({
+    page,
+  }) => {
+    // Given a line the AI could not read
+    await setupTauriMock(page, { unreadable: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const form = page.getByTestId("unreadable-line-form");
+    await expect(form).toBeVisible();
+
+    // When its category menu is opened and a same-named category is picked
+    await form.getByTestId("manual-category-select").click();
+    await expect(optionUnderGroup(page, "Lifestyle", "Streaming")).toBeVisible();
+    await optionUnderGroup(page, "Essentials", "Streaming").click();
+
+    // Then the closed control names the group it came from
+    await expect(
+      form.getByTestId("manual-category-select").getByTestId("category-group-context")
+    ).toHaveText("Essentials");
+  });
+
+  test("keyboard selection still crosses group boundaries and commits the landed id", async ({
+    page,
+  }) => {
+    // Given the flagged row's category control has focus
+    await setupTauriMock(page);
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await card.getByTestId("category-select").focus();
+
+    // When the menu is opened and walked to the last option with the keyboard alone
+    await page.keyboard.press("Enter");
+    await expect(openSelectPopup(page)).toBeVisible();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+
+    // Then it landed on Lifestyle's Streaming — the group wrapper did not trap traversal
+    await expect(card.getByTestId("category-select")).toContainText("Streaming");
+    await expect(
+      card.getByTestId("category-select").getByTestId("category-group-context")
+    ).toHaveText("Lifestyle");
+
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(sent.find((tx) => tx.merchant === "Uber Eats")?.budget_category_id).toBe(5);
+  });
+
+  test("every category stays selectable when the groups query returns nothing", async ({
+    page,
+  }) => {
+    // Given the groups query answers null, so no grouping data is available
+    await setupTauriMock(page, { groupsUnavailable: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await card.getByTestId("category-select").click();
+
+    // Then every category is still offered, ungrouped, with no heading invented for them
+    await expect(openSelectPopup(page).getByRole("option")).toHaveCount(MOCK_CATEGORIES.length);
+    await expect(openSelectPopup(page).getByRole("group")).toHaveCount(0);
+
+    // When one is picked
+    await openSelectPopup(page).getByRole("option", { name: "Shopping" }).click();
+
+    // Then it commits its own id and import is not blocked
+    await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
+    await expect(card.getByTestId("category-group-context")).toHaveCount(0);
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(sent.find((tx) => tx.merchant === "Uber Eats")?.budget_category_id).toBe(3);
+  });
+
+  test("a category whose group is missing from the list is still offered and still commits", async ({
+    page,
+  }) => {
+    // Given one category points at a group id the groups query never returns
+    await setupTauriMock(page, { orphanCategory: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    await card.getByTestId("category-select").click();
+
+    // Then the known groups still render as headings and the orphan is offered alongside them
+    await expect(openSelectPopup(page).getByRole("group")).toHaveCount(MOCK_GROUPS.length);
+    await expect(openSelectPopup(page).getByRole("option")).toHaveCount(
+      MOCK_CATEGORIES.length + 1
+    );
+
+    // When the orphan is picked
+    await openSelectPopup(page)
+      .getByRole("option", { name: ORPHANED_CATEGORY.name })
+      .click();
+
+    // Then it commits its own id and claims no parent group it cannot name
+    await expect(card.getByTestId("category-select")).toContainText(ORPHANED_CATEGORY.name);
+    await expect(card.getByTestId("category-group-context")).toHaveCount(0);
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(sent.find((tx) => tx.merchant === "Uber Eats")?.budget_category_id).toBe(
+      ORPHANED_CATEGORY.id
+    );
+  });
+
+  test("a flagged row with no category shows the placeholder, no group caption, and stays blocked", async ({
+    page,
+  }) => {
+    // Given a flagged row the AI could not assign a category to
+    await setupTauriMock(page, { proposeCategory: "existingGroup" });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+
+    // Then the placeholder stands in, no stale group caption appears, and confirm stays blocked
+    await expect(card.getByTestId("category-select")).toContainText("Select category...");
+    await expect(card.getByTestId("category-group-context")).toHaveCount(0);
+    await expect(card.getByTestId("review-row-status")).toHaveText("Needs a category");
+    await expect(page.getByTestId("confirm-import-button")).toBeDisabled();
+    await expect(page.getByText("Give every transaction you're adding a category first.")).toBeVisible();
+  });
+
+  test("an unreadable line with no category keeps its placeholder and its required blocking", async ({
+    page,
+  }) => {
+    // Given a line the AI could not read, with nothing entered yet
+    await setupTauriMock(page, { unreadable: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const form = page.getByTestId("unreadable-line-form");
+    const select = form.getByTestId("manual-category-select");
+
+    // Then its category control shows the placeholder and carries no group caption
+    await expect(select).toContainText("Select category...");
+    await expect(select.getByTestId("category-group-context")).toHaveCount(0);
+
+    // When a merchant is entered but the category is left empty
+    await form.getByLabel("Merchant").fill("Corner Store");
+
+    // Then confirm is blocked on the unfinished line, exactly as before
+    await expect(page.getByTestId("confirm-import-button")).toBeDisabled();
+    await expect(
+      page.getByText("Finish the lines Nixus couldn't read, or clear them.")
+    ).toBeVisible();
+  });
+
+  test("a proposal for an existing group names that group", async ({ page }) => {
+    // Given the AI proposes a category inside group 1
+    await setupTauriMock(page, { proposeCategory: "existingGroup" });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    // When the proposal renders
+    const alert = page.getByTestId("transaction-review-card").getByTestId("propose-category-alert");
+
+    // Then it names both the category and the group it would land in
+    await expect(alert).toContainText("Pet Supplies");
+    await expect(alert).toContainText("Essentials");
+  });
+
+  test("a proposal for a new group names the new group, and creating it keeps that context", async ({
+    page,
+  }) => {
+    // Given the AI proposes a category in a group that does not exist yet
+    await setupTauriMock(page, { proposeCategory: "newGroup" });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const card = page.getByTestId("transaction-review-card");
+    // Then the proposal names the group it would create
+    await expect(card.getByTestId("propose-category-alert")).toContainText("Pets");
+
+    // When the proposal is accepted
+    await card.getByTestId("create-category-button").click();
+    await expect(card.getByTestId("review-row-status")).toHaveText("Sorted");
+
+    // Then the row's closed control shows the created category under its new group
+    await expect(card.getByTestId("category-select")).toContainText("Pet Supplies");
+    await expect(
+      card.getByTestId("category-select").getByTestId("category-group-context")
+    ).toHaveText("Pets");
+  });
+
+  test("a long duplicate name keeps the category unclipped, yields the group caption first, and phrases the group for assistive tech", async ({
+    page,
+  }) => {
+    // Given a long category name duplicated across two long group names, at the supported minimum width
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await setupTauriMock(page, { longNames: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const trigger = page.getByTestId("transaction-review-card").getByTestId("category-select");
+
+    // When the closed control renders under width pressure
+    await expect(trigger.getByTestId("category-group-context")).toHaveText(
+      "Essentials & Fixed Monthly Costs"
+    );
+    const geometry = await valueRowGeometry(trigger);
+
+    // Then the category keeps its full text while the muted group caption is the one ellipsised
+    expect(geometry.name.clipped).toBeLessThanOrEqual(1);
+    expect(geometry.group.clipped).toBeGreaterThan(0);
+    expect(geometry.group.width).toBeGreaterThan(20);
+    expect(geometry.name.right).toBeLessThanOrEqual(geometry.triggerRight + 1);
+    expect(geometry.group.right).toBeLessThanOrEqual(geometry.triggerRight + 1);
+
+    // And the hierarchy is rendered, not merely classed
+    expect(geometry.group.fontSize).toBeLessThan(geometry.name.fontSize);
+    expect(geometry.group.color).toBe(await computedColorOfClass(page, "text-ink-dim"));
+
+    // And the visual caption is hidden from assistive tech, which gets a phrased line instead
+    await expect(trigger.getByTestId("category-group-context")).toHaveAttribute(
+      "aria-hidden",
+      "true"
+    );
+    await expect(trigger).toContainText("in Essentials & Fixed Monthly Costs");
+  });
+
+  test("a scrolling popup keeps its group heading pinned, and picking the duplicate commits that group's id", async ({
+    page,
+  }) => {
+    // Given the popup has more options than it can show at once
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await setupTauriMock(page, { longNames: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const trigger = page.getByTestId("transaction-review-card").getByTestId("category-select");
+    await trigger.click();
+    const popup = openSelectPopup(page);
+    await expect(popup).toBeVisible();
+    const overflow = await popup.evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(overflow).toBeGreaterThan(0);
+
+    // When the first group is scrolled well past the top of the popup
+    const pinned = await popup.evaluate((el) => {
+      el.scrollTop = 96;
+      const label = el.querySelector("[data-slot=select-group-label]")!;
+      const group = el.querySelector("[data-slot=select-group]")!;
+      const popupTop = el.getBoundingClientRect().top;
+      return {
+        scrollTop: el.scrollTop,
+        groupAbovePopup: popupTop - group.getBoundingClientRect().top,
+        labelOffsetFromTop: label.getBoundingClientRect().top - popupTop,
+        labelText: label.textContent,
+      };
+    });
+
+    // Then its heading is still sitting at the popup's top edge rather than scrolled away with it
+    expect(pinned.scrollTop).toBe(96);
+    expect(pinned.groupAbovePopup).toBeGreaterThan(40);
+    expect(pinned.labelOffsetFromTop).toBeLessThanOrEqual(8);
+    expect(pinned.labelText).toBe("Essentials & Fixed Monthly Costs");
+
+    // When the other group's copy of the duplicate name is picked
+    await optionUnderGroup(
+      page,
+      "Lifestyle & Discretionary Spending",
+      "Streaming & Digital Subscriptions"
+    ).click();
+
+    // Then the closed control names that group, and the commit carries that group's category id
+    await expect(trigger.getByTestId("category-group-context")).toHaveText(
+      "Lifestyle & Discretionary Spending"
+    );
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(
+      sent.find((tx) => tx.merchant === "Spotify Family Plan Renewal")?.budget_category_id
+    ).toBe(42);
+  });
+
+  test("the narrow bulk selector spends its width on the category and applies the exact id", async ({
+    page,
+  }) => {
+    // Given the bulk control and a long duplicate name, at the supported minimum width
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await setupTauriMock(page, { longNames: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+
+    const bulk = page.getByTestId("bulk-category-select");
+    await bulk.click();
+    await optionUnderGroup(
+      page,
+      "Essentials & Fixed Monthly Costs",
+      "Streaming & Digital Subscriptions"
+    ).click();
+
+    // When the closed narrow control renders
+    await expect(bulk.getByTestId("category-group-context")).toHaveText(
+      "Essentials & Fixed Monthly Costs"
+    );
+    const geometry = await valueRowGeometry(bulk);
+
+    // Then the category holds the primary space, the group caption yields, and neither overflows
+    expect(geometry.name.width).toBeGreaterThan(40);
+    expect(geometry.group.width).toBeGreaterThan(20);
+    expect(geometry.group.clipped).toBeGreaterThan(0);
+    expect(geometry.group.width).toBeLessThan(geometry.name.width / 2);
+    expect(geometry.name.right).toBeLessThanOrEqual(geometry.triggerRight + 1);
+    expect(geometry.group.right).toBeLessThanOrEqual(geometry.triggerRight + 1);
+    expect(geometry.group.fontSize).toBeLessThan(geometry.name.fontSize);
+
+    // And both rows commit the picked group's category id
+    await page.getByTestId("confirm-import-button").click();
+    await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
+    const sent = await confirmedTransactions(page);
+    expect(sent.map((tx) => tx.budget_category_id)).toEqual([41, 41]);
   });
 });
 

@@ -18,11 +18,6 @@ import {
   Input,
   Label,
   Money,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   SubStat,
 } from "@nixus/shared";
 import { MoneyInput } from "../components/shared/MoneyInput";
@@ -33,6 +28,10 @@ import { TransactionReviewCard } from "../components/import/TransactionReviewCar
 import { AutoCategorizedSummary } from "../components/import/AutoCategorizedSummary";
 import { MerchantGroup } from "../components/import/MerchantGroup";
 import {
+  ImportCategorySelect,
+  type ImportSelectGroup,
+} from "../components/import/ImportCategorySelect";
+import {
   clearImportDraft,
   readImportDraft,
   writeImportDraft,
@@ -41,7 +40,11 @@ import {
 } from "../components/import/importDraft";
 import { useImport, type ParsedTransaction, type ImportError } from "../hooks/useImport";
 import { useFormatCurrency } from "../hooks/useFormatCurrency";
-import { useCreateBudgetGroup, useCreateBudgetCategory } from "../hooks/useBudget";
+import {
+  useBudgetGroups,
+  useCreateBudgetGroup,
+  useCreateBudgetCategory,
+} from "../hooks/useBudget";
 import { useMaskProps } from "../contexts/ValuesVisibilityContext";
 import { queryKeys } from "../lib/constants";
 import {
@@ -214,6 +217,9 @@ function ReviewScreen({
     queryKey: queryKeys.allBudgetCategories,
     queryFn: () => invoke<BudgetCategory[]>("get_all_budget_categories"),
   });
+
+  const { data: loadedGroups } = useBudgetGroups();
+  const groups = useMemo<ImportSelectGroup[]>(() => loadedGroups ?? [], [loadedGroups]);
 
   const createGroup = useCreateBudgetGroup();
   const createCategory = useCreateBudgetCategory();
@@ -612,6 +618,7 @@ function ReviewScreen({
         >
           <BulkCategoryAssign
             categories={categories}
+            groups={groups}
             disabled={selectedIndices.length === 0}
             onApply={(categoryId) => applyCategoryTo(selectedIndices, categoryId)}
           />
@@ -621,6 +628,7 @@ function ReviewScreen({
       <AutoCategorizedSummary
         transactions={autoTransactions}
         categories={categories}
+        groups={groups}
         onCategoryChange={handleAutoCategoryChange}
         selectedSet={autoSelectedSet}
         onToggleSelect={(localIndex) => handleToggleSelect(autoGlobalIndices[localIndex])}
@@ -650,6 +658,7 @@ function ReviewScreen({
                   date={overrides?.date ?? tx.date}
                   suggestedCategoryId={tx.suggested_category_id}
                   categories={categories}
+                  groups={groups}
                   selectedCategoryId={selectedId}
                   onCategoryChange={(catId) =>
                     handleFlaggedCategoryChange(globalIndex, catId)
@@ -689,6 +698,7 @@ function ReviewScreen({
                 }
                 count={groupIndices.length}
                 categories={categories}
+                groups={groups}
                 onApplyToAll={(categoryId) => applyCategoryTo(groupIndices, categoryId)}
               >
                 {cards}
@@ -717,6 +727,7 @@ function ReviewScreen({
                 }
               }
               categories={categories}
+              groups={groups}
               touched={touched}
               onTouch={markTouched}
               onChange={(next) => {
@@ -768,46 +779,37 @@ function ReviewScreen({
 
 function BulkCategoryAssign({
   categories,
+  groups,
   disabled,
   onApply,
 }: {
   categories: BudgetCategory[];
+  groups: ImportSelectGroup[];
   disabled: boolean;
   onApply: (categoryId: number) => void;
 }) {
   const { t } = useTranslation();
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState<number | null>(null);
 
   return (
     <div className="flex items-center gap-2">
       <Label htmlFor="bulk-category" className="sr-only">
         {t("import.bulkCategoryLabel")}
       </Label>
-      <Select
+      <ImportCategorySelect
+        id="bulk-category"
         value={value}
-        onValueChange={(next) => {
-          if (next === null) return;
-          setValue(next);
-          onApply(Number(next));
+        onChange={(categoryId) => {
+          setValue(categoryId);
+          onApply(categoryId);
         }}
-        items={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}
-      >
-        <SelectTrigger
-          id="bulk-category"
-          disabled={disabled}
-          className="w-44"
-          data-testid="bulk-category-select"
-        >
-          <SelectValue placeholder={t("import.bulkApplyCategory")} />
-        </SelectTrigger>
-        <SelectContent>
-          {categories.map((cat) => (
-            <SelectItem key={cat.id} value={String(cat.id)}>
-              {cat.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        categories={categories}
+        groups={groups}
+        placeholder={t("import.bulkApplyCategory")}
+        testId="bulk-category-select"
+        className="w-80"
+        disabled={disabled}
+      />
     </div>
   );
 }
@@ -817,6 +819,7 @@ function UnreadableLineForm({
   originalLine,
   entry,
   categories,
+  groups,
   touched,
   onTouch,
   onChange,
@@ -825,6 +828,7 @@ function UnreadableLineForm({
   originalLine: string;
   entry: ManualEntry;
   categories: BudgetCategory[];
+  groups: ImportSelectGroup[];
   touched: Record<string, boolean>;
   onTouch: (field: string) => void;
   onChange: (entry: ManualEntry) => void;
@@ -892,30 +896,21 @@ function UnreadableLineForm({
             <Label htmlFor={categoryId} required>
               {t("common.category")}
             </Label>
-            <Select
-              value={String(entry.budget_category_id || "")}
-              onValueChange={(val) => {
+            <ImportCategorySelect
+              id={categoryId}
+              value={entry.budget_category_id}
+              onChange={(catId) => {
                 onTouch(categoryId);
-                onChange({ ...entry, budget_category_id: Number(val) });
+                onChange({ ...entry, budget_category_id: catId });
               }}
-              items={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}
-            >
-              <SelectTrigger
-                id={categoryId}
-                className="w-full"
-                aria-invalid={categoryError || undefined}
-                onBlur={() => onTouch(categoryId)}
-              >
-                <SelectValue placeholder={t("import.selectCategory")} />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.id} value={String(cat.id)}>
-                    {cat.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              categories={categories}
+              groups={groups}
+              placeholder={t("import.selectCategory")}
+              testId="manual-category-select"
+              className="w-full"
+              invalid={categoryError}
+              onBlur={() => onTouch(categoryId)}
+            />
             {categoryError && (
               <p className="text-caption text-over-ink">
                 {t("import.manualCategoryRequired")}
