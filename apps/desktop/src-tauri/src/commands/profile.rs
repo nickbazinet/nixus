@@ -27,7 +27,7 @@ fn resolve_profiles_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
 // touches no file" is structural rather than incidental. `async` because
 // `current_subject` may perform a token refresh. No `State<DbState>` and no
 // audit-log row: a file-backed store has neither a `Connection` nor an
-// `i64 entity_id`, and keeping profile values out of `nkbaz-finance.db` is what
+// `i64 entity_id`, and keeping profile values out of `nixus.db` is what
 // keeps them out of backups.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_user_profile(app: AppHandle) -> Result<Option<UserProfile>, AppError> {
@@ -155,7 +155,7 @@ fn encoded_avatar(stored: avatar_store::StoredAvatar) -> UserAvatar {
 // The avatar pair follows `get_user_profile`'s posture exactly: the `sub` is
 // resolved BEFORE the directory, so a no-session call opens no database, and
 // neither takes `State<DbState>` — an avatar belongs to the Cognito account, so
-// keeping it out of `nkbaz-finance.db` is what keeps it out of dataset backups
+// keeping it out of `nixus.db` is what keeps it out of dataset backups
 // and out of the dataset lifecycle. No audit-log row for the same reason
 // `save_user_profile` writes none: there is no `Connection` and no `i64 entity_id`
 // on this side, and the payload may never reach an audit row regardless.
