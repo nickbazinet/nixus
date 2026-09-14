@@ -1,6 +1,6 @@
 [package]
 name = "nixus"
-version = "0.3.18"
+version = "0.3.19"
 description = "Nixus"
 authors = ["you"]
 edition = "2021"
