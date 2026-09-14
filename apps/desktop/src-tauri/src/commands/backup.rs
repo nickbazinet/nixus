@@ -6,19 +6,13 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tracing::info;
 
-use crate::datasets;
+use crate::datasets::{self, dataset_db_path, DB_FILE_NAME};
 use crate::db::DbState;
 use crate::error::AppError;
-
-const DB_FILE_NAME: &str = "nkbaz-finance.db";
 
 #[derive(Serialize)]
 pub struct BackupResult {
     pub path: String,
-}
-
-fn dataset_db_path(root: &Path, id: &str) -> PathBuf {
-    datasets::dataset_dir_from_root(root, id).join(DB_FILE_NAME)
 }
 
 // A restore source that lives inside the app data root is only safe when it
@@ -88,7 +82,7 @@ pub async fn export_backup(app_handle: AppHandle) -> Result<Option<BackupResult>
 
     // Show native save dialog
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let default_name = format!("nkbaz-finance-backup-{}.db", today);
+    let default_name = format!("nixus-backup-{}.db", today);
 
     let file_path = app_handle
         .dialog()
@@ -284,10 +278,7 @@ mod tests {
     fn default_dataset_backs_up_the_database_at_the_root() {
         let root = Path::new("/app-data");
 
-        assert_eq!(
-            dataset_db_path(root, "default"),
-            root.join("nkbaz-finance.db")
-        );
+        assert_eq!(dataset_db_path(root, "default"), root.join(DB_FILE_NAME));
     }
 
     #[test]
@@ -296,7 +287,7 @@ mod tests {
 
         assert_eq!(
             dataset_db_path(root, "profile-b"),
-            root.join("datasets").join("profile-b").join("nkbaz-finance.db")
+            root.join("datasets").join("profile-b").join(DB_FILE_NAME)
         );
     }
 
@@ -316,8 +307,8 @@ mod tests {
         );
     }
 
-    // Pins the one literal this module and `init_db` must agree on: if either
-    // side renames the database file, the backup target stops existing.
+    // Pins the agreement between the shared `DB_FILE_NAME` and the file `init_db`
+    // actually creates: if either side moves, the backup target stops existing.
     #[test]
     fn dataset_db_path_matches_the_file_init_db_creates() {
         let root = TempDir::new().unwrap();
@@ -387,11 +378,56 @@ mod tests {
         let active_dir = datasets::dataset_dir_from_root(root, "profile-b");
 
         assert!(is_restorable_source(
-            Path::new("/Users/someone/Documents/nkbaz-finance-backup.db"),
+            Path::new("/Users/someone/Documents/nixus-backup.db"),
             &active_dir.join(DB_FILE_NAME),
             root,
             &active_dir
         ));
+    }
+
+    /// A backup exported before the rename carries the old filename forever, and the
+    /// user has no way to know the app renamed itself. The restore path must key off
+    /// the file's *contents*, never its name.
+    #[test]
+    fn a_backup_file_exported_under_the_legacy_name_is_still_restorable() {
+        let dir = TempDir::new().unwrap();
+        // Outside the app data root, exactly where an exported backup lives.
+        let legacy_backup = dir.path().join("nkbaz-finance-backup-2026-01-01.db");
+        let root = dir.path().join("app-data");
+
+        let source_dir = root.join("source");
+        let source = crate::db::init_db(&source_dir).expect("init_db succeeds");
+        checkpoint_for_export(&source).expect("checkpoint succeeds");
+        copy_db_to_path(&source_dir.join(DB_FILE_NAME), &legacy_backup).expect("copy succeeds");
+        drop(source);
+
+        validate_backup_file(&legacy_backup).expect("a legacy-named backup is still valid");
+
+        let target_dir = root.join("target");
+        let mut live = crate::db::init_db(&target_dir).expect("init_db succeeds");
+        live.execute(
+            "INSERT INTO budget_groups (id, name) VALUES (1, 'to be replaced')",
+            [],
+        )
+        .expect("seed");
+
+        let db_path = target_dir.join(DB_FILE_NAME);
+        assert!(is_restorable_source(
+            &legacy_backup,
+            &db_path,
+            &root,
+            &target_dir
+        ));
+        crate::db::backup::restore_from_file(&mut live, &db_path, &legacy_backup)
+            .expect("a legacy-named backup restores");
+
+        let groups: i64 = live
+            .query_row("SELECT COUNT(*) FROM budget_groups", [], |row| row.get(0))
+            .expect("count readable");
+        assert_eq!(
+            groups, 0,
+            "the legacy backup's contents must have replaced the live data"
+        );
     }
 
     /// Drives the production export path — `checkpoint_for_export`, then `copy_db_to_path`,
@@ -404,7 +440,7 @@ mod tests {
     fn an_exported_backup_restores_a_project_image_byte_identically() {
         let dir = TempDir::new().expect("temp dir");
         let db_path = dir.path().join(DB_FILE_NAME);
-        let backup_path = dir.path().join("nkbaz-finance-backup.db");
+        let backup_path = dir.path().join("nixus-backup.db");
 
         let mut conn = crate::db::init_db(dir.path()).expect("init_db succeeds");
         conn.execute(
@@ -468,7 +504,7 @@ mod tests {
     fn an_exported_backup_carries_no_avatar_data() {
         let root = TempDir::new().expect("temp dir");
         let db_path = root.path().join(DB_FILE_NAME);
-        let backup_path = root.path().join("nkbaz-finance-backup.db");
+        let backup_path = root.path().join("nixus-backup.db");
 
         let conn = crate::db::init_db(root.path()).expect("init_db succeeds");
 

@@ -45,7 +45,7 @@ pub struct DbStatus {
 
 #[tauri::command]
 pub fn get_db_status(app: AppHandle, state: State<DbState>) -> Result<DbStatus, AppError> {
-    let db_path = active_dataset_dir(&app)?.join("nkbaz-finance.db");
+    let db_path = active_dataset_dir(&app)?.join(crate::datasets::DB_FILE_NAME);
 
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),

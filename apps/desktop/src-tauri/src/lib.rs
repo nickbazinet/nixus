@@ -1,4 +1,5 @@
 mod ai;
+mod app_migration;
 mod avatar_store;
 mod budget;
 mod commands;
@@ -55,30 +56,97 @@ pub fn run() {
             let app_data_dir =
                 datasets::global_root(&app_handle).expect("failed to resolve app data dir");
 
+            // Strictly first: the whole app-data root is relocated from the
+            // pre-Nixus bundle identifier by an atomic rename, which is only
+            // possible while the new root does not exist yet. Creating the
+            // directory, opening a log file in it, or touching a database under it
+            // would each permanently strand the user's existing installation.
+            let migration = app_migration::migrate_from_legacy_identity(
+                &app_data_dir,
+                datasets::legacy_global_root(&app_handle)
+                    .expect("failed to resolve the legacy app data dir")
+                    .as_deref(),
+            )
+            .expect("failed to migrate existing application data");
+
             // Ensure data directory exists before tracing tries to write logs
             std::fs::create_dir_all(&app_data_dir)
                 .expect("failed to create app data dir");
 
             // Set up tracing with file output
-            let file_appender =
-                tracing_appender::rolling::daily(&app_data_dir, "nkbaz-finance.log");
+            let file_appender = tracing_appender::rolling::daily(&app_data_dir, "nixus.log");
             tracing_subscriber::fmt()
                 .with_writer(file_appender)
                 .with_env_filter(EnvFilter::new("info"))
                 .with_ansi(false)
                 .init();
 
+            // The migration must precede this subscriber, so its outcome travels
+            // back here to be reported rather than logged where it happened.
+            if migration.is_noop() {
+                info!("No legacy application data to migrate");
+            } else {
+                if let Some(moved_from) = &migration.root_moved_from {
+                    info!(
+                        "Moved existing application data from {:?} to {:?}",
+                        moved_from, app_data_dir
+                    );
+                }
+                if !migration.databases_renamed.is_empty() {
+                    info!(
+                        "Renamed {} legacy dataset database(s) to {}",
+                        migration.databases_renamed.len(),
+                        datasets::DB_FILE_NAME
+                    );
+                }
+                if let Some(legacy_root) = &migration.root_collision {
+                    tracing::warn!(
+                        "An entire pre-Nixus installation is still at {:?} because {:?} already exists; both were left untouched and the existing one is in use. Merging them needs a human decision",
+                        legacy_root,
+                        app_data_dir
+                    );
+                }
+                for dir in &migration.database_collisions {
+                    tracing::warn!(
+                        "{:?} holds both a legacy and a Nixus database; the Nixus one is in use and the legacy file was left untouched for review",
+                        dir
+                    );
+                }
+            }
+
             // AD-4: the registry must exist, or hard-fail visibly, before any UI
             // renders. A corrupt file crashes here rather than being recreated,
             // which would orphan every non-default dataset it recorded.
             // Placed after the tracing subscriber is initialized above, so a
             // warning about a skipped registry entry actually reaches the log file.
-            datasets::bootstrap_registry(&app_handle)
+            let registered_datasets = datasets::bootstrap_registry(&app_handle)
                 .expect("dataset registry is corrupt or unreadable");
 
             // Initialize OS keychain store (must happen before any credential access)
             keyring::use_native_store(false)
                 .expect("failed to initialize keychain store");
+
+            // After the keychain store above and before `init_ai_client` below, which
+            // is the first reader: a credential still under the legacy service would
+            // otherwise present as "AI not configured" for this whole run.
+            let credentials = credentials::migrate_legacy_ai_credentials(
+                &registered_datasets
+                    .iter()
+                    .map(|dataset| dataset.id.clone())
+                    .collect::<Vec<_>>(),
+            );
+            if !credentials.is_noop() {
+                info!(
+                    "Migrated AI credentials: {} moved, {} already present under the Nixus service",
+                    credentials.moved, credentials.superseded
+                );
+                for failure in &credentials.failures {
+                    tracing::warn!(
+                        "An AI credential could not be migrated and will be retried on the next launch ({})",
+                        failure
+                    );
+                }
+            }
 
             // Managed empty, then filled by the very same locked hot-swap the
             // picker will use later: startup gets no privileged path of its own.
@@ -92,7 +160,7 @@ pub fn run() {
             commands::datasets::select_dataset_now(&app_handle, datasets::DEFAULT_DATASET_ID)
                 .expect("failed to select the default dataset");
 
-            info!("nkbaz-finance started, database initialized");
+            info!("Nixus started, database initialized");
 
             // Initialize AI client synchronously using the active dataset's config.
             // The snapshot is taken in its own scope so the database lock is

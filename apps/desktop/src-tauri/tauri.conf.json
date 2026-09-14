@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nixus",
   "version": "0.3.18",
-  "identifier": "com.nbazinet.nkbaz-finance",
+  "identifier": "org.nixusapp.nixus",
   "build": {
     "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:1420",
@@ -38,6 +38,7 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Nixus",
     "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [

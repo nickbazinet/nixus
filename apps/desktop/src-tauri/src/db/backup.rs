@@ -110,7 +110,13 @@ fn roll_back(
     cause
 }
 
-fn remove_sidecars(db_path: &Path) {
+/// Removes a database's `-wal` and `-shm` sidecars, treating an absent one as done.
+///
+/// Shared with `app_migration`: a sidecar left beside a *renamed* main file is the
+/// same "database disk image is malformed" hazard this exists for on the restore
+/// path, because the next connection would attach a wal-index describing a file
+/// that is no longer there.
+pub(crate) fn remove_sidecars(db_path: &Path) {
     for suffix in ["-wal", "-shm"] {
         let sidecar = with_suffix(db_path, suffix);
         if let Err(e) = std::fs::remove_file(&sidecar) {
@@ -121,9 +127,9 @@ fn remove_sidecars(db_path: &Path) {
     }
 }
 
-/// Appends to the file name rather than replacing the extension, so `nkbaz-finance.db`
-/// yields `nkbaz-finance.db-wal` — the exact names SQLite uses.
-fn with_suffix(db_path: &Path, suffix: &str) -> PathBuf {
+/// Appends to the file name rather than replacing the extension, so `nixus.db`
+/// yields `nixus.db-wal` — the exact names SQLite uses.
+pub(crate) fn with_suffix(db_path: &Path, suffix: &str) -> PathBuf {
     let mut name = db_path.as_os_str().to_os_string();
     name.push(suffix);
     PathBuf::from(name)
@@ -192,7 +198,7 @@ mod tests {
     #[test]
     fn restore_replaces_data_and_cleans_up() {
         let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("nkbaz-finance.db");
+        let db_path = dir.path().join(crate::datasets::DB_FILE_NAME);
         let backup_path = dir.path().join("backup.db");
 
         let mut slot = open_live_db(&db_path);
@@ -217,7 +223,7 @@ mod tests {
     #[test]
     fn restore_succeeds_with_stale_sidecars_present() {
         let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("nkbaz-finance.db");
+        let db_path = dir.path().join(crate::datasets::DB_FILE_NAME);
         let backup_path = dir.path().join("backup.db");
 
         let mut slot = open_live_db(&db_path);
@@ -241,7 +247,7 @@ mod tests {
     #[test]
     fn restore_forward_migrates_older_backup() {
         let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("nkbaz-finance.db");
+        let db_path = dir.path().join(crate::datasets::DB_FILE_NAME);
         let backup_path = dir.path().join("backup-v18.db");
 
         let mut slot = open_live_db(&db_path);
@@ -268,7 +274,7 @@ mod tests {
     #[test]
     fn restore_rolls_back_when_backup_is_unreadable() {
         let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("nkbaz-finance.db");
+        let db_path = dir.path().join(crate::datasets::DB_FILE_NAME);
         let missing_path = dir.path().join("does-not-exist.db");
 
         let mut slot = open_live_db(&db_path);
@@ -288,7 +294,7 @@ mod tests {
     #[test]
     fn restore_leaves_working_connection_when_restored_file_is_invalid() {
         let dir = TempDir::new().expect("temp dir");
-        let db_path = dir.path().join("nkbaz-finance.db");
+        let db_path = dir.path().join(crate::datasets::DB_FILE_NAME);
         let garbage_path = dir.path().join("garbage.db");
         std::fs::write(&garbage_path, b"this is not a sqlite database at all")
             .expect("write garbage file");

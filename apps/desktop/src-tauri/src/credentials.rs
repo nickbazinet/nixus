@@ -5,23 +5,36 @@ use keyring_core::{Entry, Error};
 use crate::error::AppError;
 use crate::models::CognitoSession;
 
-const KEYRING_SERVICE: &str = "nkbaz-finance";
+const KEYRING_SERVICE: &str = "nixus";
 const KEYRING_AUTH_SERVICE: &str = "nixus-auth";
+
+/// The AI keyring service every build shipped before the Nixus rename.
+///
+/// A compatibility constant read only by `migrate_legacy_ai_credentials`: nothing
+/// else may reference it, and nothing ever writes under it again.
+const LEGACY_KEYRING_SERVICE: &str = "nkbaz-finance";
 
 /// Keyring service owning `dataset_id`'s AI-provider credentials (Story 34.2).
 ///
-/// Default keeps the bare `KEYRING_SERVICE` literal byte-for-byte so every
-/// entry written before datasets existed keeps loading with no migration; every
-/// other dataset gets its own suffixed service, which is what keeps one
+/// Default keeps the bare service name so its entries need no id in the service,
+/// and every other dataset gets its own suffixed service, which is what keeps one
 /// profile's provider key out of another's.
 ///
 /// Deliberately *not* applied to `KEYRING_AUTH_SERVICE`: the Cognito session is
 /// the machine's identity, not a profile's, and stays dataset-independent.
 fn ai_service(dataset_id: &str) -> String {
+    service_for(KEYRING_SERVICE, dataset_id)
+}
+
+fn legacy_ai_service(dataset_id: &str) -> String {
+    service_for(LEGACY_KEYRING_SERVICE, dataset_id)
+}
+
+fn service_for(base: &str, dataset_id: &str) -> String {
     if dataset_id == crate::datasets::DEFAULT_DATASET_ID {
-        KEYRING_SERVICE.to_string()
+        base.to_string()
     } else {
-        format!("{KEYRING_SERVICE}-{dataset_id}")
+        format!("{base}-{dataset_id}")
     }
 }
 
@@ -177,6 +190,151 @@ pub fn copy_ai_credentials(
     }
 
     Ok(copied)
+}
+
+/// What one credential-migration run did, for the caller to log.
+///
+/// A failure is carried as a message rather than returned as an `Err` because a
+/// keyring that cannot be reached must never block launch: the run is retried on
+/// the next one, and the app degrades to "AI not configured" in the meantime.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct CredentialMigration {
+    pub(crate) moved: usize,
+    pub(crate) superseded: usize,
+    pub(crate) failures: Vec<String>,
+}
+
+impl CredentialMigration {
+    pub(crate) fn is_noop(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Moves every AI-provider credential from the pre-Nixus keyring service to the
+/// Nixus one, for each of `dataset_ids`.
+///
+/// Convergent and per-entry, in both directions. An absent destination is filled
+/// and the legacy entry removed only after the copy reads back identically — the
+/// delete being the one irreversible step, it never runs on an unverified copy. A
+/// destination that *already* holds a value wins outright: it is never read into,
+/// never overwritten, and the now-redundant legacy entry beside it is discarded so
+/// the pair converges. Either way nothing is left for a later launch to find, which
+/// is what makes the second launch a genuine no-op rather than a silent repeat.
+///
+/// Nothing here can fail the caller: an unreachable or locked keyring yields a
+/// message, and whatever it prevented is retried on the next launch.
+pub(crate) fn migrate_legacy_ai_credentials(dataset_ids: &[String]) -> CredentialMigration {
+    let mut outcome = CredentialMigration::default();
+
+    for dataset_id in dataset_ids {
+        let legacy = legacy_ai_service(dataset_id);
+        let destination = ai_service(dataset_id);
+        if legacy == destination {
+            continue;
+        }
+
+        for name in AI_CREDENTIAL_NAMES {
+            match migrate_one_credential(&legacy, &destination, name) {
+                Ok(CredentialMove::Moved) => outcome.moved += 1,
+                Ok(CredentialMove::Superseded) => outcome.superseded += 1,
+                Ok(CredentialMove::Absent) => {}
+                // The name, never the value: a message is logged verbatim.
+                Err(message) => outcome.failures.push(format!("{name}: {message}")),
+            }
+        }
+    }
+
+    outcome
+}
+
+enum CredentialMove {
+    Moved,
+    Superseded,
+    Absent,
+}
+
+fn migrate_one_credential(
+    legacy: &str,
+    destination: &str,
+    name: &str,
+) -> Result<CredentialMove, String> {
+    let legacy_entry = Entry::new(legacy, name).map_err(|e| e.to_string())?;
+    if let Err(e) = legacy_entry.get_password() {
+        return match e {
+            Error::NoEntry => Ok(CredentialMove::Absent),
+            e => Err(e.to_string()),
+        };
+    }
+
+    let destination_entry = Entry::new(destination, name).map_err(|e| e.to_string())?;
+    match destination_entry.get_password() {
+        // Destination wins, and the redundant legacy copy goes. The destination is
+        // proven readable by this very branch before anything is deleted, so the
+        // discarded value is only ever a superseded duplicate — never the last copy.
+        Ok(_) => {
+            legacy_entry
+                .delete_credential()
+                .map_err(|e| e.to_string())?;
+            return Ok(CredentialMove::Superseded);
+        }
+        Err(Error::NoEntry) => {}
+        Err(e) => return Err(e.to_string()),
+    }
+
+    // Re-read rather than reuse the value from the presence check above: the write
+    // below is what the read-back is verified against, so both sides of the
+    // comparison must come from the same round of lookups.
+    let value = legacy_entry.get_password().map_err(|e| e.to_string())?;
+
+    // A fresh lookup, so a backend that accepted a write it did not durably store is
+    // caught before the legacy copy is destroyed.
+    store_verified_copy(&destination_entry, &value, || {
+        Entry::new(destination, name)
+            .and_then(|entry| entry.get_password())
+            .map_err(|e| e.to_string())
+    })?;
+
+    legacy_entry
+        .delete_credential()
+        .map_err(|e| e.to_string())?;
+
+    Ok(CredentialMove::Moved)
+}
+
+/// Writes `value` into `destination`, keeping it only if `read_back` proves it landed.
+///
+/// Rolling the write back on *any* unverified outcome — a mismatch as much as a read
+/// the keyring refused — is what keeps the destination-wins branch above honest. That
+/// branch treats "the destination has a value" as "the destination is authoritative",
+/// so a half-written or wrong value left behind here would be adopted as the winner on
+/// the next launch and would then cause the *legacy original* to be deleted as a
+/// redundant duplicate. Rolling back means the next launch sees an absent destination
+/// and retries the copy from a legacy source this function never touches.
+///
+/// The delete is best-effort: the error the caller needs is the verification failure
+/// that caused the rollback, not whatever went wrong undoing it. A rollback that
+/// itself fails leaves exactly the state a retry already handles.
+///
+/// `read_back` is injected for the same reason `clear_session_and_cache`'s `delete` is:
+/// the mock keyring store cannot be made to return a value different from the one just
+/// written, so a mismatch is unreachable through the real lookup and this ordering is
+/// only worth having if it is tested.
+fn store_verified_copy(
+    destination: &Entry,
+    value: &str,
+    read_back: impl FnOnce() -> Result<String, String>,
+) -> Result<(), String> {
+    destination.set_password(value).map_err(|e| e.to_string())?;
+
+    let verified = match read_back() {
+        Ok(stored) if stored == value => return Ok(()),
+        Ok(_) => "the copied credential did not read back identically".to_string(),
+        Err(e) => format!("the copied credential could not be read back: {e}"),
+    };
+
+    let _ = destination.delete_credential();
+
+    Err(verified)
 }
 
 fn auth_entry(account: &str) -> Result<Entry, AppError> {
@@ -530,6 +688,14 @@ mod tests {
         let _ = clear_cognito_session();
         for dataset_id in [DEFAULT_DATASET_ID, DATASET_A, DATASET_B] {
             clear_credentials(dataset_id);
+            // The mock store is process-global, so a legacy entry seeded by one test
+            // would otherwise be migrated by the next one.
+            let legacy = legacy_ai_service(dataset_id);
+            for name in AI_CREDENTIAL_NAMES {
+                if let Ok(entry) = Entry::new(&legacy, name) {
+                    let _ = entry.delete_credential();
+                }
+            }
         }
         g
     }
@@ -813,33 +979,69 @@ mod tests {
         assert!(load_cognito_session().unwrap().is_none());
     }
 
-    /// The zero-migration guarantee: Default's service name is the exact literal
-    /// every pre-dataset build wrote under, so entries already in a user's
-    /// keychain must still load through the dataset-aware readers. Asserted
-    /// against a raw `Entry` write rather than through `store_*` so a change to
-    /// the naming scheme cannot make the test agree with itself.
     #[test]
-    fn the_default_dataset_reads_the_pre_dataset_service_name_unchanged() {
+    fn the_default_dataset_owns_the_bare_nixus_service_name() {
+        assert_eq!(ai_service(DEFAULT_DATASET_ID), "nixus");
+    }
+
+    #[test]
+    fn a_non_default_dataset_gets_its_own_suffixed_service_name() {
+        assert_eq!(ai_service(DATASET_A), "nixus-local-1");
+    }
+
+    /// The legacy service is derived with the same suffixing rule as the live one, so a
+    /// non-default profile's pre-rename keys are looked for where they were actually
+    /// written rather than only under the bare legacy name.
+    #[test]
+    fn the_legacy_service_mirrors_the_live_suffixing_rule() {
+        assert_eq!(legacy_ai_service(DEFAULT_DATASET_ID), "nkbaz-finance");
+        assert_eq!(legacy_ai_service(DATASET_A), "nkbaz-finance-local-1");
+    }
+
+    /// Writes through raw `Entry` at the legacy service, never through `store_*`, so a
+    /// change to the naming scheme cannot make the test agree with itself.
+    fn seed_legacy(dataset_id: &str, values: &[(&str, &str)]) {
+        let service = legacy_ai_service(dataset_id);
+        for (name, value) in values {
+            Entry::new(&service, name)
+                .unwrap()
+                .set_password(value)
+                .unwrap();
+        }
+    }
+
+    fn legacy_value(dataset_id: &str, name: &str) -> Option<String> {
+        Entry::new(&legacy_ai_service(dataset_id), name)
+            .ok()?
+            .get_password()
+            .ok()
+    }
+
+    /// The upgrade path: keys written by every pre-rename build must be readable through
+    /// the ordinary dataset-aware readers after one launch, with no legacy entry left.
+    #[test]
+    fn every_legacy_credential_is_moved_to_the_nixus_service() {
         let _g = guard();
-        assert_eq!(ai_service(DEFAULT_DATASET_ID), "nkbaz-finance");
+        seed_legacy(
+            DEFAULT_DATASET_ID,
+            &[
+                ("openai_api_key", "sk-legacy"),
+                ("aws_access_key_id", "legacy-access"),
+                ("aws_secret_access_key", "legacy-secret"),
+                ("aws_region", "us-east-1"),
+            ],
+        );
+        assert_eq!(
+            load_openai_key(DEFAULT_DATASET_ID),
+            None,
+            "the fixture must start unreadable through the live service"
+        );
 
-        Entry::new("nkbaz-finance", "openai_api_key")
-            .unwrap()
-            .set_password("sk-legacy")
-            .unwrap();
-        Entry::new("nkbaz-finance", "aws_access_key_id")
-            .unwrap()
-            .set_password("legacy-access")
-            .unwrap();
-        Entry::new("nkbaz-finance", "aws_secret_access_key")
-            .unwrap()
-            .set_password("legacy-secret")
-            .unwrap();
-        Entry::new("nkbaz-finance", "aws_region")
-            .unwrap()
-            .set_password("us-east-1")
-            .unwrap();
+        let outcome = migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
 
+        assert_eq!(outcome.moved, AI_CREDENTIAL_NAMES.len());
+        assert_eq!(outcome.superseded, 0);
+        assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
         assert_eq!(
             load_openai_key(DEFAULT_DATASET_ID),
             Some("sk-legacy".to_string())
@@ -852,11 +1054,316 @@ mod tests {
                 "us-east-1".to_string()
             ))
         );
+        for name in AI_CREDENTIAL_NAMES {
+            assert_eq!(
+                legacy_value(DEFAULT_DATASET_ID, name),
+                None,
+                "{name} must not survive under the legacy service"
+            );
+        }
+    }
+
+    /// Each profile's keys live under its own suffixed service, so a migration that only
+    /// handled Default would silently strip every other profile's provider key.
+    #[test]
+    fn each_profiles_legacy_credentials_land_in_that_profiles_own_service() {
+        let _g = guard();
+        seed_legacy(DATASET_A, &[("openai_api_key", "sk-a")]);
+        seed_legacy(DATASET_B, &[("openai_api_key", "sk-b")]);
+
+        let outcome =
+            migrate_legacy_ai_credentials(&[DATASET_A.to_string(), DATASET_B.to_string()]);
+
+        assert_eq!(outcome.moved, 2);
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+        assert_eq!(load_openai_key(DATASET_B), Some("sk-b".to_string()));
     }
 
     #[test]
-    fn a_non_default_dataset_gets_its_own_suffixed_service_name() {
-        assert_eq!(ai_service(DATASET_A), "nkbaz-finance-local-1");
+    fn a_profile_with_no_legacy_credentials_migrates_nothing() {
+        let _g = guard();
+
+        let outcome =
+            migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string(), DATASET_A.to_string()]);
+
+        assert!(outcome.is_noop(), "{outcome:?}");
+    }
+
+    /// A populated destination always wins: it is never overwritten, and the legacy copy
+    /// it supersedes is discarded so the pair converges on the first run.
+    #[test]
+    fn a_populated_destination_is_never_overwritten_by_a_legacy_credential() {
+        let _g = guard();
+        store_openai_key(DEFAULT_DATASET_ID, "sk-current").unwrap();
+        seed_legacy(DEFAULT_DATASET_ID, &[("openai_api_key", "sk-legacy")]);
+
+        let outcome = migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
+
+        assert_eq!(outcome.moved, 0);
+        assert_eq!(outcome.superseded, 1);
+        assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+        assert_eq!(
+            load_openai_key(DEFAULT_DATASET_ID),
+            Some("sk-current".to_string()),
+            "a legacy credential must never overwrite a newer Nixus one"
+        );
+        assert_eq!(
+            legacy_value(DEFAULT_DATASET_ID, "openai_api_key"),
+            None,
+            "the superseded legacy copy must be removed, or the pair never converges"
+        );
+    }
+
+    /// The convergence guarantee for the collision path specifically: a second launch
+    /// must find nothing to do at all, rather than re-reporting the same collision
+    /// forever, and must still leave the winning destination value intact.
+    #[test]
+    fn a_superseded_collision_converges_so_the_second_launch_is_a_true_no_op() {
+        let _g = guard();
+        store_openai_key(DEFAULT_DATASET_ID, "sk-current").unwrap();
+        store_aws_credentials(DEFAULT_DATASET_ID, "access", "secret", "ca-central-1").unwrap();
+        seed_legacy(
+            DEFAULT_DATASET_ID,
+            &[
+                ("openai_api_key", "sk-legacy"),
+                ("aws_access_key_id", "legacy-access"),
+                ("aws_secret_access_key", "legacy-secret"),
+                ("aws_region", "us-east-1"),
+            ],
+        );
+
+        let first = migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
+        assert_eq!(first.superseded, AI_CREDENTIAL_NAMES.len());
+        assert_eq!(first.moved, 0);
+
+        let second = migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
+
+        assert!(
+            second.is_noop(),
+            "a converged pair must give a silent second launch, got {second:?}"
+        );
+        assert_eq!(
+            load_openai_key(DEFAULT_DATASET_ID),
+            Some("sk-current".to_string()),
+            "the winning destination value must survive both runs"
+        );
+        assert_eq!(
+            load_aws_credentials(DEFAULT_DATASET_ID),
+            Some((
+                "access".to_string(),
+                "secret".to_string(),
+                "ca-central-1".to_string()
+            ))
+        );
+    }
+
+    /// Mixed state, which is the realistic collision: the profile configured OpenAI after
+    /// the rename but its AWS keys are still only under the legacy service. The one gets
+    /// superseded, the other three get moved, and the next launch is silent.
+    #[test]
+    fn a_profile_with_one_colliding_and_three_absent_credentials_fully_converges() {
+        let _g = guard();
+        store_openai_key(DATASET_A, "sk-current").unwrap();
+        seed_legacy(
+            DATASET_A,
+            &[
+                ("openai_api_key", "sk-legacy"),
+                ("aws_access_key_id", "legacy-access"),
+                ("aws_secret_access_key", "legacy-secret"),
+                ("aws_region", "us-east-1"),
+            ],
+        );
+
+        let first = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(first.superseded, 1);
+        assert_eq!(first.moved, 3);
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-current".to_string()));
+        assert_eq!(
+            load_aws_credentials(DATASET_A),
+            Some((
+                "legacy-access".to_string(),
+                "legacy-secret".to_string(),
+                "us-east-1".to_string()
+            ))
+        );
+        for name in AI_CREDENTIAL_NAMES {
+            assert_eq!(
+                legacy_value(DATASET_A, name),
+                None,
+                "{name} must not survive under the legacy service"
+            );
+        }
+
+        assert!(
+            migrate_legacy_ai_credentials(&[DATASET_A.to_string()]).is_noop(),
+            "a fully converged profile must give a silent second launch"
+        );
+    }
+
+    /// Partial configuration is the ordinary case: a profile that only ever set up OpenAI
+    /// must not have its migration blocked by the three AWS names it never had.
+    #[test]
+    fn a_partially_configured_profile_migrates_only_what_exists() {
+        let _g = guard();
+        seed_legacy(DATASET_A, &[("openai_api_key", "sk-a")]);
+
+        let outcome = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(outcome.moved, 1);
+        assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+        assert_eq!(load_aws_credentials(DATASET_A), None);
+    }
+
+    #[test]
+    fn migrating_twice_is_a_no_op_the_second_time() {
+        let _g = guard();
+        seed_legacy(DATASET_A, &[("openai_api_key", "sk-a")]);
+
+        let first = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+        let second = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(first.moved, 1);
+        assert!(second.is_noop(), "{second:?}");
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+    }
+
+    /// A write that cannot be verified must leave no trace, because the destination-wins
+    /// branch treats any present destination value as authoritative — and then deletes
+    /// the legacy original as a redundant duplicate. A wrong value left behind would
+    /// therefore be promoted to the winner on the next launch and take the real
+    /// credential with it.
+    ///
+    /// The read-back is injected because the mock store cannot be made to hand back a
+    /// value different from the one just written; everything else here is the real mock
+    /// keyring, and the "next run" half drives the actual production entry point.
+    #[test]
+    fn an_unverified_destination_write_is_rolled_back_so_it_cannot_become_the_winner() {
+        let _g = guard();
+        seed_legacy(DATASET_A, &[("openai_api_key", "sk-legacy")]);
+        let destination = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
+
+        let error = store_verified_copy(&destination, "sk-legacy", || {
+            Ok("sk-corrupted-by-the-backend".to_string())
+        })
+        .expect_err("a mismatched read-back must fail");
+
+        assert!(
+            !error.contains("sk-legacy") && !error.contains("sk-corrupted"),
+            "a failure message must never carry a credential value: {error}"
+        );
+        assert_eq!(
+            load_openai_key(DATASET_A),
+            None,
+            "the unverified write must be rolled back, not left for the next launch"
+        );
+        assert_eq!(
+            legacy_value(DATASET_A, "openai_api_key"),
+            Some("sk-legacy".to_string()),
+            "the legacy source must survive a failed copy untouched"
+        );
+
+        // The next run must treat this as a fresh move from the surviving legacy source,
+        // never as a destination that already won.
+        let outcome = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(outcome.moved, 1);
+        assert_eq!(
+            outcome.superseded, 0,
+            "a rolled-back write must not be adopted as the destination-wins value"
+        );
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-legacy".to_string()));
+    }
+
+    /// A read-back the keyring refuses is just as unverified as a mismatch: the write may
+    /// or may not have landed, so it is rolled back on the same grounds.
+    #[test]
+    fn a_destination_write_whose_read_back_fails_is_also_rolled_back() {
+        let _g = guard();
+        seed_legacy(DATASET_A, &[("openai_api_key", "sk-legacy")]);
+        let destination = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
+
+        let error = store_verified_copy(&destination, "sk-legacy", || Err("locked".to_string()))
+            .expect_err("an unreadable read-back must fail");
+
+        assert!(
+            error.contains("locked"),
+            "the cause must be reported: {error}"
+        );
+        assert_eq!(load_openai_key(DATASET_A), None);
+        assert_eq!(
+            legacy_value(DATASET_A, "openai_api_key"),
+            Some("sk-legacy".to_string())
+        );
+    }
+
+    /// The success path of the same seam, so the rollback tests above cannot be passing
+    /// because the function simply never keeps anything.
+    #[test]
+    fn a_verified_destination_write_is_kept() {
+        let _g = guard();
+        let destination = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
+
+        store_verified_copy(&destination, "sk-a", || Ok("sk-a".to_string()))
+            .expect("a matching read-back must succeed");
+
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+    }
+
+    /// A keyring that refuses to answer must not cost the user their credential: the
+    /// legacy entry stays exactly where it is, the launch is not blocked, and the whole
+    /// move is retried next time.
+    #[test]
+    fn a_keyring_that_refuses_a_read_leaves_the_legacy_credential_in_place() {
+        let _g = guard();
+        seed_legacy(DATASET_A, &[("openai_api_key", "sk-a")]);
+
+        let entry = Entry::new(&legacy_ai_service(DATASET_A), "openai_api_key").unwrap();
+        let cred: &keyring_core::mock::Cred = entry
+            .as_any()
+            .downcast_ref()
+            .expect("the test store is the mock store");
+        cred.set_error(Error::Invalid(
+            "openai_api_key".to_string(),
+            "the keyring is locked".to_string(),
+        ));
+
+        let outcome = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(outcome.moved, 0);
+        assert_eq!(outcome.failures.len(), 1);
+        assert!(
+            !outcome.failures[0].contains("sk-a"),
+            "a failure message must never carry the credential value: {}",
+            outcome.failures[0]
+        );
+        assert_eq!(
+            load_openai_key(DATASET_A),
+            None,
+            "a refused read must not have produced a destination entry"
+        );
+
+        // The retry on the next launch completes the move the fault interrupted.
+        let retried = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+        assert_eq!(retried.moved, 1);
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+    }
+
+    /// The Cognito session is the machine's identity, not a profile's, and already lived
+    /// under `nixus-auth` before this rename — an AI-credential migration must not touch it.
+    #[test]
+    fn migrating_ai_credentials_leaves_the_cognito_session_alone() {
+        let _g = guard();
+        store_cognito_session(&sample()).unwrap();
+        seed_legacy(DEFAULT_DATASET_ID, &[("openai_api_key", "sk-legacy")]);
+
+        migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
+
+        let session = load_cognito_session()
+            .unwrap()
+            .expect("the migration must never sign the user out");
+        assert_eq!(session.access_token, "at");
     }
 
     #[test]

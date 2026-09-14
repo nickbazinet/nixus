@@ -471,7 +471,10 @@ mod tests {
     fn a_failure_before_the_swap_leaves_the_previous_dataset_untouched() {
         let lock = Mutex::new(active_tagged("previous"));
         let dir = TempDir::new().expect("temp dir");
-        std::fs::write(dir.path().join("nkbaz-finance.db"), b"not a sqlite file at all")
+        std::fs::write(
+            dir.path().join(crate::datasets::DB_FILE_NAME),
+            b"not a sqlite file at all",
+        )
             .expect("garbage db written");
 
         let outcome = (|| -> Result<(), AppError> {

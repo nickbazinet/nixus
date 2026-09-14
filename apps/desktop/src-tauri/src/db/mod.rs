@@ -90,7 +90,7 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
         message: format!("Failed to create app data directory: {}", e),
     })?;
 
-    let db_path = app_data_dir.join("nkbaz-finance.db");
+    let db_path = app_data_dir.join(crate::datasets::DB_FILE_NAME);
 
     open_configured(&db_path)
 }
@@ -188,7 +188,10 @@ mod tests {
     #[test]
     fn init_db_fails_when_the_datasets_database_file_is_not_sqlite() {
         let dir = TempDir::new().expect("temp dir");
-        std::fs::write(dir.path().join("nkbaz-finance.db"), b"not a sqlite file at all")
+        std::fs::write(
+            dir.path().join(crate::datasets::DB_FILE_NAME),
+            b"not a sqlite file at all",
+        )
             .expect("garbage db written");
 
         let error = init_db(dir.path()).expect_err("opening a non-database must fail");

@@ -36,6 +36,30 @@ pub(crate) fn global_root(app: &AppHandle) -> Result<PathBuf, AppError> {
     })
 }
 
+/// The bundle identifier every build shipped before the Nixus rename.
+///
+/// `app_data_dir()` is `<platform data dir>/<bundle identifier>` on all three
+/// desktop platforms, so changing the identifier moves the whole app-data root to
+/// a *sibling* directory. This literal is what lets `app_migration` find the data
+/// left at the old name — it is a compatibility constant, not a live identity, and
+/// must never be reused for anything the app creates.
+pub(crate) const LEGACY_APP_IDENTIFIER: &str = "com.nbazinet.nkbaz-finance";
+
+/// The pre-rename app-data root that sits beside `root`, or `None` when `root` has
+/// no parent to hold a sibling.
+///
+/// Deriving it from the *current* root rather than from a second `app_data_dir()`
+/// call is what guarantees the two are siblings on one volume, which is what makes
+/// the migration a rename instead of a copy.
+pub(crate) fn legacy_root_beside(root: &Path) -> Option<PathBuf> {
+    Some(root.parent()?.join(LEGACY_APP_IDENTIFIER))
+}
+
+/// The pre-rename app-data root for the running app, for `app_migration`.
+pub(crate) fn legacy_global_root(app: &AppHandle) -> Result<Option<PathBuf>, AppError> {
+    Ok(legacy_root_beside(&global_root(app)?))
+}
+
 /// Directory owning `id`'s dataset. Pure and lock-free.
 pub(crate) fn dataset_dir(app: &AppHandle, id: &str) -> Result<PathBuf, AppError> {
     Ok(dataset_dir_from_root(&global_root(app)?, id))
@@ -76,6 +100,11 @@ pub(crate) fn active_dataset_id(db: &DbState) -> Result<String, AppError> {
     active.id.clone().ok_or(AppError::NotConfigured)
 }
 
+/// The directory holding every non-default dataset. Named once so the migration's
+/// walk and `dataset_dir_from_root`'s resolution cannot disagree about where a
+/// profile lives.
+pub(crate) const DATASETS_SUBDIR: &str = "datasets";
+
 /// Default lives at the root itself; every other dataset under `datasets/<id>/`.
 ///
 /// Pure and lock-free, which is why it is exposed: callers already holding
@@ -87,7 +116,7 @@ pub(crate) fn dataset_dir_from_root(root: &Path, id: &str) -> PathBuf {
     if id == DEFAULT_DATASET_ID {
         root.to_path_buf()
     } else {
-        root.join("datasets").join(id)
+        root.join(DATASETS_SUBDIR).join(id)
     }
 }
 
@@ -121,7 +150,10 @@ fn registry_path(root: &Path) -> PathBuf {
 // `profile_store::validate_sub`'s charset — that one additionally allows `_` —
 // and kept separate on purpose: subs are opaque identity keys, ids are path
 // components.
-fn is_valid_dataset_id(id: &str) -> bool {
+//
+// Also the authority `app_migration` filters its filesystem walk by, so a
+// directory the picker can never open is a directory the migration never touches.
+pub(crate) fn is_valid_dataset_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
@@ -180,8 +212,8 @@ fn read_registry_for_update(path: &Path) -> Result<Vec<Dataset>, AppError> {
 
 /// Reads `root`'s registry, creating it with the single Default entry when absent.
 ///
-/// Idempotent, and identical on the upgrade path (an `nkbaz-finance.db` already at
-/// `root`) and a fresh install, because no sibling file is ever inspected. An
+/// Idempotent, and identical on the upgrade path (a `nixus.db` already at `root`)
+/// and a fresh install, because no sibling file is ever inspected. An
 /// existing-but-unparseable registry is a hard error rather than a re-bootstrap,
 /// which would orphan every non-default dataset recorded in it.
 fn bootstrap_registry_at(root: &Path) -> Result<Vec<Dataset>, AppError> {
@@ -423,7 +455,17 @@ pub(crate) fn create_dataset_at(root: &Path) -> Result<Dataset, AppError> {
 /// The database file every dataset directory owns. Only the main file is ever
 /// copied by a migration: a `-wal`/`-shm` sidecar belongs to the *source's* open
 /// connection, and carrying one across would hand the copy a stale log to replay.
-const DB_FILE_NAME: &str = "nkbaz-finance.db";
+///
+/// The one place this literal appears — `db::init_db`, `commands::backup` and
+/// `commands::get_db_status` all read it from here, so the file the app creates and
+/// the file the backup target resolves to cannot drift apart.
+pub(crate) const DB_FILE_NAME: &str = "nixus.db";
+
+/// The database file name every build shipped before the Nixus rename.
+///
+/// A compatibility constant consumed only by `app_migration`, for the same reason
+/// as `LEGACY_APP_IDENTIFIER`: nothing the app creates may ever use it again.
+pub(crate) const LEGACY_DB_FILE_NAME: &str = "nkbaz-finance.db";
 
 /// The database file `id` owns, resolved by explicit id so a caller can name a
 /// dataset other than the active one — which is exactly what Migrate's source is.
@@ -964,7 +1006,7 @@ mod tests {
     #[test]
     fn bootstrapping_never_touches_a_sibling_database_file() {
         let root = TempDir::new().expect("temp dir");
-        let db = root.path().join("nkbaz-finance.db");
+        let db = root.path().join(DB_FILE_NAME);
         std::fs::write(&db, b"pretend sqlite bytes").expect("db written");
 
         let entries = bootstrap_registry_at(root.path()).expect("bootstrap succeeds");
@@ -1200,7 +1242,7 @@ mod tests {
 
         let dir = dataset_dir_from_root(root.path(), &created.id);
         assert!(dir.is_dir(), "the dataset directory must exist at {dir:?}");
-        let db_path = dir.join("nkbaz-finance.db");
+        let db_path = dir.join(DB_FILE_NAME);
         assert!(db_path.is_file(), "a database must exist at {db_path:?}");
 
         let conn = rusqlite::Connection::open(&db_path).expect("database opens");
@@ -1658,9 +1700,9 @@ mod tests {
         let source = create_dataset_at(root.path()).expect("source created");
         let source_dir = dataset_dir_from_root(root.path(), &source.id);
         seed_db(&source_dir, "source");
-        std::fs::write(source_dir.join("nkbaz-finance.db-wal"), b"stale wal")
+        std::fs::write(source_dir.join(format!("{DB_FILE_NAME}-wal")), b"stale wal")
             .expect("sidecar written");
-        std::fs::write(source_dir.join("nkbaz-finance.db-shm"), b"stale shm")
+        std::fs::write(source_dir.join(format!("{DB_FILE_NAME}-shm")), b"stale shm")
             .expect("sidecar written");
 
         let migrated = migrate_to_cloud_dataset_at(root.path(), &source.id, SUB, EMAIL, || {
@@ -1669,12 +1711,12 @@ mod tests {
         .expect("migration succeeds");
 
         let dir = dataset_dir_from_root(root.path(), &migrated.id);
-        assert!(dir.join("nkbaz-finance.db").is_file());
+        assert!(dir.join(DB_FILE_NAME).is_file());
         assert!(
-            !dir.join("nkbaz-finance.db-wal").exists(),
+            !dir.join(format!("{DB_FILE_NAME}-wal")).exists(),
             "a copied -wal sidecar would be replayed over the copied database"
         );
-        assert!(!dir.join("nkbaz-finance.db-shm").exists());
+        assert!(!dir.join(format!("{DB_FILE_NAME}-shm")).exists());
     }
 
     /// The user switched profiles during the browser round-trip: the abort seam

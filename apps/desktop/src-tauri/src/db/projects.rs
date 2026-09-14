@@ -3649,7 +3649,7 @@ mod tests {
     #[test]
     fn repeated_image_upload_and_removal_cycles_do_not_grow_the_on_disk_footprint() {
         let (_dir, conn) = migrated_db_with_a_project();
-        let db_path = _dir.path().join("nkbaz-finance.db");
+        let db_path = _dir.path().join(crate::datasets::DB_FILE_NAME);
 
         // Read rather than assume: `open_configured` never sets a page size, so hardcoding 4096
         // would make the tolerance wrong on any build whose default differs.

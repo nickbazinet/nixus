@@ -595,7 +595,7 @@ mod tests {
         let root = Path::new("/app-data");
 
         assert!(!is_import_source_in_active_dataset(
-            &root.join("nkbaz-finance.db"),
+            &root.join(crate::datasets::DB_FILE_NAME),
             root,
             &active_imports(root, "default")
         ));
