@@ -58,7 +58,7 @@ pub async fn save_aws_credentials(
     let dataset_id = datasets::active_dataset_id(&db)?;
 
     // Build a temporary client to validate credentials before storing
-    let creds = Credentials::new(&access_key, &secret_key, None, None, "nkbaz-user");
+    let creds = Credentials::new(&access_key, &secret_key, None, None, "nixus-user");
     let aws_cfg = aws_config::defaults(BehaviorVersion::latest())
         .region(aws_config::Region::new(region.clone()))
         .credentials_provider(creds)
