@@ -1,26 +1,17 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { Button, Card, CardContent, Label } from "@nixus/shared";
 import {
-  Button,
-  Card,
-  CardContent,
-  Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@nixus/shared";
-
-interface BudgetCategory {
-  id: number;
-  name: string;
-}
+  ImportCategorySelect,
+  type ImportSelectCategory,
+  type ImportSelectGroup,
+} from "@/components/import/ImportCategorySelect";
 
 interface MerchantGroupProps {
   merchant: string;
   count: number;
-  categories: BudgetCategory[];
+  categories: ImportSelectCategory[];
+  groups: ImportSelectGroup[];
   onApplyToAll: (categoryId: number) => void;
   children: ReactNode;
 }
@@ -31,11 +22,12 @@ export function MerchantGroup({
   merchant,
   count,
   categories,
+  groups,
   onApplyToAll,
   children,
 }: MerchantGroupProps) {
   const { t } = useTranslation();
-  const [groupCategory, setGroupCategory] = useState("");
+  const [groupCategory, setGroupCategory] = useState<number | null>(null);
   const [applied, setApplied] = useState(false);
   const selectId = `group-category-${merchant.replace(/\W+/g, "-").toLowerCase()}`;
 
@@ -47,36 +39,27 @@ export function MerchantGroup({
             <Label htmlFor={selectId} className="mb-1">
               {t("import.groupHeading", { count, merchant })}
             </Label>
-            <Select
+            <ImportCategorySelect
+              id={selectId}
               value={groupCategory}
-              onValueChange={(val) => {
-                setGroupCategory(val ?? "");
+              onChange={(catId) => {
+                setGroupCategory(catId);
                 setApplied(false);
               }}
-              items={categories.map((cat) => ({
-                value: String(cat.id),
-                label: cat.name,
-              }))}
-            >
-              <SelectTrigger id={selectId} data-testid="group-category-select">
-                <SelectValue placeholder={t("import.selectCategory")} />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.id} value={String(cat.id)}>
-                    {cat.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              categories={categories}
+              groups={groups}
+              placeholder={t("import.selectCategory")}
+              testId="group-category-select"
+            />
           </div>
           <div className="flex flex-col items-start gap-1">
             <Button
               variant="outline"
-              disabled={groupCategory === ""}
-              aria-disabled={groupCategory === "" || undefined}
+              disabled={groupCategory === null}
+              aria-disabled={groupCategory === null || undefined}
               onClick={() => {
-                onApplyToAll(Number(groupCategory));
+                if (groupCategory === null) return;
+                onApplyToAll(groupCategory);
                 setApplied(true);
               }}
               data-testid="group-apply-button"
@@ -93,7 +76,7 @@ export function MerchantGroup({
               {t("import.groupApplied", { count })}
             </p>
           )}
-          {groupCategory === "" && (
+          {groupCategory === null && (
             <p className="w-full text-caption text-ink-dim">
               {t("import.groupPickFirst")}
             </p>

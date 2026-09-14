@@ -8,25 +8,21 @@ import {
   DatePicker,
   Input,
   Label,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { cn } from "@/lib/utils";
 import { focusRing } from "@nixus/shared";
+import {
+  ImportCategorySelect,
+  type ImportSelectCategory,
+  type ImportSelectGroup,
+} from "@/components/import/ImportCategorySelect";
 import type { ParsedTransaction } from "@/hooks/useImport";
-
-interface BudgetCategory {
-  id: number;
-  name: string;
-}
 
 interface AutoCategorizedSummaryProps {
   transactions: ParsedTransaction[];
-  categories: BudgetCategory[];
+  categories: ImportSelectCategory[];
+  groups: ImportSelectGroup[];
   onCategoryChange: (index: number, categoryId: number) => void;
   selectedSet: Set<number>;
   onToggleSelect: (index: number) => void;
@@ -40,6 +36,7 @@ interface AutoCategorizedSummaryProps {
 export function AutoCategorizedSummary({
   transactions,
   categories,
+  groups,
   onCategoryChange,
   selectedSet,
   onToggleSelect,
@@ -57,10 +54,6 @@ export function AutoCategorizedSummary({
   const selectedCount = globalIndices.filter((gi) => selectedSet.has(gi)).length;
   const allSelected = selectedCount === globalIndices.length;
   const someSelected = selectedCount > 0 && !allSelected;
-  const categoryItems = categories.map((cat) => ({
-    value: String(cat.id),
-    label: cat.name,
-  }));
 
   return (
     <Card flush data-testid="auto-categorized-summary">
@@ -180,30 +173,18 @@ export function AutoCategorizedSummary({
                       <Label htmlFor={categoryId} className="sr-only">
                         {t("common.category")}
                       </Label>
-                      <Select
-                        value={String(
-                          overrides?.suggested_category_id ??
-                            tx.suggested_category_id ??
-                            ""
-                        )}
-                        onValueChange={(val) => onCategoryChange(index, Number(val))}
-                        items={categoryItems}
-                      >
-                        <SelectTrigger
-                          id={categoryId}
-                          data-testid="auto-category-select"
-                          className="w-full"
-                        >
-                          <SelectValue placeholder={t("import.select")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {categories.map((cat) => (
-                            <SelectItem key={cat.id} value={String(cat.id)}>
-                              {cat.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <ImportCategorySelect
+                        id={categoryId}
+                        value={
+                          overrides?.suggested_category_id ?? tx.suggested_category_id ?? null
+                        }
+                        onChange={(catId) => onCategoryChange(index, catId)}
+                        categories={categories}
+                        groups={groups}
+                        placeholder={t("import.select")}
+                        testId="auto-category-select"
+                        className="w-full"
+                      />
                     </div>
                     {isDup && (
                       <Badge variant="caution" data-testid="duplicate-badge">
