@@ -244,10 +244,15 @@ The Finance module stores data locally in SQLite.
 
 **Engine**: SQLite via `rusqlite` with the `bundled` feature (compiles SQLite from source — no system dependency needed).
 
-**Location**: Tauri's app data directory (legacy bundle ID from the original project name):
+**Location**: Tauri's app data directory, named from the bundle identifier `org.nixusapp.nixus`:
 
-- macOS: `~/Library/Application Support/com.nbazinet.nkbaz-finance/nkbaz-finance.db`
-- Windows: `%APPDATA%/com.nbazinet.nkbaz-finance/nkbaz-finance.db`
+- macOS: `~/Library/Application Support/org.nixusapp.nixus/nixus.db`
+- Windows: `%APPDATA%/org.nixusapp.nixus/nixus.db`
+
+Only the Default profile's database sits at the root; every other profile owns
+`datasets/<id>/nixus.db`. On first launch after upgrading from a pre-Nixus build,
+`app_migration` moves the whole app-data root off the old bundle identifier and renames
+each database — see [Legacy data migration](#legacy-data-migration).
 
 **Configuration**: WAL journal mode and foreign keys enabled on every connection.
 
@@ -314,9 +319,52 @@ nixus/
 
 ---
 
+## Legacy data migration
+
+Builds before the Nixus rename shipped under the bundle identifier
+`com.nbazinet.nkbaz-finance` and stored `nkbaz-finance.db` / `nkbaz-finance.log`, with AI
+provider credentials under the `nkbaz-finance` keyring service. `src/app_migration/`
+converts an existing install on first launch, from `lib.rs`'s `.setup()`:
+
+1. **App-data root** — an atomic same-volume rename of the old identifier's directory onto
+   the new one. It runs *before* the new root is created, because a directory already at the
+   new name makes the rename impossible. There is deliberately no recursive-copy fallback: a
+   copy is not atomic, so a partial failure would leave two roots and no way to tell which
+   holds the user's data.
+2. **Databases** — each dataset directory's `nkbaz-finance.db` is renamed to `nixus.db`
+   after `PRAGMA wal_checkpoint(TRUNCATE)` and a clean close. The checkpoint is what makes
+   the rename lossless: committed transactions can live only in the `-wal` sidecar, which is
+   named after the file it belongs to. The walk covers the root (Default) plus each
+   `datasets/<id>/` whose name passes `datasets::is_valid_dataset_id` — a directory the app
+   could never resolve is left untouched rather than migrated.
+3. **Credentials** — `credentials::migrate_legacy_ai_credentials` moves each AI secret to
+   the `nixus` keyring service. Per-entry and convergent in both directions: an absent
+   destination is filled and the legacy entry deleted only after the copy reads back
+   identically, and an already-populated destination wins outright — never overwritten, with
+   the redundant legacy copy discarded so the pair converges and the next launch has nothing
+   to do. A keyring fault never blocks launch; whatever it prevented is retried next time.
+
+Every step is idempotent, so an interrupted run finishes on the next launch and a converged
+install is a true no-op. Collisions are never resolved automatically, and are reported
+distinctly from a no-op so they cannot be mistaken for "nothing to migrate":
+
+- **Root collision** (both app-data roots exist) — neither is merged, copied, deleted or
+  overwritten. The existing root stays live and a warning names the stranded legacy one on
+  every launch until a human resolves it.
+- **Database collision** (both filenames in one dataset directory) — the Nixus database
+  stays live, the legacy file is preserved untouched, and a warning names the directory.
+
+Two Rust tests guard the rename itself:
+`no_source_file_outside_the_allowlist_mentions_the_legacy_identity` fails if a legacy literal
+reappears in any file that is not an allowlisted compatibility constant, and
+`every_constant_carrying_a_legacy_literal_is_declared_as_legacy` fails if one is
+reintroduced as a live constant inside an allowlisted file.
+
+---
+
 ## Logging
 
-Log files are written to the app data directory using daily rolling files (`nkbaz-finance.log`). Log level defaults to `info`. Configured via `tracing-subscriber` with `env-filter`.
+Log files are written to the app data directory using daily rolling files (`nixus.log`). Log level defaults to `info`. Configured via `tracing-subscriber` with `env-filter`.
 
 ---
 
