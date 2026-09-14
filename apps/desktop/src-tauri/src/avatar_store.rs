@@ -1,7 +1,7 @@
 //! The subject-scoped store for one account's profile picture.
 //!
 //! Deliberately its own SQLite file, `profiles/avatars.db`, rather than a table in
-//! `nkbaz-finance.db`: an avatar belongs to the Cognito account, not to a dataset. Putting it in
+//! `nixus.db`: an avatar belongs to the Cognito account, not to a dataset. Putting it in
 //! the dataset would put it into every dataset backup, make it vanish when the user switches
 //! datasets, and let a restore from another machine's export overwrite the face of whoever is
 //! signed in here. It lives beside the demographic profile documents instead, under the same
