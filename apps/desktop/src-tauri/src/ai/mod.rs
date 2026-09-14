@@ -89,7 +89,7 @@ pub async fn init_ai_client(config: &AiConfigSnapshot, dataset_id: &str) -> AiSt
                         &secret_key,
                         None,
                         None,
-                        "nkbaz-keyring",
+                        "nixus-keyring",
                     );
                     let config = aws_config::defaults(BehaviorVersion::latest())
                         .region(aws_config::Region::new(region))
