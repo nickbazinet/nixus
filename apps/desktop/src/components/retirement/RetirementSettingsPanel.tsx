@@ -146,6 +146,7 @@ export function RetirementSettingsPanel({
           </Label>
           <MoneyInput
             id="retirement-government-pension"
+            className="w-full max-w-48"
             value={governmentPensionDraft}
             onChange={(cents) => {
               setGovernmentPensionDraft(cents);
@@ -179,6 +180,7 @@ export function RetirementSettingsPanel({
           </Label>
           <MoneyInput
             id="retirement-employer-pension"
+            className="w-full max-w-48"
             value={employerPensionDraft}
             onChange={(cents) => {
               setEmployerPensionDraft(cents);

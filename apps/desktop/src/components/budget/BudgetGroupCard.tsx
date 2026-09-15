@@ -352,6 +352,7 @@ export function BudgetGroupCard({
                     render={({ field }) => (
                       <MoneyInput
                         id={targetFieldId}
+                        className="w-full max-w-48"
                         value={field.value}
                         onChange={field.onChange}
                         onBlur={field.onBlur}
