@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection};
 
+use crate::db::aggregates;
 use crate::error::AppError;
 use crate::models::{BudgetSummary, DashboardBudgetCategory, SpendingByCategory};
 
@@ -22,11 +23,16 @@ pub fn get_budget_summary(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
+    let (average_monthly_income_cents, income_month_count) =
+        aggregates::get_trailing_income_average(conn)?;
+
     Ok(BudgetSummary {
         total_target_cents,
         total_spent_cents,
         remaining_cents: total_target_cents - total_spent_cents,
         month: format!("{}-{}", year_str, month_str),
+        average_monthly_income_cents,
+        income_month_count,
     })
 }
 
@@ -108,4 +114,127 @@ pub fn get_spending_breakdown(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(breakdown)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE budget_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL
+            );
+            CREATE TABLE budget_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL REFERENCES budget_groups(id),
+                name TEXT NOT NULL,
+                target_cents INTEGER NOT NULL DEFAULT 0,
+                deleted_at TEXT
+            );
+            CREATE TABLE expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                merchant TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL,
+                budget_category_id INTEGER NOT NULL REFERENCES budget_categories(id),
+                date TEXT NOT NULL
+            );
+            CREATE TABLE income_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                amount_cents INTEGER NOT NULL,
+                date TEXT NOT NULL
+            );
+            INSERT INTO budget_groups (name) VALUES ('Essentials');
+            INSERT INTO budget_categories (group_id, name, target_cents)
+                VALUES (1, 'Housing', 400000);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn budget_summary_totals_active_targets_and_the_requested_month_spend() {
+        // Given a $4,000 target and $1,500 spent in March 2026
+        let conn = setup_test_db();
+        conn.execute_batch(
+            "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date) VALUES
+             ('Landlord', 150000, 1, '2026-03-10'),
+             ('Landlord', 999999, 1, '2026-04-10');",
+        )
+        .unwrap();
+
+        // When the March summary is read
+        let summary = get_budget_summary(&conn, 2026, 3).unwrap();
+
+        // Then April's expense is excluded and the remainder is target minus spend
+        assert_eq!(summary.total_target_cents, 400000);
+        assert_eq!(summary.total_spent_cents, 150000);
+        assert_eq!(summary.remaining_cents, 250000);
+        assert_eq!(summary.month, "2026-03");
+    }
+
+    #[test]
+    fn budget_summary_averages_income_over_distinct_completed_months() {
+        // Given $18,000 of income across six completed months, one of them split over two entries
+        let conn = setup_test_db();
+        conn.execute_batch(
+            "INSERT INTO income_entries (amount_cents, date) VALUES
+             (150000, '2020-01-05'),
+             (150000, '2020-01-20'),
+             (300000, '2020-02-15'),
+             (300000, '2020-03-15'),
+             (300000, '2020-04-15'),
+             (300000, '2020-05-15'),
+             (300000, '2020-06-15');",
+        )
+        .unwrap();
+
+        // When the summary is read
+        let summary = get_budget_summary(&conn, 2026, 3).unwrap();
+
+        // Then the divisor is the six distinct months, not the seven rows
+        assert_eq!(summary.income_month_count, 6);
+        assert_eq!(summary.average_monthly_income_cents, 300000);
+
+        let wire = serde_json::to_value(&summary).unwrap();
+        assert_eq!(wire["income_month_count"], 6);
+        assert_eq!(wire["average_monthly_income_cents"], 300000);
+    }
+
+    #[test]
+    fn budget_summary_income_average_excludes_the_current_month() {
+        // Given two completed income months plus an outsized entry dated today
+        let conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO income_entries (amount_cents, date) VALUES
+             (100000, '2020-01-15'),
+             (200000, '2020-02-15'),
+             (9999999, date('now'))",
+            [],
+        )
+        .unwrap();
+
+        // When the summary is read
+        let summary = get_budget_summary(&conn, 2026, 3).unwrap();
+
+        // Then today's entry moves neither the count nor the average
+        assert_eq!(summary.income_month_count, 2);
+        assert_eq!(summary.average_monthly_income_cents, 150000);
+    }
+
+    #[test]
+    fn budget_summary_reports_no_income_history_as_zero() {
+        // Given no income entries at all
+        let conn = setup_test_db();
+
+        // When the summary is read
+        let summary = get_budget_summary(&conn, 2026, 3).unwrap();
+
+        // Then the count is zero, which is what keeps the warning off screen
+        assert_eq!(summary.income_month_count, 0);
+        assert_eq!(summary.average_monthly_income_cents, 0);
+    }
 }

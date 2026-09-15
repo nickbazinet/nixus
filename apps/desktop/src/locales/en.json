@@ -1168,6 +1168,8 @@
   "budget.overBudgetLabel": "Over budget",
   "budget.remainingCaption": "What's left of this month's targets — not your account balance.",
   "budget.overallMeterLabel": "Share of your monthly budget spent",
+  "budget.incomeWarningTitle": "Budget is above your usual income",
+  "budget.incomeWarningDescription": "Your targets add up to {{target}} a month, above the {{average}} you have averaged in income.",
   "budget.noGroupsTitle": "No budget groups yet",
   "budget.noGroupsDescription": "Group your spending the way you already think about it — Essentials, Home, Everyday.",
   "budget.addBudgetGroupDescription": "A group holds related categories. You can rename or remove it later.",

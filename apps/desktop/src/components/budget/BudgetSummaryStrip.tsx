@@ -1,6 +1,9 @@
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react";
+import { Plus, TriangleAlert } from "lucide-react";
 import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
   Badge,
   Button,
   Card,
@@ -13,10 +16,16 @@ import {
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useMaskProps, useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 
+// Six completed income months is the agreed floor for calling a history established. Anything
+// shorter would warn a user off a target from one unusual month.
+const ESTABLISHED_INCOME_MONTHS = 6;
+
 interface BudgetSummaryStripProps {
   totalTargetCents: number;
   totalSpentCents: number;
   remainingCents: number;
+  averageMonthlyIncomeCents: number;
+  incomeMonthCount: number;
   onAddExpense: () => void;
 }
 
@@ -24,6 +33,8 @@ export function BudgetSummaryStrip({
   totalTargetCents,
   totalSpentCents,
   remainingCents,
+  averageMonthlyIncomeCents,
+  incomeMonthCount,
   onAddExpense,
 }: BudgetSummaryStripProps) {
   const { t, i18n } = useTranslation();
@@ -36,6 +47,10 @@ export function BudgetSummaryStrip({
     spent: formatCurrency(totalSpentCents),
     target: formatCurrency(totalTargetCents),
   });
+
+  const budgetOutrunsIncome =
+    incomeMonthCount >= ESTABLISHED_INCOME_MONTHS &&
+    totalTargetCents > averageMonthlyIncomeCents;
 
   // The headline figure is the absolute amount with its own label rather than a signed number: a
   // leading minus on a 34px figure is the easiest thing on the surface to misread.
@@ -91,6 +106,21 @@ export function BudgetSummaryStrip({
             valueText={hidden ? t("common.amountHidden") : paceSentence}
             data-testid="budget-overall-progress"
           />
+        )}
+        {budgetOutrunsIncome && (
+          <Alert
+            variant="caution"
+            icon={<TriangleAlert className="text-caution" />}
+            data-testid="budget-income-warning"
+          >
+            <AlertTitle>{t("budget.incomeWarningTitle")}</AlertTitle>
+            <AlertDescription>
+              {t("budget.incomeWarningDescription", {
+                target: formatCurrency(totalTargetCents),
+                average: formatCurrency(averageMonthlyIncomeCents),
+              })}
+            </AlertDescription>
+          </Alert>
         )}
       </CardContent>
     </Card>

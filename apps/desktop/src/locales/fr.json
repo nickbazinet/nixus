@@ -1168,6 +1168,8 @@
   "budget.overBudgetLabel": "Budget dépassé",
   "budget.remainingCaption": "Ce qu'il reste sur vos objectifs du mois — ce n'est pas le solde de votre compte.",
   "budget.overallMeterLabel": "Part de votre budget mensuel dépensée",
+  "budget.incomeWarningTitle": "Budget supérieur à vos revenus habituels",
+  "budget.incomeWarningDescription": "Vos objectifs totalisent {{target}} par mois, au-dessus des {{average}} de revenus que vous avez enregistrés en moyenne.",
   "budget.noGroupsTitle": "Aucun groupe de budget",
   "budget.noGroupsDescription": "Regroupez vos dépenses comme vous y pensez déjà : essentiels, maison, quotidien.",
   "budget.addBudgetGroupDescription": "Un groupe rassemble des catégories liées. Vous pourrez le renommer ou le supprimer plus tard.",

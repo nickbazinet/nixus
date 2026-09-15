@@ -70,10 +70,7 @@ export function useDeleteIncomeSource() {
   return useMutation({
     mutationFn: (id: number) => invoke<void>("delete_income_source", { id }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.incomeSources });
-      queryClient.invalidateQueries({ queryKey: ["income-entries"] });
-      queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
-      queryClient.invalidateQueries({ queryKey: ["income-total"] });
+      invalidateIncomeEntryMutationQueries(queryClient);
       // Deleting a source cascades away its recurring templates in SQLite; without this the
       // recurring page keeps showing rows whose backing template is gone.
       queryClient.invalidateQueries({

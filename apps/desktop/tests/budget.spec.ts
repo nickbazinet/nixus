@@ -1,11 +1,30 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
+ * What `get_budget_summary` reports back. `seedTargetCents` pre-creates one category so a test
+ * can reach a known total target without driving the group and category forms first.
+ */
+interface SummaryFixture {
+  seedTargetCents: number;
+  averageMonthlyIncomeCents: number;
+  incomeMonthCount: number;
+}
+
+const NO_INCOME_HISTORY: SummaryFixture = {
+  seedTargetCents: 0,
+  averageMonthlyIncomeCents: 0,
+  incomeMonthCount: 0,
+};
+
+/**
  * Sets up Tauri IPC mocks so invoke() calls work in a browser context.
  * Maintains in-memory state for budget groups and categories.
  */
-async function setupTauriMock(page: Page) {
-  await page.addInitScript(() => {
+async function setupTauriMock(
+  page: Page,
+  fixture: SummaryFixture = NO_INCOME_HISTORY
+) {
+  await page.addInitScript((summary) => {
     const groups: MockGroup[] = [];
     const categories: MockCategory[] = [];
     let nextGroupId = 1;
@@ -24,6 +43,24 @@ async function setupTauriMock(page: Page) {
       target_cents: number;
       sort_order: number;
       created_at: string;
+    }
+
+    if (summary.seedTargetCents > 0) {
+      const groupId = nextGroupId++;
+      groups.push({
+        id: groupId,
+        name: "Essentials",
+        sort_order: 0,
+        created_at: new Date().toISOString(),
+      });
+      categories.push({
+        id: nextCategoryId++,
+        group_id: groupId,
+        name: "Housing",
+        target_cents: summary.seedTargetCents,
+        sort_order: 0,
+        created_at: new Date().toISOString(),
+      });
     }
 
     // Unlisten cleanup calls into this namespace; without it teardown throws.
@@ -252,6 +289,8 @@ async function setupTauriMock(page: Page) {
               total_spent_cents: 0,
               remaining_cents: totalTarget,
               month: `${args.year}-${String(args.month).padStart(2, "0")}`,
+              average_monthly_income_cents: summary.averageMonthlyIncomeCents,
+              income_month_count: summary.incomeMonthCount,
             });
           }
 
@@ -281,7 +320,7 @@ async function setupTauriMock(page: Page) {
       },
       convertFileSrc: (path: string) => path,
     };
-  });
+  }, fixture);
 }
 
 test.describe("Budget Page", () => {
@@ -936,5 +975,164 @@ test.describe("Budget Page", () => {
         "Could not save the new order. Your previous order was kept."
       )
     ).toBeVisible();
+  });
+});
+
+test.describe("Budget above recorded income", () => {
+  const TARGET_CENTS = 500000;
+  const LOWER_AVERAGE_CENTS = 420000;
+  const TARGET_TEXT = "$5,000.00";
+  const AVERAGE_TEXT = "$4,200.00";
+
+  async function openBudget(page: Page, fixture: SummaryFixture) {
+    await setupTauriMock(page, fixture);
+    await page.goto("/spending/budget");
+    await expect(page.getByTestId("budget-summary-strip")).toBeVisible();
+    if (fixture.seedTargetCents > 0) {
+      await expect(page.getByTestId("budget-overall-progress")).toBeVisible();
+    }
+  }
+
+  async function replaceTarget(page: Page, dollars: string) {
+    await page.getByTestId("category-target").click();
+    const input = page.getByTestId("category-target-input").locator("input");
+    await input.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await input.pressSequentially(dollars);
+    await input.press("Enter");
+  }
+
+  test("stays silent on five completed income months, one short of the threshold", async ({
+    page,
+  }) => {
+    // Given five completed income months and a target above their average
+    await openBudget(page, {
+      seedTargetCents: TARGET_CENTS,
+      averageMonthlyIncomeCents: LOWER_AVERAGE_CENTS,
+      incomeMonthCount: 5,
+    });
+
+    // Then no caution is raised — five months is not yet a history worth warning against
+    await expect(page.getByTestId("budget-income-warning")).toHaveCount(0);
+  });
+
+  test("cautions with both figures once six completed income months are on record", async ({
+    page,
+  }) => {
+    // Given six completed income months averaging below the target
+    await openBudget(page, {
+      seedTargetCents: TARGET_CENTS,
+      averageMonthlyIncomeCents: LOWER_AVERAGE_CENTS,
+      incomeMonthCount: 6,
+    });
+
+    // Then the caution names the target and the average, and sits below the overall meter
+    const warning = page.getByTestId("budget-income-warning");
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText("Budget is above your usual income");
+    await expect(warning).toContainText(TARGET_TEXT);
+    await expect(warning).toContainText(AVERAGE_TEXT);
+
+    // Advisory, not an error: an alert role would interrupt a user who is still editing targets.
+    await expect(warning).not.toHaveAttribute("role", "alert");
+
+    const meterThenWarning = await page.evaluate(() => {
+      const meter = document.querySelector('[data-testid="budget-overall-progress"]');
+      const alert = document.querySelector('[data-testid="budget-income-warning"]');
+      if (!meter || !alert) return false;
+      return Boolean(
+        meter.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    });
+    expect(meterThenWarning).toBe(true);
+
+    // Editing stays open — the warning is advice, so nothing on the surface is disabled.
+    await expect(page.getByTestId("add-expense-button")).toBeEnabled();
+    await expect(page.getByTestId("category-target")).toBeVisible();
+  });
+
+  test("stays silent when the target exactly equals the average", async ({
+    page,
+  }) => {
+    // Given six completed income months whose average is the target to the cent
+    await openBudget(page, {
+      seedTargetCents: TARGET_CENTS,
+      averageMonthlyIncomeCents: TARGET_CENTS,
+      incomeMonthCount: 6,
+    });
+
+    // Then nothing is flagged — meeting your income is not overshooting it
+    await expect(page.getByTestId("budget-income-warning")).toHaveCount(0);
+  });
+
+  test("stays silent when the target sits below the average", async ({ page }) => {
+    // Given six completed income months averaging above the target
+    await openBudget(page, {
+      seedTargetCents: TARGET_CENTS,
+      averageMonthlyIncomeCents: TARGET_CENTS + 100,
+      incomeMonthCount: 6,
+    });
+
+    // Then nothing is flagged
+    await expect(page.getByTestId("budget-income-warning")).toHaveCount(0);
+  });
+
+  test("shows the warning after a target is raised above the average", async ({
+    page,
+  }) => {
+    await openBudget(page, {
+      seedTargetCents: 400000,
+      averageMonthlyIncomeCents: LOWER_AVERAGE_CENTS,
+      incomeMonthCount: 6,
+    });
+    await expect(page.getByTestId("budget-income-warning")).toHaveCount(0);
+
+    await replaceTarget(page, "5000");
+
+    const warning = page.getByTestId("budget-income-warning");
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText(TARGET_TEXT);
+  });
+
+  test("clears the warning after a target is lowered below the average", async ({
+    page,
+  }) => {
+    await openBudget(page, {
+      seedTargetCents: TARGET_CENTS,
+      averageMonthlyIncomeCents: LOWER_AVERAGE_CENTS,
+      incomeMonthCount: 6,
+    });
+    await expect(page.getByTestId("budget-income-warning")).toBeVisible();
+
+    await replaceTarget(page, "4000");
+
+    await expect(page.getByTestId("budget-income-warning")).toHaveCount(0);
+    await expect(page.getByTestId("budget-summary-strip")).toContainText("$4,000.00");
+  });
+
+  test("keeps the caution visible with values hidden, exposing neither amount", async ({
+    page,
+  }) => {
+    // Given the privacy mask is on before the app boots
+    await page.addInitScript(() => {
+      window.localStorage.setItem("values-hidden", "true");
+    });
+
+    // When an eligible over-income target is rendered
+    await openBudget(page, {
+      seedTargetCents: TARGET_CENTS,
+      averageMonthlyIncomeCents: LOWER_AVERAGE_CENTS,
+      incomeMonthCount: 6,
+    });
+
+    // Then the caution still tells the user there is a problem…
+    const warning = page.getByTestId("budget-income-warning");
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText("Budget is above your usual income");
+
+    // …without either figure reaching the DOM, here or anywhere else on the surface.
+    await expect(warning).not.toContainText(TARGET_TEXT);
+    await expect(warning).not.toContainText(AVERAGE_TEXT);
+    await expect(page.getByText(TARGET_TEXT)).toHaveCount(0);
+    await expect(page.getByText(AVERAGE_TEXT)).toHaveCount(0);
   });
 });

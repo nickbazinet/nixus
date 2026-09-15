@@ -198,6 +198,10 @@ pub struct BudgetSummary {
     pub total_spent_cents: i64,
     pub remaining_cents: i64,
     pub month: String,
+    /// Lifetime — not windowed — average over completed income months; current month excluded.
+    pub average_monthly_income_cents: i64,
+    /// Distinct completed income months. The warning's eligibility gate.
+    pub income_month_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

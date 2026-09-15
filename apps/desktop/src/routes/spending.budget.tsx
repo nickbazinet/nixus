@@ -130,6 +130,8 @@ function BudgetPage() {
         totalTargetCents={summary?.total_target_cents ?? 0}
         totalSpentCents={summary?.total_spent_cents ?? 0}
         remainingCents={summary?.remaining_cents ?? 0}
+        averageMonthlyIncomeCents={summary?.average_monthly_income_cents ?? 0}
+        incomeMonthCount={summary?.income_month_count ?? 0}
         onAddExpense={() => openExpenseForm()}
       />
 

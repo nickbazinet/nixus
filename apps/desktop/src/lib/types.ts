@@ -151,6 +151,8 @@ export interface BudgetSummary {
   total_spent_cents: number;
   remaining_cents: number;
   month: string;
+  average_monthly_income_cents: number;
+  income_month_count: number;
 }
 
 export interface DashboardBudgetCategory {

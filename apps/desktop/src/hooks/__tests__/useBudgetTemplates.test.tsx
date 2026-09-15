@@ -148,6 +148,7 @@ describe("useBudgetTemplates", () => {
       ["spending-trends"],
       ["trends-insight"],
       ["all-budget-categories"],
+      ["budget-summary"],
     ]);
   });
 
@@ -325,6 +326,7 @@ describe("useBudgetTemplates", () => {
       ["spending-trends"],
       ["trends-insight"],
       ["all-budget-categories"],
+      ["budget-summary"],
     ]);
   });
 

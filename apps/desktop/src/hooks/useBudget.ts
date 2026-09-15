@@ -8,6 +8,7 @@ export function invalidateTrendsQueries(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ["spending-trends"] });
   queryClient.invalidateQueries({ queryKey: ["trends-insight"] });
   queryClient.invalidateQueries({ queryKey: queryKeys.allBudgetCategories });
+  queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
 }
 
 export function useBudgetGroups() {
