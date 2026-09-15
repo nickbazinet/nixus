@@ -14,6 +14,9 @@ const chevronByOrientation = {
   down: ChevronDown,
 } as const
 
+const standardNavTarget =
+  "z-10 before:absolute before:top-1/2 before:left-1/2 before:size-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']"
+
 function Calendar({
   className,
   classNames,
@@ -56,19 +59,17 @@ function Calendar({
         // keyboard-operable, screen-reader-announced control, sitting on top of its own label.
         dropdown: "absolute inset-0 cursor-pointer opacity-0",
         nav: isDropdown
-          ? // top-4 == p-3 plus the caption's pt-1, and size-7 arrows match the h-7 controls, so the
-            // arrows land on the caption row instead of colliding with it.
-            "absolute inset-x-3 top-4 flex items-center justify-between"
+          ? "absolute inset-x-1 top-4 flex items-center justify-between"
           : "flex items-center gap-1",
         button_previous: cn(
           buttonVariants({ variant: "outline" }),
           "size-7 bg-transparent p-0 text-ink-dim hover:text-ink",
-          !isDropdown && "absolute left-1 top-0"
+          !isDropdown && cn("absolute left-1 top-0", standardNavTarget)
         ),
         button_next: cn(
           buttonVariants({ variant: "outline" }),
           "size-7 bg-transparent p-0 text-ink-dim hover:text-ink",
-          !isDropdown && "absolute right-1 top-0"
+          !isDropdown && cn("absolute right-1 top-0", standardNavTarget)
         ),
         month_grid: "w-full border-collapse space-x-1",
         weekdays: "flex",
@@ -90,7 +91,8 @@ function Calendar({
         selected:
           "bg-brand text-brand-on hover:bg-brand-ink hover:text-brand-on focus:bg-brand focus:text-brand-on",
         today: "bg-brand-soft text-brand-ink",
-        outside: "day-outside text-ink-faint aria-selected:text-ink-faint",
+        outside:
+          "day-outside [&_button]:text-ink-faint aria-selected:[&_button]:text-brand-on",
         disabled: "text-ink-disabled",
         range_middle: "aria-selected:bg-brand-soft aria-selected:text-brand-ink",
         hidden: "invisible",

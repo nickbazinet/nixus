@@ -82,6 +82,7 @@ function DatePicker({
           captionLayout={captionLayout}
           startMonth={startMonth}
           endMonth={endMonth}
+          fixedWeeks
           autoFocus
         />
       </PopoverContent>

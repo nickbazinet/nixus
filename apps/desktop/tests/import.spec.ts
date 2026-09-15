@@ -1446,3 +1446,159 @@ test.describe("Import Page — Date Normalization", () => {
     ).toBe(pickedLabel);
   });
 });
+
+// === Date Picker Navigation ===
+
+const ARROW = {
+  previous: "Go to the Previous Month",
+  next: "Go to the Next Month",
+} as const;
+
+function calendarPopup(page: Page) {
+  return page.locator("[data-slot=popover-content]");
+}
+
+function calendarMonth(page: Page) {
+  return calendarPopup(page).locator("[role=status]");
+}
+
+function monthArrow(page: Page, direction: keyof typeof ARROW) {
+  return calendarPopup(page).getByRole("button", { name: ARROW[direction] });
+}
+
+async function openRowDatePicker(page: Page) {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await setupTauriMock(page);
+  await page.goto("/import");
+  await triggerUpload(page);
+  await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+  await page.getByTestId("auto-categorized-toggle").click();
+  await page.getByTestId("auto-date-input").locator("button").click();
+  await expect(page.getByRole("grid")).toBeVisible();
+  await expect
+    .poll(() => calendarPopup(page).evaluate((el) => getComputedStyle(el).transform))
+    .toBe("none");
+  await expect(calendarMonth(page)).toHaveText("March 2026");
+}
+
+/** Placement and both arrow boxes in one read, since a month step can move the popover. */
+function calendarGeometry(page: Page) {
+  return calendarPopup(page).evaluate((popup, arrow) => {
+    const box = (el: Element) => {
+      const b = el.getBoundingClientRect();
+      return {
+        top: b.top,
+        bottom: b.bottom,
+        left: b.left,
+        right: b.right,
+        width: Math.round(b.width),
+        height: Math.round(b.height),
+        centerX: b.left + b.width / 2,
+        centerY: b.top + b.height / 2,
+      };
+    };
+    const control = (label: string) => {
+      const el = popup.querySelector(`button[aria-label="${label}"]`);
+      if (el === null) throw new Error(`no "${label}" control`);
+      return box(el);
+    };
+    return {
+      side: popup.parentElement?.getAttribute("data-side") ?? null,
+      weeks: popup.querySelectorAll("tbody tr").length,
+      popup: box(popup),
+      previous: control(arrow.previous),
+      next: control(arrow.next),
+    };
+  }, ARROW);
+}
+
+type ArrowBox = Awaited<ReturnType<typeof calendarGeometry>>["previous"];
+
+test.describe("Import Page — Date Picker Navigation", () => {
+  test("either arrow answers a pointer outside its 28px control but inside its 44px target", async ({
+    page,
+  }) => {
+    // Given both arrows keep their compact visual box
+    await openRowDatePicker(page);
+    const opened = await calendarGeometry(page);
+    for (const arrow of [opened.previous, opened.next]) {
+      expect({ width: arrow.width, height: arrow.height }).toEqual({ width: 28, height: 28 });
+    }
+
+    // When the pointer lands 6px outside that box — beside each arrow, then below it
+    const edges: [keyof typeof ARROW, string, (a: ArrowBox) => [number, number]][] = [
+      ["previous", "February 2026", (a) => [a.centerX, a.top - 6]],
+      ["next", "March 2026", (a) => [a.centerX, a.top - 6]],
+      ["previous", "February 2026", (a) => [a.left - 6, a.centerY]],
+      ["next", "March 2026", (a) => [a.right + 6, a.centerY]],
+      ["previous", "February 2026", (a) => [a.centerX, a.bottom + 6]],
+      ["next", "March 2026", (a) => [a.centerX, a.bottom + 6]],
+    ];
+
+    // Then the calendar moves exactly one month in that direction each time
+    for (const [direction, month, point] of edges) {
+      const [x, y] = point((await calendarGeometry(page))[direction]);
+      await page.mouse.click(x, y);
+      await expect(calendarMonth(page)).toHaveText(month);
+    }
+  });
+
+  test("crossing months of different natural length keeps six rows and the opening side", async ({
+    page,
+  }) => {
+    // Given a picker opened above its field, at a height where the space below it
+    // fits a four-week month but not a six-week one
+    await openRowDatePicker(page);
+    const field = await page.getByTestId("auto-date-input").locator("button").boundingBox();
+    if (field === null) throw new Error("the date field has no box");
+    const opened = await calendarGeometry(page);
+    expect(opened.side).toBe("top");
+
+    // When navigation crosses February 2026 (four natural weeks) and May 2026 (six)
+    const visited = [opened];
+    for (const [direction, month] of [
+      ["previous", "February 2026"],
+      ["next", "March 2026"],
+      ["next", "April 2026"],
+      ["next", "May 2026"],
+    ] as const) {
+      await monthArrow(page, direction).click();
+      await expect(calendarMonth(page)).toHaveText(month);
+      if (month === "February 2026") {
+        await expect(calendarPopup(page).locator(".day-outside[aria-selected=true] button")).toHaveCSS(
+          "color",
+          "rgb(255, 255, 255)"
+        );
+      }
+      visited.push(await calendarGeometry(page));
+    }
+
+    // Then every month renders six rows at one height, on the side it opened,
+    // without crossing the field
+    for (const state of visited) {
+      expect(state.weeks).toBe(6);
+      expect(state.popup.height).toBe(opened.popup.height);
+      expect(state.side).toBe(opened.side);
+      expect(state.popup.bottom).toBeLessThanOrEqual(field.y);
+    }
+
+    const outsideDay = calendarPopup(page).locator(".day-outside button").first();
+    const insideDay = calendarPopup(page).locator("td:not(.day-outside) button").first();
+    await expect(outsideDay).not.toHaveCSS("color", await insideDay.evaluate((day) => getComputedStyle(day).color));
+  });
+
+  test("keyboard activation still moves one month and leaves focus on the arrow", async ({
+    page,
+  }) => {
+    // Given the previous-month control has keyboard focus
+    await openRowDatePicker(page);
+    await monthArrow(page, "previous").focus();
+
+    // When it is activated from the keyboard
+    await page.keyboard.press("Enter");
+
+    // Then the calendar steps back one month and the control keeps focus
+    await expect(calendarMonth(page)).toHaveText("February 2026");
+    await expect(monthArrow(page, "previous")).toBeFocused();
+  });
+});

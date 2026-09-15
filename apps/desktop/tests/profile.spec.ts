@@ -2534,3 +2534,49 @@ test.describe("account trigger geometry", () => {
     expect(centred.above).toBeGreaterThan(0);
   });
 });
+
+test.describe("/profile birth-date picker", () => {
+  test("the dropdown caption keeps its layout and controls, and shares the six-week grid", async ({
+    page,
+  }) => {
+    // Given the one date field whose caption is month/year dropdowns
+    await setupTauriMock(page, { session: LOGGED_IN, profile: SAVED_PROFILE });
+    await page.goto("/profile");
+    const trigger = page.getByTestId("profile-birth-date").getByRole("button").first();
+    await expect(trigger).toContainText("Mar 14, 1985");
+
+    // When it opens
+    await trigger.click();
+    const popup = page.locator("[data-slot=popover-content]");
+    await expect(page.getByRole("grid")).toBeVisible();
+    await expect
+      .poll(() => popup.evaluate((el) => getComputedStyle(el).transform))
+      .toBe("none");
+    await popup
+      .getByRole("combobox", { name: "Choose the Month" })
+      .selectOption({ label: "September" });
+    await expect(popup.locator("[role=status]")).toHaveText("September 1985");
+
+    // Then both dropdowns are there, and both arrows stay compact on the caption
+    // row and clear of them
+    await expect(popup.getByRole("combobox")).toHaveCount(2);
+    const arrows = await popup.evaluate((el) => {
+      const dropdowns = el.querySelector("select")?.parentElement?.parentElement;
+      if (dropdowns === undefined || dropdowns === null) throw new Error("no dropdown caption");
+      const row = dropdowns.getBoundingClientRect();
+      return Array.from(el.querySelectorAll("nav button")).map((arrow) => {
+        const b = arrow.getBoundingClientRect();
+        return {
+          size: [Math.round(b.width), Math.round(b.height)],
+          onCaptionRow: b.top + b.height / 2 > row.top && b.top + b.height / 2 < row.bottom,
+          clearOfDropdowns: b.right <= row.left || b.left >= row.right,
+        };
+      });
+    });
+    const compactAndClear = { size: [28, 28], onCaptionRow: true, clearOfDropdowns: true };
+    expect(arrows).toEqual([compactAndClear, compactAndClear]);
+
+    // And a month that naturally spans five week rows still renders six
+    await expect(popup.locator("tbody tr")).toHaveCount(6);
+  });
+});
