@@ -4,7 +4,8 @@ use crate::db::account::{self as account_db, BalanceChange, CashFlowKind};
 use crate::error::AppError;
 use crate::models::{
     CreateIncomeEntryInput, CreateIncomeSourceInput, IncomeEntry, IncomeSource,
-    IncomeSourceWithLastEntry, IncomeTotal, UpdateIncomeEntryInput, UpdateIncomeSourceInput,
+    IncomeSourceWithLastEntry, IncomeSourceYearTotal, IncomeTotal, UpdateIncomeEntryInput,
+    UpdateIncomeSourceInput,
 };
 
 const VALID_INCOME_TYPES: &[&str] = &["employment", "freelance", "investment", "other"];
@@ -371,6 +372,33 @@ pub fn get_income_total(conn: &Connection, year: i32, month: u32) -> Result<Inco
     })
 }
 
+pub fn get_income_source_year_totals(
+    conn: &Connection,
+    year: i32,
+) -> Result<Vec<IncomeSourceYearTotal>, AppError> {
+    let start_date = format!("{:04}-01-01", year);
+    let end_date = format!("{:04}-01-01", year + 1);
+
+    let mut stmt = conn.prepare(
+        "SELECT source_id, SUM(amount_cents)
+         FROM income_entries
+         WHERE date >= ?1 AND date < ?2
+         GROUP BY source_id",
+    )?;
+
+    let totals = stmt
+        .query_map(params![start_date, end_date], |row| {
+            Ok(IncomeSourceYearTotal {
+                source_id: row.get(0)?,
+                year,
+                total_cents: row.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(totals)
+}
+
 fn get_income_source_by_id(conn: &Connection, id: i64) -> Result<IncomeSource, AppError> {
     conn.query_row(
         "SELECT id, name, income_type, created_at, updated_at FROM income_sources WHERE id = ?1",
@@ -498,6 +526,81 @@ mod tests {
         assert_eq!(income_entry_count(&conn), 0);
     }
 
+    #[test]
+    fn year_totals_sum_every_selected_year_entry_and_exclude_other_years() {
+        let conn = income_test_db();
+        insert_dated_entry(&conn, 1, 520_000, "2026-03-15");
+        insert_dated_entry(&conn, 1, 200_000, "2026-03-31");
+        insert_dated_entry(&conn, 1, 90_000, "2025-11-02");
+
+        let totals = get_income_source_year_totals(&conn, 2026).unwrap();
+
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].source_id, 1);
+        assert_eq!(totals[0].year, 2026);
+        assert_eq!(totals[0].total_cents, 720_000);
+    }
+
+    #[test]
+    fn year_totals_omit_a_source_with_no_entries_in_the_selected_year() {
+        let conn = income_test_db();
+        insert_dated_entry(&conn, 1, 520_000, "2026-03-15");
+        insert_dated_entry(&conn, 2, 90_000, "2025-11-02");
+
+        let totals = get_income_source_year_totals(&conn, 2026).unwrap();
+
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].source_id, 1);
+    }
+
+    #[test]
+    fn year_totals_are_aggregated_per_source() {
+        let conn = income_test_db();
+        insert_dated_entry(&conn, 1, 520_000, "2026-03-15");
+        insert_dated_entry(&conn, 2, 125_000, "2026-07-01");
+        insert_dated_entry(&conn, 2, 75_000, "2026-08-01");
+
+        let mut totals = get_income_source_year_totals(&conn, 2026).unwrap();
+        totals.sort_by_key(|total| total.source_id);
+
+        assert_eq!(totals.len(), 2);
+        assert_eq!(totals[0].total_cents, 520_000);
+        assert_eq!(totals[1].total_cents, 200_000);
+    }
+
+    #[test]
+    fn year_totals_use_a_half_open_range_at_both_year_boundaries() {
+        let conn = income_test_db();
+        insert_dated_entry(&conn, 1, 100_000, "2025-12-31");
+        insert_dated_entry(&conn, 1, 200_000, "2026-01-01");
+        insert_dated_entry(&conn, 1, 400_000, "2026-12-31");
+        insert_dated_entry(&conn, 1, 800_000, "2027-01-01");
+
+        let totals = get_income_source_year_totals(&conn, 2026).unwrap();
+
+        assert_eq!(totals[0].total_cents, 600_000);
+    }
+
+    #[test]
+    fn year_totals_are_empty_when_the_selected_year_has_no_entries() {
+        let conn = income_test_db();
+        insert_dated_entry(&conn, 1, 520_000, "2025-03-15");
+
+        let totals = get_income_source_year_totals(&conn, 2026).unwrap();
+
+        assert!(totals.is_empty());
+    }
+
+    fn insert_dated_entry(conn: &Connection, source_id: i64, amount_cents: i64, date: &str) {
+        let input = CreateIncomeEntryInput {
+            source_id,
+            amount_cents,
+            date: date.to_string(),
+            account_id: None,
+        };
+        insert_income_entry(conn, &input).unwrap();
+    }
+
     fn income_input(account_id: Option<i64>, amount_cents: i64) -> CreateIncomeEntryInput {
         CreateIncomeEntryInput {
             source_id: 1,
@@ -543,7 +646,8 @@ mod tests {
             VALUES (1, 'Chequing', 'Bank', 'chequing', 'CAD', 10000),
                    (2, 'Credit Card', 'Bank', 'credit_card', 'CAD', 10000),
                    (3, 'Savings', 'Bank', 'savings', 'CAD', 20000);
-            INSERT INTO income_sources (id, name, income_type) VALUES (1, 'Salary', 'employment');",
+            INSERT INTO income_sources (id, name, income_type)
+            VALUES (1, 'Salary', 'employment'), (2, 'Consulting', 'freelance');",
         )
         .unwrap();
         conn

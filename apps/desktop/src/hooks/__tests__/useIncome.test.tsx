@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { useDeleteIncomeSource } from "@/hooks/useIncome";
+import { useCreateIncomeEntry, useDeleteIncomeSource } from "@/hooks/useIncome";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -15,9 +15,11 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 let deleteIncomeSource: ReturnType<typeof useDeleteIncomeSource>;
+let createIncomeEntry: ReturnType<typeof useCreateIncomeEntry>;
 
 function Harness() {
   deleteIncomeSource = useDeleteIncomeSource();
+  createIncomeEntry = useCreateIncomeEntry();
   return null;
 }
 
@@ -63,5 +65,19 @@ describe("useIncome", () => {
     expect(invalidateSpy.mock.calls.map((call) => call[0]?.queryKey)).toContainEqual([
       "budget-summary",
     ]);
+  });
+
+  it("invalidates yearly source totals after creating an income entry", async () => {
+    await act(async () => {
+      await createIncomeEntry.mutateAsync({
+        source_id: 7,
+        amount_cents: 125_000,
+        date: "2026-09-15",
+      });
+    });
+
+    expect(
+      invalidateSpy.mock.calls.map((call) => call[0]?.queryKey),
+    ).toContainEqual(["income-source-year-totals"]);
   });
 });

@@ -41,6 +41,8 @@ export const queryKeys = {
     ["income-entries-by-month", year, month] as const,
   incomeTotal: (year: number, month: number) =>
     ["income-total", year, month] as const,
+  incomeSourceYearTotals: (year: number) =>
+    ["income-source-year-totals", year] as const,
   spendingTrends: (months: number) =>
     ["spending-trends", months] as const,
   trendsInsight: (months: number, locale: string) =>

@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
 import type {
   IncomeSourceWithLastEntry,
+  IncomeSourceYearTotal,
   IncomeSource,
   IncomeEntry,
   IncomeTotal,
@@ -18,6 +19,7 @@ function invalidateIncomeEntryMutationQueries(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: ["income-entries"] });
   queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
   queryClient.invalidateQueries({ queryKey: ["income-total"] });
+  queryClient.invalidateQueries({ queryKey: ["income-source-year-totals"] });
   queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
   queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
   queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
@@ -148,5 +150,15 @@ export function useIncomeTotal(year: number, month: number) {
   return useQuery({
     queryKey: queryKeys.incomeTotal(year, month),
     queryFn: () => invoke<IncomeTotal>("get_income_total", { year, month }),
+  });
+}
+
+// Year-scoped and separate from `useIncomeSources()` on purpose: the sources list also backs pickers
+// that have no period, so forcing a year argument onto it would refetch every picker on navigation.
+export function useIncomeSourceYearTotals(year: number) {
+  return useQuery({
+    queryKey: queryKeys.incomeSourceYearTotals(year),
+    queryFn: () =>
+      invoke<IncomeSourceYearTotal[]>("get_income_source_year_totals", { year }),
   });
 }

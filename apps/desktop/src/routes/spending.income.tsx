@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Plus, Wallet } from "lucide-react";
+import { Plus, TriangleAlert, Wallet } from "lucide-react";
 import {
   Button,
   Card,
@@ -25,6 +25,7 @@ import { AddIncomeEntryForm } from "@/components/income/AddIncomeEntryForm";
 import { IncomeEntryList } from "@/components/income/IncomeEntryList";
 import {
   useIncomeSources,
+  useIncomeSourceYearTotals,
   useIncomeTotal,
   useIncomeEntriesByMonth,
 } from "@/hooks/useIncome";
@@ -48,9 +49,24 @@ function IncomePage() {
     selectedYear,
     selectedMonth
   );
+  const {
+    data: yearTotals,
+    isLoading: yearTotalsLoading,
+    isError: yearTotalsError,
+    refetch: refetchYearTotals,
+  } = useIncomeSourceYearTotals(selectedYear);
 
   const hasSources = sources && sources.length > 0;
 
+  // Gating on sources alone would flash $0.00 in every row until the aggregate lands.
+  const tableLoading = sourcesLoading || yearTotalsLoading;
+
+  const yearTotalsBySourceId = new Map(
+    (yearTotals ?? []).map((yearTotal) => [
+      yearTotal.source_id,
+      yearTotal.total_cents,
+    ])
+  );
 
   return (
     <div>
@@ -109,13 +125,29 @@ function IncomePage() {
           <h2 className="text-h2 text-ink">{t("income.sources")}</h2>
         </div>
 
-        {sourcesLoading && (
+        {tableLoading && (
           <div className="px-card-pad py-3">
             <Skeleton rows={3} data-testid="income-sources-skeleton" />
           </div>
         )}
 
-        {!sourcesLoading && !hasSources && (
+        {!tableLoading && yearTotalsError && (
+          <EmptyState
+            icon={<TriangleAlert />}
+            title={t("income.yearTotalsUnavailable")}
+            description={t("income.yearTotalsUnavailableDescription", {
+              year: String(selectedYear),
+            })}
+            action={
+              <Button size="sm" onClick={() => void refetchYearTotals()}>
+                {t("income.retryYearTotals")}
+              </Button>
+            }
+            data-testid="income-year-totals-error"
+          />
+        )}
+
+        {!tableLoading && !yearTotalsError && !hasSources && (
           <EmptyState
             icon={<Wallet />}
             title={t("income.noSourcesTitle")}
@@ -130,7 +162,7 @@ function IncomePage() {
           />
         )}
 
-        {!sourcesLoading && hasSources && (
+        {!tableLoading && !yearTotalsError && hasSources && (
           <Table>
             <caption className="sr-only">{t("income.sourcesTableCaption")}</caption>
             <TableHeader>
@@ -138,7 +170,9 @@ function IncomePage() {
                 <TableHead>{t("common.name")}</TableHead>
                 <TableHead>{t("common.type")}</TableHead>
                 <TableHead>{t("income.lastRecorded")}</TableHead>
-                <TableHead numeric>{t("common.amount")}</TableHead>
+                <TableHead numeric>
+                  {t("income.yearTotal", { year: String(selectedYear) })}
+                </TableHead>
                 <TableHead>
                   <span className="sr-only">{t("common.delete")}</span>
                 </TableHead>
@@ -146,7 +180,11 @@ function IncomePage() {
             </TableHeader>
             <TableBody>
               {sources.map((source) => (
-                <IncomeSourceRow key={source.id} source={source} />
+                <IncomeSourceRow
+                  key={source.id}
+                  source={source}
+                  yearTotalCents={yearTotalsBySourceId.get(source.id) ?? 0}
+                />
               ))}
             </TableBody>
           </Table>

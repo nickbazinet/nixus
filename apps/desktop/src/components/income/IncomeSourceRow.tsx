@@ -39,9 +39,11 @@ function formatMonth(month: string, locale: string): string {
 
 interface IncomeSourceRowProps {
   source: IncomeSourceWithLastEntry;
+  /** Scoped to the globally selected year. Zero is a real answer, never a dash. */
+  yearTotalCents: number;
 }
 
-export function IncomeSourceRow({ source }: IncomeSourceRowProps) {
+export function IncomeSourceRow({ source, yearTotalCents }: IncomeSourceRowProps) {
   const { t, i18n } = useTranslation();
   const maskProps = useMaskProps();
   const deleteSource = useDeleteIncomeSource();
@@ -80,17 +82,12 @@ export function IncomeSourceRow({ source }: IncomeSourceRowProps) {
           )}
         </TableCell>
         <TableCell numeric>
-          {source.last_amount_cents != null ? (
-            <Money
-              cents={source.last_amount_cents}
-              locale={i18n.language}
-              {...maskProps}
-            />
-          ) : (
-            <span aria-hidden="true" className="text-ink-faint">
-              &mdash;
-            </span>
-          )}
+          <Money
+            cents={yearTotalCents}
+            locale={i18n.language}
+            {...maskProps}
+            data-testid="income-source-year-total"
+          />
         </TableCell>
         <TableCell onClick={(event) => event.stopPropagation()}>
           <Button

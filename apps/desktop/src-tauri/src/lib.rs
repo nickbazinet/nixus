@@ -352,6 +352,7 @@ pub fn run() {
             commands::income::get_income_entries,
             commands::income::get_income_entries_by_month,
             commands::income::get_income_total,
+            commands::income::get_income_source_year_totals,
             commands::recurring::create_recurring_template,
             commands::recurring::get_recurring_templates,
             commands::recurring::update_recurring_template,

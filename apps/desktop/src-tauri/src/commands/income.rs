@@ -8,7 +8,8 @@ use crate::db::DbState;
 use crate::error::AppError;
 use crate::models::{
     CreateIncomeEntryInput, CreateIncomeSourceInput, IncomeEntry, IncomeSource,
-    IncomeSourceWithLastEntry, IncomeTotal, UpdateIncomeEntryInput, UpdateIncomeSourceInput,
+    IncomeSourceWithLastEntry, IncomeSourceYearTotal, IncomeTotal, UpdateIncomeEntryInput,
+    UpdateIncomeSourceInput,
 };
 
 #[tauri::command(rename_all = "snake_case")]
@@ -248,6 +249,19 @@ pub fn get_income_total(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     income_db::get_income_total(&conn, year, month)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_income_source_year_totals(
+    state: State<DbState>,
+    year: i32,
+) -> Result<Vec<IncomeSourceYearTotal>, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    income_db::get_income_source_year_totals(&conn, year)
 }
 
 fn get_source_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {

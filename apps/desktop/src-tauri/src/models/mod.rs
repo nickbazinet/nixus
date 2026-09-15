@@ -334,6 +334,15 @@ pub struct IncomeSourceWithLastEntry {
     pub updated_at: String,
 }
 
+/// Distinct from `IncomeSourceWithLastEntry` on purpose: `last_amount_cents` is a recency figure
+/// with no year scope, and reusing it for a yearly sum is how the two meanings got conflated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncomeSourceYearTotal {
+    pub source_id: i64,
+    pub year: i32,
+    pub total_cents: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonthlySpendByCategory {
     pub month: String,

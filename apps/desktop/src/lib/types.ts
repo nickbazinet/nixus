@@ -222,6 +222,12 @@ export interface IncomeSourceWithLastEntry {
   updated_at: string;
 }
 
+export interface IncomeSourceYearTotal {
+  source_id: number;
+  year: number;
+  total_cents: number;
+}
+
 export interface CreateIncomeSourceInput {
   name: string;
   income_type: string;
