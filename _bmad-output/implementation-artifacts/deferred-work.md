@@ -397,3 +397,6 @@ scope for this story:
 - source_spec: `_bmad-output/implementation-artifacts/spec-edit-delete-maintenance-services.md`
   summary: Remove parallel-load flakiness from the full desktop Playwright suite.
   evidence: The maintenance spec passes 52/52, while the full 712-test run failed three unrelated picker/profile/projects cases that pass independently; the disjoint load-sensitive failures indicate pre-existing suite contention rather than a maintenance regression.
+- source_spec: `_bmad-output/implementation-artifacts/spec-budget-add-transactions-menu.md`
+  summary: Restore focus to the control that opened a shared SlideOver after the panel closes.
+  evidence: The shared SlideOver captures a focus target inside its own panel and attempts to focus that disconnected input during cleanup, leaving focus on the document body; this predates the Budget menu and reproduces from existing Add Group and Spending Transactions actions.

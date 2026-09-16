@@ -1,6 +1,24 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
+ * How the stubbed `apply_recurring_expenses` settles. `deferred` holds the call open until the test
+ * calls `window.__releaseRecurring()`, which is what lets the pending state be asserted without a
+ * wall-clock race.
+ */
+interface RecurringFixture {
+  outcome: "created" | "none" | "failure";
+  deferred: boolean;
+}
+
+const RECURRING_DEFAULT: RecurringFixture = { outcome: "created", deferred: false };
+
+declare global {
+  interface Window {
+    __releaseRecurring?: () => void;
+  }
+}
+
+/**
  * What `get_budget_summary` reports back. `seedTargetCents` pre-creates one category so a test
  * can reach a known total target without driving the group and category forms first.
  */
@@ -8,6 +26,7 @@ interface SummaryFixture {
   seedTargetCents: number;
   averageMonthlyIncomeCents: number;
   incomeMonthCount: number;
+  recurring?: RecurringFixture;
 }
 
 const NO_INCOME_HISTORY: SummaryFixture = {
@@ -25,6 +44,7 @@ async function setupTauriMock(
   fixture: SummaryFixture = NO_INCOME_HISTORY
 ) {
   await page.addInitScript((summary) => {
+    const recurring = summary.recurring;
     const groups: MockGroup[] = [];
     const categories: MockCategory[] = [];
     let nextGroupId = 1;
@@ -297,6 +317,45 @@ async function setupTauriMock(
           case "get_all_budget_categories":
             return Promise.resolve([...categories]);
 
+          // Fixture-driven so the pending window is opened and closed by the test, never by a
+          // timer: `deferred` parks the promise until `window.__releaseRecurring()` settles it.
+          case "apply_recurring_expenses": {
+            const settle = () => {
+              if (recurring.outcome === "failure") {
+                return Promise.reject({
+                  type: "database",
+                  message: "disk is full",
+                });
+              }
+              if (recurring.outcome === "none") {
+                return Promise.resolve([]);
+              }
+              return Promise.resolve([
+                {
+                  id: 9001,
+                  merchant: "Rent",
+                  amount_cents: 120000,
+                  budget_category_id: categories[0]?.id ?? 1,
+                  account_id: null,
+                  date: `${args.year}-${String(args.month).padStart(2, "0")}-01`,
+                  source: "recurring",
+                  created_at: new Date().toISOString(),
+                },
+              ]);
+            };
+            if (!recurring.deferred) {
+              return settle();
+            }
+            return new Promise((resolve, reject) => {
+              window.__releaseRecurring = () => {
+                settle().then(resolve, reject);
+              };
+            });
+          }
+
+          case "get_expenses":
+            return Promise.resolve([]);
+
           case "get_accounts":
             return Promise.resolve([]);
 
@@ -320,7 +379,7 @@ async function setupTauriMock(
       },
       convertFileSrc: (path: string) => path,
     };
-  }, fixture);
+  }, { ...fixture, recurring: fixture.recurring ?? RECURRING_DEFAULT });
 }
 
 test.describe("Budget Page", () => {
@@ -1046,7 +1105,7 @@ test.describe("Budget above recorded income", () => {
     expect(meterThenWarning).toBe(true);
 
     // Editing stays open — the warning is advice, so nothing on the surface is disabled.
-    await expect(page.getByTestId("add-expense-button")).toBeEnabled();
+    await expect(page.getByTestId("add-transactions-trigger")).toBeEnabled();
     await expect(page.getByTestId("category-target")).toBeVisible();
   });
 
@@ -1134,5 +1193,208 @@ test.describe("Budget above recorded income", () => {
     await expect(warning).not.toContainText(AVERAGE_TEXT);
     await expect(page.getByText(TARGET_TEXT)).toHaveCount(0);
     await expect(page.getByText(AVERAGE_TEXT)).toHaveCount(0);
+  });
+});
+
+
+test.describe("Add transactions menu", () => {
+  // Base UI names the panel by the button that opens it, so both share one accessible name and are
+  // told apart by role.
+  const TRIGGER_NAME = "Add transactions";
+
+  function trigger(page: Page) {
+    return page.getByRole("button", { name: TRIGGER_NAME });
+  }
+
+  function menu(page: Page) {
+    return page.getByRole("menu", { name: TRIGGER_NAME });
+  }
+
+  async function openBudget(page: Page, recurring?: RecurringFixture) {
+    await setupTauriMock(page, { ...NO_INCOME_HISTORY, recurring });
+    await page.goto("/spending/budget");
+    await expect(page.getByTestId("budget-summary-strip")).toBeVisible();
+  }
+
+  async function openMenu(page: Page) {
+    await trigger(page).click();
+    await expect(menu(page)).toBeVisible();
+  }
+
+  test("gathers the three transaction-entry choices behind one trigger and leaves Add Group alone in the header", async ({
+    page,
+  }) => {
+    // Given the Budget tab, with the menu closed
+    await openBudget(page);
+    await expect(page.getByTestId("add-group-button")).toBeVisible();
+    await expect(menu(page)).toHaveCount(0);
+    await expect(page.getByText("Apply recurring expenses")).toHaveCount(0);
+    await expect(page.getByText("Import Statement")).toHaveCount(0);
+
+    // When the user opens Add transactions
+    await openMenu(page);
+
+    // Then exactly the three approved choices are offered, named and in order
+    await expect(menu(page).getByRole("menuitem")).toHaveText([
+      "Import Statement",
+      "Add expense manually",
+      "Apply recurring expenses",
+    ]);
+
+    // …and the recurring action no longer sits in the page header
+    await expect(page.getByTestId("apply-recurring-button")).toHaveCount(0);
+    await expect(page.getByTestId("add-group-button")).toBeVisible();
+  });
+
+  test("sends the user to the dedicated import route", async ({ page }) => {
+    // Given the open menu
+    await openBudget(page);
+    await openMenu(page);
+
+    // When Import statement is chosen
+    await page.getByTestId("import-statement-item").click();
+
+    // Then the dedicated /import route owns the flow
+    await expect(page).toHaveURL(/\/import$/);
+    await expect(page.getByTestId("upload-zone")).toBeVisible();
+  });
+
+  test("opens the manual expense slide-over unfilled, with focus inside it", async ({
+    page,
+  }) => {
+    // Given the open menu
+    await openBudget(page);
+    await openMenu(page);
+
+    // When Add expense manually is chosen
+    await page.getByTestId("add-expense-manually-item").click();
+
+    // Then the existing expense form opens with nothing preselected or prefilled
+    const slideOver = page.getByTestId("expense-slide-over");
+    await expect(slideOver).toBeVisible();
+    const form = page.getByTestId("add-expense-form");
+    await expect(form).toBeVisible();
+    await expect(form.getByLabel("Category")).toHaveText("Select a category");
+    await expect(form.getByLabel("Merchant")).toHaveValue("");
+
+    // …and focus is handed into the panel rather than dropped where the menu used to be
+    await expect(form.getByLabel("Merchant")).toBeFocused();
+
+    // When the panel is dismissed it goes away and the menu is closed behind it
+    await page.getByTestId("slide-over-close").click();
+    await expect(slideOver).toHaveCount(0);
+    await expect(menu(page)).toHaveCount(0);
+  });
+
+  test("applies recurring expenses for the selected month and refuses a second submission while pending", async ({
+    page,
+  }) => {
+    // Given a recurring apply the test holds open
+    await openBudget(page, { outcome: "created", deferred: true });
+
+    // When Apply recurring expenses is chosen
+    await openMenu(page);
+    await page.getByTestId("apply-recurring-item").click();
+
+    // Then reopening the menu offers no second submission while the first is in flight
+    await openMenu(page);
+    await expect(page.getByTestId("apply-recurring-item")).toBeDisabled();
+
+    // When the held request is released
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => {
+      window.__releaseRecurring?.();
+    });
+
+    // Then the existing success feedback reports what was created, and the choice returns
+    await expect(page.getByText("Applied 1 recurring expense(s)")).toBeVisible();
+    await openMenu(page);
+    await expect(page.getByTestId("apply-recurring-item")).toBeEnabled();
+  });
+
+  test("keeps the existing already-applied toast when the month needs nothing", async ({
+    page,
+  }) => {
+    // Given a month whose recurring expenses are all on record already
+    await openBudget(page, { outcome: "none", deferred: false });
+
+    // When Apply recurring expenses is chosen
+    await openMenu(page);
+    await page.getByTestId("apply-recurring-item").click();
+
+    // Then the unchanged nothing-was-due wording explains it, and nothing is reported as created
+    await expect(
+      page.getByText("All recurring expenses already applied for this month")
+    ).toBeVisible();
+    await expect(page.getByText(/Applied \d+ recurring expense/)).toHaveCount(0);
+  });
+
+  test("keeps the existing recurring failure toast", async ({ page }) => {
+    // Given a backend that rejects the apply
+    await openBudget(page, { outcome: "failure", deferred: false });
+
+    // When Apply recurring expenses is chosen
+    await openMenu(page);
+    await page.getByTestId("apply-recurring-item").click();
+
+    // Then the unchanged error toast explains it
+    await expect(
+      page.getByText("Failed to apply recurring expenses")
+    ).toBeVisible();
+  });
+
+  test("opens from the keyboard and lands focus on the first choice", async ({
+    page,
+  }) => {
+    // Given keyboard focus on the trigger
+    await openBudget(page);
+    await trigger(page).focus();
+
+    // When the menu is opened with Enter
+    await page.keyboard.press("Enter");
+
+    // Then the first choice holds focus and Escape returns it to the trigger
+    await expect(page.getByTestId("import-statement-item")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(page.getByTestId("add-expense-manually-item")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(menu(page)).toHaveCount(0);
+    await expect(trigger(page)).toBeFocused();
+  });
+
+  test("fits the longest French label on one line", async ({ page }) => {
+    // Given the app switched to French
+    await openBudget(page);
+    await page.getByTestId("language-toggle").click();
+    await expect(
+      page.getByRole("button", { name: "Ajouter des transactions" })
+    ).toBeVisible();
+
+    // When the menu is opened
+    await page.getByRole("button", { name: "Ajouter des transactions" }).click();
+    await expect(
+      page.getByRole("menu", { name: "Ajouter des transactions" })
+    ).toBeVisible();
+
+    // Then the longest item is neither clipped nor wrapped onto a second line
+    const manualItem = page.getByTestId("add-expense-manually-item");
+    await expect(manualItem).toHaveText("Ajouter une dépense manuellement");
+    const layout = await manualItem.evaluate((element) => {
+      const label = Array.from(element.childNodes).find(
+        (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()
+      );
+      if (label === undefined) {
+        return null;
+      }
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      // A wrapped text node reports one client rect per visual line, which is the only reading that
+      // distinguishes "fits" from "fits after wrapping".
+      return {
+        lines: range.getClientRects().length,
+        clipped: element.scrollWidth > element.clientWidth,
+      };
+    });
+    expect(layout).toEqual({ lines: 1, clipped: false });
   });
 });

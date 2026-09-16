@@ -392,6 +392,15 @@ async function gotoBudget(page: Page) {
   );
 }
 
+/**
+ * Manual entry now lives inside the summary strip's Add transactions menu, so reaching the form is
+ * two clicks rather than one.
+ */
+async function openAddExpenseForm(page: Page) {
+  await page.getByTestId("add-transactions-trigger").click();
+  await page.getByTestId("add-expense-manually-item").click();
+}
+
 test.describe("Expense Tracking", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page);
@@ -399,7 +408,7 @@ test.describe("Expense Tracking", () => {
   });
 
   test("clicking Add Expense opens the form with all fields including optional account", async ({ page }) => {
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
 
     const form = page.getByTestId("add-expense-form");
     await expect(form).toBeVisible();
@@ -412,7 +421,7 @@ test.describe("Expense Tracking", () => {
   });
 
   test("submitting a valid expense shows a success toast", async ({ page }) => {
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
 
     // Fill the form
@@ -439,7 +448,7 @@ test.describe("Expense Tracking", () => {
     await expect(spentTargets.first()).toContainText("$0.00");
 
     // Add an expense to Housing category
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Rent Payment");
     await form.getByLabel("Amount").fill("1200");
@@ -455,7 +464,7 @@ test.describe("Expense Tracking", () => {
   });
 
   test("form validation prevents submission with empty merchant", async ({ page }) => {
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
 
     // Submit without filling merchant
     await page.getByRole("button", { name: "Save Expense" }).click();
@@ -464,7 +473,7 @@ test.describe("Expense Tracking", () => {
   });
 
   test("form validation prevents submission with zero amount", async ({ page }) => {
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
 
     // Fill merchant but leave amount at 0, then submit
@@ -488,7 +497,7 @@ test.describe("Expense Tracking", () => {
 
   test("expanding a category after adding an expense shows the expense row", async ({ page }) => {
     // Add an expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Coffee Shop");
     await form.getByLabel("Amount").fill("5.50");
@@ -509,7 +518,7 @@ test.describe("Expense Tracking", () => {
 
   test("expense list is a real table: sentence-case sortable heads, right-aligned tabular amount", async ({ page }) => {
     // Add an expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Grocery Store");
     await form.getByLabel("Amount").fill("45.99");
@@ -569,7 +578,7 @@ test.describe("Expense Tracking", () => {
 
   test("search placeholder promises only what it does: merchant substrings", async ({ page }) => {
     for (const merchant of ["Coffee Shop", "Grocery Store"]) {
-      await page.getByTestId("add-expense-button").click();
+      await openAddExpenseForm(page);
       const addForm = page.getByTestId("add-expense-form");
       await addForm.getByLabel("Merchant").fill(merchant);
       await addForm.getByLabel("Amount").fill("10");
@@ -599,7 +608,7 @@ test.describe("Expense Tracking", () => {
 
   test("navigating to a different month clears expenses if none exist for that month", async ({ page }) => {
     // Add an expense for current month
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Rent");
     await form.getByLabel("Amount").fill("1200");
@@ -622,7 +631,7 @@ test.describe("Expense Tracking", () => {
 
   test("expense row actions need no hover: row activates, select control rests visible", async ({ page }) => {
     // Add an expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Coffee Shop");
     await form.getByLabel("Amount").fill("5.50");
@@ -651,7 +660,7 @@ test.describe("Expense Tracking", () => {
 
   test("activating a row opens the editor pre-populated with expense values", async ({ page }) => {
     // Add expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Coffee Shop");
     await form.getByLabel("Amount").fill("5.50");
@@ -675,7 +684,7 @@ test.describe("Expense Tracking", () => {
 
   test("saving an edited expense updates displayed values and shows success toast", async ({ page }) => {
     // Add expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Coffee Shop");
     await form.getByLabel("Amount").fill("5.50");
@@ -703,7 +712,7 @@ test.describe("Expense Tracking", () => {
 
   test("selecting a row and deleting shows confirmation dialog with destructive button", async ({ page }) => {
     // Add expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Coffee Shop");
     await form.getByLabel("Amount").fill("5.50");
@@ -733,7 +742,7 @@ test.describe("Expense Tracking", () => {
 
   test("confirming delete removes expense and shows success toast", async ({ page }) => {
     // Add expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Coffee Shop");
     await form.getByLabel("Amount").fill("5.50");
@@ -760,7 +769,7 @@ test.describe("Expense Tracking", () => {
 
   test("after deleting an expense, budget spent amount decreases", async ({ page }) => {
     // Add expense to Housing
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Rent");
     await form.getByLabel("Amount").fill("1200");
@@ -787,7 +796,7 @@ test.describe("Expense Tracking", () => {
 
   test("pressing Cancel in delete dialog does not remove the expense", async ({ page }) => {
     // Add expense
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Coffee Shop");
     await form.getByLabel("Amount").fill("5.50");
@@ -814,7 +823,7 @@ test.describe("Expense Tracking", () => {
   test("creating expense with linked chequing account decreases account balance on accounts page", async ({
     page,
   }) => {
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Grocery Store");
     await form.getByLabel("Amount").fill("50");
@@ -838,7 +847,7 @@ test.describe("Expense Tracking", () => {
     await expect(accountRow.getByTestId("account-balance")).toContainText("$1,000.00");
 
     await gotoBudget(page);
-    await page.getByTestId("add-expense-button").click();
+    await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
     await form.getByLabel("Merchant").fill("Cash Purchase");
     await form.getByLabel("Amount").fill("25");

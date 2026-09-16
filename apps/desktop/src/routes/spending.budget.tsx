@@ -80,49 +80,37 @@ function BudgetPage() {
     });
   };
 
+  const handleApplyRecurring = () => {
+    applyRecurring.mutate(
+      { year: selectedYear, month: selectedMonth },
+      {
+        onSuccess: (created) => {
+          if (created.length > 0) {
+            toast.success(t("recurring.appliedExpenses", { count: created.length }));
+          } else {
+            toast.success(t("recurring.allAlreadyApplied"));
+          }
+        },
+        onError: () => {
+          toast.error(t("recurring.applyFailed"));
+        },
+      }
+    );
+  };
+
   return (
     <div>
       <PageHeader
         title={t("nav.budget")}
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                applyRecurring.mutate(
-                  { year: selectedYear, month: selectedMonth },
-                  {
-                    onSuccess: (created) => {
-                      if (created.length > 0) {
-                        toast.success(
-                          t("recurring.appliedExpenses", { count: created.length })
-                        );
-                      } else {
-                        toast.success(t("recurring.allAlreadyApplied"));
-                      }
-                    },
-                    onError: () => {
-                      toast.error(t("recurring.applyFailed"));
-                    },
-                  }
-                )
-              }
-              disabled={applyRecurring.isPending}
-              aria-disabled={applyRecurring.isPending}
-              data-testid="apply-recurring-button"
-            >
-              {t("recurring.applyRecurring")}
-            </Button>
-            <Button
-              onClick={() => setShowGroupForm(true)}
-              data-testid="add-group-button"
-              variant="outline"
-            >
-              <Plus aria-hidden="true" />
-              {t("budget.addGroup")}
-            </Button>
-          </div>
+          <Button
+            onClick={() => setShowGroupForm(true)}
+            data-testid="add-group-button"
+            variant="outline"
+          >
+            <Plus aria-hidden="true" />
+            {t("budget.addGroup")}
+          </Button>
         }
       />
 
@@ -133,6 +121,8 @@ function BudgetPage() {
         averageMonthlyIncomeCents={summary?.average_monthly_income_cents ?? 0}
         incomeMonthCount={summary?.income_month_count ?? 0}
         onAddExpense={() => openExpenseForm()}
+        onApplyRecurring={handleApplyRecurring}
+        applyRecurringPending={applyRecurring.isPending}
       />
 
       {groups.length === 0 && !showGroupForm && (
