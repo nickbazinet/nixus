@@ -102,8 +102,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $probe = Join-Path $env:RUNNER_TEMP 'nixus-signing-probe.exe'
-          Add-Type -TypeDefinition 'public static class Program { public static void Main() { } }' `
-            -OutputAssembly $probe -OutputType ConsoleApplication
+          $source = Join-Path $env:RUNNER_TEMP 'nixus-signing-probe.cs'
+          Set-Content -LiteralPath $source `
+            -Value 'public static class Program { public static void Main() { } }'
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          & $compiler /nologo /target:exe "/out:$probe" $source
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to compile the signing probe."
+          }
 
           $signArgs = @(
             'code', 'artifact-signing',
