@@ -153,38 +153,57 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $releaseDir = Join-Path $env:GITHUB_WORKSPACE 'apps/desktop/src-tauri/target/release'
-          $bundleDir = Join-Path $releaseDir 'bundle'
-
-          if (-not (Test-Path -LiteralPath $releaseDir)) {
-            throw "No Windows build output at '$releaseDir'."
-          }
+          $bundleDir = Join-Path $env:GITHUB_WORKSPACE 'apps/desktop/src-tauri/target/release/bundle'
           if (-not (Test-Path -LiteralPath $bundleDir)) {
             throw "No bundle directory at '$bundleDir'."
           }
 
-          $appBinaries = @(
-            Get-ChildItem -LiteralPath $releaseDir -File -Filter '*.exe' |
-              Where-Object { $_.BaseName -eq 'nixus' }
-          )
-          if ($appBinaries.Count -lt 1) {
-            $found = (Get-ChildItem -LiteralPath $releaseDir -File -Filter '*.exe' |
-              ForEach-Object { $_.Name }) -join ', '
-            throw "No application executable named 'nixus.exe' in '$releaseDir'. Found: $found"
-          }
-
-          $bundleArtifacts = @(
+          $nsisInstallers = @(
             Get-ChildItem -LiteralPath $bundleDir -Recurse -File |
-              Where-Object { $_.Extension -in @('.exe', '.msi') }
+              Where-Object { $_.Extension -eq '.exe' }
           )
-          if (@($bundleArtifacts | Where-Object { $_.Extension -eq '.exe' }).Count -lt 1) {
-            throw "No NSIS .exe installer was produced under '$bundleDir'."
+          $msiInstallers = @(
+            Get-ChildItem -LiteralPath $bundleDir -Recurse -File |
+              Where-Object { $_.Extension -eq '.msi' }
+          )
+          if ($nsisInstallers.Count -ne 1) {
+            throw "Expected one NSIS installer, found $($nsisInstallers.Count)."
           }
-          if (@($bundleArtifacts | Where-Object { $_.Extension -eq '.msi' }).Count -lt 1) {
-            throw "No WiX .msi installer was produced under '$bundleDir'."
+          if ($msiInstallers.Count -ne 1) {
+            throw "Expected one MSI installer, found $($msiInstallers.Count)."
           }
 
-          $targets = @($appBinaries) + $bundleArtifacts
+          $msiPayloadDir = Join-Path $env:RUNNER_TEMP 'nixus-msi-payload'
+          New-Item -ItemType Directory -Path $msiPayloadDir | Out-Null
+          $msiProcess = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/a', $msiInstallers[0].FullName, '/qn', "TARGETDIR=$msiPayloadDir"
+          )
+          if ($msiProcess.ExitCode -ne 0) {
+            throw "MSI administrative extraction failed with exit code $($msiProcess.ExitCode)."
+          }
+
+          $nsisPayloadDir = Join-Path $env:RUNNER_TEMP 'nixus-nsis-payload'
+          New-Item -ItemType Directory -Path $nsisPayloadDir | Out-Null
+          $nsisProcess = Start-Process $nsisInstallers[0].FullName -Wait -PassThru `
+            -ArgumentList @('/S', "/D=$nsisPayloadDir")
+          if ($nsisProcess.ExitCode -ne 0) {
+            throw "NSIS silent installation failed with exit code $($nsisProcess.ExitCode)."
+          }
+
+          $msiPayloads = @(
+            Get-ChildItem -LiteralPath $msiPayloadDir -Recurse -File -Filter 'nixus.exe'
+          )
+          $nsisPayloads = @(
+            Get-ChildItem -LiteralPath $nsisPayloadDir -Recurse -File -Filter 'nixus.exe'
+          )
+          if ($msiPayloads.Count -ne 1) {
+            throw "Expected one Nixus executable in the MSI payload, found $($msiPayloads.Count)."
+          }
+          if ($nsisPayloads.Count -ne 1) {
+            throw "Expected one Nixus executable in the NSIS payload, found $($nsisPayloads.Count)."
+          }
+
+          $targets = @($msiInstallers[0], $nsisInstallers[0], $msiPayloads[0], $nsisPayloads[0])
           $failures = @()
 
           foreach ($target in $targets) {
