@@ -19,8 +19,11 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
 
+    environment: release
+
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +71,31 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Authenticate to Azure with the GitHub OIDC token
+        if: matrix.platform == 'windows-latest'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install the pinned Azure Artifact Signing CLI
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet tool install --global sign --version 0.9.1-beta.26431.1
+          $toolDir = Join-Path $env:USERPROFILE '.dotnet\tools'
+          $signExe = Join-Path $toolDir 'sign.exe'
+          if (-not (Test-Path -LiteralPath $signExe)) {
+            throw "Artifact Signing CLI was not installed at '$signExe'."
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $toolDir -Encoding utf8
+          & $signExe --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Artifact Signing CLI is not runnable."
+          }
+
       - uses: tauri-apps/tauri-action@v0.6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -81,3 +109,70 @@ jobs:
           releaseDraft: true
           updaterJsonKeepUniversal: true
           args: ${{ matrix.args }}
+
+      - name: Verify Windows Authenticode signatures
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE 'apps/desktop/src-tauri/target/release'
+          $bundleDir = Join-Path $releaseDir 'bundle'
+
+          if (-not (Test-Path -LiteralPath $releaseDir)) {
+            throw "No Windows build output at '$releaseDir'."
+          }
+          if (-not (Test-Path -LiteralPath $bundleDir)) {
+            throw "No bundle directory at '$bundleDir'."
+          }
+
+          $appBinaries = @(
+            Get-ChildItem -LiteralPath $releaseDir -File -Filter '*.exe' |
+              Where-Object { $_.BaseName -eq 'nixus' }
+          )
+          if ($appBinaries.Count -lt 1) {
+            $found = (Get-ChildItem -LiteralPath $releaseDir -File -Filter '*.exe' |
+              ForEach-Object { $_.Name }) -join ', '
+            throw "No application executable named 'nixus.exe' in '$releaseDir'. Found: $found"
+          }
+
+          $bundleArtifacts = @(
+            Get-ChildItem -LiteralPath $bundleDir -Recurse -File |
+              Where-Object { $_.Extension -in @('.exe', '.msi') }
+          )
+          if (@($bundleArtifacts | Where-Object { $_.Extension -eq '.exe' }).Count -lt 1) {
+            throw "No NSIS .exe installer was produced under '$bundleDir'."
+          }
+          if (@($bundleArtifacts | Where-Object { $_.Extension -eq '.msi' }).Count -lt 1) {
+            throw "No WiX .msi installer was produced under '$bundleDir'."
+          }
+
+          $targets = @($appBinaries) + $bundleArtifacts
+          $failures = @()
+
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $target.FullName
+
+            $signer = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { '<none>' }
+            $stamper = if ($signature.TimeStamperCertificate) { $signature.TimeStamperCertificate.Subject } else { '<none>' }
+            Write-Host ("{0}`n  status={1}`n  signer={2}`n  timestamp={3}" -f $target.FullName, $signature.Status, $signer, $stamper)
+
+            if ($signature.Status -ne 'Valid') {
+              $failures += "$($target.FullName): Authenticode status is '$($signature.Status)' ($($signature.StatusMessage)), expected 'Valid'."
+            }
+            elseif (-not $signature.SignerCertificate) {
+              $failures += "$($target.FullName): reports Valid but carries no signer certificate."
+            }
+            elseif (-not $signature.TimeStamperCertificate) {
+              $failures += "$($target.FullName): is signed but not timestamped."
+            }
+          }
+
+          if ($failures.Count -gt 0) {
+            foreach ($failure in $failures) {
+              [Console]::Error.WriteLine($failure)
+            }
+            throw "$($failures.Count) of $($targets.Count) Windows artifacts failed signature verification. This release is not usable."
+          }
+
+          Write-Host "All $($targets.Count) Windows artifacts carry a valid, timestamped Authenticode signature."

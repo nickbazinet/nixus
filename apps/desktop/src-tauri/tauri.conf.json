@@ -49,6 +49,32 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "signCommand": {
+        "cmd": "sign",
+        "args": [
+          "code",
+          "artifact-signing",
+          "--azure-credential-type",
+          "azure-cli",
+          "--artifact-signing-endpoint",
+          "https://eus.codesigning.azure.net",
+          "--artifact-signing-account",
+          "nixus",
+          "--artifact-signing-certificate-profile",
+          "nixus-public-trust",
+          "--description",
+          "Nixus",
+          "--description-url",
+          "https://nixusapp.com",
+          "--timestamp-url",
+          "http://timestamp.acs.microsoft.com",
+          "--verbosity",
+          "Information",
+          "%1"
+        ]
+      }
+    }
   }
 }
