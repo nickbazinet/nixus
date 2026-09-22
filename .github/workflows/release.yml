@@ -96,6 +96,37 @@ jobs:
             throw "Artifact Signing CLI is not runnable."
           }
 
+      - name: Validate Azure Artifact Signing access
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probe = Join-Path $env:RUNNER_TEMP 'nixus-signing-probe.exe'
+          Add-Type -TypeDefinition 'public static class Program { public static void Main() { } }' `
+            -OutputAssembly $probe -OutputType ConsoleApplication
+
+          $signArgs = @(
+            'code', 'artifact-signing',
+            '--azure-credential-type', 'azure-cli',
+            '--artifact-signing-endpoint', 'https://eus.codesigning.azure.net',
+            '--artifact-signing-account', 'nixus',
+            '--artifact-signing-certificate-profile', 'nixus-public-trust',
+            '--description', 'Nixus signing probe',
+            '--description-url', 'https://nixusapp.com',
+            '--timestamp-url', 'http://timestamp.acs.microsoft.com',
+            '--verbosity', 'Information',
+            $probe
+          )
+          & sign @signArgs
+          if ($LASTEXITCODE -ne 0) {
+            throw "Azure Artifact Signing probe failed with exit code $LASTEXITCODE."
+          }
+
+          $signature = Get-AuthenticodeSignature -LiteralPath $probe
+          if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
+            throw "Azure Artifact Signing probe did not produce a valid, timestamped signature."
+          }
+
       - uses: tauri-apps/tauri-action@v0.6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
