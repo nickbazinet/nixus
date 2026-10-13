@@ -33,6 +33,8 @@ pub mod sync_state;
 pub mod yearly_summary;
 
 #[cfg(test)]
+pub(crate) mod test_dataset;
+#[cfg(test)]
 mod tests_migration_030;
 
 /// The dataset active for this run: which one it is, and its open connection.
@@ -119,6 +121,13 @@ fn register_sha256_hex(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+/// The schema version this build knows how to run. A sync object carries the version that produced
+/// it (AD-8), and anything above this number is parked rather than applied (AD-11), so the ceiling
+/// has to be readable from outside `db/`.
+pub(crate) fn latest_schema_version() -> i64 {
+    MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0)
+}
+
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
     std::fs::create_dir_all(app_data_dir).map_err(|e| AppError::File {
         message: format!("Failed to create app data directory: {}", e),
@@ -167,7 +176,7 @@ pub(crate) fn run_migrations(conn: &Connection) -> Result<(), AppError> {
 
     info!(
         "Migrations complete. Current schema version: {}",
-        MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0)
+        latest_schema_version()
     );
 
     Ok(())

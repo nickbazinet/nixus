@@ -1,0 +1,464 @@
+//! A deterministic synthetic "heavy year" dataset, in a temp dir, for tests that need a database of
+//! realistic SIZE rather than a handful of rows (CAP-2, AD-19).
+//!
+//! WHY it lives in `db/`: it is raw SQL, and raw SQL belongs here (project-context rule 1). WHY raw
+//! SQL rather than the `db::*` write functions: those also write audit rows and adjust balances, so
+//! the row counts a timing test reports would be whatever the side effects happened to add instead
+//! of the numbers the test asked for.
+//!
+//! It never reads, copies or touches real application data: every byte is generated from a seeded
+//! LCG into a `TempDir` the caller drops.
+
+use std::path::PathBuf;
+
+use rusqlite::Connection;
+use tempfile::TempDir;
+
+use crate::db::open_configured;
+use crate::projects::image::sha256_hex;
+
+/// One year of heavy-but-plausible use. The counts are the ones CAP-2's timing budget was written
+/// against, so they are fields rather than literals: a test asserts against what it asked for.
+pub(crate) struct HeavyYear {
+    /// Owns the directory: dropping a `HeavyYear` is what deletes the dataset, so this field is a
+    /// lifetime guard rather than something a test reads.
+    #[allow(dead_code)]
+    pub dir: TempDir,
+    pub db_path: PathBuf,
+    pub expenses: usize,
+    pub audit_rows: usize,
+    pub chat_messages: usize,
+    pub project_images: usize,
+    pub image_payload_bytes: usize,
+}
+
+/// Reproducible across platforms and carrying no fixture files, which is the only way two machines
+/// can compare a measured snapshot size at all.
+struct Lcg(u64);
+
+impl Lcg {
+    fn new(seed: u64) -> Self {
+        Self(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1)
+    }
+
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 11
+    }
+
+    fn below(&mut self, limit: u64) -> u64 {
+        self.next() % limit
+    }
+
+    fn pick<'a, T>(&mut self, options: &'a [T]) -> &'a T {
+        &options[self.below(options.len() as u64) as usize]
+    }
+
+    fn bytes(&mut self, len: usize) -> Vec<u8> {
+        (0..len).map(|_| (self.next() >> 22) as u8).collect()
+    }
+
+    /// Filler of a given length built from real words, so the text compresses the way a user's
+    /// notes and AI answers do instead of like random noise.
+    fn prose(&mut self, len: usize) -> String {
+        const WORDS: &[&str] = &[
+            "budget", "category", "grocery", "transfer", "balance", "monthly", "projection",
+            "account", "statement", "recurring", "adjusted", "reviewed", "savings", "vehicle",
+            "maintenance", "contribution", "forecast", "remaining", "allocated", "reconciled",
+        ];
+
+        let mut text = String::with_capacity(len + 12);
+        while text.len() < len {
+            let word: &&str = self.pick(WORDS);
+            text.push_str(word);
+            text.push(' ');
+        }
+        text.truncate(len);
+        text
+    }
+}
+
+const GROUPS: &[&str] = &["Living", "Lifestyle", "Obligations"];
+const CATEGORIES: &[&str] = &[
+    "Groceries",
+    "Restaurants",
+    "Fuel",
+    "Transit",
+    "Rent",
+    "Utilities",
+    "Insurance",
+    "Subscriptions",
+    "Health",
+    "Clothing",
+    "Gifts",
+    "Home",
+];
+const MERCHANTS: &[&str] = &[
+    "Metro",
+    "Costco",
+    "Petro-Canada",
+    "Amazon",
+    "Hydro-Quebec",
+    "Bell",
+    "Pharmaprix",
+    "IGA",
+    "Uber",
+    "Netflix",
+];
+
+/// A date `day` days after 2026-01-01, as the ISO 8601 day string the schema stores.
+fn spread_date(day: u64) -> String {
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("2026-01-01 is a date");
+
+    (start + chrono::Days::new(day)).format("%Y-%m-%d").to_string()
+}
+
+/// Builds the dataset and returns the temp dir that owns it.
+///
+/// The database is created by `open_configured`, so it is migrated exactly the way the app migrates
+/// one and carries the real schema with all its CHECKs — a fixture that bypassed them could hold
+/// rows production can never produce.
+pub(crate) fn heavy_year_dataset() -> HeavyYear {
+    let dir = tempfile::tempdir().expect("a temp dir for the synthetic dataset");
+    let db_path = dir.path().join("nixus.db");
+    let conn = open_configured(&db_path).expect("the synthetic dataset migrates");
+
+    let heavy = HeavyYear {
+        dir,
+        db_path,
+        expenses: 6_000,
+        audit_rows: 15_000,
+        chat_messages: 5_000,
+        project_images: 2,
+        image_payload_bytes: 1_500_000,
+    };
+
+    seed(&conn, &heavy);
+    // Closed before the caller can copy or back up the file: a live connection leaves `-wal` and
+    // `-shm` beside it, and on Windows an open handle is also what makes a copy or a rename fail.
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .expect("the wal is checkpointed");
+    drop(conn);
+
+    heavy
+}
+
+fn seed(conn: &Connection, heavy: &HeavyYear) {
+    let mut rng = Lcg::new(0x5EED_0008);
+
+    conn.execute_batch("BEGIN").expect("the seed transaction opens");
+    seed_reference_rows(conn, &mut rng);
+    seed_expenses(conn, &mut rng, heavy.expenses);
+    seed_income(conn, &mut rng);
+    seed_audit_log(conn, &mut rng, heavy.audit_rows);
+    seed_chat(conn, &mut rng, heavy.chat_messages);
+    seed_projects(conn, &mut rng, heavy);
+    seed_config(conn);
+    seed_sync_state(conn);
+    conn.execute_batch("COMMIT").expect("the seed transaction commits");
+}
+
+fn seed_reference_rows(conn: &Connection, rng: &mut Lcg) {
+    for (index, group) in GROUPS.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO budget_groups (id, name, sort_order) VALUES (?1, ?2, ?3)",
+            rusqlite::params![index as i64 + 1, group, index as i64],
+        )
+        .expect("a budget group inserts");
+    }
+
+    for (index, category) in CATEGORIES.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                index as i64 + 1,
+                (index % GROUPS.len()) as i64 + 1,
+                category,
+                20_000 + rng.below(180_000) as i64,
+                index as i64
+            ],
+        )
+        .expect("a budget category inserts");
+    }
+
+    for (index, (name, kind)) in [
+        ("Chequing", "chequing"),
+        ("Visa", "credit_card"),
+        ("TFSA", "investment"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        conn.execute(
+            "INSERT INTO accounts (id, name, institution, account_type, balance_cents)
+             VALUES (?1, ?2, 'Bank', ?3, ?4)",
+            rusqlite::params![
+                index as i64 + 1,
+                name,
+                kind,
+                rng.below(2_000_000) as i64 - 500_000
+            ],
+        )
+        .expect("an account inserts");
+    }
+}
+
+fn seed_expenses(conn: &Connection, rng: &mut Lcg, count: usize) {
+    let mut insert = conn
+        .prepare(
+            "INSERT INTO expenses
+                (merchant, amount_cents, budget_category_id, date, source, account_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .expect("the expense statement prepares");
+
+    for index in 0..count {
+        let date = spread_date(rng.below(365));
+        insert
+            .execute(rusqlite::params![
+                rng.pick(MERCHANTS),
+                // Money is i64 cents everywhere, and the schema's CHECK requires it positive.
+                199 + rng.below(40_000) as i64,
+                rng.below(CATEGORIES.len() as u64) as i64 + 1,
+                date,
+                if index % 3 == 0 { "statement" } else { "manual" },
+                rng.below(3) as i64 + 1,
+                format!("{date} 12:00:00"),
+            ])
+            .expect("an expense inserts");
+    }
+}
+
+fn seed_income(conn: &Connection, rng: &mut Lcg) {
+    conn.execute(
+        "INSERT INTO income_sources (id, name, income_type) VALUES (1, 'Employer', 'employment')",
+        [],
+    )
+    .expect("an income source inserts");
+
+    for month in 0..12u64 {
+        let date = spread_date(month * 30 + 1);
+        conn.execute(
+            "INSERT INTO income_entries (source_id, amount_cents, date, month, account_id)
+             VALUES (1, ?1, ?2, ?3, 1)",
+            rusqlite::params![
+                400_000 + rng.below(50_000) as i64,
+                date,
+                &date[..7]
+            ],
+        )
+        .expect("an income entry inserts");
+    }
+}
+
+fn seed_audit_log(conn: &Connection, rng: &mut Lcg, count: usize) {
+    const ENTITIES: &[&str] = &["expense", "account", "budget_category", "project", "vehicle"];
+    const ACTIONS: &[&str] = &["create", "update", "delete"];
+
+    let mut insert = conn
+        .prepare(
+            "INSERT INTO audit_log (entity_type, entity_id, action, old_value, new_value, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .expect("the audit statement prepares");
+
+    for index in 0..count {
+        let day = (index as u64 * 365) / count.max(1) as u64;
+        insert
+            .execute(rusqlite::params![
+                rng.pick(ENTITIES),
+                rng.below(6_000) as i64 + 1,
+                rng.pick(ACTIONS),
+                format!("{{\"note\":\"{}\"}}", rng.prose(170)),
+                format!("{{\"note\":\"{}\"}}", rng.prose(170)),
+                format!("{} 09:{:02}:00", spread_date(day), index % 60),
+            ])
+            .expect("an audit row inserts");
+    }
+}
+
+fn seed_chat(conn: &Connection, rng: &mut Lcg, count: usize) {
+    const CONVERSATIONS: i64 = 40;
+
+    for id in 1..=CONVERSATIONS {
+        conn.execute(
+            "INSERT INTO chat_conversations (id, title) VALUES (?1, ?2)",
+            rusqlite::params![id, rng.prose(30)],
+        )
+        .expect("a conversation inserts");
+    }
+
+    let mut insert = conn
+        .prepare(
+            "INSERT INTO chat_messages (conversation_id, role, content, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .expect("the chat statement prepares");
+
+    for index in 0..count {
+        insert
+            .execute(rusqlite::params![
+                (index as i64 % CONVERSATIONS) + 1,
+                if index % 2 == 0 { "user" } else { "assistant" },
+                rng.prose(if index % 2 == 0 { 120 } else { 900 }),
+                format!("{} 20:00:00", spread_date((index as u64 * 365) / count.max(1) as u64)),
+            ])
+            .expect("a chat message inserts");
+    }
+}
+
+fn seed_projects(conn: &Connection, rng: &mut Lcg, heavy: &HeavyYear) {
+    for id in 1..=heavy.project_images as i64 {
+        conn.execute(
+            "INSERT INTO projects (id, name, target_cents, target_date, priority)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                id,
+                format!("Project {id}"),
+                1_000_000 * id,
+                spread_date(300 + id as u64),
+                id
+            ],
+        )
+        .expect("a project inserts");
+
+        conn.execute(
+            "INSERT INTO project_contributions (project_id, account_id, amount_cents, source, date)
+             VALUES (?1, 1, ?2, 'manual', ?3)",
+            rusqlite::params![id, 50_000 * id, spread_date(100 + id as u64)],
+        )
+        .expect("a contribution inserts");
+
+        let payload = rng.bytes(heavy.image_payload_bytes);
+        conn.execute(
+            "INSERT INTO project_images
+                (project_id, image_bytes, mime_type, original_filename, byte_size,
+                 thumbnail_bytes, thumbnail_mime, image_sha256)
+             VALUES (?1, ?2, 'image/jpeg', ?3, ?4, ?5, 'image/png', ?6)",
+            rusqlite::params![
+                id,
+                &payload,
+                format!("cover-{id}.jpg"),
+                payload.len() as i64,
+                rng.bytes(4_096),
+                sha256_hex(&payload),
+            ],
+        )
+        .expect("a project image inserts");
+    }
+}
+
+/// The three keys AD-5's deny list names, plus one ordinary key, so a stripping test can prove it
+/// removes exactly the credential-state keys and nothing else.
+fn seed_config(conn: &Connection) {
+    for (key, value) in [
+        ("ai_configured", "true"),
+        ("ai_provider", "bedrock"),
+        ("aws_region", "us-east-1"),
+        ("onboarding_complete", "true"),
+    ] {
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .expect("a config key inserts");
+    }
+}
+
+/// A linked install, so a stripping test is proving a DELETE that had something to delete.
+fn seed_sync_state(conn: &Connection) {
+    crate::db::sync_state::ensure(conn, "0a1b2c3d4e5f6071", &"a".repeat(64))
+        .expect("the sync state row inserts");
+    crate::db::sync_state::set_pin(conn, "us-east-1:0000", "sub-0").expect("the pin writes");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The generator is itself a fixture Stories 9 and 12 measure against, so its shape is pinned:
+    /// the counts it claims, valid foreign keys, money as positive cents, and a size in the range
+    /// CAP-2's budget was written for.
+    #[test]
+    fn the_heavy_year_dataset_has_the_shape_its_consumers_measure_against() {
+        let heavy = heavy_year_dataset();
+        let conn = Connection::open(&heavy.db_path).expect("the dataset opens");
+
+        let count = |table: &str| -> i64 {
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .expect("the table counts")
+        };
+        assert_eq!(count("expenses") as usize, heavy.expenses);
+        assert_eq!(count("audit_log") as usize, heavy.audit_rows);
+        assert_eq!(count("chat_messages") as usize, heavy.chat_messages);
+        assert_eq!(count("project_images") as usize, heavy.project_images);
+
+        conn.execute_batch("PRAGMA foreign_keys=ON")
+            .expect("foreign keys enable");
+        let violations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("the check runs");
+        assert_eq!(violations, 0, "every generated row must have valid parents");
+
+        let smallest: i64 = conn
+            .query_row("SELECT MIN(amount_cents) FROM expenses", [], |row| row.get(0))
+            .expect("the minimum reads");
+        assert!(smallest > 0, "money is positive i64 cents");
+
+        let distinct_dates: i64 = conn
+            .query_row("SELECT COUNT(DISTINCT date) FROM expenses", [], |row| row.get(0))
+            .expect("the spread reads");
+        assert!(
+            distinct_dates > 300,
+            "a year's spread, not a single day: {distinct_dates}"
+        );
+
+        let bytes = std::fs::metadata(&heavy.db_path)
+            .expect("the file is there")
+            .len();
+        let images = (heavy.project_images * heavy.image_payload_bytes) as u64;
+        let without_images = bytes - images;
+        assert!(
+            (6_000_000..16_000_000).contains(&without_images),
+            "about 10 MB without images, got {without_images}"
+        );
+    }
+
+    /// Two runs must produce the same DATA, or a recorded snapshot size or timing means nothing.
+    /// The file bytes themselves are deliberately not compared: `datetime('now')` defaults put a
+    /// real wall clock into `created_at`/`applied_at`, which is what a real dataset holds too.
+    #[test]
+    fn the_generator_is_deterministic() {
+        let digest = || {
+            let heavy = heavy_year_dataset();
+            let conn = Connection::open(&heavy.db_path).expect("the dataset opens");
+            let mut material = String::new();
+
+            for query in [
+                "SELECT group_concat(merchant || amount_cents || budget_category_id || date, '|')
+                 FROM (SELECT * FROM expenses ORDER BY id)",
+                "SELECT group_concat(entity_type || entity_id || action || old_value, '|')
+                 FROM (SELECT * FROM audit_log ORDER BY id)",
+                "SELECT group_concat(conversation_id || role || content, '|')
+                 FROM (SELECT * FROM chat_messages ORDER BY id)",
+                "SELECT group_concat(image_sha256 || byte_size, '|')
+                 FROM (SELECT * FROM project_images ORDER BY project_id)",
+            ] {
+                let part: String = conn
+                    .query_row(query, [], |row| row.get(0))
+                    .expect("the material reads");
+                material.push_str(&part);
+            }
+
+            sha256_hex(material.as_bytes())
+        };
+
+        assert_eq!(digest(), digest());
+    }
+}

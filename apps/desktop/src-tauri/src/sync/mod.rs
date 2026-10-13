@@ -26,6 +26,8 @@ pub mod state;
 pub mod store;
 
 #[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
 mod tests_auth_boundary;
 #[cfg(test)]
 mod tests_gate_boundary;
