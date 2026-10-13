@@ -1130,7 +1130,12 @@ mod tests {
         };
         assert_eq!(snap_id, built.snap_id);
         assert!(created);
-        assert_eq!(fake.keys(), vec![built.key(), SNAP_LATEST_KEY.to_string()]);
+        let mut expected = vec![built.key(), SNAP_LATEST_KEY.to_string()];
+        expected.sort();
+        // Sorted on both sides: `keys()` orders lexicographically, and a snap id is a
+        // hash, so whether it sorts before or after `snap/LATEST` is luck rather than a
+        // property worth asserting.
+        assert_eq!(fake.keys(), expected);
         assert_eq!(fake.stored(&built.key()).as_deref(), Some(&built.object[..]));
 
         let (published, etag) = fetch_latest(&store)

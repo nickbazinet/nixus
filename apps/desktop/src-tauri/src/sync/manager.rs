@@ -1,2 +1,1242 @@
-//! Sync actor: owns the second connection, the clock, the schedule and the status
-//! events, and pauses for guarded file swaps (AD-11, AD-16). Filled by Story 10.
+//! The sync actor (AD-16), and the one seam it is generic over.
+//!
+//! Three properties shape every line below.
+//!
+//! **Nothing here blocks.** The actor is spawned behind an `mpsc` channel and owns all of
+//! its state, so a command is a message and a fault is a status, never a failed launch and
+//! never a held lock. No mutex of this crate's is held across an `.await`, and the only
+//! lock the actor's work ever takes is the one inside `DatasetSlot` during a guarded swap.
+//!
+//! **Nothing reaches the network except through the gate.** The actor never builds a
+//! transport or a credential itself: `SyncHost::connect` is the single path, it runs
+//! `SyncGate::check` before it vends and `SyncGate::vend` before it builds a store, and it
+//! returns an already-wrapped `GatedStore`. A local-only, un-entitled or Frozen dataset
+//! therefore produces no task work, no client and no request.
+//!
+//! **Milestone 1 has no capture hook.** There is no `sync_log` yet, so "the dataset
+//! changed" is detected by polling `PRAGMA data_version` on the actor's *own* connection:
+//! SQLite bumps that counter on a connection whenever **another** connection commits, it
+//! costs one page-cache read, it needs no schema, no trigger and no write of our own, and
+//! it cannot miss a commit. Milestone 2 Story 15 replaces it with the pre-update hook.
+
+use std::path::Path;
+use std::pin::Pin;
+use std::time::Duration;
+
+use serde::Serialize;
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio::time::Instant;
+
+use crate::db::backup::{DatasetSlot, LocalData};
+use crate::db::sync_state::FrozenReason;
+use crate::entitlements::MULTI_DEVICE_SYNC;
+
+use super::auth::{AccountPin, AuthError};
+use super::bootstrap::{
+    self, BootstrapError, BootstrapPlan, LinkChoice, LinkOutcome, ReplaceTarget, RestoreTarget,
+    SeparateContext,
+};
+use super::gate::{
+    CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncBlocked, SyncGate,
+};
+use super::owner::{owner_object_body, owner_sub_from_body, OWNER_OBJECT_KEY};
+use super::snapshot::{self, LatestSnapshot, SnapshotError, UploadOutcome};
+use super::store::{ETag, ObjectStore, StoreError};
+
+/// What the UI shows, and what `sync:status` carries (AD-16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncState {
+    /// Sync has not been turned on for this dataset, or the dataset cannot sync at all.
+    Unlinked,
+    Idle,
+    Syncing,
+    Offline,
+    /// Transfers are stopped; the local app is unaffected and the cloud copy is kept.
+    Frozen,
+    /// The cloud copy was written by a newer build (AD-11, CAP-7).
+    UpdateNeeded,
+    /// Waiting for the user to answer CAP-5's replace-or-separate question.
+    LinkChoiceRequired,
+    /// Waiting for the user to answer load-or-keep after a conflict.
+    RemoteChanged,
+    Error,
+}
+
+/// A question only the user can answer. Counts and timings, never values (AD-16).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SyncPrompt {
+    LinkChoice {
+        local_rows: i64,
+        remote_created_ms: i64,
+        remote_schema_version: u32,
+    },
+    RemoteChanged {
+        remote_created_ms: i64,
+        remote_schema_version: u32,
+    },
+}
+
+/// The `sync:status` payload, and what `sync_status` returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SyncStatusPayload {
+    pub state: SyncState,
+    pub dataset_id: String,
+    pub enabled: bool,
+    pub last_sync_ms: Option<i64>,
+    pub error_code: Option<String>,
+    pub recoverable: bool,
+    pub prompt: Option<SyncPrompt>,
+}
+
+/// What `sync_enable` concluded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum SyncEnableOutcome {
+    Enabled {
+        state: SyncState,
+    },
+    /// CAP-5: this computer already holds data, so `sync_enable` must be called again with
+    /// the user's choice. Deliberately not a seventh command.
+    LinkChoiceRequired {
+        local_rows: i64,
+        remote_created_ms: i64,
+        remote_schema_version: u32,
+    },
+    /// *Separate* provisioned a second profile for the cloud copy. This dataset stays
+    /// exactly as it was and is **not** synced; activating the new profile is
+    /// `select_dataset`'s job (AD-6: one hot-swap path).
+    SeparateProfileCreated {
+        dataset_id: String,
+    },
+}
+
+/// The answer to a conflict prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteChoice {
+    /// Load the cloud copy, keeping the current file as a dated backup (Story 9 replace).
+    LoadRemote,
+    /// Keep this computer's copy; it is published over the cloud one on the next settle.
+    KeepLocal,
+}
+
+/// Every way a sync operation can fail, as one typed surface so `AppError::Sync` carries a
+/// stable `code` and never service prose or a row value (AD-16).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyncFault {
+    Blocked(SyncBlocked),
+    Auth(AuthError),
+    Store(StoreError),
+    Snapshot(SnapshotError),
+    /// The guarded file swap failed. The dataset is rolled back unless `rolled_back` is
+    /// false, which is reserved for a rollback that itself failed.
+    Swap { rolled_back: bool },
+    /// The cloud copy needs a schema this build does not have.
+    UpdateNeeded { found: u32, supported: u32 },
+    OwnerMismatch,
+    /// The *separate* profile could not be provisioned; nothing was restored.
+    Registry,
+    /// The dataset's own database could not be read.
+    StateUnavailable,
+    NotEnabled,
+    NoPendingPrompt,
+    /// The actor's task is gone (a dataset switch or sign-out stopped it).
+    ActorUnavailable,
+}
+
+impl SyncFault {
+    /// The stable discriminator. Support reads it in diagnostics and the UI switches on it;
+    /// it is never a service message and never derived from user data.
+    pub fn code(&self) -> &'static str {
+        match self {
+            SyncFault::Blocked(SyncBlocked::LocalOnlyDataset) => "local_only",
+            SyncFault::Blocked(SyncBlocked::CapabilityMissing { .. }) => "not_entitled",
+            SyncFault::Blocked(SyncBlocked::Frozen { .. }) => "frozen",
+            SyncFault::Blocked(SyncBlocked::PinMismatch { .. })
+            | SyncFault::Auth(AuthError::PinMismatch(_)) => "account_mismatch",
+            SyncFault::Blocked(SyncBlocked::StateUnavailable)
+            | SyncFault::Auth(AuthError::StateUnavailable)
+            | SyncFault::StateUnavailable => "state_unavailable",
+            SyncFault::Auth(AuthError::SignedOut) => "signed_out",
+            SyncFault::Auth(AuthError::Unconfigured) => "not_configured",
+            SyncFault::Auth(AuthError::MalformedOwnerObject) => "owner_malformed",
+            SyncFault::Auth(error) if error.retryable() => "offline",
+            SyncFault::Auth(_) => "identity_rejected",
+            SyncFault::Store(StoreError::NotFound) => "remote_missing",
+            SyncFault::Store(StoreError::ContentHashMismatch) => "install_collision",
+            SyncFault::Store(StoreError::Forbidden) => "forbidden",
+            SyncFault::Store(StoreError::CredentialsExpired) => "credentials_expired",
+            SyncFault::Store(StoreError::PreconditionFailed)
+            | SyncFault::Store(StoreError::ConditionalConflict) => "remote_changed",
+            SyncFault::Store(error) if error.retryable() => "offline",
+            SyncFault::Store(_) => "transport",
+            SyncFault::Snapshot(SnapshotError::Build { .. }) => "snapshot_build",
+            SyncFault::Snapshot(SnapshotError::SourceBusy) => "dataset_busy",
+            SyncFault::Snapshot(SnapshotError::SchemaTooNew { .. })
+            | SyncFault::UpdateNeeded { .. } => "update_needed",
+            SyncFault::Snapshot(_) => "snapshot_invalid",
+            SyncFault::Swap { .. } => "restore_failed",
+            SyncFault::OwnerMismatch => "owner_mismatch",
+            SyncFault::Registry => "profile_create_failed",
+            SyncFault::NotEnabled => "not_enabled",
+            SyncFault::NoPendingPrompt => "no_pending_prompt",
+            SyncFault::ActorUnavailable => "actor_unavailable",
+        }
+    }
+
+    /// Whether repeating the same operation later can succeed on its own.
+    pub fn retryable(&self) -> bool {
+        match self {
+            SyncFault::Auth(error) => error.retryable(),
+            SyncFault::Store(error) => error.retryable(),
+            SyncFault::Snapshot(SnapshotError::SourceBusy) => true,
+            // A conflict is resolved by re-reading, which the upload path already does, so
+            // the operation that produced it is not the one to repeat.
+            _ => false,
+        }
+    }
+
+    /// Whether the user can act on it: sign in, reconnect, re-upgrade, answer a prompt.
+    /// Distinct from `retryable`, which is about an unattended repeat.
+    pub fn recoverable(&self) -> bool {
+        match self {
+            SyncFault::Blocked(SyncBlocked::PinMismatch { .. })
+            | SyncFault::Auth(AuthError::PinMismatch(_))
+            | SyncFault::OwnerMismatch
+            | SyncFault::Auth(AuthError::Unconfigured) => false,
+            SyncFault::Blocked(_)
+            | SyncFault::Auth(_)
+            | SyncFault::Store(_)
+            | SyncFault::Snapshot(_)
+            | SyncFault::UpdateNeeded { .. }
+            | SyncFault::Swap { .. }
+            | SyncFault::Registry
+            | SyncFault::StateUnavailable
+            | SyncFault::NotEnabled
+            | SyncFault::NoPendingPrompt
+            | SyncFault::ActorUnavailable => true,
+        }
+    }
+
+    /// One fixed sentence per code, for support and for a UI that has no string yet. The
+    /// frontend narrows on `code` and renders its own i18n copy (Story 11).
+    pub fn message(&self) -> &'static str {
+        match self.code() {
+            "local_only" => "This profile is not linked to a Nixus Cloud account.",
+            "not_entitled" => "This Nixus Cloud account does not include sync.",
+            "frozen" => "Sync is paused; this computer keeps working normally.",
+            "account_mismatch" | "owner_mismatch" => {
+                "The cloud copy belongs to a different Nixus Cloud account."
+            }
+            "state_unavailable" => "This profile's sync state could not be read.",
+            "signed_out" => "Sign in to your Nixus Cloud account to sync.",
+            "not_configured" => "Sync is not available in this build.",
+            "owner_malformed" => "The cloud account marker could not be read.",
+            "offline" => "Sync could not reach the cloud and will retry.",
+            "identity_rejected" => "The cloud rejected this session.",
+            "remote_missing" => "The cloud copy could not be found.",
+            "install_collision" => "This computer's install id is already in use.",
+            "forbidden" => "The cloud refused this request.",
+            "credentials_expired" => "The cloud session expired and will be renewed.",
+            "remote_changed" => "The cloud copy changed on another computer.",
+            "transport" => "The cloud request failed.",
+            "snapshot_build" => "This profile's data could not be packaged for upload.",
+            "dataset_busy" => "This profile was busy; the upload will be retried.",
+            "update_needed" => "Update Nixus to read the cloud copy.",
+            "snapshot_invalid" => "The cloud copy could not be verified.",
+            "restore_failed" => "The cloud copy could not be loaded onto this computer.",
+            "profile_create_failed" => "A separate profile could not be created.",
+            "not_enabled" => "Sync is not turned on for this profile.",
+            _ => "Sync is unavailable.",
+        }
+    }
+}
+
+impl From<GatedError> for SyncFault {
+    fn from(error: GatedError) -> Self {
+        match error {
+            GatedError::Blocked(blocked) => SyncFault::Blocked(blocked),
+            GatedError::Store(error) => SyncFault::Store(error),
+            GatedError::Auth(error) => SyncFault::Auth(error),
+        }
+    }
+}
+
+impl From<SnapshotError> for SyncFault {
+    fn from(error: SnapshotError) -> Self {
+        match error {
+            SnapshotError::Store(error) => SyncFault::from(error),
+            other => SyncFault::Snapshot(other),
+        }
+    }
+}
+
+impl From<BootstrapError> for SyncFault {
+    fn from(error: BootstrapError) -> Self {
+        match error {
+            BootstrapError::Blocked(blocked) => SyncFault::Blocked(blocked),
+            BootstrapError::Store(error) => SyncFault::Store(error),
+            BootstrapError::Auth(error) => SyncFault::Auth(error),
+            BootstrapError::OwnerMismatch => SyncFault::OwnerMismatch,
+            BootstrapError::Snapshot(error) => SyncFault::Snapshot(error),
+            BootstrapError::SnapshotTooNew { found, supported } => {
+                SyncFault::UpdateNeeded { found, supported }
+            }
+            BootstrapError::Swap(failure) => SyncFault::Swap {
+                rolled_back: failure.rolled_back,
+            },
+            BootstrapError::Registry => SyncFault::Registry,
+        }
+    }
+}
+
+impl From<SyncFault> for crate::error::AppError {
+    fn from(fault: SyncFault) -> Self {
+        crate::error::AppError::Sync {
+            code: fault.code().to_string(),
+            message: fault.message().to_string(),
+            recoverable: fault.recoverable(),
+        }
+    }
+}
+
+/// Every timing the actor runs on, injectable so a test states them instead of waiting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyncTuning {
+    /// How often `data_version` is read.
+    pub poll_interval: Duration,
+    /// How long the dataset has to be unchanged before an upload starts.
+    pub settle_window: Duration,
+    /// The floor between two uploads, whatever the edit rate.
+    pub min_upload_interval: Duration,
+    pub initial_backoff: Duration,
+    pub max_backoff: Duration,
+}
+
+impl Default for SyncTuning {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(2),
+            settle_window: Duration::from_secs(5),
+            min_upload_interval: Duration::from_secs(60),
+            initial_backoff: Duration::from_secs(5),
+            max_backoff: Duration::from_secs(300),
+        }
+    }
+}
+
+/// A gated store and the account it was vended for: the whole result of `connect`.
+pub(crate) struct SyncSession<S, L, C, T> {
+    pub store: GatedStore<S, SyncGate<L, C, T>>,
+    pub pin: AccountPin,
+}
+
+pub(crate) type HostSession<H> = SyncSession<
+    <H as SyncHost>::Store,
+    <H as SyncHost>::Link,
+    <H as SyncHost>::Caps,
+    <H as SyncHost>::GateState,
+>;
+
+/// Everything the actor needs from the dataset it syncs, as one seam.
+///
+/// `connect` returns a boxed future rather than being an `async fn` so that this trait can
+/// be implemented over a Tauri `AppHandle` in `sync/host.rs` without that type reaching
+/// this file: `manager.rs` names no Tauri item, which is what keeps the whole actor
+/// testable with fakes.
+pub(crate) trait SyncHost {
+    type Store: ObjectStore;
+    type Link: DatasetLink;
+    type Caps: CapabilitySource;
+    type GateState: GateStateSource;
+    type Slot: DatasetSlot;
+
+    fn dataset_id(&self) -> &str;
+    fn db_path(&self) -> &Path;
+    /// Where a displaced database file is kept (CAP-5's dated backup).
+    fn backup_dir(&self) -> &Path;
+    /// The app-data root, which owns the dataset registry (inherited AD-3).
+    fn root(&self) -> &Path;
+    /// The label a *separate* profile is created with.
+    fn label(&self) -> &str;
+    fn schema_version(&self) -> u32;
+    fn now_ms(&self) -> i64;
+    /// `PRAGMA data_version` on the actor's own connection.
+    fn data_version(&self) -> Result<i64, SyncFault>;
+    fn local_data(&self) -> Result<LocalData, SyncFault>;
+    fn slot(&self) -> &Self::Slot;
+    /// Releases the actor's own connection(s) so nothing holds the dataset file.
+    fn release(&self);
+    /// Records that transfers must stop until support intervenes (AD-14, AD-7).
+    fn freeze(&self, reason: FrozenReason);
+    /// Drops the vended AWS credentials. Async because the cache is behind an async mutex
+    /// that a concurrent refresh may be holding.
+    fn forget_credentials(&self) -> Pin<Box<dyn std::future::Future<Output = ()> + '_>>;
+    fn connect(
+        &self,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<HostSession<Self>, SyncFault>> + '_>>;
+}
+
+/// What AD-16 lets out: counts, states, timings and error codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SyncDiagnostics {
+    pub dataset_id: String,
+    pub capability: &'static str,
+    pub state: SyncState,
+    pub enabled: bool,
+    pub has_pulled_latest: bool,
+    pub pending_prompt: Option<SyncPrompt>,
+    pub uploads: u64,
+    pub conflicts: u64,
+    pub restores: u64,
+    pub failures: u64,
+    pub blocked: u64,
+    pub last_error_code: Option<String>,
+    pub last_sync_ms: Option<i64>,
+    pub last_build_ms: Option<u64>,
+    pub last_object_bytes: Option<usize>,
+    pub last_payload_bytes: Option<usize>,
+    pub local_rows: Option<i64>,
+    pub schema_version: u32,
+    pub frozen_reason: Option<&'static str>,
+    pub backoff_ms: Option<u64>,
+    pub settle_window_ms: u64,
+    pub min_upload_interval_ms: u64,
+    pub poll_interval_ms: u64,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct SyncStats {
+    uploads: u64,
+    conflicts: u64,
+    restores: u64,
+    failures: u64,
+    blocked: u64,
+    last_build_ms: Option<u64>,
+    last_object_bytes: Option<usize>,
+    last_payload_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+enum PendingDecision {
+    LinkChoice {
+        latest: LatestSnapshot,
+        local_rows: i64,
+    },
+    RemoteChanged {
+        theirs: LatestSnapshot,
+        their_etag: ETag,
+    },
+}
+
+impl PendingDecision {
+    fn prompt(&self) -> SyncPrompt {
+        match self {
+            PendingDecision::LinkChoice {
+                latest, local_rows, ..
+            } => SyncPrompt::LinkChoice {
+                local_rows: *local_rows,
+                remote_created_ms: latest.created_ms,
+                remote_schema_version: latest.schema_version,
+            },
+            PendingDecision::RemoteChanged { theirs, .. } => SyncPrompt::RemoteChanged {
+                remote_created_ms: theirs.created_ms,
+                remote_schema_version: theirs.schema_version,
+            },
+        }
+    }
+}
+
+struct Backoff {
+    attempt: u32,
+    until: Instant,
+}
+
+/// The actor's behaviour, separated from the channel loop below so every rule in this file
+/// is driven directly by a test under virtual time instead of through a mailbox.
+pub(crate) struct SyncActor<H: SyncHost> {
+    host: H,
+    tuning: SyncTuning,
+    status: watch::Sender<SyncStatusPayload>,
+    events: mpsc::UnboundedSender<SyncStatusPayload>,
+    state: SyncState,
+    enabled: bool,
+    known_latest: Option<ETag>,
+    pending: Option<PendingDecision>,
+    last_change: Option<Instant>,
+    last_upload: Option<Instant>,
+    last_seen_version: Option<i64>,
+    last_sync_ms: Option<i64>,
+    last_error: Option<&'static str>,
+    frozen_reason: Option<&'static str>,
+    recoverable: bool,
+    backoff: Option<Backoff>,
+    stats: SyncStats,
+}
+
+impl<H: SyncHost> SyncActor<H> {
+    pub(in crate::sync) fn new(
+        host: H,
+        tuning: SyncTuning,
+    ) -> (
+        Self,
+        watch::Receiver<SyncStatusPayload>,
+        mpsc::UnboundedReceiver<SyncStatusPayload>,
+    ) {
+        let initial = SyncStatusPayload {
+            state: SyncState::Unlinked,
+            dataset_id: host.dataset_id().to_string(),
+            enabled: false,
+            last_sync_ms: None,
+            error_code: None,
+            recoverable: true,
+            prompt: None,
+        };
+        let (status, status_rx) = watch::channel(initial);
+        let (events, events_rx) = mpsc::unbounded_channel();
+
+        let actor = Self {
+            host,
+            tuning,
+            status,
+            events,
+            state: SyncState::Unlinked,
+            enabled: false,
+            known_latest: None,
+            pending: None,
+            last_change: None,
+            last_upload: None,
+            last_seen_version: None,
+            last_sync_ms: None,
+            last_error: None,
+            frozen_reason: None,
+            recoverable: true,
+            backoff: None,
+            stats: SyncStats::default(),
+        };
+
+        (actor, status_rx, events_rx)
+    }
+
+    pub(in crate::sync) fn status(&self) -> SyncStatusPayload {
+        SyncStatusPayload {
+            state: self.state,
+            dataset_id: self.host.dataset_id().to_string(),
+            enabled: self.enabled,
+            last_sync_ms: self.last_sync_ms,
+            error_code: self.last_error.map(str::to_string),
+            recoverable: self.recoverable,
+            prompt: self.pending.as_ref().map(PendingDecision::prompt),
+        }
+    }
+
+    pub(in crate::sync) fn diagnostics(&self) -> SyncDiagnostics {
+        SyncDiagnostics {
+            dataset_id: self.host.dataset_id().to_string(),
+            capability: MULTI_DEVICE_SYNC.name(),
+            state: self.state,
+            enabled: self.enabled,
+            has_pulled_latest: self.known_latest.is_some(),
+            pending_prompt: self.pending.as_ref().map(PendingDecision::prompt),
+            uploads: self.stats.uploads,
+            conflicts: self.stats.conflicts,
+            restores: self.stats.restores,
+            failures: self.stats.failures,
+            blocked: self.stats.blocked,
+            last_error_code: self.last_error.map(str::to_string),
+            last_sync_ms: self.last_sync_ms,
+            last_build_ms: self.stats.last_build_ms,
+            last_object_bytes: self.stats.last_object_bytes,
+            last_payload_bytes: self.stats.last_payload_bytes,
+            local_rows: self.host.local_data().ok().map(|local| local.rows),
+            schema_version: self.host.schema_version(),
+            frozen_reason: self.frozen_reason,
+            backoff_ms: self
+                .backoff
+                .as_ref()
+                .map(|backoff| backoff.until.saturating_duration_since(Instant::now()))
+                .map(millis),
+            settle_window_ms: millis(self.tuning.settle_window),
+            min_upload_interval_ms: millis(self.tuning.min_upload_interval),
+            poll_interval_ms: millis(self.tuning.poll_interval),
+        }
+    }
+
+    /// Emits only on a real transition, so a listener counts changes rather than ticks.
+    fn publish(&mut self, state: SyncState) {
+        self.state = state;
+        let payload = self.status();
+        if *self.status.borrow() == payload {
+            return;
+        }
+
+        let _ = self.status.send(payload.clone());
+        let _ = self.events.send(payload);
+    }
+
+    fn clear_error(&mut self) {
+        self.last_error = None;
+        self.recoverable = true;
+        self.frozen_reason = None;
+        self.backoff = None;
+    }
+
+    fn record_fault(&mut self, fault: &SyncFault) {
+        self.last_error = Some(fault.code());
+        self.recoverable = fault.recoverable();
+        self.frozen_reason = match fault {
+            SyncFault::Blocked(SyncBlocked::Frozen { reason }) => Some(reason.code()),
+            SyncFault::Blocked(SyncBlocked::CapabilityMissing { .. }) => {
+                Some(FrozenReason::EntitlementLapsed.code())
+            }
+            _ => None,
+        };
+
+        // AD-7: continuing would mean two accounts writing one source of truth, so the
+        // refusal is persisted in the dataset's own row. This run still reports `error`
+        // (AD-7's wording); every later launch reads it back as `frozen`.
+        if matches!(fault.code(), "account_mismatch" | "owner_mismatch") {
+            self.host.freeze(FrozenReason::OwnerMismatch);
+        }
+
+        let state = match fault {
+            SyncFault::Blocked(SyncBlocked::LocalOnlyDataset) | SyncFault::NotEnabled => {
+                SyncState::Unlinked
+            }
+            SyncFault::Blocked(SyncBlocked::Frozen { .. })
+            | SyncFault::Blocked(SyncBlocked::CapabilityMissing { .. }) => SyncState::Frozen,
+            SyncFault::UpdateNeeded { .. }
+            | SyncFault::Snapshot(SnapshotError::SchemaTooNew { .. }) => SyncState::UpdateNeeded,
+            other if other.retryable() => SyncState::Offline,
+            _ => SyncState::Error,
+        };
+
+        match state {
+            // A refusal is a state of the product, not a fault to count or to back off
+            // from: the next tick re-asks the gate, which is how leaving Frozen resumes.
+            SyncState::Frozen | SyncState::Unlinked => {
+                self.stats.blocked += 1;
+                self.backoff = None;
+            }
+            SyncState::Offline => {
+                self.stats.failures += 1;
+                self.schedule_backoff();
+            }
+            _ => {
+                self.stats.failures += 1;
+                self.backoff = None;
+            }
+        }
+
+        self.publish(state);
+    }
+
+    /// Exponential with full jitter on the increment, capped. The jitter matters because
+    /// every computer on one account wakes on the same poll cadence: without it, two of
+    /// them that went offline together would retry in lockstep forever.
+    fn schedule_backoff(&mut self) {
+        let attempt = self
+            .backoff
+            .as_ref()
+            .map(|backoff| backoff.attempt.saturating_add(1))
+            .unwrap_or(0);
+
+        let base = self
+            .tuning
+            .initial_backoff
+            .saturating_mul(1u32 << attempt.min(16))
+            .min(self.tuning.max_backoff);
+        let span = millis(base).max(1);
+        let jitter = Duration::from_millis(rand::random::<u64>() % span);
+
+        self.backoff = Some(Backoff {
+            attempt,
+            until: Instant::now() + base + jitter,
+        });
+    }
+
+    fn mark_synced(&mut self) {
+        self.last_sync_ms = Some(self.host.now_ms());
+        self.last_change = None;
+        self.last_upload = Some(Instant::now());
+        self.last_seen_version = self.host.data_version().ok();
+        self.clear_error();
+        self.publish(SyncState::Idle);
+    }
+
+    pub(in crate::sync) async fn enable(
+        &mut self,
+        choice: Option<LinkChoice>,
+    ) -> Result<SyncEnableOutcome, SyncFault> {
+        self.publish(SyncState::Syncing);
+
+        match self.enable_inner(choice).await {
+            Ok(outcome) => {
+                match &outcome {
+                    SyncEnableOutcome::Enabled { .. } => {
+                        self.enabled = true;
+                        if self.pending.is_some() {
+                            self.clear_error();
+                            self.publish(SyncState::RemoteChanged);
+                        } else {
+                            self.mark_synced();
+                        }
+                    }
+                    SyncEnableOutcome::LinkChoiceRequired { .. } => {
+                        self.publish(SyncState::LinkChoiceRequired)
+                    }
+                    SyncEnableOutcome::SeparateProfileCreated { .. } => {
+                        self.enabled = false;
+                        self.pending = None;
+                        self.clear_error();
+                        self.publish(SyncState::Unlinked);
+                    }
+                }
+
+                Ok(outcome)
+            }
+            Err(fault) => {
+                self.record_fault(&fault);
+                Err(fault)
+            }
+        }
+    }
+
+    async fn enable_inner(
+        &mut self,
+        choice: Option<LinkChoice>,
+    ) -> Result<SyncEnableOutcome, SyncFault> {
+        let session = self.host.connect().await?;
+        let local = self.host.local_data()?;
+        let plan = bootstrap::assess(&session.store, &session.pin, &local).await?;
+
+        match plan {
+            BootstrapPlan::FirstEnable => {
+                claim_owner(&session, self.host.now_ms()).await?;
+                self.publish_snapshot(&session, None).await
+            }
+            BootstrapPlan::NoSnapshot => self.publish_snapshot(&session, None).await,
+            BootstrapPlan::Restore { latest, etag } => {
+                let report = bootstrap::restore_latest(
+                    &session.store,
+                    &latest,
+                    &RestoreTarget {
+                        db_path: self.host.db_path(),
+                        // Nothing to back up: `assess` only returns `Restore` for a
+                        // dataset holding no user data.
+                        dated_backup_dir: None,
+                    },
+                    self.host.slot(),
+                )
+                .await?;
+
+                self.stats.restores += 1;
+                self.stats.last_object_bytes = Some(report.object_bytes);
+                self.stats.last_payload_bytes = Some(report.payload_bytes);
+                self.known_latest = Some(etag);
+
+                Ok(SyncEnableOutcome::Enabled {
+                    state: SyncState::Idle,
+                })
+            }
+            BootstrapPlan::ChoiceRequired {
+                latest,
+                etag,
+                local,
+            } => match choice {
+                None => {
+                    let outcome = SyncEnableOutcome::LinkChoiceRequired {
+                        local_rows: local.rows,
+                        remote_created_ms: latest.created_ms,
+                        remote_schema_version: latest.schema_version,
+                    };
+                    self.pending = Some(PendingDecision::LinkChoice {
+                        latest,
+                        local_rows: local.rows,
+                    });
+
+                    Ok(outcome)
+                }
+                Some(choice) => self.apply_link_choice(&session, &latest, etag, choice).await,
+            },
+        }
+    }
+
+    async fn apply_link_choice(
+        &mut self,
+        session: &HostSession<H>,
+        latest: &LatestSnapshot,
+        etag: ETag,
+        choice: LinkChoice,
+    ) -> Result<SyncEnableOutcome, SyncFault> {
+        let outcome = bootstrap::apply_choice(
+            &session.store,
+            latest,
+            choice,
+            &ReplaceTarget {
+                db_path: self.host.db_path(),
+                dated_backup_dir: self.host.backup_dir(),
+            },
+            &SeparateContext {
+                root: self.host.root(),
+                kept_dataset_id: self.host.dataset_id(),
+                owner_sub: &session.pin.owner_sub,
+                label: self.host.label(),
+            },
+            self.host.slot(),
+        )
+        .await?;
+
+        self.stats.restores += 1;
+
+        match outcome {
+            LinkOutcome::Replaced { report } => {
+                self.stats.last_object_bytes = Some(report.object_bytes);
+                self.stats.last_payload_bytes = Some(report.payload_bytes);
+                self.known_latest = Some(etag);
+                self.pending = None;
+
+                Ok(SyncEnableOutcome::Enabled {
+                    state: SyncState::Idle,
+                })
+            }
+            LinkOutcome::Separated { dataset, report } => {
+                self.stats.last_object_bytes = Some(report.object_bytes);
+                self.stats.last_payload_bytes = Some(report.payload_bytes);
+
+                Ok(SyncEnableOutcome::SeparateProfileCreated {
+                    dataset_id: dataset.id,
+                })
+            }
+        }
+    }
+
+    async fn publish_snapshot(
+        &mut self,
+        session: &HostSession<H>,
+        known_latest: Option<&ETag>,
+    ) -> Result<SyncEnableOutcome, SyncFault> {
+        let state = match self.upload(session, known_latest).await? {
+            UploadStep::Published => SyncState::Idle,
+            UploadStep::RemoteChanged => SyncState::RemoteChanged,
+        };
+
+        Ok(SyncEnableOutcome::Enabled { state })
+    }
+
+    async fn upload(
+        &mut self,
+        session: &HostSession<H>,
+        known_latest: Option<&ETag>,
+    ) -> Result<UploadStep, SyncFault> {
+        let built =
+            snapshot::build_snapshot(self.host.db_path(), self.host.schema_version()).await?;
+
+        self.stats.last_build_ms = Some(millis(built.build_duration));
+        self.stats.last_object_bytes = Some(built.object_bytes());
+        self.stats.last_payload_bytes = Some(built.payload_bytes);
+
+        match snapshot::upload_snapshot(&session.store, &built, known_latest, self.host.now_ms())
+            .await?
+        {
+            UploadOutcome::Published { latest, .. } => {
+                self.stats.uploads += 1;
+                self.known_latest = Some(latest);
+                self.pending = None;
+
+                Ok(UploadStep::Published)
+            }
+            UploadOutcome::RemoteChanged {
+                theirs, their_etag, ..
+            } => {
+                self.stats.conflicts += 1;
+                self.pending = Some(PendingDecision::RemoteChanged { theirs, their_etag });
+
+                Ok(UploadStep::RemoteChanged)
+            }
+        }
+    }
+
+    /// One poll: read the change signal, and upload if the dataset has settled.
+    pub(in crate::sync) async fn tick(&mut self) {
+        if !self.enabled || self.pending.is_some() {
+            return;
+        }
+
+        if let Some(backoff) = &self.backoff {
+            if Instant::now() < backoff.until {
+                return;
+            }
+        }
+
+        match self.host.data_version() {
+            Ok(version) => {
+                if self.last_seen_version != Some(version) {
+                    self.last_seen_version = Some(version);
+                    self.last_change = Some(Instant::now());
+                }
+            }
+            Err(fault) => {
+                self.record_fault(&fault);
+                return;
+            }
+        }
+
+        let Some(changed_at) = self.last_change else {
+            return;
+        };
+        if changed_at.elapsed() < self.tuning.settle_window {
+            return;
+        }
+        if let Some(uploaded_at) = self.last_upload {
+            if uploaded_at.elapsed() < self.tuning.min_upload_interval {
+                return;
+            }
+        }
+
+        let _ = self.run_upload().await;
+    }
+
+    /// An upload the user asked for: the settle window and the minimum interval are the
+    /// policy for *unattended* uploads, so an explicit `sync_now` is not subject to them.
+    pub(in crate::sync) async fn sync_now(&mut self) -> Result<(), SyncFault> {
+        if !self.enabled {
+            let fault = SyncFault::NotEnabled;
+            self.record_fault(&fault);
+            return Err(fault);
+        }
+
+        self.backoff = None;
+        self.run_upload().await
+    }
+
+    async fn run_upload(&mut self) -> Result<(), SyncFault> {
+        self.publish(SyncState::Syncing);
+
+        let session = match self.host.connect().await {
+            Ok(session) => session,
+            Err(fault) => {
+                self.record_fault(&fault);
+                return Err(fault);
+            }
+        };
+
+        let known = self.known_latest.clone();
+        match self.upload(&session, known.as_ref()).await {
+            Ok(UploadStep::Published) => {
+                self.mark_synced();
+                Ok(())
+            }
+            Ok(UploadStep::RemoteChanged) => {
+                self.clear_error();
+                self.publish(SyncState::RemoteChanged);
+                Ok(())
+            }
+            Err(fault) => {
+                self.record_fault(&fault);
+                Err(fault)
+            }
+        }
+    }
+
+    pub(in crate::sync) async fn resolve_remote(
+        &mut self,
+        action: RemoteChoice,
+    ) -> Result<(), SyncFault> {
+        let Some(PendingDecision::RemoteChanged { theirs, their_etag }) = self.pending.clone()
+        else {
+            let fault = SyncFault::NoPendingPrompt;
+            self.record_fault(&fault);
+            return Err(fault);
+        };
+
+        match action {
+            RemoteChoice::LoadRemote => {
+                self.publish(SyncState::Syncing);
+
+                let session = match self.host.connect().await {
+                    Ok(session) => session,
+                    Err(fault) => {
+                        self.record_fault(&fault);
+                        return Err(fault);
+                    }
+                };
+
+                let restored = bootstrap::restore_latest(
+                    &session.store,
+                    &theirs,
+                    &RestoreTarget {
+                        db_path: self.host.db_path(),
+                        // The displaced file is this computer's data, so CAP-5's dated
+                        // backup is mandatory here and is what makes the choice safe.
+                        dated_backup_dir: Some(self.host.backup_dir()),
+                    },
+                    self.host.slot(),
+                )
+                .await;
+
+                match restored {
+                    Ok(report) => {
+                        self.stats.restores += 1;
+                        self.stats.last_object_bytes = Some(report.object_bytes);
+                        self.stats.last_payload_bytes = Some(report.payload_bytes);
+                        self.pending = None;
+                        self.known_latest = Some(their_etag);
+                        self.mark_synced();
+
+                        Ok(())
+                    }
+                    Err(error) => {
+                        let fault = SyncFault::from(error);
+                        self.record_fault(&fault);
+
+                        Err(fault)
+                    }
+                }
+            }
+            RemoteChoice::KeepLocal => {
+                self.pending = None;
+                // Adopting their ETag is what makes the next `If-Match` succeed: this
+                // computer now believes the cloud is at their snapshot, and publishing
+                // over it is the user's explicit decision rather than a blind overwrite.
+                self.known_latest = Some(their_etag);
+                self.last_change = Some(Instant::now());
+                self.last_upload = None;
+                self.clear_error();
+                self.publish(SyncState::Idle);
+
+                Ok(())
+            }
+        }
+    }
+
+    pub(in crate::sync) async fn disable(&mut self) {
+        self.enabled = false;
+        self.pending = None;
+        self.last_change = None;
+        self.known_latest = None;
+        self.clear_error();
+        // Both halves of "stop touching the cloud": no connection to the dataset file, and
+        // no AWS credential in memory for an account this computer is no longer syncing.
+        self.host.release();
+        self.host.forget_credentials().await;
+        self.publish(SyncState::Unlinked);
+    }
+}
+
+enum UploadStep {
+    Published,
+    RemoteChanged,
+}
+
+fn millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Writes the create-only `acct/<identity>/owner` binding (AD-7, Story 3's contract).
+///
+/// A 412 here is not a failure: another computer bound the same account between `assess`
+/// reading an absent owner and this write. Re-reading and comparing the `sub` is the only
+/// correct answer — the same `sub` is ordinary operation, a different one refuses.
+async fn claim_owner<S, L, C, T>(
+    session: &SyncSession<S, L, C, T>,
+    created_ms: i64,
+) -> Result<(), SyncFault>
+where
+    S: ObjectStore,
+    L: DatasetLink,
+    C: CapabilitySource,
+    T: GateStateSource,
+{
+    let body = owner_object_body(&session.pin, created_ms);
+
+    match session.store.put_if_absent(OWNER_OBJECT_KEY, body).await {
+        Ok(_) => Ok(()),
+        Err(GatedError::Store(StoreError::PreconditionFailed)) => {
+            let stored = session.store.get(OWNER_OBJECT_KEY).await?;
+            let owner_sub = owner_sub_from_body(&stored.bytes).map_err(SyncFault::Auth)?;
+
+            if owner_sub == session.pin.owner_sub {
+                Ok(())
+            } else {
+                Err(SyncFault::OwnerMismatch)
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// What the handle can ask the actor to do. Every variant carries its own reply channel, so
+/// a caller awaits its own answer and never a shared one.
+enum SyncCommand {
+    Enable {
+        choice: Option<LinkChoice>,
+        reply: oneshot::Sender<Result<SyncEnableOutcome, SyncFault>>,
+    },
+    Disable {
+        reply: oneshot::Sender<()>,
+    },
+    Now {
+        reply: oneshot::Sender<Result<(), SyncFault>>,
+    },
+    Diagnostics {
+        reply: oneshot::Sender<SyncDiagnostics>,
+    },
+    ResolveRemote {
+        action: RemoteChoice,
+        reply: oneshot::Sender<Result<(), SyncFault>>,
+    },
+    Stop,
+}
+
+/// The actor's mailbox and its current status. Cloneable, and the only thing
+/// `commands/sync.rs` ever holds.
+#[derive(Clone)]
+pub struct SyncHandle {
+    dataset_id: String,
+    commands: mpsc::Sender<SyncCommand>,
+    status: watch::Receiver<SyncStatusPayload>,
+}
+
+impl SyncHandle {
+    pub fn dataset_id(&self) -> &str {
+        &self.dataset_id
+    }
+
+    /// Read from the `watch` channel rather than through the mailbox, so reading the status
+    /// can never queue behind a running snapshot build (AD-16: sync never blocks the UI).
+    pub fn status(&self) -> SyncStatusPayload {
+        self.status.borrow().clone()
+    }
+
+    async fn request<T>(
+        &self,
+        make: impl FnOnce(oneshot::Sender<T>) -> SyncCommand,
+    ) -> Result<T, SyncFault> {
+        let (reply, answer) = oneshot::channel();
+        self.commands
+            .send(make(reply))
+            .await
+            .map_err(|_| SyncFault::ActorUnavailable)?;
+
+        answer.await.map_err(|_| SyncFault::ActorUnavailable)
+    }
+
+    pub async fn enable(&self, choice: Option<LinkChoice>) -> Result<SyncEnableOutcome, SyncFault> {
+        self.request(|reply| SyncCommand::Enable { choice, reply })
+            .await?
+    }
+
+    pub async fn disable(&self) -> Result<(), SyncFault> {
+        self.request(|reply| SyncCommand::Disable { reply }).await
+    }
+
+    pub async fn sync_now(&self) -> Result<(), SyncFault> {
+        self.request(|reply| SyncCommand::Now { reply }).await?
+    }
+
+    pub async fn diagnostics(&self) -> Result<SyncDiagnostics, SyncFault> {
+        self.request(|reply| SyncCommand::Diagnostics { reply })
+            .await
+    }
+
+    pub async fn resolve_remote(&self, action: RemoteChoice) -> Result<(), SyncFault> {
+        self.request(|reply| SyncCommand::ResolveRemote { action, reply })
+            .await?
+    }
+
+    /// Best-effort and synchronous: a dataset switch or a sign-out must not wait on an
+    /// upload in flight, and a full mailbox already means the actor is alive and busy.
+    pub fn stop(&self) {
+        let _ = self.commands.try_send(SyncCommand::Stop);
+    }
+}
+
+/// Serves the mailbox and the poll tick until `Stop` or the last sender is dropped. The
+/// tick is the only driver, which is what makes a tight retry loop impossible: a fault sets
+/// a backoff and returns to this `select!`.
+async fn serve<H: SyncHost>(
+    mut actor: SyncActor<H>,
+    mut commands: mpsc::Receiver<SyncCommand>,
+) {
+    let poll = actor.tuning.poll_interval;
+
+    loop {
+        tokio::select! {
+            command = commands.recv() => match command {
+                None | Some(SyncCommand::Stop) => break,
+                Some(SyncCommand::Enable { choice, reply }) => {
+                    let _ = reply.send(actor.enable(choice).await);
+                }
+                Some(SyncCommand::Disable { reply }) => {
+                    actor.disable().await;
+                    let _ = reply.send(());
+                }
+                Some(SyncCommand::Now { reply }) => {
+                    let _ = reply.send(actor.sync_now().await);
+                }
+                Some(SyncCommand::Diagnostics { reply }) => {
+                    let _ = reply.send(actor.diagnostics());
+                }
+                Some(SyncCommand::ResolveRemote { action, reply }) => {
+                    let _ = reply.send(actor.resolve_remote(action).await);
+                }
+            },
+            _ = tokio::time::sleep(poll) => actor.tick().await,
+        }
+    }
+
+    actor.disable().await;
+}
+
+/// How many commands may queue before `enable`/`sync_now` wait. Small on purpose: the UI
+/// issues one at a time, and a deep queue would only hide that the actor is stuck.
+const COMMAND_QUEUE: usize = 8;
+
+/// Starts the actor on a thread of its own and hands back the mailbox immediately.
+///
+/// A dedicated thread with a current-thread runtime, not `spawn`: the gate's
+/// `CapabilitySource` and the `ObjectStore` port are `async fn`-in-trait, so futures
+/// composed from them are not provably `Send` and could not be spawned onto the shared
+/// runtime without `Send` bounds every fake would then have to satisfy. One thread per
+/// *active* dataset is also what makes AD-11's "one extra connection" literally true, and
+/// it keeps a multi-megabyte snapshot build off the runtime the UI's commands run on.
+///
+/// Returns before any network or database work happens, so a sync fault — or a hang — can
+/// never delay launch (AD-16).
+pub(crate) fn spawn<H: SyncHost + Send + 'static>(
+    host: H,
+    tuning: SyncTuning,
+) -> std::io::Result<(SyncHandle, mpsc::UnboundedReceiver<SyncStatusPayload>)> {
+    let dataset_id = host.dataset_id().to_string();
+    let (commands, mailbox) = mpsc::channel(COMMAND_QUEUE);
+    let (actor, status, events) = SyncActor::new(host, tuning);
+
+    std::thread::Builder::new()
+        .name(format!("nixus-sync-{dataset_id}"))
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .enable_io()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    tracing::error!("Sync actor could not start its runtime: {error}");
+                    return;
+                }
+            };
+
+            runtime.block_on(serve(actor, mailbox));
+        })?;
+
+    Ok((
+        SyncHandle {
+            dataset_id,
+            commands,
+            status,
+        },
+        events,
+    ))
+}

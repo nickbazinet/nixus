@@ -42,8 +42,26 @@ pub(crate) fn select_dataset_now(app: &AppHandle, dataset_id: &str) -> Result<()
 
     let entry = find_registered(datasets::load_registry(app)?, dataset_id)?;
 
+    // Before anything opens the target: the previous run may have been interrupted
+    // mid-swap, and only a process that holds no handle to the file can decide which of
+    // the two complete databases survived (AD-9, Story 9's `recover_interrupted_restore`).
     let dir = datasets::dataset_dir(app, &entry.id)?;
+    let recovery = crate::db::backup::recover_interrupted_restore(
+        &dir.join(datasets::DB_FILE_NAME),
+    )?;
+    if !recovery.is_noop() {
+        info!(
+            "Recovered an interrupted sync restore for {}: {:?}",
+            entry.id, recovery.outcome
+        );
+    }
+
     let conn = init_db(&dir)?;
+
+    // The sync actor holds its own connection to the dataset it syncs (AD-11), so it has
+    // to be gone before `DbState` points somewhere else. Stopped here rather than in a
+    // `dataset:switched` listener so the ordering is a guarantee, not a race.
+    crate::commands::sync::stop(app);
 
     swap_active(&app.state::<DbState>().0, entry.id.clone(), conn)?;
 
@@ -58,6 +76,10 @@ pub(crate) fn select_dataset_now(app: &AppHandle, dataset_id: &str) -> Result<()
             kind: entry.kind,
         },
     );
+
+    // After the swap and after the event, so the actor is built from the dataset that is
+    // now active. A local-only profile gets no actor at all (inherited AD-12).
+    crate::commands::sync::start_for_active_dataset(app);
 
     Ok(())
 }

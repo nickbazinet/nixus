@@ -184,9 +184,6 @@ impl IdToken {
         Ok(token)
     }
 
-    pub(in crate::sync) fn subject_sub(&self) -> &str {
-        &self.subject_sub
-    }
 }
 
 /// Bearer material: the token itself never appears in a formatted string.
@@ -868,7 +865,7 @@ mod tests {
 
             Ok(VendedCredentials {
                 identity_id: IDENTITY.to_string(),
-                owner_sub: token.subject_sub().to_string(),
+                owner_sub: token.subject_sub.clone(),
                 access_key_id: "ASIAEXAMPLE".to_string(),
                 secret_access_key: "secret-example".to_string(),
                 session_token: "session-example".to_string(),

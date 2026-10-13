@@ -36,9 +36,13 @@ use super::snapshot::{fetch_latest, read_snapshot, LatestSnapshot, SnapshotError
 use super::store::{ETag, ObjectStore, StoreError};
 
 /// CAP-2's link budget: "usable within 5 s on a 10 Mbps connection".
+// Read by the CAP-2 timing gate and by Story 12's new-computer proof; Milestone 1's
+// production path measures nothing.
+#[allow(dead_code)]
 pub const CAP2_BUDGET: Duration = Duration::from_secs(5);
 
 /// 10 Mbps expressed as bytes per second, which is the unit the object store throttles in.
+#[allow(dead_code)] // Same: the CAP-2 gate and Story 12's proof.
 pub const CAP2_BYTES_PER_SECOND: u64 = 1_250_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -379,11 +383,13 @@ pub struct ReplaceTarget<'a> {
 /// rest — verify, decompress, write, migrate, reopen — is real work on a real disk and is
 /// timed as such.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Constructed by `measure_link`, which the CAP-2 gate drives.
 pub struct LinkBudget {
     pub transferred_bytes: u64,
     pub measured: Duration,
 }
 
+#[allow(dead_code)] // Read by the CAP-2 gate and by Story 12's proof.
 impl LinkBudget {
     pub fn network_model(&self) -> Duration {
         Duration::from_secs_f64(self.transferred_bytes as f64 / CAP2_BYTES_PER_SECOND as f64)
@@ -420,6 +426,7 @@ impl LinkBudget {
 ///
 /// `transferred` is read after the work finishes rather than taken from the report, so a
 /// bootstrap that moved more bytes than expected is counted honestly.
+#[allow(dead_code)] // The CAP-2 timing gate is its only caller until Story 12.
 pub async fn measure_link<F, T, E>(
     work: F,
     transferred: impl FnOnce() -> u64,
@@ -441,6 +448,7 @@ where
 }
 
 /// The file names the guarded swap owns, so a caller can clean up or recognise them.
+#[allow(dead_code)] // Story 12's proof cleans up with it; nothing in M1 needs the names.
 pub fn scratch_paths(db_path: &Path) -> (PathBuf, PathBuf) {
     (
         crate::db::backup::with_suffix(db_path, crate::db::backup::INCOMING_SUFFIX),

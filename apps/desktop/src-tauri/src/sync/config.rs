@@ -21,6 +21,11 @@ pub const SYNC_REGION: &str = "us-east-1";
 const PRODUCTION_IDENTITY_POOL_ID: Option<&str> =
     Some("us-east-1:952bbe95-591a-4260-854d-c218cadbbaf2");
 
+/// The deployed `nixus-sync` stack's `BucketName` output. Deterministic
+/// (`nixus-sync-<account>-<region>`) by the Story-2 decision, so a retried create keeps
+/// the same name rather than orphaning the previous bucket.
+const PRODUCTION_BUCKET: Option<&str> = Some("nixus-sync-760573627796-us-east-1");
+
 /// The user pool that issues the ID token. `commands/auth.rs` only ever needed the app
 /// client id and the custom domain, so the repository did not carry the pool id until
 /// the identity pool's `Logins` key required it.
@@ -69,6 +74,18 @@ impl IdentityPoolConfig {
             _ => Err(AuthError::Unconfigured),
         }
     }
+}
+
+/// The bucket every object key lives in, or `Unconfigured` when this build carries no
+/// deployed stack output.
+pub fn production_bucket() -> Result<String, AuthError> {
+    PRODUCTION_BUCKET
+        .filter(|bucket| !bucket.is_empty())
+        .map(str::to_string)
+        .ok_or(AuthError::Unconfigured)
+}
+
+impl IdentityPoolConfig {
 
     /// The `Logins` map key of the enhanced flow: the user pool's OIDC issuer without
     /// its scheme, which is the exact string the identity pool's trust configuration

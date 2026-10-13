@@ -80,6 +80,39 @@ impl S3ObjectStore {
         }
     }
 
+    /// The production store for one vend: a client carrying exactly the just-vended
+    /// 1-hour credentials and nothing else.
+    ///
+    /// No credentials *provider* and no `aws_config` call, deliberately — the same rule
+    /// `sync/auth.rs` follows. A provider would let the machine's default credential
+    /// chain (environment variables, the shared profile, an instance role) answer when
+    /// the vend is missing, which would send sync traffic signed as whoever happens to be
+    /// configured on that computer. Static credentials make that impossible, and because
+    /// they expire the caller rebuilds this store each cycle rather than refreshing one.
+    pub(in crate::sync) fn for_vend(
+        credentials: &super::auth::VendedCredentials,
+        region: &str,
+        bucket: &str,
+    ) -> Self {
+        let config = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new(region.to_string()))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                &credentials.access_key_id,
+                &credentials.secret_access_key,
+                Some(credentials.session_token.clone()),
+                Some(credentials.expires_at.into()),
+                "nixus-sync-identity-pool",
+            ))
+            .build();
+
+        Self::new(
+            Client::from_conf(config),
+            bucket.to_string(),
+            &credentials.identity_id,
+        )
+    }
+
     fn absolute(&self, key: &str) -> Result<String, StoreError> {
         validate_relative_key(key)?;
         Ok(format!("{}{key}", self.account_prefix))

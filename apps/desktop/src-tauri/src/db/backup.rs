@@ -256,7 +256,6 @@ impl LocalData {
     }
 }
 
-#[allow(dead_code)] // Story 10 reads this under DbState's guard to build the CAP-5 choice.
 pub fn local_data_summary(conn: &Connection) -> Result<LocalData, AppError> {
     let mut summary = LocalData::default();
 
@@ -594,7 +593,6 @@ pub fn recover_interrupted_restore(db_path: &Path) -> Result<Recovery, AppError>
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Reported by `recover_interrupted_restore`, which Story 10 calls.
 pub enum RecoveryOutcome {
     NothingToDo,
     /// The file in place opens and is intact, so it is kept. Which of the two databases it
@@ -606,16 +604,22 @@ pub enum RecoveryOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Reported by `recover_interrupted_restore`, which Story 10 calls.
 pub struct Recovery {
     pub stale_incoming_removed: bool,
     pub outcome: RecoveryOutcome,
 }
 
+impl Recovery {
+    /// Whether the previous run left nothing to clean up, which is the ordinary case on
+    /// every launch and the one that must produce no log line.
+    pub fn is_noop(&self) -> bool {
+        !self.stale_incoming_removed && self.outcome == RecoveryOutcome::NothingToDo
+    }
+}
+
 /// Whether `db_path` is a database this app could keep using. No migration is run: the
 /// question is whether the *file* survived, and migrating it would be a write to a file
 /// that may be about to be replaced.
-#[allow(dead_code)] // Reachable only from `recover_interrupted_restore`.
 fn restored_file_is_usable(db_path: &Path) -> bool {
     if !db_path.exists() {
         return false;

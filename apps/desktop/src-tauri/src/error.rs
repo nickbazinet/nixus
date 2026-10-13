@@ -15,6 +15,15 @@ pub enum AppError {
         message: String,
         recoverable: bool,
     },
+    /// A multi-device sync failure (AD-16). `code` is the stable discriminator the
+    /// frontend switches on and support reads in diagnostics; `message` is a fixed
+    /// sentence per code and never carries a row value, a key, an account identifier
+    /// or service prose.
+    Sync {
+        code: String,
+        message: String,
+        recoverable: bool,
+    },
     File { message: String },
     NotConfigured,
     InvalidCredentials,
@@ -30,6 +39,9 @@ impl fmt::Display for AppError {
             AppError::Auth { message, .. } => write!(f, "Authentication error: {}", message),
             AppError::HostedAi { code, message, .. } => {
                 write!(f, "Hosted AI error ({}): {}", code, message)
+            }
+            AppError::Sync { code, message, .. } => {
+                write!(f, "Sync error ({}): {}", code, message)
             }
             AppError::File { message } => write!(f, "File error: {}", message),
             AppError::NotConfigured => write!(f, "AI provider not configured"),
@@ -92,6 +104,18 @@ impl Serialize for AppError {
             } => {
                 let mut map = serializer.serialize_map(Some(4))?;
                 map.serialize_entry("type", "hosted_ai")?;
+                map.serialize_entry("code", code)?;
+                map.serialize_entry("message", message)?;
+                map.serialize_entry("recoverable", recoverable)?;
+                map.end()
+            }
+            AppError::Sync {
+                code,
+                message,
+                recoverable,
+            } => {
+                let mut map = serializer.serialize_map(Some(4))?;
+                map.serialize_entry("type", "sync")?;
                 map.serialize_entry("code", code)?;
                 map.serialize_entry("message", message)?;
                 map.serialize_entry("recoverable", recoverable)?;
@@ -202,5 +226,44 @@ mod tests {
             error.to_string(),
             "Hosted AI error (hosted_unavailable): Hosted AI is unavailable."
         );
+    }
+
+    #[test]
+    fn sync_error_serializes_with_the_same_discriminated_union_shape_as_hosted_ai() {
+        let json = serde_json::to_string(&AppError::Sync {
+            code: "offline".to_string(),
+            message: "Sync could not reach the cloud.".to_string(),
+            recoverable: true,
+        })
+        .unwrap();
+
+        assert_eq!(
+            json,
+            r#"{"type":"sync","code":"offline","message":"Sync could not reach the cloud.","recoverable":true}"#
+        );
+    }
+
+    #[test]
+    fn sync_error_preserves_a_non_recoverable_code() {
+        let json = serde_json::to_string(&AppError::Sync {
+            code: "account_mismatch".to_string(),
+            message: "This profile belongs to a different account.".to_string(),
+            recoverable: false,
+        })
+        .unwrap();
+
+        assert!(json.contains(r#""type":"sync""#));
+        assert!(json.contains(r#""code":"account_mismatch""#));
+        assert!(json.contains(r#""recoverable":false"#));
+    }
+
+    #[test]
+    fn sync_display_names_the_code() {
+        let error = AppError::Sync {
+            code: "frozen".to_string(),
+            message: "Sync is paused.".to_string(),
+            recoverable: true,
+        };
+        assert_eq!(error.to_string(), "Sync error (frozen): Sync is paused.");
     }
 }

@@ -376,6 +376,41 @@ fn seed_sync_state(conn: &Connection) {
     crate::db::sync_state::set_pin(conn, "us-east-1:0000", "sub-0").expect("the pin writes");
 }
 
+/// A migrated, otherwise-empty dataset at `db_path`, for tests about the sync *protocol*
+/// rather than about size. `heavy_year_dataset` costs ~700 ms to snapshot; this costs
+/// milliseconds, which is what makes a dozen settle/conflict tests affordable.
+pub(crate) fn migrated_dataset(db_path: &std::path::Path) -> Connection {
+    open_configured(db_path).expect("a fresh dataset migrates")
+}
+
+/// Inserts recognisable `budget_groups` rows.
+///
+/// Two jobs in one helper: it makes `local_data_summary` report "this computer has data"
+/// (which is what raises CAP-5's choice), and the names are the sentinels an AD-16 test
+/// searches the serialized diagnostics for. SQL stays in `db/` (project-context rule 1).
+pub(crate) fn insert_marker_rows(conn: &Connection, names: &[&str]) {
+    for name in names {
+        conn.execute(
+            "INSERT INTO budget_groups (name, sort_order) VALUES (?1, 0)",
+            rusqlite::params![name],
+        )
+        .expect("a marker row inserts");
+    }
+}
+
+pub(crate) fn marker_rows(conn: &Connection) -> Vec<String> {
+    let mut statement = conn
+        .prepare("SELECT name FROM budget_groups ORDER BY id")
+        .expect("the marker query prepares");
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("the marker query runs")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("every marker row reads");
+
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

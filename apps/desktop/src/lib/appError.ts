@@ -37,12 +37,82 @@ export interface HostedAiError {
   readonly recoverable: boolean;
 }
 
+/**
+ * `AppError::Sync`'s `code` (AD-16). The backend's `SyncFault::code` is the authority;
+ * every value here is one of its arms. `code` is the discriminator the UI switches on
+ * because `message` is a fixed support-grade English sentence, never a localized one and
+ * never anything derived from the user's data.
+ */
+export type SyncErrorCode =
+  | "local_only"
+  | "not_entitled"
+  | "frozen"
+  | "account_mismatch"
+  | "owner_mismatch"
+  | "owner_malformed"
+  | "state_unavailable"
+  | "signed_out"
+  | "not_configured"
+  | "offline"
+  | "identity_rejected"
+  | "remote_missing"
+  | "install_collision"
+  | "forbidden"
+  | "credentials_expired"
+  | "remote_changed"
+  | "transport"
+  | "snapshot_build"
+  | "dataset_busy"
+  | "update_needed"
+  | "snapshot_invalid"
+  | "restore_failed"
+  | "profile_create_failed"
+  | "not_enabled"
+  | "no_pending_prompt"
+  | "actor_unavailable";
+
+const SYNC_CODES: readonly SyncErrorCode[] = [
+  "local_only",
+  "not_entitled",
+  "frozen",
+  "account_mismatch",
+  "owner_mismatch",
+  "owner_malformed",
+  "state_unavailable",
+  "signed_out",
+  "not_configured",
+  "offline",
+  "identity_rejected",
+  "remote_missing",
+  "install_collision",
+  "forbidden",
+  "credentials_expired",
+  "remote_changed",
+  "transport",
+  "snapshot_build",
+  "dataset_busy",
+  "update_needed",
+  "snapshot_invalid",
+  "restore_failed",
+  "profile_create_failed",
+  "not_enabled",
+  "no_pending_prompt",
+  "actor_unavailable",
+];
+
+export interface SyncError {
+  readonly type: "sync";
+  readonly code: SyncErrorCode;
+  readonly message: string;
+  readonly recoverable: boolean;
+}
+
 export interface GenericAppError {
   readonly type: string | undefined;
   readonly message: string | undefined;
 }
 
-export type ParsedAppError = HostedAiError | GenericAppError;
+export type ParsedAppError = HostedAiError | SyncError | GenericAppError;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -50,6 +120,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isHostedAiError(error: ParsedAppError): error is HostedAiError {
   return error.type === "hosted_ai";
+}
+
+export function isSyncError(error: ParsedAppError): error is SyncError {
+  return error.type === "sync";
 }
 
 /**
@@ -77,6 +151,23 @@ export function parseAppError(error: unknown): ParsedAppError {
 
     return {
       type: "hosted_ai",
+      code,
+      message: message ?? "",
+      recoverable: error.recoverable !== false,
+    };
+  }
+
+  if (type === "sync") {
+    const raw = error.code;
+    // An unrecognized code degrades to `transport` rather than being dropped, for the
+    // same reason as the hosted-AI table above: a newer backend's failure is still a sync
+    // failure, and falling through would restore the silent generic message.
+    const code = SYNC_CODES.includes(raw as SyncErrorCode)
+      ? (raw as SyncErrorCode)
+      : "transport";
+
+    return {
+      type: "sync",
       code,
       message: message ?? "",
       recoverable: error.recoverable !== false,
