@@ -260,3 +260,47 @@ jobs:
             --query 'Stacks[0].[StackStatus,LastUpdatedTime]' \
             --output text --region "$AWS_REGION" \
             || echo 'unreadable (AccessDenied or absent); continuing')"
+
+  # The AD-19 release gate: one account's credentials must not reach another
+  # account's prefix. Read-only simulation against the ALREADY-DEPLOYED role, so
+  # it runs on pull requests (proving isolation before a merge) and again after
+  # every master deploy. Skipped on fork PRs, which have no credentials at all.
+  isolation:
+    name: Cross-account isolation gate
+    needs: [verify, deploy]
+    if: >-
+      always()
+      && needs.verify.result == 'success'
+      && (needs.deploy.result == 'success' || needs.deploy.result == 'skipped')
+      && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install boto3
+        run: pip install "boto3>=1.40,<2"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Prove cross-account denial (IAM simulation + trust and pool settings)
+        run: python3 infra/sync/isolation-simulate.py
+
+      - name: Prove the owner object is create-only
+        run: python3 infra/sync/owner-object-test.py
+
+      - name: Live two-account test (skips without test accounts)
+        run: python3 infra/sync/live-two-account-test.py
+
