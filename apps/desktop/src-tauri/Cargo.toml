@@ -63,6 +63,10 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # project-image validator admits are enabled; every other decoder would be attack surface
 # for a format this app refuses anyway.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Snapshot and (Milestone 2) segment payload compression. The compression LEVEL is frozen in
+# `sync/snapshot.rs` and pinned by a test, because the object format version is what a reader uses
+# to decide it can read the bytes at all (AD-8).
+zstd = "0.14.2"
 
 [dev-dependencies]
 # The S3 adapter's error mapping is unit-tested with no network at all: these stub the
@@ -76,6 +80,9 @@ aws-sdk-cognitoidentity = { version = "=1.116.0", features = ["test-util"] }
 # Only for `StatusCode`, which the adapter's tests need to synthesise the 304, 403,
 # 409 and 412 answers the real service would send.
 aws-smithy-runtime-api = "1"
+# `#[tokio::test(start_paused = true)]`, which is what lets the throttled-transfer test assert an
+# exact duration instead of sleeping for real.
+tokio = { version = "1.50.0", features = ["full", "test-util"] }
 
 # Must remain the LAST table in this file: bare keys after a [target...] table would
 # be silently absorbed into it. The "deep-link" feature is required so a forwarded
