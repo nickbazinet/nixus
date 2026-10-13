@@ -1,5 +1,14 @@
 use rusqlite::Connection;
 
+/// The `config` keys that describe THIS computer's credential state and therefore never
+/// travel between computers (AD-5's deny list). Everything else in `config` is the user's
+/// own setting and syncs.
+///
+/// One source of truth for both halves of the round trip: `sync::snapshot` empties them
+/// from the copy it uploads, and `db::backup` carries them back from the safety copy when
+/// a snapshot is restored over this computer's file.
+pub(crate) const LOCAL_ONLY_KEYS: &[&str] = &["ai_configured", "ai_provider", "aws_region"];
+
 pub fn get(conn: &Connection, key: &str) -> Option<String> {
     conn.query_row(
         "SELECT value FROM config WHERE key = ?1",

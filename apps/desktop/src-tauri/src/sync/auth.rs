@@ -60,11 +60,6 @@ const MAX_VEND_ATTEMPTS: u32 = 2;
 const VEND_ATTEMPT_TIMEOUT_SECS: u64 = 10;
 const VEND_TOTAL_TIMEOUT_SECS: u64 = 25;
 
-/// The relative object key (the adapter owns `acct/<identity-id>/`) whose body pins the
-/// account's user-pool `sub`. Written create-only, so the first computer to enable sync
-/// fixes the owner and every later one must agree with it (AD-7).
-pub const OWNER_OBJECT_KEY: &str = "owner";
-
 /// Which Cognito call failed. A code, not prose: diagnostics stay countable (AD-16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VendOp {
@@ -610,29 +605,6 @@ pub fn verify_account_pin(
 pub trait AccountPinStore {
     fn load(&self) -> Result<Option<AccountPin>, AuthError>;
     fn store(&self, pin: &AccountPin) -> Result<(), AuthError>;
-}
-
-/// The body of the create-only `owner` object: the user-pool `sub`, as UTF-8, and
-/// nothing else.
-///
-/// Chosen deliberately over JSON: the object's only job is to be compared, it is written
-/// once and never migrated, and a bare value cannot develop a second field whose absence
-/// two client versions disagree about. If the infrastructure track pins a different
-/// format, this is the one function to change.
-pub fn owner_object_body(owner_sub: &str) -> Vec<u8> {
-    owner_sub.as_bytes().to_vec()
-}
-
-/// Tolerates surrounding whitespace (a trailing newline is what any hand-written or
-/// console-uploaded object would carry) but refuses anything that is not a usable `sub`:
-/// an unreadable owner object must not be mistaken for an absent one.
-pub fn owner_sub_from_body(body: &[u8]) -> Result<String, AuthError> {
-    let text = std::str::from_utf8(body).map_err(|_| AuthError::MalformedOwnerObject)?;
-    let owner_sub = text.trim();
-    if owner_sub.is_empty() {
-        return Err(AuthError::MalformedOwnerObject);
-    }
-    Ok(owner_sub.to_string())
 }
 
 #[cfg(test)]
@@ -1250,29 +1222,6 @@ mod tests {
                 field: PinField::IdentityId
             })
         );
-    }
-
-    #[test]
-    fn the_owner_object_round_trips_and_tolerates_a_trailing_newline() {
-        assert_eq!(owner_object_body(SUB), SUB.as_bytes());
-        assert_eq!(
-            owner_sub_from_body(&owner_object_body(SUB)).expect("round trips"),
-            SUB
-        );
-        assert_eq!(
-            owner_sub_from_body(format!("{SUB}\n").as_bytes()).expect("tolerates whitespace"),
-            SUB
-        );
-    }
-
-    #[test]
-    fn an_unreadable_owner_object_is_never_mistaken_for_an_absent_one() {
-        for body in [b"".as_slice(), b"   \n".as_slice(), &[0xff, 0xfe][..]] {
-            assert_eq!(
-                owner_sub_from_body(body),
-                Err(AuthError::MalformedOwnerObject)
-            );
-        }
     }
 
     #[test]

@@ -12,12 +12,14 @@
 pub mod apply;
 pub mod auth;
 pub mod blob;
+pub mod bootstrap;
 pub mod capture;
 pub mod clock;
 pub mod config;
 pub mod gate;
 pub mod manager;
 pub mod object;
+pub mod owner;
 pub mod registry;
 pub mod s3;
 pub mod segment;
@@ -29,6 +31,8 @@ pub mod store;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests_auth_boundary;
+#[cfg(test)]
+mod tests_bootstrap;
 #[cfg(test)]
 mod tests_gate_boundary;
 #[cfg(test)]
