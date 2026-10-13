@@ -103,7 +103,7 @@ pub async fn get_tfsa_accumulated_limit(
             message: e.to_string(),
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        account_db::get_cad_tfsa_balance_cents(&conn)?
+        account_db::get_cad_tfsa_balance_cents(conn)?
     };
 
     Ok(gate_on_cad_tfsa_balance(limit, cad_tfsa_balance_cents))

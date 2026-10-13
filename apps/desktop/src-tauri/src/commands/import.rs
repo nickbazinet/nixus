@@ -270,9 +270,9 @@ pub async fn import_cc_statement(
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         let active_id = active.id.clone().ok_or(AppError::NotConfigured)?;
-        let cats = budget_db::get_all_budget_categories(&conn)?;
-        let groups = budget_db::get_budget_groups(&conn)?;
-        let hints = expense_db::get_merchant_category_hints(&conn)?;
+        let cats = budget_db::get_all_budget_categories(conn)?;
+        let groups = budget_db::get_budget_groups(conn)?;
+        let hints = expense_db::get_merchant_category_hints(conn)?;
         (cats, groups, hints, active_id)
     };
 
@@ -336,7 +336,7 @@ pub async fn import_cc_statement(
                     .iter()
                     .map(|t| (t.merchant.clone(), t.date.clone(), t.amount_cents))
                     .collect();
-                expense_db::find_duplicate_indices(&conn, &tuples)
+                expense_db::find_duplicate_indices(conn, &tuples)
             })()
             .unwrap_or_else(|e| {
                 error!("Duplicate check failed (non-blocking): {}", e);
@@ -474,7 +474,7 @@ pub fn confirm_import(
         })
         .collect::<Result<Vec<_>, AppError>>()?;
 
-    let count = expense_db::bulk_insert_imported_expenses(&conn, &tuples)?;
+    let count = expense_db::bulk_insert_imported_expenses(conn, &tuples)?;
 
     // Record merchant-category hints for future imports
     for tx in &transactions {
@@ -484,7 +484,7 @@ pub fn confirm_import(
                 .map(|orig| orig != tx.budget_category_id)
                 .unwrap_or(false);
             if let Err(e) = expense_db::record_merchant_category_hint(
-                &conn,
+                conn,
                 &tx.merchant,
                 tx.budget_category_id,
                 user_corrected,
@@ -496,7 +496,7 @@ pub fn confirm_import(
 
     // Audit log
     let details = format!("{{\"transaction_count\":{},\"source\":\"cc_import\"}}", count);
-    audit_db::insert_audit_log(&conn, "import", 0, "create", None, Some(&details))?;
+    audit_db::insert_audit_log(conn, "import", 0, "create", None, Some(&details))?;
 
     info!("Confirmed import: {} transactions saved", count);
 

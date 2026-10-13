@@ -1398,12 +1398,12 @@ mod boundary_guards {
         let source = production_source("commands/chat.rs");
 
         assert!(
-            source.contains(r#"insert_message(&conn, conv_id, "user", &message, "chat")"#),
+            source.contains(r#"insert_message(conn, conv_id, "user", &message, "chat")"#),
             "the user turn must persist exactly the typed message"
         );
 
         for forbidden in [
-            r#"insert_message(&conn, conv_id, "user", &attachment"#,
+            r#"insert_message(conn, conv_id, "user", &attachment"#,
             "attachment_path,",
             "&attachment_path",
             "file_name,",

@@ -1,0 +1,178 @@
+# Desktop app CI for apps/desktop/ (Rust backend + React frontend).
+#
+# This is the gate that did not exist before the multi-device-sync work: every
+# Rust change until now was only ever compiled on a developer's macOS machine and
+# then, once, inside the Release workflow. Release cannot be used as a gate — it
+# signs and publishes — so Windows had no pre-merge proof at all.
+#
+# Why libclang is a prerequisite now: `rusqlite`'s `preupdate_hook` feature forces
+# `buildtime_bindgen` in `libsqlite3-sys`, so the SQLite bindings are generated at
+# build time by bindgen, which links libclang. macOS gets it from the Xcode command
+# line tools; Windows needs LIBCLANG_PATH pointed at an LLVM install.
+#
+# This workflow builds and tests only. It never publishes, signs, uploads release
+# artifacts, or touches AWS.
+
+name: Desktop CI
+
+on:
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "rust-toolchain.toml"
+      - ".github/workflows/desktop-ci.yml"
+  push:
+    branches: [master]
+    paths:
+      - "apps/desktop/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "rust-toolchain.toml"
+      - ".github/workflows/desktop-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Verify (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: clippy
+
+      # rust-toolchain.toml is what cargo actually obeys, so a mismatch with the
+      # version installed above would silently build on a toolchain this workflow
+      # never vetted — including a `stable` that is years newer.
+      - name: Assert the installed toolchain matches rust-toolchain.toml
+        run: |
+          pinned="$(sed -n 's/^channel[[:space:]]*=[[:space:]]*"\(.*\)"$/\1/p' rust-toolchain.toml)"
+          if [ -z "$pinned" ]; then
+            echo "rust-toolchain.toml declares no channel." >&2
+            exit 1
+          fi
+          active="$(rustc --version)"
+          echo "pinned=$pinned active=$active"
+          case "$active" in
+            "rustc $pinned "*) ;;
+            *) echo "rustc is '$active' but rust-toolchain.toml pins '$pinned'." >&2; exit 1 ;;
+          esac
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: ${{ matrix.platform }}
+
+      # The runner images ship LLVM, but the path is not exported and bindgen does
+      # not search for it on Windows. Installing is the fallback, not the norm.
+      - name: Provide libclang for bindgen (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $llvmBin = Join-Path $env:ProgramFiles 'LLVM\bin'
+          if (-not (Test-Path -LiteralPath (Join-Path $llvmBin 'libclang.dll'))) {
+            choco install llvm --no-progress --yes
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $llvmBin 'libclang.dll'))) {
+            throw "libclang.dll was not found under '$llvmBin'."
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "LIBCLANG_PATH=$llvmBin" -Encoding utf8
+
+      # macOS gets libclang from the active Xcode or command line tools, but where it
+      # lives differs between the two (a full Xcode puts it under XcodeDefault
+      # .xctoolchain), so the path is probed and exported rather than assumed.
+      - name: Provide libclang for bindgen (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          developer="$(xcode-select -p)"
+          for candidate in \
+            "$(dirname "$(xcrun --find clang)")/../lib" \
+            "$developer/Toolchains/XcodeDefault.xctoolchain/usr/lib" \
+            "$developer/usr/lib"; do
+            if [ -f "$candidate/libclang.dylib" ]; then
+              resolved="$(cd "$candidate" && pwd)"
+              echo "LIBCLANG_PATH=$resolved" >> "$GITHUB_ENV"
+              echo "$resolved/libclang.dylib"
+              exit 0
+            fi
+          done
+          echo "No libclang.dylib found under $developer" >&2
+          exit 1
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck shared package
+        run: pnpm --filter @nixus/shared typecheck
+
+      - name: Typecheck desktop frontend
+        run: pnpm --filter @nixus/desktop exec tsc --noEmit
+
+      - name: Desktop frontend unit tests
+        run: pnpm --filter @nixus/desktop test
+
+      - name: Build desktop frontend
+        run: pnpm desktop:build
+
+      - name: Build Rust backend
+        working-directory: apps/desktop/src-tauri
+        run: cargo build
+
+      - name: Rust tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
+
+      - name: Clippy
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      # The Release workflow builds `universal-apple-darwin`, which compiles the
+      # crate once per architecture. Only the host arch is covered above, so this
+      # proves bindgen also generates the SQLite bindings when cross-compiling —
+      # the half of the release build no other gate can reach.
+      - name: Build the second macOS architecture
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop/src-tauri
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --target x86_64-apple-darwin

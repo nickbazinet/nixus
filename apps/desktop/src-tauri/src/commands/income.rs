@@ -24,11 +24,11 @@ pub fn create_income_source(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateIncomeSourceInput { name, income_type };
-    let result = income_db::insert_income_source(&conn, &input)?;
+    let result = income_db::insert_income_source(conn, &input)?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "income_source",
         result.id,
         "create",
@@ -50,7 +50,7 @@ pub fn get_income_sources(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    income_db::get_all_income_sources(&conn)
+    income_db::get_all_income_sources(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -65,14 +65,14 @@ pub fn update_income_source(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_source_json(&conn, id);
+    let old_json = get_source_json(conn, id);
 
     let input = UpdateIncomeSourceInput { name, income_type };
-    let result = income_db::update_income_source(&conn, id, &input)?;
+    let result = income_db::update_income_source(conn, id, &input)?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "income_source",
         id,
         "update",
@@ -92,12 +92,12 @@ pub fn delete_income_source(state: State<DbState>, id: i64) -> Result<(), AppErr
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_source_json(&conn, id);
+    let old_json = get_source_json(conn, id);
 
-    income_db::delete_income_source(&conn, id)?;
+    income_db::delete_income_source(conn, id)?;
 
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "income_source",
         id,
         "delete",
@@ -129,12 +129,12 @@ pub fn create_income_entry(
         date,
         account_id,
     };
-    let mutation = income_db::insert_income_entry(&conn, &input)?;
+    let mutation = income_db::insert_income_entry(conn, &input)?;
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "income_entry",
         result.id,
         "create",
@@ -143,7 +143,7 @@ pub fn create_income_entry(
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(&conn, &mutation.balance_changes);
+    record_account_balance_changes(conn, &mutation.balance_changes);
 
     Ok(result)
 }
@@ -162,15 +162,15 @@ pub fn update_income_entry(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_entry_json(&conn, id);
+    let old_json = get_entry_json(conn, id);
 
     let input = UpdateIncomeEntryInput { source_id, amount_cents, date, account_id };
-    let mutation = income_db::update_income_entry(&conn, id, &input)?;
+    let mutation = income_db::update_income_entry(conn, id, &input)?;
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "income_entry",
         id,
         "update",
@@ -179,7 +179,7 @@ pub fn update_income_entry(
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(&conn, &mutation.balance_changes);
+    record_account_balance_changes(conn, &mutation.balance_changes);
 
     Ok(result)
 }
@@ -191,12 +191,12 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_entry_json(&conn, id);
+    let old_json = get_entry_json(conn, id);
 
-    let balance_changes = income_db::delete_income_entry(&conn, id)?;
+    let balance_changes = income_db::delete_income_entry(conn, id)?;
 
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "income_entry",
         id,
         "delete",
@@ -205,7 +205,7 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(&conn, &balance_changes);
+    record_account_balance_changes(conn, &balance_changes);
 
     Ok(())
 }
@@ -220,7 +220,7 @@ pub fn get_income_entries(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    income_db::get_income_entries(&conn, source_id)
+    income_db::get_income_entries(conn, source_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -234,7 +234,7 @@ pub fn get_income_entries_by_month(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    income_db::get_income_entries_by_month(&conn, year, month)
+    income_db::get_income_entries_by_month(conn, year, month)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -248,7 +248,7 @@ pub fn get_income_total(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    income_db::get_income_total(&conn, year, month)
+    income_db::get_income_total(conn, year, month)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -261,7 +261,7 @@ pub fn get_income_source_year_totals(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    income_db::get_income_source_year_totals(&conn, year)
+    income_db::get_income_source_year_totals(conn, year)
 }
 
 fn get_source_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {

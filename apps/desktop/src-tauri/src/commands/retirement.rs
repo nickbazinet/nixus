@@ -20,7 +20,7 @@ pub fn get_retirement_input(state: State<DbState>) -> Result<RetirementInput, Ap
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    retirement_db::get_retirement_input(&conn)
+    retirement_db::get_retirement_input(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -30,7 +30,7 @@ pub fn get_retirement_pension_cents(state: State<DbState>) -> Result<Option<i64>
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    Ok(config::get(&conn, RETIREMENT_PENSION_CONFIG_KEY).and_then(|v| v.parse::<i64>().ok()))
+    Ok(config::get(conn, RETIREMENT_PENSION_CONFIG_KEY).and_then(|v| v.parse::<i64>().ok()))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -50,7 +50,7 @@ pub fn set_retirement_pension_cents(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    config::set(&conn, RETIREMENT_PENSION_CONFIG_KEY, &cents.to_string()).map_err(|e| {
+    config::set(conn, RETIREMENT_PENSION_CONFIG_KEY, &cents.to_string()).map_err(|e| {
         AppError::Database {
             message: e.to_string(),
         }
@@ -66,7 +66,7 @@ pub fn get_retirement_employer_pension_cents(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    Ok(config::get(&conn, RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY)
+    Ok(config::get(conn, RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY)
         .and_then(|v| v.parse::<i64>().ok()))
 }
 
@@ -88,7 +88,7 @@ pub fn set_retirement_employer_pension_cents(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     config::set(
-        &conn,
+        conn,
         RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY,
         &cents.to_string(),
     )
@@ -131,7 +131,7 @@ pub fn get_retirement_employer_pension_start_age(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    Ok(config::get(&conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY)
+    Ok(config::get(conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY)
         .and_then(|v| v.parse::<i64>().ok()))
 }
 
@@ -148,7 +148,7 @@ pub fn set_retirement_employer_pension_start_age(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     config::set(
-        &conn,
+        conn,
         RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY,
         &years.to_string(),
     )
@@ -166,7 +166,7 @@ pub fn get_retirement_pension_tax_rate_percent(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    Ok(config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY)
+    Ok(config::get(conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY)
         .and_then(|v| v.parse::<i64>().ok()))
 }
 
@@ -183,7 +183,7 @@ pub fn set_retirement_pension_tax_rate_percent(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     config::set(
-        &conn,
+        conn,
         RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY,
         &percent.to_string(),
     )
@@ -199,7 +199,7 @@ pub fn clear_retirement_pension_tax_rate_percent(state: State<DbState>) -> Resul
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    config::delete(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY).map_err(|e| {
+    config::delete(conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY).map_err(|e| {
         AppError::Database {
             message: e.to_string(),
         }
@@ -213,7 +213,7 @@ pub fn get_retirement_age_override(state: State<DbState>) -> Result<Option<i64>,
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    Ok(config::get(&conn, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY).and_then(|v| v.parse::<i64>().ok()))
+    Ok(config::get(conn, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY).and_then(|v| v.parse::<i64>().ok()))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -230,7 +230,7 @@ pub fn set_retirement_age_override(state: State<DbState>, years: i64) -> Result<
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    config::set(&conn, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY, &years.to_string()).map_err(|e| {
+    config::set(conn, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY, &years.to_string()).map_err(|e| {
         AppError::Database {
             message: e.to_string(),
         }

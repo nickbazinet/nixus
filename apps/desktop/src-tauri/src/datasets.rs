@@ -2191,11 +2191,9 @@ mod tests {
     // create a label a surviving profile already owns.
     #[test]
     fn the_sequence_reads_the_highest_suffix_rather_than_the_count() {
-        let entries = vec![
-            default_dataset_entry(),
+        let entries = [default_dataset_entry(),
             local_entry(DOOMED_ID, "Local Profile 3"),
-            entry("cloud-1"),
-        ];
+            entry("cloud-1")];
 
         assert_eq!(
             highest_local_label(entries.iter()),
@@ -2206,11 +2204,9 @@ mod tests {
 
     #[test]
     fn a_renamed_profile_holds_no_number_in_the_sequence() {
-        let renamed_only = vec![
-            default_dataset_entry(),
+        let renamed_only = [default_dataset_entry(),
             local_entry(DOOMED_ID, "Work"),
-            local_entry(SIBLING_ID, "Personal"),
-        ];
+            local_entry(SIBLING_ID, "Personal")];
 
         assert_eq!(
             highest_local_label(renamed_only.iter()),
@@ -2218,11 +2214,9 @@ mod tests {
             "no generated label is in the way"
         );
 
-        let mixed = vec![
-            default_dataset_entry(),
+        let mixed = [default_dataset_entry(),
             local_entry(DOOMED_ID, "Work"),
-            local_entry(SIBLING_ID, "Local Profile 2"),
-        ];
+            local_entry(SIBLING_ID, "Local Profile 2")];
 
         assert_eq!(highest_local_label(mixed.iter()), 2);
     }
@@ -2382,10 +2376,8 @@ mod tests {
         ]);
         write_label_high_water(root.path(), 9).expect("high-water written");
 
-        let behind = vec![
-            default_dataset_entry(),
-            local_entry(SIBLING_ID, "Local Profile 2"),
-        ];
+        let behind = [default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 2")];
         assert_eq!(effective_label_high_water(root.path(), behind.iter()), 9);
 
         let next = create_dataset_at(root.path()).expect("create succeeds");

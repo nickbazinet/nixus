@@ -18,8 +18,8 @@ pub fn check_onboarding_status(state: State<DbState>) -> Result<OnboardingStatus
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let has_data = onboarding_db::has_budget_data(&conn)?;
-    let completed = onboarding_db::is_completed(&conn);
+    let has_data = onboarding_db::has_budget_data(conn)?;
+    let completed = onboarding_db::is_completed(conn);
 
     Ok(OnboardingStatus {
         needs_onboarding: !has_data && !completed,
@@ -34,5 +34,5 @@ pub fn complete_onboarding(state: State<DbState>) -> Result<(), AppError> {
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    onboarding_db::set_completed(&conn)
+    onboarding_db::set_completed(conn)
 }

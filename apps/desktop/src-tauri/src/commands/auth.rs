@@ -427,11 +427,10 @@ pub async fn start_login(
     // Must also be bound before the browser opens: Cognito redirects here as
     // soon as the user finishes signing in, which can be faster than this
     // function returning if the listener started after `open_url`.
-    crate::commands::auth_listener::start(app.clone(), &listener).map_err(|e| {
+    crate::commands::auth_listener::start(app.clone(), &listener).inspect_err(|_| {
         // A listener that never bound cannot complete any attempt, including one
         // left over from an earlier click.
         discard_pending_attempt(&app);
-        e
     })?;
 
     {

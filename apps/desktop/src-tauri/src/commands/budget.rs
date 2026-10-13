@@ -16,7 +16,7 @@ pub fn create_budget_group(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateBudgetGroup { name };
-    budget_db::create_budget_group(&conn, &input)
+    budget_db::create_budget_group(conn, &input)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -26,7 +26,7 @@ pub fn get_budget_groups(state: State<DbState>) -> Result<Vec<BudgetGroup>, AppE
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::get_budget_groups(&conn)
+    budget_db::get_budget_groups(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -40,7 +40,7 @@ pub fn get_budget_groups_for_month(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::get_budget_groups_for_month(&conn, year, month)
+    budget_db::get_budget_groups_for_month(conn, year, month)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -60,7 +60,7 @@ pub fn create_budget_category(
         name,
         target_cents,
     };
-    budget_db::create_budget_category(&conn, &input)
+    budget_db::create_budget_category(conn, &input)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -73,7 +73,7 @@ pub fn get_budget_categories(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::get_budget_categories_by_group(&conn, group_id)
+    budget_db::get_budget_categories_by_group(conn, group_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -87,9 +87,9 @@ pub fn reorder_budget_categories(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::reorder_budget_categories(&conn, group_id, &category_ids)?;
+    budget_db::reorder_budget_categories(conn, group_id, &category_ids)?;
 
-    budget_db::get_budget_categories_by_group(&conn, group_id)
+    budget_db::get_budget_categories_by_group(conn, group_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -103,7 +103,7 @@ pub fn update_budget_group(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::update_budget_group(&conn, id, name)
+    budget_db::update_budget_group(conn, id, name)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -118,7 +118,7 @@ pub fn update_budget_category(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::update_budget_category(&conn, id, name, target_cents)
+    budget_db::update_budget_category(conn, id, name, target_cents)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -131,7 +131,7 @@ pub fn delete_budget_category(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::delete_budget_category(&conn, id)
+    budget_db::delete_budget_category(conn, id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -145,7 +145,7 @@ pub fn get_budget_status(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::get_budget_status(&conn, year, month)
+    budget_db::get_budget_status(conn, year, month)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -158,7 +158,7 @@ pub fn delete_budget_group(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::delete_budget_group(&conn, id)
+    budget_db::delete_budget_group(conn, id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -170,5 +170,5 @@ pub fn get_all_budget_categories(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    budget_db::get_all_budget_categories(&conn)
+    budget_db::get_all_budget_categories(conn)
 }

@@ -24,14 +24,14 @@ pub fn create_asset(
         asset_type,
         value_cents,
     };
-    let result = asset_db::insert_asset(&conn, &input)?;
+    let result = asset_db::insert_asset(conn, &input)?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(&conn, "passive_asset", result.id, "create", None, Some(&details)) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "passive_asset", result.id, "create", None, Some(&details)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(&conn) {
+    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
     Ok(result)
@@ -44,7 +44,7 @@ pub fn get_assets(state: State<DbState>) -> Result<Vec<PassiveAsset>, AppError> 
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    asset_db::get_all_assets(&conn)
+    asset_db::get_all_assets(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -58,10 +58,10 @@ pub fn update_asset_value(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (old_value, asset) = asset_db::update_asset_value(&conn, id, value_cents)?;
+    let (old_value, asset) = asset_db::update_asset_value(conn, id, value_cents)?;
 
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "passive_asset",
         id,
         "value_update",
@@ -71,7 +71,7 @@ pub fn update_asset_value(
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(&conn) {
+    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
 
@@ -90,13 +90,13 @@ pub fn update_asset(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_asset_json(&conn, id);
+    let old_json = get_asset_json(conn, id);
 
     let input = UpdateAssetInput { name, asset_type };
-    let result = asset_db::update_asset(&conn, id, &input)?;
+    let result = asset_db::update_asset(conn, id, &input)?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(&conn, "passive_asset", id, "update", old_json.as_deref(), Some(&new_json)) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "passive_asset", id, "update", old_json.as_deref(), Some(&new_json)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
@@ -113,15 +113,15 @@ pub fn delete_asset(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_asset_json(&conn, id);
+    let old_json = get_asset_json(conn, id);
 
-    asset_db::delete_asset(&conn, id)?;
+    asset_db::delete_asset(conn, id)?;
 
-    if let Err(e) = audit_db::insert_audit_log(&conn, "passive_asset", id, "delete", old_json.as_deref(), None) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "passive_asset", id, "delete", old_json.as_deref(), None) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(&conn) {
+    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
     Ok(())

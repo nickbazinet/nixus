@@ -29,14 +29,14 @@ pub fn create_expense(
         date,
         account_id,
     };
-    let result = expense_db::insert_expense_with_balance_changes(&conn, &input)?;
+    let result = expense_db::insert_expense_with_balance_changes(conn, &input)?;
     let expense = result.expense;
 
     let details = serde_json::to_string(&expense).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(&conn, "expense", expense.id, "create", None, Some(&details)) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "expense", expense.id, "create", None, Some(&details)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(&conn, &result.balance_changes);
+    record_account_balance_changes(conn, &result.balance_changes);
 
     Ok(expense)
 }
@@ -52,7 +52,7 @@ pub fn get_expenses(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    expense_db::get_expenses_by_month(&conn, year, month)
+    expense_db::get_expenses_by_month(conn, year, month)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -62,7 +62,7 @@ pub fn get_latest_expense(state: State<DbState>) -> Result<Option<Expense>, AppE
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    expense_db::get_latest_expense(&conn)
+    expense_db::get_latest_expense(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -81,7 +81,7 @@ pub fn update_expense(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     // Fetch old value before update
-    let old_json = get_expense_json(&conn, id);
+    let old_json = get_expense_json(conn, id);
 
     let input = UpdateExpenseInput {
         merchant,
@@ -90,14 +90,14 @@ pub fn update_expense(
         date,
         account_id,
     };
-    let result = expense_db::update_expense(&conn, id, &input)?;
+    let result = expense_db::update_expense(conn, id, &input)?;
     let expense = result.expense;
 
     let new_json = serde_json::to_string(&expense).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(&conn, "expense", id, "update", old_json.as_deref(), Some(&new_json)) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "expense", id, "update", old_json.as_deref(), Some(&new_json)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(&conn, &result.balance_changes);
+    record_account_balance_changes(conn, &result.balance_changes);
 
     Ok(expense)
 }
@@ -113,14 +113,14 @@ pub fn delete_expense(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     // Fetch old value before delete
-    let old_json = get_expense_json(&conn, id);
+    let old_json = get_expense_json(conn, id);
 
-    let balance_changes = expense_db::delete_expense(&conn, id)?;
+    let balance_changes = expense_db::delete_expense(conn, id)?;
 
-    if let Err(e) = audit_db::insert_audit_log(&conn, "expense", id, "delete", old_json.as_deref(), None) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "expense", id, "delete", old_json.as_deref(), None) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(&conn, &balance_changes);
+    record_account_balance_changes(conn, &balance_changes);
 
     Ok(())
 }

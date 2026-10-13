@@ -46,9 +46,48 @@ jobs:
             echo "RELEASE_NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to the same version as rust-toolchain.toml: that file is what cargo
+      # obeys, so installing `stable` here would add the universal-build targets to
+      # a toolchain the build never uses and the macOS bundle would fail to link.
+      - uses: dtolnay/rust-toolchain@1.94.1
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      # `rusqlite`'s `preupdate_hook` feature forces `buildtime_bindgen` in
+      # `libsqlite3-sys`, so every build now runs bindgen and needs libclang.
+      # macOS has it in the Xcode command line tools; Windows does not export a path.
+      - name: Provide libclang for bindgen
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $llvmBin = Join-Path $env:ProgramFiles 'LLVM\bin'
+          if (-not (Test-Path -LiteralPath (Join-Path $llvmBin 'libclang.dll'))) {
+            choco install llvm --no-progress --yes
+          }
+          if (-not (Test-Path -LiteralPath (Join-Path $llvmBin 'libclang.dll'))) {
+            throw "libclang.dll was not found under '$llvmBin'."
+          }
+          Add-Content -Path $env:GITHUB_ENV -Value "LIBCLANG_PATH=$llvmBin" -Encoding utf8
+
+      - name: Provide libclang for bindgen
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          developer="$(xcode-select -p)"
+          for candidate in \
+            "$(dirname "$(xcrun --find clang)")/../lib" \
+            "$developer/Toolchains/XcodeDefault.xctoolchain/usr/lib" \
+            "$developer/usr/lib"; do
+            if [ -f "$candidate/libclang.dylib" ]; then
+              resolved="$(cd "$candidate" && pwd)"
+              echo "LIBCLANG_PATH=$resolved" >> "$GITHUB_ENV"
+              echo "$resolved/libclang.dylib"
+              exit 0
+            fi
+          done
+          echo "No libclang.dylib found under $developer" >&2
+          exit 1
 
       - uses: actions/cache@v4
         with:

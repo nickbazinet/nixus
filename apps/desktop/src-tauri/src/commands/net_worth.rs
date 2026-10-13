@@ -14,7 +14,7 @@ pub fn get_current_net_worth(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    net_worth_db::get_current_net_worth(&conn)
+    net_worth_db::get_current_net_worth(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -27,7 +27,7 @@ pub fn get_recent_net_worth_snapshots(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    net_worth_db::get_recent_net_worth_snapshots(&conn, limit)
+    net_worth_db::get_recent_net_worth_snapshots(conn, limit)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -39,7 +39,7 @@ pub fn record_net_worth_snapshot(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    net_worth_db::record_net_worth_snapshot(&conn)
+    net_worth_db::record_net_worth_snapshot(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -52,7 +52,7 @@ pub fn get_net_worth_history(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    net_worth_db::get_net_worth_history(&conn, &period)
+    net_worth_db::get_net_worth_history(conn, &period)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -65,5 +65,5 @@ pub fn get_net_worth_change(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    net_worth_db::get_net_worth_change(&conn, &period)
+    net_worth_db::get_net_worth_change(conn, &period)
 }

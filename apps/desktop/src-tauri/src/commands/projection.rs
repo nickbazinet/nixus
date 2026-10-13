@@ -14,5 +14,5 @@ pub fn get_projection_input(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    projection_db::get_projection_input(&conn)
+    projection_db::get_projection_input(conn)
 }

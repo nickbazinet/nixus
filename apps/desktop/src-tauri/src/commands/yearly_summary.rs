@@ -15,5 +15,5 @@ pub fn get_yearly_summary(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    yearly_summary_db::get_yearly_summary(&conn, year)
+    yearly_summary_db::get_yearly_summary(conn, year)
 }

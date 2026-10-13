@@ -65,11 +65,11 @@ pub fn create_project(
         icon,
         color,
     };
-    let result = projects_db::insert_project(&conn, &input)?;
+    let result = projects_db::insert_project(conn, &input)?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) =
-        audit_db::insert_audit_log(&conn, "project", result.id, "create", None, Some(&details))
+        audit_db::insert_audit_log(conn, "project", result.id, "create", None, Some(&details))
     {
         tracing::error!("Failed to write audit log: {}", e);
     }
@@ -84,7 +84,7 @@ pub fn get_projects(state: State<DbState>) -> Result<Vec<Project>, AppError> {
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    projects_db::get_active_projects(&conn)
+    projects_db::get_active_projects(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -106,7 +106,7 @@ pub fn update_project(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = serde_json::to_string(&projects_db::get_project_by_id(&conn, id)?).ok();
+    let old_json = serde_json::to_string(&projects_db::get_project_by_id(conn, id)?).ok();
 
     let input = UpdateProjectInput {
         name,
@@ -116,11 +116,11 @@ pub fn update_project(
         icon,
         color,
     };
-    let result = projects_db::update_project(&conn, id, &input)?;
+    let result = projects_db::update_project(conn, id, &input)?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "project",
         id,
         "update",
@@ -143,11 +143,11 @@ pub fn reorder_projects(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let changes = projects_db::reorder_projects(&conn, &project_ids)?;
+    let changes = projects_db::reorder_projects(conn, &project_ids)?;
 
     for change in &changes {
         if let Err(e) = audit_db::insert_audit_log(
-            &conn,
+            conn,
             "project",
             change.project_id,
             "update",
@@ -158,7 +158,7 @@ pub fn reorder_projects(
         }
     }
 
-    projects_db::get_active_projects(&conn)
+    projects_db::get_active_projects(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -168,13 +168,13 @@ pub fn archive_project(state: State<DbState>, id: i64) -> Result<Project, AppErr
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = serde_json::to_string(&projects_db::get_project_by_id(&conn, id)?).ok();
+    let old_json = serde_json::to_string(&projects_db::get_project_by_id(conn, id)?).ok();
 
-    let result = projects_db::archive_project(&conn, id)?;
+    let result = projects_db::archive_project(conn, id)?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "project",
         id,
         "archive",
@@ -209,11 +209,11 @@ pub fn create_project_contribution(
         source: "manual".to_string(),
         date,
     };
-    let result = projects_db::insert_project_contribution(&conn, &input)?;
+    let result = projects_db::insert_project_contribution(conn, &input)?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "project_contribution",
         result.id,
         "create",
@@ -241,7 +241,7 @@ pub fn confirm_project_allocations(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
+    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(conn)?;
 
     // Summed from the raw list, before the db layer drops zero entries, so padding a confirmation
     // with extra rows can never widen the cap.
@@ -255,14 +255,14 @@ pub fn confirm_project_allocations(
         total_cents,
     )?;
 
-    let created = projects_db::insert_suggested_contributions(&conn, &allocations)?;
+    let created = projects_db::insert_suggested_contributions(conn, &allocations)?;
 
     // One audit row per created contribution, not one summary row for the batch, so
     // `audit_log.entity_id` stays joinable back to the contribution it describes.
     for contribution in &created {
         let details = serde_json::to_string(contribution).unwrap_or_default();
         if let Err(e) = audit_db::insert_audit_log(
-            &conn,
+            conn,
             "project_contribution",
             contribution.id,
             "create",
@@ -286,11 +286,11 @@ pub fn delete_project_contribution(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let result = projects_db::delete_project_contribution(&conn, id)?;
+    let result = projects_db::delete_project_contribution(conn, id)?;
 
     let old_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "project_contribution",
         result.id,
         "delete",
@@ -313,7 +313,7 @@ pub fn get_project_contributions(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    projects_db::get_project_contributions(&conn, project_id)
+    projects_db::get_project_contributions(conn, project_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -323,7 +323,7 @@ pub fn get_project_saved_totals(state: State<DbState>) -> Result<Vec<ProjectSave
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    projects_db::get_project_saved_totals(&conn)
+    projects_db::get_project_saved_totals(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -336,7 +336,7 @@ pub fn get_account_earmark_breakdown(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    projects_db::get_account_earmark_breakdown(&conn, account_id)
+    projects_db::get_account_earmark_breakdown(conn, account_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -348,7 +348,7 @@ pub fn get_savings_projects_summary(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    projects_db::get_savings_projects_summary(&conn)
+    projects_db::get_savings_projects_summary(conn)
 }
 
 // Two reads and a pure function, with no audit log because nothing changes: the suggestion flow is
@@ -365,8 +365,8 @@ pub fn get_suggested_allocation(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
-    let projects = projects_db::get_active_allocation_projects(&conn)?;
+    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(conn)?;
+    let projects = projects_db::get_active_allocation_projects(conn)?;
 
     let today = chrono::Local::now().date_naive();
     let input = allocation::AllocationInput {
@@ -378,11 +378,11 @@ pub fn get_suggested_allocation(
     let suggestions = allocation::compute_suggested_allocation(&input);
 
     let current_month = settlement::month_of(today);
-    let confirmed = projects_db::get_confirmed_suggestion_for_month(&conn, &current_month)?;
+    let confirmed = projects_db::get_confirmed_suggestion_for_month(conn, &current_month)?;
     let confirmed_total_cents = confirmed
         .as_ref()
         .map_or(0, |confirmed| confirmed.total_cents);
-    let skipped_month = projects_db::get_suggestion_skipped_month(&conn);
+    let skipped_month = projects_db::get_suggestion_skipped_month(conn);
     let settlement =
         settlement::resolve_settlement(&current_month, confirmed, skipped_month.as_deref());
 
@@ -420,7 +420,7 @@ pub fn get_project_pace(state: State<DbState>) -> Result<Vec<ProjectPace>, AppEr
         .checked_sub_months(chrono::Months::new(window_months))
         .unwrap_or(today);
 
-    let rows = projects_db::get_active_project_pace_inputs(&conn, &recent_since.to_string())?;
+    let rows = projects_db::get_active_project_pace_inputs(conn, &recent_since.to_string())?;
     let today = today.to_string();
 
     Ok(rows
@@ -447,7 +447,7 @@ pub fn skip_suggested_allocation_for_month(state: State<DbState>) -> Result<Stri
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let month = settlement::month_of(chrono::Local::now().date_naive());
-    projects_db::set_suggestion_skipped_month(&conn, &month)?;
+    projects_db::set_suggestion_skipped_month(conn, &month)?;
 
     Ok(month)
 }
@@ -461,7 +461,7 @@ pub fn clear_suggested_allocation_skip(state: State<DbState>) -> Result<(), AppE
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    projects_db::clear_suggestion_skipped_month(&conn)
+    projects_db::clear_suggestion_skipped_month(conn)
 }
 
 // The budget half of the prompt is read here, never accepted from the caller: the frontend can only
@@ -478,7 +478,7 @@ fn over_target_categories(state: &State<'_, DbState>) -> Result<Vec<BudgetCatego
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-        budget_db::get_budget_status(&conn, year, month)?
+        budget_db::get_budget_status(conn, year, month)?
     };
 
     categories.retain(|category| category.spent_cents > category.target_cents);
@@ -501,8 +501,8 @@ fn slack_categories(state: &State<'_, DbState>) -> Result<Vec<CategoryCompareRow
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
         let by_category =
-            spending_trends_db::get_monthly_spend_by_category(&conn, SLACK_TREND_MONTHS)?;
-        let targets = spending_trends_db::get_category_targets(&conn)?;
+            spending_trends_db::get_monthly_spend_by_category(conn, SLACK_TREND_MONTHS)?;
+        let targets = spending_trends_db::get_category_targets(conn)?;
 
         spending_trends_db::compute_category_compare(&by_category, SLACK_TREND_MONTHS, &targets)
     };
@@ -523,7 +523,7 @@ fn liquid_account_headroom(state: &State<'_, DbState>) -> Result<Vec<AccountHead
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-        projects_db::get_liquid_account_headroom(&conn)?
+        projects_db::get_liquid_account_headroom(conn)?
     };
 
     accounts.truncate(MAX_IDLE_CASH_ACCOUNTS);
@@ -827,7 +827,7 @@ pub fn get_project_image(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    get_project_image_inner(&conn, project_id)
+    get_project_image_inner(conn, project_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -837,7 +837,7 @@ pub fn get_project_thumbnails(state: State<DbState>) -> Result<Vec<ProjectThumbn
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    get_project_thumbnails_inner(&conn)
+    get_project_thumbnails_inner(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -856,7 +856,7 @@ pub fn set_project_image(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    set_project_image_inner(&conn, project_id, mime_type, &original_filename, &bytes)
+    set_project_image_inner(conn, project_id, mime_type, &original_filename, &bytes)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -866,7 +866,7 @@ pub fn remove_project_image(state: State<DbState>, project_id: i64) -> Result<()
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    remove_project_image_inner(&conn, project_id)
+    remove_project_image_inner(conn, project_id)
 }
 
 #[cfg(test)]

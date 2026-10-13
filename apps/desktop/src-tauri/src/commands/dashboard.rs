@@ -16,7 +16,7 @@ pub fn get_budget_summary(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    dashboard_db::get_budget_summary(&conn, year, month)
+    dashboard_db::get_budget_summary(conn, year, month)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -31,7 +31,7 @@ pub fn get_top_budget_categories(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    dashboard_db::get_top_budget_categories(&conn, year, month, limit)
+    dashboard_db::get_top_budget_categories(conn, year, month, limit)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -45,5 +45,5 @@ pub fn get_spending_breakdown(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    dashboard_db::get_spending_breakdown(&conn, year, month)
+    dashboard_db::get_spending_breakdown(conn, year, month)
 }

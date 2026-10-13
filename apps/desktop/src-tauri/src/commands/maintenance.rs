@@ -52,11 +52,11 @@ pub fn create_vehicle(
         use_default_template: use_default_template.unwrap_or(true),
         custom_tasks,
     };
-    let result = maintenance_db::insert_vehicle(&conn, &input)?;
+    let result = maintenance_db::insert_vehicle(conn, &input)?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "vehicle",
         result.id,
         "create",
@@ -76,7 +76,7 @@ pub fn get_vehicles(state: State<DbState>) -> Result<Vec<Vehicle>, AppError> {
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    maintenance_db::get_all_vehicles(&conn)
+    maintenance_db::get_all_vehicles(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -86,7 +86,7 @@ pub fn get_vehicle(state: State<DbState>, id: i64) -> Result<VehicleWithTasks, A
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    maintenance_db::get_vehicle_with_tasks(&conn, id)
+    maintenance_db::get_vehicle_with_tasks(conn, id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -102,18 +102,18 @@ pub fn update_vehicle(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_vehicle_json(&conn, id);
+    let old_json = get_vehicle_json(conn, id);
 
     let input = UpdateVehicleInput {
         make,
         model,
         year,
     };
-    let result = maintenance_db::update_vehicle(&conn, id, &input)?;
+    let result = maintenance_db::update_vehicle(conn, id, &input)?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "vehicle",
         id,
         "update",
@@ -133,12 +133,12 @@ pub fn delete_vehicle(state: State<DbState>, id: i64) -> Result<(), AppError> {
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_vehicle_json(&conn, id);
+    let old_json = get_vehicle_json(conn, id);
 
-    maintenance_db::delete_vehicle(&conn, id)?;
+    maintenance_db::delete_vehicle(conn, id)?;
 
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "vehicle",
         id,
         "delete",
@@ -162,7 +162,7 @@ pub fn update_vehicle_odometer(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    maintenance_db::update_vehicle_odometer(&conn, vehicle_id, odometer_km)
+    maintenance_db::update_vehicle_odometer(conn, vehicle_id, odometer_km)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -177,7 +177,7 @@ pub fn update_maintenance_task(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    maintenance_db::update_maintenance_task_intervals(&conn, task_id, interval_km, interval_months)
+    maintenance_db::update_maintenance_task_intervals(conn, task_id, interval_km, interval_months)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -190,7 +190,7 @@ pub fn add_maintenance_task(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    maintenance_db::add_maintenance_task(&conn, &input)
+    maintenance_db::add_maintenance_task(conn, &input)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -203,7 +203,7 @@ pub fn get_service_history(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    maintenance_db::get_service_history(&conn, vehicle_id)
+    maintenance_db::get_service_history(conn, vehicle_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -216,7 +216,7 @@ pub fn log_maintenance_service(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let result = maintenance_db::log_maintenance_service(&conn, &input)?;
+    let result = maintenance_db::log_maintenance_service(conn, &input)?;
 
     if result.odometer_updated {
         let old_json = result
@@ -232,7 +232,7 @@ pub fn log_maintenance_service(
         .to_string();
 
         if let Err(e) = audit_db::insert_audit_log(
-            &conn,
+            conn,
             "vehicle",
             result.log.vehicle_id,
             "update",
@@ -256,7 +256,7 @@ pub fn log_custom_service(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let result = maintenance_db::log_custom_service(&conn, &input)?;
+    let result = maintenance_db::log_custom_service(conn, &input)?;
 
     if result.odometer_updated {
         let old_json = result
@@ -272,7 +272,7 @@ pub fn log_custom_service(
         .to_string();
 
         if let Err(e) = audit_db::insert_audit_log(
-            &conn,
+            conn,
             "vehicle",
             result.log.vehicle_id,
             "update",
@@ -344,7 +344,7 @@ pub fn update_service_log(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    update_service_log_inner(&conn, &input)
+    update_service_log_inner(conn, &input)
 }
 
 pub(crate) fn delete_service_log_inner(
@@ -379,7 +379,7 @@ pub fn delete_service_log(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    delete_service_log_inner(&conn, log_id)
+    delete_service_log_inner(conn, log_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -391,7 +391,7 @@ pub fn get_maintenance_alert_summary(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    maintenance_db::get_maintenance_alert_summary(&conn)
+    maintenance_db::get_maintenance_alert_summary(conn)
 }
 
 fn get_vehicle_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {

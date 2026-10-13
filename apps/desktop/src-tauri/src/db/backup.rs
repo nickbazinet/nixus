@@ -236,8 +236,17 @@ mod tests {
 
         std::fs::write(with_suffix(&db_path, "-wal"), b"bogus wal contents")
             .expect("write bogus wal");
-        std::fs::write(with_suffix(&db_path, "-shm"), b"bogus shm contents")
-            .expect("write bogus shm");
+        // Not `fs::write`: that truncates, and Windows refuses to resize `-shm` while the
+        // live connection still has it memory-mapped (ERROR_USER_MAPPED_FILE). Scribbling
+        // over the header in place corrupts it just as well and is portable.
+        {
+            use std::io::Write as _;
+            let mut shm = std::fs::OpenOptions::new()
+                .write(true)
+                .open(with_suffix(&db_path, "-shm"))
+                .expect("open shm");
+            shm.write_all(b"bogus shm contents").expect("write bogus shm");
+        }
 
         restore_from_file(&mut slot, &db_path, &backup_path).expect("restore succeeds");
 

@@ -28,9 +28,9 @@ pub fn get_spending_trends(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let by_category = spending_trends_db::get_monthly_spend_by_category(&conn, months)?;
-    let totals = spending_trends_db::get_monthly_spend_totals(&conn, months)?;
-    let targets = spending_trends_db::get_category_targets(&conn)?;
+    let by_category = spending_trends_db::get_monthly_spend_by_category(conn, months)?;
+    let totals = spending_trends_db::get_monthly_spend_totals(conn, months)?;
+    let targets = spending_trends_db::get_category_targets(conn)?;
     let category_compare =
         spending_trends_db::compute_category_compare(&by_category, months, &targets);
 
