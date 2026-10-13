@@ -5,11 +5,11 @@
 //! the Cognito call with an opaque `NotAuthorized`. Keeping them in one struct is what
 //! makes "which pool did we ask?" answerable from a single line of code.
 //!
-//! The values are public by design (they travel in every unsigned `GetId` request),
-//! but the deployed `nixus-sync` stack's outputs are not in this repository yet, so
-//! `production()` refuses rather than guessing: a wrong pool id would fail at runtime
-//! on a user's machine instead of here. Story 10 fills the two constants in from the
-//! stack outputs.
+//! The values are public by design: they travel in every unsigned `GetId` request, the
+//! way `COGNITO_CLIENT_ID` and the custom domain in `commands/auth.rs` already do. They
+//! are the `nixus-sync` stack's own outputs, so a wrong one is a deploy-time mistake
+//! rather than a secret leak — but an *invented* one would fail on a user's machine, which
+//! is why `production()` refuses instead of guessing when a constant is absent.
 
 use super::auth::AuthError;
 
@@ -17,13 +17,14 @@ use super::auth::AuthError;
 /// `nixus-bedrock-api` and of the user pool that issues the ID token.
 pub const SYNC_REGION: &str = "us-east-1";
 
-/// `None` until the `nixus-sync` stack's `IdentityPoolId` output is recorded here.
-const PRODUCTION_IDENTITY_POOL_ID: Option<&str> = None;
+/// The deployed `nixus-sync` stack's `IdentityPoolId` output (us-east-1).
+const PRODUCTION_IDENTITY_POOL_ID: Option<&str> =
+    Some("us-east-1:952bbe95-591a-4260-854d-c218cadbbaf2");
 
-/// `None` until the user pool id is recorded here. `commands/auth.rs` only needs the
-/// app client id and the custom domain, so the repository has never carried the pool
-/// id itself; the identity pool's `Logins` key is the first thing that needs it.
-const PRODUCTION_USER_POOL_ID: Option<&str> = None;
+/// The user pool that issues the ID token. `commands/auth.rs` only ever needed the app
+/// client id and the custom domain, so the repository did not carry the pool id until
+/// the identity pool's `Logins` key required it.
+const PRODUCTION_USER_POOL_ID: Option<&str> = Some("us-east-1_7gfGQ0emg");
 
 /// Where the vended credentials come from. Injectable rather than global so tests, and
 /// a future second environment, do not have to mutate process state.
@@ -113,11 +114,40 @@ mod tests {
         }
     }
 
-    /// Guards the rule that matters more than the values: no invented identifier is
-    /// ever committed. When Story 10 records the real outputs this test is updated to
-    /// assert the shape of the real ones instead.
+    /// Drift guard against the deployed stack: these are the `nixus-sync` outputs, and
+    /// the shape is what distinguishes a real output from a placeholder — an identity
+    /// pool id is `<region>:<uuid>`, a user pool id is `<region>_<suffix>`, and both must
+    /// be in the stack's region.
     #[test]
-    fn production_refuses_until_the_deployed_stack_outputs_are_recorded() {
-        assert_eq!(IdentityPoolConfig::production(), Err(AuthError::Unconfigured));
+    fn the_production_configuration_is_the_deployed_stacks_own_identifiers() {
+        let config = IdentityPoolConfig::production().expect("the stack outputs are recorded");
+
+        assert_eq!(config.region, SYNC_REGION);
+        assert!(
+            config
+                .identity_pool_id
+                .starts_with(&format!("{SYNC_REGION}:")),
+            "an identity pool id is region-qualified"
+        );
+        assert_eq!(config.identity_pool_id.len(), SYNC_REGION.len() + 1 + 36);
+        assert!(
+            config.user_pool_id.starts_with(&format!("{SYNC_REGION}_")),
+            "a user pool id is region-qualified"
+        );
+        assert_eq!(
+            config.logins_provider_name(),
+            format!(
+                "cognito-idp.{SYNC_REGION}.amazonaws.com/{}",
+                config.user_pool_id
+            )
+        );
+    }
+
+    /// The app client in `commands/auth.rs` and this pool must describe the same user
+    /// pool: the identity pool's trust configuration pins `:aud` to that client, so a
+    /// drift between the two files is an unrecognised-login failure at runtime.
+    #[test]
+    fn the_user_pool_region_agrees_with_the_signed_in_pools_region() {
+        assert_eq!(SYNC_REGION, crate::commands::auth::COGNITO_REGION);
     }
 }
