@@ -64,8 +64,9 @@ const BACKUP_BUSY_PAUSE: Duration = Duration::from_millis(25);
 const BACKUP_BUSY_BUDGET: Duration = Duration::from_secs(30);
 
 /// The `config` keys that describe THIS computer's credential state and therefore never travel
-/// (AD-5's deny list). Everything else in `config` is the user's own setting and syncs.
-const CONFIG_DENY_LIST: &[&str] = &["ai_configured", "ai_provider", "aws_region"];
+/// (AD-5's deny list). Owned by `db::config` so the strip here and Story 9's carry-back on the
+/// restore path cannot disagree about the list.
+const CONFIG_DENY_LIST: &[&str] = crate::db::config::LOCAL_ONLY_KEYS;
 
 /// Which step of a build failed. Counted and reported as a code, never as a message or a path
 /// (AD-16).

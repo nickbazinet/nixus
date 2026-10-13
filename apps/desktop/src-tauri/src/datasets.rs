@@ -216,7 +216,7 @@ fn read_registry_for_update(path: &Path) -> Result<Vec<Dataset>, AppError> {
 /// and a fresh install, because no sibling file is ever inspected. An
 /// existing-but-unparseable registry is a hard error rather than a re-bootstrap,
 /// which would orphan every non-default dataset recorded in it.
-fn bootstrap_registry_at(root: &Path) -> Result<Vec<Dataset>, AppError> {
+pub(crate) fn bootstrap_registry_at(root: &Path) -> Result<Vec<Dataset>, AppError> {
     let _guard = REGISTRY_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -473,6 +473,23 @@ pub(crate) fn dataset_db_path(root: &Path, id: &str) -> PathBuf {
     dataset_dir_from_root(root, id).join(DB_FILE_NAME)
 }
 
+/// Where a dataset keeps the dated copies a guarded swap leaves behind (AD-9, CAP-5).
+///
+/// Inside the dataset's *own* directory, so a backup travels with the dataset it was
+/// taken from (inherited AD-1) and a profile deletion takes its backups with it rather
+/// than orphaning another profile's data. Default's directory is the app data root, so
+/// this sits beside `datasets/` there; nothing walks the root for dataset directories
+/// (`app_migration::dataset_dirs` reads only `datasets/`), so the name is free.
+// Story 10 resolves this for the CAP-5 replace branch; the swap takes the directory as
+// an argument, so nothing in this story is its first caller.
+#[allow(dead_code)]
+pub(crate) const BACKUPS_SUBDIR: &str = "backups";
+
+#[allow(dead_code)] // First production caller is Story 10's sync_enable.
+pub(crate) fn dataset_backup_dir(root: &Path, id: &str) -> PathBuf {
+    dataset_dir_from_root(root, id).join(BACKUPS_SUBDIR)
+}
+
 /// The cloud-linked entry to reopen for `sub`, or `None` when this account has
 /// never been linked here.
 ///
@@ -568,6 +585,31 @@ pub(crate) fn find_or_create_cloud_dataset_at(
     }
 
     let dataset = cloud_linked_entry(new_dataset_id(), label, sub, None);
+    provision_dataset(root, entries, dataset, |_| Ok(()))
+}
+
+/// Story 9's *separate* branch (CAP-5): a brand-new cloud-linked dataset for `sub`,
+/// provisioned even though one already exists.
+///
+/// Distinct from `find_or_create_cloud_dataset_at`, which returns the current entry —
+/// the whole point of *separate* is that the dataset already holding data is kept as it
+/// is and the cloud copy lands somewhere else. Several cloud-linked profiles for one
+/// subject is the already-documented edge case (AD-12), and `most_recent_for_sub` makes
+/// this new entry the one a later sign-in opens. `linked_from` records which dataset was
+/// kept, the same provenance field Migrate uses for the dataset it copied.
+pub(crate) fn create_cloud_dataset_at(
+    root: &Path,
+    sub: &str,
+    label: &str,
+    linked_from: Option<&str>,
+) -> Result<Dataset, AppError> {
+    let _guard = REGISTRY_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let entries = read_registry_for_update(&registry_path(root))?;
+    let dataset = cloud_linked_entry(new_dataset_id(), label, sub, linked_from);
+
     provision_dataset(root, entries, dataset, |_| Ok(()))
 }
 

@@ -36,6 +36,8 @@ pub mod yearly_summary;
 pub(crate) mod test_dataset;
 #[cfg(test)]
 mod tests_migration_030;
+#[cfg(test)]
+mod tests_sync_restore;
 
 /// The dataset active for this run: which one it is, and its open connection.
 ///
