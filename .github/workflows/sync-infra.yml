@@ -1,0 +1,262 @@
+# Sync infrastructure CI/CD for infra/sync/ (stack nixus-sync, us-east-1).
+#
+# - PRs: offline gates (cfn-lint + the property assertions in
+#   infra/sync/verify-template.py) and, when the PR is not from a fork, a
+#   read-only `validate-template` plus a read-only baseline of the unrelated
+#   nixus-bedrock-api stack. Nothing on a PR mutates AWS.
+# - Push to master: deploys the stack with the repository's existing static AWS
+#   credentials. This workflow creates or updates ONLY nixus-sync and never
+#   deletes a stack, a bucket or an identity pool.
+#
+# No GitHub `environment` and never `pull_request_target`: the repository's
+# `production` environment carries the Bedrock OIDC deploy-role branch policy,
+# which this static-key path must not inherit, and `pull_request_target` would
+# hand repository secrets to code from a fork.
+
+name: Sync Infra
+
+on:
+  pull_request:
+    paths:
+      - "infra/sync/**"
+      - ".github/workflows/sync-infra.yml"
+  push:
+    branches: [master]
+    paths:
+      - "infra/sync/**"
+      - ".github/workflows/sync-infra.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-infra-${{ github.workflow }}-${{ github.ref }}
+  # PR runs are cancellable; a master run is not. Workflow-level cancellation
+  # kills in-flight jobs regardless of their own concurrency group, so a second
+  # push to master would otherwise interrupt a running CloudFormation deploy and
+  # strand the stack in an *_IN_PROGRESS state.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: nixus-sync
+  COGNITO_USER_POOL_ID: us-east-1_7gfGQ0emg
+  COGNITO_APP_CLIENT_ID: 6525109r95las7odvuesf13joj
+
+jobs:
+  verify:
+    name: Verify template (offline gates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cfn-lint
+        run: pip install "cfn-lint==1.57.*"
+
+      # Default rule set, no --ignore-checks: an informational finding is fixed,
+      # not suppressed.
+      - name: cfn-lint
+        run: cfn-lint infra/sync/template.yaml --regions us-east-1 --format parseable
+
+      - name: Assert security properties
+        run: python3 infra/sync/verify-template.py
+
+      # Fork PRs get no secrets, so every credentialed step below is guarded.
+      # These are read-only calls; they prove the template parses server-side and
+      # record the Bedrock stack's untouched state before any merge.
+      - name: Configure AWS credentials (read-only checks)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Validate template server-side (read-only)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          aws cloudformation validate-template \
+            --template-body "file://infra/sync/template.yaml" \
+            --region "$AWS_REGION" \
+            --query 'Parameters[].ParameterKey' --output text
+
+      - name: Baseline nixus-bedrock-api (read-only)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          echo "bedrock-baseline(pr): $(aws cloudformation describe-stacks \
+            --stack-name nixus-bedrock-api \
+            --query 'Stacks[0].[StackStatus,LastUpdatedTime]' \
+            --output text --region "$AWS_REGION" \
+            || echo 'unreadable (AccessDenied or absent); continuing')"
+
+  deploy:
+    name: Deploy nixus-sync
+    needs: verify
+    if: github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Never cancelled: interrupting CloudFormation mid-flight strands the stack
+    # in an *_IN_PROGRESS state that the next run has to refuse.
+    concurrency:
+      group: sync-infra-deploy-nixus-sync
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      # Account id only. No key, ARN or user name is ever printed.
+      - name: Identify account
+        run: |
+          set -euo pipefail
+          echo "aws_account=$(aws sts get-caller-identity --query Account --output text)"
+
+      - name: Baseline nixus-bedrock-api (before)
+        run: |
+          set -euo pipefail
+          echo "bedrock-baseline(before): $(aws cloudformation describe-stacks \
+            --stack-name nixus-bedrock-api \
+            --query 'Stacks[0].[StackStatus,LastUpdatedTime]' \
+            --output text --region "$AWS_REGION" \
+            || echo 'unreadable (AccessDenied or absent); continuing')"
+
+      # Read-only gate. CREATE_FAILED/UPDATE_FAILED are repairable because the
+      # deploy below disables rollback; the terminal states are refused loudly
+      # because the only exit from them is deleting the stack, and this workflow
+      # never deletes anything.
+      - name: Pre-flight stack state
+        id: preflight
+        run: |
+          set -euo pipefail
+          status="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].StackStatus' --output text --region "$AWS_REGION" \
+            2>/dev/null || echo DOES_NOT_EXIST)"
+          echo "pre-flight status: $status"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          case "$status" in
+            DOES_NOT_EXIST|CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE|IMPORT_COMPLETE|REVIEW_IN_PROGRESS)
+              echo "proceeding" ;;
+            CREATE_FAILED|UPDATE_FAILED)
+              echo "notice: $status is repairable with --disable-rollback; resuming" ;;
+            *)
+              echo "refusing to deploy: $STACK_NAME is $status."
+              echo "That state is terminal for this pipeline: recovery needs a stack deletion,"
+              echo "which this workflow will never perform. A human must decide."
+              exit 1 ;;
+          esac
+
+      # Primary path. --disable-rollback so a failed first create stays
+      # CREATE_FAILED (repairable) instead of ROLLBACK_COMPLETE (deletable only).
+      - name: Deploy stack
+        id: deploy
+        run: |
+          set -uo pipefail
+          set +e
+          aws cloudformation deploy \
+            --stack-name nixus-sync \
+            --template-file infra/sync/template.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --disable-rollback \
+            --region us-east-1 \
+            --parameter-overrides \
+              "UserPoolId=${COGNITO_USER_POOL_ID}" \
+              "AppClientId=${COGNITO_APP_CLIENT_ID}"
+          code=$?
+          set -e
+          echo "deploy_exit=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::aws cloudformation deploy exited $code; trying the change-set fallback"
+            aws cloudformation describe-stack-events --stack-name "$STACK_NAME" \
+              --region "$AWS_REGION" \
+              --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`||ResourceStatus==`UPDATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' \
+              --output text | head -20 || true
+          fi
+
+      # `aws cloudformation deploy` drives a change set itself and can refuse a
+      # stack it considers un-updatable. The same operation, scripted, can still
+      # execute with --disable-rollback.
+      - name: Fallback - scripted change set
+        if: steps.deploy.outputs.deploy_exit != '0'
+        run: |
+          set -euo pipefail
+          cs="fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          aws cloudformation create-change-set \
+            --stack-name "$STACK_NAME" \
+            --change-set-name "$cs" \
+            --change-set-type UPDATE \
+            --template-body "file://infra/sync/template.yaml" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "$AWS_REGION" \
+            --parameters \
+              "ParameterKey=UserPoolId,ParameterValue=${COGNITO_USER_POOL_ID}" \
+              "ParameterKey=AppClientId,ParameterValue=${COGNITO_APP_CLIENT_ID}" \
+            --query 'Id' --output text
+          aws cloudformation wait change-set-create-complete \
+            --stack-name "$STACK_NAME" --change-set-name "$cs" --region "$AWS_REGION" || true
+          cs_status="$(aws cloudformation describe-change-set \
+            --stack-name "$STACK_NAME" --change-set-name "$cs" --region "$AWS_REGION" \
+            --query 'Status' --output text)"
+          echo "change-set status: $cs_status"
+          if [ "$cs_status" = "FAILED" ]; then
+            aws cloudformation describe-change-set \
+              --stack-name "$STACK_NAME" --change-set-name "$cs" --region "$AWS_REGION" \
+              --query 'StatusReason' --output text
+            exit 1
+          fi
+          aws cloudformation execute-change-set \
+            --stack-name "$STACK_NAME" --change-set-name "$cs" \
+            --disable-rollback --region "$AWS_REGION"
+          aws cloudformation wait stack-update-complete \
+            --stack-name "$STACK_NAME" --region "$AWS_REGION"
+
+      - name: Report stack status and outputs
+        run: |
+          set -euo pipefail
+          status="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].StackStatus' --output text --region "$AWS_REGION")"
+          echo "stack status: $status"
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs' --output table --region "$AWS_REGION"
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' \
+            --output text --region "$AWS_REGION"
+          case "$status" in
+            CREATE_COMPLETE|UPDATE_COMPLETE) ;;
+            *)
+              echo "deploy did not reach a COMPLETE state"
+              aws cloudformation describe-stack-events --stack-name "$STACK_NAME" \
+                --region "$AWS_REGION" \
+                --query 'StackEvents[?ResourceStatusReason!=`null`].[ResourceStatus,LogicalResourceId,ResourceStatusReason]' \
+                --output text | head -20
+              exit 1 ;;
+          esac
+
+      - name: Baseline nixus-bedrock-api (after)
+        if: always()
+        run: |
+          set -euo pipefail
+          echo "bedrock-baseline(after): $(aws cloudformation describe-stacks \
+            --stack-name nixus-bedrock-api \
+            --query 'Stacks[0].[StackStatus,LastUpdatedTime]' \
+            --output text --region "$AWS_REGION" \
+            || echo 'unreadable (AccessDenied or absent); continuing')"
