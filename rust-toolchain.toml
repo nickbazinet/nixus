@@ -1,0 +1,8 @@
+# Pinned, not floating: `rustfmt` and `clippy` change their verdicts between releases, so
+# "latest stable" would turn an unrelated compiler upgrade into a repo-wide reformat and a
+# few hundred new lint failures. The version is the floor from the sync architecture's Stack
+# table (the AWS SDK crates' MSRV); `rust-version` in apps/desktop/src-tauri/Cargo.toml
+# states the same floor for anyone who ignores this file.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]

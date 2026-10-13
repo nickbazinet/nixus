@@ -22,7 +22,19 @@ This is a **pnpm monorepo** with three packages:
 
 - **[pnpm](https://pnpm.io/)** >= 9
 - **Node.js** >= 20
-- **Rust** — install via [rustup](https://rustup.rs/) (1.70+)
+- **Rust** — install via [rustup](https://rustup.rs/). The repo pins its toolchain in
+  `rust-toolchain.toml` (currently **1.94.1**, also declared as `rust-version` in
+  `apps/desktop/src-tauri/Cargo.toml`), so rustup selects the right compiler for you
+  automatically — there is nothing to choose.
+- **bindgen + libclang** — required for every Rust build, not optional. `rusqlite`'s
+  `preupdate_hook` feature turns on `buildtime_bindgen` in `libsqlite3-sys`, so the
+  SQLite bindings are generated at build time by bindgen, which links libclang.
+  - **macOS**: included in the Xcode Command Line Tools (below). Nothing else to do.
+  - **Windows**: install [LLVM](https://github.com/llvm/llvm-project/releases) (or
+    `choco install llvm`) and set `LIBCLANG_PATH` to its `bin` directory, e.g.
+    `setx LIBCLANG_PATH "C:\Program Files\LLVM\bin"`. Without it the build fails with
+    `Unable to find libclang`.
+  - **Linux** (not a shipping target, but the app compiles): `apt install libclang-dev`.
 - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
 - **Windows**: [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (pre-installed on Windows 10+ since 2022)
 
@@ -211,6 +223,20 @@ pnpm --filter @nixus/web test          # Vitest
 pnpm --filter @nixus/web test:e2e      # Playwright
 ```
 
+### Rust backend
+
+```bash
+cd apps/desktop/src-tauri
+cargo build
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+The **Desktop CI** workflow (`.github/workflows/desktop-ci.yml`) runs exactly these three
+commands plus the frontend typecheck, unit tests and build on both `macos-latest` and
+`windows-latest` for every PR touching `apps/desktop/` or `packages/shared/`. Windows has no
+other pre-merge coverage, so a red Windows leg is a real failure, not flakiness.
+
 ---
 
 ## Building and packaging
@@ -242,7 +268,10 @@ Produces a statically prerendered site under `apps/web/.output/public/`.
 
 The Finance module stores data locally in SQLite.
 
-**Engine**: SQLite via `rusqlite` with the `bundled` feature (compiles SQLite from source — no system dependency needed).
+**Engine**: SQLite via `rusqlite` (features `bundled`, `preupdate_hook`, `hooks`, `backup`).
+`bundled` compiles SQLite from source, so there is no system SQLite dependency; `preupdate_hook`
+pulls in `buildtime_bindgen`, so bindgen and libclang *are* a build dependency — see
+[Prerequisites](#prerequisites).
 
 **Location**: Tauri's app data directory, named from the bundle identifier `org.nixusapp.nixus`:
 
