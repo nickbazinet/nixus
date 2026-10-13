@@ -118,14 +118,26 @@ jobs:
           }
           Add-Content -Path $env:GITHUB_ENV -Value "LIBCLANG_PATH=$llvmBin" -Encoding utf8
 
-      # macOS gets libclang from the Xcode command line tools, which the runner
-      # image already has; this only fails the job early with a clear message.
-      - name: Verify libclang is available (macOS)
+      # macOS gets libclang from the active Xcode or command line tools, but where it
+      # lives differs between the two (a full Xcode puts it under XcodeDefault
+      # .xctoolchain), so the path is probed and exported rather than assumed.
+      - name: Provide libclang for bindgen (macOS)
         if: runner.os == 'macOS'
         run: |
-          libclang="$(xcode-select -p)/usr/lib/libclang.dylib"
-          test -f "$libclang" || { echo "No libclang at $libclang" >&2; exit 1; }
-          echo "$libclang"
+          developer="$(xcode-select -p)"
+          for candidate in \
+            "$(dirname "$(xcrun --find clang)")/../lib" \
+            "$developer/Toolchains/XcodeDefault.xctoolchain/usr/lib" \
+            "$developer/usr/lib"; do
+            if [ -f "$candidate/libclang.dylib" ]; then
+              resolved="$(cd "$candidate" && pwd)"
+              echo "LIBCLANG_PATH=$resolved" >> "$GITHUB_ENV"
+              echo "$resolved/libclang.dylib"
+              exit 0
+            fi
+          done
+          echo "No libclang.dylib found under $developer" >&2
+          exit 1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

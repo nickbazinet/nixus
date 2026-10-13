@@ -70,13 +70,24 @@ jobs:
           }
           Add-Content -Path $env:GITHUB_ENV -Value "LIBCLANG_PATH=$llvmBin" -Encoding utf8
 
-      - name: Verify libclang for bindgen
+      - name: Provide libclang for bindgen
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
-          libclang="$(xcode-select -p)/usr/lib/libclang.dylib"
-          test -f "$libclang" || { echo "No libclang at $libclang" >&2; exit 1; }
-          echo "$libclang"
+          developer="$(xcode-select -p)"
+          for candidate in \
+            "$(dirname "$(xcrun --find clang)")/../lib" \
+            "$developer/Toolchains/XcodeDefault.xctoolchain/usr/lib" \
+            "$developer/usr/lib"; do
+            if [ -f "$candidate/libclang.dylib" ]; then
+              resolved="$(cd "$candidate" && pwd)"
+              echo "LIBCLANG_PATH=$resolved" >> "$GITHUB_ENV"
+              echo "$resolved/libclang.dylib"
+              exit 0
+            fi
+          done
+          echo "No libclang.dylib found under $developer" >&2
+          exit 1
 
       - uses: actions/cache@v4
         with:
