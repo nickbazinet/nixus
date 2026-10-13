@@ -28,11 +28,11 @@ pub fn create_recurring_template(
         budget_category_id,
         day_of_month,
     };
-    let result = recurring_db::insert_template(&conn, &input)?;
+    let result = recurring_db::insert_template(conn, &input)?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "recurring_template",
         result.id,
         "create",
@@ -54,7 +54,7 @@ pub fn get_recurring_templates(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    recurring_db::get_all_templates(&conn)
+    recurring_db::get_all_templates(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -72,7 +72,7 @@ pub fn update_recurring_template(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_template_json(&conn, id);
+    let old_json = get_template_json(conn, id);
 
     let input = UpdateRecurringExpenseTemplateInput {
         merchant,
@@ -81,11 +81,11 @@ pub fn update_recurring_template(
         day_of_month,
         is_active,
     };
-    let result = recurring_db::update_template(&conn, id, &input)?;
+    let result = recurring_db::update_template(conn, id, &input)?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "recurring_template",
         id,
         "update",
@@ -105,12 +105,12 @@ pub fn delete_recurring_template(state: State<DbState>, id: i64) -> Result<(), A
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_template_json(&conn, id);
+    let old_json = get_template_json(conn, id);
 
-    recurring_db::delete_template(&conn, id)?;
+    recurring_db::delete_template(conn, id)?;
 
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "recurring_template",
         id,
         "delete",
@@ -134,8 +134,8 @@ pub fn apply_recurring_expenses(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let created = recurring_db::apply_recurring_for_month(&conn, year, month)?;
-    audit_created_expenses(&conn, &created);
+    let created = recurring_db::apply_recurring_for_month(conn, year, month)?;
+    audit_created_expenses(conn, &created);
 
     Ok(created)
 }

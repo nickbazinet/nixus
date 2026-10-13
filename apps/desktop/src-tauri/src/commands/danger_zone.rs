@@ -21,7 +21,7 @@ pub fn delete_all_data(app: AppHandle, state: State<DbState>) -> Result<(), AppE
     info!("Danger Zone wipe complete: {} rows deleted", deleted);
 
     // Non-fatal: the rows are already gone, this only reclaims disk space.
-    if let Err(e) = danger_zone_db::reclaim_space(&conn) {
+    if let Err(e) = danger_zone_db::reclaim_space(conn) {
         warn!("Post-wipe checkpoint/vacuum failed: {}", e);
     }
 

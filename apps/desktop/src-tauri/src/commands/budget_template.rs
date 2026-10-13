@@ -53,7 +53,7 @@ pub async fn import_budget_template(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let result = budget_template_db::import_budget_template_from_path(&conn, &selected_path)?;
+    let result = budget_template_db::import_budget_template_from_path(conn, &selected_path)?;
 
     info!(
         "Budget template imported: {} groups, {} categories, {} skipped",
@@ -88,7 +88,7 @@ pub async fn export_budget_template(
             message: e.to_string(),
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        budget_template_db::build_budget_template_export_json(&conn)?
+        budget_template_db::build_budget_template_export_json(conn)?
     };
 
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -176,7 +176,7 @@ pub fn apply_system_template(
     // No insert_audit_log here: db::budget_template's shared primitive writes
     // exactly one row per apply (source: "system"). Adding one here would double
     // it. Intentional deviation from project-context.md §3.
-    budget_template_db::apply_system_budget_template(&conn, edited.as_ref().unwrap_or(template))
+    budget_template_db::apply_system_budget_template(conn, edited.as_ref().unwrap_or(template))
 }
 
 #[tauri::command(rename_all = "snake_case")]

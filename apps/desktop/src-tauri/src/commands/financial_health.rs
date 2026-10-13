@@ -14,7 +14,7 @@ pub fn get_financial_health_summary(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
+    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(conn)?;
     Ok(financial_health_db::build_financial_health_summary(
         &figures,
         &evaluation,
@@ -30,8 +30,8 @@ pub fn get_financial_health_detail(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(&conn)?;
-    financial_health_db::build_financial_health_detail(&conn, &figures, &evaluation)
+    let (figures, evaluation) = financial_health_db::evaluate_financial_health_waterfall(conn)?;
+    financial_health_db::build_financial_health_detail(conn, &figures, &evaluation)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -44,5 +44,5 @@ pub fn set_emergency_fund_target(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    financial_health_db::set_emergency_fund_target_months(&conn, months)
+    financial_health_db::set_emergency_fund_target_months(conn, months)
 }

@@ -1,3 +1,9 @@
+//! HTTP/NDJSON client for `apps/api-bedrock` (AD-1, AD-7).
+//!
+//! No AWS credential of any kind exists on this path: the only credential is a
+//! Cognito access token obtained from `commands/auth.rs`, which owns the keyring
+//! boundary. This module must never call `credentials.rs` or `keyring_core`.
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -7,12 +13,6 @@ use crate::ai::backend::{self, AiAttachment, AiImageFormat, AiRequest, AiRole, D
 use crate::ai::hosted_state::{self, HostedAiStatus};
 use crate::commands::auth::{self, HostedAiAuth};
 use crate::error::AppError;
-
-/// HTTP/NDJSON client for `apps/api-bedrock` (AD-1, AD-7).
-///
-/// No AWS credential of any kind exists on this path: the only credential is a
-/// Cognito access token obtained from `commands/auth.rs`, which owns the keyring
-/// boundary. This module must never call `credentials.rs` or `keyring_core`.
 
 /// Stable production URL, compiled into release builds (AD-15).
 const PRODUCTION_BASE_URL: &str = "https://api.nixusapp.com";

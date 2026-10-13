@@ -27,14 +27,14 @@ pub fn create_account(
         account_type,
         currency,
     };
-    let result = account_db::insert_account(&conn, &input)?;
+    let result = account_db::insert_account(conn, &input)?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(&conn, "account", result.id, "create", None, Some(&details)) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "account", result.id, "create", None, Some(&details)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(&conn) {
+    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
     Ok(result)
@@ -47,7 +47,7 @@ pub fn get_accounts(state: State<DbState>) -> Result<Vec<Account>, AppError> {
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    account_db::get_all_accounts(&conn)
+    account_db::get_all_accounts(conn)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -61,10 +61,10 @@ pub fn update_account_balance(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (old_balance, account) = account_db::update_account_balance(&conn, id, balance_cents)?;
+    let (old_balance, account) = account_db::update_account_balance(conn, id, balance_cents)?;
 
     if let Err(e) = audit_db::insert_audit_log(
-        &conn,
+        conn,
         "account",
         id,
         "balance_update",
@@ -74,7 +74,7 @@ pub fn update_account_balance(
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(&conn) {
+    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
 
@@ -95,7 +95,7 @@ pub fn update_account(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_account_json(&conn, id);
+    let old_json = get_account_json(conn, id);
 
     let input = UpdateAccountInput {
         name,
@@ -103,10 +103,10 @@ pub fn update_account(
         account_type,
         currency,
     };
-    let result = account_db::update_account(&conn, id, &input)?;
+    let result = account_db::update_account(conn, id, &input)?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(&conn, "account", id, "update", old_json.as_deref(), Some(&new_json)) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "account", id, "update", old_json.as_deref(), Some(&new_json)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
@@ -123,13 +123,13 @@ pub fn delete_account(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let old_json = get_account_json(&conn, id);
+    let old_json = get_account_json(conn, id);
 
     // Two layers, one behaviour: `project_contributions.account_id ON DELETE RESTRICT` is the
     // invariant, this guard is its voice. Their predicates must stay identical — the guard is not
     // filtered to active projects — or an unguarded case reaches the user as a raw
     // "FOREIGN KEY constraint failed" from the global `From<rusqlite::Error>` impl.
-    let funded_projects = projects_db::get_project_names_funded_by_account(&conn, id)?;
+    let funded_projects = projects_db::get_project_names_funded_by_account(conn, id)?;
     if !funded_projects.is_empty() {
         return Err(AppError::Validation {
             message: format!(
@@ -140,13 +140,13 @@ pub fn delete_account(
         });
     }
 
-    account_db::delete_account(&conn, id)?;
+    account_db::delete_account(conn, id)?;
 
-    if let Err(e) = audit_db::insert_audit_log(&conn, "account", id, "delete", old_json.as_deref(), None) {
+    if let Err(e) = audit_db::insert_audit_log(conn, "account", id, "delete", old_json.as_deref(), None) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(&conn) {
+    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
     Ok(())

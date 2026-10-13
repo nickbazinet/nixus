@@ -1,15 +1,15 @@
+//! Process-local hosted-AI status cache (AD-9 / architecture Conventions).
+//!
+//! Deliberately has no Tauri command, no frontend hook, and no TanStack Query key:
+//! v1 renders nothing from this, and exposing it would create a status surface the
+//! architecture defers. It is read and invalidated only by `ai::hosted_bedrock`.
+//!
+//! Every entry is bound to the `subject_sub` it was fetched for. A desktop process
+//! can outlive a sign-out/sign-in-as-someone-else cycle, so a cache keyed only by
+//! time would leak one Cognito user's quota state into another's session.
+
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-
-/// Process-local hosted-AI status cache (AD-9 / architecture Conventions).
-///
-/// Deliberately has no Tauri command, no frontend hook, and no TanStack Query key:
-/// v1 renders nothing from this, and exposing it would create a status surface the
-/// architecture defers. It is read and invalidated only by `ai::hosted_bedrock`.
-///
-/// Every entry is bound to the `subject_sub` it was fetched for. A desktop process
-/// can outlive a sign-out/sign-in-as-someone-else cycle, so a cache keyed only by
-/// time would leak one Cognito user's quota state into another's session.
 
 /// Refresh interval for a still-valid entry. Bounds how long a console-side premium
 /// or limit change takes to be observed without any polling loop.

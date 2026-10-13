@@ -90,7 +90,7 @@ fn build_history_turns(
         message: e.to_string(),
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-    let db_messages = chat_db::get_conversation_messages_for_ai(&conn, conv_id)?;
+    let db_messages = chat_db::get_conversation_messages_for_ai(conn, conv_id)?;
 
     Ok(alternating_turns(&db_messages)
         .into_iter()
@@ -111,7 +111,7 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
     let mut ctx = String::new();
 
     // Budget summary
-    if let Ok(summary) = dashboard_db::get_budget_summary(&conn, year, month) {
+    if let Ok(summary) = dashboard_db::get_budget_summary(conn, year, month) {
         ctx.push_str(&format!(
             "Budget Summary ({}-{:02}):\n  Total budget: {} cents\n  Total spent: {} cents\n  Remaining: {} cents\n\n",
             year, month, summary.total_target_cents, summary.total_spent_cents, summary.remaining_cents
@@ -121,7 +121,7 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
     // Listed before the categories so the model sees the groups a new category may be filed
     // under. `create_budget_category` requires an existing group name and never creates one,
     // so an invented name is a refused card.
-    let groups = budget_db::get_budget_groups(&conn).unwrap_or_default();
+    let groups = budget_db::get_budget_groups(conn).unwrap_or_default();
     if groups.is_empty() {
         ctx.push_str("Budget Groups: none yet.\n\n");
     } else {
@@ -133,7 +133,7 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
     }
 
     // Budget categories with spending
-    if let Ok(categories) = budget_db::get_budget_status(&conn, year, month) {
+    if let Ok(categories) = budget_db::get_budget_status(conn, year, month) {
         ctx.push_str("Budget Categories:\n");
         for cat in &categories {
             let group_name = groups
@@ -150,7 +150,7 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
     }
 
     // Accounts
-    if let Ok(accounts) = account_db::get_all_accounts(&conn) {
+    if let Ok(accounts) = account_db::get_all_accounts(conn) {
         ctx.push_str("Accounts:\n");
         for acc in &accounts {
             ctx.push_str(&format!(
@@ -162,7 +162,7 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
     }
 
     // Assets
-    if let Ok(assets) = asset_db::get_all_assets(&conn) {
+    if let Ok(assets) = asset_db::get_all_assets(conn) {
         ctx.push_str("Assets:\n");
         for asset in &assets {
             ctx.push_str(&format!(
@@ -176,7 +176,7 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
     // Income this month
     let current_year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
     let current_month_num = now.format("%m").to_string().parse::<u32>().unwrap_or(1);
-    let month_entries = income_db::get_income_entries_by_month(&conn, current_year, current_month_num)
+    let month_entries = income_db::get_income_entries_by_month(conn, current_year, current_month_num)
         .unwrap_or_default();
 
     if month_entries.is_empty() {
@@ -191,7 +191,7 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
                 entry.amount_cents as f64 / 100.0
             ));
         }
-        if let Ok(total) = income_db::get_income_total(&conn, current_year, current_month_num) {
+        if let Ok(total) = income_db::get_income_total(conn, current_year, current_month_num) {
             ctx.push_str(&format!(
                 "Total income: ${:.2}\n",
                 total.total_cents as f64 / 100.0
@@ -200,11 +200,11 @@ fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
         ctx.push('\n');
     }
 
-    if let Ok(vehicles) = maintenance_db::get_all_vehicles(&conn) {
+    if let Ok(vehicles) = maintenance_db::get_all_vehicles(conn) {
         if vehicles.is_empty() {
             ctx.push_str("Maintenance Tracking: No vehicles registered.\n\n");
         } else {
-            let alert_count = maintenance_db::get_maintenance_alert_summary(&conn)
+            let alert_count = maintenance_db::get_maintenance_alert_summary(conn)
                 .map(|s| s.total_alerts)
                 .unwrap_or(0);
 
@@ -273,7 +273,7 @@ pub async fn send_chat_message(
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         let title: String = message.chars().take(40).collect();
         let title = title.trim().to_string();
-        let conv = chat_db::create_conversation(&conn, Some(&title), &agent_id)?;
+        let conv = chat_db::create_conversation(conn, Some(&title), &agent_id)?;
         conv.id
     };
 
@@ -283,7 +283,7 @@ pub async fn send_chat_message(
             message: e.to_string(),
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        chat_db::insert_message(&conn, conv_id, "user", &message, "chat")?
+        chat_db::insert_message(conn, conv_id, "user", &message, "chat")?
     };
 
     info!("Chat message received, conversation: {}", conv_id);
@@ -324,7 +324,7 @@ pub async fn send_chat_message(
                 message: e.to_string(),
             })?;
             let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-            chat_db::insert_message(&conn, conv_id, "assistant", &first_response, "tool_call")?;
+            chat_db::insert_message(conn, conv_id, "assistant", &first_response, "tool_call")?;
         }
 
         // Emit tool-executing event
@@ -339,7 +339,7 @@ pub async fn send_chat_message(
                 message: e.to_string(),
             })?;
             let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-            chat_db::insert_message(&conn, conv_id, "user", &tool_result, "tool_result")?;
+            chat_db::insert_message(conn, conv_id, "user", &tool_result, "tool_result")?;
         }
 
         // Reload full history (now includes tool-call and tool-result saved above)
@@ -376,7 +376,7 @@ pub async fn send_chat_message(
             message: e.to_string(),
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        chat_db::insert_message(&conn, conv_id, "assistant", &final_response, "chat")?;
+        chat_db::insert_message(conn, conv_id, "assistant", &final_response, "chat")?;
     }
 
     Ok(SendMessageResult {
@@ -641,7 +641,7 @@ fn execute_tool_call(
                 message: e.to_string(),
             })?;
             let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-            let results = expense_db::search_expenses(&conn, &filters)?;
+            let results = expense_db::search_expenses(conn, &filters)?;
             info!("Tool query_expenses returned {} results", results.len());
             Ok(chat_ai::format_tool_result(&filters, &results))
         }
@@ -661,7 +661,7 @@ fn execute_tool_call(
                 message: e.to_string(),
             })?;
             let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-            let results = maintenance_db::query_maintenance_status(&conn, &filters)?;
+            let results = maintenance_db::query_maintenance_status(conn, &filters)?;
             info!(
                 "Tool query_maintenance_status returned {} results",
                 results.len()
@@ -693,7 +693,7 @@ fn execute_tool_call(
                 message: e.to_string(),
             })?;
             let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-            let results = maintenance_db::query_maintenance_history(&conn, &filters)?;
+            let results = maintenance_db::query_maintenance_history(conn, &filters)?;
             info!(
                 "Tool query_maintenance_history returned {} results",
                 results.len()
@@ -713,13 +713,13 @@ pub fn get_chat_messages(
         message: e.to_string(),
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-    if !chat_db::conversation_exists(&conn, conversation_id)? {
+    if !chat_db::conversation_exists(conn, conversation_id)? {
         return Err(AppError::Validation {
             message: "Conversation not found".to_string(),
             field: Some("conversation_id".to_string()),
         });
     }
-    chat_db::get_conversation_messages_for_display(&conn, conversation_id)
+    chat_db::get_conversation_messages_for_display(conn, conversation_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -731,7 +731,7 @@ pub fn list_conversations(
         message: e.to_string(),
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-    chat_db::list_conversations_by_agent(&conn, &agent_id)
+    chat_db::list_conversations_by_agent(conn, &agent_id)
 }
 
 #[derive(Serialize)]
