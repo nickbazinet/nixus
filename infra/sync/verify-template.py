@@ -261,10 +261,25 @@ def main() -> int:
         "workflow must never trigger on pull_request_target",
     )
     jobs = workflow["jobs"]
-    check("verify" in jobs and "deploy" in jobs, "workflow must define a verify and a deploy job")
+    check(
+        {"verify", "deploy", "isolation"} <= set(jobs),
+        "workflow must define the verify, deploy and isolation jobs",
+    )
     check(
         jobs["deploy"].get("needs") in ("verify", ["verify"]),
         "deploy must depend on verify",
+    )
+    # The AD-19 isolation gate has to run on pull requests as well, so a merge
+    # cannot land without the cross-account denial having been proven.
+    isolation = jobs.get("isolation", {})
+    check(
+        set(as_list(isolation.get("needs"))) == {"verify", "deploy"},
+        "isolation must depend on both verify and deploy",
+    )
+    check(
+        "always()" in str(isolation.get("if", ""))
+        and "skipped" in str(isolation.get("if", "")),
+        "isolation must still run when deploy is skipped (pull requests)",
     )
     for job_name, job in jobs.items():
         check(
