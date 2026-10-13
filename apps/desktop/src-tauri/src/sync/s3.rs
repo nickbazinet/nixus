@@ -64,7 +64,14 @@ pub struct S3ObjectStore {
 }
 
 impl S3ObjectStore {
-    pub fn new(client: Client, bucket: impl Into<String>, identity_id: &str) -> Self {
+    /// Scoped to `crate::sync` so an un-gated store cannot be constructed anywhere else:
+    /// `gate::GatedStore` is the only way to reach these operations, and
+    /// `tests_gate_boundary.rs` fails the build if this widens (AD-14).
+    pub(in crate::sync) fn new(
+        client: Client,
+        bucket: impl Into<String>,
+        identity_id: &str,
+    ) -> Self {
         Self {
             client,
             bucket: bucket.into(),

@@ -6,6 +6,7 @@ mod commands;
 mod credentials;
 mod datasets;
 mod db;
+mod entitlements;
 mod error;
 mod financial_health;
 mod json_store;

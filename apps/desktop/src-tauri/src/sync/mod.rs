@@ -14,15 +14,19 @@ pub mod auth;
 pub mod capture;
 pub mod clock;
 pub mod config;
+pub mod gate;
 pub mod manager;
 pub mod registry;
 pub mod s3;
 pub mod segment;
 pub mod snapshot;
+pub mod state;
 pub mod store;
 
 #[cfg(test)]
 mod tests_auth_boundary;
+#[cfg(test)]
+mod tests_gate_boundary;
 #[cfg(test)]
 mod tests_port_boundary;
 #[cfg(test)]
