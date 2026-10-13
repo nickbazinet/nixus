@@ -1224,6 +1224,49 @@ fn hosted_ai_auth_from_resolved(resolved: ResolvedSession) -> Result<HostedAiAut
     })
 }
 
+/// Outcome of resolving a call-time **ID** token for sync (AD-7, inherited AD-10).
+///
+/// Separate from `HostedAiAuth` because the two credentials differ: hosted AI presents
+/// the *access* token to `apps/api-bedrock` and needs the `nixus-api/ai.invoke` scope,
+/// while the identity pool consumes the *id* token and no scope applies to it. Folding
+/// them together would make a missing AI scope block sync, which is wrong.
+pub(crate) enum SyncIdToken {
+    Ready {
+        id_token: String,
+        /// The `sub` claim of the same token, so the caller cannot pin an account
+        /// against a `sub` read from a different (possibly older) session.
+        subject_sub: String,
+    },
+    SignedOut,
+}
+
+/// Returns a call-time ID token, refreshed proactively at the existing 120-second
+/// skew by `resolve_session`. `sync/auth.rs` goes through here and never touches the
+/// sole OS-credential-store accessor itself (inherited AD-10).
+pub(crate) async fn sync_id_token() -> Result<SyncIdToken, AppError> {
+    sync_id_token_from_resolved(resolve_session().await?)
+}
+
+/// Split out so both branches are unit-testable without an OS credential store or a
+/// network. Unlike the hosted-AI path this clears no AI cache: sync owns no state in
+/// `ai/`, and clearing it here would couple two unrelated features.
+fn sync_id_token_from_resolved(resolved: ResolvedSession) -> Result<SyncIdToken, AppError> {
+    let session = match resolved {
+        ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => session,
+        ResolvedSession::None | ResolvedSession::Expired => return Ok(SyncIdToken::SignedOut),
+    };
+
+    let claims = decode_id_token_claims(&session.id_token)?;
+    if claims.sub.is_empty() {
+        return Err(unreadable_session_error());
+    }
+
+    Ok(SyncIdToken::Ready {
+        id_token: session.id_token,
+        subject_sub: claims.sub,
+    })
+}
+
 /// Local-only by design: Cognito's `/oauth2/revoke` is deferred for v1 and
 /// `COGNITO_SIGNOUT_URI` is deliberately never opened, so this performs no
 /// network I/O and stays synchronous. Takes `AppHandle` rather than a
@@ -2460,6 +2503,60 @@ mod tests {
             subject_from_resolved(resolved).expect("resolves"),
             "only-sub"
         );
+    }
+
+    /// The sync accessor and the hosted-AI accessor must disagree about one thing only:
+    /// a session without the AI scope is unusable for hosted AI but perfectly usable
+    /// for sync, which presents the id token to the identity pool.
+    #[test]
+    fn the_sync_accessor_returns_the_id_token_and_the_sub_of_that_same_token() {
+        for resolved in [
+            ResolvedSession::Live(session_with_claims(
+                r#"{"sub":"a1b2c3","email":"user@example.com"}"#,
+            )),
+            ResolvedSession::Refreshed(session_with_claims(
+                r#"{"sub":"a1b2c3","email":"user@example.com"}"#,
+            )),
+        ] {
+            let expected = id_token_with_payload(r#"{"sub":"a1b2c3","email":"user@example.com"}"#);
+
+            match sync_id_token_from_resolved(resolved) {
+                Ok(SyncIdToken::Ready {
+                    id_token,
+                    subject_sub,
+                }) => {
+                    assert_eq!(id_token, expected);
+                    assert_eq!(subject_sub, "a1b2c3");
+                }
+                Ok(SyncIdToken::SignedOut) => panic!("a live session is not signed out"),
+                Err(_) => panic!("a live session resolves"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_sync_accessor_reports_no_session_rather_than_an_error() {
+        for resolved in [ResolvedSession::None, ResolvedSession::Expired] {
+            match sync_id_token_from_resolved(resolved) {
+                Ok(SyncIdToken::SignedOut) => {}
+                Ok(SyncIdToken::Ready { .. }) => panic!("there is no usable session"),
+                Err(_) => panic!("an absent session is not a fault"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_sync_accessor_rejects_a_session_whose_sub_claim_is_empty() {
+        let resolved = ResolvedSession::Live(session_with_claims(
+            r#"{"sub":"","email":"user@example.com"}"#,
+        ));
+
+        // Matched rather than `expect_err`: `SyncIdToken` deliberately has no `Debug`,
+        // because deriving one would put a bearer token in a panic message.
+        match sync_id_token_from_resolved(resolved) {
+            Err(error) => assert!(recoverable_of(&error)),
+            Ok(_) => panic!("an empty sub claim is an unreadable session"),
+        }
     }
 
     #[test]

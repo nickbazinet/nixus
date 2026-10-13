@@ -544,6 +544,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-cognitoidentity"
+version = "1.116.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e16d8246c1073ae0bff241bc1a16b458aa521e70eb7f25a6237666314b2b7ae"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http 0.64.1",
+ "aws-smithy-json 0.63.1",
+ "aws-smithy-observability 0.3.0",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema 0.2.1",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes",
+ "fastrand",
+ "http 1.4.1",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-s3"
 version = "1.152.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4447,6 +4472,7 @@ dependencies = [
  "async-openai",
  "aws-config",
  "aws-sdk-bedrockruntime",
+ "aws-sdk-cognitoidentity",
  "aws-sdk-s3",
  "aws-smithy-mocks",
  "aws-smithy-runtime-api",
