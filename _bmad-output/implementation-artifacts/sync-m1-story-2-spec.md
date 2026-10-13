@@ -73,6 +73,9 @@ Why `${cognito-identity.amazonaws.com:sub}` resolves under the enhanced flow: th
 
 Scope justification: `s3:GetObject` covers HEAD and conditional GET (`If-None-Match`/`If-Match`); `s3:PutObject` covers create-only (`If-None-Match: *`) and CAS (`If-Match`) writes. Deliberately **absent**: `s3:DeleteObject` (retention/compaction is AD-13, Milestone 2 Story 23 — adding it now would be unreviewed scope creep), `s3:GetObjectVersion` (versioning is an owner-side recovery net, not a client surface), `s3:AbortMultipartUpload`/`ListMultipartUploadParts` (AD-18 caps object sizes well under the 5 GB single-PUT limit, and the lifecycle rule sweeps aborted uploads), any KMS action (SSE-S3 needs none — one reason AD-8 chose it). No statement uses `Resource: "*"`.
 
+**403-not-404 on the caller's own prefix (accepted, by design).** S3 answers `403` instead of `404` for a GET/HEAD on a missing key whenever the caller has no `s3:ListBucket` **in that request's context**. A GET carries no `s3:prefix` key, so the `ListOwnPrefixOnly` condition cannot be satisfied by a GET and a missing key inside the caller's own prefix will answer `403`. This is accepted rather than engineered around: every policy shape that would restore the `404` (an unconditional `s3:ListBucket`, or `StringLikeIfExists` on `s3:prefix`) also permits a **prefix-less whole-bucket listing**, which enumerates every account's prefix — and the policy cannot be tested live from here, so a clever shape would ship unverified. The strict policy stays. The Story-4 S3 adapter already disambiguates: on `403` for GET/HEAD it issues one `ListObjectsV2(prefix = <full key>, max-keys = 1)` and compares the exact key. That probe **is** permitted here: its `s3:prefix` is `acct/<identity-id>/<key>`, matched by `StringLike acct/${cognito-identity.amazonaws.com:sub}/*`; the bare prefix `acct/<identity-id>/` matches too (`*` matches the empty string); a root listing sends no `s3:prefix` and stays denied. The reasoning is a comment at the `ListOwnPrefixOnly` statement and a `[story 2]` ledger line.
+
+
 ### `SyncIdentityPoolRoleAttachment` — `AWS::Cognito::IdentityPoolRoleAttachment`
 
 `IdentityPoolId: !Ref SyncIdentityPool`, `Roles: { authenticated: !GetAtt SyncAuthenticatedRole.Arn }`. No `unauthenticated` key (the pool forbids unauthenticated identities anyway) and **no `RoleMappings`** — a rules-based or token-based mapping is the documented way to widen which role a token can reach, so its absence is load-bearing and asserted by the verify script.
@@ -96,7 +99,10 @@ Scope justification: `s3:GetObject` covers HEAD and conditional GET (`If-None-Ma
 2. `echo "aws_account=$(aws sts get-caller-identity --query Account --output text)"` — account id only; no key, ARN or user name is ever printed.
 3. Pre-flight stack-state gate (§3) and the Bedrock "before" baseline (§4).
 4. `aws cloudformation deploy --stack-name nixus-sync --template-file infra/sync/template.yaml --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset --disable-rollback --region us-east-1 --parameter-overrides "UserPoolId=${COGNITO_USER_POOL_ID}" "AppClientId=${COGNITO_APP_CLIENT_ID}"`. Every step runs `set -euo pipefail`.
-5. `describe-stacks` → print `StackStatus` and the full `Outputs` array; then the Bedrock "after" baseline.
+5. `describe-stacks` → print `StackStatus` and the full `Outputs` array, and **fail the job unless the status is `CREATE_COMPLETE`/`UPDATE_COMPLETE`** (printing the failing stack events); then the Bedrock "after" baseline (`if: always()`).
+
+Fork-PR safety: the triggers are `pull_request` + `push` only — **never `pull_request_target`**, which would hand repository secrets to fork code — and every credentialed step in `verify` is guarded on `github.event.pull_request.head.repo.full_name == github.repository`. There is no GitHub `environment` anywhere (owner override of AD-17's `production` mention); the plain repository secrets are used directly.
+
 
 The workflow creates/updates only `nixus-sync`; it never calls `delete-stack`, `delete-*`, `s3 rm`, or any Cognito/IAM mutation outside CloudFormation.
 
@@ -112,7 +118,8 @@ Pre-flight gate (read-only `describe-stacks`, never a delete):
 | `CREATE_FAILED`, `UPDATE_FAILED` | print a notice ("repairable, resuming") and proceed |
 | `ROLLBACK_COMPLETE`, `ROLLBACK_FAILED`, `UPDATE_ROLLBACK_FAILED`, `DELETE_FAILED`, `DELETE_COMPLETE`, any `*_IN_PROGRESS`, anything unrecognised | **fail** with the status, the reason it is terminal for this pipeline, and the explicit statement that this workflow will not delete a stack — a human decides |
 
-Residual risk (recorded, not hidden): if `cloudformation deploy`'s change-set path should refuse a `CREATE_FAILED` stack, the gate still surfaces the exact status and the run fails loudly instead of thrashing; the repair is then an operator decision, logged as a blocker.
+Residual risk, now handled rather than only recorded: `aws cloudformation deploy` treats **any** existing stack except `REVIEW_IN_PROGRESS` as an UPDATE change set and may refuse a `CREATE_FAILED`/`UPDATE_FAILED` stack outright. `deploy` stays the primary path; when it exits non-zero the run prints the failing stack events and then runs a **scripted fallback** in the same job: `create-change-set --change-set-type UPDATE` (same template, same parameters, `CAPABILITY_NAMED_IAM`), `wait change-set-create-complete`, and — unless the change set came back `FAILED` — `execute-change-set --disable-rollback` + `wait stack-update-complete`. If both paths fail, the status step fails the job with the stack events. No path deletes anything.
+
 
 ## 4. Read-only guard for `nixus-bedrock-api`
 
@@ -177,3 +184,7 @@ Merging to `master` auto-deploys (push trigger on `infra/sync/**`); the very fir
 - Deterministic account-scoped bucket name over a CloudFormation-generated one: survives a `Retain`ed failed create and keeps the client's bucket name predictable.
 - `s3:DeleteObject` intentionally not granted in Milestone 1: retention (AD-13) is Milestone 2 Story 23 and will add it under its own review.
 - Unattended auto-decisions per rules §6: spec self-approved, all goals kept, subagents authorized, no HALT taken.
+- Accepted `403`-instead-of-`404` on a missing key in the caller's own prefix (§1): the strict `s3:prefix`-conditioned `ListBucket` is kept, because every shape that restores the `404` also allows a whole-bucket listing, and no live S3 test is available here. The Story-4 adapter's `ListObjectsV2(prefix=<full key>, max-keys=1)` probe is explicitly within the granted condition.
+- `aws cloudformation deploy` stays the primary deploy path, with a scripted `create-change-set --change-set-type UPDATE` + `execute-change-set --disable-rollback` fallback in the same job for a stack `deploy` refuses to update (§3).
+- Verify script proven non-vacuous before commit: five deliberate template mutations (versioning `Suspended`, `AllowClassicFlow: true`, `:amr` `*`, `s3:prefix` `*`, added `s3:DeleteObject`) each produced the expected named failure, then were reverted.
+

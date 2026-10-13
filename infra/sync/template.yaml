@@ -1,0 +1,220 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >-
+  Nixus multi-device sync infrastructure (stack nixus-sync, us-east-1): the sync
+  object bucket, the Cognito identity pool that vends prefix-scoped credentials,
+  and the single authenticated role those credentials assume. Compute-free by
+  design (AD-17) and deployed only by .github/workflows/sync-infra.yml.
+  The existing user pool, its app client and the nixus-bedrock-api stack are
+  referenced or ignored here, never created, imported or modified.
+
+# Plain CloudFormation, not SAM: the stack has no compute, so a Transform and a
+# `sam build` step would add a toolchain dependency and buy nothing.
+
+Parameters:
+  UserPoolId:
+    Type: String
+    Default: us-east-1_7gfGQ0emg
+    AllowedPattern: '^[\w-]+_[0-9a-zA-Z]+$'
+    Description: >-
+      Existing Cognito user pool whose ID tokens the identity pool trusts.
+      Public by design (it appears in the OIDC discovery URL). Referenced only.
+  AppClientId:
+    Type: String
+    Default: 6525109r95las7odvuesf13joj
+    AllowedPattern: '^[a-z0-9]+$'
+    Description: >-
+      Existing public app client id. Already committed as COGNITO_CLIENT_ID in
+      apps/desktop/src-tauri/src/commands/auth.rs and public by design (it
+      travels in the address bar). Drift-guarded by infra/sync/verify-template.py.
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # The sync bucket. One bucket for every account; isolation is by key prefix
+  # and by the role policy below, never by bucket (AD-6, AD-7).
+  # ---------------------------------------------------------------------------
+  SyncBucket:
+    Type: AWS::S3::Bucket
+    # Retained: this bucket holds the only cloud copy of users' datasets. A
+    # stack mistake must never be able to delete it.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      # Deterministic and account-scoped rather than CloudFormation-generated:
+      # a Retained bucket from a failed create keeps the same name on the retry
+      # (so the next deploy adopts it instead of orphaning it), and the desktop
+      # client's bucket name stays predictable.
+      BucketName: !Sub 'nixus-sync-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          # SSE-S3 only (AD-8). No BucketKeyEnabled: S3 Bucket Keys only reduce
+          # SSE-KMS request cost and are inert for AES256.
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        # ACLs disabled, so IAM and this bucket's policy are the only access path.
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          # Versioning is an owner-side recovery net, not storage the product
+          # pays for forever.
+          - Id: expire-noncurrent-objects
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 30
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  SyncBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SyncBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # AD-8: plaintext transport is refused outright, not merely discouraged.
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt SyncBucket.Arn
+              - !Sub '${SyncBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  # ---------------------------------------------------------------------------
+  # Identity pool. Enhanced flow only: Cognito itself calls STS and picks the
+  # role, so a client cannot nominate a role of its choosing (AD-7).
+  # ---------------------------------------------------------------------------
+  SyncIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Ref AWS::StackName
+      AllowUnauthenticatedIdentities: false
+      # Basic (classic) flow off. With it on, a caller could call
+      # AssumeRoleWithWebIdentity itself against any role that trusts the pool.
+      AllowClassicFlow: false
+      CognitoIdentityProviders:
+        - ProviderName: !Sub 'cognito-idp.${AWS::Region}.amazonaws.com/${UserPoolId}'
+          ClientId: !Ref AppClientId
+          # Checked against the user pool on every GetId /
+          # GetCredentialsForIdentity, so a deleted or globally signed-out user
+          # stops getting credentials instead of riding a still-valid ID token.
+          ServerSideTokenCheck: true
+
+  # ---------------------------------------------------------------------------
+  # The one authenticated role. One role serves every account because the policy
+  # names the caller's own identity id through a policy variable.
+  # ---------------------------------------------------------------------------
+  SyncAuthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # Named (not generated) so the isolation gate (Story 3, AD-19) has a
+      # stable subject to simulate against. Requires CAPABILITY_NAMED_IAM.
+      RoleName: !Sub '${AWS::StackName}-authenticated'
+      Description: >-
+        Assumed by Cognito on behalf of a signed-in Nixus user. Grants S3 access
+        to that user's own acct/<identity-id>/ prefix and nothing else.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              # :aud is this pool by reference, which also orders pool-before-role
+              # at create time and makes a stale literal impossible.
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref SyncIdentityPool
+              # :amr is multi-valued (it also carries the provider name), so the
+              # test is "at least one value is authenticated". An unauthenticated
+              # identity carries `unauthenticated` and can never satisfy it.
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': authenticated
+      Policies:
+        - PolicyName: nixus-sync-prefix-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # ${cognito-identity.amazonaws.com:sub} is the identity id
+              # (us-east-1:<uuid>) that Cognito put in the token's sub claim, so
+              # each caller can only name its own AD-6 prefix. GetObject covers
+              # HEAD and conditional GET; PutObject covers create-only
+              # (If-None-Match: *) and compare-and-swap (If-Match) writes.
+              # Deliberately absent: s3:DeleteObject (retention is AD-13 /
+              # Milestone 2), s3:GetObjectVersion, multipart actions, any KMS
+              # action (SSE-S3 needs none).
+              - Sid: ReadWriteOwnPrefixOnly
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource: !Sub '${SyncBucket.Arn}/acct/${!cognito-identity.amazonaws.com:sub}/*'
+              # ListBucket is scoped by s3:prefix, which a GetObject request does
+              # not carry. Consequence, by design: a GET or HEAD on a missing key
+              # is answered 403 rather than 404, because the caller has no
+              # unconditional s3:ListBucket. The S3 adapter
+              # (apps/desktop/src-tauri/src/sync/s3.rs, Story 4) disambiguates
+              # that by re-probing with ListObjectsV2(prefix = the full key,
+              # max-keys = 1): the probe's s3:prefix is
+              # acct/<identity-id>/<key>, which this StringLike matches (and so
+              # does the bare prefix acct/<identity-id>/, since * matches the
+              # empty string), while a root listing carries no s3:prefix at all
+              # and stays denied. The policy is deliberately left strict: a
+              # shape such as StringLikeIfExists would let a prefix-less
+              # (whole-bucket) listing through.
+              - Sid: ListOwnPrefixOnly
+                Effect: Allow
+                Action: 's3:ListBucket'
+                Resource: !GetAtt SyncBucket.Arn
+                Condition:
+                  StringLike:
+                    # Plain string, not !Sub: the only ${...} here is an IAM
+                    # policy variable resolved by IAM at request time.
+                    's3:prefix': 'acct/${cognito-identity.amazonaws.com:sub}/*'
+
+  SyncIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref SyncIdentityPool
+      # No `unauthenticated` key (the pool forbids those identities) and no
+      # RoleMappings: a rules- or token-based mapping is the documented way to
+      # widen which role a token can reach, so its absence is load-bearing and
+      # is asserted by infra/sync/verify-template.py.
+      Roles:
+        authenticated: !GetAtt SyncAuthenticatedRole.Arn
+
+Outputs:
+  # No Export: nothing consumes these cross-stack, and an export would pin the
+  # logical names forever.
+  BucketName:
+    Description: Sync object bucket name.
+    Value: !Ref SyncBucket
+  BucketArn:
+    Description: Sync object bucket ARN.
+    Value: !GetAtt SyncBucket.Arn
+  IdentityPoolId:
+    Description: Cognito identity pool id that vends prefix-scoped credentials.
+    Value: !Ref SyncIdentityPool
+  AuthenticatedRoleArn:
+    Description: ARN of the role Cognito assumes for a signed-in user.
+    Value: !GetAtt SyncAuthenticatedRole.Arn
+  AuthenticatedRoleName:
+    Description: Name of that role (the subject of the isolation gate).
+    Value: !Ref SyncAuthenticatedRole
+  Region:
+    Description: Region of the bucket, the identity pool and the user pool.
+    Value: !Ref AWS::Region
