@@ -1280,6 +1280,10 @@ pub fn sign_out(app: AppHandle) -> Result<(), AppError> {
     // keyring call so a keyring fault cannot leave a usable verifier behind.
     discard_pending_attempt(&app);
 
+    // Before the keyring is cleared: the sync actor holds vended AWS credentials and an
+    // open connection, and a signed-out process must keep neither (AD-7, AD-14).
+    crate::commands::sync::stop(&app);
+
     // Idempotent per Story 26.2: a missing entry is not an error.
     credentials::clear_cognito_session()?;
 

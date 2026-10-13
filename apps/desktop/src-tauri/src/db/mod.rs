@@ -130,6 +130,13 @@ pub(crate) fn latest_schema_version() -> i64 {
     MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0)
 }
 
+/// `PRAGMA data_version`: the per-connection counter SQLite bumps whenever **another**
+/// connection commits to this database. Milestone 1's change signal, because the capture
+/// hook does not exist yet (AD-3 is Milestone 2 Story 15).
+pub(crate) fn data_version(conn: &Connection) -> Result<i64, AppError> {
+    Ok(conn.query_row("PRAGMA data_version", [], |row| row.get(0))?)
+}
+
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
     std::fs::create_dir_all(app_data_dir).map_err(|e| AppError::File {
         message: format!("Failed to create app data directory: {}", e),

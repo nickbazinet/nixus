@@ -243,6 +243,8 @@ where
         Ok(self.pass().await?.get(key).await?)
     }
 
+    #[allow(dead_code)] // Milestone 2 Story 16 polls with it; the wrapper has to exist now
+    // because `tests_gate_boundary` fails the build on a port method without a gate.
     pub async fn get_if_none_match(
         &self,
         key: &str,
@@ -251,16 +253,19 @@ where
         Ok(self.pass().await?.get_if_none_match(key, known).await?)
     }
 
+    #[allow(dead_code)] // Same: gated now, first called by Milestone 2's polling.
     pub async fn head(&self, key: &str) -> Result<ObjectMeta, GatedError> {
         Ok(self.pass().await?.head(key).await?)
     }
 
+    #[allow(dead_code)] // Same: AD-6's repair path is Milestone 2 Story 23.
     pub async fn exists(&self, key: &str) -> Result<bool, GatedError> {
         Ok(self.pass().await?.exists(key).await?)
     }
 
     /// The account prefix is behind the gate too: it names the account, which AD-16 keeps
     /// out of anything a blocked dataset can reach.
+    #[allow(dead_code)] // Same: a diagnostic nothing in Milestone 1 reads.
     pub async fn account_prefix(&self) -> Result<&str, GatedError> {
         Ok(self.pass().await?.account_prefix())
     }

@@ -1,10 +1,13 @@
 //! The `AccountPinStore` implementation (Story 5's seam) and the install identity, both
 //! over the dataset's own `sync_state` row (AD-4, AD-15).
 //!
-//! The connection arrives behind an `Arc<Mutex<_>>` rather than as a borrow. `Connection`
-//! is `Send` but not `Sync`, so a `&Connection` held by this store would make every future
-//! that touches it `!Send` and would decide, from here, how Story 10's actor must be
-//! spawned. The lock is taken for exactly one statement and never across an `.await`.
+//! The connection arrives behind an `Arc<Mutex<Option<_>>>` rather than as a borrow.
+//! `Connection` is `Send` but not `Sync`, so a `&Connection` held by this store would make
+//! every future that touches it `!Send`. The `Option` is what AD-9 needs: the manager's own
+//! connection has to be *closed* before a file swap, and `None` is that closed state — a
+//! state read through a closed connection is `StateUnavailable`, which the gate already
+//! treats as "prove nothing, allow nothing". The lock is taken for exactly one statement
+//! and never across an `.await`.
 
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +33,7 @@ pub enum InstallOutcome {
 
 /// The dataset's sync state, as the `AccountPinStore` the credential vendor needs.
 pub struct SyncStateStore {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Mutex<Option<Connection>>>,
 }
 
 impl SyncStateStore {
@@ -39,7 +42,7 @@ impl SyncStateStore {
     /// `None` is what makes inherited AD-12 structural rather than a rule to remember: a
     /// local-only dataset cannot produce a store, so it cannot produce a pin, a gate that
     /// passes, or a `sync_state` row. Nothing about sync runs for it.
-    pub fn for_dataset(kind: DatasetKind, conn: Arc<Mutex<Connection>>) -> Option<Self> {
+    pub fn for_dataset(kind: DatasetKind, conn: Arc<Mutex<Option<Connection>>>) -> Option<Self> {
         match kind {
             DatasetKind::Local => None,
             DatasetKind::CloudLinked => Some(Self { conn }),
@@ -54,8 +57,9 @@ impl SyncStateStore {
             .conn
             .lock()
             .map_err(|_| AuthError::StateUnavailable)?;
+        let conn = guard.as_ref().ok_or(AuthError::StateUnavailable)?;
 
-        operation(&guard).map_err(|_| AuthError::StateUnavailable)
+        operation(conn).map_err(|_| AuthError::StateUnavailable)
     }
 
     /// Reads the row, creating or re-minting the install identity as AD-4 requires.
@@ -151,7 +155,7 @@ mod tests {
             .expect("enable fks");
         run_migrations(&conn).expect("run migrations");
 
-        SyncStateStore::for_dataset(DatasetKind::CloudLinked, Arc::new(Mutex::new(conn)))
+        SyncStateStore::for_dataset(DatasetKind::CloudLinked, Arc::new(Mutex::new(Some(conn))))
             .expect("a cloud-linked dataset has a store")
     }
 
@@ -160,21 +164,42 @@ mod tests {
             .conn
             .lock()
             .expect("lock")
+            .as_ref()
+            .expect("the connection is open")
             .query_row("SELECT COUNT(*) FROM sync_state", [], |r| r.get(0))
             .expect("count")
+    }
+
+    #[test]
+    fn a_closed_connection_reports_the_state_as_unavailable_rather_than_as_absent() {
+        let store = store();
+        store.ensure_install().expect("the install identity is minted");
+
+        // What AD-9 does before a file swap: the manager's own connection is released.
+        *store.conn.lock().expect("lock") = None;
+
+        assert_eq!(store.gate_state(), Err(AuthError::StateUnavailable));
+        assert_eq!(store.load(), Err(AuthError::StateUnavailable));
+        assert_eq!(
+            store.ensure_install(),
+            Err(AuthError::StateUnavailable),
+            "a closed dataset must never read as one that has no install identity"
+        );
     }
 
     #[test]
     fn a_local_only_dataset_has_no_store_at_all() {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         run_migrations(&conn).expect("run migrations");
-        let shared = Arc::new(Mutex::new(conn));
+        let shared = Arc::new(Mutex::new(Some(conn)));
 
         assert!(SyncStateStore::for_dataset(DatasetKind::Local, Arc::clone(&shared)).is_none());
 
         let rows: i64 = shared
             .lock()
             .expect("lock")
+            .as_ref()
+            .expect("the connection is open")
             .query_row("SELECT COUNT(*) FROM sync_state", [], |r| r.get(0))
             .expect("count");
         assert_eq!(rows, 0, "a local-only dataset must create no sync state");
@@ -338,6 +363,8 @@ mod tests {
             .conn
             .lock()
             .expect("lock")
+            .as_ref()
+            .expect("the connection is open")
             .execute("DELETE FROM sync_state", [])
             .expect("wipe");
 
@@ -353,6 +380,8 @@ mod tests {
             .conn
             .lock()
             .expect("lock")
+            .as_ref()
+            .expect("the connection is open")
             .execute_batch("DROP TABLE sync_state")
             .expect("drop the table");
 

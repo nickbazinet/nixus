@@ -26,6 +26,7 @@ pub mod recurring_income;
 pub mod retirement;
 pub mod settings;
 pub mod spending_trends;
+pub mod sync;
 pub mod yearly_summary;
 
 use serde::Serialize;

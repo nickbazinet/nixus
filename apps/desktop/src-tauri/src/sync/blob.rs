@@ -11,6 +11,11 @@
 //! and writes of an image are pure SQLite, and the sync path is the only thing that ever leaves the
 //! machine.
 
+// Every item here is reached first by Story 11's lazy image fetch and by Milestone 2's
+// segment path; nothing in Milestone 1 uploads or downloads an image blob. Scoped to this
+// one file so a new unused item anywhere else still fails the gate.
+#![allow(dead_code)]
+
 use sha2::{Digest, Sha256};
 
 use super::gate::{GatedError, GatedStore, SyncGate};

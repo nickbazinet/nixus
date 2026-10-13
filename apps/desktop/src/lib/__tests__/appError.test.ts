@@ -8,11 +8,52 @@ import {
   hostedAiMessageKey,
   hostedAiNeedsSignIn,
   isHostedAiError,
+  isSyncError,
   parseAppError,
   projectImageMessageKey,
   userAvatarMessageKey,
   type HostedAiErrorCode,
+  type SyncErrorCode,
 } from "../appError";
+
+const ALL_SYNC_CODES: SyncErrorCode[] = [
+  "local_only",
+  "not_entitled",
+  "frozen",
+  "account_mismatch",
+  "owner_mismatch",
+  "owner_malformed",
+  "state_unavailable",
+  "signed_out",
+  "not_configured",
+  "offline",
+  "identity_rejected",
+  "remote_missing",
+  "install_collision",
+  "forbidden",
+  "credentials_expired",
+  "remote_changed",
+  "transport",
+  "snapshot_build",
+  "dataset_busy",
+  "update_needed",
+  "snapshot_invalid",
+  "restore_failed",
+  "profile_create_failed",
+  "not_enabled",
+  "no_pending_prompt",
+  "actor_unavailable",
+];
+
+function syncError(code: string, overrides: Record<string, unknown> = {}) {
+  return {
+    type: "sync",
+    code,
+    message: "backend message",
+    recoverable: true,
+    ...overrides,
+  };
+}
 
 const ALL_CODES: HostedAiErrorCode[] = [
   "validation",
@@ -109,6 +150,50 @@ describe("parseAppError narrows the hosted_ai envelope", () => {
       message: undefined,
     });
     expect(parseAppError(7)).toEqual({ type: undefined, message: undefined });
+  });
+});
+
+describe("parseAppError narrows the sync envelope", () => {
+  it("reads the code, message, and recoverable flag", () => {
+    const parsed = parseAppError(syncError("offline"));
+
+    expect(isSyncError(parsed)).toBe(true);
+    if (!isSyncError(parsed)) throw new Error("unreachable");
+
+    expect(parsed.code).toBe("offline");
+    expect(parsed.message).toBe("backend message");
+    expect(parsed.recoverable).toBe(true);
+  });
+
+  it("preserves an explicitly unrecoverable flag", () => {
+    const parsed = parseAppError(syncError("account_mismatch", { recoverable: false }));
+
+    expect(isSyncError(parsed) && parsed.recoverable).toBe(false);
+  });
+
+  it("accepts every code the backend can send", () => {
+    for (const code of ALL_SYNC_CODES) {
+      const parsed = parseAppError(syncError(code));
+      expect(isSyncError(parsed) && parsed.code, code).toBe(code);
+    }
+  });
+
+  /* A newer backend's failure is still a sync failure; dropping the code would restore
+   * the silent generic message this module exists to remove. */
+  it("degrades an unrecognized, missing or non-string code to transport", () => {
+    for (const raw of ["teapot", "", "OFFLINE", undefined, null, 42, {}]) {
+      const parsed = parseAppError({ type: "sync", code: raw, message: "m" });
+      expect(isSyncError(parsed)).toBe(true);
+      expect(isSyncError(parsed) && parsed.code).toBe("transport");
+    }
+  });
+
+  it("is not confused with the hosted-AI envelope", () => {
+    const sync = parseAppError(syncError("frozen"));
+    const hosted = parseAppError(hostedAi("quota_exhausted"));
+
+    expect(isHostedAiError(sync)).toBe(false);
+    expect(isSyncError(hosted)).toBe(false);
   });
 });
 

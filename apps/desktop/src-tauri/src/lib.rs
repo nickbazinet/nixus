@@ -157,6 +157,12 @@ pub fn run() {
                 conn: None,
             })));
 
+            // Managed before the first selection, not after: `select_dataset_now` stops
+            // and starts the sync actor through this state, and reading an unmanaged Tauri
+            // state panics. It also means the default dataset's actor is started by the
+            // same path every later switch uses, with no startup-only variant.
+            app.manage(commands::sync::SyncSupervisor::default());
+
             // Depends on bootstrap_registry above: select_dataset_now reads the
             // registry via load_registry, which never creates datasets.json.
             commands::datasets::select_dataset_now(&app_handle, datasets::DEFAULT_DATASET_ID)
@@ -444,6 +450,12 @@ pub fn run() {
             commands::projects::get_project_thumbnails,
             commands::projects::set_project_image,
             commands::projects::remove_project_image,
+            commands::sync::sync_enable,
+            commands::sync::sync_disable,
+            commands::sync::sync_status,
+            commands::sync::sync_now,
+            commands::sync::sync_resolve_remote_changed,
+            commands::sync::sync_diagnostics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

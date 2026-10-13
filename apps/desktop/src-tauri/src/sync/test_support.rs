@@ -8,9 +8,13 @@
 //! the returned error would pass even if the request had gone out.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use rusqlite::Connection;
+use tempfile::TempDir;
 
 use crate::db::sync_state::FrozenReason;
 use crate::entitlements::AccountCapabilities;
@@ -119,6 +123,16 @@ impl FakeObjectStore {
             .expect("not poisoned")
             .get(key)
             .map(|stored| stored.bytes.clone())
+    }
+
+    /// The concurrency token a stored object currently carries, so a test can assert that a
+    /// compare-and-swap actually moved the pointer rather than only that it returned `Ok`.
+    pub(crate) fn etag_of(&self, key: &str) -> Option<ETag> {
+        self.objects
+            .lock()
+            .expect("not poisoned")
+            .get(key)
+            .map(|stored| stored.etag.clone())
     }
 
     pub(crate) fn keys(&self) -> Vec<String> {
@@ -381,12 +395,17 @@ impl CapabilitySource for FixedCapabilities {
     }
 }
 
+/// The account every fake vends for. It has to match `FixedGateState`'s pin, or the gate
+/// would refuse its own fake as a different account.
+pub(crate) const FAKE_IDENTITY_ID: &str = "us-east-1:0000";
+pub(crate) const FAKE_OWNER_SUB: &str = "sub-0";
+
 pub(crate) struct FixedGateState(Option<FrozenReason>);
 
 impl GateStateSource for FixedGateState {
     fn gate_state(&self) -> Result<GateState, AuthError> {
         Ok(GateState {
-            pin: Some(AccountPin::new("us-east-1:0000", "sub-0")),
+            pin: Some(AccountPin::new(FAKE_IDENTITY_ID, FAKE_OWNER_SUB)),
             frozen_reason: self.0,
         })
     }
@@ -415,6 +434,305 @@ pub(crate) fn gated_fake(
 /// The ordinary case: cloud-linked, entitled, not frozen.
 pub(crate) fn syncing_fake(store: Arc<FakeObjectStore>) -> FakeGatedStore {
     gated_fake(store, DatasetKind::CloudLinked, true, None)
+}
+
+/// One simulated computer: its own app-data directory, its own dataset file, its own
+/// connections, and a `SyncHost` the actor can be built from.
+///
+/// This is the harness Story 12 and the final Milestone-1 proof drive: two of these over
+/// ONE shared `FakeObjectStore` is "two computers, one cloud account", with no network, no
+/// AWS and no Tauri app in the way.
+///
+/// It is split into the host (which the actor takes ownership of) and a probe (which the
+/// test keeps), because `SyncActor` owns its host and a test still has to write rows, read
+/// rows and list dated backups afterwards. Everything shared between the two halves is
+/// behind an `Arc`, including the `TempDir`, so the directory outlives both.
+pub(crate) struct TestComputer {
+    id: String,
+    label: String,
+    root: PathBuf,
+    db_path: PathBuf,
+    backup_dir: PathBuf,
+    own: Arc<Mutex<Option<Connection>>>,
+    store: Arc<FakeObjectStore>,
+    kind: DatasetKind,
+    entitled: Arc<AtomicBool>,
+    frozen: Arc<Mutex<Option<FrozenReason>>>,
+    clock: Arc<AtomicI64>,
+    slot: FakeSlot,
+    _dir: Arc<TempDir>,
+}
+
+/// The test's half of a `TestComputer`.
+pub(crate) struct ComputerProbe {
+    db_path: PathBuf,
+    backup_dir: PathBuf,
+    live: Arc<Mutex<Option<Connection>>>,
+    store: Arc<FakeObjectStore>,
+    entitled: Arc<AtomicBool>,
+    frozen: Arc<Mutex<Option<FrozenReason>>>,
+    _dir: Arc<TempDir>,
+}
+
+/// Closes and republishes both connections to one simulated computer's dataset file: the
+/// actor's own and the "UI's". The production slot does exactly this over `DbState`.
+pub(crate) struct FakeSlot {
+    own: Arc<Mutex<Option<Connection>>>,
+    live: Arc<Mutex<Option<Connection>>>,
+}
+
+impl crate::db::backup::DatasetSlot for FakeSlot {
+    fn close(&self) -> Result<(), crate::error::AppError> {
+        for cell in [&self.own, &self.live] {
+            if let Ok(mut guard) = cell.lock() {
+                drop(guard.take());
+            }
+        }
+
+        Ok(())
+    }
+
+    fn adopt(&self, conn: Connection) -> Result<(), crate::error::AppError> {
+        if let Ok(mut guard) = self.live.lock() {
+            *guard = Some(conn);
+        }
+
+        Ok(())
+    }
+}
+
+/// A cloud-linked, entitled, un-frozen computer with a freshly migrated empty dataset.
+///
+/// `clock_base` is the value `now_ms` starts at and is why two computers produce different
+/// `created_ms` values without a real clock: each call advances by one second.
+pub(crate) fn test_computer(
+    id: &str,
+    store: Arc<FakeObjectStore>,
+    clock_base: i64,
+) -> (TestComputer, ComputerProbe) {
+    let dir = Arc::new(tempfile::tempdir().expect("a temp app-data dir"));
+    let root = dir.path().to_path_buf();
+    let db_path = root.join(crate::datasets::DB_FILE_NAME);
+    let backup_dir = root.join("backups");
+
+    // Created through the real `open_configured`, so every migration and CHECK applies.
+    let live = Arc::new(Mutex::new(Some(crate::db::test_dataset::migrated_dataset(
+        &db_path,
+    ))));
+    let own = Arc::new(Mutex::new(None));
+    let entitled = Arc::new(AtomicBool::new(true));
+    let frozen = Arc::new(Mutex::new(None));
+
+    let host = TestComputer {
+        id: id.to_string(),
+        label: format!("Computer {id}"),
+        root,
+        db_path: db_path.clone(),
+        backup_dir: backup_dir.clone(),
+        own: Arc::clone(&own),
+        store: Arc::clone(&store),
+        kind: DatasetKind::CloudLinked,
+        entitled: Arc::clone(&entitled),
+        frozen: Arc::clone(&frozen),
+        clock: Arc::new(AtomicI64::new(clock_base)),
+        slot: FakeSlot {
+            own,
+            live: Arc::clone(&live),
+        },
+        _dir: Arc::clone(&dir),
+    };
+
+    let probe = ComputerProbe {
+        db_path,
+        backup_dir,
+        live,
+        store,
+        entitled,
+        frozen,
+        _dir: dir,
+    };
+
+    (host, probe)
+}
+
+impl TestComputer {
+    /// The same computer, but on a profile that is not cloud-linked: inherited AD-12's
+    /// "no sync code path runs for a local-only dataset".
+    pub(crate) fn local_only(mut self) -> Self {
+        self.kind = DatasetKind::Local;
+        self
+    }
+}
+
+impl ComputerProbe {
+    pub(crate) fn store(&self) -> &Arc<FakeObjectStore> {
+        &self.store
+    }
+
+    /// A local write, through the connection that stands in for the UI's. This is what
+    /// `PRAGMA data_version` on the actor's own connection is supposed to notice, and what
+    /// has to keep working while sync is Frozen.
+    pub(crate) fn write_row(&self, name: &str) {
+        self.with_live(|conn| crate::db::test_dataset::insert_marker_rows(conn, &[name]));
+    }
+
+    pub(crate) fn rows(&self) -> Vec<String> {
+        self.with_live(crate::db::test_dataset::marker_rows)
+    }
+
+    fn with_live<T>(&self, operation: impl FnOnce(&Connection) -> T) -> T {
+        let mut guard = self.live.lock().expect("the live connection lock");
+        if guard.is_none() {
+            *guard = Some(crate::db::test_dataset::migrated_dataset(&self.db_path));
+        }
+
+        operation(guard.as_ref().expect("the live connection is open"))
+    }
+
+    /// The files CAP-5's *replace* path leaves behind.
+    pub(crate) fn dated_backups(&self) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(&self.backup_dir) else {
+            return Vec::new();
+        };
+
+        let mut paths: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        paths.sort();
+
+        paths
+    }
+
+    /// Takes the `multi_device_sync` capability away, or gives it back (AD-14, CAP-8).
+    pub(crate) fn set_entitled(&self, entitled: bool) {
+        self.entitled.store(entitled, Ordering::SeqCst);
+    }
+
+    pub(crate) fn frozen_reason(&self) -> Option<FrozenReason> {
+        *self.frozen.lock().expect("the frozen reason lock")
+    }
+}
+
+impl crate::sync::manager::SyncHost for TestComputer {
+    type Store = Arc<FakeObjectStore>;
+    type Link = DatasetKind;
+    type Caps = FixedCapabilities;
+    type GateState = FixedGateState;
+    type Slot = FakeSlot;
+
+    fn dataset_id(&self) -> &str {
+        &self.id
+    }
+
+    fn db_path(&self) -> &std::path::Path {
+        &self.db_path
+    }
+
+    fn backup_dir(&self) -> &std::path::Path {
+        &self.backup_dir
+    }
+
+    fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    fn label(&self) -> &str {
+        &self.label
+    }
+
+    fn schema_version(&self) -> u32 {
+        u32::try_from(crate::db::latest_schema_version()).expect("the schema version fits")
+    }
+
+    fn now_ms(&self) -> i64 {
+        self.clock.fetch_add(1_000, Ordering::SeqCst)
+    }
+
+    fn data_version(&self) -> Result<i64, crate::sync::manager::SyncFault> {
+        self.with_own(crate::db::data_version)
+    }
+
+    fn local_data(
+        &self,
+    ) -> Result<crate::db::backup::LocalData, crate::sync::manager::SyncFault> {
+        self.with_own(crate::db::backup::local_data_summary)
+    }
+
+    fn slot(&self) -> &Self::Slot {
+        &self.slot
+    }
+
+    fn release(&self) {
+        if let Ok(mut guard) = self.own.lock() {
+            drop(guard.take());
+        }
+    }
+
+    fn freeze(&self, reason: FrozenReason) {
+        *self.frozen.lock().expect("the frozen reason lock") = Some(reason);
+    }
+
+    fn forget_credentials(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>> {
+        Box::pin(std::future::ready(()))
+    }
+
+    fn connect(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::sync::manager::SyncSession<
+                            Arc<FakeObjectStore>,
+                            DatasetKind,
+                            FixedCapabilities,
+                            FixedGateState,
+                        >,
+                        crate::sync::manager::SyncFault,
+                    >,
+                > + '_,
+        >,
+    > {
+        Box::pin(async move {
+            // Rebuilt per call, exactly like the production host rebuilds the S3 adapter
+            // from a fresh vend: that is what lets a test lapse an entitlement or freeze a
+            // dataset mid-run and have the very next operation see it.
+            Ok(crate::sync::manager::SyncSession {
+                store: gated_fake(
+                    Arc::clone(&self.store),
+                    self.kind.clone(),
+                    self.entitled.load(Ordering::SeqCst),
+                    *self.frozen.lock().expect("the frozen reason lock"),
+                ),
+                pin: AccountPin::new(FAKE_IDENTITY_ID, FAKE_OWNER_SUB),
+            })
+        })
+    }
+}
+
+impl TestComputer {
+    fn with_own<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, crate::error::AppError>,
+    ) -> Result<T, crate::sync::manager::SyncFault> {
+        let mut guard = self
+            .own
+            .lock()
+            .map_err(|_| crate::sync::manager::SyncFault::StateUnavailable)?;
+
+        if guard.is_none() {
+            *guard = Some(crate::db::test_dataset::migrated_dataset(&self.db_path));
+        }
+
+        let conn = guard
+            .as_ref()
+            .ok_or(crate::sync::manager::SyncFault::StateUnavailable)?;
+
+        operation(conn).map_err(|_| crate::sync::manager::SyncFault::StateUnavailable)
+    }
 }
 
 #[cfg(test)]
