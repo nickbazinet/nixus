@@ -39,7 +39,10 @@ on:
 
 concurrency:
   group: desktop-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests cancel freely: a superseded PR run proves nothing. Master must not,
+  # because its run is the only macOS/Windows proof those commits ever get, and a
+  # second push would otherwise cancel the first one's verification outright.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
