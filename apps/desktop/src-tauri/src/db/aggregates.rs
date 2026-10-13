@@ -178,7 +178,7 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO income_entries (amount_cents, date) VALUES
              (10000, '2020-01-15'),
-             (500000, '2026-07-15');",
+             (500000, date('now', 'start of month', '-1 month', '+14 days'));",
         )
         .unwrap();
 
