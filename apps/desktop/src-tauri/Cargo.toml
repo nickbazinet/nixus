@@ -36,8 +36,13 @@ tauri-plugin-process = "2"
 tauri-plugin-deep-link = "2"
 tempfile = "3"
 base64 = "0.22"
-aws-config = "1.8.15"
+aws-config = "1.9.0"
 aws-sdk-bedrockruntime = "1.127.0"
+# Pinned exactly: the sync object-store adapter reads HTTP status codes and error
+# codes off SdkError to distinguish 200/304/404/409/412/403, which is a contract
+# with this SDK's error surface rather than a public API a caret range protects.
+# Its own MSRV (1.94.1) is why rust-toolchain.toml sits where it does.
+aws-sdk-s3 = "=1.152.0"
 tokio = { version = "1.50.0", features = ["full"] }
 regex = "1"
 keyring = "4"
@@ -54,6 +59,16 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # project-image validator admits are enabled; every other decoder would be attack surface
 # for a format this app refuses anyway.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[dev-dependencies]
+# The S3 adapter's error mapping is unit-tested with no network at all: these stub the
+# SDK's responses behind a mock connector. `test-util` on aws-sdk-s3 is what supplies
+# `Config::with_test_defaults`, without which the mock harness does not compile.
+aws-smithy-mocks = "0.3.0"
+aws-sdk-s3 = { version = "=1.152.0", features = ["test-util"] }
+# Only for `StatusCode`, which the adapter's tests need to synthesise the 304, 403,
+# 409 and 412 answers the real service would send.
+aws-smithy-runtime-api = "1"
 
 # Must remain the LAST table in this file: bare keys after a [target...] table would
 # be silently absorbed into it. The "deep-link" feature is required so a forwarded

@@ -13,6 +13,7 @@ mod maintenance;
 mod models;
 mod profile_store;
 mod projects;
+mod sync;
 mod tfsa;
 
 use db::{ActiveDataset, DbState};
