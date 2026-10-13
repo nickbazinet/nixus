@@ -11,11 +11,13 @@
 
 pub mod apply;
 pub mod auth;
+pub mod blob;
 pub mod capture;
 pub mod clock;
 pub mod config;
 pub mod gate;
 pub mod manager;
+pub mod object;
 pub mod registry;
 pub mod s3;
 pub mod segment;

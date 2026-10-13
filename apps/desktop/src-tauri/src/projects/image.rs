@@ -16,6 +16,7 @@ use std::path::Path;
 
 use image::imageops::FilterType;
 use image::{load_from_memory_with_format, DynamicImage, ImageFormat};
+use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
 
@@ -65,6 +66,23 @@ const JPEG_FILL: u8 = 0xFF;
 /// A start-of-frame segment is `length(2) + precision(1) + height(2) + width(2) +
 /// component count(1)` at minimum; anything shorter cannot carry dimensions.
 const JPEG_MIN_SOF_LENGTH: usize = 8;
+
+/// The content identity of an image: the lowercase-hex sha256 of its exact bytes.
+///
+/// This is what makes an image content-addressed (AD-10): the digest is both the value stored in
+/// `project_images.image_sha256` and the `blob/<sha256>` object key the full payload is uploaded to
+/// and fetched from, so two computers that hold the same picture name the same object and upload it
+/// once. Lowercase hex because the digest is used verbatim as an object key.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push(char::from_digit((byte >> 4) as u32, 16).expect("a nibble is a hex digit"));
+        hex.push(char::from_digit((byte & 0x0f) as u32, 16).expect("a nibble is a hex digit"));
+    }
+    hex
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectImageFormat {

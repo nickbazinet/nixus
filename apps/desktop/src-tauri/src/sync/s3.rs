@@ -26,6 +26,7 @@ use aws_sdk_s3::Client;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
+use super::object::hex_lower;
 use super::store::{
     validate_relative_key, ConditionalGet, ETag, ImmutablePut, MalformedObject, ObjectMeta,
     ObjectStore, StoreError, StoreOp, StoredObject,
@@ -375,14 +376,6 @@ fn object_meta(
     })
 }
 
-fn hex_lower(bytes: &[u8]) -> String {
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        hex.push(char::from_digit((byte >> 4) as u32, 16).expect("a nibble is a hex digit"));
-        hex.push(char::from_digit((byte & 0x0f) as u32, 16).expect("a nibble is a hex digit"));
-    }
-    hex
-}
 
 /// What the wire said, before any knowledge of which operation asked. `AccessDenied`
 /// is kept separate from `Forbidden` precisely because it is the ambiguous one.

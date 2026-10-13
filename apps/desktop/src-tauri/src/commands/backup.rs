@@ -483,7 +483,8 @@ mod tests {
             .expect("the image read succeeds")
             .expect("the image survives the backup round trip");
         assert_eq!(
-            restored.image_bytes, payload,
+            restored.image_bytes.as_deref(),
+            Some(payload.as_slice()),
             "the restored BLOB must be byte-identical"
         );
         assert_eq!(

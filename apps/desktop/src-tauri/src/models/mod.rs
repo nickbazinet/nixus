@@ -1004,6 +1004,12 @@ pub struct UpdateProjectInput {
 ///
 /// `image_base64` is what the webview puts in a `data:` URL; storage keeps the raw bytes
 /// and the encoding happens at this boundary, so the payload has exactly one wire form.
+///
+/// It is `None` when the full picture has not been fetched from its `blob/<sha256>` yet
+/// (AD-10). That is a STATE and not a failure, which is why `full_image_available` is an
+/// explicit field rather than something a reader has to infer: the row still answers with
+/// complete metadata and with the thumbnail, so the card renders a placeholder of the right
+/// picture instead of an error or a blank.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectImage {
     pub project_id: i64,
@@ -1011,7 +1017,11 @@ pub struct ProjectImage {
     pub original_filename: String,
     pub byte_size: i64,
     pub uploaded_at: String,
-    pub image_base64: String,
+    pub image_sha256: String,
+    pub full_image_available: bool,
+    pub image_base64: Option<String>,
+    pub thumbnail_base64: Option<String>,
+    pub thumbnail_mime: Option<String>,
 }
 
 /// The same shape without the payload: what a write returns, so storing an image never

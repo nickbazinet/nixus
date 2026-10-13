@@ -464,7 +464,11 @@ describe("useProjectImage", () => {
       original_filename: "kitchen.png",
       byte_size: 8,
       uploaded_at: "2026-08-01T00:00:00Z",
+      image_sha256: "a".repeat(64),
+      full_image_available: true,
       image_base64: "iVBORw0KGgo=",
+      thumbnail_base64: null,
+      thumbnail_mime: null,
     });
 
     // When the card mounts

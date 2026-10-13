@@ -9,7 +9,9 @@ use crate::models::{
     ProjectContribution, ProjectSavedTotal, SavingsProjectsSummary, UpdateProjectInput,
 };
 use crate::projects::allocation::AllocationProject;
-use crate::projects::image::{ProjectImageFormat, MAX_PROJECT_THUMBNAIL_BYTES};
+use crate::projects::image::{
+    sha256_hex as image_sha256_of, ProjectImageFormat, MAX_PROJECT_THUMBNAIL_BYTES,
+};
 use crate::projects::pace::ProjectPaceRow;
 use crate::projects::settlement::ConfirmedSuggestionMonth;
 
@@ -168,11 +170,17 @@ pub fn archive_project(conn: &Connection, id: i64) -> Result<Project, AppError> 
 #[derive(Debug)]
 pub struct ProjectImageRow {
     pub project_id: i64,
-    pub image_bytes: Vec<u8>,
+    /// `None` is the AD-10 lazy state: the row knows its picture by `image_sha256` and the full
+    /// payload has not been fetched from `blob/<sha256>` yet, or was blanked out of a snapshot
+    /// copy (AD-9). Every reader renders the thumbnail for it instead of failing.
+    pub image_bytes: Option<Vec<u8>>,
+    pub image_sha256: String,
     pub mime_type: String,
     pub original_filename: String,
     pub byte_size: i64,
     pub uploaded_at: String,
+    pub thumbnail_bytes: Option<Vec<u8>>,
+    pub thumbnail_mime: Option<String>,
 }
 
 // The same row minus the payload, and db-layer internal for the same reason. The write path returns
@@ -242,23 +250,30 @@ fn validated_thumbnail<'a>(
 // `Ok(None)` rather than an error for "no image": a project without a picture is the normal state,
 // not a failure, and the caller renders an invitation rather than a problem.
 //
+// It reads the thumbnail columns too, which is what lets ONE query answer both the fetched and the
+// not-yet-fetched case: a row whose `image_bytes` are absent still has something to show.
+//
 // No `archived_at` guard: an archived project keeps its image and must stay able to show it.
 pub fn get_project_image(
     conn: &Connection,
     project_id: i64,
 ) -> Result<Option<ProjectImageRow>, AppError> {
     conn.query_row(
-        "SELECT project_id, image_bytes, mime_type, original_filename, byte_size, uploaded_at
+        "SELECT project_id, image_bytes, image_sha256, mime_type, original_filename, byte_size,
+                uploaded_at, thumbnail_bytes, thumbnail_mime
          FROM project_images WHERE project_id = ?1",
         params![project_id],
         |row| {
             Ok(ProjectImageRow {
                 project_id: row.get(0)?,
                 image_bytes: row.get(1)?,
-                mime_type: row.get(2)?,
-                original_filename: row.get(3)?,
-                byte_size: row.get(4)?,
-                uploaded_at: row.get(5)?,
+                image_sha256: row.get(2)?,
+                mime_type: row.get(3)?,
+                original_filename: row.get(4)?,
+                byte_size: row.get(5)?,
+                uploaded_at: row.get(6)?,
+                thumbnail_bytes: row.get(7)?,
+                thumbnail_mime: row.get(8)?,
             })
         },
     )
@@ -302,14 +317,19 @@ pub fn upsert_project_image(
         message: "Image payload is too large to store".to_string(),
     })?;
     let thumbnail = validated_thumbnail(write.thumbnail)?;
+    // Derived here and never taken as an argument, for the same reason as `byte_size`: the hash is
+    // the identity of these exact bytes (AD-10), and a caller-supplied digest is precisely how a
+    // row could end up naming a `blob/<sha256>` that holds something else.
+    let image_sha256 = image_sha256_of(write.bytes);
 
     conn.execute(
         "INSERT INTO project_images
-             (project_id, image_bytes, mime_type, original_filename, byte_size, uploaded_at,
-              thumbnail_bytes, thumbnail_mime)
-         VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), ?6, ?7)
+             (project_id, image_bytes, image_sha256, mime_type, original_filename, byte_size,
+              uploaded_at, thumbnail_bytes, thumbnail_mime)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), ?7, ?8)
          ON CONFLICT(project_id) DO UPDATE SET
              image_bytes = excluded.image_bytes,
+             image_sha256 = excluded.image_sha256,
              mime_type = excluded.mime_type,
              original_filename = excluded.original_filename,
              byte_size = excluded.byte_size,
@@ -319,6 +339,7 @@ pub fn upsert_project_image(
         params![
             project_id,
             write.bytes,
+            image_sha256,
             write.mime_type,
             write.original_filename,
             byte_size,
@@ -420,12 +441,18 @@ pub fn get_project_thumbnails(conn: &Connection) -> Result<Vec<ProjectThumbnailR
 // from it, so returning the candidates' bytes here would hold every one of them in memory at once —
 // exactly the profile the whole thumbnail design exists to avoid. The caller fetches them one at a
 // time through `get_project_image`.
+//
+// `image_bytes IS NOT NULL` is what keeps a lazily-fetched row out of the candidate list: there is
+// nothing to derive a thumbnail FROM until the blob arrives, so without this guard every list read
+// would re-attempt — and re-fail — on every row whose payload has not been downloaded yet.
 pub fn get_project_ids_needing_thumbnails(conn: &Connection) -> Result<Vec<i64>, AppError> {
     let mut statement = conn.prepare(
         "SELECT pi.project_id
          FROM project_images pi
          JOIN projects p ON p.id = pi.project_id
-         WHERE p.archived_at IS NULL AND pi.thumbnail_bytes IS NULL
+         WHERE p.archived_at IS NULL
+           AND pi.thumbnail_bytes IS NULL
+           AND pi.image_bytes IS NOT NULL
          ORDER BY pi.project_id",
     )?;
 
@@ -434,6 +461,53 @@ pub fn get_project_ids_needing_thumbnails(conn: &Connection) -> Result<Vec<i64>,
         .collect::<Result<Vec<i64>, _>>()?;
 
     Ok(ids)
+}
+
+/// Writes a fetched blob back into the row it belongs to, identified by its content hash.
+///
+/// The hash is a WHERE clause and not just a bound value: it is the only thing that makes this
+/// write safe to apply after an await, when the picture may have been replaced while the download
+/// was in flight. A stale payload then matches no row and is dropped instead of overwriting the
+/// newer picture. `Ok(false)` reports exactly that, which is not a failure.
+///
+/// The caller is responsible for having verified the bytes against `expected_sha256` first
+/// (`sync::blob::fetch_image_blob` does); this function trusts the pair and only places it.
+// Story 10 wires the fetch command that calls this; the table rebuild and the write-back are one
+// story so the schema is never shipped without the path that fills it back in.
+#[allow(dead_code)]
+pub fn set_project_image_bytes(
+    conn: &Connection,
+    project_id: i64,
+    expected_sha256: &str,
+    bytes: &[u8],
+) -> Result<bool, AppError> {
+    let byte_size = i64::try_from(bytes.len()).map_err(|_| AppError::Database {
+        message: "Image payload is too large to store".to_string(),
+    })?;
+
+    let rows = conn.execute(
+        "UPDATE project_images SET image_bytes = ?2, byte_size = ?3
+         WHERE project_id = ?1 AND image_sha256 = ?4",
+        params![project_id, bytes, byte_size, expected_sha256],
+    )?;
+
+    Ok(rows > 0)
+}
+
+/// Drops every full payload while keeping the metadata, the hash and the thumbnails (AD-9).
+///
+/// This runs on the snapshot COPY, never on the live dataset: it is what keeps multi-megabyte
+/// pictures out of a snapshot a new computer has to download before it can show anything, while
+/// `image_sha256` leaves every one of them fetchable afterwards.
+// Story 8 builds the snapshot that calls this.
+#[allow(dead_code)]
+pub fn blank_project_image_bytes(conn: &Connection) -> Result<usize, AppError> {
+    let rows = conn.execute(
+        "UPDATE project_images SET image_bytes = NULL WHERE image_bytes IS NOT NULL",
+        [],
+    )?;
+
+    Ok(rows)
 }
 
 // Db-layer internal: it never crosses the IPC boundary, so it carries no serde derives.
@@ -3166,15 +3240,22 @@ mod tests {
     struct ImageInsert {
         mime_type: &'static str,
         byte_size: i64,
-        bytes: Vec<u8>,
+        bytes: Option<Vec<u8>>,
+        image_sha256: String,
+        thumbnail_bytes: Option<Vec<u8>>,
+        thumbnail_mime: Option<&'static str>,
     }
 
     impl ImageInsert {
         fn valid() -> Self {
+            let bytes = vec![1, 2, 3, 4];
             Self {
                 mime_type: "image/png",
                 byte_size: 4,
-                bytes: vec![1, 2, 3, 4],
+                image_sha256: image_sha256_of(&bytes),
+                bytes: Some(bytes),
+                thumbnail_bytes: None,
+                thumbnail_mime: None,
             }
         }
     }
@@ -3208,9 +3289,17 @@ mod tests {
     fn insert_image(conn: &Connection, row: &ImageInsert) -> Result<usize, rusqlite::Error> {
         conn.execute(
             "INSERT INTO project_images
-                 (project_id, image_bytes, mime_type, original_filename, byte_size)
-             VALUES (1, ?1, ?2, 'cover.png', ?3)",
-            rusqlite::params![row.bytes, row.mime_type, row.byte_size],
+                 (project_id, image_bytes, mime_type, original_filename, byte_size, image_sha256,
+                  thumbnail_bytes, thumbnail_mime)
+             VALUES (1, ?1, ?2, 'cover.png', ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                row.bytes,
+                row.mime_type,
+                row.byte_size,
+                row.image_sha256,
+                row.thumbnail_bytes,
+                row.thumbnail_mime
+            ],
         )
     }
 
@@ -3232,7 +3321,7 @@ mod tests {
         // This pins the last `MIGRATIONS` entry, which is what forces a new migration to be
         // exercised here instead of shipping unnoticed.
         assert_eq!(
-            version, 29,
+            version, 30,
             "the newest applied version must be the last MIGRATIONS entry"
         );
 
@@ -3282,7 +3371,7 @@ mod tests {
     fn project_images_rejects_a_zero_byte_size_naming_the_positive_guard() {
         let error = violated_constraint(&ImageInsert {
             byte_size: 0,
-            bytes: Vec::new(),
+            bytes: Some(Vec::new()),
             ..ImageInsert::valid()
         });
 
@@ -3298,7 +3387,7 @@ mod tests {
     fn project_images_rejects_a_payload_over_four_mib_naming_the_ceiling_guard() {
         let error = violated_constraint(&ImageInsert {
             byte_size: 4_194_305,
-            bytes: vec![0u8; 4_194_305],
+            bytes: Some(vec![0u8; 4_194_305]),
             ..ImageInsert::valid()
         });
 
@@ -3386,7 +3475,7 @@ mod tests {
             .expect("the stored image is readable");
 
         assert_eq!(stored.project_id, 1);
-        assert_eq!(stored.image_bytes, payload);
+        assert_eq!(stored.image_bytes.as_deref(), Some(payload.as_slice()));
         assert_eq!(stored.mime_type, "image/png");
         assert_eq!(stored.original_filename, "kitchen cover.png");
         assert_eq!(stored.byte_size, 10);
@@ -3427,7 +3516,7 @@ mod tests {
         let stored = get_project_image(&conn, 1)
             .unwrap()
             .expect("the replacement is readable");
-        assert_eq!(stored.image_bytes, vec![9, 8, 7, 6]);
+        assert_eq!(stored.image_bytes.as_deref(), Some(&[9, 8, 7, 6][..]));
         assert_eq!(stored.mime_type, "image/jpeg");
         assert_eq!(stored.original_filename, "second.jpg");
     }
@@ -3609,6 +3698,86 @@ mod tests {
         archive_project(&conn, 2).unwrap();
 
         assert_eq!(get_project_ids_needing_thumbnails(&conn).unwrap(), vec![1]);
+    }
+
+    /// AD-9's snapshot stripping, and AD-10's lazy state as the database sees it: the picture's
+    /// identity, size and tile all survive the payload being dropped.
+    #[test]
+    fn blanking_the_payload_keeps_every_other_column_and_is_idempotent() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let payload = vec![7u8; 64];
+        upsert_project_image(
+            &conn,
+            1,
+            &ProjectImageWrite {
+                mime_type: "image/png",
+                original_filename: "cover.png",
+                bytes: &payload,
+                thumbnail: Some((&[1, 2, 3], "image/png")),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(blank_project_image_bytes(&conn).unwrap(), 1);
+
+        let stored = get_project_image(&conn, 1).unwrap().expect("the row stays");
+        assert_eq!(stored.image_bytes, None, "the payload is gone");
+        assert_eq!(
+            stored.image_sha256,
+            image_sha256_of(&payload),
+            "the hash is what makes the payload fetchable again"
+        );
+        assert_eq!(stored.byte_size, 64);
+        assert_eq!(stored.original_filename, "cover.png");
+        assert_eq!(stored.thumbnail_bytes.as_deref(), Some(&[1, 2, 3][..]));
+        assert_eq!(stored.thumbnail_mime.as_deref(), Some("image/png"));
+
+        assert_eq!(
+            blank_project_image_bytes(&conn).unwrap(),
+            0,
+            "a second pass has nothing left to blank"
+        );
+    }
+
+    /// Without this, a row waiting for its blob would be handed to the thumbnail backfill on every
+    /// single list read, decode nothing and be handed back again.
+    #[test]
+    fn a_row_waiting_for_its_payload_is_not_a_thumbnail_backfill_candidate() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3])).unwrap();
+        assert_eq!(get_project_ids_needing_thumbnails(&conn).unwrap(), vec![1]);
+
+        blank_project_image_bytes(&conn).unwrap();
+
+        assert!(
+            get_project_ids_needing_thumbnails(&conn).unwrap().is_empty(),
+            "there is nothing to derive a thumbnail from yet"
+        );
+    }
+
+    #[test]
+    fn a_fetched_payload_is_written_back_only_under_its_own_hash() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let payload = vec![3u8; 128];
+        upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &payload)).unwrap();
+        let hash = image_sha256_of(&payload);
+        blank_project_image_bytes(&conn).unwrap();
+
+        // A payload addressed to a hash this row no longer carries is dropped, not applied: that
+        // is a download that finished after the user replaced the picture.
+        assert!(
+            !set_project_image_bytes(&conn, 1, &image_sha256_of(b"something else"), &payload)
+                .unwrap(),
+            "a stale download must not overwrite the current row"
+        );
+        assert_eq!(get_project_image(&conn, 1).unwrap().unwrap().image_bytes, None);
+
+        assert!(set_project_image_bytes(&conn, 1, &hash, &payload).unwrap());
+
+        let stored = get_project_image(&conn, 1).unwrap().unwrap();
+        assert_eq!(stored.image_bytes.as_deref(), Some(payload.as_slice()));
+        assert_eq!(stored.byte_size, 128);
+        assert_eq!(stored.image_sha256, hash);
     }
 
     /// Sums the whole WAL family rather than `.db` alone: `open_configured` sets
