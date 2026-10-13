@@ -32,6 +32,9 @@ pub mod spending_trends;
 pub mod sync_state;
 pub mod yearly_summary;
 
+#[cfg(test)]
+mod tests_migration_030;
+
 /// The dataset active for this run: which one it is, and its open connection.
 ///
 /// Both fields live in one struct behind one lock so they swap together and
@@ -85,7 +88,36 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../../migrations/028_budget_group_soft_delete.sql"),
     ),
     (29, include_str!("../../migrations/029_sync_state.sql")),
+    (
+        30,
+        include_str!("../../migrations/030_project_images_content_addressed.sql"),
+    ),
 ];
+
+/// The scalar SQL function migration 030 backfills `project_images.image_sha256` with.
+///
+/// SQLite ships no digest, and the backfill has to happen inside the same statement that moves the
+/// rows: that is the only way `image_sha256` can be `NOT NULL` from the moment it exists, instead
+/// of a nullable column plus a later pass that an interrupted launch could skip. It is registered
+/// for the duration of the migration run and removed again, so no query outside a migration can
+/// reach it and the app's SQL surface is unchanged.
+const SHA256_HEX_FUNCTION: &str = "nixus_sha256_hex";
+
+fn register_sha256_hex(conn: &Connection) -> Result<(), AppError> {
+    conn.create_scalar_function(
+        SHA256_HEX_FUNCTION,
+        1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8
+            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let bytes = ctx.get_raw(0);
+            let bytes = bytes.as_bytes().or_else(|_| bytes.as_str().map(str::as_bytes))?;
+            Ok(crate::projects::image::sha256_hex(bytes))
+        },
+    )?;
+
+    Ok(())
+}
 
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
     std::fs::create_dir_all(app_data_dir).map_err(|e| AppError::File {
@@ -126,6 +158,22 @@ pub(crate) fn run_migrations(conn: &Connection) -> Result<(), AppError> {
             |row| row.get(0),
         )?;
 
+    register_sha256_hex(conn)?;
+    // Removed before the failure is reported, so a migration that fails cannot leave the extra
+    // function reachable on a connection the app keeps using.
+    let applied = apply_pending_migrations(conn, current_version);
+    conn.remove_function(SHA256_HEX_FUNCTION, 1)?;
+    applied?;
+
+    info!(
+        "Migrations complete. Current schema version: {}",
+        MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0)
+    );
+
+    Ok(())
+}
+
+fn apply_pending_migrations(conn: &Connection, current_version: i64) -> Result<(), AppError> {
     for (version, sql) in MIGRATIONS {
         if *version > current_version {
             let tx = conn.unchecked_transaction()?;
@@ -139,10 +187,38 @@ pub(crate) fn run_migrations(conn: &Connection) -> Result<(), AppError> {
         }
     }
 
-    info!(
-        "Migrations complete. Current schema version: {}",
-        MIGRATIONS.last().map(|(v, _)| *v).unwrap_or(0)
-    );
+    Ok(())
+}
+
+/// Brings a fresh database up to `version` and no further, so a migration test can seed the schema
+/// as it was BEFORE the migration under test and then watch a normal `open_configured` apply it.
+/// Nothing but a test has a reason to stop part-way.
+#[cfg(test)]
+pub(crate) fn run_migrations_up_to(conn: &Connection, version: i64) -> Result<(), AppError> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )",
+    )?;
+
+    register_sha256_hex(conn)?;
+    let applied = apply_pending_migrations_up_to(conn, version);
+    conn.remove_function(SHA256_HEX_FUNCTION, 1)?;
+    applied
+}
+
+#[cfg(test)]
+fn apply_pending_migrations_up_to(conn: &Connection, version: i64) -> Result<(), AppError> {
+    for (migration, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= version) {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(sql)?;
+        tx.execute(
+            "INSERT INTO schema_version (version, applied_at) VALUES (?1, datetime('now'))",
+            rusqlite::params![migration],
+        )?;
+        tx.commit()?;
+    }
 
     Ok(())
 }

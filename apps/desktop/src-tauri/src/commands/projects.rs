@@ -663,6 +663,10 @@ fn project_image_audit_value(meta: &ProjectImageMeta) -> String {
 }
 
 /// The read path over a plain `&Connection`, which is what makes it testable.
+///
+/// A row whose full payload has not been fetched yet answers with `full_image_available: false`
+/// plus the thumbnail (AD-10), never with an error and never with empty bytes: the picture exists,
+/// this computer just does not hold it locally yet, and the card has to be able to say so.
 pub(crate) fn get_project_image_inner(
     conn: &Connection,
     project_id: i64,
@@ -677,7 +681,14 @@ pub(crate) fn get_project_image_inner(
         original_filename: row.original_filename,
         byte_size: row.byte_size,
         uploaded_at: row.uploaded_at,
-        image_base64: STANDARD.encode(&row.image_bytes),
+        image_sha256: row.image_sha256,
+        full_image_available: row.image_bytes.is_some(),
+        image_base64: row.image_bytes.as_deref().map(|bytes| STANDARD.encode(bytes)),
+        thumbnail_base64: row
+            .thumbnail_bytes
+            .as_deref()
+            .map(|bytes| STANDARD.encode(bytes)),
+        thumbnail_mime: row.thumbnail_mime,
     }))
 }
 
@@ -698,14 +709,17 @@ pub(crate) fn get_project_thumbnails_inner(
         let Some(stored) = projects_db::get_project_image(conn, project_id)? else {
             continue;
         };
+        let Some(bytes) = stored.image_bytes else {
+            continue;
+        };
         let Some(format) = image::ProjectImageFormat::from_mime_type(&stored.mime_type) else {
             continue;
         };
-        let Some((bytes, mime_type)) = image::thumbnail(&stored.image_bytes, format) else {
+        let Some((thumbnail, mime_type)) = image::thumbnail(&bytes, format) else {
             continue;
         };
 
-        projects_db::set_project_thumbnail(conn, project_id, (&bytes, mime_type))?;
+        projects_db::set_project_thumbnail(conn, project_id, (&thumbnail, mime_type))?;
     }
 
     Ok(projects_db::get_project_thumbnails(conn)?
@@ -1064,8 +1078,12 @@ mod tests {
     }
 
     fn decoded(image: &ProjectImage) -> Vec<u8> {
+        let payload = image
+            .image_base64
+            .as_deref()
+            .expect("the full payload is present");
         STANDARD
-            .decode(&image.image_base64)
+            .decode(payload)
             .expect("the wire payload is valid base64")
     }
 
@@ -1278,6 +1296,42 @@ mod tests {
             stored_image(&conn).is_none(),
             "a project without a picture is the normal state, not a failure"
         );
+    }
+
+    /// AD-10's placeholder: the read path answers a picture this computer has not downloaded yet
+    /// with its metadata, its hash and its tile, and says so. Returning an error or empty bytes
+    /// would make a normal state look like a broken image.
+    #[test]
+    fn a_picture_that_is_not_fetched_yet_reads_as_a_placeholder_rather_than_a_failure() {
+        let (_dir, conn) = migrated_db_with_a_project();
+        let payload = image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
+        set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+            .expect("the picture stores");
+
+        let fetched = stored_image(&conn).expect("the picture reads");
+        assert!(fetched.full_image_available);
+        assert!(fetched.image_base64.is_some());
+        let tile = fetched
+            .thumbnail_base64
+            .clone()
+            .expect("the derivative was produced");
+
+        projects_db::blank_project_image_bytes(&conn).expect("the payload is dropped");
+
+        let placeholder = stored_image(&conn).expect("the row still reads");
+        assert!(
+            !placeholder.full_image_available,
+            "the absent payload must be reported as a state"
+        );
+        assert_eq!(placeholder.image_base64, None);
+        assert_eq!(
+            placeholder.thumbnail_base64.as_deref(),
+            Some(tile.as_str()),
+            "the tile is what the card renders meanwhile"
+        );
+        assert_eq!(placeholder.image_sha256, fetched.image_sha256);
+        assert_eq!(placeholder.byte_size, fetched.byte_size);
+        assert_eq!(placeholder.original_filename, "cover.png");
     }
 
     #[test]

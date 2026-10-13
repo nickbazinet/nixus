@@ -67,7 +67,17 @@ interface MockProjectImage {
   original_filename: string;
   byte_size: number;
   uploaded_at: string;
-  image_base64: string;
+  /** Lowercase hex sha256 of the full payload: the `blob/<sha256>` this picture is stored under. */
+  image_sha256: string;
+  /**
+   * Whether this computer holds the full payload. Every image these specs seed does, because no
+   * surface here renders the not-yet-fetched placeholder yet; a spec that needs it sets
+   * `full_image_available: false` with `image_base64: null` and a thumbnail.
+   */
+  full_image_available: boolean;
+  image_base64: string | null;
+  thumbnail_base64: string | null;
+  thumbnail_mime: string | null;
 }
 
 /**
@@ -147,7 +157,11 @@ function seededImage(
     original_filename: filename,
     byte_size: ONE_PIXEL_PNG_BYTES,
     uploaded_at: "2026-03-04 10:15:00",
+    image_sha256: "a".repeat(64),
+    full_image_available: true,
     image_base64: ONE_PIXEL_PNG_BASE64,
+    thumbnail_base64: null,
+    thumbnail_mime: null,
   };
 }
 
@@ -707,7 +721,11 @@ async function setupTauriMock(
               original_filename: basename(args.file_path as string),
               byte_size: writtenImageBytes,
               uploaded_at: "2026-03-04 10:15:00",
+              image_sha256: "b".repeat(64),
+              full_image_available: true,
               image_base64: writtenImageBase64,
+              thumbnail_base64: null,
+              thumbnail_mime: null,
             };
             const index = projectImages.findIndex(
               (image) => image.project_id === projectId

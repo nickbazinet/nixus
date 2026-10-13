@@ -781,13 +781,23 @@ export interface Project {
 // ~4 MiB of base64 per project, so it travels only on the dedicated per-project read and never
 // inside a list response. `mime_type` is only "image/png" or "image/jpeg", derived in Rust from
 // the proven file format — the frontend never sends it.
+//
+// `image_base64` is `null` when this computer does not hold the full picture yet: the image is
+// content-addressed by `image_sha256` and fetched from the cloud on demand. That is a STATE, which
+// is why `full_image_available` says so explicitly instead of leaving a reader to infer it from a
+// null, and why the thumbnail travels alongside — a card renders the placeholder tile of the right
+// picture rather than an error or a blank.
 export interface ProjectImage {
   project_id: number;
   mime_type: string;
   original_filename: string;
   byte_size: number;
   uploaded_at: string;
-  image_base64: string;
+  image_sha256: string;
+  full_image_available: boolean;
+  image_base64: string | null;
+  thumbnail_base64: string | null;
+  thumbnail_mime: string | null;
 }
 
 // Mirrors `models::ProjectImageMeta`: the same row WITHOUT the payload, which is what a write
