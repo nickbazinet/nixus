@@ -29,6 +29,7 @@ pub mod recurring;
 pub mod recurring_income;
 pub mod retirement;
 pub mod spending_trends;
+pub mod sync_state;
 pub mod yearly_summary;
 
 /// The dataset active for this run: which one it is, and its open connection.
@@ -83,6 +84,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         28,
         include_str!("../../migrations/028_budget_group_soft_delete.sql"),
     ),
+    (29, include_str!("../../migrations/029_sync_state.sql")),
 ];
 
 pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {

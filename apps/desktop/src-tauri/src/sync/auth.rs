@@ -113,6 +113,10 @@ pub enum AuthError {
     PinMismatch(PinMismatch),
     /// The `owner` object exists but does not hold a usable `sub`.
     MalformedOwnerObject,
+    /// The dataset's own sync state could not be read or written. Carries no detail on
+    /// purpose: the `AccountPinStore` implementation owns the database error, and this
+    /// enum must stay free of any vocabulary from the storage layer it is a seam over.
+    StateUnavailable,
 }
 
 impl AuthError {
@@ -126,6 +130,10 @@ impl AuthError {
             | AuthError::CredentialsExpired
             | AuthError::IncompleteVendedCredentials
             | AuthError::PinMismatch(_)
+            // Not retryable even when the cause is a transient lock: re-vending
+            // credentials is what a retry here would repeat, and that cannot make a
+            // local database readable.
+            | AuthError::StateUnavailable
             | AuthError::MalformedOwnerObject => false,
         }
     }
@@ -149,6 +157,7 @@ impl fmt::Display for AuthError {
                 write!(f, "account pin mismatch on {:?}", mismatch.field)
             }
             AuthError::MalformedOwnerObject => f.write_str("the owner object is malformed"),
+            AuthError::StateUnavailable => f.write_str("the dataset's sync state is unavailable"),
         }
     }
 }

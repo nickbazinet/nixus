@@ -15,6 +15,9 @@ use crate::error::AppError;
 /// `WIPE_TABLES + PRESERVED_TABLES` covers every table in the live schema, so a future
 /// migration cannot silently add a table that survives "delete all data".
 pub const WIPE_TABLES: &[&str] = &[
+    // AD-15: a wipe of a synced dataset unlinks it. Deleting the row *is* the
+    // Unlinked state, and it never touches the cloud copy or another computer.
+    "sync_state",
     "chat_messages",
     "chat_conversations",
     "maintenance_service_logs",
@@ -123,6 +126,10 @@ mod tests {
                 (project_id, image_bytes, mime_type, original_filename, byte_size)
                 VALUES (1, x'89504e470d0a1a0a', 'image/png', 'cover.png', 8);
             INSERT INTO config (key, value) VALUES ('onboarding_completed', 'true');
+            INSERT INTO sync_state (id, install_id, machine_fingerprint, link_state, identity_id, owner_sub)
+                VALUES (1, '0123456789abcdef',
+                        'ab00000000000000000000000000000000000000000000000000000000000000',
+                        'linked', 'us-east-1:abc', 'sub-1');
             ",
         )
         .expect("seed all tables");
