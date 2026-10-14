@@ -51,9 +51,8 @@ pub async fn import_budget_template(
     let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    let result = budget_template_db::import_budget_template_from_path(conn, &selected_path)?;
+    let result = active
+        .write(|tx| budget_template_db::import_budget_template_from_path(tx, &selected_path))?;
 
     info!(
         "Budget template imported: {} groups, {} categories, {} skipped",
@@ -171,12 +170,12 @@ pub fn apply_system_template(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     // No insert_audit_log here: db::budget_template's shared primitive writes
     // exactly one row per apply (source: "system"). Adding one here would double
     // it. Intentional deviation from project-context.md §3.
-    budget_template_db::apply_system_budget_template(conn, edited.as_ref().unwrap_or(template))
+    active.write(|tx| {
+        budget_template_db::apply_system_budget_template(tx, edited.as_ref().unwrap_or(template))
+    })
 }
 
 #[tauri::command(rename_all = "snake_case")]

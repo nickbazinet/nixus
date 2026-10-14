@@ -24,14 +24,14 @@ pub fn create_asset(
         asset_type,
         value_cents,
     };
-    let result = asset_db::insert_asset(conn, &input)?;
+    let result = active.write(|tx| asset_db::insert_asset(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(conn, "passive_asset", result.id, "create", None, Some(&details)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
+    if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
     Ok(result)
@@ -58,7 +58,7 @@ pub fn update_asset_value(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (old_value, asset) = asset_db::update_asset_value(conn, id, value_cents)?;
+    let (old_value, asset) = active.write(|tx| asset_db::update_asset_value(tx, id, value_cents))?;
 
     if let Err(e) = audit_db::insert_audit_log(
         conn,
@@ -71,7 +71,7 @@ pub fn update_asset_value(
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
+    if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
 
@@ -93,7 +93,7 @@ pub fn update_asset(
     let old_json = get_asset_json(conn, id);
 
     let input = UpdateAssetInput { name, asset_type };
-    let result = asset_db::update_asset(conn, id, &input)?;
+    let result = active.write(|tx| asset_db::update_asset(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(conn, "passive_asset", id, "update", old_json.as_deref(), Some(&new_json)) {
@@ -115,13 +115,13 @@ pub fn delete_asset(
 
     let old_json = get_asset_json(conn, id);
 
-    asset_db::delete_asset(conn, id)?;
+    active.write(|tx| asset_db::delete_asset(tx, id))?;
 
     if let Err(e) = audit_db::insert_audit_log(conn, "passive_asset", id, "delete", old_json.as_deref(), None) {
         tracing::error!("Failed to write audit log: {}", e);
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
+    if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
     Ok(())

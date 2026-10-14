@@ -200,9 +200,9 @@ pub fn run() {
                 let state = app_handle.state::<DbState>();
                 let (expense_result, income_result) = match state.0.lock() {
                     Ok(active) => match active.conn.as_ref() {
-                        Some(conn) => (
-                            commands::recurring::apply_due_recurring_expenses(conn),
-                            commands::recurring_income::apply_due_recurring_income(conn),
+                        Some(_) => (
+                            commands::recurring::apply_due_recurring_expenses(&active),
+                            commands::recurring_income::apply_due_recurring_income(&active),
                         ),
                         // Unreachable in practice — .setup() selected a dataset
                         // before spawning this — but skipping beats panicking in

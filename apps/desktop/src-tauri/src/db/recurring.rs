@@ -3,11 +3,14 @@ use rusqlite::{params, Connection};
 
 use crate::db::expense as expense_db;
 use crate::error::AppError;
+use crate::sync::capture;
+use crate::sync::identity;
 use crate::models::{
     CreateExpenseInput, CreateRecurringExpenseTemplateInput, Expense, RecurringExpenseTemplate,
     UpdateRecurringExpenseTemplateInput,
 };
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn insert_template(
     conn: &Connection,
     input: &CreateRecurringExpenseTemplateInput,
@@ -69,6 +72,7 @@ pub fn get_all_templates(conn: &Connection) -> Result<Vec<RecurringExpenseTempla
     Ok(templates)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_template(
     conn: &Connection,
     id: i64,
@@ -114,6 +118,7 @@ pub fn update_template(
     get_template_by_id(conn, id)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_template(conn: &Connection, id: i64) -> Result<(), AppError> {
     let rows = conn.execute(
         "DELETE FROM recurring_expense_templates WHERE id = ?1",
@@ -208,7 +213,40 @@ fn try_apply_template_for_month(
         account_id: None,
     };
     let expense = expense_db::insert_expense_with_source(conn, &input, "recurring")?;
+    bind_generated_expense_identity(conn, template.id, expense.id, year, month)?;
+
     Ok(Some(expense))
+}
+
+/// AD-2: every computer generates this row on its own, so its identity is DERIVED from
+/// `(template uuid, period)` rather than minted — otherwise the same month would arrive as one
+/// expense per computer.
+///
+/// Skipped entirely when nothing is capturing, so a local-only profile still writes no `sync_*`
+/// row at all (inherited AD-12).
+fn bind_generated_expense_identity(
+    conn: &Connection,
+    template_id: i64,
+    expense_id: i64,
+    year: i32,
+    month: u32,
+) -> Result<(), AppError> {
+    if !capture::is_capturing() {
+        return Ok(());
+    }
+
+    let template = identity::uuid_for(conn, "recurring_expense_templates", template_id)?;
+    let period = format!("{year:04}-{month:02}");
+    let derived = identity::recurring_expense(&template, &period);
+
+    let mapping = identity::ensure_derived(conn, "expenses", expense_id, &derived)?;
+    if mapping.row_id != expense_id {
+        tracing::warn!(
+            "Recurring expense identity for period {period} already belongs to another local row"
+        );
+    }
+
+    Ok(())
 }
 
 fn recurring_expense_exists(

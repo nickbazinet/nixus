@@ -107,6 +107,9 @@ pub fn get_budget_groups_for_month(
     Ok(groups)
 }
 
+/// NOT capture-sanctioned yet, deliberately: every caller Story 17 owns now reaches it through
+/// `ActiveDataset::write`, but the AI chat action path still calls it on a bare connection
+/// (Story 18 migrates `commands/chat.rs`), so the ratchet must keep showing it.
 pub fn create_budget_category(
     conn: &Connection,
     input: &CreateBudgetCategory,
@@ -187,6 +190,7 @@ fn invalid_category_ids(message: &str) -> AppError {
     }
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 // The submitted list must be a permutation of the group's active categories, and the whole
 // rewrite is one transaction: a partially applied order would leave sort_order inconsistent with
 // what the UI just showed the user. Every check runs before the transaction opens, so a
@@ -230,7 +234,7 @@ pub fn reorder_budget_categories(
         ordered.push((previous, sort_order));
     }
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
 
     let mut changed_ids = Vec::new();
     for (previous, sort_order) in ordered {
@@ -291,6 +295,7 @@ pub fn update_budget_group(
     .map_err(AppError::from)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_budget_category(
     conn: &Connection,
     id: i64,
@@ -359,6 +364,7 @@ pub fn update_budget_category(
     .map_err(AppError::from)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_budget_category(conn: &Connection, id: i64) -> Result<(), AppError> {
     let is_active: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL)",
@@ -387,7 +393,7 @@ pub fn delete_budget_category(conn: &Connection, id: i64) -> Result<(), AppError
         });
     }
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
     tx.execute(
         "DELETE FROM merchant_category_hints WHERE budget_category_id = ?1",
         params![id],

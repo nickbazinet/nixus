@@ -146,7 +146,7 @@ fn apply_template_inner(
 ) -> Result<ApplyBudgetTemplateResult, AppError> {
     validate_budget_template(template)?;
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
 
     // `budget_groups` has no UNIQUE constraint and `create_budget_group` does no
     // duplicate check, so collision detection is entirely ours.

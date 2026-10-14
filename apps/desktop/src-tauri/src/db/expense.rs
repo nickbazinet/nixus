@@ -31,6 +31,9 @@ pub fn insert_expense_with_source(
     Ok(insert_expense_with_source_with_balance_changes(conn, input, source)?.expense)
 }
 
+/// NOT capture-sanctioned yet, deliberately: every caller Story 17 owns now reaches it through
+/// `ActiveDataset::write`, but the AI chat action path still calls it on a bare connection
+/// (Story 18 migrates `commands/chat.rs`), so the ratchet must keep showing it.
 pub fn insert_expense_with_source_with_balance_changes(
     conn: &Connection,
     input: &CreateExpenseInput,
@@ -58,7 +61,7 @@ pub fn insert_expense_with_source_with_balance_changes(
         });
     }
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
 
     // Verify budget_category_id exists and is active
     let category_exists: bool = tx.query_row(
@@ -138,6 +141,7 @@ pub fn get_expenses_by_month(
     Ok(expenses)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_expense(
     conn: &Connection,
     id: i64,
@@ -158,7 +162,7 @@ pub fn update_expense(
         });
     }
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
     let old_expense = get_expense_by_id(&tx, id)?;
 
     // Verify budget_category_id exists and is active
@@ -226,6 +230,7 @@ pub fn update_expense(
     })
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn bulk_insert_imported_expenses(
     conn: &Connection,
     transactions: &[(String, i64, i64, String)], // (merchant, amount_cents, budget_category_id, date)
@@ -257,9 +262,7 @@ pub fn bulk_insert_imported_expenses(
         }
     }
 
-    let tx = conn.unchecked_transaction().map_err(|e| AppError::Database {
-        message: e.to_string(),
-    })?;
+    let tx = super::grouped(conn)?;
 
     let mut count = 0;
     for (merchant, amount_cents, category_id, date) in transactions {
@@ -270,9 +273,7 @@ pub fn bulk_insert_imported_expenses(
         count += 1;
     }
 
-    tx.commit().map_err(|e| AppError::Database {
-        message: e.to_string(),
-    })?;
+    tx.commit()?;
 
     Ok(count)
 }
@@ -413,8 +414,9 @@ pub fn find_duplicate_indices(
     Ok(duplicates)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_expense(conn: &Connection, id: i64) -> Result<Vec<BalanceChange>, AppError> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
     let expense = get_expense_by_id(&tx, id)?;
     let mut balance_changes = Vec::new();
 

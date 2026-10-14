@@ -16,6 +16,7 @@ fn row_to_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<PassiveAsset> {
     })
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn insert_asset(conn: &Connection, input: &CreateAssetInput) -> Result<PassiveAsset, AppError> {
     let name = input.name.trim();
     if name.is_empty() {
@@ -65,6 +66,9 @@ pub fn get_asset_by_id(conn: &Connection, id: i64) -> Result<PassiveAsset, AppEr
 }
 
 /// Returns (old_value_cents, updated PassiveAsset)
+/// NOT capture-sanctioned yet, deliberately: every caller Story 17 owns now reaches it through
+/// `ActiveDataset::write`, but the AI chat action path still calls it on a bare connection
+/// (Story 18 migrates `commands/chat.rs`), so the ratchet must keep showing it.
 pub fn update_asset_value(
     conn: &Connection,
     id: i64,
@@ -89,6 +93,7 @@ pub fn update_asset_value(
     Ok((old_value, asset))
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_asset(
     conn: &Connection,
     id: i64,
@@ -123,6 +128,7 @@ pub fn update_asset(
     get_asset_by_id(conn, id)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_asset(conn: &Connection, id: i64) -> Result<(), AppError> {
     let rows = conn.execute("DELETE FROM passive_assets WHERE id = ?1", params![id])?;
     if rows == 0 {

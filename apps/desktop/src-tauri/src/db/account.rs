@@ -79,9 +79,10 @@ pub fn balance_delta_cents(
     sign * new_owed_cents
 }
 
-/// NOT capture-sanctioned yet, deliberately: this function emits correctly inside
-/// `ActiveDataset::write`, but its callers are the expense and income write sites Story 17
-/// migrates, so the ratchet must keep showing it.
+/// NOT capture-sanctioned yet, deliberately: Story 17 migrated every expense and income caller,
+/// but one of them — `db/expense.rs::insert_expense_with_source_with_balance_changes` — is still
+/// reachable from the AI chat `create_expense` action on a bare connection (Story 18 migrates
+/// `commands/chat.rs`), so the ratchet must keep showing it.
 ///
 /// AD-5's delta emitter. The signed amount is computed HERE, once, by the computer the user acted
 /// on — including the credit-card sign rules — and shipped verbatim, because a replica that
@@ -169,7 +170,9 @@ pub fn get_cad_tfsa_balance_cents(conn: &Connection) -> Result<i64, AppError> {
     .map_err(AppError::from)
 }
 
-/// CAPTURE-SANCTIONED (AD-3): reached through `ActiveDataset::write`.
+/// NOT capture-sanctioned, corrected in Story 17: `commands/account.rs` reaches it through
+/// `ActiveDataset::write`, but the AI chat `create_account` action still calls it on a bare
+/// connection (Story 18 migrates `commands/chat.rs`), so the ratchet must keep showing it.
 ///
 /// AD-5's absolute set: a brand-new account publishes the balance it was created with, so a replica
 /// has a base to add later deltas to instead of guessing the schema default.
@@ -264,6 +267,9 @@ pub fn get_all_accounts(conn: &Connection) -> Result<Vec<Account>, AppError> {
 /// NOT capture-sanctioned yet, deliberately: `commands/account.rs` reaches it through
 /// `ActiveDataset::write` and emits, but the AI chat `update_balance` action still calls it on a
 /// bare connection (Story 18 migrates `commands/chat.rs`), so the ratchet must keep showing it.
+/// Same reason for `insert_account` above and for `db/asset.rs::update_asset_value`,
+/// `db/budget.rs::create_budget_category` and
+/// `db/expense.rs::insert_expense_with_source_with_balance_changes`.
 ///
 /// AD-5's absolute set: the user stated the balance, so what travels is the value and not a delta.
 /// Two computers setting the same number land on the same balance whichever stamp wins, and
@@ -294,6 +300,7 @@ pub fn update_account_balance(
     Ok((old_balance, account))
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_account(
     conn: &Connection,
     id: i64,
@@ -343,6 +350,7 @@ pub fn update_account(
     get_account_by_id(conn, id)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_account(conn: &Connection, id: i64) -> Result<(), AppError> {
     let rows = conn.execute("DELETE FROM accounts WHERE id = ?1", params![id])?;
     if rows == 0 {

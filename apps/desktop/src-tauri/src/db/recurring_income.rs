@@ -5,6 +5,8 @@ use crate::db::account::BalanceChange;
 use crate::db::income as income_db;
 use crate::db::recurring::{clamp_day_to_month, next_month, parse_template_start_date};
 use crate::error::AppError;
+use crate::sync::capture;
+use crate::sync::identity;
 use crate::models::{
     CreateIncomeEntryInput, CreateRecurringIncomeTemplateInput, IncomeEntry,
     RecurringIncomeTemplate, UpdateRecurringIncomeTemplateInput,
@@ -23,6 +25,7 @@ const SELECT_TEMPLATE: &str = "SELECT t.id, t.source_id, s.name, s.income_type, 
      FROM recurring_income_templates t
      JOIN income_sources s ON s.id = t.source_id";
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn insert_template(
     conn: &Connection,
     input: &CreateRecurringIncomeTemplateInput,
@@ -57,6 +60,7 @@ pub fn get_all_templates(conn: &Connection) -> Result<Vec<RecurringIncomeTemplat
     Ok(templates)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_template(
     conn: &Connection,
     id: i64,
@@ -93,6 +97,7 @@ pub fn update_template(
     get_template_by_id(conn, id)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_template(conn: &Connection, id: i64) -> Result<(), AppError> {
     let rows = conn.execute(
         "DELETE FROM recurring_income_templates WHERE id = ?1",
@@ -190,11 +195,38 @@ fn try_apply_template(
         date,
         account_id: template.account_id,
     };
-    Ok(Some(income_db::insert_income_entry_from_template(
-        conn,
-        &input,
-        Some(template.id),
-    )?))
+    let mutation =
+        income_db::insert_income_entry_from_template(conn, &input, Some(template.id))?;
+    bind_generated_entry_identity(conn, template.id, mutation.entry.id, &month)?;
+
+    Ok(Some(mutation))
+}
+
+/// The income half of AD-2's template rule: `(template uuid, period)`, derived and not minted, so
+/// two computers that both backfill the same month converge on ONE entry.
+///
+/// Skipped entirely when nothing is capturing (inherited AD-12).
+fn bind_generated_entry_identity(
+    conn: &Connection,
+    template_id: i64,
+    entry_id: i64,
+    period: &str,
+) -> Result<(), AppError> {
+    if !capture::is_capturing() {
+        return Ok(());
+    }
+
+    let template = identity::uuid_for(conn, "recurring_income_templates", template_id)?;
+    let derived = identity::recurring_income(&template, period);
+
+    let mapping = identity::ensure_derived(conn, "income_entries", entry_id, &derived)?;
+    if mapping.row_id != entry_id {
+        tracing::warn!(
+            "Recurring income identity for period {period} already belongs to another local row"
+        );
+    }
+
+    Ok(())
 }
 
 /// Two independent claims on a month. The template stamp is what survives an edit to the amount or

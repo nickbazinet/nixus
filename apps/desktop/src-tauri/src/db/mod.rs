@@ -211,6 +211,109 @@ impl ActiveDataset {
     }
 }
 
+/// A transaction when the connection has none, and a SAVEPOINT when it already does.
+///
+/// Several `db::*` functions group their statements in `conn.unchecked_transaction()`. That is a
+/// plain `BEGIN`, which SQLite refuses inside an open transaction — and those functions are now
+/// reached through [`ActiveDataset::write`], which has already begun one. A savepoint is the nested
+/// form of the same guarantee, so the grouping survives either way and no call site has to know
+/// which case it is in.
+///
+/// LIMIT, deliberately: rolling a savepoint back here discards its ROWS and not the capture buffer,
+/// because `db/` has no access to it. That is correct for every caller that propagates the error —
+/// the surrounding `write` then rolls back and discards the buffer wholesale. A caller that wants
+/// to SWALLOW a failure inside a captured write must use [`WriteTx::savepoint`], which rolls back
+/// both together.
+pub(crate) enum Grouped<'a> {
+    Owned(rusqlite::Transaction<'a>),
+    Nested(Savepoint<'a>),
+}
+
+impl std::ops::Deref for Grouped<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        match self {
+            Grouped::Owned(tx) => tx,
+            Grouped::Nested(savepoint) => savepoint.conn,
+        }
+    }
+}
+
+impl Grouped<'_> {
+    pub(crate) fn commit(self) -> Result<(), AppError> {
+        match self {
+            Grouped::Owned(tx) => tx.commit().map_err(AppError::from),
+            Grouped::Nested(savepoint) => savepoint.release(),
+        }
+    }
+}
+
+/// Rolls back on drop and releases on [`Savepoint::release`], which is what a `Transaction` does
+/// for the outermost level.
+pub(crate) struct Savepoint<'a> {
+    conn: &'a Connection,
+    name: String,
+    settled: bool,
+}
+
+impl Savepoint<'_> {
+    fn release(mut self) -> Result<(), AppError> {
+        self.conn
+            .execute_batch(&format!("RELEASE {}", self.name))?;
+        self.settled = true;
+
+        Ok(())
+    }
+}
+
+impl Drop for Savepoint<'_> {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+
+        // A destructor has nowhere to propagate an error to, and the caller's own `Err` is about to
+        // roll back the surrounding transaction anyway, so the failure is recorded, not escalated.
+        if let Err(error) = self
+            .conn
+            .execute_batch(&format!("ROLLBACK TO {0}; RELEASE {0}", self.name))
+        {
+            tracing::error!("Failed to roll back savepoint {}: {error}", self.name);
+        }
+    }
+}
+
+// Names each savepoint after a per-thread counter, so two nested groupings of one connection can
+// never share a name. Thread-local rather than a field because `grouped` is handed a bare
+// `&Connection`, and a dataset connection is only ever used by the thread holding its lock.
+thread_local! {
+    static GROUPED_SEQUENCE: Cell<u32> = const { Cell::new(0) };
+}
+
+pub(crate) fn grouped(conn: &Connection) -> Result<Grouped<'_>, AppError> {
+    if conn.is_autocommit() {
+        return Ok(Grouped::Owned(rusqlite::Transaction::new_unchecked(
+            conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?));
+    }
+
+    let sequence = GROUPED_SEQUENCE.with(|sequence| {
+        let current = sequence.get();
+        sequence.set(current.wrapping_add(1));
+        current
+    });
+    let name = format!("nixus_grouped_{sequence}");
+    conn.execute_batch(&format!("SAVEPOINT {name}"))?;
+
+    Ok(Grouped::Nested(Savepoint {
+        conn,
+        name,
+        settled: false,
+    }))
+}
+
 pub struct DbState(pub Mutex<ActiveDataset>);
 
 const MIGRATIONS: &[(i64, &str)] = &[

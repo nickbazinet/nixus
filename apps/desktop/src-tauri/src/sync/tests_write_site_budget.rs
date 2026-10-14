@@ -247,9 +247,11 @@ fn the_write_site_budget_may_only_shrink() {
 fn the_scanner_sees_the_unmigrated_sites_and_not_the_migrated_one() {
     let scanned = scan();
 
+    // A floor, not a measurement: Story 17 took the finance domains out, so the number only ever
+    // falls from here. The named lists below are what actually keeps the scanner honest.
     assert!(
-        scanned.len() > 50,
-        "the scanner found only {} write sites, which cannot be the whole app",
+        scanned.len() > 25,
+        "the scanner found only {} write sites, which cannot be the unmigrated remainder",
         scanned.len()
     );
 
@@ -257,6 +259,11 @@ fn the_scanner_sees_the_unmigrated_sites_and_not_the_migrated_one() {
         "db/budget.rs::create_budget_group",
         "db/budget.rs::update_budget_group",
         "db/budget.rs::delete_budget_group",
+        "db/expense.rs::update_expense",
+        "db/expense.rs::delete_expense",
+        "db/income.rs::update_income_entry",
+        "db/net_worth.rs::record_net_worth_snapshot",
+        "db/recurring.rs::insert_template",
     ] {
         assert!(
             !scanned.contains_key(migrated),
@@ -265,8 +272,14 @@ fn the_scanner_sees_the_unmigrated_sites_and_not_the_migrated_one() {
     }
 
     for unmigrated in [
+        "db/projects.rs::insert_project",
+        "db/maintenance.rs::insert_vehicle",
+        "db/chat.rs::insert_message",
+        "db/config.rs::set",
+        // Finance, but still reachable from the AI chat actions on a bare connection, which is
+        // Story 18's migration: the ratchet must keep showing those.
         "db/budget.rs::create_budget_category",
-        "db/expense.rs::update_expense",
+        "db/expense.rs::insert_expense_with_source_with_balance_changes",
     ] {
         assert!(
             scanned.contains_key(unmigrated),

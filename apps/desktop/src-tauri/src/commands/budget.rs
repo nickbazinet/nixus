@@ -51,14 +51,12 @@ pub fn create_budget_category(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateBudgetCategory {
         group_id,
         name,
         target_cents,
     };
-    budget_db::create_budget_category(conn, &input)
+    active.write(|tx| budget_db::create_budget_category(tx, &input))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -83,10 +81,9 @@ pub fn reorder_budget_categories(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+    active.write(|tx| budget_db::reorder_budget_categories(tx, group_id, &category_ids))?;
+
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    budget_db::reorder_budget_categories(conn, group_id, &category_ids)?;
-
     budget_db::get_budget_categories_by_group(conn, group_id)
 }
 
@@ -112,9 +109,7 @@ pub fn update_budget_category(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    budget_db::update_budget_category(conn, id, name, target_cents)
+    active.write(|tx| budget_db::update_budget_category(tx, id, name, target_cents))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -125,9 +120,7 @@ pub fn delete_budget_category(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    budget_db::delete_budget_category(conn, id)
+    active.write(|tx| budget_db::delete_budget_category(tx, id))
 }
 
 #[tauri::command(rename_all = "snake_case")]

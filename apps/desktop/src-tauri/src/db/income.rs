@@ -17,6 +17,7 @@ pub struct LinkedIncomeEntryMutation {
     pub balance_changes: Vec<BalanceChange>,
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn insert_income_source(
     conn: &Connection,
     input: &CreateIncomeSourceInput,
@@ -78,6 +79,7 @@ pub fn get_all_income_sources(
     Ok(sources)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_income_source(
     conn: &Connection,
     id: i64,
@@ -112,6 +114,7 @@ pub fn update_income_source(
     get_income_source_by_id(conn, id)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_income_source(conn: &Connection, id: i64) -> Result<(), AppError> {
     let rows = conn.execute("DELETE FROM income_sources WHERE id = ?1", params![id])?;
     if rows == 0 {
@@ -129,6 +132,7 @@ pub fn insert_income_entry(
     insert_income_entry_from_template(conn, input, None)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 /// `recurring_income_template_id` stamps which template produced the row, so a later backfill can
 /// recognise the occurrence as already applied even if the template's amount or day has changed.
 pub(crate) fn insert_income_entry_from_template(
@@ -163,7 +167,7 @@ pub(crate) fn insert_income_entry_from_template(
     // Derive month from date (first 7 chars: "2026-03")
     let month = &input.date[..7];
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
     validate_account_id(&tx, input.account_id)?;
     tx.execute(
         "INSERT INTO income_entries (source_id, amount_cents, date, month, account_id, recurring_income_template_id)
@@ -199,6 +203,7 @@ pub(crate) fn insert_income_entry_from_template(
     })
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn update_income_entry(
     conn: &Connection,
     id: i64,
@@ -219,7 +224,7 @@ pub fn update_income_entry(
     }
 
     let month = &input.date[..7];
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
     let old_entry = get_income_entry_by_id(&tx, id)?;
     validate_account_id(&tx, input.account_id)?;
     let mut balance_changes = Vec::new();
@@ -266,8 +271,9 @@ pub fn update_income_entry(
     })
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn delete_income_entry(conn: &Connection, id: i64) -> Result<Vec<BalanceChange>, AppError> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
     let entry = get_income_entry_by_id(&tx, id)?;
     let mut balance_changes = Vec::new();
 

@@ -4,7 +4,7 @@ use crate::db::account::BalanceChange;
 use crate::db::audit as audit_db;
 use crate::db::income as income_db;
 use crate::db::net_worth as net_worth_db;
-use crate::db::DbState;
+use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::models::{
     CreateIncomeEntryInput, CreateIncomeSourceInput, IncomeEntry, IncomeSource,
@@ -24,7 +24,7 @@ pub fn create_income_source(
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let input = CreateIncomeSourceInput { name, income_type };
-    let result = income_db::insert_income_source(conn, &input)?;
+    let result = active.write(|tx| income_db::insert_income_source(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
@@ -68,7 +68,7 @@ pub fn update_income_source(
     let old_json = get_source_json(conn, id);
 
     let input = UpdateIncomeSourceInput { name, income_type };
-    let result = income_db::update_income_source(conn, id, &input)?;
+    let result = active.write(|tx| income_db::update_income_source(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
@@ -94,7 +94,7 @@ pub fn delete_income_source(state: State<DbState>, id: i64) -> Result<(), AppErr
 
     let old_json = get_source_json(conn, id);
 
-    income_db::delete_income_source(conn, id)?;
+    active.write(|tx| income_db::delete_income_source(tx, id))?;
 
     if let Err(e) = audit_db::insert_audit_log(
         conn,
@@ -129,7 +129,7 @@ pub fn create_income_entry(
         date,
         account_id,
     };
-    let mutation = income_db::insert_income_entry(conn, &input)?;
+    let mutation = active.write(|tx| income_db::insert_income_entry(tx, &input))?;
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
@@ -143,7 +143,7 @@ pub fn create_income_entry(
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(conn, &mutation.balance_changes);
+    record_account_balance_changes(&active, &mutation.balance_changes);
 
     Ok(result)
 }
@@ -165,7 +165,7 @@ pub fn update_income_entry(
     let old_json = get_entry_json(conn, id);
 
     let input = UpdateIncomeEntryInput { source_id, amount_cents, date, account_id };
-    let mutation = income_db::update_income_entry(conn, id, &input)?;
+    let mutation = active.write(|tx| income_db::update_income_entry(tx, id, &input))?;
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
@@ -179,7 +179,7 @@ pub fn update_income_entry(
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(conn, &mutation.balance_changes);
+    record_account_balance_changes(&active, &mutation.balance_changes);
 
     Ok(result)
 }
@@ -193,7 +193,7 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
 
     let old_json = get_entry_json(conn, id);
 
-    let balance_changes = income_db::delete_income_entry(conn, id)?;
+    let balance_changes = active.write(|tx| income_db::delete_income_entry(tx, id))?;
 
     if let Err(e) = audit_db::insert_audit_log(
         conn,
@@ -205,7 +205,7 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
     ) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(conn, &balance_changes);
+    record_account_balance_changes(&active, &balance_changes);
 
     Ok(())
 }
@@ -308,7 +308,7 @@ fn get_entry_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
     .and_then(|e| serde_json::to_string(&e).ok())
 }
 
-pub(crate) fn record_account_balance_changes(conn: &rusqlite::Connection, changes: &[BalanceChange]) {
+pub(crate) fn record_account_balance_changes(active: &ActiveDataset, changes: &[BalanceChange]) {
     let mut summaries: Vec<(i64, i64, i64)> = Vec::new();
     for change in changes {
         if change.old_balance_cents == change.new_balance_cents {
@@ -333,6 +333,10 @@ pub(crate) fn record_account_balance_changes(conn: &rusqlite::Connection, change
         return;
     }
 
+    let Some(conn) = active.conn.as_ref() else {
+        return;
+    };
+
     for (account_id, old_balance_cents, new_balance_cents) in &summaries {
         if let Err(e) = audit_db::insert_audit_log(
             conn,
@@ -346,7 +350,7 @@ pub(crate) fn record_account_balance_changes(conn: &rusqlite::Connection, change
         }
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
+    if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
 }

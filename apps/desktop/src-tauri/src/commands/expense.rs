@@ -4,7 +4,7 @@ use crate::db::account::BalanceChange;
 use crate::db::audit as audit_db;
 use crate::db::expense as expense_db;
 use crate::db::net_worth as net_worth_db;
-use crate::db::DbState;
+use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::models::{CreateExpenseInput, Expense, UpdateExpenseInput};
 
@@ -29,14 +29,14 @@ pub fn create_expense(
         date,
         account_id,
     };
-    let result = expense_db::insert_expense_with_balance_changes(conn, &input)?;
+    let result = active.write(|tx| expense_db::insert_expense_with_balance_changes(tx, &input))?;
     let expense = result.expense;
 
     let details = serde_json::to_string(&expense).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(conn, "expense", expense.id, "create", None, Some(&details)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(conn, &result.balance_changes);
+    record_account_balance_changes(&active, &result.balance_changes);
 
     Ok(expense)
 }
@@ -90,14 +90,14 @@ pub fn update_expense(
         date,
         account_id,
     };
-    let result = expense_db::update_expense(conn, id, &input)?;
+    let result = active.write(|tx| expense_db::update_expense(tx, id, &input))?;
     let expense = result.expense;
 
     let new_json = serde_json::to_string(&expense).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(conn, "expense", id, "update", old_json.as_deref(), Some(&new_json)) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(conn, &result.balance_changes);
+    record_account_balance_changes(&active, &result.balance_changes);
 
     Ok(expense)
 }
@@ -115,12 +115,12 @@ pub fn delete_expense(
     // Fetch old value before delete
     let old_json = get_expense_json(conn, id);
 
-    let balance_changes = expense_db::delete_expense(conn, id)?;
+    let balance_changes = active.write(|tx| expense_db::delete_expense(tx, id))?;
 
     if let Err(e) = audit_db::insert_audit_log(conn, "expense", id, "delete", old_json.as_deref(), None) {
         tracing::error!("Failed to write audit log: {}", e);
     }
-    record_account_balance_changes(conn, &balance_changes);
+    record_account_balance_changes(&active, &balance_changes);
 
     Ok(())
 }
@@ -146,7 +146,7 @@ fn get_expense_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
     .and_then(|e| serde_json::to_string(&e).ok())
 }
 
-fn record_account_balance_changes(conn: &rusqlite::Connection, changes: &[BalanceChange]) {
+fn record_account_balance_changes(active: &ActiveDataset, changes: &[BalanceChange]) {
     let mut summaries: Vec<(i64, i64, i64)> = Vec::new();
     for change in changes {
         if change.old_balance_cents == change.new_balance_cents {
@@ -171,6 +171,10 @@ fn record_account_balance_changes(conn: &rusqlite::Connection, changes: &[Balanc
         return;
     }
 
+    let Some(conn) = active.conn.as_ref() else {
+        return;
+    };
+
     for (account_id, old_balance_cents, new_balance_cents) in &summaries {
         if let Err(e) = audit_db::insert_audit_log(
             conn,
@@ -184,7 +188,7 @@ fn record_account_balance_changes(conn: &rusqlite::Connection, changes: &[Balanc
         }
     }
 
-    if let Err(e) = net_worth_db::record_net_worth_snapshot(conn) {
+    if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
     }
 }

@@ -131,15 +131,11 @@ pub fn config_key(key: &str) -> RowUuid {
 
 /// An expense row that every computer generates on its own from a recurring template at startup:
 /// `(template uuid, period)`, so the same month's row is ONE row rather than one per computer.
-// Story 17 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn recurring_expense(template: &RowUuid, period: &str) -> RowUuid {
     derive("expenses", &[template, period.as_bytes()])
 }
 
 /// The income half of the same rule.
-// Story 17 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn recurring_income(template: &RowUuid, period: &str) -> RowUuid {
     derive("income_entries", &[template, period.as_bytes()])
 }

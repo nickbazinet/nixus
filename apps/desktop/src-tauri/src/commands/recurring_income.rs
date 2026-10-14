@@ -3,7 +3,7 @@ use tauri::State;
 use crate::commands::income as income_commands;
 use crate::db::audit as audit_db;
 use crate::db::recurring_income as recurring_income_db;
-use crate::db::DbState;
+use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::models::{
     CreateRecurringIncomeTemplateInput, IncomeEntry, RecurringIncomeTemplate,
@@ -29,7 +29,7 @@ pub fn create_recurring_income_template(
         day_of_month,
         account_id,
     };
-    let result = recurring_income_db::insert_template(conn, &input)?;
+    let result = active.write(|tx| recurring_income_db::insert_template(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
@@ -82,7 +82,7 @@ pub fn update_recurring_income_template(
         account_id,
         is_active,
     };
-    let result = recurring_income_db::update_template(conn, id, &input)?;
+    let result = active.write(|tx| recurring_income_db::update_template(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(
@@ -108,7 +108,7 @@ pub fn delete_recurring_income_template(state: State<DbState>, id: i64) -> Resul
 
     let old_json = template_json(conn, id);
 
-    recurring_income_db::delete_template(conn, id)?;
+    active.write(|tx| recurring_income_db::delete_template(tx, id))?;
 
     if let Err(e) = audit_db::insert_audit_log(
         conn,
@@ -126,9 +126,11 @@ pub fn delete_recurring_income_template(state: State<DbState>, id: i64) -> Resul
 
 /// Runs on app startup in the background to backfill missed recurring income.
 pub fn apply_due_recurring_income(
-    conn: &rusqlite::Connection,
+    active: &ActiveDataset,
 ) -> Result<Vec<IncomeEntry>, AppError> {
-    let applied = recurring_income_db::apply_due_recurring_income(conn)?;
+    let applied = active.write(|tx| recurring_income_db::apply_due_recurring_income(tx))?;
+
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     for entry in &applied.entries {
         let details = serde_json::to_string(entry).unwrap_or_default();
@@ -146,7 +148,7 @@ pub fn apply_due_recurring_income(
 
     // Backfilled income moves linked account balances exactly like a manual entry, so it goes
     // through the same audit + net-worth snapshot path.
-    income_commands::record_account_balance_changes(conn, &applied.balance_changes);
+    income_commands::record_account_balance_changes(active, &applied.balance_changes);
 
     Ok(applied.entries)
 }

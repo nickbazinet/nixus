@@ -37,9 +37,7 @@ pub fn record_net_worth_snapshot(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    net_worth_db::record_net_worth_snapshot(conn)
+    active.write(|tx| net_worth_db::record_net_worth_snapshot(tx))
 }
 
 #[tauri::command(rename_all = "snake_case")]

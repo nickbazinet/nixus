@@ -88,6 +88,7 @@ fn map_asset_type_to_category(asset_type: &str) -> &str {
     }
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, AppError> {
     let mut breakdown = NetWorthBreakdown {
         cash_cents: 0,

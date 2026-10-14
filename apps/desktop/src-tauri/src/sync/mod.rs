@@ -44,6 +44,8 @@ mod tests_bootstrap;
 #[cfg(test)]
 mod tests_e2e;
 #[cfg(test)]
+mod tests_finance_capture;
+#[cfg(test)]
 mod tests_gate_boundary;
 #[cfg(test)]
 mod tests_images;

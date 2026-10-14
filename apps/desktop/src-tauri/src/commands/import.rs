@@ -474,7 +474,7 @@ pub fn confirm_import(
         })
         .collect::<Result<Vec<_>, AppError>>()?;
 
-    let count = expense_db::bulk_insert_imported_expenses(conn, &tuples)?;
+    let count = active.write(|tx| expense_db::bulk_insert_imported_expenses(tx, &tuples))?;
 
     // Record merchant-category hints for future imports
     //
