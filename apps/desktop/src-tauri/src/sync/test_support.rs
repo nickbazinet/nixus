@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -526,6 +526,13 @@ pub(crate) struct Recorded {
     pub messages: Vec<SegmentMessage>,
     /// Makes the next apply fail, which is how a test proves a refused batch stays owed.
     pub refuse: bool,
+    /// What the applier answers `take_clock_skew` with, draining it like the real one does.
+    ///
+    /// The seam and not a real clock: the apply path's `Clock` is built inside `DatasetApplier`
+    /// from the dataset's own install id and reads the system wall clock (Story 20 recorded that it
+    /// is deliberately not injectable), so a manager-level test cannot move it. `Clock`'s own unit
+    /// tests prove the drift detection; this proves what the ACTOR does with it.
+    pub clock_skew_ms: Option<i64>,
 }
 
 /// The recording fake Story 19 hands fetched messages to.
@@ -544,6 +551,10 @@ impl Applier for RecordingApplier {
         recorded.messages.extend(batch.messages.iter().cloned());
 
         Ok(batch.messages.len())
+    }
+
+    fn take_clock_skew(&mut self) -> Option<i64> {
+        self.0.lock().expect("the applier lock").clock_skew_ms.take()
     }
 }
 
@@ -570,6 +581,12 @@ pub(crate) struct TestComputer {
     entitled: Arc<AtomicBool>,
     frozen: Arc<Mutex<Option<FrozenReason>>>,
     clock: Arc<AtomicI64>,
+    /// The schema version this simulated computer's BUILD understands (AD-11).
+    ///
+    /// Shared with the probe and settable, because version skew is by definition two builds and a
+    /// test has only one: lowering it here is "this computer is the old one", and raising it again
+    /// is "the user updated Nixus".
+    schema_version: Arc<AtomicU32>,
     slot: FakeSlot,
     applied: Arc<Mutex<Recorded>>,
     /// Whether `applier()` hands back the REAL apply path instead of the recorder.
@@ -590,6 +607,7 @@ pub(crate) struct ComputerProbe {
     entitled: Arc<AtomicBool>,
     frozen: Arc<Mutex<Option<FrozenReason>>>,
     applied: Arc<Mutex<Recorded>>,
+    schema_version: Arc<AtomicU32>,
     id: String,
     _dir: Arc<TempDir>,
 }
@@ -643,6 +661,9 @@ pub(crate) fn test_computer(
     let entitled = Arc::new(AtomicBool::new(true));
     let frozen = Arc::new(Mutex::new(None));
     let applied = Arc::new(Mutex::new(Recorded::default()));
+    let schema_version = Arc::new(AtomicU32::new(
+        u32::try_from(crate::db::latest_schema_version()).expect("the schema version fits"),
+    ));
 
     let host = TestComputer {
         id: id.to_string(),
@@ -656,6 +677,7 @@ pub(crate) fn test_computer(
         entitled: Arc::clone(&entitled),
         frozen: Arc::clone(&frozen),
         clock: Arc::new(AtomicI64::new(clock_base)),
+        schema_version: Arc::clone(&schema_version),
         slot: FakeSlot {
             own,
             live: Arc::clone(&live),
@@ -674,6 +696,7 @@ pub(crate) fn test_computer(
         entitled,
         frozen,
         applied,
+        schema_version,
         id: id.to_string(),
         _dir: dir,
     };
@@ -864,6 +887,22 @@ impl ComputerProbe {
         self.applied.lock().expect("the applier lock").messages.clone()
     }
 
+    /// What this computer's build understands (AD-11). Lowering it makes it the old computer;
+    /// raising it back is the update that unparks what it refused.
+    pub(crate) fn set_schema_version(&self, version: u32) {
+        self.schema_version.store(version, Ordering::SeqCst);
+    }
+
+    pub(crate) fn schema_version(&self) -> u32 {
+        self.schema_version.load(Ordering::SeqCst)
+    }
+
+    /// Makes the next `take_clock_skew` answer with this drift, exactly as the real applier's
+    /// clock would after refusing a stamp that far ahead (AD-4).
+    pub(crate) fn report_clock_skew(&self, ahead_ms: i64) {
+        self.applied.lock().expect("the applier lock").clock_skew_ms = Some(ahead_ms);
+    }
+
     pub(crate) fn refuse_apply(&self, refuse: bool) {
         self.applied.lock().expect("the applier lock").refuse = refuse;
     }
@@ -903,7 +942,7 @@ impl crate::sync::manager::SyncHost for TestComputer {
     }
 
     fn schema_version(&self) -> u32 {
-        u32::try_from(crate::db::latest_schema_version()).expect("the schema version fits")
+        self.schema_version.load(Ordering::SeqCst)
     }
 
     fn now_ms(&self) -> i64 {

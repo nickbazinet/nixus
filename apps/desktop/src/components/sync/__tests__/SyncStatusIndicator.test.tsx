@@ -18,8 +18,15 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
+/* Keyed on the event name so a test can drive `sync:applied` without also standing in for the
+ * status subscription the indicator owns. */
+const emitters = new Map<string, (payload: unknown) => void>();
+
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: async () => () => {},
+  listen: async (event: string, handler: (e: { payload: unknown }) => void) => {
+    emitters.set(event, (value) => handler({ payload: value }));
+    return () => emitters.delete(event);
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -120,6 +127,7 @@ const EVERY_STATE: readonly SyncState[] = [
   "offline",
   "frozen",
   "update_needed",
+  "clock_skew",
   "link_choice_required",
   "remote_changed",
   "error",
@@ -131,6 +139,7 @@ const EXPECTED_LABEL: Record<string, string> = {
   offline: EN["sync.stateOffline"],
   frozen: EN["sync.stateFrozen"],
   update_needed: EN["sync.stateUpdateNeeded"],
+  clock_skew: EN["sync.stateClockSkew"],
   link_choice_required: EN["sync.stateActionNeeded"],
   remote_changed: EN["sync.stateActionNeeded"],
   error: EN["sync.stateError"],
@@ -181,6 +190,7 @@ describe("SyncStatusIndicator", () => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     invokeMock.mockReset();
     navigateMock.mockReset();
+    emitters.clear();
     invokeMock.mockResolvedValue(payload());
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -416,5 +426,105 @@ describe("SyncStatusIndicator", () => {
       container.querySelector('[data-testid="sync-remote-changed-dialog"]')
     ).not.toBeNull();
     expect(navigateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("SyncStatusIndicator applied cue", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let queryClient: QueryClient;
+
+  const mount = (seeded: SyncStatusPayload) => {
+    queryClient.setQueryData(queryKeys.syncStatus, seeded);
+    act(() => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <SyncStatusIndicator expanded itemClassName="rail-item" />
+        </QueryClientProvider>
+      );
+    });
+  };
+
+  const settle = async () => {
+    const deadline = Date.now() + 2_000;
+    do {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    } while (
+      (queryClient.isFetching() > 0 || queryClient.isMutating() > 0) &&
+      Date.now() < deadline
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  };
+
+  const cue = () =>
+    container.querySelector<HTMLElement>('[data-testid="sync-applied-cue"]');
+
+  beforeEach(() => {
+    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+    invokeMock.mockReset();
+    navigateMock.mockReset();
+    emitters.clear();
+    invokeMock.mockResolvedValue(payload());
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    act(() => {
+      root = createRoot(container);
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    queryClient.clear();
+  });
+
+  it("shows the changed-on-another-computer cue after remote changes are applied", async () => {
+    mount(payload());
+    await settle();
+    expect(cue()).toBeNull();
+
+    await act(async () => {
+      emitters.get("sync:applied")?.(4);
+    });
+    await settle();
+
+    const shown = cue();
+    expect(shown).not.toBeNull();
+    expect(shown?.textContent).toContain(EN["sync.appliedCue"]);
+    expect(shown?.getAttribute("role")).toBe("status");
+    expect(shown?.getAttribute("aria-live")).toBe("polite");
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("dismisses the cue without touching the status", async () => {
+    mount(payload());
+    await settle();
+
+    await act(async () => {
+      emitters.get("sync:applied")?.(1);
+    });
+    await settle();
+
+    const dismiss = cue()?.querySelector<HTMLButtonElement>(
+      `[aria-label="${EN["sync.appliedCueDismiss"]}"]`
+    );
+    expect(dismiss).not.toBeNull();
+
+    await act(async () => {
+      dismiss?.click();
+    });
+    await settle();
+
+    expect(cue()).toBeNull();
+    expect(
+      (queryClient.getQueryData(queryKeys.syncStatus) as SyncStatusPayload).state
+    ).toBe("idle");
   });
 });

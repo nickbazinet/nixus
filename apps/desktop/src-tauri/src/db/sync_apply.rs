@@ -422,6 +422,47 @@ pub fn parked_count(conn: &Connection) -> Result<i64, AppError> {
     Ok(count)
 }
 
+/// How many messages are quarantined. A count, so AD-16's diagnostics can report that the queue is
+/// not empty without naming a table, a row or a value.
+pub fn quarantined_count(conn: &Connection) -> Result<i64, AppError> {
+    let count = conn
+        .prepare_cached("SELECT COUNT(*) FROM sync_quarantine")?
+        .query_row([], |row| row.get(0))?;
+
+    Ok(count)
+}
+
+/// Seeds both worklists with the given number of rows, so a diagnostics test can assert the counts
+/// come from the DATASET rather than from the actor's memory.
+///
+/// Raw statements and not the real `park`/`quarantine`: arranging real parked messages would take a
+/// whole segment each, and what is under test is the read path.
+#[cfg(test)]
+pub fn seed_worklists(conn: &Connection, pending: usize, quarantined: usize) {
+    const INSTALL: &str = "0123456789abcdef";
+    let hlc = format!("{:016x}-{INSTALL}", 1u64);
+
+    for idx in 0..pending {
+        conn.execute(
+            "INSERT INTO sync_pending \
+             (install, seq, idx, hlc, kind, table_name, row_uuid, waiting_on_table, waiting_on_uuid) \
+             VALUES (?1, 0, ?2, ?3, 'field', 'accounts', ?4, 'accounts', ?4)",
+            rusqlite::params![INSTALL, idx as i64, &hlc, [idx as u8; 16]],
+        )
+        .expect("a pending row seeds");
+    }
+
+    for idx in 0..quarantined {
+        conn.execute(
+            "INSERT INTO sync_quarantine \
+             (install, seq, idx, hlc, kind, table_name, row_uuid, reason) \
+             VALUES (?1, 1, ?2, ?3, 'field', 'accounts', ?4, 'unknown_column')",
+            rusqlite::params![INSTALL, idx as i64, &hlc, [idx as u8; 16]],
+        )
+        .expect("a quarantine row seeds");
+    }
+}
+
 /// Quarantines a message with a reason code — never a rendered error and never a value (AD-16).
 pub fn quarantine(
     conn: &Connection,

@@ -16,6 +16,7 @@ type SyncState =
   | "offline"
   | "frozen"
   | "update_needed"
+  | "clock_skew"
   | "link_choice_required"
   | "remote_changed"
   | "error";
@@ -55,6 +56,7 @@ const UNLINKED: SyncPayload = {
 
 interface MockWindow extends Record<string, unknown> {
   __MOCK_EMIT_SYNC__?: (payload: SyncPayload) => void;
+  __MOCK_EMIT_APPLIED__?: (applied: number) => void;
   __MOCK_SYNC_CALLS__?: { cmd: string; args: Record<string, unknown> }[];
 }
 
@@ -88,6 +90,12 @@ async function setupSyncMock(page: Page, options: SyncMockOptions = {}) {
     w.__MOCK_EMIT_SYNC__ = (payload) => {
       for (const cb of eventListeners["sync:status"] ?? []) {
         cb({ event: "sync:status", payload, id: 1 });
+      }
+    };
+
+    w.__MOCK_EMIT_APPLIED__ = (applied) => {
+      for (const cb of eventListeners["sync:applied"] ?? []) {
+        cb({ event: "sync:applied", payload: applied, id: 2 });
       }
     };
 
@@ -245,6 +253,11 @@ const emitSync = (page: Page, payload: SyncPayload) =>
   page.evaluate((next) => {
     (window as unknown as MockWindow).__MOCK_EMIT_SYNC__?.(next as SyncPayload);
   }, payload);
+
+const emitApplied = (page: Page, applied: number) =>
+  page.evaluate((count) => {
+    (window as unknown as MockWindow).__MOCK_EMIT_APPLIED__?.(count as number);
+  }, applied);
 
 const syncCalls = (page: Page) =>
   page.evaluate(
@@ -455,6 +468,7 @@ test.describe("sync status indicator", () => {
     { state: "offline", label: "Offline" },
     { state: "frozen", label: "Sync paused" },
     { state: "update_needed", label: "Update needed" },
+    { state: "clock_skew", label: "Check the clock" },
     { state: "error", label: "Sync problem" },
   ];
 
@@ -633,5 +647,78 @@ test.describe("sync prompts", () => {
     } as SyncPayload);
 
     await expect(page.getByTestId("sync-remote-changed-dialog")).toBeVisible();
+  });
+});
+
+test.describe("version skew, clock skew and the applied cue", () => {
+  test("the clock skew state tells the user to check the computer's date and time", async ({
+    page,
+  }) => {
+    await setupSyncMock(page, {
+      status: {
+        state: "clock_skew",
+        enabled: true,
+        error_code: "clock_skew",
+        recoverable: true,
+      },
+    });
+    await page.goto("/");
+
+    await expect(indicator(page)).toHaveAttribute(
+      "data-sync-state",
+      "clock_skew"
+    );
+    await expect(indicator(page)).toContainText("Check the clock");
+    /* The shell is intact: a state this build renders must never take the window down, and a
+     * wrong clock must never block local use (AD-16). */
+    await expect(page.getByTestId("settings-link")).toBeVisible();
+  });
+
+  test("the update needed state keeps the app usable and names the action", async ({
+    page,
+  }) => {
+    await setupSyncMock(page, { status: { state: "idle", enabled: true } });
+    await page.goto("/");
+
+    await emitSync(page, {
+      ...UNLINKED,
+      state: "update_needed",
+      enabled: true,
+      error_code: "update_needed",
+    });
+
+    await expect(indicator(page)).toHaveAttribute(
+      "data-sync-state",
+      "update_needed"
+    );
+    await expect(indicator(page)).toContainText("Update needed");
+    await expect(page.getByTestId("settings-link")).toBeVisible();
+  });
+
+  test("remote changes raise a dismissible cue that steals no focus", async ({
+    page,
+  }) => {
+    await setupSyncMock(page, { status: { state: "idle", enabled: true } });
+    await page.goto("/");
+
+    await expect(indicator(page)).toHaveAttribute("data-sync-state", "idle");
+    await expect(page.getByTestId("sync-applied-cue")).toHaveCount(0);
+
+    const focusedBefore = await page.evaluate(
+      () => document.activeElement?.tagName ?? null
+    );
+
+    await emitApplied(page, 3);
+
+    const cue = page.getByTestId("sync-applied-cue");
+    await expect(cue).toBeVisible();
+    await expect(cue).toContainText("Changed on another computer");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(
+      await page.evaluate(() => document.activeElement?.tagName ?? null)
+    ).toBe(focusedBefore);
+
+    await cue.getByRole("button", { name: "Dismiss" }).click();
+    await expect(page.getByTestId("sync-applied-cue")).toHaveCount(0);
   });
 });

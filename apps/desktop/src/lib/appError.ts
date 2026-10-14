@@ -72,6 +72,9 @@ export type SyncErrorCode =
   | "actor_unavailable"
   | "image_missing"
   | "image_corrupt"
+  | "segment_invalid"
+  | "apply_failed"
+  | "clock_skew"
   | "restore_not_found"
   | "restore_parent_missing"
   | "restore_conflict";
@@ -105,6 +108,9 @@ const SYNC_CODES: readonly SyncErrorCode[] = [
   "actor_unavailable",
   "image_missing",
   "image_corrupt",
+  "segment_invalid",
+  "apply_failed",
+  "clock_skew",
   "restore_not_found",
   "restore_parent_missing",
   "restore_conflict",
@@ -184,6 +190,16 @@ export function syncMessageKey(code: SyncErrorCode): string {
       return "sync.errorImageMissing";
     case "image_corrupt":
       return "sync.errorImageCorrupt";
+    // Kept apart from every transport code: a change arrived and could not be read or written, so
+    // the cloud copy is intact, nothing is lost, and the next action is to wait or to update —
+    // never to reconnect.
+    case "segment_invalid":
+      return "sync.errorSegmentInvalid";
+    case "apply_failed":
+      return "sync.errorApplyFailed";
+    // Its own key because it is the only sync failure whose fix is outside Nixus entirely.
+    case "clock_skew":
+      return "sync.errorClockSkew";
     // The three restore refusals each name a different next action: nothing to restore any more,
     // restore what it belonged to first, or deal with the thing that took its place.
     case "restore_not_found":

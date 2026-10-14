@@ -6,6 +6,7 @@ import {
   useDisableSync,
   useEnableSync,
   useResolveRemoteChanged,
+  useSyncApplied,
   useSyncDiagnostics,
   useSyncNow,
   useSyncStatus,
@@ -69,6 +70,7 @@ describe("useSync", () => {
   let root: Root;
   let queryClient: QueryClient;
   let emit: ((payload: SyncStatusPayload) => void) | undefined;
+  let emitApplied: ((applied: number) => void) | undefined;
 
   const render = (ui: React.ReactNode) => {
     act(() => {
@@ -105,12 +107,19 @@ describe("useSync", () => {
     unlistenMock.mockReset();
     recordedQueryOptions.length = 0;
     emit = undefined;
+    emitApplied = undefined;
     listenMock.mockImplementation(
       async (
-        _event: string,
-        handler: (event: { payload: SyncStatusPayload }) => void
+        event: string,
+        handler: (event: { payload: unknown }) => void
       ) => {
-        emit = (next) => handler({ payload: next });
+        // Keyed on the event name: two always-mounted hooks subscribe now, and a single shared
+        // emitter would make whichever registered last the only one a test could drive.
+        if (event === "sync:applied") {
+          emitApplied = (applied) => handler({ payload: applied });
+        } else {
+          emit = (next) => handler({ payload: next });
+        }
         return unlistenMock;
       }
     );
@@ -332,6 +341,64 @@ describe("useSync", () => {
 
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.syncStatus });
     expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.syncDiagnostics });
+  });
+
+  it("raises the applied cue on a sync:applied event and dismisses it by hand", async () => {
+    let cue: { visible: boolean; dismiss: () => void } | undefined;
+
+    function Probe() {
+      cue = useSyncApplied();
+      return null;
+    }
+    render(<Probe />);
+    await settle();
+
+    expect(listenMock.mock.calls.map((call) => call[0])).toContain("sync:applied");
+    expect(cue?.visible).toBe(false);
+
+    await act(async () => {
+      emitApplied?.(3);
+    });
+    await settle();
+    expect(cue?.visible).toBe(true);
+
+    await act(async () => {
+      cue?.dismiss();
+    });
+    await settle();
+    expect(cue?.visible).toBe(false);
+  });
+
+  it("ignores a sync:applied event that applied nothing", async () => {
+    let cue: { visible: boolean } | undefined;
+
+    function Probe() {
+      cue = useSyncApplied();
+      return null;
+    }
+    render(<Probe />);
+    await settle();
+
+    await act(async () => {
+      emitApplied?.(0);
+    });
+    await settle();
+
+    expect(cue?.visible).toBe(false);
+  });
+
+  it("detaches the applied listener on unmount", async () => {
+    function Probe() {
+      useSyncApplied();
+      return null;
+    }
+    render(<Probe />);
+    await settle();
+
+    act(() => root.render(<div />));
+    await settle();
+
+    expect(unlistenMock).toHaveBeenCalled();
   });
 
   it("reads diagnostics only once asked", async () => {

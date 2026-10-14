@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import {
+  AlarmClock,
   CircleCheckBig,
   CircleHelp,
   CirclePause,
@@ -9,6 +10,7 @@ import {
   CloudOff,
   RefreshCw,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import {
   Tooltip,
@@ -31,6 +33,7 @@ import { railLabelClass } from "@/components/shared/SidebarBrandHeader";
 import {
   useResolveRemoteChanged,
   useEnableSync,
+  useSyncApplied,
   useSyncStatus,
   type RemoteChangedAction,
 } from "@/hooks/useSync";
@@ -45,6 +48,7 @@ const STATE_ICON: Record<SyncState, React.ComponentType<{ className?: string }>>
   offline: CloudOff,
   frozen: CirclePause,
   update_needed: CircleArrowUp,
+  clock_skew: AlarmClock,
   link_choice_required: CircleHelp,
   remote_changed: CircleHelp,
   error: TriangleAlert,
@@ -78,6 +82,7 @@ export function SyncStatusIndicator({
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const status = useSyncStatus();
+  const applied = useSyncApplied();
   const enableSync = useEnableSync();
   const resolveRemote = useResolveRemoteChanged();
   const [dismissedPrompt, setDismissedPrompt] = useState<string | null>(null);
@@ -182,6 +187,32 @@ export function SyncStatusIndicator({
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
+
+      {/* Remote changes landing is news, not a question: announced politely, dismissible, and
+        * gone by itself. No dialog and no autofocus — AD-16 forbids sync interrupting the user. */}
+      {applied.visible && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="sync-applied-cue"
+          // Collapsed by the rail's own recipe rather than unmounted, so the announcement still
+          // reaches a screen reader on a collapsed rail without a stray control appearing in it.
+          className={cn(
+            "flex items-center gap-1 text-caption text-rail-ink",
+            railLabelClass(expanded)
+          )}
+        >
+          <span className="truncate">{t("sync.appliedCue")}</span>
+          <button
+            type="button"
+            onClick={applied.dismiss}
+            aria-label={t("sync.appliedCueDismiss")}
+            className="shrink-0 opacity-70 hover:opacity-100"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      )}
 
       {prompt !== null && prompt.kind === "link_choice" && (
         <SyncLinkChoiceDialog

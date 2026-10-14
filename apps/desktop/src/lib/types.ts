@@ -969,6 +969,7 @@ export type SyncState =
   | "offline"
   | "frozen"
   | "update_needed"
+  | "clock_skew"
   | "link_choice_required"
   | "remote_changed"
   | "error";
@@ -1033,6 +1034,11 @@ export interface SyncDiagnostics {
   has_pulled_latest: boolean;
   pending_prompt: SyncPrompt | null;
   uploads: number;
+  parked_segments: number;
+  pending_messages: number;
+  quarantined_messages: number;
+  clock_skews: number;
+  last_clock_skew_ms: number | null;
   conflicts: number;
   restores: number;
   failures: number;

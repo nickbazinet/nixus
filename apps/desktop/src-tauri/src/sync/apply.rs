@@ -376,8 +376,9 @@ fn apply_message(
     };
 
     // AD-4: a stamp more than five minutes ahead does NOT move this computer's clock. The message
-    // is still applied — refusing it would be data loss and its `hlc` still orders totally — and
-    // Story 24 owns surfacing `clock_skew`.
+    // is still applied — refusing it would be data loss and its `hlc` still orders totally. What
+    // the refusal costs the remote stamp is the right to move THIS clock, and `Clock` remembers it
+    // so the actor can surface `clock_skew` (Story 24) and the user can fix the date and time.
     if let Err(error) = clock.observe(&hlc) {
         warn!("a remote message carried a stamp this computer refused: {}", error);
     }
@@ -1384,5 +1385,11 @@ impl Applier for DatasetApplier {
         }
 
         Ok(report.handled())
+    }
+
+    /// AD-4: this connection's clock is the one that refused the stamp, so it is the one that
+    /// knows. Draining it here is what makes `clock_skew` a per-cycle state rather than a latch.
+    fn take_clock_skew(&mut self) -> Option<i64> {
+        self.clock.take_skew()
     }
 }

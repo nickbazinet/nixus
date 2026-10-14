@@ -11,6 +11,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicI64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -125,18 +126,6 @@ pub enum ClockError {
     MalformedTimestamp,
 }
 
-// Story 24 is the first production caller: it maps this onto the `clock_skew` sync state.
-#[allow(dead_code)]
-impl ClockError {
-    pub fn code(&self) -> &'static str {
-        match self {
-            Self::Skew { .. } => "clock_skew",
-            Self::MalformedInstallId => "install_malformed",
-            Self::MalformedTimestamp => "hlc_malformed",
-        }
-    }
-}
-
 impl std::fmt::Display for ClockError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -193,19 +182,9 @@ impl PartialOrd for Hlc {
 }
 
 impl Hlc {
-    /// The raw NTP64 word: physical time in the high bits, logical counter in the low bits.
-    // Story 24 is the first production caller: the clock-skew state compares raw words. Story 19
-    // did not need it — a segment is addressed by `(install, seq)`, never by a timestamp.
-    #[allow(dead_code)]
-    pub fn ntp_time(&self) -> u64 {
-        self.time
-    }
-
     /// Milliseconds since the Unix epoch, for diagnostics and the drift comparison. Lossy by
     /// construction (NTP64's fraction is finer than a millisecond), which is why it is not
     /// what the ordering uses.
-    // Story 24 is the first production caller: `sync_diagnostics` reports HLC ranges as wall time.
-    #[allow(dead_code)]
     pub fn wall_ms(&self) -> i64 {
         NTP64(self.time).to_duration().as_millis() as i64
     }
@@ -305,6 +284,14 @@ pub struct Clock {
     hlc: HLC,
     install: InstallBytes,
     wall: WallClock,
+    /// How far ahead the furthest REFUSED remote stamp was, or 0 if none since the last drain
+    /// (AD-4, AD-16: a number, never a value).
+    ///
+    /// A high-water mark on the clock itself rather than a count threaded back through
+    /// `apply_message` -> `apply_batch` -> `Applier`: the refusal happens here, every caller
+    /// already holds the clock by `&`, and the actor needs exactly one question answered —
+    /// "did this computer refuse a stamp since I last looked, and by how much".
+    skew_ms: AtomicI64,
 }
 
 impl Clock {
@@ -323,14 +310,20 @@ impl Clock {
                 .build(),
             install,
             wall,
+            skew_ms: AtomicI64::new(0),
         })
     }
 
-    // Story 20 is the first production caller: apply breaks an exact tie on the install bytes.
-    // Story 19 names its keys from the `sync_state` install id directly, not from the clock.
-    #[allow(dead_code)]
-    pub fn install(&self) -> InstallBytes {
-        self.install
+    /// Drains the drift high-water mark: `Some(ahead_ms)` if a stamp was refused since the last
+    /// call, `None` if none was.
+    ///
+    /// Draining and not reading, so the state is "a skew was observed in THIS cycle" and the
+    /// `clock_skew` status clears by itself once the clock is right again, with no second signal
+    /// to keep in step.
+    pub fn take_skew(&self) -> Option<i64> {
+        let ahead = self.skew_ms.swap(0, AtomicOrdering::Relaxed);
+
+        (ahead > 0).then_some(ahead)
     }
 
     /// Strictly greater than every timestamp this clock has produced and than every remote
@@ -353,19 +346,23 @@ impl Clock {
     /// not a string) and so the limit is this module's, not the `UHLC_MAX_DELTA_MS`
     /// environment variable's. `uhlc`'s own check is still called and still honoured: it is
     /// the thing that guarantees the clock is not advanced when the answer is `Err`.
-    // Story 20 is the first production caller: it folds in every remote stamp it applies.
-    #[allow(dead_code)]
     pub fn observe(&self, remote: &Hlc) -> Result<(), ClockError> {
         let ahead_ms = remote.wall_ms() - (self.wall)();
         if ahead_ms > MAX_FORWARD_DRIFT.as_millis() as i64 {
-            return Err(ClockError::Skew { ahead_ms });
+            return Err(self.record_skew(ahead_ms));
         }
 
         let stamped = remote.timestamp()?;
         let _guard = self.install_wall_clock();
         self.hlc
             .update_with_timestamp(&stamped)
-            .map_err(|_| ClockError::Skew { ahead_ms })
+            .map_err(|_| self.record_skew(ahead_ms))
+    }
+
+    fn record_skew(&self, ahead_ms: i64) -> ClockError {
+        self.skew_ms.fetch_max(ahead_ms, AtomicOrdering::Relaxed);
+
+        ClockError::Skew { ahead_ms }
     }
 
     fn install_wall_clock(&self) -> WallClockGuard {
@@ -587,7 +584,7 @@ mod tests {
         let from_a = earlier.now();
         let from_b = later.now();
 
-        assert_eq!(from_a.ntp_time(), from_b.ntp_time(), "the same physical instant");
+        assert_eq!(from_a.wall_ms(), from_b.wall_ms(), "the same physical instant");
         assert!(from_b > from_a, "ff... must win the tie against 0a...");
         assert_ne!(from_a, from_b);
     }
@@ -612,7 +609,6 @@ mod tests {
         let their_stamp = skewed.now();
 
         let refused = local.observe(&their_stamp).expect_err("beyond the limit");
-        assert_eq!(refused.code(), "clock_skew");
         assert!(
             matches!(refused, ClockError::Skew { ahead_ms } if ahead_ms >= MAX_FORWARD_DRIFT.as_millis() as i64),
             "{refused:?} must carry how far ahead the remote was"
@@ -624,6 +620,37 @@ mod tests {
             "the local clock adopted the skewed time: {ours_after:?}"
         );
         assert!(ours_after < their_stamp, "the refused stamp must still be ahead of us");
+    }
+
+    /// The drift high-water mark is what the `clock_skew` state is built on: it reports the
+    /// FURTHEST refusal since the last read, and a read drains it so the state can clear itself.
+    #[test]
+    fn the_drift_high_water_mark_reports_the_worst_refusal_and_then_drains() {
+        let local = fixed_clock(A, 1_700_000_000_000);
+        assert_eq!(local.take_skew(), None, "nothing refused yet");
+
+        let limit = MAX_FORWARD_DRIFT.as_millis() as i64;
+        for ahead in [limit + 60_000, limit + 600_000, limit + 120_000] {
+            let skewed = fixed_clock(B, 1_700_000_000_000 + ahead);
+            local
+                .observe(&skewed.now())
+                .expect_err("every one of these is beyond the limit");
+        }
+
+        let worst = local.take_skew().expect("a refusal was recorded");
+        assert!(
+            worst >= limit + 600_000,
+            "the mark must be the furthest refusal, not the latest one: {worst}"
+        );
+        assert_eq!(local.take_skew(), None, "reading drains it");
+
+        let honest = fixed_clock(B, 1_700_000_060_000);
+        local.observe(&honest.now()).expect("inside the limit");
+        assert_eq!(
+            local.take_skew(),
+            None,
+            "a stamp inside the limit must not re-raise the state"
+        );
     }
 
     /// A second inside the limit rather than exactly on it: `NTP64` is not millisecond

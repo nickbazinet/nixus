@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useMutation,
   useQuery,
@@ -14,6 +14,9 @@ import type {
   SyncEnableOutcome,
   SyncStatusPayload,
 } from "@/lib/types";
+
+/** How long the "changed on another computer" cue stays up before it removes itself. */
+export const APPLIED_CUE_MS = 8_000;
 
 /** CAP-5's answer: replace this computer's data with the cloud copy, or keep it separate. */
 export type LinkChoice = "replace" | "separate";
@@ -142,6 +145,60 @@ export function useResolveRemoteChanged() {
       invoke<SyncStatusPayload>("sync_resolve_remote_changed", { action }),
     onSuccess: (payload) => publish(queryClient, payload),
   });
+}
+
+/**
+ * The "changed on another computer" cue: true for a while after remote changes landed.
+ *
+ * `sync:applied` carries the applied COUNT and nothing else (AD-16 keeps values out of events), so
+ * this is a cue and never a description of what changed. It dismisses itself on a timer and can be
+ * dismissed by hand; it renders no dialog and moves no focus, because remote changes arriving is
+ * not a question the user has to answer (AD-16: sync never blocks).
+ *
+ * It registers its own listener rather than riding `sync:status`: an apply is not a state
+ * transition, so the status event is not emitted for one.
+ */
+export function useSyncApplied() {
+  const [shownAt, setShownAt] = useState<number | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    let cleaned = false;
+    let unlisten: UnlistenFn | undefined;
+
+    const setup = async () => {
+      const stop = await listen<number>("sync:applied", (event) => {
+        if (typeof event.payload !== "number" || event.payload <= 0) return;
+        setShownAt(Date.now());
+      });
+      // StrictMode mounts this effect twice; without the flag the first listener outlives its
+      // cleanup and one apply raises the cue twice.
+      if (cleaned) stop();
+      else unlisten = stop;
+    };
+
+    setup().catch(() => {
+      // An always-mounted component must not throw when the webview has no event plugin.
+    });
+
+    return () => {
+      cleaned = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (shownAt === null) return;
+
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setShownAt(null), APPLIED_CUE_MS);
+
+    return () => clearTimeout(timer.current);
+  }, [shownAt]);
+
+  const dismiss = useCallback(() => setShownAt(null), []);
+
+  return { visible: shownAt !== null, dismiss };
 }
 
 /**

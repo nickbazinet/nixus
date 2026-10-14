@@ -21,6 +21,7 @@ const ALL_STATES: readonly SyncState[] = [
   "offline",
   "frozen",
   "update_needed",
+  "clock_skew",
   "link_choice_required",
   "remote_changed",
   "error",
@@ -58,6 +59,9 @@ const ALL_ERROR_CODES: readonly SyncErrorCode[] = [
   "actor_unavailable",
   "image_missing",
   "image_corrupt",
+  "segment_invalid",
+  "apply_failed",
+  "clock_skew",
 ];
 
 const REQUIRED_KEYS = [
@@ -108,6 +112,8 @@ const REQUIRED_KEYS = [
   "sync.separateProfileTitle",
   "sync.separateProfileBody",
   "sync.errorTransport",
+  "sync.appliedCue",
+  "sync.appliedCueDismiss",
 ] as const;
 
 function syncKeys(locale: Record<string, string>): string[] {

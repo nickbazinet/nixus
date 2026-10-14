@@ -308,6 +308,10 @@ pub(crate) fn redacted_document(
             "blocked": diagnostics.blocked,
             "local_rows": diagnostics.local_rows,
             "snapshots": diagnostics.uploads + diagnostics.restores,
+            "parked_segments": diagnostics.parked_segments,
+            "pending_messages": diagnostics.pending_messages,
+            "quarantined_messages": diagnostics.quarantined_messages,
+            "clock_skews": diagnostics.clock_skews,
         },
         "bytes": {
             "last_object": diagnostics.last_object_bytes,
@@ -319,6 +323,7 @@ pub(crate) fn redacted_document(
             "settle_window": diagnostics.settle_window_ms,
             "min_upload_interval": diagnostics.min_upload_interval_ms,
             "poll_interval": diagnostics.poll_interval_ms,
+            "last_clock_skew": diagnostics.last_clock_skew_ms,
         },
     })
 }
@@ -502,6 +507,11 @@ mod tests {
             segments_fetched: 5,
             messages_received: 41,
             reconcile_messages: 2,
+            parked_segments: 2,
+            pending_messages: 3,
+            quarantined_messages: 1,
+            clock_skews: 1,
+            last_clock_skew_ms: Some(612_000),
             segments_deleted: 11,
             snapshots_deleted: 1,
             roster_pruned: 1,

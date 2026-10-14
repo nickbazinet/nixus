@@ -259,6 +259,17 @@ pub struct SegmentBatch {
 pub(crate) trait Applier {
     /// How many messages were accepted. Counts only; AD-16 keeps values out of every report.
     fn apply(&mut self, batch: &SegmentBatch) -> Result<usize, AppError>;
+
+    /// How far ahead the furthest remote stamp this applier REFUSED was, draining the mark
+    /// (AD-4). `None` means every stamp since the last call was inside the drift limit.
+    ///
+    /// On the trait rather than in the return of `apply`, because the question the actor asks is
+    /// about the CYCLE and not about one batch, and because every applier that does not fold
+    /// stamps into a clock (the recorder, the counter, the closed one) answers `None` by
+    /// construction.
+    fn take_clock_skew(&mut self) -> Option<i64> {
+        None
+    }
 }
 
 /// The applier the production actor runs until Story 20 lands.
@@ -646,15 +657,34 @@ pub struct VerifiedSegment {
 }
 
 /// Checks a stored segment and returns the messages it carries, in idx order.
+///
+/// `#[cfg(test)]`: production always states the ceiling its HOST reports, so that version skew is
+/// one decision in one place (AD-11). A test that is not about skew wants today's build.
+#[cfg(test)]
 pub fn read_segment(
     object: &[u8],
     install: &str,
     seq: i64,
 ) -> Result<VerifiedSegment, SegmentError> {
+    let supported = u32::try_from(crate::db::latest_schema_version()).unwrap_or(u32::MAX);
+
+    read_segment_for(object, install, seq, supported)
+}
+
+/// The same check against a stated schema ceiling.
+///
+/// Separate so the actor can pass the ceiling its HOST reports (AD-11): "this build is older than
+/// the sender" is the whole of version skew, and a test cannot otherwise stand an old computer up
+/// next to a new one without two builds.
+pub fn read_segment_for(
+    object: &[u8],
+    install: &str,
+    seq: i64,
+    supported: u32,
+) -> Result<VerifiedSegment, SegmentError> {
     let (header, compressed) = ObjectHeader::parse(object)?;
 
     // Before decompressing: an object this build cannot apply should cost nothing to refuse.
-    let supported = u32::try_from(crate::db::latest_schema_version()).unwrap_or(u32::MAX);
     if header.schema_version > supported {
         return Err(SegmentError::SchemaTooNew {
             found: header.schema_version,
@@ -948,6 +978,16 @@ struct InstallCursor {
     buffered: BTreeMap<i64, Vec<SegmentMessage>>,
     /// Gaps already probed, so a persistent gap costs one repair probe and not one per poll.
     probed: BTreeSet<i64>,
+    /// Segments PARKED for version skew (AD-11), each with the schema version it needs.
+    ///
+    /// Parking is "kept, not applied, not dropped, not quarantined": the segment object is
+    /// immutable in the account (AD-6), so the cloud copy IS the durable park and nothing has to
+    /// be written locally. `next_seq` deliberately does not move past a parked seq — every later
+    /// segment of a newer build carries the same newer version, and AD-11 applies an install's
+    /// segments in contiguous order — so this install's stream resumes exactly where it stopped
+    /// once the app has been updated. Re-requesting is suppressed until the ceiling reaches the
+    /// version the segment needs, which is why a stale build costs no extra GET per poll.
+    parked: BTreeMap<i64, u32>,
 }
 
 /// Everything the pull side remembers between polls: the roster ETag, the roster itself, and one
@@ -1001,6 +1041,32 @@ impl PullCursor {
     #[cfg(test)]
     pub fn next_seq(&self, install: &str) -> Option<i64> {
         self.installs.get(install).map(|cursor| cursor.next_seq)
+    }
+
+    /// Every parked segment this cursor is holding, oldest install-then-seq first, so the unpark
+    /// pass applies them in exactly the order AD-11 requires.
+    pub fn parked(&self) -> Vec<(String, i64, u32)> {
+        let mut parked: Vec<(String, i64, u32)> = self
+            .installs
+            .iter()
+            .flat_map(|(install, cursor)| {
+                cursor
+                    .parked
+                    .iter()
+                    .map(move |(seq, version)| (install.clone(), *seq, *version))
+            })
+            .collect();
+        parked.sort();
+
+        parked
+    }
+
+    /// How many segments are parked for version skew. Counts only (AD-16).
+    pub fn parked_count(&self) -> u64 {
+        self.installs
+            .values()
+            .map(|cursor| cursor.parked.len() as u64)
+            .sum()
     }
 
     #[cfg(test)]
@@ -1087,6 +1153,7 @@ pub(crate) async fn poll_heads<S, L, C, T>(
     cursor: &mut PullCursor,
     installs: &[String],
     applier: &mut dyn Applier,
+    supported_schema: u32,
     report: &mut PollReport,
 ) -> Result<(), SegmentError>
 where
@@ -1138,17 +1205,42 @@ where
             state.head_etag = Some(stored.meta.etag);
         }
 
+        // A parked segment whose version this build has since caught up with stops being parked:
+        // the next fetch below picks it up again and applies it (AD-11's "after the app updates").
+        state
+            .parked
+            .retain(|_, required| *required > supported_schema);
+
         if let Some(target) = state.head_seq {
             for seq in state.next_seq..=target {
                 if state.buffered.contains_key(&seq) {
                     continue;
                 }
+                // Still beyond this build: not requested again, and nothing above it either —
+                // every later segment of a newer build carries the same newer version.
+                // The cursor is the one record of what is parked (the manager reads it for the
+                // `update_needed` state), so the report deliberately does not carry a second copy.
+                if state.parked.contains_key(&seq) {
+                    break;
+                }
 
                 match store.get(&segment_key(install, seq)).await {
                     Ok(stored) => {
-                        let verified = read_segment(&stored.bytes, install, seq)?;
-                        state.buffered.insert(seq, verified.messages);
-                        report.segments_fetched += 1;
+                        match read_segment_for(&stored.bytes, install, seq, supported_schema) {
+                            Ok(verified) => {
+                                state.buffered.insert(seq, verified.messages);
+                                report.segments_fetched += 1;
+                            }
+                            // AD-11: PARKED, not dropped and not quarantined. The object stays in
+                            // the account, this install's stream stops here, and every OTHER
+                            // install keeps syncing — which is what "the rest of sync this build
+                            // understands keeps working" has to mean.
+                            Err(SegmentError::SchemaTooNew { found, .. }) => {
+                                state.parked.insert(seq, found);
+                                break;
+                            }
+                            Err(error) => return Err(error),
+                        }
                     }
                     // A gap, not a failure: the head moved before the object became visible, or an
                     // earlier segment is still in flight. Later ones keep being fetched so they are

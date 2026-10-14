@@ -68,6 +68,9 @@ pub enum SyncState {
     Frozen,
     /// The cloud copy was written by a newer build (AD-11, CAP-7).
     UpdateNeeded,
+    /// This computer's wall clock disagrees with the other computers' by more than AD-4's drift
+    /// limit. Local use is unaffected; the user has to fix the date and time.
+    ClockSkew,
     /// Waiting for the user to answer CAP-5's replace-or-separate question.
     LinkChoiceRequired,
     /// Waiting for the user to answer load-or-keep after a conflict.
@@ -148,6 +151,9 @@ pub enum SyncFault {
     Swap { rolled_back: bool },
     /// The cloud copy needs a schema this build does not have.
     UpdateNeeded { found: u32, supported: u32 },
+    /// A remote stamp was more than AD-4's drift limit ahead of this computer's wall clock, so it
+    /// was refused the right to move this clock. Carries how far ahead, never a timestamp.
+    ClockSkew { ahead_ms: i64 },
     OwnerMismatch,
     /// The *separate* profile could not be provisioned; nothing was restored.
     Registry,
@@ -194,6 +200,7 @@ impl SyncFault {
             SyncFault::Snapshot(SnapshotError::SourceBusy) => "dataset_busy",
             SyncFault::Snapshot(SnapshotError::SchemaTooNew { .. })
             | SyncFault::UpdateNeeded { .. } => "update_needed",
+            SyncFault::ClockSkew { .. } => "clock_skew",
             SyncFault::Snapshot(_) => "snapshot_invalid",
             SyncFault::Segment(error) => error.code(),
             SyncFault::Swap { .. } => "restore_failed",
@@ -233,6 +240,7 @@ impl SyncFault {
             | SyncFault::Snapshot(_)
             | SyncFault::Segment(_)
             | SyncFault::UpdateNeeded { .. }
+            | SyncFault::ClockSkew { .. }
             | SyncFault::Swap { .. }
             | SyncFault::Registry
             | SyncFault::StateUnavailable
@@ -277,6 +285,7 @@ impl SyncFault {
             "not_enabled" => "Sync is not turned on for this profile.",
             "segment_invalid" => "A change from another computer could not be read.",
             "apply_failed" => "A change from another computer could not be applied yet.",
+            "clock_skew" => "This computer's date and time are too far off to order changes.",
             _ => "Sync is unavailable.",
         }
     }
@@ -496,6 +505,15 @@ pub struct SyncDiagnostics {
     pub segments_fetched: u64,
     pub messages_received: u64,
     pub reconcile_messages: u64,
+    /// Segments held back because the computer that wrote them runs a newer schema (AD-11).
+    pub parked_segments: u64,
+    /// Messages waiting in `sync_pending` for a row that has not arrived yet (AD-11).
+    pub pending_messages: i64,
+    /// Messages in `sync_quarantine`: kept, never applied, never silently dropped (AD-11).
+    pub quarantined_messages: i64,
+    pub clock_skews: u64,
+    /// How far ahead the furthest refused remote stamp was, in ms (AD-4). A number, never a stamp.
+    pub last_clock_skew_ms: Option<i64>,
     pub segments_deleted: u64,
     pub snapshots_deleted: u64,
     pub roster_pruned: u64,
@@ -525,6 +543,8 @@ struct SyncStats {
     messages_received: u64,
     /// Messages reconcile had to emit because a write bypassed capture (AD-3). Counts only.
     reconcile_messages: u64,
+    /// Cycles that refused at least one remote stamp for drift (AD-4). Counts only.
+    clock_skews: u64,
     conflicts: u64,
     restores: u64,
     snapshots_deleted: u64,
@@ -624,6 +644,10 @@ pub(crate) struct SyncActor<H: SyncHost> {
     reconcile_clock: Option<Clock>,
     last_reconcile: Option<Instant>,
     reconcile_done_once: bool,
+    /// The furthest a refused remote stamp was ahead of this computer (AD-4). Kept for diagnostics
+    /// after the state has cleared, because "it happened and then it was fixed" is what support
+    /// needs to read.
+    last_clock_skew_ms: Option<i64>,
 }
 
 impl<H: SyncHost> SyncActor<H> {
@@ -688,6 +712,7 @@ impl<H: SyncHost> SyncActor<H> {
             reconcile_clock: None,
             last_reconcile: Some(started),
             reconcile_done_once: false,
+            last_clock_skew_ms: None,
         };
 
         (actor, status_rx, events_rx)
@@ -728,6 +753,8 @@ impl<H: SyncHost> SyncActor<H> {
     }
 
     pub(in crate::sync) fn diagnostics(&self) -> SyncDiagnostics {
+        let worklist = self.worklist_counts();
+
         SyncDiagnostics {
             dataset_id: self.host.dataset_id().to_string(),
             capability: MULTI_DEVICE_SYNC.name(),
@@ -741,6 +768,11 @@ impl<H: SyncHost> SyncActor<H> {
             segments_fetched: self.stats.segments_fetched,
             messages_received: self.stats.messages_received,
             reconcile_messages: self.stats.reconcile_messages,
+            parked_segments: self.pull.parked_count(),
+            pending_messages: worklist.0,
+            quarantined_messages: worklist.1,
+            clock_skews: self.stats.clock_skews,
+            last_clock_skew_ms: self.last_clock_skew_ms,
             segments_deleted: self.stats.segments_deleted,
             snapshots_deleted: self.stats.snapshots_deleted,
             roster_pruned: self.stats.roster_pruned,
@@ -823,6 +855,7 @@ impl<H: SyncHost> SyncActor<H> {
             | SyncFault::Blocked(SyncBlocked::CapabilityMissing { .. }) => SyncState::Frozen,
             SyncFault::UpdateNeeded { .. }
             | SyncFault::Snapshot(SnapshotError::SchemaTooNew { .. }) => SyncState::UpdateNeeded,
+            SyncFault::ClockSkew { .. } => SyncState::ClockSkew,
             other if other.retryable() => SyncState::Offline,
             _ => SyncState::Error,
         };
@@ -832,6 +865,12 @@ impl<H: SyncHost> SyncActor<H> {
             // from: the next tick re-asks the gate, which is how leaving Frozen resumes.
             SyncState::Frozen | SyncState::Unlinked => {
                 self.stats.blocked += 1;
+                self.backoff = None;
+            }
+            // Neither is a transfer that failed and neither is fixed by waiting: an old build has
+            // to be updated and a wrong clock has to be corrected. Backing off would also stop the
+            // segments this build CAN still apply, which AD-11 forbids.
+            SyncState::UpdateNeeded | SyncState::ClockSkew => {
                 self.backoff = None;
             }
             SyncState::Offline => {
@@ -1392,7 +1431,56 @@ impl<H: SyncHost> SyncActor<H> {
             self.poll_remote(&session, &install).await?;
         }
 
+        self.settle_cycle_states();
+
         Ok(())
+    }
+
+    /// Turns what the cycle observed into AD-16's two "the user has to act, sync is not broken"
+    /// states, and clears them by itself when the cause is gone.
+    ///
+    /// Order is deliberate: a wrong clock is reported ahead of version skew because it also affects
+    /// the messages this build CAN apply (a clock that is behind loses every last-write-wins
+    /// comparison), so it is the more urgent of the two.
+    fn settle_cycle_states(&mut self) {
+        if let Some(ahead_ms) = self.applier.take_clock_skew() {
+            self.stats.clock_skews += 1;
+            self.last_clock_skew_ms = Some(ahead_ms);
+            self.record_fault(&SyncFault::ClockSkew { ahead_ms });
+            return;
+        }
+
+        let parked = self.pull.parked();
+        if let Some(found) = parked.iter().map(|(_, _, version)| *version).max() {
+            self.record_fault(&SyncFault::UpdateNeeded {
+                found,
+                supported: self.host.schema_version(),
+            });
+            return;
+        }
+
+        // Both causes are gone, so neither state may persist. Narrow on purpose: only the two
+        // states this cycle owns are cleared here, so an `offline` backoff or a swap failure is
+        // still the business of the path that set it.
+        if matches!(self.state, SyncState::UpdateNeeded | SyncState::ClockSkew) {
+            self.clear_error();
+            self.publish(SyncState::Idle);
+        }
+    }
+
+    /// `sync_pending` and `sync_quarantine` as counts (AD-16: counts, never values).
+    ///
+    /// A failure to read them is NOT a fault: diagnostics must answer even when the dataset is
+    /// mid-swap, and "unknown" is reported as zero rather than as a refusal to produce a report.
+    fn worklist_counts(&self) -> (i64, i64) {
+        self.host
+            .with_dataset(|conn| {
+                Ok((
+                    crate::db::sync_apply::parked_count(conn)?,
+                    crate::db::sync_apply::quarantined_count(conn)?,
+                ))
+            })
+            .unwrap_or((0, 0))
     }
 
     /// Cuts and ships every bounded segment the unshipped tail holds, then publishes this install's
@@ -1472,6 +1560,7 @@ impl<H: SyncHost> SyncActor<H> {
             &mut self.pull,
             &installs,
             self.applier.as_mut(),
+            self.host.schema_version(),
             &mut report,
         )
         .await?;

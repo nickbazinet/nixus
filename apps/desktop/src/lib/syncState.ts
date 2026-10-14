@@ -7,6 +7,7 @@ const KNOWN_STATES: readonly SyncState[] = [
   "offline",
   "frozen",
   "update_needed",
+  "clock_skew",
   "link_choice_required",
   "remote_changed",
   "error",
@@ -48,6 +49,8 @@ export function syncStateLabelKey(state: SyncState): string {
       return "sync.stateFrozen";
     case "update_needed":
       return "sync.stateUpdateNeeded";
+    case "clock_skew":
+      return "sync.stateClockSkew";
     case "link_choice_required":
     case "remote_changed":
       return "sync.stateActionNeeded";
@@ -71,6 +74,8 @@ export function syncStateDetailKey(state: SyncState): string {
       return "sync.detailFrozen";
     case "update_needed":
       return "sync.detailUpdateNeeded";
+    case "clock_skew":
+      return "sync.detailClockSkew";
     case "link_choice_required":
       return "sync.detailLinkChoiceRequired";
     case "remote_changed":
@@ -90,6 +95,7 @@ export function syncStateTone(state: SyncState): SyncTone {
     case "offline":
     case "frozen":
     case "update_needed":
+    case "clock_skew":
     case "link_choice_required":
     case "remote_changed":
       return "caution";
