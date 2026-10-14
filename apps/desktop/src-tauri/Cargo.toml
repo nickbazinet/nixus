@@ -67,6 +67,14 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # `sync/snapshot.rs` and pinned by a test, because the object format version is what a reader uses
 # to decide it can read the bytes at all (AD-8).
 zstd = "0.14.2"
+# The hybrid logical clock (AD-4). A caret range on purpose, unlike the AWS SDKs: what
+# `sync/clock.rs` depends on is `NTP64`/`Timestamp`/`ID` and the HLC update algorithm, which
+# are this crate's public API, not an error surface. Default features are kept: `std` is
+# required for the system clock, and uhlc's own `std` code calls `log`, so trimming that
+# feature would not compile. NOTE for every later story: `HLCBuilder::new()` goes through
+# `Default`, which reads `UHLC_MAX_DELTA_MS` and PANICS on a non-numeric value; the limit
+# itself is always set explicitly with `with_max_delta`, so the variable must stay unset.
+uhlc = "0.9.0"
 
 [dev-dependencies]
 # The S3 adapter's error mapping is unit-tested with no network at all: these stub the
@@ -83,6 +91,11 @@ aws-smithy-runtime-api = "1"
 # `#[tokio::test(start_paused = true)]`, which is what lets the throttled-transfer test assert an
 # exact duration instead of sleeping for real.
 tokio = { version = "1.50.0", features = ["full", "test-util"] }
+# The seed stream and case-count plumbing of the N-replica convergence simulator (AD-19).
+# `sync/sim` derives a whole scenario from one `u64`, so proptest supplies the seeds and the
+# configuration and nothing else; `failure_persistence` is turned off there because a
+# regression file in the source tree is not how a failure is reproduced here.
+proptest = "1"
 
 # Must remain the LAST table in this file: bare keys after a [target...] table would
 # be silently absorbed into it. The "deep-link" feature is required so a forwarded

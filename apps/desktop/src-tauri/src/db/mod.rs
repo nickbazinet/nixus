@@ -35,6 +35,8 @@ pub mod sync_state;
 pub mod yearly_summary;
 
 #[cfg(test)]
+pub(crate) mod sim_tables;
+#[cfg(test)]
 pub(crate) mod test_dataset;
 #[cfg(test)]
 mod tests_migration_030;

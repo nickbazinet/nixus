@@ -256,6 +256,32 @@ dev machine — `.github/workflows/sync-infra.yml` owns the `nixus-sync` stack, 
 `infra/sync/verify-template.py` plus `cfn-lint` are the only sync-infra checks you can run
 locally.
 
+#### Convergence simulator
+
+`sync/sim/` is the N-replica randomized convergence simulator. It builds 2–5 replicas, each
+with its own install id, its own hybrid logical clock and its own real SQLite file on the real
+migrated schema, drives randomized edits plus offline periods, reordering, duplicated delivery
+and delayed segments over an in-memory transport, then asserts identical tables, balances equal
+to the sum of their changes, no lost edits, idempotent re-apply, delete-wins and
+double-delete-equals-single-delete.
+
+```bash
+cd apps/desktop/src-tauri
+cargo test sync::sim                                 # 64 seeds, included in cargo test
+NIXUS_SIM_SEEDS=1000 cargo test --release sync::sim   # the release gate (~70 s)
+NIXUS_SIM_SEED=12345 cargo test sync::sim             # replay exactly one seed
+```
+
+A seed is a complete replay instruction: the replica count and the step count are derived from
+it. A failing scenario writes its seed and resolved op trace as JSON under
+`<temp>/nixus-sim-traces/` (override with `NIXUS_SIM_TRACE_DIR`) and prints both the path and
+the one-seed command that reproduces it.
+
+The merge rules live behind one trait, `sync::sim::engine::ReplicaEngine`, with a reference
+implementation that is green today. Later sync work swaps in the real capture → segment → apply
+pipeline **without changing the assertions**; the procedure is in the module docs of
+`sync/sim/mod.rs`.
+
 ---
 
 ## Building and packaging
