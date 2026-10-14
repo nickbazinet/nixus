@@ -28,7 +28,8 @@ Two claim groups:
 
 This runs with the workflow's own static credentials, under a test-only prefix
 (ci-isolation-test/<run id>-<attempt>/), never under acct/<a real identity id>/.
-Nothing is deleted: Milestone 1 grants no s3:DeleteObject and the standing rules
+Nothing is deleted: the AD-13 grant reaches only log/ and snap/, this script writes neither,
+and the standing rules
 forbid deleting anything in AWS.
 
 Every claim prints PASS, FAIL or SKIP with a reason, and the run ends with a

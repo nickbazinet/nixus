@@ -154,15 +154,30 @@ Resources:
               # each caller can only name its own AD-6 prefix. GetObject covers
               # HEAD and conditional GET; PutObject covers create-only
               # (If-None-Match: *) and compare-and-swap (If-Match) writes.
-              # Deliberately absent: s3:DeleteObject (retention is AD-13 /
-              # Milestone 2), s3:GetObjectVersion, multipart actions, any KMS
-              # action (SSE-S3 needs none).
+              # Deliberately absent: s3:GetObjectVersion, multipart actions, any
+              # KMS action (SSE-S3 needs none). DeleteObject is granted, but only
+              # on the two reclaimable prefixes, by the statement below.
               - Sid: ReadWriteOwnPrefixOnly
                 Effect: Allow
                 Action:
                   - 's3:GetObject'
                   - 's3:PutObject'
                 Resource: !Sub '${SyncBucket.Arn}/acct/${!cognito-identity.amazonaws.com:sub}/*'
+              # AD-13 retention. Its own statement with its own two resources,
+              # deliberately NOT added to the Action list above: the grant above
+              # covers `acct/<id>/*`, so widening it would also allow deleting
+              # `owner` (the account binding), `head/*` and `roster` (the
+              # protocol's pointers) and `blob/*` (whose cleanup is deferred) —
+              # each of which another computer depends on. Only a log segment
+              # and a superseded snapshot are ever reclaimable, and only up to
+              # the watermark of the re-read `snap/LATEST`.
+              # infra/sync/verify-template.py fails if this widens.
+              - Sid: DeleteReclaimableOwnObjectsOnly
+                Effect: Allow
+                Action: 's3:DeleteObject'
+                Resource:
+                  - !Sub '${SyncBucket.Arn}/acct/${!cognito-identity.amazonaws.com:sub}/log/*'
+                  - !Sub '${SyncBucket.Arn}/acct/${!cognito-identity.amazonaws.com:sub}/snap/*'
               # ListBucket is scoped by s3:prefix, which a GetObject request does
               # not carry. Consequence, by design: a GET or HEAD on a missing key
               # is answered 403 rather than 404, because the caller has no

@@ -114,7 +114,79 @@ def build_cases(bucket_arn: str) -> list[tuple[str, str, str, str | None, bool]]
             f"{neighbour}/",
             False,
         ),
-        ("DeleteObject on own key denied (not granted in M1)", "s3:DeleteObject", obj(f"{own}/snap/x"), None, False),
+        # AD-13 retention (Story 23). The grant is deliberately narrower than the read/write one:
+        # a client may reclaim its own log segments and superseded snapshots and NOTHING else, so
+        # the four protocol pointers every other computer depends on stay undeletable.
+        (
+            "own prefix: DeleteObject on a log segment allowed (AD-13)",
+            "s3:DeleteObject",
+            obj(f"{own}/log/install-1/0000000000000001"),
+            None,
+            True,
+        ),
+        (
+            "own prefix: DeleteObject on a snapshot allowed (AD-13)",
+            "s3:DeleteObject",
+            obj(f"{own}/snap/0123abcd"),
+            None,
+            True,
+        ),
+        (
+            "own owner object: DeleteObject denied",
+            "s3:DeleteObject",
+            obj(f"{own}/owner"),
+            None,
+            False,
+        ),
+        (
+            "own head pointer: DeleteObject denied",
+            "s3:DeleteObject",
+            obj(f"{own}/head/install-1"),
+            None,
+            False,
+        ),
+        (
+            "own roster: DeleteObject denied",
+            "s3:DeleteObject",
+            obj(f"{own}/roster"),
+            None,
+            False,
+        ),
+        (
+            "own blob: DeleteObject denied (orphan cleanup is deferred)",
+            "s3:DeleteObject",
+            obj(f"{own}/blob/aabbcc"),
+            None,
+            False,
+        ),
+        (
+            "own snap/LATEST pointer: DeleteObject allowed only because it lives under snap/",
+            "s3:DeleteObject",
+            obj(f"{own}/snap/LATEST"),
+            None,
+            True,
+        ),
+        (
+            "other account: DeleteObject on a log segment denied",
+            "s3:DeleteObject",
+            obj(f"{other}/log/install-1/0000000000000001"),
+            None,
+            False,
+        ),
+        (
+            "other account: DeleteObject on a snapshot denied",
+            "s3:DeleteObject",
+            obj(f"{other}/snap/0123abcd"),
+            None,
+            False,
+        ),
+        (
+            "prefix-boundary confusion denied for DeleteObject",
+            "s3:DeleteObject",
+            obj(f"{neighbour}/log/install-1/0000000000000001"),
+            None,
+            False,
+        ),
     ]
 
 

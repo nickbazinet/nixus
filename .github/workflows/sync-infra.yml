@@ -266,6 +266,10 @@ jobs:
   # account's prefix. Read-only simulation against the ALREADY-DEPLOYED role, so
   # it runs on pull requests (proving isolation before a merge) and again after
   # every master deploy. Skipped on fork PRs, which have no credentials at all.
+  #
+  # Since story 23 the matrix also pins the AD-13 retention grant: DeleteObject
+  # is ALLOWED on the caller's own log/ and snap/ keys and DENIED on its own
+  # owner, head/, roster and blob/ keys and on every other account's prefix.
   isolation:
     name: Cross-account isolation gate
     needs: [verify, deploy]

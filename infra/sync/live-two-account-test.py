@@ -14,7 +14,8 @@ Required environment (all of them, or the run skips):
   NIXUS_SYNC_TEST_USER_B_USERNAME  / NIXUS_SYNC_TEST_USER_B_PASSWORD
 
 Keys are confined to a test-only suffix inside each test account's own prefix,
-and nothing is ever deleted (Milestone 1 grants no s3:DeleteObject).
+and nothing is ever deleted: the AD-13 retention grant covers only log/ and snap/, and this
+script exercises none of it.
 """
 
 from __future__ import annotations

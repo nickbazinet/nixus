@@ -24,7 +24,15 @@ ATTEST = REPO / "infra" / "sync" / "attest-deployed.py"
 AUTH_RS = REPO / "apps" / "desktop" / "src-tauri" / "src" / "commands" / "auth.rs"
 
 SUB_PREFIX = "acct/${cognito-identity.amazonaws.com:sub}/"
-ALLOWED_ACTIONS = {"s3:GetObject", "s3:PutObject", "s3:ListBucket"}
+ALLOWED_ACTIONS = {"s3:GetObject", "s3:PutObject", "s3:ListBucket", "s3:DeleteObject"}
+# AD-13: the ONLY two prefixes a client may ever delete from. `owner`, `head/*`,
+# `roster` and `blob/*` must stay unreachable by DeleteObject, so the grant is
+# asserted as an exact set rather than as "scoped to the sub prefix".
+BUCKET_ARN = "${SyncBucket.Arn}/"
+DELETABLE_PREFIXES = {
+    BUCKET_ARN + SUB_PREFIX + "log/*",
+    BUCKET_ARN + SUB_PREFIX + "snap/*",
+}
 
 failures: list[str] = []
 
@@ -181,6 +189,7 @@ def main() -> int:
         f"role grants actions outside {sorted(ALLOWED_ACTIONS)}: {sorted(actions - ALLOWED_ACTIONS)}",
     )
     list_statements = []
+    delete_statements = []
     for stmt in perm_statements:
         check(stmt.get("Effect") == "Allow", "every inline statement must be an Allow")
         stmt_actions = set(as_list(stmt.get("Action")))
@@ -188,6 +197,20 @@ def main() -> int:
         for rendered in resources_rendered:
             check(rendered != "*", "no statement may use Resource '*'")
             check("*" not in rendered.split("/")[0], "no statement may wildcard the bucket ARN")
+        if "s3:DeleteObject" in stmt_actions:
+            delete_statements.append(stmt)
+            check(
+                stmt_actions == {"s3:DeleteObject"},
+                "DeleteObject must be its own statement, so widening it cannot widen a read grant: "
+                f"{sorted(stmt_actions)}",
+            )
+            rendered_set = set(resources_rendered)
+            check(
+                rendered_set == DELETABLE_PREFIXES,
+                "DeleteObject must be granted on exactly the own log/ and snap/ prefixes "
+                f"({sorted(DELETABLE_PREFIXES)}), never wider: {sorted(rendered_set)}",
+            )
+            continue
         if stmt_actions == {"s3:ListBucket"}:
             list_statements.append(stmt)
             prefix = stmt.get("Condition", {}).get("StringLike", {}).get("s3:prefix")
@@ -206,6 +229,20 @@ def main() -> int:
                     f"object-level resource must be scoped to {SUB_PREFIX}: {rendered}",
                 )
     check(len(list_statements) == 1, "exactly one ListBucket statement is expected")
+    check(
+        len(delete_statements) == 1,
+        "exactly one DeleteObject statement is expected (AD-13)",
+    )
+    # The read/write grant must NOT carry DeleteObject, however the statements are arranged: that
+    # grant covers acct/<id>/* and would make owner, head/*, roster and blob/* deletable.
+    for stmt in perm_statements:
+        stmt_actions = set(as_list(stmt.get("Action")))
+        if stmt_actions == {"s3:DeleteObject"}:
+            continue
+        check(
+            "s3:DeleteObject" not in stmt_actions,
+            f"DeleteObject may not ride along with {sorted(stmt_actions - {'s3:DeleteObject'})}",
+        )
 
     # 6. Role attachment: authenticated only, no role mappings
     attachment = resources["SyncIdentityPoolRoleAttachment"]["Properties"]
