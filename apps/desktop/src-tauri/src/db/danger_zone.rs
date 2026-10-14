@@ -21,6 +21,16 @@ pub const WIPE_TABLES: &[&str] = &[
     // AD-10: what this computer has already uploaded. Forgetting it costs one
     // conditional request per picture afterwards, never a wrong answer.
     "sync_image_blobs",
+    // AD-15: Story 14's seven. A wipe deletes locally and clears the sync tables; it
+    // never touches the cloud copy or another computer. Order is free among them
+    // because none has a foreign key — into each other or into a data table.
+    "sync_uuid",
+    "sync_log",
+    "sync_field_state",
+    "sync_applied_vector",
+    "sync_tombstone",
+    "sync_pending",
+    "sync_quarantine",
     "chat_messages",
     "chat_conversations",
     "maintenance_service_logs",
@@ -136,6 +146,36 @@ mod tests {
                         'linked', 'us-east-1:abc', 'sub-1');
             INSERT INTO sync_image_blobs (image_sha256)
                 VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+            INSERT INTO sync_uuid (table_name, row_id, uuid)
+                VALUES ('accounts', 1, x'000102030405060708090a0b0c0d0e0f');
+            INSERT INTO sync_log (install, hlc, kind, table_name, row_uuid, column_name)
+                VALUES ('0123456789abcdef',
+                        '0000000000000001-0123456789abcdef', 'field', 'accounts',
+                        x'000102030405060708090a0b0c0d0e0f', 'name');
+            INSERT INTO sync_field_state
+                (table_name, row_uuid, column_name, hlc, install, content_hash)
+                VALUES ('accounts', x'000102030405060708090a0b0c0d0e0f', 'name',
+                        '0000000000000001-0123456789abcdef', '0123456789abcdef',
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+            INSERT INTO sync_applied_vector (install, seq, applied_offset)
+                VALUES ('fedcba9876543210', 4, 0);
+            INSERT INTO sync_tombstone
+                (table_name, row_uuid, hlc, install, row_json, deleted_at, purge_after)
+                VALUES ('expenses', x'0f0e0d0c0b0a09080706050403020100',
+                        '0000000000000002-0123456789abcdef', '0123456789abcdef',
+                        '{\"id\":1}', '2026-10-01 00:00:00', '2026-10-31 00:00:00');
+            INSERT INTO sync_pending
+                (install, seq, idx, hlc, kind, table_name, row_uuid,
+                 waiting_on_table, waiting_on_uuid)
+                VALUES ('fedcba9876543210', 4, 0,
+                        '0000000000000003-fedcba9876543210', 'field', 'income_entries',
+                        x'101112131415161718191a1b1c1d1e1f',
+                        'income_sources', x'202122232425262728292a2b2c2d2e2f');
+            INSERT INTO sync_quarantine
+                (install, seq, idx, hlc, kind, table_name, row_uuid, reason)
+                VALUES ('fedcba9876543210', 5, 0,
+                        '0000000000000004-fedcba9876543210', 'tombstone', 'accounts',
+                        x'303132333435363738393a3b3c3d3e3f', 'constraint_violation');
             ",
         )
         .expect("seed all tables");

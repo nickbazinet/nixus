@@ -16,6 +16,7 @@ pub mod clock;
 pub mod config;
 pub mod gate;
 pub mod host;
+pub mod identity;
 pub mod manager;
 pub mod object;
 pub mod owner;

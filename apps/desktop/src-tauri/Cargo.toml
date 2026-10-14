@@ -76,6 +76,12 @@ zstd = "0.14.2"
 # itself is always set explicitly with `with_max_delta`, so the variable must stay unset.
 uhlc = "0.9.0"
 
+# Row identity (AD-2). Both generators are needed and neither is a default feature: `v4` mints the
+# random identity of a surrogate row, `v5` derives the deterministic identity of a natural-key or
+# template-generated row, which is what makes two computers creating "the same" row land on one row
+# rather than two. Pinned to the Stack table's version.
+uuid = { version = "1.28.0", features = ["v4", "v5"] }
+
 [dev-dependencies]
 # The S3 adapter's error mapping is unit-tested with no network at all: these stub the
 # SDK's responses behind a mock connector. `test-util` on aws-sdk-s3 is what supplies

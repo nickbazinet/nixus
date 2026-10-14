@@ -510,6 +510,78 @@ fn seed_sync_state(conn: &Connection) {
     crate::db::sync_state::set_pin(conn, "us-east-1:0000", "sub-0").expect("the pin writes");
 }
 
+/// One row in each of Story 14's seven sync tables, so a test about the snapshot round trip is
+/// proving a DELETE that had something to delete and a carry-over that had something to carry.
+///
+/// Returns how many rows it wrote, so the caller asserts against what it asked for rather than
+/// against a literal that drifts the next time a table is added.
+pub(crate) fn seed_sync_bookkeeping(conn: &Connection) -> usize {
+    const HLC: &str = "0000000000000001-0a1b2c3d4e5f6071";
+    const INSTALL: &str = "0a1b2c3d4e5f6071";
+    const REMOTE: &str = "fedcba9876543210";
+    let row: [u8; 16] = [0x11; 16];
+    let parent: [u8; 16] = [0x22; 16];
+
+    let statements: [(&str, Vec<rusqlite::types::Value>); 7] = [
+        (
+            "INSERT INTO sync_uuid (table_name, row_id, uuid) VALUES ('accounts', 1, ?1)",
+            vec![row.to_vec().into()],
+        ),
+        (
+            "INSERT INTO sync_log (install, hlc, kind, table_name, row_uuid, column_name)
+             VALUES (?1, ?2, 'field', 'accounts', ?3, 'name')",
+            vec![INSTALL.to_string().into(), HLC.to_string().into(), row.to_vec().into()],
+        ),
+        (
+            "INSERT INTO sync_field_state
+                (table_name, row_uuid, column_name, hlc, install, content_hash)
+             VALUES ('accounts', ?1, 'name', ?2, ?3, ?4)",
+            vec![
+                row.to_vec().into(),
+                HLC.to_string().into(),
+                INSTALL.to_string().into(),
+                "b".repeat(64).into(),
+            ],
+        ),
+        (
+            "INSERT INTO sync_applied_vector (install, seq, applied_offset) VALUES (?1, 7, 0)",
+            vec![REMOTE.to_string().into()],
+        ),
+        (
+            "INSERT INTO sync_tombstone
+                (table_name, row_uuid, hlc, install, row_json, deleted_at, purge_after)
+             VALUES ('expenses', ?1, ?2, ?3, '{\"id\":1}',
+                     '2026-10-01 00:00:00', '2026-10-31 00:00:00')",
+            vec![row.to_vec().into(), HLC.to_string().into(), INSTALL.to_string().into()],
+        ),
+        (
+            "INSERT INTO sync_pending
+                (install, seq, idx, hlc, kind, table_name, row_uuid,
+                 waiting_on_table, waiting_on_uuid)
+             VALUES (?1, 7, 0, ?2, 'field', 'income_entries', ?3, 'income_sources', ?4)",
+            vec![
+                REMOTE.to_string().into(),
+                HLC.to_string().into(),
+                row.to_vec().into(),
+                parent.to_vec().into(),
+            ],
+        ),
+        (
+            "INSERT INTO sync_quarantine
+                (install, seq, idx, hlc, kind, table_name, row_uuid, reason)
+             VALUES (?1, 8, 0, ?2, 'tombstone', 'accounts', ?3, 'constraint_violation')",
+            vec![REMOTE.to_string().into(), HLC.to_string().into(), row.to_vec().into()],
+        ),
+    ];
+
+    for (sql, values) in &statements {
+        conn.execute(sql, rusqlite::params_from_iter(values.iter()))
+            .unwrap_or_else(|error| panic!("a sync bookkeeping row inserts: {error}\n{sql}"));
+    }
+
+    statements.len()
+}
+
 /// A migrated, otherwise-empty dataset at `db_path`, for tests about the sync *protocol*
 /// rather than about size. `heavy_year_dataset` costs ~700 ms to snapshot; this costs
 /// milliseconds, which is what makes a dozen settle/conflict tests affordable.

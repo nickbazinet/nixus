@@ -639,6 +639,10 @@ mod tests {
 
     /// Every table, and per table every row rendered with its rowid, so a comparison can tell "the
     /// same rows" from "the same rows renumbered".
+    ///
+    /// A `WITHOUT ROWID` table has no `_rowid_` to select, and Story 14's sync side tables are
+    /// mostly of that kind. They are dumped by their own columns instead — there is no renumbering
+    /// to detect on a table whose primary key IS its identity.
     fn dump(conn: &Connection) -> BTreeMap<String, Vec<String>> {
         let names: Vec<String> = {
             let mut tables = conn
@@ -653,11 +657,15 @@ mod tests {
 
         let mut dumped = BTreeMap::new();
         for name in names {
-            let mut rows = conn
-                .prepare(&format!(
-                    "SELECT _rowid_, * FROM \"{name}\" ORDER BY _rowid_"
-                ))
-                .expect("the row dump prepares");
+            let has_rowid = conn
+                .prepare(&format!("SELECT _rowid_ FROM \"{name}\" LIMIT 0"))
+                .is_ok();
+            let sql = if has_rowid {
+                format!("SELECT _rowid_, * FROM \"{name}\" ORDER BY _rowid_")
+            } else {
+                format!("SELECT * FROM \"{name}\"")
+            };
+            let mut rows = conn.prepare(&sql).expect("the row dump prepares");
             let values: Vec<String> = rows
                 .query_map([], |row| {
                     let mut rendered = String::new();
@@ -733,7 +741,18 @@ mod tests {
         assert_eq!(built.stripped.config_keys, CONFIG_DENY_LIST.len());
         assert_eq!(
             built.stripped.local_only_tables,
-            vec!["sync_image_blobs", "sync_state"]
+            vec![
+                "sync_applied_vector",
+                "sync_field_state",
+                "sync_image_blobs",
+                "sync_log",
+                "sync_pending",
+                "sync_quarantine",
+                "sync_state",
+                "sync_tombstone",
+                "sync_uuid",
+            ],
+            "every sync_* table is discovered by name and emptied (AD-15)"
         );
         assert_eq!(
             built.stripped.local_only_rows, 1,
@@ -774,6 +793,62 @@ mod tests {
             before,
             "not one byte of the live file may change"
         );
+    }
+
+    /// Story 14's seven tables are LOCAL BOOKKEEPING and must never travel (AD-15). The existing
+    /// strip discovers them by `sync\_%` name, so this proves the discovery actually reaches them
+    /// with rows in them — an empty table would make the same assertion pass for the wrong reason.
+    #[tokio::test]
+    async fn the_sync_bookkeeping_tables_never_travel_in_a_snapshot() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let db_path = dir.path().join("nixus.db");
+        let seeded = {
+            let conn = crate::db::test_dataset::migrated_dataset(&db_path);
+            crate::db::sync_state::ensure(&conn, "0a1b2c3d4e5f6071", &"a".repeat(64))
+                .expect("the install identity");
+            let seeded = crate::db::test_dataset::seed_sync_bookkeeping(&conn);
+            crate::db::test_dataset::insert_marker_rows(&conn, &["Living", "Lifestyle"]);
+            crate::db::sync_blobs::mark_image_blob_uploaded(&conn, &"c".repeat(64))
+                .expect("an upload marker");
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+                .expect("the wal is checkpointed");
+            seeded
+        };
+
+        let built = build_snapshot(&db_path, schema_version())
+            .await
+            .expect("the snapshot builds");
+
+        // One `sync_state` row, one `sync_image_blobs` row, and one per Story 14 table. Asserted as
+        // a sum so adding a table to the schema without adding it here fails loudly.
+        assert_eq!(built.stripped.local_only_rows, seeded + 2);
+        assert_eq!(built.stripped.local_only_tables.len(), 9);
+
+        let verified = read_snapshot(&built.object).expect("the object verifies");
+        let (_restored_dir, restored) = restore_to_file(&verified.payload);
+
+        for table in &built.stripped.local_only_tables {
+            let remaining: i64 = restored
+                .query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| {
+                    row.get(0)
+                })
+                .expect("the count reads");
+            assert_eq!(remaining, 0, "{table} must travel empty");
+        }
+
+        // And the user's own rows did travel, so "everything is empty" is not what was proven.
+        assert_eq!(
+            crate::db::test_dataset::marker_rows(&restored),
+            vec!["Living".to_string(), "Lifestyle".to_string()]
+        );
+
+        // `sync_image_blobs` is treated exactly as Story 11 left it: emptied by the same
+        // discovery, not special-cased by either side.
+        let live = Connection::open(&db_path).expect("the live dataset opens");
+        let kept: i64 = live
+            .query_row("SELECT COUNT(*) FROM sync_image_blobs", [], |row| row.get(0))
+            .expect("the count reads");
+        assert_eq!(kept, 1, "the live file keeps knowing what it uploaded");
     }
 
     /// The round trip is the whole promise of a snapshot: restore it and the tables are the same

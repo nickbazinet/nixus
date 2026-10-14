@@ -287,7 +287,17 @@ fn the_local_only_tables_and_credential_config_keys_are_carried_over() {
     // which pictures this computer already put in the cloud.
     assert_eq!(
         report.carried.tables,
-        vec!["sync_image_blobs".to_string(), "sync_state".to_string()]
+        vec![
+            "sync_applied_vector".to_string(),
+            "sync_field_state".to_string(),
+            "sync_image_blobs".to_string(),
+            "sync_log".to_string(),
+            "sync_pending".to_string(),
+            "sync_quarantine".to_string(),
+            "sync_state".to_string(),
+            "sync_tombstone".to_string(),
+            "sync_uuid".to_string(),
+        ]
     );
     assert_eq!(report.carried.rows, 1);
     assert_eq!(report.carried.config_keys, 1);
@@ -312,6 +322,72 @@ fn the_local_only_tables_and_credential_config_keys_are_carried_over() {
         Some("the account's"),
         "a synced setting must come from the snapshot, not from the old file"
     );
+}
+
+/// The other half of the round trip (AD-9, AD-15): what the snapshot travels WITHOUT, the guarded
+/// restore must put back from the safety copy. Story 14's seven tables are discovered by the same
+/// `sync\_%` name match as `sync_state` and `sync_image_blobs`, so they are carried with no edit —
+/// and this test is what proves that rather than assuming it.
+#[test]
+fn every_sync_bookkeeping_table_is_carried_over_by_a_guarded_restore() {
+    let mut seeded = 0;
+    let (_dir, db_path) = live_dataset("live", |conn| {
+        link_sync_state(conn);
+        seeded = crate::db::test_dataset::seed_sync_bookkeeping(conn);
+    });
+    let slot = TestSlot::holding(&db_path, Sabotage::None);
+
+    // A payload built the way a snapshot is: every `sync_*` table empty.
+    let payload = database_bytes("from the cloud", |_| {});
+
+    let report =
+        restore_snapshot_file(&slot, &db_path, &payload, None).expect("the restore succeeds");
+
+    // One `sync_state` row plus one per Story 14 table; `sync_image_blobs` was never populated
+    // here, which is what keeps this a statement about the seven.
+    assert_eq!(report.carried.rows, seeded + 1);
+
+    let held = slot.held.lock().expect("not poisoned");
+    let conn = held.as_ref().expect("a connection");
+    let count = |table: &str| -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+            .expect("the count reads")
+    };
+
+    for table in [
+        "sync_uuid",
+        "sync_log",
+        "sync_field_state",
+        "sync_applied_vector",
+        "sync_tombstone",
+        "sync_pending",
+        "sync_quarantine",
+    ] {
+        assert_eq!(count(table), 1, "{table} must survive the file swap");
+    }
+
+    // The values, not just the counts: a carry-over that renumbered or truncated a row would pass
+    // a count check and lose the identity every message depends on.
+    let uuid: Vec<u8> = conn
+        .query_row(
+            "SELECT uuid FROM sync_uuid WHERE table_name = 'accounts' AND row_id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the identity reads");
+    assert_eq!(uuid, vec![0x11u8; 16]);
+
+    let applied: (String, i64) = conn
+        .query_row(
+            "SELECT install, seq FROM sync_applied_vector",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the vector reads");
+    assert_eq!(applied, ("fedcba9876543210".to_string(), 7));
+
+    // And the restored file is still the cloud's data, not the old one.
+    assert_eq!(read_marker(conn), "from the cloud");
 }
 
 #[test]
