@@ -4467,7 +4467,7 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nixus"
-version = "0.3.21"
+version = "0.3.22"
 dependencies = [
  "async-openai",
  "aws-config",
