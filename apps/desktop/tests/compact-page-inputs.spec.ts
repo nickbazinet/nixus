@@ -28,6 +28,19 @@ async function setupPage(page: Page, surface: Surface) {
               email: "user@example.com",
               name: "Test User",
             });
+          // The sync status indicator is mounted in the app shell on every screen, so this read
+          // must be answered even where the surface under test has nothing to do with sync (see
+          // project-context.md, Testing). `unlinked` renders no indicator, so no surface changes.
+          case "sync_status":
+            return Promise.resolve({
+              state: "unlinked",
+              dataset_id: "default",
+              enabled: false,
+              last_sync_ms: null,
+              error_code: null,
+              recoverable: true,
+              prompt: null,
+            });
           case "get_user_avatar":
           case "get_user_profile":
             return Promise.resolve(null);

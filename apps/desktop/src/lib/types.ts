@@ -955,3 +955,90 @@ export interface SuggestedAllocationResponse {
   next_suggestion_date: string;
   settlement: SuggestionSettlement | null;
 }
+
+/**
+ * `sync::manager::SyncState`, snake_case off the wire (AD-16).
+ *
+ * `update_needed`, `link_choice_required` and `remote_changed` are states rather than errors
+ * because the cloud copy is intact in all three and the next move is the user's, not a retry.
+ */
+export type SyncState =
+  | "unlinked"
+  | "idle"
+  | "syncing"
+  | "offline"
+  | "frozen"
+  | "update_needed"
+  | "link_choice_required"
+  | "remote_changed"
+  | "error";
+
+/**
+ * `sync::manager::SyncPrompt`, internally tagged on `kind`. Counts and timings only — AD-16 keeps
+ * values out of anything the status layer carries.
+ */
+export type SyncPrompt =
+  | {
+      kind: "link_choice";
+      local_rows: number;
+      remote_created_ms: number;
+      remote_schema_version: number;
+    }
+  | {
+      kind: "remote_changed";
+      remote_created_ms: number;
+      remote_schema_version: number;
+    };
+
+/** `sync_status`'s return value, and the payload of the `sync:status` event. */
+export interface SyncStatusPayload {
+  state: SyncState;
+  dataset_id: string;
+  enabled: boolean;
+  last_sync_ms: number | null;
+  error_code: string | null;
+  recoverable: boolean;
+  prompt: SyncPrompt | null;
+}
+
+/**
+ * `sync_enable`'s return value, tagged on `outcome`. `link_choice_required` means CAP-5: call
+ * `sync_enable` again carrying the answer. `separate_profile_created` does NOT activate the new
+ * profile — `select_dataset` does (AD-6, one hot-swap path).
+ */
+export type SyncEnableOutcome =
+  | { outcome: "enabled"; state: SyncState }
+  | {
+      outcome: "link_choice_required";
+      local_rows: number;
+      remote_created_ms: number;
+      remote_schema_version: number;
+    }
+  | { outcome: "separate_profile_created"; dataset_id: string };
+
+/** `sync_diagnostics`: counts, states, timings and error codes, never values (AD-16). */
+export interface SyncDiagnostics {
+  dataset_id: string;
+  capability: string;
+  state: SyncState;
+  enabled: boolean;
+  has_pulled_latest: boolean;
+  pending_prompt: SyncPrompt | null;
+  uploads: number;
+  conflicts: number;
+  restores: number;
+  failures: number;
+  blocked: number;
+  last_error_code: string | null;
+  last_sync_ms: number | null;
+  last_build_ms: number | null;
+  last_object_bytes: number | null;
+  last_payload_bytes: number | null;
+  local_rows: number | null;
+  schema_version: number;
+  frozen_reason: string | null;
+  backoff_ms: number | null;
+  settle_window_ms: number;
+  min_upload_interval_ms: number;
+  poll_interval_ms: number;
+}

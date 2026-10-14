@@ -11,6 +11,7 @@ import {
   useSystemTemplates,
 } from "@/hooks/useBudgetTemplates";
 import { DangerZone } from "./DangerZone";
+import { SyncSettings } from "./SyncSettings";
 import { SettingRow, SettingsSection } from "./SettingRow";
 
 function getErrorMessage(err: unknown): string {
@@ -307,6 +308,8 @@ export function YourDataSettings() {
           />
         </Card>
       </SettingsSection>
+
+      <SyncSettings />
 
       <DangerZone />
     </div>

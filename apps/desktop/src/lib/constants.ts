@@ -98,4 +98,6 @@ export const queryKeys = {
   savingsProjectsSummary: ["savings-projects-summary"] as const,
   suggestedAllocation: ["suggested-allocation"] as const,
   projectPace: ["project-pace"] as const,
+  syncStatus: ["sync-status"] as const,
+  syncDiagnostics: ["sync-diagnostics"] as const,
 };

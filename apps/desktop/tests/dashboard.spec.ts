@@ -103,6 +103,19 @@ async function setupEmptyDashboardMock(page: Page) {
                 total_saved_cents: 0,
                 total_target_cents: 0,
               });
+            // The sync status indicator is mounted in the app shell on every screen, so this read
+            // must be answered even where the surface under test has nothing to do with sync (see
+            // project-context.md, Testing). `unlinked` renders no indicator, so no surface changes.
+            case "sync_status":
+              return Promise.resolve({
+                state: "unlinked",
+                dataset_id: "default",
+                enabled: false,
+                last_sync_ms: null,
+                error_code: null,
+                recoverable: true,
+                prompt: null,
+              });
             // The account trigger is mounted on every screen, so this read must be answered even where
             // the surface under test has nothing to do with an account (see project-context.md, Testing).
             case "get_user_avatar":
@@ -242,6 +255,16 @@ async function setupSeededDashboardMock(page: Page) {
               total_saved_cents: 0,
               total_target_cents: 0,
             });
+          case "sync_status":
+            return Promise.resolve({
+              state: "unlinked",
+              dataset_id: "default",
+              enabled: false,
+              last_sync_ms: null,
+              error_code: null,
+              recoverable: true,
+              prompt: null,
+            });
           // The account trigger is mounted on every screen, so this read must be answered even where
           // the surface under test has nothing to do with an account (see project-context.md, Testing).
           case "get_user_avatar":
@@ -321,6 +344,16 @@ async function setupPacingDashboardMock(page: Page) {
               active_project_count: 0,
               total_saved_cents: 0,
               total_target_cents: 0,
+            });
+          case "sync_status":
+            return Promise.resolve({
+              state: "unlinked",
+              dataset_id: "default",
+              enabled: false,
+              last_sync_ms: null,
+              error_code: null,
+              recoverable: true,
+              prompt: null,
             });
           // The account trigger is mounted on every screen, so this read must be answered even where
           // the surface under test has nothing to do with an account (see project-context.md, Testing).
@@ -487,6 +520,16 @@ test.describe("Dashboard — Story 5.1", () => {
                 active_project_count: 0,
                 total_saved_cents: 0,
                 total_target_cents: 0,
+              });
+            case "sync_status":
+              return Promise.resolve({
+                state: "unlinked",
+                dataset_id: "default",
+                enabled: false,
+                last_sync_ms: null,
+                error_code: null,
+                recoverable: true,
+                prompt: null,
               });
             // The account trigger is mounted on every screen, so this read must be answered even where
             // the surface under test has nothing to do with an account (see project-context.md, Testing).
@@ -775,6 +818,16 @@ test.describe("Dashboard — Suggested Next Step Card", () => {
                 total_saved_cents: 0,
                 total_target_cents: 0,
               });
+            case "sync_status":
+              return Promise.resolve({
+                state: "unlinked",
+                dataset_id: "default",
+                enabled: false,
+                last_sync_ms: null,
+                error_code: null,
+                recoverable: true,
+                prompt: null,
+              });
             // The account trigger is mounted on every screen, so this read must be answered even where
             // the surface under test has nothing to do with an account (see project-context.md, Testing).
             case "get_user_avatar":
@@ -929,6 +982,16 @@ async function setupSavingsDashboardMock(
               return Promise.resolve(null);
             case "get_savings_projects_summary":
               return Promise.resolve(savings);
+            case "sync_status":
+              return Promise.resolve({
+                state: "unlinked",
+                dataset_id: "default",
+                enabled: false,
+                last_sync_ms: null,
+                error_code: null,
+                recoverable: true,
+                prompt: null,
+              });
             // The account trigger is mounted on every screen, so this read must be answered even where
             // the surface under test has nothing to do with an account (see project-context.md, Testing).
             case "get_user_avatar":
