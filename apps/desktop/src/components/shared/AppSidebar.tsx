@@ -19,6 +19,7 @@ import { Link } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { cn } from "@/lib/utils";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
+import { SyncStatusIndicator } from "@/components/sync/SyncStatusIndicator";
 import {
   BuyMeACoffeeIcon,
   BUY_ME_A_COFFEE_URL,
@@ -220,6 +221,12 @@ export function AppSidebar() {
           label={t("sidebar.buyMeACoffee")}
           expanded={expanded}
           testId="buy-me-a-coffee-link"
+        />
+        {/* The rail owns its item recipe, so the indicator is handed the class rather than
+          * importing it back out of this file. */}
+        <SyncStatusIndicator
+          expanded={expanded}
+          itemClassName={railItemClass(expanded, false)}
         />
         <span
           className={cn(

@@ -87,6 +87,19 @@ async function setupTauriMock(page: Page, rejectYearTotals = false) {
               has_assets: true,
               has_income: true,
             });
+          // The sync status indicator is mounted in the app shell on every screen, so this read
+          // must be answered even where the surface under test has nothing to do with sync (see
+          // project-context.md, Testing). `unlinked` renders no indicator, so no surface changes.
+          case "sync_status":
+            return Promise.resolve({
+              state: "unlinked",
+              dataset_id: "default",
+              enabled: false,
+              last_sync_ms: null,
+              error_code: null,
+              recoverable: true,
+              prompt: null,
+            });
           // The account trigger is mounted on every screen, so this read must be answered even
           // where the surface under test has nothing to do with an account.
           case "get_user_avatar":
@@ -169,6 +182,16 @@ test("the table waits for the year aggregate instead of flashing zero totals", a
             );
           case "get_income_total":
             return Promise.resolve({ total_cents: 200_000, month: "2026-05" });
+          case "sync_status":
+            return Promise.resolve({
+              state: "unlinked",
+              dataset_id: "default",
+              enabled: false,
+              last_sync_ms: null,
+              error_code: null,
+              recoverable: true,
+              prompt: null,
+            });
           case "get_user_avatar":
             return Promise.resolve(null);
           default:

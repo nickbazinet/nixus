@@ -105,6 +105,19 @@ async function setupRetirementMock(page: Page, opts: RetirementMockOptions = {})
           case "set_retirement_age_override":
             ageOverride = args?.years as number;
             return Promise.resolve(null);
+          // The sync status indicator is mounted in the app shell on every screen, so this read
+          // must be answered even where the surface under test has nothing to do with sync (see
+          // project-context.md, Testing). `unlinked` renders no indicator, so no surface changes.
+          case "sync_status":
+            return Promise.resolve({
+              state: "unlinked",
+              dataset_id: "default",
+              enabled: false,
+              last_sync_ms: null,
+              error_code: null,
+              recoverable: true,
+              prompt: null,
+            });
           // The account trigger is mounted on every screen, so this read must be answered even where
           // the surface under test has nothing to do with an account (see project-context.md, Testing).
           case "get_user_avatar":

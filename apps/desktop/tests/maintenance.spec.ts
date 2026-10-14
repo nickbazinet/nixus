@@ -487,8 +487,19 @@ async function setupMaintenanceTauriMock(
       return task;
     }
 
+    (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => {},
+    };
+
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      // `transformCallback` and the event-plugin stub above are required, not decorative: the
+      // always-mounted RecurringApplyListener, CloudSignInNavigator, useAuthSession and the sync
+      // status indicator all call `event.listen()` on mount. This spec's `default` arm rejects
+      // unknown commands, so `plugin:` also has to be answered ahead of the switch or every one
+      // of those listeners rejects instead of registering.
+      transformCallback: () => 1,
       invoke: (cmd: string, args: Record<string, unknown>) => {
+        if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         // Opt-in rejection, in the real command's AppError shape, so a failure path can be driven
         // without a second mock.
         if (failCommands.includes(cmd)) {
@@ -1235,6 +1246,19 @@ async function setupMaintenanceTauriMock(
               active_project_count: 0,
               total_saved_cents: 0,
               total_target_cents: 0,
+            });
+          // The sync status indicator is mounted in the app shell on every screen, so this read
+          // must be answered even where the surface under test has nothing to do with sync (see
+          // project-context.md, Testing). `unlinked` renders no indicator, so no surface changes.
+          case "sync_status":
+            return Promise.resolve({
+              state: "unlinked",
+              dataset_id: "default",
+              enabled: false,
+              last_sync_ms: null,
+              error_code: null,
+              recoverable: true,
+              prompt: null,
             });
           // The account trigger is mounted on every screen, so this read must be answered even where
           // the surface under test has nothing to do with an account (see project-context.md, Testing).

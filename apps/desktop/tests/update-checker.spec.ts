@@ -63,6 +63,10 @@ async function setupUpdateAvailable(page: Page, body: string | null) {
           case 'get_income_total': return Promise.resolve(720000);
           case 'get_savings_projects_summary': return Promise.resolve({ active_project_count: 0, total_saved_cents: 0, total_target_cents: 0 });
           case 'get_financial_health_summary': return Promise.resolve({ data_sufficient: false, emergency_fund: null, savings: null, waterfall: { current_step: 'build_emergency_fund', action_line_key: 'build_emergency_fund' } });
+          // The sync status indicator is mounted in the app shell on every screen, so this read
+          // must be answered here too (project-context.md, Testing). `unlinked` renders no
+          // indicator, so the update dialog under test is unaffected.
+          case 'sync_status': return Promise.resolve({ state: 'unlinked', dataset_id: 'default', enabled: false, last_sync_ms: null, error_code: null, recoverable: true, prompt: null });
           // null where an array is expected crashes on `.map` and shows the error boundary, which
           // would fail every locator below for an unrelated reason.
           case 'get_top_budget_categories':

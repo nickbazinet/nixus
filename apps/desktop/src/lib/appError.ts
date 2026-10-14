@@ -107,6 +107,72 @@ export interface SyncError {
   readonly recoverable: boolean;
 }
 
+/**
+ * i18n key for a sync failure, keyed on `code` rather than on `message`.
+ *
+ * Exhaustive with no `default`, so a code added to `SyncErrorCode` is a compile error here rather
+ * than a silent generic sentence. The grouping is by what the user has to DO: the codes that only
+ * differ in which internal step failed share one key, while every code with its own next action
+ * (sign in, upgrade, reconnect, update the app, answer a prompt, contact support) gets its own.
+ *
+ * `not_entitled` and `frozen` deliberately name no tier (AD-14): the wording is about the account's
+ * access to multi-computer sync, which is the one capability flag the backend checks.
+ */
+export function syncMessageKey(code: SyncErrorCode): string {
+  switch (code) {
+    case "local_only":
+      return "sync.errorLocalOnly";
+    case "not_entitled":
+      return "sync.errorNotEntitled";
+    case "frozen":
+      return "sync.errorFrozen";
+    case "account_mismatch":
+    case "owner_mismatch":
+      return "sync.errorAccountMismatch";
+    case "owner_malformed":
+    case "snapshot_invalid":
+      return "sync.errorCloudCopyUnreadable";
+    case "state_unavailable":
+    case "dataset_busy":
+      return "sync.errorDatasetBusy";
+    case "signed_out":
+    case "identity_rejected":
+    case "credentials_expired":
+      return "sync.errorSignedOut";
+    case "not_configured":
+      return "sync.errorNotConfigured";
+    case "offline":
+      return "sync.errorOffline";
+    // Kept apart from `offline` even though both are transport-shaped: `parseAppError` degrades an
+    // unrecognized code to `transport`, so this arm is also what a newer backend's unknown failure
+    // renders as, and telling that user "no connection" would be a confident wrong diagnosis.
+    case "transport":
+      return "sync.errorTransport";
+    case "remote_missing":
+      return "sync.errorRemoteMissing";
+    case "install_collision":
+      return "sync.errorInstallCollision";
+    case "forbidden":
+      return "sync.errorForbidden";
+    case "remote_changed":
+      return "sync.errorRemoteChanged";
+    case "snapshot_build":
+      return "sync.errorSnapshotBuild";
+    case "update_needed":
+      return "sync.errorUpdateNeeded";
+    case "restore_failed":
+      return "sync.errorRestoreFailed";
+    case "profile_create_failed":
+      return "sync.errorProfileCreateFailed";
+    case "not_enabled":
+      return "sync.errorNotEnabled";
+    case "no_pending_prompt":
+      return "sync.errorNoPendingPrompt";
+    case "actor_unavailable":
+      return "sync.errorActorUnavailable";
+  }
+}
+
 export interface GenericAppError {
   readonly type: string | undefined;
   readonly message: string | undefined;
