@@ -274,8 +274,12 @@ describe("multi-device sync disclosure", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
     expect(text).toMatch(/uploads a snapshot/i);
-    // Milestone 1 wires no blob upload, so claiming images are uploaded would be false.
-    expect(text).toMatch(/Full-size project images are deliberately left out/i);
+    /* Fix F-1 wired the blob upload and the on-demand fetch, so the disclosure now has to say
+     * so: thumbnails come first, each full-size image is its own object, and it comes down the
+     * first time it is viewed. The protection claim has to travel with it. */
+    expect(text).toMatch(/Full-size project images travel separately/i);
+    expect(text).toMatch(/uploaded as its own object/i);
+    expect(text).toMatch(/downloads one the first time you view it/i);
     expect(text).toMatch(/does not sync continuously/i);
     expect(text).toMatch(/never uploaded/i);
     expect(text).toMatch(/credential store and are never transmitted to Nixus/i);
