@@ -223,7 +223,11 @@ impl Hlc {
     }
 
     pub fn decode(encoded: &str) -> Result<Self, ClockError> {
-        if encoded.len() != HLC_ENCODED_LEN {
+        // `is_ascii` before any slicing, not only the byte length: the input is untrusted
+        // (Stories 14/19/20 decode it out of the dataset and off the wire), and a 33-BYTE
+        // string whose multi-byte character straddles byte 16 would make `split_at` panic
+        // on a character boundary instead of reporting a malformed timestamp.
+        if encoded.len() != HLC_ENCODED_LEN || !encoded.is_ascii() {
             return Err(ClockError::MalformedTimestamp);
         }
         let (time, rest) = encoded.split_at(16);
@@ -680,6 +684,26 @@ mod tests {
             "123456789abcdeg0-0a1b2c3d4e5f6071",
             "123456789abcdef0-0A1B2C3D4E5F6071",
         ] {
+            assert_eq!(
+                Hlc::decode(bad),
+                Err(ClockError::MalformedTimestamp),
+                "{bad} must not decode"
+            );
+        }
+    }
+
+    /// Both of these are exactly 33 BYTES, which is all a length check can see, and both put
+    /// a multi-byte character where slicing happens — the first straddles the offset the time
+    /// field is split at. A byte-length guard alone lets them through and panics on a
+    /// character boundary, and this input arrives from the dataset and off the wire.
+    #[test]
+    fn a_multibyte_encoding_of_the_right_byte_length_is_refused_not_panicked_on() {
+        for bad in [
+            "123456789abcdef\u{00e9}0a1b2c3d4e5f6071",
+            "123456789abcdef0-0a1b2c3\u{1f600}f6071",
+        ] {
+            assert_eq!(bad.len(), HLC_ENCODED_LEN, "{bad} must be 33 bytes to be the case");
+            assert!(!bad.is_char_boundary(16) || !bad.is_ascii());
             assert_eq!(
                 Hlc::decode(bad),
                 Err(ClockError::MalformedTimestamp),

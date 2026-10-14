@@ -236,6 +236,9 @@ fn the_fault_model_actually_fires() {
         totals.dropped_deliveries += outcome.dropped_deliveries;
         totals.offline_periods += outcome.offline_periods;
         totals.deletes += outcome.deletes;
+        totals.double_deletes += outcome.double_deletes;
+        totals.concurrent_edit_deletes += outcome.concurrent_edit_deletes;
+        totals.double_balance_sets += outcome.double_balance_sets;
         totals.live_rows += outcome.live_rows;
     }
 
@@ -247,6 +250,9 @@ fn the_fault_model_actually_fires() {
         ("delayed segments", totals.dropped_deliveries),
         ("offline periods", totals.offline_periods),
         ("deletes", totals.deletes),
+        ("double deletes", totals.double_deletes),
+        ("concurrent edit-and-delete pairs", totals.concurrent_edit_deletes),
+        ("double absolute balance sets", totals.double_balance_sets),
         ("surviving rows", totals.live_rows),
     ] {
         assert!(count > 0, "12 seeds produced no {what}");

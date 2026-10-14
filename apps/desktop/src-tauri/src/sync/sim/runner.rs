@@ -36,6 +36,13 @@ pub(crate) struct SimOutcome {
     pub dropped_deliveries: usize,
     pub offline_periods: usize,
     pub deletes: usize,
+    /// The three AD-19 faults that are compound actions rather than single ops. Counted
+    /// separately because each one silently does nothing when its candidate list is empty,
+    /// so without a counter a generator change could turn any of them into a permanent
+    /// no-op and `the_fault_model_actually_fires` would stay green.
+    pub double_deletes: usize,
+    pub concurrent_edit_deletes: usize,
+    pub double_balance_sets: usize,
     pub live_rows: usize,
 }
 
@@ -684,6 +691,7 @@ impl<E: ReplicaEngine> Driver<E> {
             return Ok(());
         };
         let replica = self.rng.below(self.replicas() as u64) as usize;
+        self.outcome.double_deletes += 1;
 
         self.write(
             replica,
@@ -710,6 +718,7 @@ impl<E: ReplicaEngine> Driver<E> {
 
         let editor = self.rng.below(self.replicas() as u64) as usize;
         let deleter = self.other_than(editor);
+        self.outcome.concurrent_edit_deletes += 1;
         self.edit(editor, record)?;
 
         self.delete(deleter, record)
@@ -724,6 +733,7 @@ impl<E: ReplicaEngine> Driver<E> {
         let cents = self.rng.below(1_000_000) as i64;
         let first = self.rng.below(self.replicas() as u64) as usize;
         let second = self.other_than(first);
+        self.outcome.double_balance_sets += 1;
 
         self.write(
             first,
