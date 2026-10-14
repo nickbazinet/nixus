@@ -194,7 +194,8 @@ impl PartialOrd for Hlc {
 
 impl Hlc {
     /// The raw NTP64 word: physical time in the high bits, logical counter in the low bits.
-    // Story 19 is the first production caller: a segment header carries the raw word.
+    // Story 24 is the first production caller: the clock-skew state compares raw words. Story 19
+    // did not need it — a segment is addressed by `(install, seq)`, never by a timestamp.
     #[allow(dead_code)]
     pub fn ntp_time(&self) -> u64 {
         self.time
@@ -325,7 +326,8 @@ impl Clock {
         })
     }
 
-    // Story 19 is the first production caller: `log/<install>/<seq>` is named after it.
+    // Story 20 is the first production caller: apply breaks an exact tie on the install bytes.
+    // Story 19 names its keys from the `sync_state` install id directly, not from the clock.
     #[allow(dead_code)]
     pub fn install(&self) -> InstallBytes {
         self.install

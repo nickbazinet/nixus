@@ -58,4 +58,6 @@ mod tests_port_boundary;
 #[cfg(test)]
 mod tests_s3_endpoint;
 #[cfg(test)]
+mod tests_segment;
+#[cfg(test)]
 mod tests_write_site_budget;

@@ -35,6 +35,7 @@ use super::auth::{
 use super::config::{production_bucket, IdentityPoolConfig, SYNC_REGION};
 use super::gate::{AccountEntitlement, GatedStore, SyncGate};
 use super::manager::{SyncFault, SyncHost, SyncSession};
+use super::segment::{Applier, CountingApplier};
 use super::s3::S3ObjectStore;
 use super::state::SyncStateStore;
 
@@ -261,6 +262,10 @@ impl SyncHost for DatasetHost {
 
     fn slot(&self) -> &Self::Slot {
         &self.slot
+    }
+
+    fn applier(&self) -> Box<dyn Applier + Send> {
+        Box::new(CountingApplier::default())
     }
 
     fn freeze(&self, reason: sync_state::FrozenReason) {

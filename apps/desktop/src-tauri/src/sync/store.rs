@@ -193,7 +193,6 @@ pub struct StoredObject {
 /// The outcome of a conditional GET. `NotModified` is a success, not an error: it is
 /// the normal answer when polling `roster` and `head/<install>`, and it is billed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)] // Answered by `get_if_none_match`: Milestone 2's conditional polling.
 pub enum ConditionalGet {
     Modified(StoredObject),
     NotModified,
@@ -256,7 +255,6 @@ pub trait ObjectStore {
     async fn get(&self, key: &str) -> Result<StoredObject, StoreError>;
 
     /// Conditional GET (`If-None-Match: <etag>`).
-    #[allow(dead_code)] // AD-6's `roster`/`head` polling is Milestone 2 Story 16.
     async fn get_if_none_match(
         &self,
         key: &str,
@@ -268,7 +266,6 @@ pub trait ObjectStore {
     /// Whether the exact key exists, answered by a one-key listing. This is AD-6's
     /// repair path and the disambiguation the prefix-conditioned `s3:ListBucket`
     /// grant forces on GET/HEAD (see `s3.rs`).
-    #[allow(dead_code)] // AD-6's repair path, which is Milestone 2 Story 23.
     async fn exists(&self, key: &str) -> Result<bool, StoreError>;
 }
 

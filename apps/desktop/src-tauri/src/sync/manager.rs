@@ -45,6 +45,7 @@ use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncBlocked, SyncGate,
 };
 use super::owner::{owner_object_body, owner_sub_from_body, OWNER_OBJECT_KEY};
+use super::segment::{self, Applier, Head, PollReport, PullCursor, SegmentError};
 use super::snapshot::{self, LatestSnapshot, SnapshotError, UploadOutcome};
 use super::store::{ETag, ObjectStore, StoreError};
 
@@ -134,6 +135,8 @@ pub enum SyncFault {
     Auth(AuthError),
     Store(StoreError),
     Snapshot(SnapshotError),
+    /// A segment, head or roster could not be read, written or handed on (AD-6).
+    Segment(SegmentError),
     /// The guarded file swap failed. The dataset is rolled back unless `rolled_back` is
     /// false, which is reserved for a rollback that itself failed.
     Swap { rolled_back: bool },
@@ -186,6 +189,7 @@ impl SyncFault {
             SyncFault::Snapshot(SnapshotError::SchemaTooNew { .. })
             | SyncFault::UpdateNeeded { .. } => "update_needed",
             SyncFault::Snapshot(_) => "snapshot_invalid",
+            SyncFault::Segment(error) => error.code(),
             SyncFault::Swap { .. } => "restore_failed",
             SyncFault::OwnerMismatch => "owner_mismatch",
             SyncFault::Registry => "profile_create_failed",
@@ -221,6 +225,7 @@ impl SyncFault {
             | SyncFault::Auth(_)
             | SyncFault::Store(_)
             | SyncFault::Snapshot(_)
+            | SyncFault::Segment(_)
             | SyncFault::UpdateNeeded { .. }
             | SyncFault::Swap { .. }
             | SyncFault::Registry
@@ -264,6 +269,8 @@ impl SyncFault {
             "image_missing" => "This project has no picture to download.",
             "image_corrupt" => "The stored picture could not be verified.",
             "not_enabled" => "Sync is not turned on for this profile.",
+            "segment_invalid" => "A change from another computer could not be read.",
+            "apply_failed" => "A change from another computer could not be applied yet.",
             _ => "Sync is unavailable.",
         }
     }
@@ -298,6 +305,15 @@ impl From<BlobError> for SyncFault {
             BlobError::InvalidHash | BlobError::ContentMismatch { .. } | BlobError::Header(_) => {
                 SyncFault::ImageCorrupt
             }
+        }
+    }
+}
+
+impl From<SegmentError> for SyncFault {
+    fn from(error: SegmentError) -> Self {
+        match error {
+            SegmentError::Store(error) => SyncFault::from(error),
+            other => SyncFault::Segment(other),
         }
     }
 }
@@ -342,6 +358,13 @@ pub struct SyncTuning {
     pub min_upload_interval: Duration,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
+    /// The floor between two reads of `roster` and the known heads. Bounded and configurable
+    /// because AD-6 bills a `304` as a GET: the steady-state cost of sync is
+    /// `1 + <known heads>` requests per interval, whatever the edit rate.
+    pub remote_poll_interval: Duration,
+    /// The floor between two segment ships, so a burst of edits becomes one object rather than one
+    /// per keystroke.
+    pub segment_interval: Duration,
 }
 
 impl Default for SyncTuning {
@@ -352,6 +375,8 @@ impl Default for SyncTuning {
             min_upload_interval: Duration::from_secs(60),
             initial_backoff: Duration::from_secs(5),
             max_backoff: Duration::from_secs(300),
+            remote_poll_interval: Duration::from_secs(30),
+            segment_interval: Duration::from_secs(10),
         }
     }
 }
@@ -406,6 +431,10 @@ pub(crate) trait SyncHost {
         operation: impl FnOnce(&Connection) -> Result<T, crate::error::AppError>,
     ) -> Result<T, SyncFault>;
     fn slot(&self) -> &Self::Slot;
+    /// Where fetched remote messages go. Boxed rather than an associated type: the actor needs it
+    /// by `&mut` on every poll, and an associated type would force every host to carry interior
+    /// mutability for it. Story 20 returns the real apply path from here.
+    fn applier(&self) -> Box<dyn Applier + Send>;
     /// Releases the actor's own connection(s) so nothing holds the dataset file.
     fn release(&self);
     /// Records that transfers must stop until support intervenes (AD-14, AD-7).
@@ -437,6 +466,9 @@ pub struct SyncDiagnostics {
     pub has_pulled_latest: bool,
     pub pending_prompt: Option<SyncPrompt>,
     pub uploads: u64,
+    pub segments_shipped: u64,
+    pub segments_fetched: u64,
+    pub messages_received: u64,
     pub conflicts: u64,
     pub restores: u64,
     pub failures: u64,
@@ -458,6 +490,9 @@ pub struct SyncDiagnostics {
 #[derive(Debug, Default, Clone, Copy)]
 struct SyncStats {
     uploads: u64,
+    segments_shipped: u64,
+    segments_fetched: u64,
+    messages_received: u64,
     conflicts: u64,
     restores: u64,
     failures: u64,
@@ -527,6 +562,14 @@ pub(crate) struct SyncActor<H: SyncHost> {
     backoff: Option<Backoff>,
     stats: SyncStats,
     transitions: VecDeque<SyncTransition>,
+    install: Option<String>,
+    pull: PullCursor,
+    applier: Box<dyn Applier + Send>,
+    head_etag: Option<ETag>,
+    published_seq: Option<i64>,
+    in_roster: bool,
+    last_segment_ship: Option<Instant>,
+    last_remote_poll: Option<Instant>,
 }
 
 impl<H: SyncHost> SyncActor<H> {
@@ -550,6 +593,8 @@ impl<H: SyncHost> SyncActor<H> {
         let (status, status_rx) = watch::channel(initial);
         let (events, events_rx) = mpsc::unbounded_channel();
 
+        let applier = host.applier();
+        let started = Instant::now();
         let actor = Self {
             host,
             tuning,
@@ -569,6 +614,17 @@ impl<H: SyncHost> SyncActor<H> {
             backoff: None,
             stats: SyncStats::default(),
             transitions: VecDeque::with_capacity(TRANSITION_HISTORY),
+            install: None,
+            pull: PullCursor::default(),
+            // Dated from construction, so the first log cycle happens one interval after the actor
+            // starts rather than on its first tick: launch belongs to the snapshot path (AD-16),
+            // and `sync_now` forces a cycle anyway.
+            applier,
+            head_etag: None,
+            published_seq: None,
+            in_roster: false,
+            last_segment_ship: Some(started),
+            last_remote_poll: Some(started),
         };
 
         (actor, status_rx, events_rx)
@@ -586,6 +642,13 @@ impl<H: SyncHost> SyncActor<H> {
         }
     }
 
+    /// The pull cursor, so a test can assert what is buffered, what is owed, and arrange the one
+    /// state the protocol cannot produce by itself: a head re-read after it was already consumed.
+    #[cfg(test)]
+    pub(in crate::sync) fn pull(&mut self) -> &mut super::segment::PullCursor {
+        &mut self.pull
+    }
+
     pub(in crate::sync) fn diagnostics(&self) -> SyncDiagnostics {
         SyncDiagnostics {
             dataset_id: self.host.dataset_id().to_string(),
@@ -596,6 +659,9 @@ impl<H: SyncHost> SyncActor<H> {
             has_pulled_latest: self.known_latest.is_some(),
             pending_prompt: self.pending.as_ref().map(PendingDecision::prompt),
             uploads: self.stats.uploads,
+            segments_shipped: self.stats.segments_shipped,
+            segments_fetched: self.stats.segments_fetched,
+            messages_received: self.stats.messages_received,
             conflicts: self.stats.conflicts,
             restores: self.stats.restores,
             failures: self.stats.failures,
@@ -1011,6 +1077,145 @@ impl<H: SyncHost> SyncActor<H> {
             .ok_or(SyncFault::ImageMissing)
     }
 
+    /// This install's id, read once from the dataset's own `sync_state` row (AD-4).
+    ///
+    /// Through `ensure_install_on`, which is the same function capture calls: whichever runs first
+    /// settles the id, and a database copied to another machine is re-minted by the fingerprint
+    /// comparison instead of appending to the original's `(install, seq)` space.
+    fn install(&mut self) -> Result<String, SyncFault> {
+        if let Some(install) = &self.install {
+            return Ok(install.clone());
+        }
+
+        let state = self.host.with_dataset(super::state::ensure_install_on)?;
+        self.install = Some(state.install_id.clone());
+
+        Ok(state.install_id)
+    }
+
+    /// One cycle of the log protocol (AD-6): ship what is local, publish the head and the roster,
+    /// then poll the roster and the known heads.
+    ///
+    /// Both halves are on their own floor from `SyncTuning`, and the floors are checked BEFORE
+    /// anything is connected or read, so a tick with nothing due costs nothing at all. The M1
+    /// snapshot flow below is untouched by this: Story 23 replaces it.
+    async fn log_cycle(&mut self, forced: bool) -> Result<(), SyncFault> {
+        let ship_due = forced
+            || self
+                .last_segment_ship
+                .is_none_or(|at| at.elapsed() >= self.tuning.segment_interval);
+        let poll_due = forced
+            || self
+                .last_remote_poll
+                .is_none_or(|at| at.elapsed() >= self.tuning.remote_poll_interval);
+        if !ship_due && !poll_due {
+            return Ok(());
+        }
+
+        // The gate first: a local-only, un-entitled or Frozen dataset must not even read its own
+        // install id for a cycle it is not allowed to run (AD-14).
+        let session = self.host.connect().await?;
+        let install = self.install()?;
+
+        if ship_due {
+            self.last_segment_ship = Some(Instant::now());
+            self.ship_log(&session, &install).await?;
+        }
+        if poll_due {
+            self.last_remote_poll = Some(Instant::now());
+            self.poll_remote(&session, &install).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Cuts and ships every bounded segment the unshipped tail holds, then publishes this install's
+    /// head and joins the roster.
+    async fn ship_log(
+        &mut self,
+        session: &HostSession<H>,
+        install: &str,
+    ) -> Result<(), SyncFault> {
+        let schema_version = self.host.schema_version();
+        let mut highest = None;
+
+        for _ in 0..segment::MAX_SEGMENTS_PER_CYCLE {
+            let Some(cut) = self
+                .host
+                .with_dataset(|conn| segment::cut(conn, install, schema_version))?
+            else {
+                break;
+            };
+
+            segment::ship(&session.store, &cut).await?;
+            // Only now: a crash before this leaves the rows unshipped, and the re-cut is
+            // byte-identical, so the create-only put dedups instead of minting a second segment.
+            self.host
+                .with_dataset(|conn| segment::mark_shipped(conn, &cut))?;
+
+            self.stats.segments_shipped += 1;
+            highest = Some(cut.seq);
+        }
+
+        let Some(seq) = highest.or(self.published_seq) else {
+            return Ok(());
+        };
+
+        if self.published_seq != Some(seq) {
+            let head = Head {
+                install: install.to_string(),
+                seq,
+            };
+            self.head_etag =
+                Some(segment::publish_head(&session.store, &head, self.head_etag.as_ref()).await?);
+            self.published_seq = Some(seq);
+        }
+
+        // On first publish, and never again: the roster is a membership list, so one successful
+        // compare-and-swap is the whole of this computer's interest in it.
+        if !self.in_roster {
+            segment::join_roster(&session.store, install).await?;
+            self.in_roster = true;
+        }
+
+        Ok(())
+    }
+
+    async fn poll_remote(
+        &mut self,
+        session: &HostSession<H>,
+        install: &str,
+    ) -> Result<(), SyncFault> {
+        let mut report = PollReport::default();
+        let installs =
+            segment::poll_roster(&session.store, &mut self.pull, install, &mut report).await?;
+
+        for remote in &installs {
+            if !self.pull.knows(remote) {
+                // Resume from the apply path's durable watermark, so a relaunch does not re-fetch
+                // what Story 20 has already written into the tables.
+                let applied = self
+                    .host
+                    .with_dataset(|conn| crate::db::sync_segment::applied_seq(conn, remote))?;
+                self.pull.start(remote, applied.map_or(0, |seq| seq + 1));
+            }
+        }
+
+        segment::poll_heads(
+            &session.store,
+            &mut self.pull,
+            &installs,
+            self.applier.as_mut(),
+            &mut report,
+        )
+        .await?;
+
+        self.stats.segments_fetched += report.segments_fetched;
+        self.stats.messages_received += report.messages_applied;
+
+        Ok(())
+    }
+
     /// One poll: read the change signal, and upload if the dataset has settled.
     pub(in crate::sync) async fn tick(&mut self) {
         if !self.enabled || self.pending.is_some() {
@@ -1021,6 +1226,13 @@ impl<H: SyncHost> SyncActor<H> {
             if Instant::now() < backoff.until {
                 return;
             }
+        }
+
+        // The log protocol runs on every tick, independently of the snapshot settle window: it
+        // moves individual changes, and a computer that makes no local edit still has to receive.
+        if let Err(fault) = self.log_cycle(false).await {
+            self.record_fault(&fault);
+            return;
         }
 
         match self.host.data_version() {
@@ -1061,6 +1273,11 @@ impl<H: SyncHost> SyncActor<H> {
         }
 
         self.backoff = None;
+        if let Err(fault) = self.log_cycle(true).await {
+            self.record_fault(&fault);
+            return Err(fault);
+        }
+
         self.run_upload().await
     }
 
@@ -1169,6 +1386,12 @@ impl<H: SyncHost> SyncActor<H> {
         self.pending = None;
         self.last_change = None;
         self.known_latest = None;
+        self.pull = PullCursor::default();
+        self.head_etag = None;
+        self.published_seq = None;
+        self.in_roster = false;
+        self.last_segment_ship = None;
+        self.last_remote_poll = None;
         self.clear_error();
         // Both halves of "stop touching the cloud": no connection to the dataset file, and
         // no AWS credential in memory for an account this computer is no longer syncing.

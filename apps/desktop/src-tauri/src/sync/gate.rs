@@ -243,8 +243,8 @@ where
         Ok(self.pass().await?.get(key).await?)
     }
 
-    #[allow(dead_code)] // Milestone 2 Story 16 polls with it; the wrapper has to exist now
-    // because `tests_gate_boundary` fails the build on a port method without a gate.
+    /// AD-6's conditional GET: how `roster` and `head/<install>` are polled without paying for a
+    /// body that has not changed (`sync::segment`).
     pub async fn get_if_none_match(
         &self,
         key: &str,
@@ -253,7 +253,8 @@ where
         Ok(self.pass().await?.get_if_none_match(key, known).await?)
     }
 
-    #[allow(dead_code)] // Same: gated now, first called by Milestone 2's polling.
+    /// The concurrency token a mutable key currently holds, which is what re-reads a head whose
+    /// compare-and-swap was lost (`sync::segment::publish_head`).
     pub async fn head(&self, key: &str) -> Result<ObjectMeta, GatedError> {
         Ok(self.pass().await?.head(key).await?)
     }

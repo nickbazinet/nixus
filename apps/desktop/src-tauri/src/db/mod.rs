@@ -35,6 +35,7 @@ pub mod spending_trends;
 pub mod sync_blobs;
 pub mod sync_capture;
 pub mod sync_identity;
+pub mod sync_segment;
 pub mod sync_state;
 pub mod yearly_summary;
 

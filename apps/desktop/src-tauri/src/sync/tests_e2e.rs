@@ -65,6 +65,11 @@ fn tuning() -> SyncTuning {
         settle_window: SETTLE,
         min_upload_interval: MIN_UPLOAD,
         initial_backoff: Duration::from_secs(10),
+        // The Story-19 log protocol is OFF in this fixture, deliberately: these tests count
+        // requests to pin the SNAPSHOT debounce, and a conditional roster poll in the middle of
+        // one would be counted as an upload. `tests_segment.rs` is where the log cycle is driven.
+        remote_poll_interval: Duration::from_secs(86_400),
+        segment_interval: Duration::from_secs(86_400),
         max_backoff: Duration::from_secs(120),
     }
 }

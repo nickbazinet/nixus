@@ -44,6 +44,7 @@ const SANCTIONED_PREFIXES: &[&str] = &[
     "db/sync_identity.rs",
     "db/sync_state.rs",
     "db/sync_blobs.rs",
+    "db/sync_segment.rs",
     "db/snapshot_strip.rs",
 ];
 

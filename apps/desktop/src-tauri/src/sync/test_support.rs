@@ -21,6 +21,7 @@ use crate::entitlements::AccountCapabilities;
 use crate::models::DatasetKind;
 use crate::sync::auth::{AccountPin, AuthError};
 use crate::sync::gate::{CapabilitySource, GateStateSource, GatedStore, SyncGate};
+use crate::sync::segment::{Applier, SegmentBatch, SegmentMessage};
 use crate::sync::state::GateState;
 use crate::sync::store::{
     ConditionalGet, ETag, ImmutablePut, ObjectMeta, ObjectStore, StoreError, StoredObject,
@@ -459,6 +460,36 @@ pub(crate) fn syncing_fake(store: Arc<FakeObjectStore>) -> FakeGatedStore {
     gated_fake(store, DatasetKind::CloudLinked, true, None)
 }
 
+/// What the fake applier saw. This is Story 20's slot: the pull side is finished at Story 19, so
+/// what can be proven today is exactly which batches were handed on, in which order, once each.
+#[derive(Debug, Default)]
+pub(crate) struct Recorded {
+    /// `(install, seq, message count)` in the order the batches arrived.
+    pub batches: Vec<(String, i64, usize)>,
+    pub messages: Vec<SegmentMessage>,
+    /// Makes the next apply fail, which is how a test proves a refused batch stays owed.
+    pub refuse: bool,
+}
+
+/// The recording fake Story 19 hands fetched messages to.
+pub(crate) struct RecordingApplier(Arc<Mutex<Recorded>>);
+
+impl Applier for RecordingApplier {
+    fn apply(&mut self, batch: &SegmentBatch) -> Result<usize, crate::error::AppError> {
+        let mut recorded = self.0.lock().expect("the applier lock");
+        if recorded.refuse {
+            return Err(crate::error::AppError::NotConfigured);
+        }
+
+        recorded
+            .batches
+            .push((batch.install.clone(), batch.seq, batch.messages.len()));
+        recorded.messages.extend(batch.messages.iter().cloned());
+
+        Ok(batch.messages.len())
+    }
+}
+
 /// One simulated computer: its own app-data directory, its own dataset file, its own
 /// connections, and a `SyncHost` the actor can be built from.
 ///
@@ -483,6 +514,7 @@ pub(crate) struct TestComputer {
     frozen: Arc<Mutex<Option<FrozenReason>>>,
     clock: Arc<AtomicI64>,
     slot: FakeSlot,
+    applied: Arc<Mutex<Recorded>>,
     _dir: Arc<TempDir>,
 }
 
@@ -495,6 +527,8 @@ pub(crate) struct ComputerProbe {
     store: Arc<FakeObjectStore>,
     entitled: Arc<AtomicBool>,
     frozen: Arc<Mutex<Option<FrozenReason>>>,
+    applied: Arc<Mutex<Recorded>>,
+    id: String,
     _dir: Arc<TempDir>,
 }
 
@@ -546,6 +580,7 @@ pub(crate) fn test_computer(
     let own = Arc::new(Mutex::new(None));
     let entitled = Arc::new(AtomicBool::new(true));
     let frozen = Arc::new(Mutex::new(None));
+    let applied = Arc::new(Mutex::new(Recorded::default()));
 
     let host = TestComputer {
         id: id.to_string(),
@@ -563,6 +598,7 @@ pub(crate) fn test_computer(
             own,
             live: Arc::clone(&live),
         },
+        applied: Arc::clone(&applied),
         _dir: Arc::clone(&dir),
     };
 
@@ -574,6 +610,8 @@ pub(crate) fn test_computer(
         store,
         entitled,
         frozen,
+        applied,
+        id: id.to_string(),
         _dir: dir,
     };
 
@@ -701,6 +739,67 @@ impl ComputerProbe {
         *self.frozen.lock().expect("the frozen reason lock")
     }
 
+    /// A local write through the REAL capture path, so the dataset ends up holding real
+    /// `sync_log` rows for the segment cutter to ship. `write_row` deliberately does not: a raw
+    /// statement outside `ActiveDataset::write` is exactly the unmigrated write site the hook
+    /// buffers and discards (Story 15), which is what the M1 snapshot tests need.
+    pub(crate) fn write_captured(&self, name: &str) {
+        let mut guard = self.live.lock().expect("the live connection lock");
+        if guard.is_none() {
+            *guard = Some(crate::db::test_dataset::migrated_dataset(&self.db_path));
+        }
+
+        let conn = guard.take().expect("the live connection is open");
+        let capture = crate::sync::capture::Capture::for_dataset(DatasetKind::CloudLinked, &conn)
+            .expect("capture is built")
+            .expect("a cloud-linked dataset captures");
+        capture.attach(&conn).expect("the hook is installed");
+
+        let dataset = crate::db::ActiveDataset {
+            id: Some(self.id.clone()),
+            conn: Some(conn),
+            capture: Some(capture),
+        };
+        let outcome = dataset.write(|tx| {
+            crate::db::test_dataset::insert_marker_rows(tx, &[name]);
+            Ok(())
+        });
+
+        let crate::db::ActiveDataset { conn, .. } = dataset;
+        *guard = conn;
+
+        outcome.expect("a captured write succeeds");
+    }
+
+    /// This computer's install id (AD-4), as the keys it writes spell it.
+    pub(crate) fn install_id(&self) -> String {
+        self.with_live(|conn| {
+            crate::sync::state::ensure_install_on(conn)
+                .expect("the install row reads")
+                .install_id
+        })
+    }
+
+    pub(crate) fn unshipped(&self) -> i64 {
+        let install = self.install_id();
+        self.with_live(|conn| {
+            crate::db::sync_segment::unshipped_count(conn, &install).expect("the tail counts")
+        })
+    }
+
+    /// Every batch the applier was handed, as `(install, seq, message count)`.
+    pub(crate) fn applied_batches(&self) -> Vec<(String, i64, usize)> {
+        self.applied.lock().expect("the applier lock").batches.clone()
+    }
+
+    pub(crate) fn applied_messages(&self) -> Vec<SegmentMessage> {
+        self.applied.lock().expect("the applier lock").messages.clone()
+    }
+
+    pub(crate) fn refuse_apply(&self, refuse: bool) {
+        self.applied.lock().expect("the applier lock").refuse = refuse;
+    }
+
     /// Freezes this computer the way a support action or AD-7's refusal does, which is a
     /// different input from a lapsed entitlement even though both end in `Frozen`.
     pub(crate) fn set_frozen(&self, reason: Option<FrozenReason>) {
@@ -762,6 +861,10 @@ impl crate::sync::manager::SyncHost for TestComputer {
 
     fn slot(&self) -> &Self::Slot {
         &self.slot
+    }
+
+    fn applier(&self) -> Box<dyn Applier + Send> {
+        Box::new(RecordingApplier(Arc::clone(&self.applied)))
     }
 
     fn release(&self) {
