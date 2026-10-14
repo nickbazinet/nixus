@@ -651,12 +651,35 @@ pub(crate) fn migrate_to_cloud_dataset_at(
     let destination_id = dataset.id.clone();
 
     provision_dataset(root, entries, dataset, |dir| {
-        std::fs::copy(&source_db, dir.join(DB_FILE_NAME)).map_err(|e| AppError::File {
+        let copied = dir.join(DB_FILE_NAME);
+        std::fs::copy(&source_db, &copied).map_err(|e| AppError::File {
             message: format!("Failed to copy the profile database: {}", e),
         })?;
+        // AD-4: the copy carries the source's install identity, and on this machine the
+        // fingerprint still matches — so nothing downstream can tell the file was duplicated.
+        // Re-minting here, before anything opens the copy, is what stops two live datasets from
+        // appending under one `(install, seq)` space. It also leaves the copy Unlinked, so the
+        // first enable goes through the CAP-5 choice (AD-9) instead of adopting the source's link.
+        remint_copied_dataset(&copied)?;
         crate::credentials::copy_ai_credentials(source_id, &destination_id).map(|_| ())
     })
     .inspect_err(|_| crate::credentials::clear_credentials(&destination_id))
+}
+
+/// Gives a just-copied dataset file its own install identity (AD-4).
+///
+/// Opened read-write through the repository's own `open_configured`, so the copy is migrated
+/// exactly like any other dataset before it is written to, and closed again immediately: the
+/// caller is still inside `provision_dataset`, and leaving a handle open here would make the
+/// rollback that removes the directory fail on Windows.
+fn remint_copied_dataset(db_path: &Path) -> Result<(), AppError> {
+    let conn = crate::db::open_configured(db_path)?;
+    let outcome = crate::sync::state::remint_install_on(&conn)?;
+    drop(conn);
+
+    tracing::info!("the copied profile was given a new install identity ({outcome:?})");
+
+    Ok(())
 }
 
 /// The longest display label a profile may carry.

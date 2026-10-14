@@ -364,6 +364,18 @@ pub fn forget_field_state(
         .execute(params![table_name, row_uuid])?)
 }
 
+/// Drops the log rows that were never shipped, keeping every shipped one.
+///
+/// The one caller is an EXPLICIT CAP-5 "take the cloud copy" (replace, or answering the
+/// remote-changed prompt with `load_remote`): the user chose to discard this computer's data, so
+/// publishing its unsent changes over the copy they chose would partially undo that choice. The
+/// discarded rows are not lost — the displaced file is kept as a dated backup. Shipped rows
+/// (`seq IS NOT NULL`) STAY because `next_seq` is derived from them, and reusing a sequence
+/// number would alias a message other computers already hold.
+pub fn discard_unsent(conn: &Connection) -> Result<usize, AppError> {
+    Ok(conn.execute("DELETE FROM sync_log WHERE seq IS NULL", [])?)
+}
+
 #[cfg(test)]
 pub(crate) fn field_state_row_count(conn: &Connection) -> Result<i64, AppError> {
     Ok(conn.query_row("SELECT COUNT(*) FROM sync_field_state", [], |row| row.get(0))?)

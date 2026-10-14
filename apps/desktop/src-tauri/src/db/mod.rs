@@ -191,9 +191,6 @@ impl ActiveDataset {
     /// row: a `danger_zone` wipe (AD-15) and a restore's in-file rewrites (AD-9).
     ///
     /// The hook is re-attached by a guard when the closure returns, however it returns.
-    // Story 25 is the first production caller: the `danger_zone` wipe and the guarded restore are
-    // the two paths that rewrite the file without emitting a message per row.
-    #[allow(dead_code)]
     pub fn write_uncaptured<T>(
         &self,
         operation: impl FnOnce(&Connection) -> Result<T, AppError>,

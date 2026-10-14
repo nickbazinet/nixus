@@ -157,9 +157,25 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
         });
     }
 
+    // Field-level borrows: the capture hook has to be re-attached to the connection this call
+    // replaces, and both live in the same guard.
+    let active = &mut *active;
     let conn = active.conn.as_mut().ok_or(AppError::NotConfigured)?;
 
     crate::db::backup::restore_from_file(&mut *conn, &db_path, &source)?;
+
+    // AD-4/AD-9: the restored file is a copy of this dataset — possibly from another computer,
+    // possibly an older copy of this one — so it gets a fresh install identity and is left
+    // Unlinked rather than resuming the identity the backup happens to carry. Re-attaching the
+    // capture hook is not optional either: `restore_from_file` swapped the connection the previous
+    // hook was registered on, so without this the dataset would write nothing to `sync_log` until
+    // the next dataset switch. Both steps are behind the capture, which is what makes them
+    // CLOUD-LINKED-only: a local-only profile must not acquire an install identity at all
+    // (inherited AD-12), and an imported file brings no sync state of its own that could sync.
+    if let Some(capture) = &active.capture {
+        crate::sync::state::remint_install_on(conn)?;
+        capture.attach(conn)?;
+    }
 
     info!("Database restored from {}", selected_path.display());
 

@@ -1060,6 +1060,7 @@ impl<H: SyncHost> SyncActor<H> {
 
         match outcome {
             LinkOutcome::Replaced { report } => {
+                self.discard_unsent_log();
                 self.stats.last_object_bytes = Some(report.object_bytes);
                 self.stats.last_payload_bytes = Some(report.payload_bytes);
                 self.known_latest = Some(etag);
@@ -1167,6 +1168,31 @@ impl<H: SyncHost> SyncActor<H> {
     fn reopen_applier(&mut self) {
         self.applier = self.host.applier();
         self.pull = PullCursor::default();
+    }
+
+    /// Drops this computer's unsent log after an EXPLICIT choice to take the cloud copy (CAP-5).
+    ///
+    /// Only on the two paths where the user said "discard my local data" — a `replace` link
+    /// choice and `load_remote`. Shipping the unsent rows afterwards would republish part of what
+    /// they chose to discard. The retention re-bootstrap is the opposite case (no such intent) and
+    /// REPLAYS its unsent log instead. Never fatal: the swap already succeeded, and the restored
+    /// file is correct either way.
+    fn discard_unsent_log(&self) {
+        match self
+            .host
+            .with_dataset(crate::db::sync_capture::discard_unsent)
+        {
+            Ok(dropped) if dropped > 0 => {
+                info!("{dropped} unsent change(s) dropped with this computer's replaced data");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                warn!(
+                    "the unsent log could not be dropped after a replace: {}",
+                    error.code()
+                );
+            }
+        }
     }
 
     /// AD-13's sweep, run only by the computer that has just published a snapshot.
@@ -1845,6 +1871,7 @@ impl<H: SyncHost> SyncActor<H> {
                         self.known_latest = Some(their_etag);
                         self.snapshot_watermark = theirs.watermark.clone();
                         self.reopen_applier();
+                        self.discard_unsent_log();
                         self.mark_synced();
 
                         Ok(())

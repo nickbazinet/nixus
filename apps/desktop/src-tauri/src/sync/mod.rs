@@ -66,6 +66,8 @@ mod tests_reconcile;
 #[cfg(test)]
 mod tests_retention;
 #[cfg(test)]
+mod tests_lifecycle;
+#[cfg(test)]
 mod tests_restore;
 #[cfg(test)]
 mod tests_s3_endpoint;

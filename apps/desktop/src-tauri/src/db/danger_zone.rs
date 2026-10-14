@@ -57,21 +57,22 @@ pub const WIPE_TABLES: &[&str] = &[
 #[cfg(test)]
 pub const PRESERVED_TABLES: &[&str] = &["config", "schema_version", "sqlite_sequence"];
 
-/// Deletes every row from all user-data tables in a single transaction.
+/// Deletes every row from all user-data tables. Returns the number of rows deleted.
 ///
-/// Either every table is emptied or the database is left untouched. Returns the number
-/// of rows deleted.
-pub fn wipe_all(conn: &mut Connection) -> Result<u64, AppError> {
-    let tx = conn.transaction()?;
+/// The CALLER owns the transaction, and that is what makes "either every table is emptied or the
+/// database is left untouched" true: the production caller is
+/// `ActiveDataset::write_uncaptured`, which opens an `Immediate` transaction, detaches the
+/// capture hook for its duration (AD-15: a wipe must emit no message) and commits only on `Ok`.
+/// Opening a second transaction here would fail inside that one.
+pub fn wipe_all(conn: &Connection) -> Result<u64, AppError> {
     let mut deleted: u64 = 0;
 
     for table in WIPE_TABLES {
         // Table names come from the const above, never from user input.
-        let affected = tx.execute(&format!("DELETE FROM {}", table), [])?;
+        let affected = conn.execute(&format!("DELETE FROM {}", table), [])?;
         deleted += affected as u64;
     }
 
-    tx.commit()?;
     Ok(deleted)
 }
 
@@ -189,7 +190,7 @@ mod tests {
 
     #[test]
     fn wipe_all_empties_every_user_data_table() {
-        let mut conn = migrated_db();
+        let conn = migrated_db();
         seed_all(&conn);
 
         for table in WIPE_TABLES {
@@ -200,7 +201,7 @@ mod tests {
             );
         }
 
-        let deleted = wipe_all(&mut conn).expect("wipe succeeds");
+        let deleted = wipe_all(&conn).expect("wipe succeeds");
         assert_eq!(deleted, WIPE_TABLES.len() as u64);
 
         for table in WIPE_TABLES {
@@ -210,10 +211,10 @@ mod tests {
 
     #[test]
     fn wipe_all_preserves_config_and_schema_version() {
-        let mut conn = migrated_db();
+        let conn = migrated_db();
         seed_all(&conn);
 
-        wipe_all(&mut conn).expect("wipe succeeds");
+        wipe_all(&conn).expect("wipe succeeds");
 
         assert_eq!(count(&conn, "config"), 1, "config must survive the wipe");
         assert!(
@@ -232,10 +233,10 @@ mod tests {
 
     #[test]
     fn wipe_all_is_idempotent_on_empty_database() {
-        let mut conn = migrated_db();
+        let conn = migrated_db();
 
-        assert_eq!(wipe_all(&mut conn).expect("first wipe"), 0);
-        assert_eq!(wipe_all(&mut conn).expect("second wipe"), 0);
+        assert_eq!(wipe_all(&conn).expect("first wipe"), 0);
+        assert_eq!(wipe_all(&conn).expect("second wipe"), 0);
     }
 
     /// Guards against a future migration adding a table that silently survives the wipe.
@@ -274,14 +275,22 @@ mod tests {
 
     #[test]
     fn wipe_all_rolls_back_when_a_delete_fails() {
-        let mut conn = migrated_db();
+        let conn = migrated_db();
         seed_all(&conn);
 
         // Remove a table listed in WIPE_TABLES so its DELETE fails mid-transaction.
         conn.execute_batch("DROP TABLE audit_log")
             .expect("drop audit_log");
 
-        let err = wipe_all(&mut conn).expect_err("wipe must fail");
+        // The transaction is the caller's, exactly as in production: dropping it without a
+        // commit is what `write_uncaptured` does for an `Err` from the closure.
+        let tx = rusqlite::Transaction::new_unchecked(
+            &conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )
+        .expect("begin");
+        let err = wipe_all(&tx).expect_err("wipe must fail");
+        drop(tx);
         assert!(matches!(err, AppError::Database { .. }));
 
         // Everything deleted before the failure must be restored.
@@ -293,13 +302,13 @@ mod tests {
     #[test]
     fn reclaim_space_succeeds_on_a_wal_file_backed_database() {
         let file = tempfile::NamedTempFile::new().expect("temp file");
-        let mut conn = Connection::open(file.path()).expect("open file db");
+        let conn = Connection::open(file.path()).expect("open file db");
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .expect("set pragmas");
         run_migrations(&conn).expect("run migrations");
         seed_all(&conn);
 
-        wipe_all(&mut conn).expect("wipe succeeds");
+        wipe_all(&conn).expect("wipe succeeds");
         reclaim_space(&conn).expect("checkpoint and vacuum succeed");
 
         for table in WIPE_TABLES {

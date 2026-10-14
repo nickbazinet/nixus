@@ -63,6 +63,26 @@ pub(crate) fn stop(app: &AppHandle) {
     }
 }
 
+/// Disables sync and stops the actor, for a caller that is about to unlink the dataset.
+///
+/// `disable` first and `stop` second: disabling is what releases the actor's connection and
+/// forgets the vended credentials (AD-15 "credentials forgotten"), and only a running actor can
+/// be asked to do it. A failure is logged rather than returned — the caller's own work (a
+/// `danger_zone` wipe) must not be refused because sync could not be told about it, and the wipe
+/// deletes the `sync_state` row anyway, which IS the Unlinked state.
+pub(crate) async fn disable_and_stop(app: &AppHandle) {
+    if let Some(handle) = app
+        .try_state::<SyncSupervisor>()
+        .and_then(|supervisor| supervisor.current())
+    {
+        if let Err(error) = handle.disable().await {
+            warn!("Sync could not be disabled before the dataset was unlinked: {}", error.code());
+        }
+    }
+
+    stop(app);
+}
+
 /// Starts the actor for the active dataset, if that dataset is cloud-linked.
 ///
 /// Never fails the caller: a sync fault at launch or at a dataset switch is logged and

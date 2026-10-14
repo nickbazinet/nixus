@@ -112,6 +112,28 @@ pub fn ensure_install_on(conn: &Connection) -> Result<sync_state::SyncState, App
     ensure_install_outcome(conn).map(|(state, _)| state)
 }
 
+/// Re-mints the install identity unconditionally, for a dataset file that was just REPLACED or
+/// COPIED (a backup restore, a backup import, a dataset copy — AD-4, AD-9).
+///
+/// Separate from `ensure_install_on` because the fingerprint comparison cannot answer this case:
+/// a file copied into a second dataset directory on the SAME computer carries a fingerprint that
+/// still matches, so `ensure_install_on` reports `Unchanged` and two live datasets would append
+/// under one `(install, seq)` space — the exact thing AD-15 forbids. The caller knows a copy
+/// happened; the file cannot. The pin is KEPT (a copy is almost always the same user, Story 6)
+/// and the dataset is left Unlinked, so the next enable goes through the CAP-5 choice.
+pub fn remint_install_on(conn: &Connection) -> Result<InstallOutcome, AppError> {
+    let fingerprint = machine_fingerprint(&MachineSignals::from_environment());
+
+    if sync_state::load(conn)?.is_none() {
+        sync_state::ensure(conn, &new_install_id(), &fingerprint)?;
+        return Ok(InstallOutcome::Created);
+    }
+
+    sync_state::relink_install(conn, &new_install_id(), &fingerprint)?;
+
+    Ok(InstallOutcome::Relinked)
+}
+
 fn ensure_install_outcome(
     conn: &Connection,
 ) -> Result<(sync_state::SyncState, InstallOutcome), AppError> {

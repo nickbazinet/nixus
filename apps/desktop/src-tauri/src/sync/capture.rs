@@ -617,8 +617,6 @@ impl Capture {
     /// The explicit "capture off" seam AD-3's neighbours need: `sync::apply` runs on a connection
     /// that never had the hook (AD-11), but a wipe (AD-15) and a restore (AD-9) operate on the UI
     /// connection itself and must not emit a message per deleted row.
-    // Story 25 is the first production caller (through `ActiveDataset::write_uncaptured`).
-    #[allow(dead_code)]
     pub fn detached<'a>(&'a self, conn: &'a Connection) -> Result<Detached<'a>, AppError> {
         conn.preupdate_hook(None::<fn(Action, &str, &str, &PreUpdateCase)>)?;
         self.discard();
@@ -1305,7 +1303,6 @@ fn row_json(
 }
 
 /// Re-attaches the hook when it goes out of scope, however the scope ends.
-#[allow(dead_code)]
 pub struct Detached<'a> {
     capture: &'a Capture,
     conn: &'a Connection,
