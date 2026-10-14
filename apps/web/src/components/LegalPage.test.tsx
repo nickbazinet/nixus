@@ -279,7 +279,7 @@ describe("multi-device sync disclosure", () => {
      * first time it is viewed. The protection claim has to travel with it. */
     expect(text).toMatch(/Full-size project images travel separately/i);
     expect(text).toMatch(/uploaded as its own object/i);
-    expect(text).toMatch(/downloads one the first time you view it/i);
+    expect(text).toMatch(/downloads one the first time you ask to see it/i);
     expect(text).toMatch(/does not sync continuously/i);
     expect(text).toMatch(/never uploaded/i);
     expect(text).toMatch(/credential store and are never transmitted to Nixus/i);
