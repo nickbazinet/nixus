@@ -108,6 +108,17 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
     ],
   },
   { headingKey: "termsPage.quota.heading", bodyKeys: ["termsPage.quota.body"] },
+  {
+    headingKey: "termsPage.sync.heading",
+    bodyKeys: [
+      "termsPage.sync.body",
+      // The conflict rule and the absent in-app deletion are what a user cannot
+      // discover from the app before it matters to them.
+      "termsPage.sync.conflict",
+      "termsPage.sync.backups",
+      "termsPage.sync.freeze",
+    ],
+  },
   { headingKey: "termsPage.accounts.heading", bodyKeys: ["termsPage.accounts.body"] },
   { headingKey: "termsPage.noAdvice.heading", bodyKeys: ["termsPage.noAdvice.body"] },
   { headingKey: "termsPage.yourData.heading", bodyKeys: ["termsPage.yourData.body"] },
@@ -117,6 +128,21 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
 
 export const PRIVACY_SECTIONS: readonly LegalSection[] = [
   { headingKey: "privacyPage.local.heading", bodyKeys: ["privacyPage.local.body"] },
+  {
+    headingKey: "privacyPage.sync.heading",
+    bodyKeys: [
+      "privacyPage.sync.body",
+      "privacyPage.sync.what",
+      "privacyPage.sync.notSynced",
+      "privacyPage.sync.where",
+      // AD-8: SSE-S3 only, no client-side encryption, so "who could technically
+      // read this" has to be stated rather than left to the reader's assumption.
+      "privacyPage.sync.protection",
+      "privacyPage.sync.retention",
+      "privacyPage.sync.deletion",
+      "privacyPage.sync.localOnly",
+    ],
+  },
   { headingKey: "privacyPage.aiLeaves.heading", bodyKeys: ["privacyPage.aiLeaves.body"] },
   { headingKey: "privacyPage.byo.heading", bodyKeys: ["privacyPage.byo.body"] },
   {

@@ -2,6 +2,8 @@ import { act, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import i18n from "@/lib/i18n";
 
+import enMessages from "@/locales/en.json";
+import frMessages from "@/locales/fr.json";
 import { renderWithProviders } from "@/lib/test-utils";
 import {
   PRIVACY_SECTIONS,
@@ -234,15 +236,178 @@ describe("EN and FR locality claims stay in step", () => {
     );
   });
 
-  it("keeps the opt-in wording that only triggered AI requests leave the device", () => {
+  it("keeps the opt-in wording that nothing leaves the device unasked", () => {
     const en = i18n.getFixedT("en");
     const fr = i18n.getFixedT("fr");
 
+    // Narrowed from "only the AI requests you trigger leave your device": sync is a
+    // second way records leave the device, so the old absolute claim became false.
     expect(en("features.localFirst.description")).toMatch(
-      /only the AI requests you trigger leave your device/i
+      /nothing leaves it unless you ask/i
+    );
+    expect(en("features.localFirst.description")).toMatch(/or sync you turn on/i);
+    expect(fr("features.localFirst.description")).toMatch(
+      /rien ne le quitte sans que vous le demandiez/i
     );
     expect(fr("features.localFirst.description")).toMatch(
-      /seules les requêtes IA que vous lancez quittent votre appareil/i
+      /ou la synchronisation que vous activez/i
     );
+  });
+});
+
+/*
+ * AD-13 extends to sync: Terms and Privacy are the only disclosure, there is no in-app
+ * consent gate. Every claim here is pinned to something the code actually does, because
+ * a disclosure that overstates the protection is worse than none.
+ */
+describe("multi-device sync disclosure", () => {
+  it("states that sync is opt-in and entitlement-bound without naming a tier", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/off until you turn it on/i);
+    expect(text).toMatch(/a Nixus Cloud account that includes multi-device sync/i);
+    // AD-14: no sync copy may name a tier.
+    expect(text).not.toMatch(/premium multi-device|multi-device sync tier/i);
+  });
+
+  it("names what is uploaded, what is stripped, and where it lives", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/uploads a snapshot/i);
+    // Milestone 1 wires no blob upload, so claiming images are uploaded would be false.
+    expect(text).toMatch(/Full-size project images are deliberately left out/i);
+    expect(text).toMatch(/does not sync continuously/i);
+    expect(text).toMatch(/never uploaded/i);
+    expect(text).toMatch(/credential store and are never transmitted to Nixus/i);
+    expect(text).toMatch(/operated by Nixus on Amazon Web Services/i);
+    expect(text).toMatch(/US East \(N\. Virginia\)/);
+  });
+
+  /* AD-8 is SSE-S3 only. Claiming or implying end-to-end encryption would be the one
+   * unrecoverable error in this document. */
+  it("refuses to imply end-to-end encryption and says who could read the copy", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/server-side encryption \(SSE-S3\)/i);
+    expect(text).toMatch(/not end-to-end encrypted/i);
+    expect(text).toMatch(/administrator with access to that AWS account/i);
+    expect(text).toMatch(/reserves a marker for an encryption scheme/i);
+    expect(text).not.toMatch(/end-to-end encrypted\.(?! )/);
+    expect(text).not.toMatch(/only you can read/i);
+  });
+
+  /* The sync role holds no delete permission, so a self-serve deletion promise would be
+   * unimplementable; the retention window is the lifecycle rule on the bucket. */
+  it("states the 30-day version window and that deletion is a manual request", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/previous versions of each object for 30 days/i);
+    expect(text).toMatch(/no way to delete the cloud copy from inside the app/i);
+    expect(text).toMatch(/email the address at the bottom of this page/i);
+    expect(text).toMatch(/stops transfers but does not delete the copy/i);
+  });
+
+  it("keeps the local-only promise intact in the Privacy Policy", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/local-only profile, no sync code runs/i);
+  });
+
+  /* No continuous sync and no merge exist in this milestone, so the Terms must describe
+   * the choice the user is actually offered instead of promising convergence. */
+  it("describes beta availability, the conflict choice and the freeze in the Terms", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/optional feature of eligible Nixus Cloud accounts/i);
+    expect(text).toMatch(/availability is not guaranteed/i);
+    expect(text).toMatch(/does not merge edits made on two computers at the same time/i);
+    expect(text).toMatch(/never silently overwritten/i);
+    expect(text).toMatch(/kept as a dated backup/i);
+    expect(text).toMatch(/keeping your own backups remains your responsibility/i);
+    expect(text).toMatch(/Nixus freezes it/i);
+    expect(text).toMatch(/keeps working normally with your local data/i);
+  });
+
+  it("no longer claims that Nixus never syncs or holds a copy", () => {
+    for (const page of [<TermsPage locale="en" />, <PrivacyPage locale="en" />]) {
+      const text = renderText(page);
+      expect(text).not.toMatch(/does not back them up, sync them, or hold a copy/i);
+      expect(text).not.toMatch(/no cloud sync/i);
+    }
+  });
+
+  it("carries the same sync facts in French", async () => {
+    await withFrench(() => {
+      const privacy = renderText(<PrivacyPage locale="fr" />);
+
+      expect(privacy).toMatch(/désactivée jusqu'à ce que vous l'activiez/i);
+      expect(privacy).toMatch(/compte Nixus Cloud qui inclut la synchronisation/i);
+      expect(privacy).toMatch(/Virginie du Nord/i);
+      expect(privacy).toMatch(/n'est pas chiffrée de bout en bout/i);
+      expect(privacy).toMatch(/administrateur de Nixus ayant accès à ce compte AWS/i);
+      expect(privacy).toMatch(/pendant 30 jours/i);
+      expect(privacy).toMatch(/au bas de cette page/i);
+      expect(privacy).toMatch(/aucun code de synchronisation ne s'exécute/i);
+
+      const terms = renderText(<TermsPage locale="fr" />);
+
+      expect(terms).toMatch(/comptes Nixus Cloud admissibles/i);
+      expect(terms).toMatch(/version bêta/i);
+      expect(terms).toMatch(/ne fusionne pas les modifications faites simultanément/i);
+      expect(terms).toMatch(/jamais remplacée en silence/i);
+      expect(terms).toMatch(/sauvegarde datée/i);
+      expect(terms).toMatch(/Nixus la gèle/i);
+      expect(terms).not.toMatch(/ne les synchronise pas/i);
+    });
+  });
+
+  it("keeps both documents' sync paragraphs in the rendered section order", () => {
+    const termsKeys = TERMS_SECTIONS.flatMap((section) => section.bodyKeys);
+    const privacyKeys = PRIVACY_SECTIONS.flatMap((section) => section.bodyKeys);
+
+    expect(termsKeys).toEqual(
+      expect.arrayContaining([
+        "termsPage.sync.body",
+        "termsPage.sync.conflict",
+        "termsPage.sync.backups",
+        "termsPage.sync.freeze",
+      ])
+    );
+    expect(privacyKeys).toEqual(
+      expect.arrayContaining([
+        "privacyPage.sync.body",
+        "privacyPage.sync.what",
+        "privacyPage.sync.notSynced",
+        "privacyPage.sync.where",
+        "privacyPage.sync.protection",
+        "privacyPage.sync.retention",
+        "privacyPage.sync.deletion",
+        "privacyPage.sync.localOnly",
+      ])
+    );
+  });
+});
+
+/* A key present in one locale and missing in the other renders the English string on a
+ * French legal page without failing anything, which is how a disclosure silently stops
+ * being a disclosure for half the users. */
+describe("locale key parity", () => {
+  it("defines exactly the same keys in both locales", () => {
+    const en = Object.keys(enMessages).sort();
+    const fr = Object.keys(frMessages).sort();
+
+    expect(fr).toEqual(en);
+  });
+
+  it("leaves no legal string untranslated", () => {
+    const untranslated = Object.keys(enMessages).filter(
+      (key) =>
+        (key.startsWith("privacyPage.") || key.startsWith("termsPage.")) &&
+        !key.endsWith(".meta.title") &&
+        enMessages[key as keyof typeof enMessages] ===
+          frMessages[key as keyof typeof frMessages]
+    );
+
+    expect(untranslated).toEqual([]);
   });
 });
