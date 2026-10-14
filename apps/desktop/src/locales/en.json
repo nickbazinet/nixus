@@ -1451,6 +1451,13 @@
   "projects.image.contentMismatch": "That file's contents are not a usable PNG or JPEG image.",
   "projects.image.dimensions": "That image is larger than 12 megapixels. Pick a smaller one.",
   "projects.image.projectUnavailable": "This project is no longer available.",
+  "projects.image.alt": "Picture for {{name}}",
+  "projects.image.notOnThisComputer": "The full-size picture is still in your cloud space. Only the preview came down with your records.",
+  "projects.image.loadFullAction": "Load full image",
+  "projects.image.loadingFull": "Getting the full-size picture…",
+  "projects.image.loadFailed": "The full-size picture could not be loaded. Nothing on this computer was changed.",
+  "projects.image.loadRetry": "Try again",
+  "projects.image.unavailable": "This project's picture could not be read.",
 
   "hostedAi.validation": "Nixus couldn't send that request. Trying again unchanged won't help — the request itself was rejected.",
   "hostedAi.payloadTooLarge": "That file is too large for AI reading. Try a smaller image, or split a multi-page PDF.",
@@ -1573,5 +1580,7 @@
   "sync.errorNotEnabled": "Sync is not on for this profile yet.",
   "sync.errorNoPendingPrompt": "That question has already been answered.",
   "sync.errorActorUnavailable": "Sync is not running for this profile. Reopen the profile and try again.",
+  "sync.errorImageMissing": "This project no longer has a picture to download.",
+  "sync.errorImageCorrupt": "The stored picture did not match its fingerprint, so it was not used. Nothing on this computer was changed.",
   "sync.errorTransport": "Sync could not finish. The app and your records are unaffected."
 }

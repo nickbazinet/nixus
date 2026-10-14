@@ -17,6 +17,7 @@ use tauri_plugin_dialog::DialogExt;
 use tracing::{info, warn};
 
 use crate::error::AppError;
+use crate::models::ProjectImage;
 use crate::sync::bootstrap::LinkChoice;
 use crate::sync::host::DatasetHost;
 use crate::sync::manager::{
@@ -193,6 +194,21 @@ pub async fn sync_resolve_remote_changed(
 #[tauri::command(rename_all = "snake_case")]
 pub async fn sync_diagnostics(app: AppHandle) -> Result<SyncDiagnostics, AppError> {
     Ok(handle(&app)?.diagnostics().await?)
+}
+
+/// Downloads one project's full picture from the cloud and stores it locally (AD-10, CAP-6).
+///
+/// The answer is the same `ProjectImage` shape `get_project_image` returns, so the caller
+/// replaces what it already had rather than merging two payloads — with
+/// `full_image_available: true` once the bytes are here. A picture this computer already holds is
+/// returned without a single request; a profile that cannot sync answers with a typed code and
+/// makes none either (inherited AD-12, AD-14).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn sync_fetch_project_image(
+    app: AppHandle,
+    project_id: i64,
+) -> Result<ProjectImage, AppError> {
+    Ok(handle(&app)?.fetch_image(project_id).await?)
 }
 
 /// The version of the exported document's own shape. Support reads it before anything else,

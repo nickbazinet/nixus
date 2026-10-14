@@ -245,6 +245,13 @@ impl SyncHost for DatasetHost {
         self.with_conn(local_data_summary)
     }
 
+    fn with_dataset<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, AppError>,
+    ) -> Result<T, SyncFault> {
+        self.with_conn(operation)
+    }
+
     fn slot(&self) -> &Self::Slot {
         &self.slot
     }

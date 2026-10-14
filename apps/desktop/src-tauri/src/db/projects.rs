@@ -472,9 +472,6 @@ pub fn get_project_ids_needing_thumbnails(conn: &Connection) -> Result<Vec<i64>,
 ///
 /// The caller is responsible for having verified the bytes against `expected_sha256` first
 /// (`sync::blob::fetch_image_blob` does); this function trusts the pair and only places it.
-// Story 10 wires the fetch command that calls this; the table rebuild and the write-back are one
-// story so the schema is never shipped without the path that fills it back in.
-#[allow(dead_code)]
 pub fn set_project_image_bytes(
     conn: &Connection,
     project_id: i64,
@@ -499,8 +496,6 @@ pub fn set_project_image_bytes(
 /// This runs on the snapshot COPY, never on the live dataset: it is what keeps multi-megabyte
 /// pictures out of a snapshot a new computer has to download before it can show anything, while
 /// `image_sha256` leaves every one of them fetchable afterwards.
-// Story 8 builds the snapshot that calls this.
-#[allow(dead_code)]
 pub fn blank_project_image_bytes(conn: &Connection) -> Result<usize, AppError> {
     let rows = conn.execute(
         "UPDATE project_images SET image_bytes = NULL WHERE image_bytes IS NOT NULL",
@@ -3321,7 +3316,7 @@ mod tests {
         // This pins the last `MIGRATIONS` entry, which is what forces a new migration to be
         // exercised here instead of shipping unnoticed.
         assert_eq!(
-            version, 30,
+            version, 31,
             "the newest applied version must be the last MIGRATIONS entry"
         );
 

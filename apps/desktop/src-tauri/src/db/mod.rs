@@ -29,6 +29,7 @@ pub mod recurring;
 pub mod recurring_income;
 pub mod retirement;
 pub mod spending_trends;
+pub mod sync_blobs;
 pub mod sync_state;
 pub mod yearly_summary;
 
@@ -96,6 +97,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         30,
         include_str!("../../migrations/030_project_images_content_addressed.sql"),
     ),
+    (31, include_str!("../../migrations/031_sync_image_blobs.sql")),
 ];
 
 /// The scalar SQL function migration 030 backfills `project_images.image_sha256` with.

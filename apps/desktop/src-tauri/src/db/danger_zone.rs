@@ -18,6 +18,9 @@ pub const WIPE_TABLES: &[&str] = &[
     // AD-15: a wipe of a synced dataset unlinks it. Deleting the row *is* the
     // Unlinked state, and it never touches the cloud copy or another computer.
     "sync_state",
+    // AD-10: what this computer has already uploaded. Forgetting it costs one
+    // conditional request per picture afterwards, never a wrong answer.
+    "sync_image_blobs",
     "chat_messages",
     "chat_conversations",
     "maintenance_service_logs",
@@ -131,6 +134,8 @@ mod tests {
                 VALUES (1, '0123456789abcdef',
                         'ab00000000000000000000000000000000000000000000000000000000000000',
                         'linked', 'us-east-1:abc', 'sub-1');
+            INSERT INTO sync_image_blobs (image_sha256)
+                VALUES ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
             ",
         )
         .expect("seed all tables");

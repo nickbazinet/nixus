@@ -46,6 +46,10 @@ struct Stored {
 struct Counters {
     total: u64,
     by_op: HashMap<FakeOp, u64>,
+    /// Every request in order, with the key it addressed. The per-op counters cannot answer
+    /// "how many PUTs were blobs", because a snapshot object is written through the same
+    /// immutable put as a blob is.
+    keyed: Vec<(FakeOp, String)>,
 }
 
 pub(crate) struct FakeObjectStore {
@@ -88,6 +92,17 @@ impl FakeObjectStore {
             .unwrap_or(0)
     }
 
+    /// How many requests of `op` addressed a key under `prefix`.
+    pub(crate) fn calls_of_prefix(&self, op: FakeOp, prefix: &str) -> u64 {
+        self.counters
+            .lock()
+            .expect("not poisoned")
+            .keyed
+            .iter()
+            .filter(|(seen, key)| *seen == op && key.starts_with(prefix))
+            .count() as u64
+    }
+
     pub(crate) fn transferred_bytes(&self) -> u64 {
         self.transferred.load(Ordering::SeqCst)
     }
@@ -125,6 +140,13 @@ impl FakeObjectStore {
             .map(|stored| stored.bytes.clone())
     }
 
+    /// Takes an object away without going through the protocol, so a test can arrange the one
+    /// state the app cannot produce itself: a key a row still names and the cloud no longer has
+    /// (Milestone 1 grants no delete permission).
+    pub(crate) fn remove(&self, key: &str) {
+        self.objects.lock().expect("not poisoned").remove(key);
+    }
+
     /// The concurrency token a stored object currently carries, so a test can assert that a
     /// compare-and-swap actually moved the pointer rather than only that it returned `Ok`.
     pub(crate) fn etag_of(&self, key: &str) -> Option<ETag> {
@@ -157,11 +179,12 @@ impl FakeObjectStore {
 
     /// One place where a call is counted, a queued fault is taken and the throttle is paid, so no
     /// operation can be added that silently escapes any of the three.
-    async fn enter(&self, op: FakeOp, bytes: u64) -> Result<(), StoreError> {
+    async fn enter(&self, op: FakeOp, key: &str, bytes: u64) -> Result<(), StoreError> {
         {
             let mut counters = self.counters.lock().expect("not poisoned");
             counters.total += 1;
             *counters.by_op.entry(op).or_insert(0) += 1;
+            counters.keyed.push((op, key.to_string()));
         }
         self.transferred.fetch_add(bytes, Ordering::SeqCst);
 
@@ -192,7 +215,7 @@ impl ObjectStore for FakeObjectStore {
     /// `If-None-Match: *` with AD-6's refinement: an existing key holding the SAME content is a
     /// success (the upload is idempotent), and a different content is an install-id collision.
     async fn put_immutable(&self, key: &str, body: Vec<u8>) -> Result<ImmutablePut, StoreError> {
-        self.enter(FakeOp::PutImmutable, body.len() as u64).await?;
+        self.enter(FakeOp::PutImmutable, key, body.len() as u64).await?;
 
         let mut objects = self.objects.lock().expect("not poisoned");
         if let Some(stored) = objects.get(key) {
@@ -221,7 +244,7 @@ impl ObjectStore for FakeObjectStore {
     }
 
     async fn put_if_absent(&self, key: &str, body: Vec<u8>) -> Result<ETag, StoreError> {
-        self.enter(FakeOp::PutIfAbsent, body.len() as u64).await?;
+        self.enter(FakeOp::PutIfAbsent, key, body.len() as u64).await?;
 
         let mut objects = self.objects.lock().expect("not poisoned");
         if objects.contains_key(key) {
@@ -246,7 +269,7 @@ impl ObjectStore for FakeObjectStore {
         expected: &ETag,
         body: Vec<u8>,
     ) -> Result<ETag, StoreError> {
-        self.enter(FakeOp::PutIfMatch, body.len() as u64).await?;
+        self.enter(FakeOp::PutIfMatch, key, body.len() as u64).await?;
 
         let mut objects = self.objects.lock().expect("not poisoned");
         let Some(stored) = objects.get_mut(key) else {
@@ -272,7 +295,7 @@ impl ObjectStore for FakeObjectStore {
             .map(|stored| (stored.bytes.clone(), stored.etag.clone()));
 
         let size = found.as_ref().map(|(bytes, _)| bytes.len()).unwrap_or(0);
-        self.enter(FakeOp::Get, size as u64).await?;
+        self.enter(FakeOp::Get, key, size as u64).await?;
 
         let (bytes, etag) = found.ok_or(StoreError::NotFound)?;
 
@@ -305,7 +328,7 @@ impl ObjectStore for FakeObjectStore {
             (Some((bytes, _)), false) => bytes.len(),
             _ => 0,
         };
-        self.enter(FakeOp::GetIfNoneMatch, size as u64).await?;
+        self.enter(FakeOp::GetIfNoneMatch, key, size as u64).await?;
 
         let (bytes, etag) = found.ok_or(StoreError::NotFound)?;
         if unchanged {
@@ -322,7 +345,7 @@ impl ObjectStore for FakeObjectStore {
     }
 
     async fn head(&self, key: &str) -> Result<ObjectMeta, StoreError> {
-        self.enter(FakeOp::Head, 0).await?;
+        self.enter(FakeOp::Head, key, 0).await?;
 
         let objects = self.objects.lock().expect("not poisoned");
         let stored = objects.get(key).ok_or(StoreError::NotFound)?;
@@ -334,7 +357,7 @@ impl ObjectStore for FakeObjectStore {
     }
 
     async fn exists(&self, key: &str) -> Result<bool, StoreError> {
-        self.enter(FakeOp::Exists, 0).await?;
+        self.enter(FakeOp::Exists, key, 0).await?;
 
         Ok(self
             .objects
@@ -638,8 +661,50 @@ impl ComputerProbe {
         self.entitled.store(entitled, Ordering::SeqCst);
     }
 
+    /// Gives this computer a project with a full-size picture, and answers with the content hash
+    /// AD-10 addresses it by. A thumbnail is attached because that is what a real upload stores
+    /// and what has to survive the snapshot's blanking.
+    pub(crate) fn store_project_image(&self, project_id: i64, bytes: &[u8]) -> String {
+        self.with_live(|conn| {
+            conn.execute(
+                "INSERT OR IGNORE INTO projects (id, name, target_cents) VALUES (?1, ?2, 100000)",
+                rusqlite::params![project_id, format!("Project {project_id}")],
+            )
+            .expect("the project exists");
+
+            crate::db::projects::upsert_project_image(
+                conn,
+                project_id,
+                &crate::db::projects::ProjectImageWrite {
+                    mime_type: "image/png",
+                    original_filename: "cover.png",
+                    bytes,
+                    thumbnail: Some((&bytes[..bytes.len().min(512)], "image/png")),
+                },
+            )
+            .expect("the picture stores");
+        });
+
+        crate::projects::image::sha256_hex(bytes)
+    }
+
+    pub(crate) fn project_image(
+        &self,
+        project_id: i64,
+    ) -> Option<crate::db::projects::ProjectImageRow> {
+        self.with_live(|conn| {
+            crate::db::projects::get_project_image(conn, project_id).expect("the picture reads")
+        })
+    }
+
     pub(crate) fn frozen_reason(&self) -> Option<FrozenReason> {
         *self.frozen.lock().expect("the frozen reason lock")
+    }
+
+    /// Freezes this computer the way a support action or AD-7's refusal does, which is a
+    /// different input from a lapsed entitlement even though both end in `Frozen`.
+    pub(crate) fn set_frozen(&self, reason: Option<FrozenReason>) {
+        *self.frozen.lock().expect("the frozen reason lock") = reason;
     }
 }
 
@@ -686,6 +751,13 @@ impl crate::sync::manager::SyncHost for TestComputer {
         &self,
     ) -> Result<crate::db::backup::LocalData, crate::sync::manager::SyncFault> {
         self.with_own(crate::db::backup::local_data_summary)
+    }
+
+    fn with_dataset<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, crate::error::AppError>,
+    ) -> Result<T, crate::sync::manager::SyncFault> {
+        self.with_own(operation)
     }
 
     fn slot(&self) -> &Self::Slot {

@@ -1451,6 +1451,13 @@
   "projects.image.contentMismatch": "Le contenu de ce fichier n'est pas une image PNG ou JPEG valide.",
   "projects.image.dimensions": "Cette image dépasse 12 mégapixels. Choisissez-en une plus petite.",
   "projects.image.projectUnavailable": "Ce projet n'est plus disponible.",
+  "projects.image.alt": "Image du projet {{name}}",
+  "projects.image.notOnThisComputer": "L'image en taille réelle se trouve encore dans votre espace infonuagique. Seul l'aperçu est arrivé avec vos données.",
+  "projects.image.loadFullAction": "Télécharger l'image complète",
+  "projects.image.loadingFull": "Téléchargement de l'image en taille réelle…",
+  "projects.image.loadFailed": "L'image en taille réelle n'a pas pu être téléchargée. Rien n'a été modifié sur cet ordinateur.",
+  "projects.image.loadRetry": "Réessayer",
+  "projects.image.unavailable": "L'image de ce projet n'a pas pu être lue.",
 
   "hostedAi.validation": "Nixus n'a pas pu envoyer cette requête. La réessayer telle quelle ne changera rien — la requête elle-même a été refusée.",
   "hostedAi.payloadTooLarge": "Ce fichier est trop volumineux pour la lecture IA. Essayez une image plus petite, ou divisez un PDF de plusieurs pages.",
@@ -1573,5 +1580,7 @@
   "sync.errorNotEnabled": "La synchronisation n'est pas encore activée pour ce profil.",
   "sync.errorNoPendingPrompt": "Cette question a déjà été résolue.",
   "sync.errorActorUnavailable": "La synchronisation n'est pas active pour ce profil. Rouvrez le profil et réessayez.",
+  "sync.errorImageMissing": "Ce projet n'a plus d'image à télécharger.",
+  "sync.errorImageCorrupt": "L'image stockée ne correspondait pas à son empreinte; elle n'a donc pas été utilisée. Rien n'a été modifié sur cet ordinateur.",
   "sync.errorTransport": "La synchronisation n'a pas pu aboutir. L'application et vos données ne sont pas touchées."
 }

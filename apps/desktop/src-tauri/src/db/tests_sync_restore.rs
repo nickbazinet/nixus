@@ -282,7 +282,13 @@ fn the_local_only_tables_and_credential_config_keys_are_carried_over() {
     let report =
         restore_snapshot_file(&slot, &db_path, &payload, None).expect("the restore succeeds");
 
-    assert_eq!(report.carried.tables, vec!["sync_state".to_string()]);
+    // Both `sync_*` tables are discovered from the file's own `sqlite_master`, which is why
+    // AD-10's upload marker is carried with no edit here: the restored dataset keeps knowing
+    // which pictures this computer already put in the cloud.
+    assert_eq!(
+        report.carried.tables,
+        vec!["sync_image_blobs".to_string(), "sync_state".to_string()]
+    );
     assert_eq!(report.carried.rows, 1);
     assert_eq!(report.carried.config_keys, 1);
 

@@ -69,7 +69,9 @@ export type SyncErrorCode =
   | "profile_create_failed"
   | "not_enabled"
   | "no_pending_prompt"
-  | "actor_unavailable";
+  | "actor_unavailable"
+  | "image_missing"
+  | "image_corrupt";
 
 const SYNC_CODES: readonly SyncErrorCode[] = [
   "local_only",
@@ -98,6 +100,8 @@ const SYNC_CODES: readonly SyncErrorCode[] = [
   "not_enabled",
   "no_pending_prompt",
   "actor_unavailable",
+  "image_missing",
+  "image_corrupt",
 ];
 
 export interface SyncError {
@@ -170,6 +174,10 @@ export function syncMessageKey(code: SyncErrorCode): string {
       return "sync.errorNoPendingPrompt";
     case "actor_unavailable":
       return "sync.errorActorUnavailable";
+    case "image_missing":
+      return "sync.errorImageMissing";
+    case "image_corrupt":
+      return "sync.errorImageCorrupt";
   }
 }
 

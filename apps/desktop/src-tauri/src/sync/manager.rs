@@ -24,15 +24,19 @@ use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 
+use rusqlite::Connection;
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
 
 use crate::db::backup::{DatasetSlot, LocalData};
+use crate::db::sync_blobs::{self, ImageFetchTarget};
 use crate::db::sync_state::FrozenReason;
 use crate::entitlements::MULTI_DEVICE_SYNC;
+use crate::models::ProjectImage;
 
 use super::auth::{AccountPin, AuthError};
+use super::blob::{self, BlobError};
 use super::bootstrap::{
     self, BootstrapError, BootstrapPlan, LinkChoice, LinkOutcome, ReplaceTarget, RestoreTarget,
     SeparateContext,
@@ -140,6 +144,11 @@ pub enum SyncFault {
     Registry,
     /// The dataset's own database could not be read.
     StateUnavailable,
+    /// The project has no picture, so there is nothing to fetch for it.
+    ImageMissing,
+    /// What came back is not the picture the row names: the payload does not hash to the key, or
+    /// the body is not a Nixus object at all. Never written to the dataset.
+    ImageCorrupt,
     NotEnabled,
     NoPendingPrompt,
     /// The actor's task is gone (a dataset switch or sign-out stopped it).
@@ -180,6 +189,8 @@ impl SyncFault {
             SyncFault::Swap { .. } => "restore_failed",
             SyncFault::OwnerMismatch => "owner_mismatch",
             SyncFault::Registry => "profile_create_failed",
+            SyncFault::ImageMissing => "image_missing",
+            SyncFault::ImageCorrupt => "image_corrupt",
             SyncFault::NotEnabled => "not_enabled",
             SyncFault::NoPendingPrompt => "no_pending_prompt",
             SyncFault::ActorUnavailable => "actor_unavailable",
@@ -214,6 +225,8 @@ impl SyncFault {
             | SyncFault::Swap { .. }
             | SyncFault::Registry
             | SyncFault::StateUnavailable
+            | SyncFault::ImageMissing
+            | SyncFault::ImageCorrupt
             | SyncFault::NotEnabled
             | SyncFault::NoPendingPrompt
             | SyncFault::ActorUnavailable => true,
@@ -248,6 +261,8 @@ impl SyncFault {
             "snapshot_invalid" => "The cloud copy could not be verified.",
             "restore_failed" => "The cloud copy could not be loaded onto this computer.",
             "profile_create_failed" => "A separate profile could not be created.",
+            "image_missing" => "This project has no picture to download.",
+            "image_corrupt" => "The stored picture could not be verified.",
             "not_enabled" => "Sync is not turned on for this profile.",
             _ => "Sync is unavailable.",
         }
@@ -269,6 +284,20 @@ impl From<SnapshotError> for SyncFault {
         match error {
             SnapshotError::Store(error) => SyncFault::from(error),
             other => SyncFault::Snapshot(other),
+        }
+    }
+}
+
+impl From<BlobError> for SyncFault {
+    fn from(error: BlobError) -> Self {
+        match error {
+            BlobError::Store(error) => SyncFault::from(error),
+            // A hash that is not a digest can only come from a row the schema's hex CHECK
+            // admitted, so it is the same class of problem as a payload that does not match:
+            // the picture this computer holds cannot be addressed, and no retry changes that.
+            BlobError::InvalidHash | BlobError::ContentMismatch { .. } | BlobError::Header(_) => {
+                SyncFault::ImageCorrupt
+            }
         }
     }
 }
@@ -366,6 +395,16 @@ pub(crate) trait SyncHost {
     /// `PRAGMA data_version` on the actor's own connection.
     fn data_version(&self) -> Result<i64, SyncFault>;
     fn local_data(&self) -> Result<LocalData, SyncFault>;
+    /// Runs one read or write on the actor's own connection to the dataset.
+    ///
+    /// Generic rather than one method per question (which would be five) because the lazy-image
+    /// path needs several short statements and every one of them already lives in `db/`. It is a
+    /// generic method, which costs nothing here: the actor is `SyncActor<H>` and no `dyn SyncHost`
+    /// exists. The connection is opened on first use and closed by `release` before a file swap.
+    fn with_dataset<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, crate::error::AppError>,
+    ) -> Result<T, SyncFault>;
     fn slot(&self) -> &Self::Slot;
     /// Releases the actor's own connection(s) so nothing holds the dataset file.
     fn release(&self);
@@ -858,6 +897,12 @@ impl<H: SyncHost> SyncActor<H> {
         session: &HostSession<H>,
         known_latest: Option<&ETag>,
     ) -> Result<UploadStep, SyncFault> {
+        // Blobs FIRST, and the snapshot only if they all succeeded: a snapshot names its
+        // pictures by `image_sha256`, so publishing it before their objects exist would give
+        // every other computer a hash it cannot resolve (AD-10). A blob fault returns here,
+        // before `snap/LATEST` is read or written, so the pointer never moves on a half upload.
+        self.upload_image_blobs(session).await?;
+
         let built =
             snapshot::build_snapshot(self.host.db_path(), self.host.schema_version()).await?;
 
@@ -884,6 +929,86 @@ impl<H: SyncHost> SyncActor<H> {
                 Ok(UploadStep::RemoteChanged)
             }
         }
+    }
+
+    /// Puts every full image this computer holds and has not yet sent into `blob/<sha256>`.
+    ///
+    /// Three things keep this from re-sending megabytes on every cycle: the queue only contains
+    /// rows whose bytes are actually here, a 0-byte presence probe answers for anything another
+    /// computer already uploaded, and a local marker is written for every hash that is confirmed
+    /// stored — so a second cycle with no new picture makes no blob request at all.
+    async fn upload_image_blobs(&mut self, session: &HostSession<H>) -> Result<(), SyncFault> {
+        let pending = self.host.with_dataset(sync_blobs::pending_image_blobs)?;
+
+        for hash in pending {
+            // AD-6: an existing key whose stored hash matches IS success, and `put_immutable`
+            // already turns a mismatch into an error, so both outcomes of a put that returned
+            // `Ok` mean the object is there and the marker is owed either way.
+            if !blob::blob_present(&session.store, &hash).await? {
+                // Read inside the loop and by hash: the picture may have been replaced since the
+                // queue was read, and then there is nothing to send under this key.
+                let Some(bytes) = self
+                    .host
+                    .with_dataset(|conn| sync_blobs::image_blob_bytes(conn, &hash))?
+                else {
+                    continue;
+                };
+
+                let (uploaded, _) =
+                    blob::put_image_blob(&session.store, self.host.schema_version(), &bytes)
+                        .await?;
+
+                // The key is derived from the bytes that were just read, so this cannot differ;
+                // asserting it is what makes the marker below provably about the right object.
+                if uploaded != hash {
+                    return Err(SyncFault::ImageCorrupt);
+                }
+            }
+
+            self.host
+                .with_dataset(|conn| sync_blobs::mark_image_blob_uploaded(conn, &hash))?;
+        }
+
+        Ok(())
+    }
+
+    /// Downloads one project's full picture and writes it into the row it belongs to (AD-10).
+    ///
+    /// A row that already holds its bytes answers from the dataset and never calls `connect`, so
+    /// no credential is vended and no request is made for a picture this computer has.
+    pub(in crate::sync) async fn fetch_image(
+        &mut self,
+        project_id: i64,
+    ) -> Result<ProjectImage, SyncFault> {
+        let hash = match self
+            .host
+            .with_dataset(|conn| sync_blobs::image_fetch_target(conn, project_id))?
+        {
+            ImageFetchTarget::NoImage => return Err(SyncFault::ImageMissing),
+            ImageFetchTarget::AlreadyLocal => return self.image_payload(project_id),
+            ImageFetchTarget::Needed { image_sha256 } => image_sha256,
+        };
+
+        let session = self.host.connect().await?;
+        let bytes = blob::fetch_image_blob(&session.store, &hash).await?;
+
+        // `Ok(false)` is the picture having been replaced while the download was in flight: the
+        // hash in the WHERE clause matched no row, nothing was overwritten, and the honest answer
+        // is whatever the row holds now rather than a failure (`db::projects` documents it).
+        self.host
+            .with_dataset(|conn| {
+                crate::db::projects::set_project_image_bytes(conn, project_id, &hash, &bytes)
+            })?;
+
+        self.image_payload(project_id)
+    }
+
+    fn image_payload(&self, project_id: i64) -> Result<ProjectImage, SyncFault> {
+        self.host
+            .with_dataset(|conn| {
+                crate::commands::projects::get_project_image_inner(conn, project_id)
+            })?
+            .ok_or(SyncFault::ImageMissing)
     }
 
     /// One poll: read the change signal, and upload if the dataset has settled.
@@ -1115,6 +1240,10 @@ enum SyncCommand {
         action: RemoteChoice,
         reply: oneshot::Sender<Result<(), SyncFault>>,
     },
+    FetchImage {
+        project_id: i64,
+        reply: oneshot::Sender<Result<ProjectImage, SyncFault>>,
+    },
     Stop,
 }
 
@@ -1174,6 +1303,14 @@ impl SyncHandle {
             .await?
     }
 
+    /// Fetches one project's full picture on demand (AD-10). It goes through the actor so the
+    /// gate and the credential vend stay the single path to the cloud, and so the download cannot
+    /// run while a guarded file swap has the dataset closed.
+    pub async fn fetch_image(&self, project_id: i64) -> Result<ProjectImage, SyncFault> {
+        self.request(|reply| SyncCommand::FetchImage { project_id, reply })
+            .await?
+    }
+
     /// Best-effort and synchronous: a dataset switch or a sign-out must not wait on an
     /// upload in flight, and a full mailbox already means the actor is alive and busy.
     pub fn stop(&self) {
@@ -1209,6 +1346,9 @@ async fn serve<H: SyncHost>(
                 }
                 Some(SyncCommand::ResolveRemote { action, reply }) => {
                     let _ = reply.send(actor.resolve_remote(action).await);
+                }
+                Some(SyncCommand::FetchImage { project_id, reply }) => {
+                    let _ = reply.send(actor.fetch_image(project_id).await);
                 }
             },
             _ = tokio::time::sleep(poll) => actor.tick().await,

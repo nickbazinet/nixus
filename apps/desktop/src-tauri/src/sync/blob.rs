@@ -11,11 +11,6 @@
 //! and writes of an image are pure SQLite, and the sync path is the only thing that ever leaves the
 //! machine.
 
-// Every item here is reached first by Story 11's lazy image fetch and by Milestone 2's
-// segment path; nothing in Milestone 1 uploads or downloads an image blob. Scoped to this
-// one file so a new unused item anywhere else still fails the gate.
-#![allow(dead_code)]
-
 use sha2::{Digest, Sha256};
 
 use super::gate::{GatedError, GatedStore, SyncGate};
@@ -126,6 +121,27 @@ where
     };
 
     Ok((hex, outcome))
+}
+
+/// Whether the cloud already holds this image, as a request that moves no body.
+///
+/// Worth one extra round trip because the alternative is not free: `put_immutable` has to send the
+/// whole multi-megabyte payload before S3 can tell it the key exists, and a blob uploaded by
+/// ANOTHER computer on the same account is exactly the common case after a bootstrap. A probe of
+/// 0 bytes answering "already there" turns that re-upload into a marker write.
+pub async fn blob_present<S, L, C, T>(
+    store: &GatedStore<S, SyncGate<L, C, T>>,
+    sha256_hex: &str,
+) -> Result<bool, BlobError>
+where
+    S: ObjectStore,
+    L: super::gate::DatasetLink,
+    C: super::gate::CapabilitySource,
+    T: super::gate::GateStateSource,
+{
+    let key = blob_key(sha256_hex)?;
+
+    Ok(store.exists(&key).await?)
 }
 
 /// Downloads one full image by its hash and proves it is that image before returning it.
