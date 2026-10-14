@@ -13,6 +13,8 @@
 //! and `tests_gate_boundary.rs` fails the build if a port method ships without a gate or
 //! if any module outside `sync` learns the transport's name.
 
+use std::sync::Arc;
+
 use crate::db::sync_state::FrozenReason;
 use crate::entitlements::{AccountCapabilities, Capability, MULTI_DEVICE_SYNC};
 
@@ -20,6 +22,7 @@ use super::auth::{
     verify_account_pin, AccountPin, AccountPinStore, AuthError, Clock, CredentialVendor,
     IdTokenProvider, PinField, SyncCredentials, VendedCredentials,
 };
+use super::limits::{DatasetLimits, Oversize};
 use super::store::{
     ConditionalGet, ETag, ImmutablePut, ListedObject, ObjectMeta, ObjectStore, StoreError,
     StoredObject,
@@ -175,6 +178,10 @@ pub enum GatedError {
     /// Obtaining or pinning credentials failed. Distinct from `Blocked` because the gate
     /// passed: the fault is in the vend, not in this dataset's eligibility.
     Auth(AuthError),
+    /// AD-18: the write is larger than this client will ever put on the wire. Refused here,
+    /// before the transport, so the oversized body is never sent — and deliberately NOT a
+    /// `StoreError`, which a caller would be entitled to retry.
+    TooLarge(Oversize),
 }
 
 impl From<StoreError> for GatedError {
@@ -189,6 +196,12 @@ impl From<SyncBlocked> for GatedError {
     }
 }
 
+impl From<Oversize> for GatedError {
+    fn from(oversize: Oversize) -> Self {
+        GatedError::TooLarge(oversize)
+    }
+}
+
 /// Every `ObjectStore` operation, each behind the gate.
 ///
 /// Deliberately **not** an `impl ObjectStore`: implementing the port would force the
@@ -198,6 +211,10 @@ impl From<SyncBlocked> for GatedError {
 pub struct GatedStore<S, G> {
     store: S,
     gate: G,
+    /// AD-18's per-dataset bounds. Shared rather than owned: `SyncHost::connect` rebuilds this
+    /// wrapper from a fresh vend every cycle, and a rate cap that was rebuilt with it would
+    /// reset every 30 seconds and bound nothing.
+    limits: Arc<DatasetLimits>,
 }
 
 impl<S, L, C, T> GatedStore<S, SyncGate<L, C, T>>
@@ -207,24 +224,52 @@ where
     C: CapabilitySource,
     T: GateStateSource,
 {
-    pub fn new(store: S, gate: SyncGate<L, C, T>) -> Self {
-        Self { store, gate }
+    pub fn new(store: S, gate: SyncGate<L, C, T>, limits: Arc<DatasetLimits>) -> Self {
+        Self {
+            store,
+            gate,
+            limits,
+        }
     }
 
     /// The gate, and the only path to the wrapped store. Private, and returning the store
     /// rather than `()` so a method physically cannot touch the transport without having
     /// passed the check first.
+    ///
+    /// AD-18's rate cap is taken here and not in each method, for the same reason: every port
+    /// operation — read, write, listing, delete and both probes — comes through this one call,
+    /// so all of them count against the cap. It is taken AFTER the gate check so a local-only,
+    /// un-entitled or Frozen dataset neither spends a token nor waits for one.
     async fn pass(&self) -> Result<&S, GatedError> {
         self.gate.check(None).await?;
+        self.limits.acquire().await;
+
+        Ok(&self.store)
+    }
+
+    /// The same gate and cap, plus AD-18's size refusal for a write of `body` to `key`.
+    async fn pass_write(&self, key: &str, body: &[u8]) -> Result<&S, GatedError> {
+        self.gate.check(None).await?;
+        self.limits.check_object_size(key, body.len())?;
+        self.limits.acquire().await;
+
         Ok(&self.store)
     }
 
     pub async fn put_immutable(&self, key: &str, body: Vec<u8>) -> Result<ImmutablePut, GatedError> {
-        Ok(self.pass().await?.put_immutable(key, body).await?)
+        Ok(self
+            .pass_write(key, &body)
+            .await?
+            .put_immutable(key, body)
+            .await?)
     }
 
     pub async fn put_if_absent(&self, key: &str, body: Vec<u8>) -> Result<ETag, GatedError> {
-        Ok(self.pass().await?.put_if_absent(key, body).await?)
+        Ok(self
+            .pass_write(key, &body)
+            .await?
+            .put_if_absent(key, body)
+            .await?)
     }
 
     pub async fn put_if_match(
@@ -234,7 +279,7 @@ where
         body: Vec<u8>,
     ) -> Result<ETag, GatedError> {
         Ok(self
-            .pass()
+            .pass_write(key, &body)
             .await?
             .put_if_match(key, expected, body)
             .await?)
@@ -275,6 +320,12 @@ where
 
     pub async fn delete(&self, key: &str) -> Result<(), GatedError> {
         Ok(self.pass().await?.delete(key).await?)
+    }
+
+    /// AD-18's bounds for this dataset, so a producer that refuses an oversized object before
+    /// building a request can still have the refusal counted in one place.
+    pub fn limits(&self) -> &DatasetLimits {
+        &self.limits
     }
 
     /// The account prefix is behind the gate too: it names the account, which AD-16 keeps
@@ -452,11 +503,16 @@ mod tests {
     /// proof honest about how much it actually calls.
     const GATED_METHOD_COUNT: usize = 8;
 
+    fn test_limits() -> Arc<DatasetLimits> {
+        Arc::new(DatasetLimits::default())
+    }
+
     #[tokio::test]
     async fn a_local_only_dataset_sends_nothing() {
         let gated = GatedStore::new(
             CountingStore::default(),
             gate(DatasetKind::Local, true, linked_state()),
+            test_limits(),
         );
 
         let refusals = exercise_every_method(&gated).await;
@@ -477,6 +533,7 @@ mod tests {
         let gated = GatedStore::new(
             CountingStore::default(),
             gate(DatasetKind::CloudLinked, false, linked_state()),
+            test_limits(),
         );
 
         let refusals = exercise_every_method(&gated).await;
@@ -506,6 +563,7 @@ mod tests {
                         frozen_reason: Some(reason),
                     })),
                 ),
+                test_limits(),
             );
 
             let refusals = exercise_every_method(&gated).await;
@@ -531,6 +589,7 @@ mod tests {
                 true,
                 FixedState(Err(AuthError::StateUnavailable)),
             ),
+            test_limits(),
         );
 
         let refusals = exercise_every_method(&gated).await;
@@ -547,6 +606,7 @@ mod tests {
         let gated = GatedStore::new(
             CountingStore::default(),
             gate(DatasetKind::CloudLinked, true, linked_state()),
+            test_limits(),
         );
 
         let refusals = exercise_every_method(&gated).await;

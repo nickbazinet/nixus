@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::sync::limits::RequestRateCap;
 use crate::sync::manager::{SyncActor, SyncTuning};
 use crate::sync::object::{ObjectHeader, OBJECT_FORMAT_VERSION};
 use crate::sync::segment::{
@@ -43,6 +44,7 @@ fn tuning() -> SyncTuning {
         // Reconcile is driven directly in `tests_reconcile.rs`: here it would be a full scan of
         // every travelling table inside a fixture that counts requests (AD-3, story 22).
         reconcile_interval: Duration::from_secs(86_400),
+        request_rate: RequestRateCap::default(),
     }
 }
 

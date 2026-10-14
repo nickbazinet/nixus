@@ -75,6 +75,7 @@ export type SyncErrorCode =
   | "segment_invalid"
   | "apply_failed"
   | "clock_skew"
+  | "payload_too_large"
   | "restore_not_found"
   | "restore_parent_missing"
   | "restore_conflict";
@@ -111,6 +112,7 @@ const SYNC_CODES: readonly SyncErrorCode[] = [
   "segment_invalid",
   "apply_failed",
   "clock_skew",
+  "payload_too_large",
   "restore_not_found",
   "restore_parent_missing",
   "restore_conflict",
@@ -200,6 +202,10 @@ export function syncMessageKey(code: SyncErrorCode): string {
     // Its own key because it is the only sync failure whose fix is outside Nixus entirely.
     case "clock_skew":
       return "sync.errorClockSkew";
+    // Its own key because nothing here is broken and no retry will help: something is simply too
+    // big to send, and the only next step is on the user's side.
+    case "payload_too_large":
+      return "sync.errorPayloadTooLarge";
     // The three restore refusals each name a different next action: nothing to restore any more,
     // restore what it belonged to first, or deal with the thing that took its place.
     case "restore_not_found":

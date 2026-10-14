@@ -34,6 +34,7 @@ use super::auth::{
 };
 use super::config::{production_bucket, IdentityPoolConfig, SYNC_REGION};
 use super::gate::{AccountEntitlement, GatedStore, SyncGate};
+use super::limits::DatasetLimits;
 use super::manager::{SyncFault, SyncHost, SyncSession};
 use super::apply::DatasetApplier;
 use super::segment::{Applier, CountingApplier};
@@ -118,6 +119,9 @@ pub struct DatasetHost {
     conn: Arc<Mutex<Option<Connection>>>,
     credentials: ProductionCredentials,
     slot: AppDatasetSlot,
+    /// AD-18's size and rate bounds, minted once per dataset and shared with every
+    /// `GatedStore` `connect` hands out, so the cap survives the per-cycle re-vend.
+    limits: Arc<DatasetLimits>,
 }
 
 impl DatasetHost {
@@ -162,6 +166,7 @@ impl DatasetHost {
                 app: app.clone(),
                 own: conn,
             },
+            limits: Arc::new(DatasetLimits::default()),
         }))
     }
 
@@ -313,6 +318,10 @@ impl SyncHost for DatasetHost {
         }
     }
 
+    fn limits(&self) -> &Arc<DatasetLimits> {
+        &self.limits
+    }
+
     fn connect(
         &self,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<SyncSession<S3ObjectStore, DatasetKind, AccountEntitlement, SyncStateStore>, SyncFault>> + '_>>
@@ -330,7 +339,7 @@ impl SyncHost for DatasetHost {
             let store = S3ObjectStore::for_vend(&vended, SYNC_REGION, &self.bucket);
 
             Ok(SyncSession {
-                store: GatedStore::new(store, self.gate()?),
+                store: GatedStore::new(store, self.gate()?, Arc::clone(&self.limits)),
                 pin: vended.pin(),
             })
         })

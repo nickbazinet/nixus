@@ -28,6 +28,7 @@ use crate::error::AppError;
 use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncGate,
 };
+use super::limits::{Oversize, MAX_SNAPSHOT_OBJECT_BYTES};
 use super::object::{hex_lower, ObjectHeader, ObjectHeaderError};
 use super::store::{ETag, ImmutablePut, ObjectStore, StoreError};
 
@@ -51,7 +52,9 @@ pub const SNAPSHOT_COMPRESSION_LEVEL: i32 = 3;
 pub const SNAP_LATEST_VERSION: u32 = 1;
 
 /// A ceiling on what `read_snapshot` will decompress, so a malformed or hostile object cannot be
-/// turned into unbounded memory. Generous rather than tuned: AD-18's real size caps are Story 26.
+/// turned into unbounded memory. Deliberately looser than `limits::MAX_SNAPSHOT_OBJECT_BYTES`,
+/// which bounds what THIS computer writes: a snapshot another computer legitimately published must
+/// still be readable here, and refusing it would make the account un-bootstrappable.
 const MAX_SNAPSHOT_PAYLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 /// Pages copied per backup step. Small enough that SQLite releases its read lock on the source
@@ -97,6 +100,11 @@ pub enum SnapshotError {
     SchemaTooNew { found: u32, supported: u32 },
     /// `snap/LATEST` exists but is not a document this build can read.
     MalformedLatest,
+    /// AD-18: the framed snapshot is larger than this client will upload. Refused at BUILD time
+    /// rather than at the boundary, so the refusal costs no request at all, and never retried:
+    /// the same dataset would produce the same size. The local app is unaffected — a snapshot is
+    /// a copy, and nothing about the dataset changes when one is not published.
+    TooLarge(Oversize),
     Store(GatedError),
 }
 
@@ -126,6 +134,7 @@ impl std::fmt::Display for SnapshotError {
                 write!(f, "snapshot schema version {found} is newer than {supported}")
             }
             SnapshotError::MalformedLatest => f.write_str("snap/LATEST is not readable"),
+            SnapshotError::TooLarge(oversize) => write!(f, "snapshot refused: {oversize}"),
             SnapshotError::Store(error) => write!(f, "snapshot transfer: {error:?}"),
         }
     }
@@ -332,7 +341,10 @@ pub async fn build_snapshot(
         })?
 }
 
-fn build_snapshot_blocking(
+/// The build itself, off the runtime. `pub(crate)` because the convergence simulator (Story 25)
+/// takes a bootstrap image from a replica on a plain test thread, and calling the real builder is
+/// the whole point of the restore op — a second copy of this would be a second thing to keep right.
+pub(crate) fn build_snapshot_blocking(
     db_path: &Path,
     schema_version: u32,
 ) -> Result<BuiltSnapshot, SnapshotError> {
@@ -363,6 +375,8 @@ fn build_snapshot_blocking(
         },
     )?;
 
+    let object = within_size_cap(ObjectHeader::new(schema_version, digest).frame(&compressed))?;
+
     Ok(BuiltSnapshot {
         // Content-addressed: a retry of the same snapshot writes the same key with the same bytes,
         // which is exactly the case AD-6 lets a 412 report as success.
@@ -370,11 +384,27 @@ fn build_snapshot_blocking(
         schema_version,
         payload_sha256,
         payload_bytes: payload.len(),
-        object: ObjectHeader::new(schema_version, digest).frame(&compressed),
+        object,
         build_duration: started.elapsed(),
         stripped,
         watermark,
     })
+}
+
+/// AD-18's snapshot cap, applied to the framed object the upload would carry.
+///
+/// Taking and returning the bytes rather than inspecting them keeps the build with no branch to
+/// forget, and gives the cap one testable name of its own: proving it any other way would need a
+/// dataset tens of megabytes wide.
+pub(in crate::sync) fn within_size_cap(object: Vec<u8>) -> Result<Vec<u8>, SnapshotError> {
+    if object.len() > MAX_SNAPSHOT_OBJECT_BYTES {
+        return Err(SnapshotError::TooLarge(Oversize {
+            limit: MAX_SNAPSHOT_OBJECT_BYTES,
+            found: object.len(),
+        }));
+    }
+
+    Ok(object)
 }
 
 type StrippedCopy = (StripReport, BTreeMap<String, i64>);

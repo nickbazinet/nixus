@@ -63,6 +63,8 @@ pub enum BootstrapError {
     /// The separate dataset could not be provisioned, so nothing was restored and the
     /// existing dataset is untouched.
     Registry,
+    /// AD-18: an object the bootstrap was about to write exceeds its size cap.
+    TooLarge(crate::sync::limits::Oversize),
 }
 
 impl From<GatedError> for BootstrapError {
@@ -71,6 +73,7 @@ impl From<GatedError> for BootstrapError {
             GatedError::Blocked(blocked) => BootstrapError::Blocked(blocked),
             GatedError::Store(error) => BootstrapError::Store(error),
             GatedError::Auth(error) => BootstrapError::Auth(error),
+            GatedError::TooLarge(oversize) => BootstrapError::TooLarge(oversize),
         }
     }
 }
@@ -108,6 +111,7 @@ impl std::fmt::Display for BootstrapError {
             }
             BootstrapError::Swap(failure) => write!(f, "bootstrap restore: {failure}"),
             BootstrapError::Registry => f.write_str("the separate profile could not be created"),
+            BootstrapError::TooLarge(oversize) => write!(f, "bootstrap upload: {oversize}"),
         }
     }
 }

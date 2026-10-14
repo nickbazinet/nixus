@@ -138,6 +138,18 @@ pub fn applied_seq(conn: &Connection, install: &str) -> Result<Option<i64>, AppE
 /// CUTTER's bounding, and 5,000 real transactions would measure SQLite instead.
 #[cfg(test)]
 pub(crate) fn seed_log_messages(conn: &Connection, install: &str, count: usize) {
+    seed_log_messages_sized(conn, install, count, 4);
+}
+
+/// The same, with a stated payload size, for the tests that measure AD-18's byte cap: the cutter
+/// has to split on bytes before it reaches the message count, and only a wide payload gets there.
+#[cfg(test)]
+pub(crate) fn seed_log_messages_sized(
+    conn: &Connection,
+    install: &str,
+    count: usize,
+    payload_bytes: usize,
+) {
     let mut stmt = conn
         .prepare(
             "INSERT INTO sync_log (install, hlc, kind, table_name, row_uuid, column_name, payload) \
@@ -151,7 +163,7 @@ pub(crate) fn seed_log_messages(conn: &Connection, install: &str, count: usize) 
             install,
             format!("{:016x}-{install}", index as u64 + 1),
             uuid,
-            vec![3u8, 1, 2, 3],
+            vec![3u8; payload_bytes.max(1)],
         ])
         .expect("the message inserts");
     }

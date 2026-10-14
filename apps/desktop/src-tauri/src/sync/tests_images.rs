@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use crate::db::sync_state::FrozenReason;
 use crate::sync::blob::{blob_key, BLOB_KEY_PREFIX};
+use crate::sync::limits::RequestRateCap;
 use crate::sync::manager::{SyncActor, SyncFault, SyncState, SyncTuning};
 use crate::sync::object::ObjectHeader;
 use crate::sync::store::{StoreError, StoreOp};
@@ -45,6 +46,7 @@ fn tuning() -> SyncTuning {
         // every travelling table inside a fixture that counts requests (AD-3, story 22).
         reconcile_interval: Duration::from_secs(86_400),
         max_backoff: Duration::from_secs(120),
+        request_rate: RequestRateCap::default(),
     }
 }
 

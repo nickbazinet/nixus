@@ -1587,6 +1587,7 @@
   "sync.errorSegmentInvalid": "Une modification provenant d'un autre ordinateur n'a pas pu être lue; elle a été conservée telle quelle et rien n'a été modifié ici. Contactez le soutien si cela persiste.",
   "sync.errorApplyFailed": "Une modification provenant d'un autre ordinateur n'a pas encore pu être appliquée. Elle est conservée et réessayée; rien n'a été perdu.",
   "sync.errorClockSkew": "La date et l'heure de cet ordinateur sont trop décalées, ce qui peut placer vos modifications dans le mauvais ordre. Vérifiez-les dans les paramètres de votre système.",
+  "sync.errorPayloadTooLarge": "Un élément de ce profil est trop volumineux pour être envoyé vers le nuage; il n'a pas été téléversé. Vos données restent inchangées sur cet ordinateur.",
   "sync.appliedCue": "Modifié sur un autre ordinateur",
   "sync.appliedCueDismiss": "Masquer",
   "sync.errorTransport": "La synchronisation n'a pas pu aboutir. L'application et vos données ne sont pas touchées.",

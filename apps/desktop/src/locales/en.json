@@ -1587,6 +1587,7 @@
   "sync.errorSegmentInvalid": "A change from another computer could not be read, so it was left where it is and nothing here was altered. Contact support if this keeps happening.",
   "sync.errorApplyFailed": "A change from another computer could not be applied yet. It is kept and tried again; nothing was lost.",
   "sync.errorClockSkew": "This computer's date and time are too far off, which can put your changes in the wrong order. Check them in your system settings.",
+  "sync.errorPayloadTooLarge": "Something on this profile is too large to send to the cloud, so it was not uploaded. Your data is unchanged on this computer.",
   "sync.appliedCue": "Changed on another computer",
   "sync.appliedCueDismiss": "Dismiss",
   "sync.errorTransport": "Sync could not finish. The app and your records are unaffected.",

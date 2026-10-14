@@ -22,6 +22,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::Connection;
@@ -45,6 +46,7 @@ use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncBlocked, SyncGate,
 };
 use super::clock::Clock;
+use super::limits::{DatasetLimits, Oversize, RequestRateCap};
 use super::owner::{owner_object_body, owner_sub_from_body, OWNER_OBJECT_KEY};
 use tracing::{info, warn};
 
@@ -151,6 +153,11 @@ pub enum SyncFault {
     Swap { rolled_back: bool },
     /// The cloud copy needs a schema this build does not have.
     UpdateNeeded { found: u32, supported: u32 },
+    /// AD-18: an object this computer was about to write is larger than the cap for its
+    /// namespace. Refused, never retried (the same bytes would be the same size) and never
+    /// fatal: a segment candidate is split instead, and a refused snapshot or picture leaves
+    /// the local dataset untouched.
+    TooLarge(Oversize),
     /// A remote stamp was more than AD-4's drift limit ahead of this computer's wall clock, so it
     /// was refused the right to move this clock. Carries how far ahead, never a timestamp.
     ClockSkew { ahead_ms: i64 },
@@ -200,6 +207,7 @@ impl SyncFault {
             SyncFault::Snapshot(SnapshotError::SourceBusy) => "dataset_busy",
             SyncFault::Snapshot(SnapshotError::SchemaTooNew { .. })
             | SyncFault::UpdateNeeded { .. } => "update_needed",
+            SyncFault::TooLarge(_) => "payload_too_large",
             SyncFault::ClockSkew { .. } => "clock_skew",
             SyncFault::Snapshot(_) => "snapshot_invalid",
             SyncFault::Segment(error) => error.code(),
@@ -241,6 +249,7 @@ impl SyncFault {
             | SyncFault::Segment(_)
             | SyncFault::UpdateNeeded { .. }
             | SyncFault::ClockSkew { .. }
+            | SyncFault::TooLarge(_)
             | SyncFault::Swap { .. }
             | SyncFault::Registry
             | SyncFault::StateUnavailable
@@ -286,6 +295,7 @@ impl SyncFault {
             "segment_invalid" => "A change from another computer could not be read.",
             "apply_failed" => "A change from another computer could not be applied yet.",
             "clock_skew" => "This computer's date and time are too far off to order changes.",
+            "payload_too_large" => "This change is too large to send to the cloud.",
             _ => "Sync is unavailable.",
         }
     }
@@ -297,6 +307,7 @@ impl From<GatedError> for SyncFault {
             GatedError::Blocked(blocked) => SyncFault::Blocked(blocked),
             GatedError::Store(error) => SyncFault::Store(error),
             GatedError::Auth(error) => SyncFault::Auth(error),
+            GatedError::TooLarge(oversize) => SyncFault::TooLarge(oversize),
         }
     }
 }
@@ -305,6 +316,7 @@ impl From<SnapshotError> for SyncFault {
     fn from(error: SnapshotError) -> Self {
         match error {
             SnapshotError::Store(error) => SyncFault::from(error),
+            SnapshotError::TooLarge(oversize) => SyncFault::TooLarge(oversize),
             other => SyncFault::Snapshot(other),
         }
     }
@@ -314,6 +326,7 @@ impl From<BlobError> for SyncFault {
     fn from(error: BlobError) -> Self {
         match error {
             BlobError::Store(error) => SyncFault::from(error),
+            BlobError::TooLarge(oversize) => SyncFault::TooLarge(oversize),
             // A hash that is not a digest can only come from a row the schema's hex CHECK
             // admitted, so it is the same class of problem as a payload that does not match:
             // the picture this computer holds cannot be addressed, and no retry changes that.
@@ -340,6 +353,7 @@ impl From<BootstrapError> for SyncFault {
             BootstrapError::Store(error) => SyncFault::Store(error),
             BootstrapError::Auth(error) => SyncFault::Auth(error),
             BootstrapError::OwnerMismatch => SyncFault::OwnerMismatch,
+            BootstrapError::TooLarge(oversize) => SyncFault::TooLarge(oversize),
             BootstrapError::Snapshot(error) => SyncFault::Snapshot(error),
             BootstrapError::SnapshotTooNew { found, supported } => {
                 SyncFault::UpdateNeeded { found, supported }
@@ -388,6 +402,9 @@ pub struct SyncTuning {
     /// bytes bound a new computer's download, messages bound how long applying the tail takes.
     pub snapshot_tail_max_bytes: u64,
     pub snapshot_tail_max_messages: u64,
+    /// AD-18's maximum object rate for this dataset, applied at the gated store boundary so every
+    /// request type counts. Stated here so there is one place the rate is configured.
+    pub request_rate: RequestRateCap,
     /// The floor between two reconcile passes (AD-3).
     ///
     /// Dated from CONSTRUCTION like the two log floors, so the startup pass happens one interval
@@ -410,6 +427,7 @@ impl Default for SyncTuning {
             segment_interval: Duration::from_secs(10),
             tombstone_purge_interval: Duration::from_secs(6 * 60 * 60),
             reconcile_interval: Duration::from_secs(60),
+            request_rate: RequestRateCap::default(),
             snapshot_tail_max_bytes: 2 * 1024 * 1024,
             snapshot_tail_max_messages: 5_000,
         }
@@ -480,6 +498,9 @@ pub(crate) trait SyncHost {
     fn connect(
         &self,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<HostSession<Self>, SyncFault>> + '_>>;
+    /// AD-18's bounds for this dataset. Owned by the host because the host owns the store, and
+    /// shared so the cap outlives the per-cycle re-vend.
+    fn limits(&self) -> &Arc<DatasetLimits>;
 }
 
 /// One entry of the bounded transition history AD-16's "states and transitions" asks for.
@@ -517,6 +538,10 @@ pub struct SyncDiagnostics {
     pub segments_deleted: u64,
     pub snapshots_deleted: u64,
     pub roster_pruned: u64,
+    /// Requests AD-18's rate cap made wait. A count: never dropped, never a value.
+    pub rate_delays: u64,
+    /// Objects AD-18's size caps refused, at the boundary or in a producer. Also only a count.
+    pub oversize_refusals: u64,
     pub conflicts: u64,
     pub restores: u64,
     pub failures: u64,
@@ -671,6 +696,10 @@ impl<H: SyncHost> SyncActor<H> {
         let (status, status_rx) = watch::channel(initial);
         let (events, events_rx) = mpsc::unbounded_channel();
 
+        // AD-18: the tuning is the one statement of the rate, so it is pushed into the host's
+        // limiter here rather than read at each request.
+        host.limits().reconfigure(tuning.request_rate);
+
         let applier = host.applier();
         let started = Instant::now();
         let actor = Self {
@@ -776,6 +805,8 @@ impl<H: SyncHost> SyncActor<H> {
             segments_deleted: self.stats.segments_deleted,
             snapshots_deleted: self.stats.snapshots_deleted,
             roster_pruned: self.stats.roster_pruned,
+            rate_delays: self.host.limits().delays(),
+            oversize_refusals: self.host.limits().oversize_refusals(),
             conflicts: self.stats.conflicts,
             restores: self.stats.restores,
             failures: self.stats.failures,

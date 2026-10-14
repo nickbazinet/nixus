@@ -14,6 +14,7 @@
 use sha2::{Digest, Sha256};
 
 use super::gate::{GatedError, GatedStore, SyncGate};
+use super::limits::{Oversize, MAX_BLOB_BYTES};
 use super::object::{hex_lower, ObjectHeader, ObjectHeaderError};
 use super::store::{ImmutablePut, ObjectStore};
 
@@ -34,6 +35,11 @@ pub enum BlobError {
     /// discarded: writing it into `image_bytes` would store one picture under another's identity.
     ContentMismatch { expected: String, found: String },
     Header(ObjectHeaderError),
+    /// AD-18: the picture is larger than this client will upload. Refused before it is hashed or
+    /// framed, so the refusal costs no request, and never retried — the same file is the same
+    /// size. The picture stays in the local dataset; only its copy in the cloud is skipped, and
+    /// another computer then sees the row with its thumbnail and no full image (AD-10).
+    TooLarge(Oversize),
     Store(GatedError),
 }
 
@@ -57,6 +63,7 @@ impl std::fmt::Display for BlobError {
                 write!(f, "blob {expected} holds content hashing to {found}")
             }
             BlobError::Header(error) => write!(f, "blob header: {error}"),
+            BlobError::TooLarge(oversize) => write!(f, "blob refused: {oversize}"),
             BlobError::Store(error) => write!(f, "blob transfer: {error:?}"),
         }
     }
@@ -111,6 +118,15 @@ where
     C: super::gate::CapabilitySource,
     T: super::gate::GateStateSource,
 {
+    if bytes.len() > MAX_BLOB_BYTES {
+        store.limits().note_oversize();
+
+        return Err(BlobError::TooLarge(Oversize {
+            limit: MAX_BLOB_BYTES,
+            found: bytes.len(),
+        }));
+    }
+
     let (digest, hex) = identity(bytes);
     let key = blob_key(&hex)?;
     let body = ObjectHeader::new(schema_version, digest).frame(bytes);
@@ -318,6 +334,7 @@ mod tests {
         GatedStore::new(
             store,
             SyncGate::new(kind, FixedCapabilities(entitled), FixedState(frozen)),
+            std::sync::Arc::new(crate::sync::limits::DatasetLimits::default()),
         )
     }
 

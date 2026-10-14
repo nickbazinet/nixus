@@ -11,6 +11,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::db::sync_state::FrozenReason;
 use crate::sync::bootstrap::LinkChoice;
+use crate::sync::limits::RequestRateCap;
 use crate::sync::manager::{
     self, RemoteChoice, SyncActor, SyncEnableOutcome, SyncFault, SyncState, SyncStatusPayload,
     SyncTuning,
@@ -45,6 +46,7 @@ fn tuning() -> SyncTuning {
         // every travelling table inside a fixture that counts requests (AD-3, story 22).
         reconcile_interval: Duration::from_secs(86_400),
         max_backoff: Duration::from_secs(120),
+        request_rate: RequestRateCap::default(),
     }
 }
 

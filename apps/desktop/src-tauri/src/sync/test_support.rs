@@ -21,6 +21,7 @@ use crate::entitlements::AccountCapabilities;
 use crate::models::DatasetKind;
 use crate::sync::auth::{AccountPin, AuthError};
 use crate::sync::gate::{CapabilitySource, GateStateSource, GatedStore, SyncGate};
+use crate::sync::limits::DatasetLimits;
 use crate::sync::segment::{Applier, SegmentBatch, SegmentMessage};
 use crate::sync::state::GateState;
 use crate::sync::store::{
@@ -506,9 +507,28 @@ pub(crate) fn gated_fake(
     entitled: bool,
     frozen: Option<FrozenReason>,
 ) -> FakeGatedStore {
+    gated_fake_limited(
+        store,
+        kind,
+        entitled,
+        frozen,
+        Arc::new(DatasetLimits::default()),
+    )
+}
+
+/// The same gated fake with AD-18's bounds supplied, which is how a test tightens the rate cap or
+/// keeps a handle on the counters after `GatedStore` has taken ownership.
+pub(crate) fn gated_fake_limited(
+    store: Arc<FakeObjectStore>,
+    kind: DatasetKind,
+    entitled: bool,
+    frozen: Option<FrozenReason>,
+    limits: Arc<DatasetLimits>,
+) -> FakeGatedStore {
     GatedStore::new(
         store,
         SyncGate::new(kind, FixedCapabilities(entitled), FixedGateState(frozen)),
+        limits,
     )
 }
 
@@ -594,6 +614,7 @@ pub(crate) struct TestComputer {
     /// Opt-in because most tests here count requests and assert on the messages a batch carried;
     /// the row-level convergence proofs (Story 23) need the batch to actually land in the tables.
     apply_for_real: bool,
+    limits: Arc<DatasetLimits>,
     _dir: Arc<TempDir>,
 }
 
@@ -684,6 +705,7 @@ pub(crate) fn test_computer(
         },
         applied: Arc::clone(&applied),
         apply_for_real: false,
+        limits: Arc::new(DatasetLimits::default()),
         _dir: Arc::clone(&dir),
     };
 
@@ -996,6 +1018,10 @@ impl crate::sync::manager::SyncHost for TestComputer {
         Box::pin(std::future::ready(()))
     }
 
+    fn limits(&self) -> &Arc<DatasetLimits> {
+        &self.limits
+    }
+
     fn connect(
         &self,
     ) -> std::pin::Pin<
@@ -1018,11 +1044,12 @@ impl crate::sync::manager::SyncHost for TestComputer {
             // from a fresh vend: that is what lets a test lapse an entitlement or freeze a
             // dataset mid-run and have the very next operation see it.
             Ok(crate::sync::manager::SyncSession {
-                store: gated_fake(
+                store: gated_fake_limited(
                     Arc::clone(&self.store),
                     self.kind.clone(),
                     self.entitled.load(Ordering::SeqCst),
                     *self.frozen.lock().expect("the frozen reason lock"),
+                    Arc::clone(&self.limits),
                 ),
                 pin: AccountPin::new(FAKE_IDENTITY_ID, FAKE_OWNER_SUB),
             })

@@ -518,6 +518,8 @@ mod tests {
             }],
             enabled: true,
             has_pulled_latest: true,
+            rate_delays: 0,
+            oversize_refusals: 0,
             pending_prompt: Some(SyncPrompt::RemoteChanged {
                 remote_created_ms: 1_759_000_000_000,
                 remote_schema_version: 30,

@@ -62,6 +62,7 @@ const ALL_ERROR_CODES: readonly SyncErrorCode[] = [
   "segment_invalid",
   "apply_failed",
   "clock_skew",
+  "payload_too_large",
 ];
 
 const REQUIRED_KEYS = [

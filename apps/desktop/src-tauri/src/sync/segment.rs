@@ -63,16 +63,23 @@ pub const SEGMENT_PAYLOAD_VERSION: u16 = 1;
 
 /// How many messages one segment may carry.
 ///
-/// A sane cap, not AD-18's enforced limit (Story 26): big enough that an ordinary editing session
-/// is one object, small enough that a 5,000-message backlog becomes a handful of bounded objects
-/// instead of one upload a slow link cannot finish.
+/// Big enough that an ordinary editing session is one object, small enough that a 5,000-message
+/// backlog becomes a handful of bounded objects instead of one upload a slow link cannot finish.
 pub const SEGMENT_MAX_MESSAGES: usize = 1_000;
 
-/// How many payload bytes one segment may carry, applied before compression.
+/// AD-18's enforced segment size, applied to the UNCOMPRESSED payload.
+///
+/// This is where "an oversize segment candidate is split" happens: `bounded_batch` stops adding
+/// messages here, so a large backlog becomes several bounded objects rather than one refusal. It
+/// is measured before compression because that is the only quantity the cutter can bound without
+/// encoding anything, and the encoded object is capped separately and more loosely by
+/// `limits::MAX_SEGMENT_OBJECT_BYTES` at the gated-store boundary.
 pub const SEGMENT_MAX_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
 
 /// A ceiling on what a segment READ will decompress, so a small object cannot be expanded into
-/// unbounded memory. Generous rather than tuned; AD-18's real caps are Story 26.
+/// unbounded memory. Deliberately looser than AD-18's write caps (`sync::limits`): those bound
+/// what THIS computer writes, while this bounds what a peer's object may expand to on read, and
+/// refusing a readable segment because a future build packs more into one would lose messages.
 const MAX_READ_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
 
 /// The version of the `head/<install>` and `roster` documents. Plain JSON pointers like

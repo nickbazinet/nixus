@@ -36,6 +36,7 @@ use crate::db::{config::LOCAL_ONLY_KEYS, open_configured};
 use crate::models::DatasetKind;
 use crate::sync::blob::{blob_key, BLOB_KEY_PREFIX};
 use crate::sync::bootstrap::{measure_link, LinkChoice, CAP2_BUDGET, CAP2_BYTES_PER_SECOND};
+use crate::sync::limits::RequestRateCap;
 use crate::sync::manager::{
     SyncActor, SyncEnableOutcome, SyncState, SyncStatusPayload, SyncTuning,
 };
@@ -82,6 +83,7 @@ fn tuning() -> SyncTuning {
         // every travelling table inside a fixture that counts requests (AD-3, story 22).
         reconcile_interval: Duration::from_secs(86_400),
         max_backoff: Duration::from_secs(120),
+        request_rate: RequestRateCap::default(),
     }
 }
 

@@ -18,6 +18,7 @@ pub mod config;
 pub mod gate;
 pub mod host;
 pub mod identity;
+pub mod limits;
 pub mod manager;
 pub mod object;
 pub mod owner;
@@ -67,6 +68,8 @@ mod tests_reconcile;
 mod tests_retention;
 #[cfg(test)]
 mod tests_lifecycle;
+#[cfg(test)]
+mod tests_limits;
 #[cfg(test)]
 mod tests_restore;
 #[cfg(test)]
