@@ -857,6 +857,36 @@ impl ComputerProbe {
     /// statement outside `ActiveDataset::write` is exactly the unmigrated write site the hook
     /// buffers and discards (Story 15), which is what the M1 snapshot tests need.
     pub(crate) fn write_captured(&self, name: &str) {
+        self.captured(|tx| {
+            crate::db::test_dataset::insert_marker_rows(tx, &[name]);
+            Ok(())
+        })
+        .expect("a captured write succeeds");
+    }
+
+    /// The same real transaction and the same real hook `write_captured` uses, with the caller's
+    /// own statements instead of one marker row.
+    ///
+    /// A two-computer proof has to edit accounts, expenses and the rest of the real schema, and it
+    /// has to do it through `ActiveDataset::write` — a raw statement is the unmigrated write site
+    /// the hook buffers and discards (Story 15), which would prove nothing about replication. The
+    /// `Err` is handed back rather than unwrapped because a refused write is itself a claim some
+    /// tests make.
+    pub(crate) fn captured<T>(
+        &self,
+        write: impl FnOnce(&crate::db::WriteTx) -> Result<T, crate::error::AppError>,
+    ) -> Result<T, crate::error::AppError> {
+        self.with_active(|active| active.write(write))
+    }
+
+    /// Hands the caller the real `ActiveDataset` of this computer — a real connection with a real
+    /// attached capture hook — so a proof can drive a production entry point that takes one
+    /// (`sync::restore::{list, restore}`, `ActiveDataset::write_uncaptured` for the wipe) instead
+    /// of re-implementing what it does.
+    pub(crate) fn with_active<T>(
+        &self,
+        run: impl FnOnce(&crate::db::ActiveDataset) -> T,
+    ) -> T {
         let mut guard = self.live.lock().expect("the live connection lock");
         if guard.is_none() {
             *guard = Some(crate::db::test_dataset::migrated_dataset(&self.db_path));
@@ -873,15 +903,12 @@ impl ComputerProbe {
             conn: Some(conn),
             capture: Some(capture),
         };
-        let outcome = dataset.write(|tx| {
-            crate::db::test_dataset::insert_marker_rows(tx, &[name]);
-            Ok(())
-        });
+        let outcome = run(&dataset);
 
         let crate::db::ActiveDataset { conn, .. } = dataset;
         *guard = conn;
 
-        outcome.expect("a captured write succeeds");
+        outcome
     }
 
     /// This computer's install id (AD-4), as the keys it writes spell it.
