@@ -1016,11 +1016,19 @@ export type SyncEnableOutcome =
     }
   | { outcome: "separate_profile_created"; dataset_id: string };
 
+/** One entry of the bounded transition history `sync_diagnostics` carries (AD-16). */
+export interface SyncTransition {
+  state: SyncState;
+  at_ms: number;
+  error_code: string | null;
+}
+
 /** `sync_diagnostics`: counts, states, timings and error codes, never values (AD-16). */
 export interface SyncDiagnostics {
   dataset_id: string;
   capability: string;
   state: SyncState;
+  transitions: SyncTransition[];
   enabled: boolean;
   has_pulled_latest: boolean;
   pending_prompt: SyncPrompt | null;
@@ -1041,4 +1049,12 @@ export interface SyncDiagnostics {
   settle_window_ms: number;
   min_upload_interval_ms: number;
   poll_interval_ms: number;
+}
+
+/**
+ * `sync_export_diagnostics`: where the redacted report was written, or `null` when the user
+ * cancelled the save dialog — the same contract as `export_backup`.
+ */
+export interface SyncDiagnosticsExport {
+  path: string;
 }

@@ -299,6 +299,7 @@ describe("SyncSettings", () => {
       dataset_id: "default",
       capability: "multi_device_sync",
       state: "idle",
+      transitions: [],
       enabled: true,
       has_pulled_latest: true,
       pending_prompt: null,
@@ -356,5 +357,44 @@ describe("SyncSettings", () => {
     expect(at("sync-separate-profile-notice")?.textContent).toContain(
       EN["sync.separateProfileBody"]
     );
+  });
+  it("saves a diagnostics report and names the file it wrote", async () => {
+    mount({});
+    await settle();
+
+    invokeMock.mockResolvedValue({ path: "/tmp/nixus-sync-diagnostics-2026-10-14.json" });
+    await click("sync-diagnostics-export-button");
+
+    expect(invokeMock).toHaveBeenCalledWith("sync_export_diagnostics");
+    expect(at("sync-diagnostics-export-path")?.textContent).toContain(
+      "/tmp/nixus-sync-diagnostics-2026-10-14.json"
+    );
+    expect(at("sync-action-error")).toBeNull();
+  });
+
+  it("treats a cancelled save dialog as neither a path nor an error", async () => {
+    mount({});
+    await settle();
+
+    invokeMock.mockResolvedValue(null);
+    await click("sync-diagnostics-export-button");
+
+    expect(invokeMock).toHaveBeenCalledWith("sync_export_diagnostics");
+    expect(at("sync-diagnostics-export-path")).toBeNull();
+    expect(at("sync-action-error")).toBeNull();
+    expect(at("setting-sync-diagnostics-export")?.textContent).toContain(
+      EN["sync.diagnosticsExportBody"]
+    );
+  });
+
+  it("reports a failed export without claiming a file was written", async () => {
+    mount({});
+    await settle();
+
+    invokeMock.mockRejectedValue({ type: "file", message: "disk full" });
+    await click("sync-diagnostics-export-button");
+
+    expect(at("sync-diagnostics-export-path")).toBeNull();
+    expect(at("sync-action-error")).not.toBeNull();
   });
 });

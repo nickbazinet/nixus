@@ -12,6 +12,7 @@ import {
 import {
   useDisableSync,
   useEnableSync,
+  useExportSyncDiagnostics,
   useSyncDiagnostics,
   useSyncNow,
   useSyncStatusValue,
@@ -42,6 +43,8 @@ export function SyncSettings() {
   const syncNow = useSyncNow();
   const [diagnosticsRequested, setDiagnosticsRequested] = useState(false);
   const diagnostics = useSyncDiagnostics({ enabled: diagnosticsRequested });
+  const exportDiagnostics = useExportSyncDiagnostics();
+  const [exportedPath, setExportedPath] = useState<string | null>(null);
   const [firstSyncOpen, setFirstSyncOpen] = useState(false);
   const [separateProfileId, setSeparateProfileId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +102,17 @@ export function SyncSettings() {
           setSeparateProfileId(outcome.dataset_id);
         }
       },
+      onError: (err) => setError(describeFailure(err)),
+    });
+  };
+
+  // A cancelled save dialog answers `null` and must leave no trace: no error, and no stale
+  // "saved to…" line from a previous export either.
+  const handleExportDiagnostics = () => {
+    setError(null);
+    setExportedPath(null);
+    exportDiagnostics.mutate(undefined, {
+      onSuccess: (result) => setExportedPath(result?.path ?? null),
       onError: (err) => setError(describeFailure(err)),
     });
   };
@@ -282,6 +296,33 @@ export function SyncSettings() {
             </Button>
           }
           data-testid="setting-sync-diagnostics"
+        />
+
+        <SettingRow
+          title={t("sync.diagnosticsExportTitle")}
+          description={
+            exportedPath === null ? (
+              t("sync.diagnosticsExportBody")
+            ) : (
+              <span data-testid="sync-diagnostics-export-path">
+                {t("sync.diagnosticsExportSaved", { path: exportedPath })}
+              </span>
+            )
+          }
+          control={
+            <Button
+              variant="outline"
+              onClick={handleExportDiagnostics}
+              disabled={exportDiagnostics.isPending}
+              aria-disabled={exportDiagnostics.isPending || undefined}
+              data-testid="sync-diagnostics-export-button"
+            >
+              {exportDiagnostics.isPending
+                ? t("sync.diagnosticsExporting")
+                : t("sync.diagnosticsExportAction")}
+            </Button>
+          }
+          data-testid="setting-sync-diagnostics-export"
         />
 
         {separateProfileId !== null && (

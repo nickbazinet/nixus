@@ -139,7 +139,7 @@ fn latest_of(built: &BuiltSnapshot) -> LatestSnapshot {
     }
 }
 
-fn config_map(conn: &Connection) -> std::collections::BTreeMap<String, String> {
+pub(super) fn config_map(conn: &Connection) -> std::collections::BTreeMap<String, String> {
     let mut statement = conn
         .prepare("SELECT key, value FROM config")
         .expect("the config read prepares");
@@ -152,7 +152,7 @@ fn config_map(conn: &Connection) -> std::collections::BTreeMap<String, String> {
         .expect("the config collects")
 }
 
-fn tables(conn: &Connection) -> Vec<String> {
+pub(super) fn tables(conn: &Connection) -> Vec<String> {
     let mut statement = conn
         .prepare(
             "SELECT name FROM sqlite_master
@@ -171,7 +171,7 @@ fn tables(conn: &Connection) -> Vec<String> {
 
 /// Every row of `table`, rendered with its rowid so a comparison can tell "the same rows"
 /// from "the same rows renumbered" — the property AD-9 forbids `VACUUM INTO` to protect.
-fn dump(conn: &Connection, table: &str, skip: &[&str]) -> Vec<String> {
+pub(super) fn dump(conn: &Connection, table: &str, skip: &[&str]) -> Vec<String> {
     let mut statement = conn
         .prepare(&format!(
             "SELECT _rowid_, * FROM \"{table}\" ORDER BY _rowid_"

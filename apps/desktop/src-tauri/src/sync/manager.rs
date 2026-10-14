@@ -19,6 +19,7 @@
 //! costs one page-cache read, it needs no schema, no trigger and no write of our own, and
 //! it cannot miss a commit. Milestone 2 Story 15 replaces it with the pre-update hook.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
@@ -378,12 +379,21 @@ pub(crate) trait SyncHost {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<HostSession<Self>, SyncFault>> + '_>>;
 }
 
+/// One entry of the bounded transition history AD-16's "states and transitions" asks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SyncTransition {
+    pub state: SyncState,
+    pub at_ms: i64,
+    pub error_code: Option<String>,
+}
+
 /// What AD-16 lets out: counts, states, timings and error codes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SyncDiagnostics {
     pub dataset_id: String,
     pub capability: &'static str,
     pub state: SyncState,
+    pub transitions: Vec<SyncTransition>,
     pub enabled: bool,
     pub has_pulled_latest: bool,
     pub pending_prompt: Option<SyncPrompt>,
@@ -448,6 +458,10 @@ impl PendingDecision {
     }
 }
 
+/// Bounded so a long-running actor cannot grow one entry per transition forever; the tail
+/// is what a support report needs.
+const TRANSITION_HISTORY: usize = 20;
+
 struct Backoff {
     attempt: u32,
     until: Instant,
@@ -473,6 +487,7 @@ pub(crate) struct SyncActor<H: SyncHost> {
     recoverable: bool,
     backoff: Option<Backoff>,
     stats: SyncStats,
+    transitions: VecDeque<SyncTransition>,
 }
 
 impl<H: SyncHost> SyncActor<H> {
@@ -514,6 +529,7 @@ impl<H: SyncHost> SyncActor<H> {
             recoverable: true,
             backoff: None,
             stats: SyncStats::default(),
+            transitions: VecDeque::with_capacity(TRANSITION_HISTORY),
         };
 
         (actor, status_rx, events_rx)
@@ -536,6 +552,7 @@ impl<H: SyncHost> SyncActor<H> {
             dataset_id: self.host.dataset_id().to_string(),
             capability: MULTI_DEVICE_SYNC.name(),
             state: self.state,
+            transitions: self.transitions.iter().cloned().collect(),
             enabled: self.enabled,
             has_pulled_latest: self.known_latest.is_some(),
             pending_prompt: self.pending.as_ref().map(PendingDecision::prompt),
@@ -570,6 +587,17 @@ impl<H: SyncHost> SyncActor<H> {
         if *self.status.borrow() == payload {
             return;
         }
+
+        // AD-16 asks diagnostics to carry states *and transitions*: a count alone cannot
+        // tell "offline once, retried, fine" from "flapping every tick".
+        if self.transitions.len() == TRANSITION_HISTORY {
+            self.transitions.pop_front();
+        }
+        self.transitions.push_back(SyncTransition {
+            state,
+            at_ms: self.host.now_ms(),
+            error_code: self.last_error.map(str::to_string),
+        });
 
         let _ = self.status.send(payload.clone());
         let _ = self.events.send(payload);
