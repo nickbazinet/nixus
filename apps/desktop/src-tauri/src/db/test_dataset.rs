@@ -519,6 +519,17 @@ pub(crate) fn seed_sync_bookkeeping(conn: &Connection) -> usize {
     const HLC: &str = "0000000000000001-0a1b2c3d4e5f6071";
     const INSTALL: &str = "0a1b2c3d4e5f6071";
     const REMOTE: &str = "fedcba9876543210";
+
+    /// The packed per-column map migration 033 stores: `count = 1`, then `name_len = 4`, `"name"`,
+    /// the 33-character HLC and 32 hash bytes. Built as bytes here so the fixture does not depend
+    /// on `db::sync_capture`'s encoder being correct to prove a restore carried the row.
+    fn packed_name_entry(hlc: &str) -> Vec<u8> {
+        let mut packed = vec![0x00, 0x01, 0x04];
+        packed.extend_from_slice(b"name");
+        packed.extend_from_slice(hlc.as_bytes());
+        packed.extend_from_slice(&[0xbb; 32]);
+        packed
+    }
     let row: [u8; 16] = [0x11; 16];
     let parent: [u8; 16] = [0x22; 16];
 
@@ -533,15 +544,10 @@ pub(crate) fn seed_sync_bookkeeping(conn: &Connection) -> usize {
             vec![INSTALL.to_string().into(), HLC.to_string().into(), row.to_vec().into()],
         ),
         (
-            "INSERT INTO sync_field_state
-                (table_name, row_uuid, column_name, hlc, install, content_hash)
-             VALUES ('accounts', ?1, 'name', ?2, ?3, ?4)",
-            vec![
-                row.to_vec().into(),
-                HLC.to_string().into(),
-                INSTALL.to_string().into(),
-                "b".repeat(64).into(),
-            ],
+            // The packed per-column map migration 033 stores: one entry for `name`, built here as
+            // bytes so the fixture does not depend on `db::sync_capture`'s encoder to be correct.
+            "INSERT INTO sync_field_state (table_name, row_uuid, columns) VALUES ('accounts', ?1, ?2)",
+            vec![row.to_vec().into(), packed_name_entry(HLC).into()],
         ),
         (
             "INSERT INTO sync_applied_vector (install, seq, applied_offset) VALUES (?1, 7, 0)",

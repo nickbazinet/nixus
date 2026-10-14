@@ -261,6 +261,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     ),
     (31, include_str!("../../migrations/031_sync_image_blobs.sql")),
     (32, include_str!("../../migrations/032_sync_tables.sql")),
+    (
+        33,
+        include_str!("../../migrations/033_sync_field_state_per_row.sql"),
+    ),
 ];
 
 /// The scalar SQL function migration 030 backfills `project_images.image_sha256` with.

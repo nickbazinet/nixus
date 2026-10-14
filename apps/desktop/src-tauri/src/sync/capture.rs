@@ -24,11 +24,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::hooks::{Action, PreUpdateCase, PreUpdateNewValueAccessor, PreUpdateOldValueAccessor};
+use sha2::{Digest, Sha256};
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::Connection;
 use tracing::warn;
 
-use crate::db::sync_capture::{self, LoggedMessage};
+use crate::db::sync_capture::{self, ColumnState, LoggedMessage, CONTENT_HASH_LEN};
 use crate::db::sync_identity::{self, RowUuid};
 use crate::error::AppError;
 use crate::models::DatasetKind;
@@ -581,17 +582,21 @@ impl Capture {
                         )?;
                         written += 1;
 
-                        for (column, value) in &columns {
-                            sync_capture::upsert_field_state(
-                                conn,
-                                table,
-                                row_uuid,
-                                column,
-                                &hlc,
-                                install,
-                                &content_hash(value),
-                            )?;
-                        }
+                        // ONE row write for the whole changed row (migration 033), still carrying
+                        // one entry per column: AD-5 decides each column on its own `hlc`.
+                        let states: Vec<(String, ColumnState)> = columns
+                            .iter()
+                            .map(|(column, value)| {
+                                (
+                                    (*column).to_string(),
+                                    ColumnState {
+                                        hlc: hlc.clone(),
+                                        content_hash: content_hash(value),
+                                    },
+                                )
+                            })
+                            .collect();
+                        sync_capture::upsert_field_states(conn, table, row_uuid, &states)?;
                     }
 
                     // No field state for a counter: its value is the SUM of its deltas, so there is
@@ -1294,12 +1299,15 @@ fn hex(bytes: &[u8]) -> String {
 
 /// Reconcile's input (AD-3): the hash of the value the message carried, so a write that bypassed
 /// the hook is found by hashing the live value the same way and comparing.
-fn content_hash(encoded: &[u8]) -> String {
-    let mut material = Vec::with_capacity(FIELD_HASH_DOMAIN.len() + encoded.len());
-    material.extend_from_slice(FIELD_HASH_DOMAIN);
-    material.extend_from_slice(encoded);
+///
+/// RAW digest bytes, not hex: it is stored inside the packed map (migration 033), never read by
+/// eye, and hex would be twice the size plus a formatting pass per captured column.
+fn content_hash(encoded: &[u8]) -> [u8; CONTENT_HASH_LEN] {
+    let mut digest = Sha256::new();
+    digest.update(FIELD_HASH_DOMAIN);
+    digest.update(encoded);
 
-    crate::projects::image::sha256_hex(&material)
+    digest.finalize().into()
 }
 
 fn unknown_table(table: &str) -> AppError {

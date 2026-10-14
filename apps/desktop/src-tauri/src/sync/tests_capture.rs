@@ -186,9 +186,14 @@ fn a_committed_insert_becomes_one_message_carrying_every_captured_column() {
         .iter()
         .all(|message| message.row_uuid == row_uuid.to_vec()));
     assert_eq!(
-        sync_capture::field_state_count(harness.conn()).expect("the state reads"),
+        sync_capture::field_state_column_count(harness.conn()).expect("the state reads"),
         4,
-        "one field-state row per captured field (AD-5)"
+        "one entry per captured field (AD-5)"
+    );
+    assert_eq!(
+        sync_capture::field_state_row_count(harness.conn()).expect("the state reads"),
+        1,
+        "and all four live in ONE row since migration 033"
     );
 }
 
@@ -251,10 +256,47 @@ fn the_field_state_hash_follows_the_value_and_the_clock_moves_forward() {
         .expect("the state reads")
         .expect("the field is owned");
 
-    assert_ne!(second.2, first.2, "a different value hashes differently");
-    assert!(second.0 > first.0, "the HLC of the newer write is greater");
-    assert_eq!(second.1, first.1, "both writes are this install's");
-    assert_eq!(second.2.len(), 64);
+    assert_ne!(
+        second.content_hash, first.content_hash,
+        "a different value hashes differently"
+    );
+    assert!(second.hlc > first.hlc, "the HLC of the newer write is greater");
+    assert_eq!(
+        second.install(),
+        first.install(),
+        "both writes are this install's"
+    );
+    assert!(
+        sync_capture::field_state_accepts(
+            harness.conn(),
+            "budget_groups",
+            &row_uuid,
+            "name",
+            "ffffffffffffffff-ffffffffffffffff"
+        )
+        .expect("the gate reads"),
+        "AD-5's gate accepts a greater stamp"
+    );
+    assert!(
+        !sync_capture::field_state_accepts(
+            harness.conn(),
+            "budget_groups",
+            &row_uuid,
+            "name",
+            &first.hlc
+        )
+        .expect("the gate reads"),
+        "and refuses the one that already lost"
+    );
+    assert_eq!(
+        sync_capture::field_state_columns(harness.conn(), "budget_groups", &row_uuid)
+            .expect("the columns read")
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>(),
+        vec!["created_at", "deleted_at", "name", "sort_order"],
+        "reconcile (Story 22) walks the row's columns"
+    );
 }
 
 #[test]
@@ -383,7 +425,7 @@ fn a_delete_without_a_where_clause_captures_every_row() {
         "every mapping is dropped with its tombstone (AD-2)"
     );
     assert_eq!(
-        sync_capture::field_state_count(harness.conn()).expect("the state reads"),
+        sync_capture::field_state_row_count(harness.conn()).expect("the state reads"),
         0
     );
 }

@@ -152,11 +152,12 @@ mod tests {
                 VALUES ('0123456789abcdef',
                         '0000000000000001-0123456789abcdef', 'field', 'accounts',
                         x'000102030405060708090a0b0c0d0e0f', 'name');
-            INSERT INTO sync_field_state
-                (table_name, row_uuid, column_name, hlc, install, content_hash)
-                VALUES ('accounts', x'000102030405060708090a0b0c0d0e0f', 'name',
-                        '0000000000000001-0123456789abcdef', '0123456789abcdef',
-                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+            -- The packed per-column map migration 033 stores, as one literal: count = 1, then
+            -- `name_len = 4`, `name`, the 33-character HLC and 32 hash bytes. One literal and not
+            -- `||`, because SQLite's concatenation converts its operands to TEXT.
+            INSERT INTO sync_field_state (table_name, row_uuid, columns)
+                VALUES ('accounts', x'000102030405060708090a0b0c0d0e0f',
+                        x'0001046e616d65303030303030303030303030303030312d30313233343536373839616263646566bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
             INSERT INTO sync_applied_vector (install, seq, applied_offset)
                 VALUES ('fedcba9876543210', 4, 0);
             INSERT INTO sync_tombstone

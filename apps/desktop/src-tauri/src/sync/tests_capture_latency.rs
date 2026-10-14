@@ -7,32 +7,38 @@
 //!
 //! | | single insert | 1,000-row import |
 //! | --- | --- | --- |
-//! | release, capture OFF | 59 µs (77 µs) | 0.65 ms (0.73 ms) |
-//! | release, capture ON | 163 µs (211 µs) = **+105 µs**, 2.8x | 19.1 ms (23.8 ms) = **+18.5 ms**, 29x |
-//! | debug, capture OFF | 69 µs (83 µs) | 1.52 ms (1.59 ms) |
-//! | debug, capture ON | 254 µs (276 µs) = +185 µs, 3.7x | 86.1 ms (90.4 ms) = +84.6 ms, 57x |
+//! | release, capture OFF | 59 µs (73 µs) | 0.66 ms (0.72 ms) |
+//! | release, capture ON | 153 µs (194 µs) = **+94 µs**, 2.6x | 13.7 ms (16.1 ms) = **+13.1 ms**, 21x |
+//! | debug, capture OFF | 68 µs (76 µs) | 1.47 ms (1.54 ms) |
+//! | debug, capture ON | 223 µs (249 µs) = +155 µs, 3.3x | 55.9 ms (61.2 ms) = +54.5 ms, 38x |
 //!
-//! THE IMPORT STILL MISSES THE BASELINE BY ABOUT 2.7x AND THIS GATE SAYS SO RATHER THAN HIDING IT.
-//! The M2 ledger carries an `OPEN` line with the one schema change that would close the rest. The
-//! cause is row COUNT, not slow code, and it was measured directly against the real schema:
+//! THE IMPORT STILL MISSES THE BASELINE BY ABOUT 1.9x AND THIS GATE SAYS SO RATHER THAN HIDING IT.
+//! Three rounds of optimization took it from +32.5 ms to +13.1 ms and the remaining cost is five
+//! unavoidable row writes per changed row, measured one at a time against the real schema:
 //!
-//! - A `sync_log` row costs 3.6 µs: the row plus `idx_sync_log_row`, `idx_sync_log_unshipped` and
-//!   the `AUTOINCREMENT` sequence. 4,000 of them (one per captured column) cost 14.6 ms, which is
-//!   why one message now carries the whole changed row (`ROW_COLUMN_MARKER`) — 1,000 rows, 3.5 ms.
-//! - 4,000 `sync_field_state` rows cost 7.9 ms, and they CANNOT be skipped: AD-5 decides each
-//!   column on its own `hlc` and Story 22's reconcile reads each column's `content_hash`.
-//!   Collapsing them to one row per `(table, row_uuid)` needs a migration and is the OPEN item.
-//! - A multi-row `VALUES` form of the same inserts was measured at 14.0 ms against 14.6 ms, i.e.
-//!   **4% faster**: statement overhead is NOT the cost. Batching was therefore implemented,
-//!   measured (6 ms SLOWER end to end, because it needs an owned copy of every value) and removed.
+//! - 1,000 `sync_log` rows: 3.5 ms. A log row costs 3.6 µs — the row plus `idx_sync_log_row`,
+//!   `idx_sync_log_unshipped` and the `AUTOINCREMENT` sequence. It is already one message per
+//!   changed row (`ROW_COLUMN_MARKER`), down from one per column.
+//! - 1,000 `sync_field_state` rows plus their read-merge-write: about 3 ms, down from 7.9 ms when
+//!   it was one row per column (migration 033). It cannot be skipped: AD-5 decides each column on
+//!   its own `hlc` and Story 22's reconcile reads each column's `content_hash`.
+//! - 1,000 `sync_uuid` rows and their lookups: about 2 ms. AD-2 requires the mapping.
+//! - The rest is hashing, encoding and stamping, which `-O0` is what makes the debug column 4x.
+//!
+//! A multi-row `VALUES` form of these inserts was measured at 14.0 ms against 14.6 ms for cached
+//! per-row prepared statements — 4% — so statement overhead is NOT the cost. Batching was
+//! implemented, measured (6 ms SLOWER end to end, because it needs an owned copy of every value)
+//! and removed again.
+//!
+//! Going further means writing FEWER THAN five rows per changed row, which is a question about what
+//! replication needs rather than about this code: dropping an index on `sync_log`, or making the
+//! log the only record and deriving field state from it. Both belong to Story 19/20, which freeze
+//! the wire format and own apply. The M2 ledger carries the `OPEN` line.
 //!
 //! WHY the gate is relative AND absolute. A debug build is several times slower than a release one
 //! and a shared CI runner is noisier still, so the RATIO (the same work twice in one process, hook
 //! on vs off) is what survives a slow machine, while the absolute ceiling is what catches a
 //! regression that slows both sides down.
-//!
-//! WHY the ceilings are per build profile: the row writes are C and the per-message work (hashing,
-//! encoding, stamping) is Rust, and only the second is slowed down by `-O0`.
 //!
 //! WHY the gate reads the FASTEST run and not the median. `cargo test` runs this concurrently with
 //! ~1,650 other tests on every core, which inflates a median by up to 4x and would make the gate
@@ -68,27 +74,27 @@ const IMPORT_ROWS: usize = 1_000;
 /// They are NOT a multiple of the isolated numbers above. `cargo test` runs this gate while ~1,650
 /// other tests saturate every core, and that contention inflates even the fastest of N runs by
 /// about 1.6x (measured: an 18.5 ms isolated import overhead read as 30 ms inside the full release
-/// suite). The ceilings are therefore `worst observed under full-suite load` x about 1.3, which is
-/// the tightest value that is not a flaky test. Run the gate alone to see the real numbers:
+/// suite). The ceilings are therefore the measured number x 1.6 for that contention x about 1.3,
+/// which is the tightest value that is not a flaky test. Run the gate alone to see the real numbers:
 /// `cargo test --release tests_capture_latency -- --nocapture`.
 #[cfg(debug_assertions)]
 mod ceiling {
     use std::time::Duration;
 
-    pub const SINGLE_INSERT_RATIO: f64 = 8.0;
-    pub const IMPORT_RATIO: f64 = 95.0;
-    pub const SINGLE_INSERT_OVERHEAD: Duration = Duration::from_micros(600);
-    pub const IMPORT_OVERHEAD: Duration = Duration::from_millis(170);
+    pub const SINGLE_INSERT_RATIO: f64 = 7.0;
+    pub const IMPORT_RATIO: f64 = 70.0;
+    pub const SINGLE_INSERT_OVERHEAD: Duration = Duration::from_micros(500);
+    pub const IMPORT_OVERHEAD: Duration = Duration::from_millis(115);
 }
 
 #[cfg(not(debug_assertions))]
 mod ceiling {
     use std::time::Duration;
 
-    pub const SINGLE_INSERT_RATIO: f64 = 6.0;
-    pub const IMPORT_RATIO: f64 = 60.0;
-    pub const SINGLE_INSERT_OVERHEAD: Duration = Duration::from_micros(400);
-    pub const IMPORT_OVERHEAD: Duration = Duration::from_millis(40);
+    pub const SINGLE_INSERT_RATIO: f64 = 5.5;
+    pub const IMPORT_RATIO: f64 = 45.0;
+    pub const SINGLE_INSERT_OVERHEAD: Duration = Duration::from_micros(350);
+    pub const IMPORT_OVERHEAD: Duration = Duration::from_millis(28);
 }
 
 struct Side {
@@ -257,8 +263,13 @@ fn the_measured_work_really_is_captured() {
          is the real capture path"
     );
     assert_eq!(
-        crate::db::sync_capture::field_state_count(conn).expect("the state reads"),
+        crate::db::sync_capture::field_state_column_count(conn).expect("the state reads"),
         40,
-        "and AD-5's per-column merge state is still written per column"
+        "and AD-5's per-column merge state is still recorded per column"
+    );
+    assert_eq!(
+        crate::db::sync_capture::field_state_row_count(conn).expect("the state reads"),
+        10,
+        "packed into one row per synced row (migration 033)"
     );
 }
