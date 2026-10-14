@@ -42,6 +42,8 @@ mod tests_balance_emitters;
 #[cfg(test)]
 mod tests_bootstrap;
 #[cfg(test)]
+mod tests_domain_capture;
+#[cfg(test)]
 mod tests_e2e;
 #[cfg(test)]
 mod tests_finance_capture;

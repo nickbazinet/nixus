@@ -77,9 +77,7 @@ pub fn set_emergency_fund_target_months(conn: &Connection, months: i64) -> Resul
         });
     }
 
-    config::set(conn, EMERGENCY_FUND_TARGET_CONFIG_KEY, &months.to_string())
-        .map_err(AppError::from)
-}
+    config::set(conn, EMERGENCY_FUND_TARGET_CONFIG_KEY, &months.to_string())}
 
 fn emergency_fund_status(
     coverage_months: Option<f64>,

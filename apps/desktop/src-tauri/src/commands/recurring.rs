@@ -20,8 +20,6 @@ pub fn create_recurring_template(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateRecurringExpenseTemplateInput {
         merchant,
         amount_cents,
@@ -31,16 +29,7 @@ pub fn create_recurring_template(
     let result = active.write(|tx| recurring_db::insert_template(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "recurring_template",
-        result.id,
-        "create",
-        None,
-        Some(&details),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "recurring_template", result.id, "create", None, Some(&details));
 
     Ok(result)
 }
@@ -84,16 +73,14 @@ pub fn update_recurring_template(
     let result = active.write(|tx| recurring_db::update_template(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
+    audit_db::record(
+        &active,
         "recurring_template",
         id,
         "update",
         old_json.as_deref(),
         Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    );
 
     Ok(result)
 }
@@ -109,16 +96,7 @@ pub fn delete_recurring_template(state: State<DbState>, id: i64) -> Result<(), A
 
     active.write(|tx| recurring_db::delete_template(tx, id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "recurring_template",
-        id,
-        "delete",
-        old_json.as_deref(),
-        None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "recurring_template", id, "delete", old_json.as_deref(), None);
 
     Ok(())
 }
@@ -132,10 +110,8 @@ pub fn apply_recurring_expenses(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let created = active.write(|tx| recurring_db::apply_recurring_for_month(tx, year, month))?;
-    audit_created_expenses(conn, &created);
+    audit_created_expenses(&active, &created);
 
     Ok(created)
 }
@@ -144,25 +120,15 @@ pub fn apply_recurring_expenses(
 pub fn apply_due_recurring_expenses(active: &ActiveDataset) -> Result<Vec<Expense>, AppError> {
     let created = active.write(|tx| recurring_db::apply_due_recurring_expenses(tx))?;
 
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-    audit_created_expenses(conn, &created);
+    audit_created_expenses(active, &created);
 
     Ok(created)
 }
 
-fn audit_created_expenses(conn: &rusqlite::Connection, created: &[Expense]) {
+fn audit_created_expenses(active: &ActiveDataset, created: &[Expense]) {
     for expense in created {
         let details = serde_json::to_string(expense).unwrap_or_default();
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
-            "expense",
-            expense.id,
-            "create",
-            None,
-            Some(&details),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        audit_db::record(active, "expense", expense.id, "create", None, Some(&details));
     }
 }
 

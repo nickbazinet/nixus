@@ -5,7 +5,7 @@ use tauri::{AppHandle, State};
 use crate::datasets;
 use crate::db::audit as audit_db;
 use crate::db::maintenance as maintenance_db;
-use crate::db::DbState;
+use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::maintenance::catalog::{self, VehicleCatalogStatus, VehicleMake, VehicleModel};
 use crate::maintenance::defaults::DEFAULT_TASKS;
@@ -42,8 +42,6 @@ pub fn create_vehicle(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateVehicleInput {
         odometer_km,
         make,
@@ -52,19 +50,10 @@ pub fn create_vehicle(
         use_default_template: use_default_template.unwrap_or(true),
         custom_tasks,
     };
-    let result = maintenance_db::insert_vehicle(conn, &input)?;
+    let result = active.write(|tx| maintenance_db::insert_vehicle(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "vehicle",
-        result.id,
-        "create",
-        None,
-        Some(&details),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "vehicle", result.id, "create", None, Some(&details));
 
     Ok(result)
 }
@@ -109,19 +98,10 @@ pub fn update_vehicle(
         model,
         year,
     };
-    let result = maintenance_db::update_vehicle(conn, id, &input)?;
+    let result = active.write(|tx| maintenance_db::update_vehicle(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "vehicle",
-        id,
-        "update",
-        old_json.as_deref(),
-        Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "vehicle", id, "update", old_json.as_deref(), Some(&new_json));
 
     Ok(result)
 }
@@ -135,18 +115,9 @@ pub fn delete_vehicle(state: State<DbState>, id: i64) -> Result<(), AppError> {
 
     let old_json = get_vehicle_json(conn, id);
 
-    maintenance_db::delete_vehicle(conn, id)?;
+    active.write(|tx| maintenance_db::delete_vehicle(tx, id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "vehicle",
-        id,
-        "delete",
-        old_json.as_deref(),
-        None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "vehicle", id, "delete", old_json.as_deref(), None);
 
     Ok(())
 }
@@ -160,9 +131,7 @@ pub fn update_vehicle_odometer(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    maintenance_db::update_vehicle_odometer(conn, vehicle_id, odometer_km)
+    active.write(|tx| maintenance_db::update_vehicle_odometer(tx, vehicle_id, odometer_km))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -175,9 +144,9 @@ pub fn update_maintenance_task(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    maintenance_db::update_maintenance_task_intervals(conn, task_id, interval_km, interval_months)
+    active.write(|tx| {
+        maintenance_db::update_maintenance_task_intervals(tx, task_id, interval_km, interval_months)
+    })
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -188,9 +157,7 @@ pub fn add_maintenance_task(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    maintenance_db::add_maintenance_task(conn, &input)
+    active.write(|tx| maintenance_db::add_maintenance_task(tx, &input))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -214,9 +181,7 @@ pub fn log_maintenance_service(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    let result = maintenance_db::log_maintenance_service(conn, &input)?;
+    let result = active.write(|tx| maintenance_db::log_maintenance_service(tx, &input))?;
 
     if result.odometer_updated {
         let old_json = result
@@ -231,16 +196,14 @@ pub fn log_maintenance_service(
         })
         .to_string();
 
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
+        audit_db::record(
+            &active,
             "vehicle",
             result.log.vehicle_id,
             "update",
             old_json.as_deref(),
             Some(&new_json),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        );
     }
 
     Ok(result)
@@ -254,9 +217,7 @@ pub fn log_custom_service(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    let result = maintenance_db::log_custom_service(conn, &input)?;
+    let result = active.write(|tx| maintenance_db::log_custom_service(tx, &input))?;
 
     if result.odometer_updated {
         let old_json = result
@@ -271,40 +232,37 @@ pub fn log_custom_service(
         })
         .to_string();
 
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
+        audit_db::record(
+            &active,
             "vehicle",
             result.log.vehicle_id,
             "update",
             old_json.as_deref(),
             Some(&new_json),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        );
     }
 
     Ok(result)
 }
 
 pub(crate) fn update_service_log_inner(
-    conn: &rusqlite::Connection,
+    active: &ActiveDataset,
     input: &UpdateServiceLogInput,
 ) -> Result<UpdateServiceLogResult, AppError> {
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     let old_json = get_service_log_json(conn, input.log_id);
 
-    let result = maintenance_db::update_service_log(conn, input)?;
+    let result = active.write(|tx| maintenance_db::update_service_log(tx, input))?;
 
     let new_json = serde_json::to_string(&result.log).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
+    audit_db::record(
+        active,
         "maintenance_service_log",
         result.log.id,
         "update",
         old_json.as_deref(),
         Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    );
 
     if result.odometer_updated {
         let odometer_old_json = result
@@ -319,16 +277,14 @@ pub(crate) fn update_service_log_inner(
         })
         .to_string();
 
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
+        audit_db::record(
+            active,
             "vehicle",
             result.log.vehicle_id,
             "update",
             odometer_old_json.as_deref(),
             Some(&odometer_new_json),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        );
     }
 
     Ok(result)
@@ -342,29 +298,26 @@ pub fn update_service_log(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    update_service_log_inner(conn, &input)
+    update_service_log_inner(&active, &input)
 }
 
 pub(crate) fn delete_service_log_inner(
-    conn: &rusqlite::Connection,
+    active: &ActiveDataset,
     log_id: i64,
 ) -> Result<DeleteServiceLogResult, AppError> {
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     let old_json = get_service_log_json(conn, log_id);
 
-    let result = maintenance_db::delete_service_log(conn, log_id)?;
+    let result = active.write(|tx| maintenance_db::delete_service_log(tx, log_id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
+    audit_db::record(
+        active,
         "maintenance_service_log",
         log_id,
         "delete",
         old_json.as_deref(),
         None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    );
 
     Ok(result)
 }
@@ -377,9 +330,7 @@ pub fn delete_service_log(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    delete_service_log_inner(conn, log_id)
+    delete_service_log_inner(&active, log_id)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -461,7 +412,7 @@ mod tests {
     /// A migrated database holding one vehicle and one scheduled log, and **no audit rows**: both
     /// fixture writes go through the db layer, so every audit row a test sees was written by the
     /// command helper under test.
-    fn migrated_db_with_a_logged_service() -> (TempDir, Connection, i64, i64) {
+    fn migrated_db_with_a_logged_service() -> (TempDir, crate::db::ActiveDataset, i64, i64) {
         let dir = TempDir::new().expect("temp dir");
         let conn = crate::db::init_db(dir.path()).expect("init_db succeeds");
 
@@ -504,7 +455,15 @@ mod tests {
             "the fixture must not write audit rows of its own"
         );
 
-        (dir, conn, logged.log.id, vehicle.id)
+        // Local-only, so the fixture exercises the real `ActiveDataset::write` path without a
+        // cloud link: capture is `None` for a local profile by construction (inherited AD-12).
+        let active = crate::db::ActiveDataset {
+            id: Some("maintenance-command-test".to_string()),
+            conn: Some(conn),
+            capture: None,
+        };
+
+        (dir, active, logged.log.id, vehicle.id)
     }
 
     fn audit_row_count(conn: &Connection) -> i64 {
@@ -551,12 +510,13 @@ mod tests {
 
     #[test]
     fn updating_a_service_log_audits_the_row_before_and_after_the_edit() {
-        let (_dir, conn, log_id, _vehicle_id) = migrated_db_with_a_logged_service();
+        let (_dir, active, log_id, _vehicle_id) = migrated_db_with_a_logged_service();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let corrected_on = days_ago(20);
 
         // Below the vehicle's reading on purpose: this edit must produce the log audit row alone.
         update_service_log_inner(
-            &conn,
+            &active,
             &UpdateServiceLogInput {
                 log_id,
                 service_date: corrected_on.clone(),
@@ -568,7 +528,7 @@ mod tests {
         .expect("the edit succeeds");
 
         let (entity_id, old_value, new_value) =
-            audit_row(&conn, "maintenance_service_log", "update");
+            audit_row(conn, "maintenance_service_log", "update");
         let old_value = old_value.expect("the update audit records the row as it was");
         let new_value = new_value.expect("the update audit records the row as saved");
 
@@ -595,7 +555,7 @@ mod tests {
         );
 
         assert_eq!(
-            audit_row_count(&conn),
+            audit_row_count(conn),
             1,
             "an edit that leaves the odometer alone writes no vehicle audit row"
         );
@@ -603,12 +563,13 @@ mod tests {
 
     #[test]
     fn deleting_a_service_log_audits_the_destroyed_row_and_no_new_value() {
-        let (_dir, conn, log_id, _vehicle_id) = migrated_db_with_a_logged_service();
+        let (_dir, active, log_id, _vehicle_id) = migrated_db_with_a_logged_service();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
-        delete_service_log_inner(&conn, log_id).expect("the delete succeeds");
+        delete_service_log_inner(&active, log_id).expect("the delete succeeds");
 
         let (entity_id, old_value, new_value) =
-            audit_row(&conn, "maintenance_service_log", "delete");
+            audit_row(conn, "maintenance_service_log", "delete");
         let old_value = old_value.expect("the delete audit records what was destroyed");
 
         assert_eq!(entity_id, log_id);
@@ -625,15 +586,16 @@ mod tests {
             field(&old_value, "notes"),
             serde_json::json!("Original note")
         );
-        assert_eq!(audit_row_count(&conn), 1);
+        assert_eq!(audit_row_count(conn), 1);
     }
 
     #[test]
     fn an_odometer_advancing_edit_audits_the_vehicle_with_the_service_log_update_source() {
-        let (_dir, conn, log_id, vehicle_id) = migrated_db_with_a_logged_service();
+        let (_dir, active, log_id, vehicle_id) = migrated_db_with_a_logged_service();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
         update_service_log_inner(
-            &conn,
+            &active,
             &UpdateServiceLogInput {
                 log_id,
                 service_date: days_ago(20),
@@ -644,7 +606,7 @@ mod tests {
         )
         .expect("the edit succeeds");
 
-        let (entity_id, old_value, new_value) = audit_row(&conn, "vehicle", "update");
+        let (entity_id, old_value, new_value) = audit_row(conn, "vehicle", "update");
         let old_value = old_value.expect("the companion audit records the previous reading");
         let new_value = new_value.expect("the companion audit records the advance");
 
@@ -665,9 +627,9 @@ mod tests {
         assert_eq!(field(&new_value, "after"), serde_json::json!(26_000));
         assert_eq!(field(&new_value, "log_id"), serde_json::json!(log_id));
 
-        audit_row(&conn, "maintenance_service_log", "update");
+        audit_row(conn, "maintenance_service_log", "update");
         assert_eq!(
-            audit_row_count(&conn),
+            audit_row_count(conn),
             2,
             "the advance is a companion row, not a replacement for the log audit"
         );

@@ -10,7 +10,7 @@ use crate::db::budget as budget_db;
 use crate::db::financial_health as financial_health_db;
 use crate::db::projects as projects_db;
 use crate::db::spending_trends as spending_trends_db;
-use crate::db::DbState;
+use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::models::{
     AccountEarmarkBreakdown, AccountHeadroom, BudgetCategoryStatus, CategoryCompareRow,
@@ -55,8 +55,6 @@ pub fn create_project(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateProjectInput {
         name,
         target_cents,
@@ -65,14 +63,10 @@ pub fn create_project(
         icon,
         color,
     };
-    let result = projects_db::insert_project(conn, &input)?;
+    let result = active.write(|tx| projects_db::insert_project(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) =
-        audit_db::insert_audit_log(conn, "project", result.id, "create", None, Some(&details))
-    {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "project", result.id, "create", None, Some(&details));
 
     Ok(result)
 }
@@ -116,19 +110,10 @@ pub fn update_project(
         icon,
         color,
     };
-    let result = projects_db::update_project(conn, id, &input)?;
+    let result = active.write(|tx| projects_db::update_project(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "project",
-        id,
-        "update",
-        old_json.as_deref(),
-        Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "project", id, "update", old_json.as_deref(), Some(&new_json));
 
     Ok(result)
 }
@@ -143,19 +128,17 @@ pub fn reorder_projects(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let changes = projects_db::reorder_projects(conn, &project_ids)?;
+    let changes = active.write(|tx| projects_db::reorder_projects(tx, &project_ids))?;
 
     for change in &changes {
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
+        audit_db::record(
+            &active,
             "project",
             change.project_id,
             "update",
             Some(&change.old_json),
             Some(&change.new_json),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        );
     }
 
     projects_db::get_active_projects(conn)
@@ -170,19 +153,10 @@ pub fn archive_project(state: State<DbState>, id: i64) -> Result<Project, AppErr
 
     let old_json = serde_json::to_string(&projects_db::get_project_by_id(conn, id)?).ok();
 
-    let result = projects_db::archive_project(conn, id)?;
+    let result = active.write(|tx| projects_db::archive_project(tx, id))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "project",
-        id,
-        "archive",
-        old_json.as_deref(),
-        Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "project", id, "archive", old_json.as_deref(), Some(&new_json));
 
     Ok(result)
 }
@@ -198,8 +172,6 @@ pub fn create_project_contribution(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     // `source` is hard-coded, never a parameter: `confirm_project_allocations` is the only path that
     // may produce a `"suggested"` row (FR8), so this command cannot be used to forge one.
     let input = CreateProjectContributionInput {
@@ -209,19 +181,10 @@ pub fn create_project_contribution(
         source: "manual".to_string(),
         date,
     };
-    let result = projects_db::insert_project_contribution(conn, &input)?;
+    let result = active.write(|tx| projects_db::insert_project_contribution(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "project_contribution",
-        result.id,
-        "create",
-        None,
-        Some(&details),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "project_contribution", result.id, "create", None, Some(&details));
 
     Ok(result)
 }
@@ -255,22 +218,20 @@ pub fn confirm_project_allocations(
         total_cents,
     )?;
 
-    let created = projects_db::insert_suggested_contributions(conn, &allocations)?;
+    let created = active.write(|tx| projects_db::insert_suggested_contributions(tx, &allocations))?;
 
     // One audit row per created contribution, not one summary row for the batch, so
     // `audit_log.entity_id` stays joinable back to the contribution it describes.
     for contribution in &created {
         let details = serde_json::to_string(contribution).unwrap_or_default();
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
+        audit_db::record(
+            &active,
             "project_contribution",
             contribution.id,
             "create",
             None,
             Some(&details),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        );
     }
 
     Ok(created)
@@ -284,21 +245,10 @@ pub fn delete_project_contribution(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    let result = projects_db::delete_project_contribution(conn, id)?;
+    let result = active.write(|tx| projects_db::delete_project_contribution(tx, id))?;
 
     let old_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "project_contribution",
-        result.id,
-        "delete",
-        Some(&old_json),
-        None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "project_contribution", result.id, "delete", Some(&old_json), None);
 
     Ok(result)
 }
@@ -444,10 +394,8 @@ pub fn skip_suggested_allocation_for_month(state: State<DbState>) -> Result<Stri
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let month = settlement::month_of(chrono::Local::now().date_naive());
-    projects_db::set_suggestion_skipped_month(conn, &month)?;
+    active.write(|tx| projects_db::set_suggestion_skipped_month(tx, &month))?;
 
     Ok(month)
 }
@@ -459,9 +407,7 @@ pub fn clear_suggested_allocation_skip(state: State<DbState>) -> Result<(), AppE
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    projects_db::clear_suggestion_skipped_month(conn)
+    active.write(|tx| projects_db::clear_suggestion_skipped_month(tx))
 }
 
 // The budget half of the prompt is read here, never accepted from the caller: the frontend can only
@@ -703,8 +649,10 @@ pub(crate) fn get_project_image_inner(
 /// skipped and left NULL: it is re-attempted on a later read, which costs one decode per app
 /// session (the hook caches with `staleTime: Infinity`) and never costs the user a picture.
 pub(crate) fn get_project_thumbnails_inner(
-    conn: &Connection,
+    active: &ActiveDataset,
 ) -> Result<Vec<ProjectThumbnail>, AppError> {
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
     for project_id in projects_db::get_project_ids_needing_thumbnails(conn)? {
         let Some(stored) = projects_db::get_project_image(conn, project_id)? else {
             continue;
@@ -719,7 +667,9 @@ pub(crate) fn get_project_thumbnails_inner(
             continue;
         };
 
-        projects_db::set_project_thumbnail(conn, project_id, (&thumbnail, mime_type))?;
+        active.write(|tx| {
+            projects_db::set_project_thumbnail(tx, project_id, (&thumbnail, mime_type))
+        })?;
     }
 
     Ok(projects_db::get_project_thumbnails(conn)?
@@ -742,7 +692,7 @@ pub(crate) fn get_project_thumbnails_inner(
 /// could not be produced is stored anyway with a NULL thumbnail — the row falls back to its
 /// placeholder tile rather than the upload being refused for a file the user can see.
 pub(crate) fn set_project_image_inner(
-    conn: &Connection,
+    active: &ActiveDataset,
     project_id: i64,
     mime_type: &str,
     original_filename: &str,
@@ -751,18 +701,20 @@ pub(crate) fn set_project_image_inner(
     let derived = image::ProjectImageFormat::from_mime_type(mime_type)
         .and_then(|format| image::thumbnail(bytes, format));
 
-    let row = projects_db::upsert_project_image(
-        conn,
-        project_id,
-        &projects_db::ProjectImageWrite {
-            mime_type,
-            original_filename,
-            bytes,
-            thumbnail: derived
-                .as_ref()
-                .map(|(thumbnail, thumbnail_mime)| (thumbnail.as_slice(), *thumbnail_mime)),
-        },
-    )?;
+    let row = active.write(|tx| {
+        projects_db::upsert_project_image(
+            tx,
+            project_id,
+            &projects_db::ProjectImageWrite {
+                mime_type,
+                original_filename,
+                bytes,
+                thumbnail: derived
+                    .as_ref()
+                    .map(|(thumbnail, thumbnail_mime)| (thumbnail.as_slice(), *thumbnail_mime)),
+            },
+        )
+    })?;
 
     let meta = ProjectImageMeta {
         project_id: row.project_id,
@@ -773,24 +725,17 @@ pub(crate) fn set_project_image_inner(
     };
 
     let details = project_image_audit_value(&meta);
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        PROJECT_IMAGE_ENTITY,
-        project_id,
-        "set",
-        None,
-        Some(&details),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(active, PROJECT_IMAGE_ENTITY, project_id, "set", None, Some(&details));
 
     Ok(meta)
 }
 
 pub(crate) fn remove_project_image_inner(
-    conn: &Connection,
+    active: &ActiveDataset,
     project_id: i64,
 ) -> Result<(), AppError> {
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
     // Read before deleting so the audit trail can record what was released. This loads the
     // payload and drops it — at most 4 MiB — because `get_project_image` is the only reader
     // and a metadata-only accessor would have no second caller.
@@ -800,7 +745,7 @@ pub(crate) fn remove_project_image_inner(
         return Ok(());
     };
 
-    projects_db::delete_project_image(conn, project_id)?;
+    active.write(|tx| projects_db::delete_project_image(tx, project_id))?;
 
     let old_json = project_image_audit_value(&ProjectImageMeta {
         project_id: previous.project_id,
@@ -809,16 +754,7 @@ pub(crate) fn remove_project_image_inner(
         byte_size: previous.byte_size,
         uploaded_at: previous.uploaded_at,
     });
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        PROJECT_IMAGE_ENTITY,
-        project_id,
-        "remove",
-        Some(&old_json),
-        None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(active, PROJECT_IMAGE_ENTITY, project_id, "remove", Some(&old_json), None);
 
     Ok(())
 }
@@ -849,9 +785,7 @@ pub fn get_project_thumbnails(state: State<DbState>) -> Result<Vec<ProjectThumbn
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    get_project_thumbnails_inner(conn)
+    get_project_thumbnails_inner(&active)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -868,9 +802,7 @@ pub fn set_project_image(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    set_project_image_inner(conn, project_id, mime_type, &original_filename, &bytes)
+    set_project_image_inner(&active, project_id, mime_type, &original_filename, &bytes)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -878,9 +810,7 @@ pub fn remove_project_image(state: State<DbState>, project_id: i64) -> Result<()
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    remove_project_image_inner(conn, project_id)
+    remove_project_image_inner(&active, project_id)
 }
 
 #[cfg(test)]
@@ -1048,7 +978,11 @@ mod tests {
 
     const CAPTURE_SENTINEL: &str = "tracing-capture-is-live";
 
-    fn migrated_db_with_a_project() -> (TempDir, Connection) {
+    /// A migrated file holding one project, as a LOCAL-ONLY dataset: the image commands write
+    /// through `ActiveDataset::write` now, and capture is `None` for a local profile by
+    /// construction (inherited AD-12), so these tests exercise the real write path without
+    /// depending on a cloud link.
+    fn migrated_db_with_a_project() -> (TempDir, ActiveDataset) {
         let dir = TempDir::new().expect("temp dir");
         let conn = crate::db::init_db(dir.path()).expect("init_db succeeds");
         conn.execute(
@@ -1056,7 +990,14 @@ mod tests {
             [],
         )
         .expect("seed project");
-        (dir, conn)
+
+        let active = ActiveDataset {
+            id: Some("project-image-test".to_string()),
+            conn: Some(conn),
+            capture: None,
+        };
+
+        (dir, active)
     }
 
     /// A 13-byte IHDR carrying the declared size, then the fixed colour-type tail — the same
@@ -1191,10 +1132,11 @@ mod tests {
 
     #[test]
     fn storing_a_png_reports_its_own_mime_and_payload_length_and_reads_back_byte_identically() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let payload = png_bytes(64, 64);
 
-        let meta = set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+        let meta = set_project_image_inner(&active, 1, "image/png", "cover.png", &payload)
             .expect("the image is stored");
 
         assert_eq!(meta.project_id, 1);
@@ -1209,7 +1151,7 @@ mod tests {
             "uploaded_at comes from SQLite's clock, not from the caller"
         );
 
-        let image = stored_image(&conn).expect("the stored image is readable");
+        let image = stored_image(conn).expect("the stored image is readable");
         assert_eq!(image.mime_type, "image/png");
         assert_eq!(image.byte_size, meta.byte_size);
         assert_eq!(
@@ -1221,13 +1163,14 @@ mod tests {
 
     #[test]
     fn the_set_audit_row_carries_only_metadata_and_never_the_payload() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let payload = png_bytes(64, 64);
 
-        set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+        set_project_image_inner(&active, 1, "image/png", "cover.png", &payload)
             .expect("the image is stored");
 
-        let (old_value, new_value) = image_audit_values(&conn, "set");
+        let (old_value, new_value) = image_audit_values(conn, "set");
         assert_eq!(old_value, None, "a store has no prior value to record");
         let new_value = new_value.expect("the set audit row records the new metadata");
 
@@ -1237,7 +1180,7 @@ mod tests {
             "the audit value must carry exactly the four metadata fields"
         );
 
-        let audit = all_audit_text(&conn);
+        let audit = all_audit_text(conn);
         assert!(
             !audit.contains("image_bytes"),
             "no payload key may reach the audit trail: {audit}"
@@ -1250,7 +1193,8 @@ mod tests {
 
     #[test]
     fn the_read_then_store_path_leaks_no_source_path_into_the_audit_trail_or_the_logs() {
-        let (dir, conn) = migrated_db_with_a_project();
+        let (dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let marker = format!("nixus-image-leak-marker-{}", std::process::id());
         let source_dir = dir.path().join(&marker);
         std::fs::create_dir_all(&source_dir).expect("the marker directory is created");
@@ -1261,7 +1205,7 @@ mod tests {
         let (meta, logs) = captured_tracing(|| {
             let (mime_type, original_filename, bytes) =
                 read_project_image_for_store(file_path).expect("the source image is accepted");
-            let meta = set_project_image_inner(&conn, 1, mime_type, &original_filename, &bytes)
+            let meta = set_project_image_inner(&active, 1, mime_type, &original_filename, &bytes)
                 .expect("the image is stored");
             // Emitted inside the capture so the absence assertions below cannot pass on an
             // empty buffer: a capture that silently recorded nothing would prove nothing.
@@ -1277,7 +1221,7 @@ mod tests {
             !logs.contains(&marker),
             "no source path may reach a log line: {logs}"
         );
-        let audit = all_audit_text(&conn);
+        let audit = all_audit_text(conn);
         assert!(
             !audit.contains(&marker),
             "no source path may reach a persisted row: {audit}"
@@ -1290,10 +1234,11 @@ mod tests {
 
     #[test]
     fn get_project_image_inner_returns_none_for_a_project_without_one() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
         assert!(
-            stored_image(&conn).is_none(),
+            stored_image(conn).is_none(),
             "a project without a picture is the normal state, not a failure"
         );
     }
@@ -1303,12 +1248,13 @@ mod tests {
     /// would make a normal state look like a broken image.
     #[test]
     fn a_picture_that_is_not_fetched_yet_reads_as_a_placeholder_rather_than_a_failure() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let payload = image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
-        set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+        set_project_image_inner(&active, 1, "image/png", "cover.png", &payload)
             .expect("the picture stores");
 
-        let fetched = stored_image(&conn).expect("the picture reads");
+        let fetched = stored_image(conn).expect("the picture reads");
         assert!(fetched.full_image_available);
         assert!(fetched.image_base64.is_some());
         let tile = fetched
@@ -1316,9 +1262,9 @@ mod tests {
             .clone()
             .expect("the derivative was produced");
 
-        projects_db::blank_project_image_bytes(&conn).expect("the payload is dropped");
+        projects_db::blank_project_image_bytes(conn).expect("the payload is dropped");
 
-        let placeholder = stored_image(&conn).expect("the row still reads");
+        let placeholder = stored_image(conn).expect("the row still reads");
         assert!(
             !placeholder.full_image_available,
             "the absent payload must be reported as a state"
@@ -1336,16 +1282,17 @@ mod tests {
 
     #[test]
     fn removing_an_image_clears_it_and_records_metadata_only() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let payload = png_bytes(64, 64);
-        set_project_image_inner(&conn, 1, "image/png", "cover.png", &payload)
+        set_project_image_inner(&active, 1, "image/png", "cover.png", &payload)
             .expect("the image is stored");
 
-        remove_project_image_inner(&conn, 1).expect("the image is removed");
+        remove_project_image_inner(&active, 1).expect("the image is removed");
 
-        assert!(stored_image(&conn).is_none(), "the image is gone");
+        assert!(stored_image(conn).is_none(), "the image is gone");
 
-        let (old_value, new_value) = image_audit_values(&conn, "remove");
+        let (old_value, new_value) = image_audit_values(conn, "remove");
         let old_value = old_value.expect("the remove audit row records what was released");
         assert_eq!(
             new_value, None,
@@ -1356,19 +1303,20 @@ mod tests {
             vec!["byte_size", "mime_type", "original_filename", "uploaded_at"]
         );
         assert!(
-            !all_audit_text(&conn).contains(&STANDARD.encode(&payload)),
+            !all_audit_text(conn).contains(&STANDARD.encode(&payload)),
             "removal must not be the moment a payload enters the audit trail"
         );
     }
 
     #[test]
     fn removing_an_image_that_was_never_there_is_a_silent_no_op() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
-        remove_project_image_inner(&conn, 1).expect("removal is idempotent");
+        remove_project_image_inner(&active, 1).expect("removal is idempotent");
 
         assert_eq!(
-            all_audit_text(&conn),
+            all_audit_text(conn),
             "",
             "a state that never changed leaves no audit row"
         );
@@ -1396,9 +1344,10 @@ mod tests {
     /// upsert, so the bytes already stored stay exactly where they were.
     #[test]
     fn a_write_refused_by_the_archived_guard_leaves_the_previous_image_intact() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let original = png_bytes(64, 64);
-        set_project_image_inner(&conn, 1, "image/png", "cover.png", &original)
+        set_project_image_inner(&active, 1, "image/png", "cover.png", &original)
             .expect("the first image is stored");
         conn.execute(
             "UPDATE projects SET archived_at = datetime('now') WHERE id = 1",
@@ -1412,7 +1361,7 @@ mod tests {
             "the replacement must differ, or byte-identity would prove nothing"
         );
         let error =
-            set_project_image_inner(&conn, 1, "image/jpeg", "replacement.jpg", &replacement)
+            set_project_image_inner(&active, 1, "image/jpeg", "replacement.jpg", &replacement)
                 .expect_err("an archived project refuses a write");
 
         assert!(
@@ -1420,7 +1369,7 @@ mod tests {
             "expected the project_id guard, got {error:?}"
         );
 
-        let image = stored_image(&conn).expect("the previous image survives the refusal");
+        let image = stored_image(conn).expect("the previous image survives the refusal");
         assert_eq!(image.mime_type, "image/png");
         assert_eq!(image.original_filename, "cover.png");
         assert_eq!(
@@ -1454,13 +1403,14 @@ mod tests {
     /// thumbnail columns. One list read has to fix that permanently, not just for that response.
     #[test]
     fn an_image_stored_without_a_thumbnail_is_backfilled_by_one_batch_read() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let source =
             image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
         // Straight through the db layer with no derivative, which is exactly the row shape every
         // image written before migration 027 has.
         projects_db::upsert_project_image(
-            &conn,
+            conn,
             1,
             &projects_db::ProjectImageWrite {
                 mime_type: "image/png",
@@ -1470,19 +1420,19 @@ mod tests {
             },
         )
         .expect("the pre-027 write succeeds");
-        assert_eq!(persisted_thumbnail(&conn, 1), None);
+        assert_eq!(persisted_thumbnail(conn, 1), None);
 
-        let thumbnails = get_project_thumbnails_inner(&conn).expect("the batch read succeeds");
+        let thumbnails = get_project_thumbnails_inner(&active).expect("the batch read succeeds");
 
         assert_eq!(thumbnails.len(), 1);
         let (stored_bytes, stored_mime) =
-            persisted_thumbnail(&conn, 1).expect("the derivative is now on the row");
+            persisted_thumbnail(conn, 1).expect("the derivative is now on the row");
         assert_eq!(stored_mime, "image/png");
         assert_eq!(thumbnail_payload(&thumbnails[0]), stored_bytes);
         // Untouched by the backfill: only the two derivative columns may change, or a late
         // thumbnail would rewrite the moment the user actually uploaded.
         assert_eq!(
-            stored_image(&conn)
+            stored_image(conn)
                 .expect("the picture is still there")
                 .original_filename,
             "cover.png"
@@ -1493,7 +1443,8 @@ mod tests {
     /// for each. The size assertion is what breaks if the command ever ships full-size bytes.
     #[test]
     fn the_batch_read_covers_active_projects_only_and_bounds_every_payload() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         for (id, name) in [(2, "Roof"), (3, "Boat")] {
             conn.execute(
                 "INSERT INTO projects (id, name, target_cents) VALUES (?1, ?2, 900000)",
@@ -1515,7 +1466,7 @@ mod tests {
             source.len()
         );
         for project_id in [1, 2, 3] {
-            set_project_image_inner(&conn, project_id, "image/png", "cover.png", &source)
+            set_project_image_inner(&active, project_id, "image/png", "cover.png", &source)
                 .expect("the write succeeds");
         }
         // Archived only after its picture was stored, because the write guard refuses an archived
@@ -1526,7 +1477,7 @@ mod tests {
         )
         .expect("the third project is archived");
 
-        let thumbnails = get_project_thumbnails_inner(&conn).expect("the batch read succeeds");
+        let thumbnails = get_project_thumbnails_inner(&active).expect("the batch read succeeds");
 
         assert_eq!(
             thumbnails
@@ -1556,17 +1507,18 @@ mod tests {
     /// data behind it, so the decoder genuinely disagrees with the validator here.
     #[test]
     fn an_image_whose_thumbnail_cannot_be_produced_is_still_stored() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let undecodable = png_bytes(64, 64);
 
-        let meta = set_project_image_inner(&conn, 1, "image/png", "cover.png", &undecodable)
+        let meta = set_project_image_inner(&active, 1, "image/png", "cover.png", &undecodable)
             .expect("the upload succeeds despite the derivative failing");
 
         assert_eq!(meta.byte_size, i64::try_from(undecodable.len()).unwrap());
-        assert_eq!(persisted_thumbnail(&conn, 1), None);
-        assert!(decoded(&stored_image(&conn).expect("the picture is stored")) == undecodable);
+        assert_eq!(persisted_thumbnail(conn, 1), None);
+        assert!(decoded(&stored_image(conn).expect("the picture is stored")) == undecodable);
         assert!(
-            get_project_thumbnails_inner(&conn)
+            get_project_thumbnails_inner(&active)
                 .expect("the batch read succeeds")
                 .is_empty(),
             "a NULL thumbnail is an absent entry, so the row falls back to its placeholder"
@@ -1577,16 +1529,17 @@ mod tests {
     /// PREVIOUS picture's tile after a replace.
     #[test]
     fn replacing_a_picture_never_leaves_the_previous_thumbnail_behind() {
-        let (_dir, conn) = migrated_db_with_a_project();
+        let (_dir, active) = migrated_db_with_a_project();
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         let decodable =
             image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
-        set_project_image_inner(&conn, 1, "image/png", "first.png", &decodable)
+        set_project_image_inner(&active, 1, "image/png", "first.png", &decodable)
             .expect("the first image is stored");
-        assert!(persisted_thumbnail(&conn, 1).is_some());
+        assert!(persisted_thumbnail(conn, 1).is_some());
 
-        set_project_image_inner(&conn, 1, "image/png", "second.png", &png_bytes(64, 64))
+        set_project_image_inner(&active, 1, "image/png", "second.png", &png_bytes(64, 64))
             .expect("the replacement is stored");
 
-        assert_eq!(persisted_thumbnail(&conn, 1), None);
+        assert_eq!(persisted_thumbnail(conn, 1), None);
     }
 }

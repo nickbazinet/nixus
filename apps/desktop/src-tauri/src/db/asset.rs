@@ -66,9 +66,8 @@ pub fn get_asset_by_id(conn: &Connection, id: i64) -> Result<PassiveAsset, AppEr
 }
 
 /// Returns (old_value_cents, updated PassiveAsset)
-/// NOT capture-sanctioned yet, deliberately: every caller Story 17 owns now reaches it through
-/// `ActiveDataset::write`, but the AI chat action path still calls it on a bare connection
-/// (Story 18 migrates `commands/chat.rs`), so the ratchet must keep showing it.
+/// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`, the AI chat
+/// action path included since Story 18 put `commands/chat.rs` on one captured transaction.
 pub fn update_asset_value(
     conn: &Connection,
     id: i64,

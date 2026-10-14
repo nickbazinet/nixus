@@ -204,10 +204,15 @@ pub const COLUMNS: &[ColumnRule] = &[
     column("accounts", "updated_at", Lww),
     column("audit_log", "id", LocalId),
     column("audit_log", "entity_type", Immutable),
-    // An audit row's `entity_id` is a machine-local integer and is NOT an FK, so it cannot be
-    // resolved by one. Story 18 adds the nullable `entity_uuid` AD-5 calls for; until then the
-    // integer is what it has always been and travels as a local id, i.e. not at all.
+    // An audit row's `entity_id` is a machine-local integer and is NOT an FK — one column points at
+    // eleven tables, and the audit row outlives the row it describes — so nothing can resolve it
+    // into a parent uuid. It travels as a local id, i.e. not at all, and `entity_uuid` below is the
+    // same fact expressed in uuid space (migration 034, AD-5).
     column("audit_log", "entity_id", LocalId),
+    // The `sync_uuid` of the affected row, read when the audit row is written and never changed
+    // afterwards. NULL when the action has no single entity (`import`, `budget_template`, the AI
+    // chat actions) or when the entity predates capture.
+    column("audit_log", "entity_uuid", Immutable),
     column("audit_log", "action", Immutable),
     column("audit_log", "old_value", Immutable),
     column("audit_log", "new_value", Immutable),
@@ -470,9 +475,6 @@ fn find_edge(child_table: &str, child_column: &str) -> Option<&'static EdgeRule>
 ///
 /// It reuses `db::config::LOCAL_ONLY_KEYS` rather than restating the keys, so the registry, the
 /// snapshot strip and the restore carry-over cannot disagree about which keys those are.
-// Story 18 is the first production caller: it migrates the `config` write sites, which is where
-// the three credential-state keys have to be held back.
-#[allow(dead_code)]
 pub fn config_key_is_local_only(key: &str) -> bool {
     crate::db::config::LOCAL_ONLY_KEYS.contains(&key)
 }

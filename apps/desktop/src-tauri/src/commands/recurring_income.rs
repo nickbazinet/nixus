@@ -21,8 +21,6 @@ pub fn create_recurring_income_template(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateRecurringIncomeTemplateInput {
         source_id,
         amount_cents,
@@ -32,16 +30,14 @@ pub fn create_recurring_income_template(
     let result = active.write(|tx| recurring_income_db::insert_template(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
+    audit_db::record(
+        &active,
         "recurring_income_template",
         result.id,
         "create",
         None,
         Some(&details),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    );
 
     Ok(result)
 }
@@ -85,16 +81,14 @@ pub fn update_recurring_income_template(
     let result = active.write(|tx| recurring_income_db::update_template(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
+    audit_db::record(
+        &active,
         "recurring_income_template",
         id,
         "update",
         old_json.as_deref(),
         Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    );
 
     Ok(result)
 }
@@ -110,16 +104,7 @@ pub fn delete_recurring_income_template(state: State<DbState>, id: i64) -> Resul
 
     active.write(|tx| recurring_income_db::delete_template(tx, id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "recurring_income_template",
-        id,
-        "delete",
-        old_json.as_deref(),
-        None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "recurring_income_template", id, "delete", old_json.as_deref(), None);
 
     Ok(())
 }
@@ -130,20 +115,9 @@ pub fn apply_due_recurring_income(
 ) -> Result<Vec<IncomeEntry>, AppError> {
     let applied = active.write(|tx| recurring_income_db::apply_due_recurring_income(tx))?;
 
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     for entry in &applied.entries {
         let details = serde_json::to_string(entry).unwrap_or_default();
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
-            "income_entry",
-            entry.id,
-            "create",
-            None,
-            Some(&details),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        audit_db::record(active, "income_entry", entry.id, "create", None, Some(&details));
     }
 
     // Backfilled income moves linked account balances exactly like a manual entry, so it goes

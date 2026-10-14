@@ -440,7 +440,8 @@ mod tests {
                 action TEXT NOT NULL,
                 old_value TEXT,
                 new_value TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                entity_uuid BLOB
             );",
         )
         .unwrap();

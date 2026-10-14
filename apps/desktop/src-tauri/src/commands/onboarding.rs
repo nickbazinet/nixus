@@ -32,7 +32,5 @@ pub fn complete_onboarding(state: State<DbState>) -> Result<(), AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    onboarding_db::set_completed(conn)
+    active.write(|tx| onboarding_db::set_completed(tx))
 }

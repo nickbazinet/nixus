@@ -3,6 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::config;
 use crate::error::AppError;
+use crate::sync::{capture, identity};
 use crate::models::{
     AccountEarmarkBreakdown, AccountEarmarkSegment, AccountHeadroom,
     CreateProjectContributionInput, CreateProjectInput, Project, ProjectAllocationInput,
@@ -59,6 +60,7 @@ fn validate_project_fields(name: &str, target_cents: i64) -> Result<(), AppError
     Ok(())
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn insert_project(conn: &Connection, input: &CreateProjectInput) -> Result<Project, AppError> {
     let name = input.name.trim();
     validate_project_fields(name, input.target_cents)?;
@@ -112,6 +114,7 @@ pub fn get_project_by_id(conn: &Connection, id: i64) -> Result<Project, AppError
     .map_err(AppError::from)
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn update_project(
     conn: &Connection,
     id: i64,
@@ -145,6 +148,7 @@ pub fn update_project(
     get_project_by_id(conn, id)
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn archive_project(conn: &Connection, id: i64) -> Result<Project, AppError> {
     // The `archived_at IS NULL` guard turns a double-archive into an error rather than silently
     // rewriting the original archive timestamp.
@@ -291,6 +295,7 @@ pub fn get_project_image(
 //
 // The thumbnail travels on this same statement rather than a follow-up write so that a replace can
 // never leave the PREVIOUS picture's thumbnail attached to the new one.
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn upsert_project_image(
     conn: &Connection,
     project_id: i64,
@@ -348,6 +353,8 @@ pub fn upsert_project_image(
         ],
     )?;
 
+    bind_project_image_identity(conn, project_id)?;
+
     // Read back rather than echo the arguments: `uploaded_at` is SQLite's clock.
     conn.query_row(
         "SELECT project_id, mime_type, original_filename, byte_size, uploaded_at
@@ -374,6 +381,7 @@ pub fn upsert_project_image(
 // Returns whether a row was removed rather than the `rows == 0 -> AppError::Database` convention the
 // project writes above use, because "there was no image" is the caller's expected answer on a retry,
 // not a failure. That makes removal idempotent.
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn delete_project_image(conn: &Connection, project_id: i64) -> Result<bool, AppError> {
     let rows = conn.execute(
         "DELETE FROM project_images WHERE project_id = ?1",
@@ -389,6 +397,7 @@ pub fn delete_project_image(conn: &Connection, project_id: i64) -> Result<bool, 
 // The tuple is required rather than optional because no caller ever needs to clear a thumbnail on
 // its own: a new picture overwrites both columns through `upsert_project_image`, and removing a
 // picture takes the whole row with it.
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn set_project_thumbnail(
     conn: &Connection,
     project_id: i64,
@@ -397,6 +406,11 @@ pub fn set_project_thumbnail(
     let (bytes, mime_type) = validated_thumbnail(Some(thumbnail))?.ok_or(AppError::Database {
         message: "Thumbnail was dropped by its own guard".to_string(),
     })?;
+
+    // Bound BEFORE the update, not only at the insert site: this is the lazy backfill, so the row
+    // it touches routinely predates capture and would otherwise fail the write for want of the
+    // derived identity AD-2 requires of a `Natural` table.
+    bind_project_image_identity(conn, project_id)?;
 
     conn.execute(
         "UPDATE project_images SET thumbnail_bytes = ?2, thumbnail_mime = ?3
@@ -472,6 +486,11 @@ pub fn get_project_ids_needing_thumbnails(conn: &Connection) -> Result<Vec<i64>,
 ///
 /// The caller is responsible for having verified the bytes against `expected_sha256` first
 /// (`sync::blob::fetch_image_blob` does); this function trusts the pair and only places it.
+// NOT capture-sanctioned, deliberately and permanently: its one caller is the AD-10 blob fetch in
+// `sync::manager::fetch_image`, which runs on the sync actor's own connection. The bytes it places
+// are `Excluded` (AD-10) and the `byte_size` beside them arrived in the remote `field` message that
+// asked for this download, so capturing this write would ship a picture's metadata back to the
+// computer it came from.
 pub fn set_project_image_bytes(
     conn: &Connection,
     project_id: i64,
@@ -489,6 +508,30 @@ pub fn set_project_image_bytes(
     )?;
 
     Ok(rows > 0)
+}
+
+/// Binds `project_images`' derived identity: the owning project's own uuid (AD-2).
+///
+/// `project_images.project_id` IS the primary key, so the picture has no identity of its own beyond
+/// "the picture of that project". The project's uuid is minted here if this is the first time
+/// anything has needed it, which is why the call site is a write rather than a read.
+///
+/// Skipped entirely when nothing is capturing, so a local-only profile still writes no `sync_*` row
+/// (inherited AD-12).
+fn bind_project_image_identity(conn: &Connection, project_id: i64) -> Result<(), AppError> {
+    if !capture::is_capturing() {
+        return Ok(());
+    }
+
+    let project = identity::uuid_for(conn, "projects", project_id)?;
+    let derived = identity::project_image(&project);
+
+    let mapping = identity::ensure_derived(conn, "project_images", project_id, &derived)?;
+    if mapping.row_id != project_id {
+        tracing::warn!("A project image identity already belongs to another local row");
+    }
+
+    Ok(())
 }
 
 /// Drops every full payload while keeping the metadata, the hash and the thumbnails (AD-9).
@@ -523,6 +566,7 @@ fn invalid_project_ids(message: &str) -> AppError {
 // The submitted list must be a permutation of the active set, and the whole rewrite is one
 // transaction: a partially applied order would silently feed Story 32.2's suggested split a
 // corrupted ranking. Every check runs before the transaction opens, so a rejection writes nothing.
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn reorder_projects(
     conn: &Connection,
     project_ids: &[i64],
@@ -559,7 +603,7 @@ pub fn reorder_projects(
         ordered.push((previous, priority));
     }
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
 
     let mut changes = Vec::new();
     for (previous, priority) in ordered {
@@ -660,6 +704,7 @@ fn validate_contribution_input(
     Ok(())
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn insert_project_contribution(
     conn: &Connection,
     input: &CreateProjectContributionInput,
@@ -757,6 +802,7 @@ fn validate_suggested_allocations(
 // the INSERT below and never a bound parameter, so no caller can forge a different source value; the
 // schema's `CHECK (source IN ('manual','suggested'))` is only the backstop. Nothing here touches
 // `accounts`: earmarking labels money that is already in the account (SC2).
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn insert_suggested_contributions(
     conn: &Connection,
     allocations: &[ProjectAllocationInput],
@@ -776,7 +822,7 @@ pub fn insert_suggested_contributions(
     // writes no rows at all — not even the valid entries ahead of it.
     validate_suggested_allocations(conn, &funded)?;
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = super::grouped(conn)?;
 
     let mut created_ids = Vec::with_capacity(funded.len());
     for allocation in &funded {
@@ -803,6 +849,7 @@ pub fn insert_suggested_contributions(
 
 // Returns the deleted row so the command layer has an audit `old_value` and the frontend knows
 // which project and account keys to invalidate.
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn delete_project_contribution(
     conn: &Connection,
     id: i64,
@@ -1130,8 +1177,7 @@ pub fn get_suggestion_skipped_month(conn: &Connection) -> Option<String> {
 }
 
 pub fn set_suggestion_skipped_month(conn: &Connection, month: &str) -> Result<(), AppError> {
-    config::set(conn, SUGGESTION_SKIPPED_MONTH_CONFIG_KEY, month).map_err(AppError::from)
-}
+    config::set(conn, SUGGESTION_SKIPPED_MONTH_CONFIG_KEY, month)}
 
 // Cleared by writing an empty value rather than by deleting the row: `config` exposes `get`/`set`
 // only, an empty string is already "not a month" to `get_suggestion_skipped_month`, and this keeps
@@ -3316,7 +3362,7 @@ mod tests {
         // This pins the last `MIGRATIONS` entry, which is what forces a new migration to be
         // exercised here instead of shipping unnoticed.
         assert_eq!(
-            version, 33,
+            version, 34,
             "the newest applied version must be the last MIGRATIONS entry"
         );
 

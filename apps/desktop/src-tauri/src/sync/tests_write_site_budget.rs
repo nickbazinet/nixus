@@ -58,11 +58,58 @@ fn is_test_only(relative: &str) -> bool {
         )
 }
 
+/// Why each surviving site is allowed to survive — one entry per remaining write site, written
+/// into the budget file so the exclusion list is reviewable there and not only here.
+///
+/// Story 18 took the count to its final value for this milestone: everything a USER action writes
+/// now goes through `ActiveDataset::write`, and what is left is the four kinds of write that
+/// structurally cannot (a different database file, the apply/blob path, the snapshot copy, and the
+/// wipe/restore internals Story 25 owns). `every_remaining_site_is_justified` fails on a site with
+/// no entry here, so a new uncaptured write cannot hide behind the total.
+const JUSTIFICATIONS: &[(&str, &str)] = &[
+    (
+        "avatar_store.rs::save_avatar",
+        "A DIFFERENT DATABASE: `user_avatars` lives in the account-level avatar store keyed by \
+         `cognito_sub`, not in a dataset, and `registry::TABLES` therefore does not classify it. \
+         There is no dataset transaction for it to join.",
+    ),
+    (
+        "db/backup.rs::carry_local_only",
+        "RESTORE INTERNALS (AD-9, Story 25): it carries this computer's local-only rows back into \
+         a file that has just replaced the live one. Capturing it would emit messages for rows \
+         that are by definition local-only.",
+    ),
+    (
+        "db/backup.rs::copy_table",
+        "RESTORE INTERNALS (AD-9, Story 25): a table-by-table copy into the replacement file, \
+         which the dataset's own transaction cannot wrap because the file is not the live one yet.",
+    ),
+    (
+        "db/danger_zone.rs::wipe_all",
+        "WIPE INTERNALS (AD-15, Story 25): the whole point is to leave no trace, and a message \
+         per deleted row is the opposite. It is the `write_uncaptured`/`detached` seam's caller.",
+    ),
+    (
+        "db/projects.rs::blank_project_image_bytes",
+        "SNAPSHOT COPY (AD-9/AD-10): it runs on the copy being uploaded, never on the live \
+         dataset, so there is nothing local to describe.",
+    ),
+    (
+        "db/projects.rs::set_project_image_bytes",
+        "BLOB FETCH (AD-10): its one caller is `sync::manager::fetch_image`, on the sync actor's \
+         own connection. The bytes are `Excluded` and the metadata beside them arrived in the \
+         remote message that asked for the download.",
+    ),
+];
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Budget {
     /// Carried in the file itself so the next person to see it red knows what to do.
     #[serde(rename = "_how_to_lower_this")]
     how_to_lower: String,
+    /// One line per remaining site, from [`JUSTIFICATIONS`].
+    #[serde(rename = "_why_these_remain")]
+    why_these_remain: BTreeMap<String, String>,
     total: usize,
     sites: BTreeMap<String, usize>,
 }
@@ -199,6 +246,11 @@ fn the_write_site_budget_may_only_shrink() {
                            CAPTURE-SANCTIONED (AD-3), then re-run with \
                            NIXUS_WRITE_SITE_BUDGET=update."
                 .to_string(),
+            why_these_remain: JUSTIFICATIONS
+                .iter()
+                .filter(|(site, _)| scanned.contains_key(*site))
+                .map(|(site, why)| ((*site).to_string(), (*why).to_string()))
+                .collect(),
             total,
             sites: scanned,
         };
@@ -247,23 +299,39 @@ fn the_write_site_budget_may_only_shrink() {
 fn the_scanner_sees_the_unmigrated_sites_and_not_the_migrated_one() {
     let scanned = scan();
 
-    // A floor, not a measurement: Story 17 took the finance domains out, so the number only ever
-    // falls from here. The named lists below are what actually keeps the scanner honest.
+    // The scanner must still be LOOKING: it walks the whole of `src/` and finds the handful of
+    // structurally-uncaptured writes, so a scanner that silently stopped reading files would show
+    // zero and pass. The named lists below are what actually keeps it honest.
     assert!(
-        scanned.len() > 25,
-        "the scanner found only {} write sites, which cannot be the unmigrated remainder",
+        !scanned.is_empty(),
+        "the scanner found no write sites at all, so it is not reading the source tree"
+    );
+    assert!(
+        scanned.len() < 15,
+        "the scanner found {} write sites; Story 18 took the remainder to the structural ones",
         scanned.len()
     );
 
+    // Story 18's own migrations, named individually: these are the domains whose rows a user
+    // action writes, and every one of them now goes through `ActiveDataset::write`.
     for migrated in [
         "db/budget.rs::create_budget_group",
-        "db/budget.rs::update_budget_group",
-        "db/budget.rs::delete_budget_group",
+        "db/budget.rs::create_budget_category",
         "db/expense.rs::update_expense",
-        "db/expense.rs::delete_expense",
+        "db/expense.rs::insert_expense_with_source_with_balance_changes",
         "db/income.rs::update_income_entry",
         "db/net_worth.rs::record_net_worth_snapshot",
         "db/recurring.rs::insert_template",
+        "db/projects.rs::insert_project",
+        "db/projects.rs::upsert_project_image",
+        "db/maintenance.rs::insert_vehicle",
+        "db/maintenance.rs::log_maintenance_service",
+        "db/chat.rs::insert_message",
+        "db/config.rs::set",
+        "db/config.rs::delete",
+        "db/audit.rs::insert_audit_log",
+        "db/account.rs::update_account_balance",
+        "db/asset.rs::update_asset_value",
     ] {
         assert!(
             !scanned.contains_key(migrated),
@@ -271,21 +339,54 @@ fn the_scanner_sees_the_unmigrated_sites_and_not_the_migrated_one() {
         );
     }
 
-    for unmigrated in [
-        "db/projects.rs::insert_project",
-        "db/maintenance.rs::insert_vehicle",
-        "db/chat.rs::insert_message",
-        "db/config.rs::set",
-        // Finance, but still reachable from the AI chat actions on a bare connection, which is
-        // Story 18's migration: the ratchet must keep showing those.
-        "db/budget.rs::create_budget_category",
-        "db/expense.rs::insert_expense_with_source_with_balance_changes",
+    // The structural remainder, named rather than counted: each of these CANNOT join a dataset
+    // transaction, and the reason is recorded in `JUSTIFICATIONS`.
+    for structural in [
+        "avatar_store.rs::save_avatar",
+        "db/danger_zone.rs::wipe_all",
+        "db/projects.rs::set_project_image_bytes",
     ] {
         assert!(
-            scanned.contains_key(unmigrated),
-            "{unmigrated} has not been migrated yet and must still be counted"
+            scanned.contains_key(structural),
+            "{structural} is a structurally-uncaptured write and must still be counted"
         );
     }
+}
+
+/// Every surviving site must say why it survives, in the file itself. This is what stops the
+/// remainder from quietly becoming a dumping ground now that it is small.
+#[test]
+fn every_remaining_site_is_justified() {
+    let scanned = scan();
+    let justified: BTreeMap<&str, &str> = JUSTIFICATIONS.iter().copied().collect();
+
+    let unjustified: Vec<&String> = scanned
+        .keys()
+        .filter(|site| !justified.contains_key(site.as_str()))
+        .collect();
+    assert!(
+        unjustified.is_empty(),
+        "these write sites have no recorded reason to remain uncaptured (AD-3): {unjustified:?}"
+    );
+
+    let stale: Vec<&&str> = justified
+        .keys()
+        .filter(|site| !scanned.contains_key(**site))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "JUSTIFICATIONS names sites the scanner no longer finds: {stale:?}"
+    );
+
+    let recorded: Budget = serde_json::from_str(
+        &std::fs::read_to_string(budget_path()).expect("the budget file is checked in"),
+    )
+    .expect("the budget file is valid JSON");
+    assert_eq!(
+        recorded.why_these_remain.len(),
+        scanned.len(),
+        "the checked-in budget must carry one justification per remaining site"
+    );
 }
 
 #[test]

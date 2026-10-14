@@ -21,22 +21,11 @@ pub fn create_income_source(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateIncomeSourceInput { name, income_type };
     let result = active.write(|tx| income_db::insert_income_source(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "income_source",
-        result.id,
-        "create",
-        None,
-        Some(&details),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "income_source", result.id, "create", None, Some(&details));
 
     Ok(result)
 }
@@ -71,16 +60,7 @@ pub fn update_income_source(
     let result = active.write(|tx| income_db::update_income_source(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "income_source",
-        id,
-        "update",
-        old_json.as_deref(),
-        Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "income_source", id, "update", old_json.as_deref(), Some(&new_json));
 
     Ok(result)
 }
@@ -96,16 +76,7 @@ pub fn delete_income_source(state: State<DbState>, id: i64) -> Result<(), AppErr
 
     active.write(|tx| income_db::delete_income_source(tx, id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "income_source",
-        id,
-        "delete",
-        old_json.as_deref(),
-        None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "income_source", id, "delete", old_json.as_deref(), None);
 
     Ok(())
 }
@@ -121,8 +92,6 @@ pub fn create_income_entry(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateIncomeEntryInput {
         source_id,
         amount_cents,
@@ -133,16 +102,7 @@ pub fn create_income_entry(
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "income_entry",
-        result.id,
-        "create",
-        None,
-        Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "income_entry", result.id, "create", None, Some(&new_json));
     record_account_balance_changes(&active, &mutation.balance_changes);
 
     Ok(result)
@@ -169,16 +129,7 @@ pub fn update_income_entry(
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "income_entry",
-        id,
-        "update",
-        old_json.as_deref(),
-        Some(&new_json),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "income_entry", id, "update", old_json.as_deref(), Some(&new_json));
     record_account_balance_changes(&active, &mutation.balance_changes);
 
     Ok(result)
@@ -195,16 +146,7 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
 
     let balance_changes = active.write(|tx| income_db::delete_income_entry(tx, id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
-        "income_entry",
-        id,
-        "delete",
-        old_json.as_deref(),
-        None,
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "income_entry", id, "delete", old_json.as_deref(), None);
     record_account_balance_changes(&active, &balance_changes);
 
     Ok(())
@@ -333,21 +275,15 @@ pub(crate) fn record_account_balance_changes(active: &ActiveDataset, changes: &[
         return;
     }
 
-    let Some(conn) = active.conn.as_ref() else {
-        return;
-    };
-
     for (account_id, old_balance_cents, new_balance_cents) in &summaries {
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
+        audit_db::record(
+            active,
             "account",
             *account_id,
             "balance_update",
             Some(&old_balance_cents.to_string()),
             Some(&new_balance_cents.to_string()),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        );
     }
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {

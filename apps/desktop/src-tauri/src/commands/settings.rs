@@ -85,13 +85,13 @@ pub async fn save_aws_credentials(
         let active = db.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
-        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        config_db::set(conn, "ai_provider", "bedrock")
-            .map_err(|e| AppError::Database { message: e.to_string() })?;
-        config_db::set(conn, "aws_region", &region)
-            .map_err(|e| AppError::Database { message: e.to_string() })?;
-        config_db::set(conn, "ai_configured", "true")
-            .map_err(|e| AppError::Database { message: e.to_string() })?;
+        // One captured write for all three, and all three are on AD-5's deny list, so this write
+        // produces no sync message at all — the dataset's own credential state must never travel.
+        active.write(|tx| {
+            config_db::set(tx, "ai_provider", "bedrock")?;
+            config_db::set(tx, "aws_region", &region)?;
+            config_db::set(tx, "ai_configured", "true")
+        })?;
     }
 
     // Update AiState in place (temp_client is the validated real client)
@@ -134,11 +134,10 @@ pub async fn save_openai_credentials(
         let active = db.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
-        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        config_db::set(conn, "ai_provider", "openai")
-            .map_err(|e| AppError::Database { message: e.to_string() })?;
-        config_db::set(conn, "ai_configured", "true")
-            .map_err(|e| AppError::Database { message: e.to_string() })?;
+        active.write(|tx| {
+            config_db::set(tx, "ai_provider", "openai")?;
+            config_db::set(tx, "ai_configured", "true")
+        })?;
     }
 
     // Update AiState in place
@@ -161,9 +160,7 @@ pub fn clear_ai_credentials(
         let active = db.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
-        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        config_db::set(conn, "ai_configured", "false")
-            .map_err(|e| AppError::Database { message: e.to_string() })?;
+        active.write(|tx| config_db::set(tx, "ai_configured", "false"))?;
     }
 
     let mut ai = ai_state.lock().map_err(|_| AppError::Database {

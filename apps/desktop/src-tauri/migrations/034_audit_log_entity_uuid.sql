@@ -1,0 +1,25 @@
+-- `audit_log` gains the nullable `entity_uuid` AD-5 names, so a shared action log survives the fact
+-- that every computer numbers its rows differently.
+--
+-- WHY a new column rather than a translation of `entity_id`: `audit_log.entity_id` is a
+-- machine-local integer that is deliberately NOT a foreign key (one column points at eleven
+-- different tables, and an audit row outlives the row it describes), so nothing can resolve it into
+-- a parent uuid the way AD-2 resolves a real edge. `registry::fk_parent` answers `None` for it and
+-- it therefore does not travel at all. `entity_uuid` is the same fact expressed in uuid space: the
+-- `sync_uuid` of the affected row, read at the moment the audit row is written, which is after the
+-- transaction that changed the row has flushed its identity.
+--
+-- WHY NULLABLE, and why there is no backfill: an audit row can legitimately have no single entity
+-- (`import`, `budget_template` and every AI chat action pass `entity_id` 0), and an audit row that
+-- predates capture names a row that has no identity yet — Story 22's reconcile owns rows that
+-- predate capture, and inventing a uuid here would bind one to an audit row rather than to the row
+-- it describes. Existing rows keep NULL, which is exactly what "this computer cannot name the
+-- entity" means.
+--
+-- `audit_log` is classified `AppendOnly` (AD-5): its rows are shared, never edited and never
+-- merged, and a remote apply writes no new audit row of its own.
+ALTER TABLE audit_log ADD COLUMN entity_uuid BLOB;
+
+-- The lookup the action log is read by stays `(entity_type, entity_id)` (migration 010). The uuid
+-- is carried for replication, not queried locally, so it gets no index: an index nothing reads is
+-- a page write on every audited change for nothing.

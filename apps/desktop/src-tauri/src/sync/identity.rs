@@ -107,24 +107,18 @@ pub fn balance_cause(
 
 /// `maintenance_tasks (vehicle uuid, task_type_key)` — the schema's `UNIQUE(vehicle_id,
 /// task_type_key)`, with the vehicle named by uuid.
-// Story 18 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn maintenance_task(vehicle: &RowUuid, task_type_key: &str) -> RowUuid {
     derive("maintenance_tasks", &[vehicle, task_type_key.as_bytes()])
 }
 
 /// `project_images` takes its owning project's uuid: the table's primary key IS `project_id`, so
 /// the image has no identity of its own beyond "the picture of that project".
-// Story 18 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn project_image(project: &RowUuid) -> RowUuid {
     derive("project_images", &[project])
 }
 
 /// `config` is keyed by the setting's name, which is already machine-independent — so unlike every
 /// other derived identity there is no referenced row to express it through.
-// Story 18 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn config_key(key: &str) -> RowUuid {
     derive("config", &[key.as_bytes()])
 }
@@ -445,12 +439,23 @@ mod tests {
             let offenders: Vec<String> = columns_of(table)
                 .into_iter()
                 .filter(|column| column.contains("uuid"))
+                // AD-5's ONE sanctioned exception, named rather than allowed for by a count.
+                // `audit_log.entity_uuid` is not this row's identity — that still lives in
+                // `sync_uuid` — it is a REFERENCE to another row, and it has to be a column
+                // because `entity_id` points at eleven different tables and is therefore not a
+                // foreign key AD-2's translation could resolve (migration 034).
+                .filter(|column| !(table == "audit_log" && column == "entity_uuid"))
                 .collect();
             assert!(
                 offenders.is_empty(),
                 "{table} carries {offenders:?}; row identity lives in sync_uuid, not in a data table"
             );
         }
+
+        assert!(
+            columns_of("audit_log").contains(&"entity_uuid".to_string()),
+            "the exception above must stay a statement about a column that exists"
+        );
 
         // Non-vacuity: the search term is one that WOULD be found if a uuid column existed.
         assert!(columns_of("sync_uuid").contains(&"uuid".to_string()));

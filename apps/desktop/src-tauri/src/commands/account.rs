@@ -19,8 +19,6 @@ pub fn create_account(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateAccountInput {
         name,
         institution,
@@ -30,9 +28,7 @@ pub fn create_account(
     let result = active.write(|tx| account_db::insert_account(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(conn, "account", result.id, "create", None, Some(&details)) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "account", result.id, "create", None, Some(&details));
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
@@ -59,21 +55,17 @@ pub fn update_account_balance(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let (old_balance, account) =
         active.write(|tx| account_db::update_account_balance(tx, id, balance_cents))?;
 
-    if let Err(e) = audit_db::insert_audit_log(
-        conn,
+    audit_db::record(
+        &active,
         "account",
         id,
         "balance_update",
         Some(&old_balance.to_string()),
         Some(&balance_cents.to_string()),
-    ) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    );
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
@@ -107,9 +99,7 @@ pub fn update_account(
     let result = active.write(|tx| account_db::update_account(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(conn, "account", id, "update", old_json.as_deref(), Some(&new_json)) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "account", id, "update", old_json.as_deref(), Some(&new_json));
 
     Ok(result)
 }
@@ -143,9 +133,7 @@ pub fn delete_account(
 
     active.write(|tx| account_db::delete_account(tx, id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(conn, "account", id, "delete", old_json.as_deref(), None) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "account", id, "delete", old_json.as_deref(), None);
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);

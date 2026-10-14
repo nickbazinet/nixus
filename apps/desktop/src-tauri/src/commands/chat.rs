@@ -17,7 +17,7 @@ use crate::db::dashboard as dashboard_db;
 use crate::db::expense as expense_db;
 use crate::db::income as income_db;
 use crate::db::maintenance as maintenance_db;
-use crate::db::DbState;
+use crate::db::{DbState, WriteTx};
 use crate::error::AppError;
 use crate::models::{CreateAccountInput, CreateBudgetCategory, CreateExpenseInput};
 
@@ -270,10 +270,9 @@ pub async fn send_chat_message(
         let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
-        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         let title: String = message.chars().take(40).collect();
         let title = title.trim().to_string();
-        let conv = chat_db::create_conversation(conn, Some(&title), &agent_id)?;
+        let conv = active.write(|tx| chat_db::create_conversation(tx, Some(&title), &agent_id))?;
         conv.id
     };
 
@@ -282,8 +281,7 @@ pub async fn send_chat_message(
         let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
-        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        chat_db::insert_message(conn, conv_id, "user", &message, "chat")?
+        active.write(|tx| chat_db::insert_message(tx, conv_id, "user", &message, "chat"))?
     };
 
     info!("Chat message received, conversation: {}", conv_id);
@@ -323,8 +321,9 @@ pub async fn send_chat_message(
             let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
-            let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-            chat_db::insert_message(conn, conv_id, "assistant", &first_response, "tool_call")?;
+            active.write(|tx| {
+                chat_db::insert_message(tx, conv_id, "assistant", &first_response, "tool_call")
+            })?;
         }
 
         // Emit tool-executing event
@@ -338,8 +337,9 @@ pub async fn send_chat_message(
             let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
             })?;
-            let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-            chat_db::insert_message(conn, conv_id, "user", &tool_result, "tool_result")?;
+            active.write(|tx| {
+                chat_db::insert_message(tx, conv_id, "user", &tool_result, "tool_result")
+            })?;
         }
 
         // Reload full history (now includes tool-call and tool-result saved above)
@@ -375,8 +375,9 @@ pub async fn send_chat_message(
         let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
-        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-        chat_db::insert_message(conn, conv_id, "assistant", &final_response, "chat")?;
+        active.write(|tx| {
+            chat_db::insert_message(tx, conv_id, "assistant", &final_response, "chat")
+        })?;
     }
 
     Ok(SendMessageResult {
@@ -774,6 +775,22 @@ fn unknown_action(action_type: &str) -> AppError {
 /// Split out from the command so success and failure share one persistence path: before this
 /// existed, an early `?` returned before anything was written and the outcome vanished.
 fn run_chat_action(
+    tx: &WriteTx<'_>,
+    action_type: &str,
+    params: &serde_json::Value,
+) -> Result<String, AppError> {
+    match action_type {
+        "batch_actions" => batch_actions_action(tx, params),
+        other => run_single_action(tx, other, params),
+    }
+}
+
+/// One non-batch action, on whatever transaction or savepoint the caller is holding.
+///
+/// Split from [`run_chat_action`] so a batch item can run inside a `WriteTx::savepoint`, which
+/// hands out a plain `&Connection`: a nested batch is refused by the batch runner itself, so the
+/// one action this cannot dispatch is the one that can never reach it.
+fn run_single_action(
     conn: &rusqlite::Connection,
     action_type: &str,
     params: &serde_json::Value,
@@ -781,7 +798,13 @@ fn run_chat_action(
     match action_type {
         "create_expense" => create_expense_action(conn, params),
         "create_budget_category" => create_budget_category_action(conn, params),
-        "batch_actions" => batch_actions_action(conn, params),
+        // Unreachable: `run_chat_action` routes a batch to `batch_actions_action`, and a batch
+        // ITEM that names `batch_actions` is refused by name before it is dispatched. Stated as a
+        // refusal rather than left to the catch-all so the message is the right one either way.
+        "batch_actions" => Err(AppError::Validation {
+            message: "a batch cannot contain another batch".to_string(),
+            field: Some("actions".to_string()),
+        }),
         "update_balance" => {
             let account_id = params["account_id"].as_i64().ok_or_else(|| AppError::Validation {
                 message: "account_id is required".to_string(),
@@ -842,7 +865,7 @@ const MAX_BATCH_ACTIONS: usize = 200;
 /// unknown category, say) must not erase the rest that were fine. Every item's own outcome is
 /// reported so the model can see exactly what to fix and re-propose only the failures.
 fn batch_actions_action(
-    conn: &rusqlite::Connection,
+    tx: &WriteTx<'_>,
     params: &serde_json::Value,
 ) -> Result<String, AppError> {
     let items = params
@@ -878,7 +901,12 @@ fn batch_actions_action(
         }
 
         let item_params = item.get("params").cloned().unwrap_or(serde_json::Value::Null);
-        match run_chat_action(conn, item_type, &item_params) {
+
+        // One SAVEPOINT per item, which is what keeps "best effort" honest now that the whole
+        // batch is one captured transaction (AD-3): rolling the savepoint back discards the failed
+        // item's rows AND the changes capture buffered for them together, so the batch can never
+        // ship a message describing a row that was rolled back.
+        match tx.savepoint(|conn| run_single_action(conn, item_type, &item_params)) {
             Ok(message) => succeeded.push(message),
             Err(error) => failed.push(format!("#{} ({}): {}", position, item_type, error)),
         }
@@ -905,32 +933,34 @@ pub fn execute_chat_action(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    let result_msg = match run_chat_action(conn, &action_type, &params) {
+    let result_msg = match active.write(|tx| run_chat_action(tx, &action_type, &params)) {
         Ok(message) => message,
         Err(error) => {
             // The failure has to outlive this call, or the next turn's history looks as though
-            // the card was never confirmed and the model proposes it again unchanged. A failure
-            // to record the failure must not mask the original error.
-            let _ = chat_db::insert_message(
-                conn,
-                conversation_id,
-                "assistant",
-                ACTION_FAILED_TEXT,
-                "chat",
-            );
+            // the card was never confirmed and the model proposes it again unchanged. It is its
+            // OWN write because the failed one has already been rolled back, and a failure to
+            // record the failure must not mask the original error.
+            let _ = active.write(|tx| {
+                chat_db::insert_message(
+                    tx,
+                    conversation_id,
+                    "assistant",
+                    ACTION_FAILED_TEXT,
+                    "chat",
+                )
+            });
             info!("Chat action failed: {}", action_type);
             return Err(error);
         }
     };
 
-    // Audit log
+    // The audit row and the chat line the user sees are one write: either both describe the
+    // action or neither does.
     let details = serde_json::to_string(&params).unwrap_or_default();
-    audit_db::insert_audit_log(conn, &action_type, 0, "chat_action", None, Some(&details))?;
-
-    // Insert success message into chat
-    chat_db::insert_message(conn, conversation_id, "assistant", &result_msg, "chat")?;
+    active.write(|tx| {
+        audit_db::insert_audit_log(tx, &action_type, 0, "chat_action", None, Some(&details))?;
+        chat_db::insert_message(tx, conversation_id, "assistant", &result_msg, "chat")
+    })?;
 
     // The action type only: `result_msg` carries the merchant and amount, which is
     // transaction content and must not reach an app log (AD-11). The user's own
@@ -961,15 +991,15 @@ pub fn record_chat_action_cancelled(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    chat_db::insert_message(
-        conn,
-        conversation_id,
-        "assistant",
-        ACTION_CANCELLED_TEXT,
-        "chat",
-    )?;
+    active.write(|tx| {
+        chat_db::insert_message(
+            tx,
+            conversation_id,
+            "assistant",
+            ACTION_CANCELLED_TEXT,
+            "chat",
+        )
+    })?;
 
     info!("Chat action cancelled: {}", action_type);
 
@@ -1057,6 +1087,18 @@ mod tests {
 
     fn roles(turns: &[(ConversationRole, String)]) -> Vec<ConversationRole> {
         turns.iter().map(|(role, _)| role.clone()).collect()
+    }
+
+    /// The fixture connection as a LOCAL-ONLY dataset, which is what lets these tests drive the
+    /// real `ActiveDataset::write` path (savepoints included) without a migrated file: capture is
+    /// `None` for a local profile by construction (inherited AD-12), and the savepoint behaviour
+    /// under test is the transaction's, not capture's.
+    fn local_dataset(conn: Connection) -> crate::db::ActiveDataset {
+        crate::db::ActiveDataset {
+            id: Some("chat-action-test".to_string()),
+            conn: Some(conn),
+            capture: None,
+        }
     }
 
     /// Groups plus categories plus the chat tables, so one fixture can cover the action itself
@@ -1376,21 +1418,22 @@ mod tests {
 
     #[test]
     fn batch_actions_action_runs_every_item_through_the_normal_dispatch() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
-        let message = batch_actions_action(
-            &conn,
+        let message = active.write(|tx| batch_actions_action(
+            tx,
             &json!({
                 "actions": [
                     action_item("create_budget_category", json!({ "category_name": "House Related", "group_name": "Needs" })),
                     action_item("create_budget_category", json!({ "category_name": "Car", "group_name": "Wants" })),
                 ]
             }),
-        )
+        ))
         .unwrap();
 
         assert_eq!(
-            category_rows(&conn),
+            category_rows(conn),
             vec![
                 ("House Related".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS),
                 ("Car".to_string(), 2, DEFAULT_CATEGORY_TARGET_CENTS),
@@ -1401,13 +1444,16 @@ mod tests {
 
     #[test]
     fn batch_actions_action_rejects_an_empty_or_missing_list() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
         for params in [json!({}), json!({ "actions": [] }), json!({ "actions": "House" })] {
-            let err = batch_actions_action(&conn, &params).unwrap_err();
+            let err = active
+                .write(|tx| batch_actions_action(tx, &params))
+                .unwrap_err();
             assert_eq!(validation_field(&err), Some("actions"), "{params}");
         }
-        assert!(category_rows(&conn).is_empty());
+        assert!(category_rows(conn).is_empty());
     }
 
     /// Best-effort, not all-or-nothing: a mixed batch can carry independent records, so one bad
@@ -1415,33 +1461,37 @@ mod tests {
     /// this reports the failure and keeps every success.
     #[test]
     fn batch_actions_action_keeps_successful_items_when_one_item_fails() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
-        let message = batch_actions_action(
-            &conn,
+        let message = active.write(|tx| batch_actions_action(
+            tx,
             &json!({
                 "actions": [
                     action_item("create_budget_category", json!({ "category_name": "House Related", "group_name": "Needs" })),
                     action_item("create_budget_category", json!({ "category_name": "Car", "group_name": "Nonexistent" })),
                 ]
             }),
-        )
+        ))
         .unwrap();
 
-        assert_eq!(category_rows(&conn), vec![("House Related".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS)]);
+        assert_eq!(category_rows(conn), vec![("House Related".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS)]);
         assert!(message.contains("1 of 2"));
         assert!(message.contains("Failed"));
     }
 
     #[test]
     fn batch_actions_action_rejects_a_nested_batch() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
 
-        let message = batch_actions_action(
-            &conn,
-            &json!({ "actions": [action_item("batch_actions", json!({ "actions": [] }))] }),
-        )
-        .unwrap();
+        let message = active
+            .write(|tx| {
+                batch_actions_action(
+                    tx,
+                    &json!({ "actions": [action_item("batch_actions", json!({ "actions": [] }))] }),
+                )
+            })
+            .unwrap();
 
         assert!(message.contains("0 of 1"));
         assert!(message.contains("cannot contain another batch"));
@@ -1449,44 +1499,50 @@ mod tests {
 
     #[test]
     fn batch_actions_action_supports_a_mix_of_action_types() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
+        let conn = active.conn.as_ref().expect("the fixture dataset");
         conn.execute(
             "INSERT INTO chat_conversations (id, title) VALUES (7, 'Mixed batch')",
             [],
         )
         .unwrap();
 
-        let message = batch_actions_action(
-            &conn,
+        let message = active.write(|tx| batch_actions_action(
+            tx,
             &json!({
                 "actions": [
                     action_item("create_budget_category", json!({ "category_name": "Vacation Fund", "group_name": "Wants" })),
                 ]
             }),
-        )
+        ))
         .unwrap();
 
         assert!(message.contains("1 of 1"));
-        assert_eq!(category_rows(&conn).len(), 1);
+        assert_eq!(category_rows(conn).len(), 1);
     }
 
     /* Dispatch and outcome persistence. */
 
     #[test]
     fn run_chat_action_dispatches_the_category_action() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
+        let conn = active.conn.as_ref().expect("the fixture dataset");
 
-        let message = run_chat_action(&conn, "create_budget_category", &house_params()).unwrap();
+        let message = active
+            .write(|tx| run_chat_action(tx, "create_budget_category", &house_params()))
+            .unwrap();
 
         assert!(message.contains("House"));
-        assert_eq!(category_rows(&conn).len(), 1);
+        assert_eq!(category_rows(conn).len(), 1);
     }
 
     #[test]
     fn run_chat_action_rejects_an_action_outside_the_closed_set() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
 
-        let err = run_chat_action(&conn, "delete_everything", &json!({})).unwrap_err();
+        let err = active
+            .write(|tx| run_chat_action(tx, "delete_everything", &json!({})))
+            .unwrap_err();
 
         assert!(validation_message(&err).contains("Unknown action type"));
     }
@@ -1495,10 +1551,12 @@ mod tests {
     /// handle is exactly the bug being fixed.
     #[test]
     fn every_action_type_in_the_closed_set_is_dispatched() {
-        let conn = budget_action_test_db();
+        let active = local_dataset(budget_action_test_db());
 
         for action_type in ACTION_TYPES {
-            let err = run_chat_action(&conn, action_type, &json!({})).unwrap_err();
+            let err = active
+                .write(|tx| run_chat_action(tx, action_type, &json!({})))
+                .unwrap_err();
             assert!(
                 !validation_message(&err).contains("Unknown action type"),
                 "{action_type} is advertised but not dispatched"

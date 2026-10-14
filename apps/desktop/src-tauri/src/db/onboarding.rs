@@ -15,5 +15,4 @@ pub fn is_completed(conn: &Connection) -> bool {
 }
 
 pub fn set_completed(conn: &Connection) -> Result<(), AppError> {
-    config::set(conn, ONBOARDING_COMPLETED_CONFIG_KEY, "true").map_err(AppError::from)
-}
+    config::set(conn, ONBOARDING_COMPLETED_CONFIG_KEY, "true")}

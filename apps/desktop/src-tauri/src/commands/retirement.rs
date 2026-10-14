@@ -48,13 +48,7 @@ pub fn set_retirement_pension_cents(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    config::set(conn, RETIREMENT_PENSION_CONFIG_KEY, &cents.to_string()).map_err(|e| {
-        AppError::Database {
-            message: e.to_string(),
-        }
-    })
+    active.write(|tx| config::set(tx, RETIREMENT_PENSION_CONFIG_KEY, &cents.to_string()))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -85,16 +79,7 @@ pub fn set_retirement_employer_pension_cents(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    config::set(
-        conn,
-        RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY,
-        &cents.to_string(),
-    )
-    .map_err(|e| AppError::Database {
-        message: e.to_string(),
-    })
+    active.write(|tx| config::set(tx, RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY, &cents.to_string()))
 }
 
 /// Extracted from the command body because a `#[tauri::command]` needs a `State<DbState>` that no
@@ -145,15 +130,12 @@ pub fn set_retirement_employer_pension_start_age(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    config::set(
-        conn,
-        RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY,
-        &years.to_string(),
-    )
-    .map_err(|e| AppError::Database {
-        message: e.to_string(),
+    active.write(|tx| {
+        config::set(
+            tx,
+            RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY,
+            &years.to_string(),
+        )
     })
 }
 
@@ -180,15 +162,8 @@ pub fn set_retirement_pension_tax_rate_percent(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    config::set(
-        conn,
-        RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY,
-        &percent.to_string(),
-    )
-    .map_err(|e| AppError::Database {
-        message: e.to_string(),
+    active.write(|tx| {
+        config::set(tx, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY, &percent.to_string())
     })
 }
 
@@ -197,12 +172,8 @@ pub fn clear_retirement_pension_tax_rate_percent(state: State<DbState>) -> Resul
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    config::delete(conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY).map_err(|e| {
-        AppError::Database {
-            message: e.to_string(),
-        }
+    active.write(|tx| {
+        config::delete(tx, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY).map_err(AppError::from)
     })
 }
 
@@ -228,13 +199,7 @@ pub fn set_retirement_age_override(state: State<DbState>, years: i64) -> Result<
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    config::set(conn, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY, &years.to_string()).map_err(|e| {
-        AppError::Database {
-            message: e.to_string(),
-        }
-    })
+    active.write(|tx| config::set(tx, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY, &years.to_string()))
 }
 
 #[cfg(test)]

@@ -190,6 +190,10 @@ pub mod payload {
 /// `accounts` alone, and `registry::COLUMNS` is what pins that).
 const ACCOUNTS: &str = "accounts";
 
+/// The one table with a per-ROW exclusion (AD-5), and the column that decides it.
+const CONFIG: &str = "config";
+const CONFIG_KEY: &str = "key";
+
 thread_local! {
     /// The capture of the `ActiveDataset::write` currently running on this thread.
     ///
@@ -280,6 +284,7 @@ struct ColumnShape {
 
 struct TableShape {
     table: &'static str,
+    class: TableClass,
     identity: RowIdentity,
     /// `false` for a `WITHOUT ROWID` table, whose hook row id is meaningless.
     has_rowid: bool,
@@ -438,6 +443,13 @@ enum Resolved {
     /// A delete of a row that never had an identity: it was never shipped under one, so no other
     /// computer knows it exists. Reconcile (Story 22) owns rows that predate capture.
     Nothing,
+    /// A delete that writes NO message but still drops the local mapping: an `AppendOnly` row
+    /// (AD-5), whose removal is a local prune rather than a change other computers must copy.
+    Forget {
+        table: &'static str,
+        row_id: i64,
+        row_uuid: RowUuid,
+    },
     Balance {
         table: &'static str,
         row_uuid: RowUuid,
@@ -513,6 +525,7 @@ impl Capture {
                 extra.table,
                 TableShape {
                     table: extra.table,
+                    class: TableClass::Synced,
                     identity: extra.identity,
                     has_rowid: sync_capture::table_has_rowid(conn, extra.table)?,
                     columns: sync_capture::table_columns(conn, extra.table)?
@@ -698,6 +711,11 @@ impl Capture {
         for item in resolved {
             match item {
                 Resolved::Nothing => {}
+                Resolved::Forget {
+                    table,
+                    row_id,
+                    row_uuid,
+                } => forgotten.push((table, *row_id, *row_uuid)),
                 Resolved::Balance {
                     table,
                     row_uuid,
@@ -942,10 +960,31 @@ fn resolve(
             })
         }
         ChangeOp::Insert(new) => {
+            if row_is_local_only(shape, new)? {
+                return Ok(Resolved::Nothing);
+            }
+
             let row_uuid = identity_of(conn, shapes, memo, shape, row_id)?;
             resolve_fields(conn, shapes, memo, shape, row_uuid, None, new)
         }
         ChangeOp::Update { old, new } => {
+            if row_is_local_only(shape, new)? {
+                return Ok(Resolved::Nothing);
+            }
+
+            // AD-5: an `AppendOnly` row is never edited and never merged, so there is no message
+            // shape that could describe an edit to one. Every column of `audit_log` is `Immutable`
+            // or `LocalId`, which already makes the field list empty — refusing here as well is
+            // what keeps that true if a later migration adds a mergeable column by accident.
+            if matches!(shape.class, TableClass::AppendOnly) {
+                warn!(
+                    "an append-only row was updated locally and was not captured: {}",
+                    shape.table
+                );
+
+                return Ok(Resolved::Nothing);
+            }
+
             let row_uuid = identity_of(conn, shapes, memo, shape, row_id)?;
             resolve_fields(conn, shapes, memo, shape, row_uuid, Some(old), new)
         }
@@ -954,10 +993,23 @@ fn resolve(
                 return Ok(Resolved::Nothing);
             };
 
-            let row_json = row_json(conn, memo, shape, old)?;
             // The mapping is dropped at the end of the writing pass, so the memo must not keep
             // handing this identity to a row that reuses the row id later in the same batch.
             memo.remove(&(shape.table, row_id));
+
+            // An `AppendOnly` row is not tombstoned either (AD-5): the action log is append-only,
+            // so a local prune is a local decision and shipping a tombstone would delete the
+            // entry on every other computer. The mapping is still forgotten, because AD-2's
+            // rowid-reuse rule does not care why the row went away.
+            if matches!(shape.class, TableClass::AppendOnly) {
+                return Ok(Resolved::Forget {
+                    table: shape.table,
+                    row_id,
+                    row_uuid,
+                });
+            }
+
+            let row_json = row_json(conn, memo, shape, old)?;
 
             Ok(Resolved::Tombstone {
                 table: shape.table,
@@ -966,6 +1018,33 @@ fn resolve(
                 row_json,
             })
         }
+    }
+}
+
+/// AD-5's per-ROW exclusion inside the otherwise-`Synced` `config` table: the three keys that
+/// describe THIS computer's credential state.
+///
+/// Answered from the row's own values and BEFORE any identity is resolved, which is the load-bearing
+/// part: `config` is `Natural` (AD-2), so resolving an identity for a deny-listed key would either
+/// fail the whole write or write a `sync_uuid` row for a setting that must never leave the machine.
+fn row_is_local_only(shape: &TableShape, values: &[Value]) -> Result<bool, AppError> {
+    if shape.table != CONFIG {
+        return Ok(false);
+    }
+
+    let index = shape
+        .columns
+        .iter()
+        .position(|column| column.name == CONFIG_KEY)
+        .ok_or_else(|| AppError::Database {
+            message: format!("{CONFIG} has no {CONFIG_KEY} column to classify its rows by"),
+        })?;
+
+    match value_at(values, index, CONFIG, CONFIG_KEY)? {
+        Value::Text(key) => Ok(registry::config_key_is_local_only(key)),
+        // A non-text key cannot be one of the three, and the `config` schema makes it the primary
+        // key, so this is unreachable rather than tolerated.
+        _ => Ok(false),
     }
 }
 
@@ -1457,6 +1536,7 @@ fn resolve_shapes(conn: &Connection) -> Result<Shapes, AppError> {
             rule.table,
             TableShape {
                 table: rule.table,
+                class: rule.class,
                 identity,
                 has_rowid: sync_capture::table_has_rowid(conn, rule.table)?,
                 columns,

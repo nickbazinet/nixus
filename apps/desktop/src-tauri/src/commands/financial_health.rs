@@ -42,7 +42,5 @@ pub fn set_emergency_fund_target(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    financial_health_db::set_emergency_fund_target_months(conn, months)
+    active.write(|tx| financial_health_db::set_emergency_fund_target_months(tx, months))
 }

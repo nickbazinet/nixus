@@ -20,8 +20,6 @@ pub fn create_expense(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateExpenseInput {
         merchant,
         amount_cents,
@@ -33,9 +31,7 @@ pub fn create_expense(
     let expense = result.expense;
 
     let details = serde_json::to_string(&expense).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(conn, "expense", expense.id, "create", None, Some(&details)) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "expense", expense.id, "create", None, Some(&details));
     record_account_balance_changes(&active, &result.balance_changes);
 
     Ok(expense)
@@ -94,9 +90,7 @@ pub fn update_expense(
     let expense = result.expense;
 
     let new_json = serde_json::to_string(&expense).unwrap_or_default();
-    if let Err(e) = audit_db::insert_audit_log(conn, "expense", id, "update", old_json.as_deref(), Some(&new_json)) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "expense", id, "update", old_json.as_deref(), Some(&new_json));
     record_account_balance_changes(&active, &result.balance_changes);
 
     Ok(expense)
@@ -117,9 +111,7 @@ pub fn delete_expense(
 
     let balance_changes = active.write(|tx| expense_db::delete_expense(tx, id))?;
 
-    if let Err(e) = audit_db::insert_audit_log(conn, "expense", id, "delete", old_json.as_deref(), None) {
-        tracing::error!("Failed to write audit log: {}", e);
-    }
+    audit_db::record(&active, "expense", id, "delete", old_json.as_deref(), None);
     record_account_balance_changes(&active, &balance_changes);
 
     Ok(())
@@ -171,21 +163,15 @@ fn record_account_balance_changes(active: &ActiveDataset, changes: &[BalanceChan
         return;
     }
 
-    let Some(conn) = active.conn.as_ref() else {
-        return;
-    };
-
     for (account_id, old_balance_cents, new_balance_cents) in &summaries {
-        if let Err(e) = audit_db::insert_audit_log(
-            conn,
+        audit_db::record(
+            active,
             "account",
             *account_id,
             "balance_update",
             Some(&old_balance_cents.to_string()),
             Some(&new_balance_cents.to_string()),
-        ) {
-            tracing::error!("Failed to write audit log: {}", e);
-        }
+        );
     }
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {

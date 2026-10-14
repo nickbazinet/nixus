@@ -22,6 +22,7 @@ pub struct ChatMessage {
     pub created_at: String,
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn create_conversation(conn: &Connection, title: Option<&str>, agent_id: &str) -> Result<ChatConversation, AppError> {
     conn.execute(
         "INSERT INTO chat_conversations (title, agent_id) VALUES (?1, ?2)",
@@ -65,6 +66,7 @@ pub fn list_conversations_by_agent(
     Ok(conversations)
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn insert_message(
     conn: &Connection,
     conversation_id: i64,

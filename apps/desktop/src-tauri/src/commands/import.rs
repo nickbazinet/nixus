@@ -459,7 +459,6 @@ pub fn confirm_import(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let tuples: Vec<(String, i64, i64, String)> = transactions
         .iter()
@@ -510,7 +509,7 @@ pub fn confirm_import(
 
     // Audit log
     let details = format!("{{\"transaction_count\":{},\"source\":\"cc_import\"}}", count);
-    audit_db::insert_audit_log(conn, "import", 0, "create", None, Some(&details))?;
+    active.write(|tx| audit_db::insert_audit_log(tx, "import", 0, "create", None, Some(&details)))?;
 
     info!("Confirmed import: {} transactions saved", count);
 

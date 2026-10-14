@@ -2,6 +2,7 @@ use chrono::{Local, NaiveDate};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::AppError;
+use crate::sync::{capture, identity};
 use crate::maintenance::defaults::{baseline_for, DEFAULT_TASKS};
 use crate::maintenance::display::derive_vehicle_nickname;
 use crate::maintenance::evaluator::{
@@ -83,40 +84,36 @@ fn generate_custom_task_key() -> String {
     format!("custom_{nanos}")
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn insert_vehicle(conn: &Connection, input: &CreateVehicleInput) -> Result<Vehicle, AppError> {
     let nickname =
         validate_vehicle_fields(&input.make, &input.model, &input.year, input.odometer_km)?;
 
-    conn.execute("BEGIN IMMEDIATE", [])?;
+    // `db::grouped` and not a raw `BEGIN IMMEDIATE`: this function is now reached through
+    // `ActiveDataset::write`, which has already opened a transaction, and SQLite refuses a nested
+    // `BEGIN`. The savepoint form is the nested version of the same all-or-nothing grouping — a
+    // vehicle must never exist without the schedule it was created with.
+    let tx = super::grouped(conn)?;
 
-    let result = (|| -> Result<Vehicle, AppError> {
-        conn.execute(
-            "INSERT INTO vehicles (nickname, make, model, year, odometer_km)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![nickname, input.make, input.model, input.year, input.odometer_km],
-        )?;
+    tx.execute(
+        "INSERT INTO vehicles (nickname, make, model, year, odometer_km)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![nickname, input.make, input.model, input.year, input.odometer_km],
+    )?;
 
-        let vehicle_id = conn.last_insert_rowid();
-        if input.use_default_template {
-            seed_default_tasks_for_vehicle(conn, vehicle_id)?;
-        } else if let Some(tasks) = input.custom_tasks.as_deref() {
-            if !tasks.is_empty() {
-                seed_custom_tasks_for_vehicle(conn, vehicle_id, tasks)?;
-            }
-        }
-        get_vehicle_by_id(conn, vehicle_id)
-    })();
-
-    match result {
-        Ok(vehicle) => {
-            conn.execute("COMMIT", [])?;
-            Ok(vehicle)
-        }
-        Err(e) => {
-            let _ = conn.execute("ROLLBACK", []);
-            Err(e)
+    let vehicle_id = tx.last_insert_rowid();
+    if input.use_default_template {
+        seed_default_tasks_for_vehicle(&tx, vehicle_id)?;
+    } else if let Some(tasks) = input.custom_tasks.as_deref() {
+        if !tasks.is_empty() {
+            seed_custom_tasks_for_vehicle(&tx, vehicle_id, tasks)?;
         }
     }
+    let vehicle = get_vehicle_by_id(&tx, vehicle_id)?;
+
+    tx.commit()?;
+
+    Ok(vehicle)
 }
 
 fn seed_default_tasks_for_vehicle(conn: &Connection, vehicle_id: i64) -> Result<(), AppError> {
@@ -188,6 +185,43 @@ fn seed_custom_tasks_for_vehicle(
     Ok(())
 }
 
+/// Binds `maintenance_tasks`' derived identity: UUIDv5 over `(vehicle uuid, task_type_key)`, which
+/// is the schema's own `UNIQUE(vehicle_id, task_type_key)` with the vehicle named by uuid (AD-2).
+///
+/// Called at the INSERT site and again before every UPDATE of a task, because a task row created
+/// before this dataset started capturing has no mapping — and capture fails the whole write for a
+/// `Natural` row that has none, rather than minting one that would differ per computer.
+///
+/// Skipped entirely when nothing is capturing, so a local-only profile still writes no `sync_*` row
+/// (inherited AD-12).
+fn bind_task_identity(conn: &Connection, task_id: i64) -> Result<(), AppError> {
+    if !capture::is_capturing() {
+        return Ok(());
+    }
+
+    let found: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT vehicle_id, task_type_key FROM maintenance_tasks WHERE id = ?1",
+            params![task_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((vehicle_id, task_type_key)) = found else {
+        return Ok(());
+    };
+
+    let vehicle = identity::uuid_for(conn, "vehicles", vehicle_id)?;
+    let derived = identity::maintenance_task(&vehicle, &task_type_key);
+
+    let mapping = identity::ensure_derived(conn, "maintenance_tasks", task_id, &derived)?;
+    if mapping.row_id != task_id {
+        tracing::warn!("A maintenance task identity already belongs to another local row");
+    }
+
+    Ok(())
+}
+
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 fn insert_maintenance_task(
     conn: &Connection,
     vehicle_id: i64,
@@ -195,7 +229,7 @@ fn insert_maintenance_task(
     interval_km: i64,
     interval_months: i64,
     custom_task_name: Option<&str>,
-) -> Result<(), AppError> {
+) -> Result<i64, AppError> {
     conn.execute(
         "INSERT INTO maintenance_tasks (vehicle_id, task_type_key, interval_km, interval_months, custom_task_name)
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -207,7 +241,13 @@ fn insert_maintenance_task(
             custom_task_name
         ],
     )?;
-    Ok(())
+
+    // Read BEFORE the binding: `bind_task_identity` writes a `sync_uuid` row of its own, which
+    // would move `last_insert_rowid` out from under every caller of this function.
+    let task_id = conn.last_insert_rowid();
+    bind_task_identity(conn, task_id)?;
+
+    Ok(task_id)
 }
 
 pub fn get_all_vehicles(conn: &Connection) -> Result<Vec<Vehicle>, AppError> {
@@ -312,6 +352,7 @@ pub fn get_vehicle_with_tasks(conn: &Connection, id: i64) -> Result<VehicleWithT
     })
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn update_vehicle(
     conn: &Connection,
     id: i64,
@@ -335,6 +376,7 @@ pub fn update_vehicle(
     get_vehicle_by_id(conn, id)
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn delete_vehicle(conn: &Connection, id: i64) -> Result<(), AppError> {
     let rows = conn.execute("DELETE FROM vehicles WHERE id = ?1", params![id])?;
     if rows == 0 {
@@ -383,6 +425,7 @@ fn get_task_by_id(conn: &Connection, task_id: i64) -> Result<MaintenanceTask, Ap
     })
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn update_vehicle_odometer(
     conn: &Connection,
     vehicle_id: i64,
@@ -516,7 +559,7 @@ pub fn add_maintenance_task(
 
     validate_task_intervals(interval_km, interval_months)?;
 
-    insert_maintenance_task(
+    let task_id = insert_maintenance_task(
         conn,
         input.vehicle_id,
         &task_type_key,
@@ -524,12 +567,11 @@ pub fn add_maintenance_task(
         interval_months,
         custom_task_name.as_deref(),
     )?;
-
-    let task_id = conn.last_insert_rowid();
     let task = get_task_by_id(conn, task_id)?;
     Ok(attach_task_status(&task, &vehicle))
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn update_maintenance_task_intervals(
     conn: &Connection,
     task_id: i64,
@@ -537,6 +579,7 @@ pub fn update_maintenance_task_intervals(
     interval_months: i64,
 ) -> Result<MaintenanceTaskWithStatus, AppError> {
     validate_task_intervals(interval_km, interval_months)?;
+    bind_task_identity(conn, task_id)?;
 
     let rows = conn.execute(
         "UPDATE maintenance_tasks
@@ -900,6 +943,7 @@ pub fn query_maintenance_history(
     Ok(rows)
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn log_maintenance_service(
     conn: &Connection,
     input: &LogMaintenanceServiceInput,
@@ -930,11 +974,7 @@ pub fn log_maintenance_service(
         None
     };
 
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|e| AppError::Database {
-            message: e.to_string(),
-        })?;
+    let tx = super::grouped(conn)?;
 
     let result = (|| -> Result<i64, AppError> {
         tx.execute(
@@ -951,6 +991,7 @@ pub fn log_maintenance_service(
 
         let log_id = tx.last_insert_rowid();
 
+        bind_task_identity(&tx, input.task_id)?;
         tx.execute(
             "UPDATE maintenance_tasks
              SET last_service_date = ?1, last_service_odometer_km = ?2, updated_at = datetime('now')
@@ -972,9 +1013,7 @@ pub fn log_maintenance_service(
 
     match result {
         Ok(log_id) => {
-            tx.commit().map_err(|e| AppError::Database {
-                message: e.to_string(),
-            })?;
+            tx.commit()?;
 
             let log = get_service_log_by_id(conn, log_id)?;
             let updated_task = get_task_by_id(conn, input.task_id)?;
@@ -989,13 +1028,12 @@ pub fn log_maintenance_service(
                 new_odometer_km,
             })
         }
-        Err(e) => {
-            let _ = tx.rollback();
-            Err(e)
-        }
+        // `Grouped` rolls back on drop, which is what makes the early return safe.
+        Err(e) => Err(e),
     }
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn log_custom_service(
     conn: &Connection,
     input: &LogCustomServiceInput,
@@ -1033,11 +1071,7 @@ pub fn log_custom_service(
         None
     };
 
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|e| AppError::Database {
-            message: e.to_string(),
-        })?;
+    let tx = super::grouped(conn)?;
 
     let result = (|| -> Result<i64, AppError> {
         tx.execute(
@@ -1068,9 +1102,7 @@ pub fn log_custom_service(
 
     match result {
         Ok(log_id) => {
-            tx.commit().map_err(|e| AppError::Database {
-                message: e.to_string(),
-            })?;
+            tx.commit()?;
 
             let log = get_service_log_by_id(conn, log_id)?;
 
@@ -1081,17 +1113,18 @@ pub fn log_custom_service(
                 new_odometer_km,
             })
         }
-        Err(e) => {
-            let _ = tx.rollback();
-            Err(e)
-        }
+        // `Grouped` rolls back on drop, which is what makes the early return safe.
+        Err(e) => Err(e),
     }
 }
 
 // The anchor is whatever log now sits newest for the task under the same ordering the history list
 // uses, so an edit or a delete of the newest entry falls back to the one below it, and an empty
 // history returns the task to never-serviced.
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 fn recompute_task_anchors(conn: &Connection, task_id: i64) -> Result<(), AppError> {
+    bind_task_identity(conn, task_id)?;
+
     let newest = conn
         .query_row(
             "SELECT service_date, odometer_km
@@ -1143,6 +1176,7 @@ fn resolve_edited_service_name(
         .map(Some)
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn update_service_log(
     conn: &Connection,
     input: &UpdateServiceLogInput,
@@ -1167,11 +1201,7 @@ pub fn update_service_log(
     let previous_odometer_km = odometer_will_update.then_some(vehicle.odometer_km);
     let new_odometer_km = odometer_will_update.then_some(input.odometer_km);
 
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|e| AppError::Database {
-            message: e.to_string(),
-        })?;
+    let tx = super::grouped(conn)?;
 
     let result = (|| -> Result<(), AppError> {
         tx.execute(
@@ -1205,9 +1235,7 @@ pub fn update_service_log(
 
     match result {
         Ok(()) => {
-            tx.commit().map_err(|e| AppError::Database {
-                message: e.to_string(),
-            })?;
+            tx.commit()?;
 
             let log = get_service_log_by_id(conn, input.log_id)?;
             let updated_vehicle = get_vehicle_by_id(conn, existing.vehicle_id)?;
@@ -1227,24 +1255,19 @@ pub fn update_service_log(
                 new_odometer_km,
             })
         }
-        Err(e) => {
-            let _ = tx.rollback();
-            Err(e)
-        }
+        // `Grouped` rolls back on drop, which is what makes the early return safe.
+        Err(e) => Err(e),
     }
 }
 
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn delete_service_log(
     conn: &Connection,
     log_id: i64,
 ) -> Result<DeleteServiceLogResult, AppError> {
     let existing = get_service_log_by_id(conn, log_id)?;
 
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|e| AppError::Database {
-            message: e.to_string(),
-        })?;
+    let tx = super::grouped(conn)?;
 
     let result = (|| -> Result<(), AppError> {
         tx.execute(
@@ -1261,9 +1284,7 @@ pub fn delete_service_log(
 
     match result {
         Ok(()) => {
-            tx.commit().map_err(|e| AppError::Database {
-                message: e.to_string(),
-            })?;
+            tx.commit()?;
 
             let vehicle = get_vehicle_by_id(conn, existing.vehicle_id)?;
             let task = match existing.task_id {
@@ -1280,10 +1301,8 @@ pub fn delete_service_log(
                 task,
             })
         }
-        Err(e) => {
-            let _ = tx.rollback();
-            Err(e)
-        }
+        // `Grouped` rolls back on drop, which is what makes the early return safe.
+        Err(e) => Err(e),
     }
 }
 
