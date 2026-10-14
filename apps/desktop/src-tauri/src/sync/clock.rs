@@ -170,8 +170,6 @@ const HLC_SEPARATOR: char = '-';
 /// The install id is the final tiebreak, which makes the order total across the whole
 /// system: no two messages anywhere can compare equal unless they are the same message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-// Story 15 is the first production caller.
-#[allow(dead_code)]
 pub struct Hlc {
     time: u64,
     install: InstallBytes,
@@ -194,9 +192,10 @@ impl PartialOrd for Hlc {
     }
 }
 
-#[allow(dead_code)]
 impl Hlc {
     /// The raw NTP64 word: physical time in the high bits, logical counter in the low bits.
+    // Story 19 is the first production caller: a segment header carries the raw word.
+    #[allow(dead_code)]
     pub fn ntp_time(&self) -> u64 {
         self.time
     }
@@ -204,10 +203,14 @@ impl Hlc {
     /// Milliseconds since the Unix epoch, for diagnostics and the drift comparison. Lossy by
     /// construction (NTP64's fraction is finer than a millisecond), which is why it is not
     /// what the ordering uses.
+    // Story 24 is the first production caller: `sync_diagnostics` reports HLC ranges as wall time.
+    #[allow(dead_code)]
     pub fn wall_ms(&self) -> i64 {
         NTP64(self.time).to_duration().as_millis() as i64
     }
 
+    // Story 20 is the first production caller: apply breaks an exact tie by the install id.
+    #[allow(dead_code)]
     pub fn install(&self) -> InstallBytes {
         self.install
     }
@@ -222,6 +225,9 @@ impl Hlc {
         format!("{:016x}{HLC_SEPARATOR}{}", self.time, self.install.hex())
     }
 
+    // Story 20 is the first production caller: it decodes the stamps apply compares. Capture only
+    // ever encodes, because a plain `ORDER BY hlc` already reproduces the order.
+    #[allow(dead_code)]
     pub fn decode(encoded: &str) -> Result<Self, ClockError> {
         // `is_ascii` before any slicing, not only the byte length: the input is untrusted
         // (Stories 14/19/20 decode it out of the dataset and off the wire), and a 33-BYTE
@@ -244,6 +250,8 @@ impl Hlc {
         })
     }
 
+    // Reached from `Clock::observe`, whose first production caller is Story 20.
+    #[allow(dead_code)]
     fn timestamp(&self) -> Result<Timestamp, ClockError> {
         Ok(Timestamp::new(NTP64(self.time), self.install.uhlc_id()?))
     }
@@ -292,15 +300,12 @@ pub fn system_wall_clock() -> WallClock {
 }
 
 /// One HLC per install (AD-4), with the 5-minute maximum delta configured.
-// Story 15 is the first production caller: the capture hook stamps every change with it.
-#[allow(dead_code)]
 pub struct Clock {
     hlc: HLC,
     install: InstallBytes,
     wall: WallClock,
 }
 
-#[allow(dead_code)]
 impl Clock {
     pub fn new(install_id: &str) -> Result<Self, ClockError> {
         Self::with_wall_clock(install_id, system_wall_clock())
@@ -320,6 +325,8 @@ impl Clock {
         })
     }
 
+    // Story 19 is the first production caller: `log/<install>/<seq>` is named after it.
+    #[allow(dead_code)]
     pub fn install(&self) -> InstallBytes {
         self.install
     }
@@ -344,6 +351,8 @@ impl Clock {
     /// not a string) and so the limit is this module's, not the `UHLC_MAX_DELTA_MS`
     /// environment variable's. `uhlc`'s own check is still called and still honoured: it is
     /// the thing that guarantees the clock is not advanced when the answer is `Err`.
+    // Story 20 is the first production caller: it folds in every remote stamp it applies.
+    #[allow(dead_code)]
     pub fn observe(&self, remote: &Hlc) -> Result<(), ClockError> {
         let ahead_ms = remote.wall_ms() - (self.wall)();
         if ahead_ms > MAX_FORWARD_DRIFT.as_millis() as i64 {

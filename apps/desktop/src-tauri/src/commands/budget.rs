@@ -13,10 +13,8 @@ pub fn create_budget_group(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
     let input = CreateBudgetGroup { name };
-    budget_db::create_budget_group(conn, &input)
+    active.write(|tx| budget_db::create_budget_group(tx, &input))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -101,9 +99,7 @@ pub fn update_budget_group(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    budget_db::update_budget_group(conn, id, name)
+    active.write(|tx| budget_db::update_budget_group(tx, id, name))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -156,9 +152,7 @@ pub fn delete_budget_group(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    budget_db::delete_budget_group(conn, id)
+    active.write(|tx| budget_db::delete_budget_group(tx, id))
 }
 
 #[tauri::command(rename_all = "snake_case")]

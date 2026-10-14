@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -5,6 +6,7 @@ use rusqlite::Connection;
 use tracing::info;
 
 use crate::error::AppError;
+use crate::sync::capture::Capture;
 
 pub mod account;
 pub mod aggregates;
@@ -31,10 +33,13 @@ pub mod retirement;
 pub mod snapshot_strip;
 pub mod spending_trends;
 pub mod sync_blobs;
+pub mod sync_capture;
 pub mod sync_identity;
 pub mod sync_state;
 pub mod yearly_summary;
 
+#[cfg(test)]
+pub(crate) mod capture_fixtures;
 #[cfg(test)]
 pub(crate) mod sim_tables;
 #[cfg(test)]
@@ -44,16 +49,161 @@ mod tests_migration_030;
 #[cfg(test)]
 mod tests_sync_restore;
 
-/// The dataset active for this run: which one it is, and its open connection.
+/// The dataset active for this run: which one it is, its open connection, and — for a
+/// cloud-linked dataset only — the capture state its writes are recorded through.
 ///
-/// Both fields live in one struct behind one lock so they swap together and
+/// All three fields live in one struct behind one lock so they swap together and
 /// never independently (AD-6) — no caller can observe an id paired with a
 /// different dataset's connection. `{ id: None, conn: None }` is the
 /// pre-selection state, which call sites surface as `AppError::NotConfigured`
 /// rather than defaulting to a dataset of their own choosing.
+///
+/// `capture` is `None` for a local-only profile and the hook is then never installed, so such a
+/// profile provably runs no sync code at all (inherited AD-12).
 pub struct ActiveDataset {
     pub id: Option<String>,
     pub conn: Option<Connection>,
+    pub capture: Option<Capture>,
+}
+
+/// The transaction a captured write runs in.
+///
+/// Derefs to `Connection`, which is what lets every `db::*` function keep its `&Connection`
+/// signature: migrating a write site onto capture is a change to its CALLER, not to its SQL
+/// (AD-3). The only thing a call site can do with the `WriteTx` itself is open a savepoint, and
+/// that exists because the capture buffer has to be rolled back with it.
+pub struct WriteTx<'a> {
+    tx: rusqlite::Transaction<'a>,
+    capture: Option<&'a Capture>,
+    depth: Cell<u32>,
+}
+
+impl std::ops::Deref for WriteTx<'_> {
+    type Target = Connection;
+
+    fn deref(&self) -> &Connection {
+        &self.tx
+    }
+}
+
+impl WriteTx<'_> {
+    /// Runs `operation` in a savepoint: on `Err` its rows AND its captured changes are discarded,
+    /// and the surrounding transaction continues.
+    ///
+    /// Issued as SQL rather than through `Transaction::savepoint`, which needs `&mut self` and
+    /// would therefore have to be threaded through every call site that only ever reads the
+    /// connection. The name is generated from a depth counter, never from input.
+    // Story 17 is the first production caller: a multi-step write site (reordering a list) is
+    // where one failed step must not discard the ones before it.
+    #[allow(dead_code)]
+    pub fn savepoint<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let name = format!("nixus_write_{}", self.depth.get());
+        self.depth.set(self.depth.get() + 1);
+
+        let mark = self.capture.map(|capture| capture.mark());
+        self.tx.execute_batch(&format!("SAVEPOINT {name}"))?;
+
+        match operation(&self.tx) {
+            Ok(value) => {
+                self.tx.execute_batch(&format!("RELEASE {name}"))?;
+                self.depth.set(self.depth.get().saturating_sub(1));
+                Ok(value)
+            }
+            Err(error) => {
+                self.tx
+                    .execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name}"))?;
+                self.depth.set(self.depth.get().saturating_sub(1));
+
+                if let (Some(capture), Some(mark)) = (self.capture, mark) {
+                    capture.rollback_to(mark);
+                }
+
+                Err(error)
+            }
+        }
+    }
+}
+
+impl ActiveDataset {
+    /// AD-3's write path: one transaction holding the caller's rows AND the messages that describe
+    /// them.
+    ///
+    /// The ordering is the guarantee. The closure runs, the capture buffer is flushed into
+    /// `sync_log` on the SAME transaction, and only then does it commit — so a committed write can
+    /// never be missing its messages, a failed flush rolls the caller's rows back with it, and a
+    /// rollback discards the buffer instead of leaving messages for changes that never happened.
+    ///
+    /// For a local-only dataset this is exactly a transaction and nothing else.
+    pub fn write<T>(
+        &self,
+        operation: impl FnOnce(&WriteTx<'_>) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let conn = self.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+        if let Some(capture) = &self.capture {
+            capture.begin();
+        }
+
+        let result = self.commit_write(conn, operation);
+
+        if result.is_err() {
+            if let Some(capture) = &self.capture {
+                capture.discard();
+            }
+        }
+
+        result
+    }
+
+    fn commit_write<T>(
+        &self,
+        conn: &Connection,
+        operation: impl FnOnce(&WriteTx<'_>) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let tx = WriteTx {
+            tx: conn.unchecked_transaction()?,
+            capture: self.capture.as_ref(),
+            depth: Cell::new(0),
+        };
+
+        let value = operation(&tx)?;
+
+        if let Some(capture) = tx.capture {
+            capture.flush(&tx.tx)?;
+        }
+
+        tx.tx.commit()?;
+
+        Ok(value)
+    }
+
+    /// A transaction with capture explicitly OFF, for the paths that must not emit a message per
+    /// row: a `danger_zone` wipe (AD-15) and a restore's in-file rewrites (AD-9).
+    ///
+    /// The hook is re-attached by a guard when the closure returns, however it returns.
+    // Story 25 is the first production caller: the `danger_zone` wipe and the guarded restore are
+    // the two paths that rewrite the file without emitting a message per row.
+    #[allow(dead_code)]
+    pub fn write_uncaptured<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let conn = self.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+        let _detached = match &self.capture {
+            Some(capture) => Some(capture.detached(conn)?),
+            None => None,
+        };
+
+        let tx = conn.unchecked_transaction()?;
+        let value = operation(&tx)?;
+        tx.commit()?;
+
+        Ok(value)
+    }
 }
 
 pub struct DbState(pub Mutex<ActiveDataset>);
@@ -258,6 +408,7 @@ mod tests {
         let active = ActiveDataset {
             id: None,
             conn: None,
+            capture: None,
         };
 
         let guarded = active.conn.as_ref().ok_or(AppError::NotConfigured);
@@ -271,6 +422,7 @@ mod tests {
         let active = ActiveDataset {
             id: Some("default".to_string()),
             conn: Some(Connection::open_in_memory().expect("in-memory database")),
+            capture: None,
         };
 
         let conn = active

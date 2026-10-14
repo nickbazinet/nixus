@@ -18,6 +18,7 @@ use tracing::{info, warn};
 use crate::ai::{self, AiState};
 use crate::datasets;
 use crate::db::{init_db, ActiveDataset, DbState};
+use crate::sync::capture::Capture;
 use crate::error::AppError;
 use crate::models::{Dataset, DatasetKind};
 
@@ -51,12 +52,20 @@ pub(crate) fn select_dataset_now(app: &AppHandle, dataset_id: &str) -> Result<()
 
     let conn = init_db(&dir)?;
 
+    // Installed before the swap and on the connection that is about to become active, so the
+    // very first write of a cloud-linked profile is captured (AD-3). A local profile gets no
+    // hook at all (inherited AD-12), which is the structural half of "no sync code runs".
+    let capture = crate::sync::capture::Capture::for_dataset(entry.kind.clone(), &conn)?;
+    if let Some(capture) = &capture {
+        capture.attach(&conn)?;
+    }
+
     // The sync actor holds its own connection to the dataset it syncs (AD-11), so it has
     // to be gone before `DbState` points somewhere else. Stopped here rather than in a
     // `dataset:switched` listener so the ordering is a guarantee, not a race.
     crate::commands::sync::stop(app);
 
-    swap_active(&app.state::<DbState>().0, entry.id.clone(), conn)?;
+    swap_active(&app.state::<DbState>().0, entry.id.clone(), conn, capture)?;
 
     info!("Active dataset is now {}", entry.id);
 
@@ -126,6 +135,7 @@ fn swap_active(
     lock: &Mutex<ActiveDataset>,
     id: String,
     conn: Connection,
+    capture: Option<Capture>,
 ) -> Result<(), AppError> {
     let mut active = lock.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
@@ -134,6 +144,7 @@ fn swap_active(
     *active = ActiveDataset {
         id: Some(id),
         conn: Some(conn),
+        capture,
     };
 
     Ok(())
@@ -466,6 +477,7 @@ mod tests {
         ActiveDataset {
             id: Some(tag.to_string()),
             conn: Some(tagged_connection(tag)),
+            capture: None,
         }
     }
 
@@ -473,7 +485,7 @@ mod tests {
     fn a_swap_replaces_the_id_and_the_connection_together() {
         let lock = Mutex::new(active_tagged("previous"));
 
-        swap_active(&lock, "next".to_string(), tagged_connection("next"))
+        swap_active(&lock, "next".to_string(), tagged_connection("next"), None)
             .expect("swap succeeds");
 
         let active = lock.lock().expect("lock is not poisoned");
@@ -490,9 +502,10 @@ mod tests {
         let lock = Mutex::new(ActiveDataset {
             id: None,
             conn: None,
+            capture: None,
         });
 
-        swap_active(&lock, "default".to_string(), tagged_connection("default"))
+        swap_active(&lock, "default".to_string(), tagged_connection("default"), None)
             .expect("swap succeeds");
 
         let active = lock.lock().expect("lock is not poisoned");
@@ -518,7 +531,7 @@ mod tests {
 
         let outcome = (|| -> Result<(), AppError> {
             let conn = init_db(dir.path())?;
-            swap_active(&lock, "next".to_string(), conn)
+            swap_active(&lock, "next".to_string(), conn, None)
         })();
 
         assert!(
@@ -549,6 +562,7 @@ mod tests {
         let unselected = Mutex::new(ActiveDataset {
             id: None,
             conn: None,
+            capture: None,
         });
 
         assert!(

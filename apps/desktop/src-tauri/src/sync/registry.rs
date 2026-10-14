@@ -18,8 +18,6 @@
 /// table (savings-project totals are a `SUM` over contributions, net worth is per-date rows), and a
 /// variant nothing in the schema uses would be dead code pretending to be a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// Story 15 is the first production caller: the capture hook asks this before buffering a change.
-#[allow(dead_code)]
 pub enum TableClass {
     /// Two-way merged per column (AD-5).
     Synced,
@@ -35,8 +33,6 @@ pub enum TableClass {
 /// Where a row's uuid comes from (AD-2). Per TABLE, except for the one case that genuinely is per
 /// row: a template-generated expense or income entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// Story 15 is the first production caller: it mints or derives at the insert site.
-#[allow(dead_code)]
 pub enum RowIdentity {
     /// Random (UUIDv4), minted lazily into `sync_uuid` on first sight.
     Surrogate,
@@ -52,8 +48,8 @@ pub enum RowIdentity {
 
 /// How a column's concurrent writes are reconciled (AD-5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// Story 15 is the first production caller; Story 16 is the first to act on Counter and Balance.
-#[allow(dead_code)]
+// Story 16 is the first to ACT on Counter and Balance; the capture hook already classifies by all
+// six (AD-5).
 pub enum MergeKind {
     /// The default: the write with the greatest `hlc` wins, ties broken by install id.
     Lww,
@@ -111,8 +107,6 @@ pub enum FkPolicy {
 
 /// One table's classification.
 #[derive(Debug, Clone, Copy)]
-// Story 15 is the first production caller: the capture hook reads both fields per change.
-#[allow(dead_code)]
 pub struct TableRule {
     pub table: &'static str,
     pub class: TableClass,
@@ -435,14 +429,13 @@ const fn edge(
     }
 }
 
-// Story 15 is the first production caller: the capture hook classifies the table a change hit.
+// Story 20 is the first production caller: apply classifies the table a remote message names.
+// The capture hook walks `TABLES` once at install time instead, to resolve every shape.
 #[allow(dead_code)]
 pub fn table(name: &str) -> Option<&'static TableRule> {
     TABLES.iter().find(|rule| rule.table == name)
 }
 
-// Story 15 is the first production caller.
-#[allow(dead_code)]
 pub fn merge_kind(table: &str, column: &str) -> Option<MergeKind> {
     COLUMNS
         .iter()
@@ -453,10 +446,23 @@ pub fn merge_kind(table: &str, column: &str) -> Option<MergeKind> {
 // Story 20 is the first production caller: it consults the policy when a parent tombstone arrives.
 #[allow(dead_code)]
 pub fn fk_policy(child_table: &str, child_column: &str) -> Option<FkPolicy> {
+    find_edge(child_table, child_column).map(|rule| rule.policy)
+}
+
+/// The table a foreign-key column points at, or `None` when the column is not one.
+///
+/// AD-2's translation step: a `LocalId` column that is an edge travels as the PARENT'S uuid, and
+/// this is the table that uuid has to be looked up in. The one `LocalId` column that is a local
+/// integer WITHOUT being an edge (`audit_log.entity_id`) answers `None` and therefore does not
+/// travel at all until Story 18 gives it an `entity_uuid`.
+pub fn fk_parent(child_table: &str, child_column: &str) -> Option<&'static str> {
+    find_edge(child_table, child_column).map(|rule| rule.parent_table)
+}
+
+fn find_edge(child_table: &str, child_column: &str) -> Option<&'static EdgeRule> {
     EDGES
         .iter()
         .find(|rule| rule.child_table == child_table && rule.child_column == child_column)
-        .map(|rule| rule.policy)
 }
 
 /// The per-ROW exception inside the `Synced` `config` table (AD-5): the three keys that describe
@@ -464,7 +470,8 @@ pub fn fk_policy(child_table: &str, child_column: &str) -> Option<FkPolicy> {
 ///
 /// It reuses `db::config::LOCAL_ONLY_KEYS` rather than restating the keys, so the registry, the
 /// snapshot strip and the restore carry-over cannot disagree about which keys those are.
-// Story 15 is the first production caller.
+// Story 18 is the first production caller: it migrates the `config` write sites, which is where
+// the three credential-state keys have to be held back.
 #[allow(dead_code)]
 pub fn config_key_is_local_only(key: &str) -> bool {
     crate::db::config::LOCAL_ONLY_KEYS.contains(&key)

@@ -3,6 +3,8 @@ use rusqlite::{params, Connection};
 use crate::error::AppError;
 use crate::models::{BudgetCategory, BudgetCategoryStatus, BudgetGroup, CreateBudgetCategory, CreateBudgetGroup};
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`, so its writes are
+/// recorded in `sync_log` by the pre-update hook in the same transaction.
 pub fn create_budget_group(
     conn: &Connection,
     input: &CreateBudgetGroup,
@@ -247,6 +249,8 @@ pub fn reorder_budget_categories(
     Ok(changed_ids)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`, so its writes are
+/// recorded in `sync_log` by the pre-update hook in the same transaction.
 pub fn update_budget_group(
     conn: &Connection,
     id: i64,
@@ -403,6 +407,8 @@ pub fn delete_budget_category(conn: &Connection, id: i64) -> Result<(), AppError
     Ok(())
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`, so its writes are
+/// recorded in `sync_log` by the pre-update hook in the same transaction.
 pub fn delete_budget_group(conn: &Connection, id: i64) -> Result<(), AppError> {
     let is_active: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM budget_groups WHERE id = ?1 AND deleted_at IS NULL)",

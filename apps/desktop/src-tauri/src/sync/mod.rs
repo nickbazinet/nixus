@@ -34,6 +34,10 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests_auth_boundary;
 #[cfg(test)]
+mod tests_capture;
+#[cfg(test)]
+mod tests_capture_latency;
+#[cfg(test)]
 mod tests_bootstrap;
 #[cfg(test)]
 mod tests_e2e;
@@ -47,3 +51,5 @@ mod tests_manager;
 mod tests_port_boundary;
 #[cfg(test)]
 mod tests_s3_endpoint;
+#[cfg(test)]
+mod tests_write_site_budget;

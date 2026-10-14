@@ -50,10 +50,22 @@ pub fn ensure(
     row_id: i64,
     uuid: &RowUuid,
 ) -> Result<Mapping, AppError> {
-    conn.execute(
-        "INSERT OR IGNORE INTO sync_uuid (table_name, row_id, uuid) VALUES (?1, ?2, ?3)",
-        rusqlite::params![table, row_id, &uuid[..]],
-    )?;
+    // Cached: capture mints one of these per newly seen row, and a 1,000-row import pays for the
+    // parse every time otherwise (the AD-19 latency gate measures exactly that).
+    let inserted = conn
+        .prepare_cached(
+            "INSERT OR IGNORE INTO sync_uuid (table_name, row_id, uuid) VALUES (?1, ?2, ?3)",
+        )?
+        .execute(rusqlite::params![table, row_id, &uuid[..]])?;
+
+    // The row we just wrote IS the binding, so re-reading it would be a second statement per
+    // newly captured row to learn what this one already proved (AD-19's latency gate).
+    if inserted == 1 {
+        return Ok(Mapping {
+            uuid: *uuid,
+            row_id,
+        });
+    }
 
     if let Some(bound) = lookup(conn, table, row_id)? {
         return Ok(Mapping { uuid: bound, row_id });
@@ -77,11 +89,8 @@ pub fn ensure(
 #[allow(dead_code)]
 pub fn lookup(conn: &Connection, table: &str, row_id: i64) -> Result<Option<RowUuid>, AppError> {
     let found: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT uuid FROM sync_uuid WHERE table_name = ?1 AND row_id = ?2",
-            rusqlite::params![table, row_id],
-            |row| row.get(0),
-        )
+        .prepare_cached("SELECT uuid FROM sync_uuid WHERE table_name = ?1 AND row_id = ?2")?
+        .query_row(rusqlite::params![table, row_id], |row| row.get(0))
         .optional()?;
 
     found.map(|bytes| sized(table, bytes)).transpose()
@@ -109,10 +118,9 @@ pub fn row_id_for(conn: &Connection, table: &str, uuid: &RowUuid) -> Result<Opti
 // Story 15 is the first production caller.
 #[allow(dead_code)]
 pub fn forget(conn: &Connection, table: &str, row_id: i64) -> Result<bool, AppError> {
-    let removed = conn.execute(
-        "DELETE FROM sync_uuid WHERE table_name = ?1 AND row_id = ?2",
-        rusqlite::params![table, row_id],
-    )?;
+    let removed = conn
+        .prepare_cached("DELETE FROM sync_uuid WHERE table_name = ?1 AND row_id = ?2")?
+        .execute(rusqlite::params![table, row_id])?;
 
     Ok(removed > 0)
 }

@@ -92,6 +92,13 @@ impl DatasetSlot for AppDatasetSlot {
         let mut active = state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+        // The swapped-in file needs the hook as much as the one it replaced (AD-3): this is the
+        // same dataset, still cloud-linked, and a connection without the hook would capture
+        // nothing until the next dataset selection.
+        if let Some(capture) = &active.capture {
+            capture.attach(&conn)?;
+        }
+
         active.conn = Some(conn);
 
         Ok(())

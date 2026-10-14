@@ -155,6 +155,7 @@ pub fn run() {
             app.manage(DbState(Mutex::new(ActiveDataset {
                 id: None,
                 conn: None,
+                capture: None,
             })));
 
             // Managed before the first selection, not after: `select_dataset_now` stops

@@ -43,8 +43,6 @@ pub const NAMESPACE_URL_NAME: &str = "https://nixusapp.com/sync/row-identity/v1"
 /// Lazy on purpose (AD-2): a local-only user pays nothing, and no data table gains a uuid column.
 /// The mint is `INSERT OR IGNORE` plus a read in [`sync_identity::ensure`], so two callers racing
 /// for one row both end up with the identity that won.
-// Story 15 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn uuid_for(conn: &Connection, table: &str, row_id: i64) -> Result<RowUuid, AppError> {
     if let Some(existing) = sync_identity::lookup(conn, table, row_id)? {
         return Ok(existing);

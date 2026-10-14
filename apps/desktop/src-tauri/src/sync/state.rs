@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 
 use crate::db::sync_state;
+use crate::error::AppError;
 use crate::models::DatasetKind;
 
 use super::auth::{verify_account_pin, AccountPin, AccountPinStore, AuthError};
@@ -63,27 +64,8 @@ impl SyncStateStore {
     }
 
     /// Reads the row, creating or re-minting the install identity as AD-4 requires.
-    ///
-    /// The fingerprint comparison lives here rather than in `db/` because the decision is
-    /// a sync rule, not a storage one: a stored fingerprint that no longer matches means
-    /// the `.db` file was copied to another computer, and continuing to append under the
-    /// old install id would let two machines share one `(install, seq)` space.
     pub fn ensure_install(&self) -> Result<InstallOutcome, AuthError> {
-        let fingerprint = machine_fingerprint(&MachineSignals::from_environment());
-
-        self.with_conn(|conn| {
-            let Some(state) = sync_state::load(conn)? else {
-                sync_state::ensure(conn, &new_install_id(), &fingerprint)?;
-                return Ok(InstallOutcome::Created);
-            };
-
-            if state.machine_fingerprint == fingerprint {
-                return Ok(InstallOutcome::Unchanged);
-            }
-
-            sync_state::relink_install(conn, &new_install_id(), &fingerprint)?;
-            Ok(InstallOutcome::Relinked)
-        })
+        self.with_conn(|conn| ensure_install_outcome(conn).map(|(_, outcome)| outcome))
     }
 
     /// The row's frozen reason, and whether a pin has been recorded — everything the gate
@@ -114,6 +96,42 @@ impl SyncStateStore {
     ) -> Result<(), AuthError> {
         self.with_conn(|conn| sync_state::set_frozen_reason(conn, reason))
     }
+}
+
+/// The dataset's install identity, created or re-minted as AD-4 requires.
+///
+/// The fingerprint comparison lives here rather than in `db/` because the decision is a sync rule,
+/// not a storage one: a stored fingerprint that no longer matches means the `.db` file was copied
+/// to another computer, and continuing to append under the old install id would let two machines
+/// share one `(install, seq)` space.
+///
+/// A free function over a bare `&Connection` because there are now TWO callers that must reach the
+/// same conclusion — the credential vendor's store and `sync::capture`, which stamps every message
+/// with this install id. Whichever runs first settles it; the other sees `Unchanged`.
+pub fn ensure_install_on(conn: &Connection) -> Result<sync_state::SyncState, AppError> {
+    ensure_install_outcome(conn).map(|(state, _)| state)
+}
+
+fn ensure_install_outcome(
+    conn: &Connection,
+) -> Result<(sync_state::SyncState, InstallOutcome), AppError> {
+    let fingerprint = machine_fingerprint(&MachineSignals::from_environment());
+
+    let Some(state) = sync_state::load(conn)? else {
+        let created = sync_state::ensure(conn, &new_install_id(), &fingerprint)?;
+        return Ok((created, InstallOutcome::Created));
+    };
+
+    if state.machine_fingerprint == fingerprint {
+        return Ok((state, InstallOutcome::Unchanged));
+    }
+
+    sync_state::relink_install(conn, &new_install_id(), &fingerprint)?;
+    let relinked = sync_state::load(conn)?.ok_or_else(|| AppError::Database {
+        message: "the sync_state row vanished immediately after it was relinked".to_string(),
+    })?;
+
+    Ok((relinked, InstallOutcome::Relinked))
 }
 
 /// The slice of `sync_state` a gate decision is made from.

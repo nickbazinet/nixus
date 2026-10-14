@@ -282,6 +282,26 @@ implementation that is green today. Later sync work swaps in the real capture â†
 pipeline **without changing the assertions**; the procedure is in the module docs of
 `sync/sim/mod.rs`.
 
+#### Capture gates
+
+`sync/capture.rs` records every local write into `sync_log` from a SQLite pre-update hook, flushed
+inside the same transaction by `ActiveDataset::write`. Three gates guard it, all inside
+`cargo test`:
+
+```bash
+cd apps/desktop/src-tauri
+cargo test tests_capture::                              # the regression tests (REPLACE, cascades,
+                                                        # unqualified DELETE, WITHOUT ROWID, rollback)
+cargo test tests_capture_latency -- --nocapture         # the latency gate; prints its measurements
+cargo test --release tests_capture_latency -- --nocapture
+cargo test write_site                                   # the uncaptured-write-site ratchet
+NIXUS_WRITE_SITE_BUDGET=update cargo test write_site    # regenerate the budget after migrating one
+```
+
+`sync-write-site-budget.json` is the checked-in count of SQL writes that do not yet run through
+`ActiveDataset::write`. It may only shrink: migrate the write site onto `ActiveDataset::write`,
+mark the `db::*` function `CAPTURE-SANCTIONED (AD-3)`, then regenerate.
+
 ---
 
 ## Building and packaging
