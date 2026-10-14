@@ -21,7 +21,8 @@ use super::auth::{
     IdTokenProvider, PinField, SyncCredentials, VendedCredentials,
 };
 use super::store::{
-    ConditionalGet, ETag, ImmutablePut, ObjectMeta, ObjectStore, StoreError, StoredObject,
+    ConditionalGet, ETag, ImmutablePut, ListedObject, ObjectMeta, ObjectStore, StoreError,
+    StoredObject,
 };
 
 /// Why a transfer may not happen. Distinct outcomes rather than a boolean, because the
@@ -265,6 +266,17 @@ where
         Ok(self.pass().await?.exists(key).await?)
     }
 
+    /// AD-13's retention sweep: the listing that finds the segments and snapshots a compaction may
+    /// consider, and the delete itself. Both behind the gate, which is what makes "nothing is
+    /// deleted for a Frozen account" structural rather than a check someone has to remember.
+    pub async fn list(&self, prefix: &str) -> Result<Vec<ListedObject>, GatedError> {
+        Ok(self.pass().await?.list(prefix).await?)
+    }
+
+    pub async fn delete(&self, key: &str) -> Result<(), GatedError> {
+        Ok(self.pass().await?.delete(key).await?)
+    }
+
     /// The account prefix is behind the gate too: it names the account, which AD-16 keeps
     /// out of anything a blocked dataset can reach.
     #[allow(dead_code)] // Same: a diagnostic nothing in Milestone 1 reads.
@@ -364,6 +376,16 @@ mod tests {
         async fn exists(&self, _key: &str) -> Result<bool, StoreError> {
             self.record();
             Ok(true)
+        }
+
+        async fn list(&self, _prefix: &str) -> Result<Vec<ListedObject>, StoreError> {
+            self.record();
+            Ok(Vec::new())
+        }
+
+        async fn delete(&self, _key: &str) -> Result<(), StoreError> {
+            self.record();
+            Ok(())
         }
     }
 

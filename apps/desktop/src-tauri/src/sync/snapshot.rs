@@ -15,6 +15,7 @@
 //!    in bounded page batches, and the source is this module's own read connection, so the
 //!    `Mutex<Connection>` the UI writes through is never taken at all.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -136,7 +137,10 @@ impl std::error::Error for SnapshotError {}
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StripReport {
     pub local_only_tables: Vec<String>,
+    pub carried_tables: Vec<String>,
     pub local_only_rows: usize,
+    pub log_messages_dropped: usize,
+    pub own_head_seq: Option<i64>,
     pub config_keys: usize,
     pub blanked_images: usize,
 }
@@ -152,6 +156,9 @@ pub struct BuiltSnapshot {
     pub object: Vec<u8>,
     pub build_duration: Duration,
     pub stripped: StripReport,
+    /// Read out of the COPY's own `sync_applied_vector` (AD-9: "never read separately"), after the
+    /// strip claimed this install's own shipped head.
+    pub watermark: BTreeMap<String, i64>,
 }
 
 impl BuiltSnapshot {
@@ -177,6 +184,11 @@ pub struct LatestSnapshot {
     pub hash: String,
     pub schema_version: u32,
     pub created_ms: i64,
+    /// What the snapshot already contains, per install. Published here and not only inside the
+    /// object because AD-13's retention sweep has to know it to decide which segments are
+    /// redundant, and downloading a multi-megabyte snapshot to read one table would make the
+    /// sweep cost more than the storage it reclaims.
+    pub watermark: BTreeMap<String, i64>,
 }
 
 impl LatestSnapshot {
@@ -200,9 +212,21 @@ impl LatestSnapshot {
     }
 
     pub fn body(&self) -> Vec<u8> {
+        let watermark = self
+            .watermark
+            .iter()
+            .map(|(install, seq)| format!("\"{install}\":{seq}"))
+            .collect::<Vec<String>>()
+            .join(",");
+
         format!(
-            "{{\"created_ms\":{},\"hash\":\"{}\",\"schema_version\":{},\"snap_id\":\"{}\",\"v\":{}}}",
-            self.created_ms, self.hash, self.schema_version, self.snap_id, SNAP_LATEST_VERSION
+            "{{\"created_ms\":{},\"hash\":\"{}\",\"schema_version\":{},\"snap_id\":\"{}\",\"v\":{},\"watermark\":{{{}}}}}",
+            self.created_ms,
+            self.hash,
+            self.schema_version,
+            self.snap_id,
+            SNAP_LATEST_VERSION,
+            watermark
         )
         .into_bytes()
     }
@@ -230,11 +254,26 @@ impl LatestSnapshot {
         let schema_version =
             u32::try_from(number("schema_version")?).map_err(|_| SnapshotError::MalformedLatest)?;
 
+        // OPTIONAL, deliberately: a `snap/LATEST` written by Milestone 1 has no watermark, and an
+        // empty one is exactly the honest reading of it — nothing is claimed, so no segment is
+        // deletable and a bootstrap applies the whole tail.
+        let mut watermark = BTreeMap::new();
+        if let Some(entries) = document.get("watermark").and_then(|value| value.as_object()) {
+            for (install, seq) in entries {
+                let seq = seq.as_i64().ok_or(SnapshotError::MalformedLatest)?;
+                if seq < 0 {
+                    return Err(SnapshotError::MalformedLatest);
+                }
+                watermark.insert(install.clone(), seq);
+            }
+        }
+
         Ok(Self {
             snap_id: text("snap_id")?,
             hash: text("hash")?,
             schema_version,
             created_ms: number("created_ms")?,
+            watermark,
         })
     }
 }
@@ -311,7 +350,7 @@ fn build_snapshot_blocking(
         })?;
     let copy_path = scratch.path().join("snapshot.db");
 
-    let stripped = copy_and_strip(db_path, &copy_path)?;
+    let (stripped, watermark) = copy_and_strip(db_path, &copy_path)?;
 
     let payload = std::fs::read(&copy_path).map_err(|_| SnapshotError::Build {
         stage: BuildStage::ReadCopy,
@@ -334,15 +373,18 @@ fn build_snapshot_blocking(
         object: ObjectHeader::new(schema_version, digest).frame(&compressed),
         build_duration: started.elapsed(),
         stripped,
+        watermark,
     })
 }
+
+type StrippedCopy = (StripReport, BTreeMap<String, i64>);
 
 /// Copies the live database into `copy_path` and empties what must not travel.
 ///
 /// Both connections are closed before this returns, so the caller reads a file no SQLite handle
 /// still owns. That matters on Windows, where an open handle alone is enough to make a later copy,
 /// rename or delete fail.
-fn copy_and_strip(db_path: &Path, copy_path: &Path) -> Result<StripReport, SnapshotError> {
+fn copy_and_strip(db_path: &Path, copy_path: &Path) -> Result<StrippedCopy, SnapshotError> {
     {
         // The source is this module's OWN read connection to the dataset file, never the UI's.
         // Holding the UI's `Mutex<Connection>` for an entire multi-megabyte copy is the one thing
@@ -430,17 +472,24 @@ fn copy_in_steps(source: &Connection, destination: &mut Connection) -> Result<()
 ///
 /// The statements themselves live in `db/snapshot_strip.rs`, including the `secure_delete` pragma
 /// that has to be set outside the transaction; this is the orchestration and the reporting.
-fn strip_in_copy(conn: &Connection) -> Result<StripReport, AppError> {
+fn strip_in_copy(conn: &Connection) -> Result<StrippedCopy, AppError> {
     crate::db::snapshot_strip::enable_secure_delete(conn)?;
 
     let counts = crate::db::snapshot_strip::strip_local_only(conn, CONFIG_DENY_LIST)?;
+    let watermark = crate::db::snapshot_strip::read_watermark(conn)?;
 
-    Ok(StripReport {
-        local_only_tables: counts.local_only_tables,
-        local_only_rows: counts.local_only_rows,
-        config_keys: counts.config_keys,
-        blanked_images: counts.blanked_images,
-    })
+    Ok((
+        StripReport {
+            local_only_tables: counts.local_only_tables,
+            carried_tables: counts.carried_tables,
+            local_only_rows: counts.local_only_rows,
+            log_messages_dropped: counts.log_messages_dropped,
+            own_head_seq: counts.own_head_seq,
+            config_keys: counts.config_keys,
+            blanked_images: counts.blanked_images,
+        },
+        watermark,
+    ))
 }
 
 /// Checks a stored snapshot object and returns the database bytes it carries.
@@ -529,6 +578,7 @@ where
         hash: snapshot.payload_sha256.clone(),
         schema_version: snapshot.schema_version,
         created_ms,
+        watermark: snapshot.watermark.clone(),
     };
 
     let published = match known_latest {
@@ -739,20 +789,25 @@ mod tests {
 
         assert_eq!(built.stripped.blanked_images, heavy.project_images);
         assert_eq!(built.stripped.config_keys, CONFIG_DENY_LIST.len());
+        // INTENTIONAL BEHAVIOUR CHANGE (Story 23, closing Stories 20/22's OPEN item): only the two
+        // tables that describe THIS computer are emptied; the account's merge and identity state
+        // travels, or a bootstrapped computer parks every message naming a snapshot row.
         assert_eq!(
             built.stripped.local_only_tables,
+            vec!["sync_image_blobs", "sync_state"],
+        );
+        assert_eq!(
+            built.stripped.carried_tables,
             vec![
                 "sync_applied_vector",
                 "sync_field_state",
-                "sync_image_blobs",
                 "sync_log",
                 "sync_pending",
                 "sync_quarantine",
-                "sync_state",
                 "sync_tombstone",
                 "sync_uuid",
             ],
-            "every sync_* table is discovered by name and emptied (AD-15)"
+            "every other sync_* table is discovered by name and CARRIED (AD-9 as amended)"
         );
         assert_eq!(
             built.stripped.local_only_rows, 1,
@@ -795,11 +850,15 @@ mod tests {
         );
     }
 
-    /// Story 14's seven tables are LOCAL BOOKKEEPING and must never travel (AD-15). The existing
-    /// strip discovers them by `sync\_%` name, so this proves the discovery actually reaches them
-    /// with rows in them — an empty table would make the same assertion pass for the wrong reason.
+    /// Story 23's snapshot content contract, both directions.
+    ///
+    /// INTENTIONAL BEHAVIOUR CHANGE from Milestone 1, which emptied every `sync\_%` table: only
+    /// `sync_state` and `sync_image_blobs` travel empty now, and the five identity/merge tables
+    /// plus the compacted `sync_log` travel POPULATED. The old behaviour is what made a
+    /// bootstrapped computer park every message naming a snapshot row and re-mint every identity
+    /// (Stories 20 and 22 recorded it as the OPEN item this closes).
     #[tokio::test]
-    async fn the_sync_bookkeeping_tables_never_travel_in_a_snapshot() {
+    async fn a_snapshot_strips_this_computer_and_carries_the_accounts_merge_state() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let db_path = dir.path().join("nixus.db");
         let seeded = {
@@ -814,36 +873,47 @@ mod tests {
                 .expect("the wal is checkpointed");
             seeded
         };
+        assert!(seeded > 0, "the fixture must actually populate the tables");
 
         let built = build_snapshot(&db_path, schema_version())
             .await
             .expect("the snapshot builds");
 
-        // One `sync_state` row, one `sync_image_blobs` row, and one per Story 14 table. Asserted as
-        // a sum so adding a table to the schema without adding it here fails loudly.
-        assert_eq!(built.stripped.local_only_rows, seeded + 2);
-        assert_eq!(built.stripped.local_only_tables.len(), 9);
+        assert_eq!(
+            built.stripped.local_only_tables,
+            vec!["sync_image_blobs", "sync_state"]
+        );
+        assert_eq!(
+            built.stripped.local_only_rows, 2,
+            "one sync_state row and one sync_image_blobs row, and nothing else, is deleted"
+        );
 
         let verified = read_snapshot(&built.object).expect("the object verifies");
         let (_restored_dir, restored) = restore_to_file(&verified.payload);
-
-        for table in &built.stripped.local_only_tables {
-            let remaining: i64 = restored
+        let count = |table: &str| -> i64 {
+            restored
                 .query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| {
                     row.get(0)
                 })
-                .expect("the count reads");
-            assert_eq!(remaining, 0, "{table} must travel empty");
+                .expect("the count reads")
+        };
+
+        for table in &built.stripped.local_only_tables {
+            assert_eq!(count(table), 0, "{table} must travel empty");
+        }
+        for table in ["sync_uuid", "sync_field_state", "sync_tombstone"] {
+            assert!(
+                count(table) > 0,
+                "{table} is the account's merge state and must travel populated"
+            );
         }
 
-        // And the user's own rows did travel, so "everything is empty" is not what was proven.
+        // And the user's own rows did travel, so "everything is carried" is not what was proven.
         assert_eq!(
             crate::db::test_dataset::marker_rows(&restored),
             vec!["Living".to_string(), "Lifestyle".to_string()]
         );
 
-        // `sync_image_blobs` is treated exactly as Story 11 left it: emptied by the same
-        // discovery, not special-cased by either side.
         let live = Connection::open(&db_path).expect("the live dataset opens");
         let kept: i64 = live
             .query_row("SELECT COUNT(*) FROM sync_image_blobs", [], |row| row.get(0))
@@ -1081,6 +1151,7 @@ mod tests {
             hash: digest.clone(),
             schema_version: 30,
             created_ms: 1,
+            watermark: Default::default(),
         };
 
         assert_eq!(
@@ -1110,6 +1181,7 @@ mod tests {
             hash: "b".repeat(64),
             schema_version: 30,
             created_ms: 1_760_000_000_000,
+            watermark: Default::default(),
         };
 
         let body = latest.body();
@@ -1117,12 +1189,39 @@ mod tests {
             String::from_utf8(body.clone()).expect("it is utf-8"),
             format!(
                 "{{\"created_ms\":1760000000000,\"hash\":\"{}\",\"schema_version\":30,\
-                 \"snap_id\":\"{}\",\"v\":1}}",
+                 \"snap_id\":\"{}\",\"v\":1,\"watermark\":{{}}}}",
                 "b".repeat(64),
                 "a".repeat(64)
             )
         );
-        assert_eq!(LatestSnapshot::parse(&body), Ok(latest));
+        assert_eq!(LatestSnapshot::parse(&body), Ok(latest.clone()));
+
+        // The watermark is sorted by install, so the same coverage is the same bytes whatever
+        // order the vector was read in — and a Milestone-1 document with no watermark at all reads
+        // as "nothing is claimed" rather than as malformed.
+        let claimed = LatestSnapshot {
+            watermark: BTreeMap::from([
+                ("b".repeat(16), 7),
+                ("a".repeat(16), 3),
+            ]),
+            ..latest
+        };
+        let body = claimed.body();
+        assert!(String::from_utf8(body.clone())
+            .expect("it is utf-8")
+            .ends_with(&format!(
+                ",\"watermark\":{{\"{}\":3,\"{}\":7}}}}",
+                "a".repeat(16),
+                "b".repeat(16)
+            )));
+        assert_eq!(LatestSnapshot::parse(&body), Ok(claimed));
+        assert_eq!(
+            LatestSnapshot::parse(
+                br#"{"created_ms":1,"hash":"ff","schema_version":2,"snap_id":"aa","v":1,"watermark":{"x":-1}}"#
+            ),
+            Err(SnapshotError::MalformedLatest),
+            "a negative seq would claim a segment that cannot exist"
+        );
 
         let with_unknown_fields = br#"{"created_ms":1,"hash":"ff","schema_version":2,"snap_id":"aa","v":1,"future":{"x":1}}"#;
         assert_eq!(
@@ -1132,6 +1231,7 @@ mod tests {
                 hash: "ff".to_string(),
                 schema_version: 2,
                 created_ms: 1,
+            watermark: Default::default(),
             }
         );
 
@@ -1193,6 +1293,7 @@ mod tests {
                 hash: built.payload_sha256.clone(),
                 schema_version: built.schema_version,
                 created_ms: 1_760_000_000_000,
+            watermark: Default::default(),
             }
         );
 
@@ -1219,6 +1320,7 @@ mod tests {
             hash: "c".repeat(64),
             schema_version: built.schema_version,
             created_ms: 1_760_000_500_000,
+            watermark: Default::default(),
         };
         fake.seed(SNAP_LATEST_KEY, theirs.body());
         let store = syncing_fake(Arc::clone(&fake));
@@ -1256,6 +1358,7 @@ mod tests {
             hash: "d".repeat(64),
             schema_version: built.schema_version,
             created_ms: 1,
+            watermark: Default::default(),
         };
         fake.seed(SNAP_LATEST_KEY, theirs.body());
         let store = syncing_fake(Arc::clone(&fake));
@@ -1283,6 +1386,7 @@ mod tests {
             hash: "f".repeat(64),
             schema_version: built.schema_version,
             created_ms: 3,
+            watermark: Default::default(),
         };
         let etag = fake.seed(SNAP_LATEST_KEY, theirs.body());
         fake.fail_next(FakeOp::PutIfMatch, StoreError::NotFound);
@@ -1307,6 +1411,7 @@ mod tests {
             hash: "e".repeat(64),
             schema_version: 30,
             created_ms: 7,
+            watermark: Default::default(),
         };
         let etag = fake.seed(SNAP_LATEST_KEY, latest.body());
 

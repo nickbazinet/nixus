@@ -37,7 +37,7 @@ use crate::models::DatasetKind;
 use crate::sync::blob::{blob_key, BLOB_KEY_PREFIX};
 use crate::sync::bootstrap::{measure_link, LinkChoice, CAP2_BUDGET, CAP2_BYTES_PER_SECOND};
 use crate::sync::manager::{
-    RemoteChoice, SyncActor, SyncEnableOutcome, SyncState, SyncStatusPayload, SyncTuning,
+    SyncActor, SyncEnableOutcome, SyncState, SyncStatusPayload, SyncTuning,
 };
 use crate::sync::snapshot::SNAP_LATEST_KEY;
 use crate::entitlements::AccountCapabilities;
@@ -61,6 +61,13 @@ type Actor = SyncActor<TestComputer>;
 
 fn tuning() -> SyncTuning {
     SyncTuning {
+        // Story 23 made the snapshot trigger the UNSNAPSHOTTED TAIL rather than "something
+        // changed". These fixtures are about the settle window, the minimum interval and the
+        // compare-and-swap, so they set both thresholds to 0: every tail qualifies and the
+        // behaviour each test names is still the thing under test. The thresholds themselves
+        // are proven in `tests_retention.rs`.
+        snapshot_tail_max_bytes: 0,
+        snapshot_tail_max_messages: 0,
         poll_interval: Duration::from_secs(1),
         settle_window: SETTLE,
         min_upload_interval: MIN_UPLOAD,
@@ -481,8 +488,13 @@ async fn sync_e2e_e_frozen_stops_every_transfer_and_leaving_it_resumes() {
     ));
 }
 
-/// (f) A publish that finds LATEST moved by the other computer never overwrites the cloud
-/// copy, and accepting the offer to load it keeps the local file as a dated backup.
+/// (f) A publish that finds LATEST moved by the other computer never overwrites the cloud copy.
+///
+/// Story 23 changed what happens NEXT, deliberately: in continuous sync the pointer another
+/// computer published is adopted instead of being turned into a question, because the log has
+/// already carried every change both ways and there is no version of the dataset to choose
+/// between. The claim this proof exists for — "their pointer is still theirs, byte for byte" — is
+/// unchanged. CAP-5's dated backup is still proven by (d), which drives the link choice.
 #[tokio::test(start_paused = true)]
 async fn sync_e2e_f_a_conflicting_upload_never_overwrites_the_cloud_copy() {
     let cloud = Arc::new(FakeObjectStore::default());
@@ -497,33 +509,29 @@ async fn sync_e2e_f_a_conflicting_upload_never_overwrites_the_cloud_copy() {
     a.write_row("later-on-a");
     computer_a.sync_now().await.expect("A's attempt is not a fault");
 
-    assert_eq!(computer_a.status().state, SyncState::RemoteChanged);
-    assert!(computer_a.status().prompt.is_some(), "the user is offered the choice");
+    assert_eq!(computer_a.status().state, SyncState::Idle);
+    assert!(
+        computer_a.status().prompt.is_none(),
+        "a converged account has no version to choose between"
+    );
     assert_eq!(
         cloud.stored(SNAP_LATEST_KEY).as_deref(),
         Some(theirs.as_slice()),
         "their pointer is still theirs, byte for byte"
     );
     assert_eq!(computer_a.diagnostics().conflicts, 1);
-
-    computer_a
-        .resolve_remote(RemoteChoice::LoadRemote)
-        .await
-        .expect("A loads the cloud copy");
-
-    assert_eq!(computer_a.status().state, SyncState::Idle);
-    assert_eq!(a.dated_backups().len(), 1, "CAP-5: the displaced file is kept");
-    let kept = opened(&a.dated_backups()[0]);
     assert!(
-        crate::db::test_dataset::marker_rows(&kept).contains(&"later-on-a".to_string()),
-        "the backup holds the edit the cloud copy displaced"
+        a.dated_backups().is_empty(),
+        "nothing was displaced, so nothing is backed up"
     );
-    drop(kept);
-    assert_eq!(a.rows(), vec!["from-a".to_string(), "from-b".to_string()]);
+    assert!(
+        a.rows().contains(&"later-on-a".to_string()),
+        "A keeps its own edit; the log is what carries it to B"
+    );
 
     report(format!(
-        "(f) A's conflicting publish left LATEST at B's {} bytes, reported 1 conflict, and \
-         loading the cloud copy kept 1 dated backup holding A's displaced edit",
+        "(f) A's conflicting publish left LATEST at B's {} bytes, reported 1 conflict, adopted \
+         their pointer without a prompt and displaced nothing locally",
         theirs.len()
     ));
 }

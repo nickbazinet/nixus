@@ -121,6 +121,7 @@ async fn published_cloud(source: &Path) -> (Arc<FakeObjectStore>, FakeGatedStore
             hash: built.payload_sha256.clone(),
             schema_version: built.schema_version,
             created_ms: 1_760_000_000_000,
+            watermark: Default::default(),
         }
         .body(),
     );
@@ -136,6 +137,7 @@ fn latest_of(built: &BuiltSnapshot) -> LatestSnapshot {
         hash: built.payload_sha256.clone(),
         schema_version: built.schema_version,
         created_ms: 1_760_000_000_000,
+            watermark: Default::default(),
     }
 }
 
@@ -334,6 +336,7 @@ async fn a_snapshot_from_a_newer_build_is_refused_before_it_is_downloaded() {
             hash: built.payload_sha256.clone(),
             schema_version: newer,
             created_ms: 1,
+            watermark: Default::default(),
         }
         .body(),
     );
@@ -583,6 +586,7 @@ async fn an_older_snapshot_is_migrated_on_the_way_in() {
         hash: crate::sync::object::hex_lower(&digest),
         schema_version: 18,
         created_ms: 1,
+            watermark: Default::default(),
     };
 
     let store = Arc::new(FakeObjectStore::default());

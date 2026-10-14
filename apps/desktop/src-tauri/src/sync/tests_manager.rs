@@ -15,7 +15,7 @@ use crate::sync::manager::{
     self, RemoteChoice, SyncActor, SyncEnableOutcome, SyncFault, SyncState, SyncStatusPayload,
     SyncTuning,
 };
-use crate::sync::snapshot::SNAP_LATEST_KEY;
+use crate::sync::snapshot::{LatestSnapshot, SNAP_LATEST_KEY};
 use crate::sync::store::{StoreError, StoreOp};
 use crate::sync::test_support::{test_computer, ComputerProbe, FakeOp, FakeObjectStore, TestComputer};
 
@@ -24,6 +24,13 @@ const MIN_UPLOAD: Duration = Duration::from_secs(60);
 
 fn tuning() -> SyncTuning {
     SyncTuning {
+        // Story 23 made the snapshot trigger the UNSNAPSHOTTED TAIL rather than "something
+        // changed". These fixtures are about the settle window, the minimum interval and the
+        // compare-and-swap, so they set both thresholds to 0: every tail qualifies and the
+        // behaviour each test names is still the thing under test. The thresholds themselves
+        // are proven in `tests_retention.rs`.
+        snapshot_tail_max_bytes: 0,
+        snapshot_tail_max_messages: 0,
         poll_interval: Duration::from_secs(1),
         settle_window: SETTLE,
         min_upload_interval: MIN_UPLOAD,
@@ -191,12 +198,14 @@ async fn the_second_upload_compares_and_swaps_against_the_latest_it_published() 
     );
 }
 
+/// INTENTIONAL BEHAVIOUR CHANGE (Story 23): in CONTINUOUS sync a lost `snap/LATEST`
+/// compare-and-swap no longer asks the user anything. What it must still never do — overwrite the
+/// pointer another computer published — is unchanged and is what this asserts.
 #[tokio::test(start_paused = true)]
-async fn a_latest_that_moved_elsewhere_is_never_overwritten() {
-    let (mut actor, probe, mut events) = one_computer();
+async fn a_latest_that_moved_elsewhere_is_adopted_and_never_overwritten() {
+    let (mut actor, probe, _events) = one_computer();
     actor.enable(None).await.expect("enable");
     let mine = probe.store().stored(SNAP_LATEST_KEY).expect("my LATEST");
-    let _ = states(&mut events);
 
     // Another computer publishes, which both moves the pointer and changes its ETag.
     let theirs = br#"{"created_ms":1800000000000,"hash":"ab","schema_version":30,"snap_id":"0000000000000000000000000000000000000000000000000000000000000000","v":1}"#;
@@ -205,8 +214,11 @@ async fn a_latest_that_moved_elsewhere_is_never_overwritten() {
     edit_then_settle(&mut actor, &probe, "one").await;
 
     let status = actor.status();
-    assert_eq!(status.state, SyncState::RemoteChanged);
-    assert!(status.prompt.is_some(), "the user is offered the choice");
+    assert_eq!(status.state, SyncState::Idle);
+    assert!(
+        status.prompt.is_none(),
+        "a converged account has no question to ask"
+    );
     assert_eq!(actor.diagnostics().conflicts, 1);
     assert_eq!(
         probe.store().stored(SNAP_LATEST_KEY).as_deref(),
@@ -214,19 +226,26 @@ async fn a_latest_that_moved_elsewhere_is_never_overwritten() {
         "their pointer is still theirs, byte for byte"
     );
     assert_ne!(probe.store().stored(SNAP_LATEST_KEY), Some(mine));
-    assert!(states(&mut events).contains(&SyncState::RemoteChanged));
+
+    // And their ETag was adopted, so the NEXT publish is a compare-and-swap that succeeds rather
+    // than a second conflict.
+    edit_then_settle(&mut actor, &probe, "two").await;
+    assert_eq!(actor.diagnostics().conflicts, 1);
+    assert_eq!(actor.status().state, SyncState::Idle);
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_pending_prompt_stops_the_poll_from_uploading_behind_the_user() {
     let (mut actor, probe, _events) = one_computer();
     actor.enable(None).await.expect("enable");
-    probe.store().seed(
-        SNAP_LATEST_KEY,
-        br#"{"created_ms":1,"hash":"ab","schema_version":30,"snap_id":"0000000000000000000000000000000000000000000000000000000000000000","v":1}"#.to_vec(),
-    );
+    let etag = probe
+        .store()
+        .etag_of(SNAP_LATEST_KEY)
+        .expect("LATEST exists");
+    let theirs = LatestSnapshot::parse(&probe.store().stored(SNAP_LATEST_KEY).expect("LATEST"))
+        .expect("it parses");
+    actor.arrange_remote_changed(theirs, etag);
 
-    edit_then_settle(&mut actor, &probe, "one").await;
     let after_conflict = probe.store().calls();
 
     edit_then_settle(&mut actor, &probe, "two").await;
@@ -256,7 +275,7 @@ async fn keeping_local_adopts_their_pointer_so_the_next_upload_publishes() {
     second_probe.write_row("theirs");
     other.sync_now().await.expect("B publishes");
 
-    edit_then_settle(&mut actor, &probe, "mine-again").await;
+    arrange_their_pointer(&mut actor, &probe);
     assert_eq!(actor.status().state, SyncState::RemoteChanged);
 
     actor
@@ -281,7 +300,18 @@ async fn keeping_local_adopts_their_pointer_so_the_next_upload_publishes() {
         "the adopted ETag makes the next compare-and-swap succeed"
     );
     assert_eq!(actor.diagnostics().uploads, 2);
-    assert_eq!(actor.diagnostics().conflicts, 1);
+}
+
+/// Puts the actor in front of the `remote_changed` question about whatever `snap/LATEST` currently
+/// holds. See `SyncActor::arrange_remote_changed` for why the state is set rather than raced.
+fn arrange_their_pointer(actor: &mut SyncActor<TestComputer>, probe: &ComputerProbe) {
+    let etag = probe
+        .store()
+        .etag_of(SNAP_LATEST_KEY)
+        .expect("LATEST exists");
+    let theirs = LatestSnapshot::parse(&probe.store().stored(SNAP_LATEST_KEY).expect("LATEST"))
+        .expect("it parses");
+    actor.arrange_remote_changed(theirs, etag);
 }
 
 #[tokio::test(start_paused = true)]
@@ -302,7 +332,7 @@ async fn loading_the_remote_copy_keeps_the_local_file_as_a_dated_backup() {
     other.sync_now().await.expect("B publishes");
 
     probe.write_row("later-on-a");
-    actor.sync_now().await.expect("A's attempt is not an error");
+    arrange_their_pointer(&mut actor, &probe);
     assert_eq!(actor.status().state, SyncState::RemoteChanged);
 
     actor
@@ -581,23 +611,24 @@ async fn two_computers_one_account_end_to_end() {
     assert_eq!(computer_b.status().state, SyncState::Idle);
     assert_eq!(computer_b.diagnostics().uploads, 1);
 
-    // 4. A tries to publish and finds the cloud changed elsewhere. Nothing is overwritten.
+    // 4. A tries to publish and finds the cloud pointer moved elsewhere. It adopts theirs and
+    //    overwrites nothing (Story 23: in continuous sync there is no question to ask).
     a.write_row("from-a-again");
+    let theirs = b.store().stored(SNAP_LATEST_KEY).expect("B's pointer");
     computer_a.sync_now().await.expect("A's attempt is not a fault");
 
-    assert_eq!(computer_a.status().state, SyncState::RemoteChanged);
-    assert_eq!(computer_a.diagnostics().conflicts, 1);
-    assert!(computer_a.status().prompt.is_some());
-
-    // 5. A loads the cloud copy and keeps its own file as a dated backup.
-    computer_a
-        .resolve_remote(RemoteChoice::LoadRemote)
-        .await
-        .expect("A loads the cloud copy");
-
     assert_eq!(computer_a.status().state, SyncState::Idle);
-    assert_eq!(a.dated_backups().len(), 1);
-    assert_eq!(a.rows(), vec!["from-a".to_string(), "from-b".to_string()]);
+    assert_eq!(computer_a.diagnostics().conflicts, 1);
+    assert!(computer_a.status().prompt.is_none());
+
+    // 5. A still holds its own data and the resolution asked nobody anything.
+    assert!(a.rows().contains(&"from-a-again".to_string()));
+    assert!(a.dated_backups().is_empty(), "nothing was displaced");
+    assert_eq!(
+        b.store().stored(SNAP_LATEST_KEY),
+        Some(theirs),
+        "B's pointer is untouched: adopting is a read, never a write"
+    );
 }
 
 /// The only test that goes through the real mailbox and the real thread: it is what proves

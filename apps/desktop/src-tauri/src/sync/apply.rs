@@ -76,6 +76,11 @@ pub const PENDING_GIVE_UP_DAYS: u32 = 30;
 /// previous one made progress, so this bounds a cycle in the waiting graph, not a retry budget.
 const PENDING_DRAIN_ROUNDS: usize = 16;
 
+/// How many of this computer's own unsent messages a post-swap replay re-materializes. Bounded for
+/// the same reason every other batch here is: a replay must not hold one transaction open over an
+/// unbounded tail.
+pub const REPLAY_MAX_MESSAGES: usize = 5_000;
+
 const INSERT_SAVEPOINT: &str = "nixus_apply_insert";
 const MESSAGE_SAVEPOINT: &str = "nixus_apply_message";
 const RETRY_SAVEPOINT: &str = "nixus_apply_retry";
@@ -168,7 +173,7 @@ pub fn apply_batch(
 
             for (offset, message) in batch.messages[start..end].iter().enumerate() {
                 let idx = (start + offset) as i64;
-                let outcome = apply_message(conn, clock, &batch.install, batch.seq, idx, message)?;
+                let outcome = apply_message(conn, clock, &batch.install, batch.seq, idx, message, true)?;
                 record(
                     &mut chunk_report,
                     conn,
@@ -243,7 +248,7 @@ fn replay_chunk(
         for (offset, message) in batch.messages[start..end].iter().enumerate() {
             let idx = (start + offset) as i64;
             let attempt = in_savepoint(conn, MESSAGE_SAVEPOINT, |conn| {
-                let outcome = apply_message(conn, clock, &batch.install, batch.seq, idx, message)?;
+                let outcome = apply_message(conn, clock, &batch.install, batch.seq, idx, message, true)?;
                 let mut single = ApplyReport::default();
                 record(
                     &mut single,
@@ -317,10 +322,21 @@ fn stored_message<'a>(
     idx: i64,
     message: &'a SegmentMessage,
 ) -> AppliedMessage<'a> {
+    remembered_message(install, seq, idx, message, true)
+}
+
+fn remembered_message<'a>(
+    install: &'a str,
+    seq: i64,
+    idx: i64,
+    message: &'a SegmentMessage,
+    record: bool,
+) -> AppliedMessage<'a> {
     AppliedMessage {
         install,
         seq,
         idx,
+        record,
         hlc: &message.hlc,
         kind: message.kind.as_str(),
         table_name: &message.table_name,
@@ -343,15 +359,16 @@ fn apply_message(
     seq: i64,
     idx: i64,
     message: &SegmentMessage,
+    record: bool,
 ) -> Result<Outcome, AppError> {
     // AD-4's message identity. Applied, parked and quarantined all count as handled: re-folding an
     // applied delta would double it, and out-of-order arrival across installs is safe because every
     // merge rule here is commutative.
-    if apply_db::is_recorded(conn, install, seq, idx)? {
+    if record && apply_db::is_recorded(conn, install, seq, idx)? {
         return Ok(Outcome::Skipped);
     }
 
-    let stored = stored_message(install, seq, idx, message);
+    let stored = remembered_message(install, seq, idx, message, record);
 
     let Ok(hlc) = Hlc::decode(&message.hlc) else {
         apply_db::quarantine(conn, &stored, "malformed_payload", None)?;
@@ -1027,6 +1044,51 @@ fn cascaded_rows(
     Ok(found)
 }
 
+/// Re-materializes this computer's own unsent messages into a file a snapshot has just replaced
+/// (AD-9: "unsent `sync_log` rows re-applied after").
+///
+/// Recording is OFF for every one of them, which is what makes this safe to run: the rows are
+/// already in `sync_log` with `seq IS NULL` and must stay exactly there so the next cycle ships
+/// them, so nothing is written to `sync_log`, `sync_pending` or `sync_quarantine` and no delta can
+/// be folded twice. A message that cannot be applied yet is therefore COUNTED and left unsent
+/// rather than parked — the row it names is not in the snapshot and no local retry can conjure it,
+/// while shipping it still gets the change to every other computer.
+pub fn replay_own_unsent(
+    conn: &Connection,
+    clock: &Clock,
+    install: &str,
+) -> Result<ApplyReport, AppError> {
+    let rows = crate::db::sync_segment::unshipped(conn, install, REPLAY_MAX_MESSAGES)?;
+    if rows.is_empty() {
+        return Ok(ApplyReport::default());
+    }
+
+    let mut report = ApplyReport::default();
+    for chunk in rows.chunks(APPLY_MAX_MESSAGES) {
+        let applied = in_transaction(conn, true, |conn| {
+            let mut chunk_report = ApplyReport::default();
+            for (idx, row) in chunk.iter().enumerate() {
+                let Ok(message) = super::segment::wire_message(row.clone()) else {
+                    chunk_report.quarantined += 1;
+                    continue;
+                };
+                match apply_message(conn, clock, install, 0, idx as i64, &message, false)? {
+                    Outcome::Applied => chunk_report.applied += 1,
+                    Outcome::Dropped => chunk_report.dropped += 1,
+                    Outcome::Skipped => chunk_report.skipped += 1,
+                    Outcome::Quarantined => chunk_report.quarantined += 1,
+                    Outcome::Parked { .. } => chunk_report.parked += 1,
+                }
+            }
+
+            Ok(chunk_report)
+        })?;
+        report.add(applied);
+    }
+
+    Ok(report)
+}
+
 /// Re-drives the parking queue until it stops making progress (AD-11).
 fn drain_parked(conn: &Connection, clock: &Clock) -> Result<ApplyReport, AppError> {
     let mut report = ApplyReport::default();
@@ -1053,7 +1115,7 @@ fn drain_parked(conn: &Connection, clock: &Clock) -> Result<ApplyReport, AppErro
             apply_db::forget_parked(conn, parked.id)?;
 
             let attempt = in_savepoint(conn, RETRY_SAVEPOINT, |conn| {
-                apply_message(conn, clock, &install, seq, idx, &message)
+                apply_message(conn, clock, &install, seq, idx, &message, true)
             });
 
             match attempt {

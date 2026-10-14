@@ -34,11 +34,22 @@ pub struct AppliedMessage<'a> {
     pub column_name: Option<&'a str>,
     pub cause_uuid: Option<&'a [u8]>,
     pub payload: Option<&'a [u8]>,
+    /// Whether this message has a replication identity worth remembering.
+    ///
+    /// `false` for AD-9's post-swap replay of this computer's OWN unsent log: those rows are
+    /// already in `sync_log` with `seq IS NULL` and must stay there to be shipped, so recording
+    /// them again would both duplicate the message and — for a counter or balance delta, whose
+    /// value IS the sum of its recorded copies — double-count it.
+    pub record: bool,
 }
 
 /// Records a message as applied. The `(install, seq, idx)` UNIQUE of `sync_log` is AD-4's message
 /// identity, so a second attempt is a constraint failure rather than a second fold.
 pub fn record_applied(conn: &Connection, message: &AppliedMessage<'_>) -> Result<(), AppError> {
+    if !message.record {
+        return Ok(());
+    }
+
     conn.prepare_cached(
         "INSERT INTO sync_log (install, seq, idx, hlc, kind, table_name, row_uuid, column_name, cause_uuid, payload) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
@@ -320,6 +331,10 @@ pub fn park(
     waiting_on_table: &str,
     waiting_on_uuid: &[u8],
 ) -> Result<(), AppError> {
+    if !message.record {
+        return Ok(());
+    }
+
     conn.prepare_cached(
         "INSERT OR IGNORE INTO sync_pending \
          (install, seq, idx, hlc, kind, table_name, row_uuid, column_name, cause_uuid, payload, waiting_on_table, waiting_on_uuid) \
@@ -414,6 +429,10 @@ pub fn quarantine(
     reason: &str,
     schema_version: Option<u32>,
 ) -> Result<(), AppError> {
+    if !message.record {
+        return Ok(());
+    }
+
     conn.prepare_cached(
         "INSERT OR IGNORE INTO sync_quarantine \
          (install, seq, idx, hlc, kind, table_name, row_uuid, column_name, cause_uuid, payload, reason, schema_version) \

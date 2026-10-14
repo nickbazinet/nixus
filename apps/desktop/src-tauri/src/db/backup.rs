@@ -762,7 +762,24 @@ fn carry_local_only(target: &Connection, source_path: &Path) -> Result<CarryRepo
 
     let tx = target.unchecked_transaction()?;
     for name in carried {
-        report.rows += copy_table(&source, &tx, &name)?;
+        // THREE policies, not one, and the split is the whole safety argument of a Story-23 swap.
+        //
+        // The six merge/identity tables now TRAVEL IN THE SNAPSHOT (`db::snapshot_strip`), and the
+        // snapshot's copy is the account's shared truth: replacing it with this computer's would
+        // reinstate identities for rows the incoming file does not have and would discard the
+        // field state the snapshot's own messages were accepted against.
+        //
+        // `sync_log` is carried ADDITIVELY on top of what the snapshot brought. Both halves are
+        // load-bearing: the unsent rows are this computer's edits nobody else has yet, and the
+        // SHIPPED rows are what `next_seq` is derived from — a log that lost them would re-cut
+        // `seq` 0 with different bytes and read as an install-id collision (Story 19).
+        //
+        // Everything else (`sync_state`, `sync_image_blobs`) describes THIS computer and replaces
+        // whatever arrived.
+        if SNAPSHOT_OWNED_SYNC_TABLES.contains(&name.as_str()) {
+            continue;
+        }
+        report.rows += copy_table(&source, &tx, &name, name == "sync_log")?;
         report.tables.push(name);
     }
 
@@ -797,6 +814,17 @@ fn open_query_only(path: &Path) -> Result<Connection, AppError> {
     Ok(conn)
 }
 
+/// The `sync_*` tables a Story-23 snapshot carries itself, so a restore must NOT overwrite them
+/// with this computer's copies.
+const SNAPSHOT_OWNED_SYNC_TABLES: &[&str] = &[
+    "sync_applied_vector",
+    "sync_field_state",
+    "sync_pending",
+    "sync_quarantine",
+    "sync_tombstone",
+    "sync_uuid",
+];
+
 fn sync_tables(conn: &Connection) -> Result<Vec<String>, AppError> {
     let mut statement = conn.prepare(
         "SELECT name FROM sqlite_master
@@ -809,27 +837,51 @@ fn sync_tables(conn: &Connection) -> Result<Vec<String>, AppError> {
     Ok(names)
 }
 
-/// Replaces `name`'s rows in the target with the source's, column by named column.
+/// Carries `name`'s rows from the source into the target, column by named column.
+///
+/// Two modes, and which one a table gets is the safety argument of a Story-23 swap. REPLACE is
+/// the default: the table describes THIS computer (`sync_state`, `sync_image_blobs`) and the
+/// incoming copy of it is meaningless. ADDITIVE is `sync_log` alone, where both sides matter —
+/// the snapshot brought the account's counter and balance history (Story 20: the log IS the merge
+/// state for those two kinds) while the safety copy holds this computer's unsent rows AND the
+/// shipped rows `next_seq` is derived from, so losing either is data loss.
 ///
 /// The columns come from the SOURCE statement, so a column a later migration added to the
 /// target takes its default instead of shifting every value one place to the left — which
-/// is what a positional `INSERT ... SELECT *` would do.
-fn copy_table(source: &Connection, target: &Connection, name: &str) -> Result<usize, AppError> {
-    target.execute(&format!("DELETE FROM \"{name}\""), [])?;
+/// is the bug a positional copy ships silently. Additive mode additionally drops `id`:
+/// `sync_log.id` is the one `AUTOINCREMENT` in the sync schema and a reused id would alias a
+/// message already shipped.
+///
+/// `OR IGNORE` in BOTH modes, deliberately: replace empties the table first so no conflict is
+/// reachable there, and stating the conflict rule once keeps the union's rule — a message the
+/// snapshot already carries under the same `(install, seq, idx)` is NOT inserted twice, because a
+/// duplicated `counter_delta` would double-count.
+fn copy_table(
+    source: &Connection,
+    target: &Connection,
+    name: &str,
+    additive: bool,
+) -> Result<usize, AppError> {
+    if !additive {
+        target.execute(&format!("DELETE FROM \"{name}\""), [])?;
+    }
 
     let mut read = source.prepare(&format!("SELECT * FROM \"{name}\""))?;
-    let columns: Vec<String> = read
+    let selected: Vec<(usize, String)> = read
         .column_names()
         .iter()
-        .map(|column| format!("\"{column}\""))
+        .enumerate()
+        .filter(|(_, column)| !(additive && **column == "id"))
+        .map(|(at, column)| (at, format!("\"{column}\"")))
         .collect();
-    if columns.is_empty() {
+    if selected.is_empty() {
         return Ok(0);
     }
 
+    let columns: Vec<&str> = selected.iter().map(|(_, column)| column.as_str()).collect();
     let placeholders: Vec<String> = (1..=columns.len()).map(|at| format!("?{at}")).collect();
     let mut write = target.prepare(&format!(
-        "INSERT INTO \"{name}\" ({}) VALUES ({})",
+        "INSERT OR IGNORE INTO \"{name}\" ({}) VALUES ({})",
         columns.join(", "),
         placeholders.join(", ")
     ))?;
@@ -837,11 +889,11 @@ fn copy_table(source: &Connection, target: &Connection, name: &str) -> Result<us
     let mut copied = 0;
     let mut rows = read.query([])?;
     while let Some(row) = rows.next()? {
-        let values: Vec<Value> = (0..columns.len())
-            .map(|at| row.get::<_, Value>(at))
+        let values: Vec<Value> = selected
+            .iter()
+            .map(|(at, _)| row.get::<_, Value>(*at))
             .collect::<Result<_, _>>()?;
-        write.execute(rusqlite::params_from_iter(values))?;
-        copied += 1;
+        copied += write.execute(rusqlite::params_from_iter(values))?;
     }
 
     Ok(copied)

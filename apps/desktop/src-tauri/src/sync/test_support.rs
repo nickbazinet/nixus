@@ -24,7 +24,8 @@ use crate::sync::gate::{CapabilitySource, GateStateSource, GatedStore, SyncGate}
 use crate::sync::segment::{Applier, SegmentBatch, SegmentMessage};
 use crate::sync::state::GateState;
 use crate::sync::store::{
-    ConditionalGet, ETag, ImmutablePut, ObjectMeta, ObjectStore, StoreError, StoredObject,
+    ConditionalGet, ETag, ImmutablePut, ListedObject, ObjectMeta, ObjectStore, StoreError,
+    StoredObject,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,11 +37,14 @@ pub(crate) enum FakeOp {
     PutImmutable,
     PutIfAbsent,
     PutIfMatch,
+    List,
+    Delete,
 }
 
 struct Stored {
     bytes: Vec<u8>,
     etag: ETag,
+    modified_ms: i64,
 }
 
 #[derive(Default)]
@@ -62,6 +66,9 @@ pub(crate) struct FakeObjectStore {
     /// 10 Mbps" gate in Story 9 gets a deterministic clock without a network.
     bytes_per_second: Mutex<Option<u64>>,
     transferred: AtomicU64,
+    /// What the store stamps a new object with. AD-13 measures retention against the store's own
+    /// clock, so a test has to be able to state it rather than wait 90 days.
+    clock_ms: AtomicI64,
 }
 
 impl Default for FakeObjectStore {
@@ -73,6 +80,7 @@ impl Default for FakeObjectStore {
             next_etag: AtomicU64::new(1),
             bytes_per_second: Mutex::new(None),
             transferred: AtomicU64::new(0),
+            clock_ms: AtomicI64::new(0),
         }
     }
 }
@@ -127,6 +135,7 @@ impl FakeObjectStore {
             Stored {
                 bytes,
                 etag: etag.clone(),
+                modified_ms: self.clock_ms.load(Ordering::SeqCst),
             },
         );
 
@@ -169,6 +178,18 @@ impl FakeObjectStore {
         keys.sort();
 
         keys
+    }
+
+    /// What later writes are stamped with.
+    pub(crate) fn set_clock(&self, ms: i64) {
+        self.clock_ms.store(ms, Ordering::SeqCst);
+    }
+
+    /// Ages one stored object, which is the only way to arrange AD-13's "older than 90 days".
+    pub(crate) fn set_modified(&self, key: &str, ms: i64) {
+        if let Some(stored) = self.objects.lock().expect("not poisoned").get_mut(key) {
+            stored.modified_ms = ms;
+        }
     }
 
     fn mint_etag(&self) -> ETag {
@@ -238,6 +259,7 @@ impl ObjectStore for FakeObjectStore {
             Stored {
                 bytes: body,
                 etag: etag.clone(),
+                modified_ms: self.clock_ms.load(Ordering::SeqCst),
             },
         );
 
@@ -258,6 +280,7 @@ impl ObjectStore for FakeObjectStore {
             Stored {
                 bytes: body,
                 etag: etag.clone(),
+                modified_ms: self.clock_ms.load(Ordering::SeqCst),
             },
         );
 
@@ -283,6 +306,7 @@ impl ObjectStore for FakeObjectStore {
         let etag = self.mint_etag();
         stored.bytes = body;
         stored.etag = etag.clone();
+        stored.modified_ms = self.clock_ms.load(Ordering::SeqCst);
 
         Ok(etag)
     }
@@ -366,6 +390,31 @@ impl ObjectStore for FakeObjectStore {
             .expect("not poisoned")
             .contains_key(key))
     }
+
+    async fn list(&self, prefix: &str) -> Result<Vec<ListedObject>, StoreError> {
+        self.enter(FakeOp::List, prefix, 0).await?;
+
+        let objects = self.objects.lock().expect("not poisoned");
+        let mut listed: Vec<ListedObject> = objects
+            .iter()
+            .filter(|(key, _)| key.starts_with(prefix))
+            .map(|(key, stored)| ListedObject {
+                key: key.clone(),
+                size: stored.bytes.len() as u64,
+                last_modified_ms: stored.modified_ms,
+            })
+            .collect();
+        listed.sort_by(|left, right| left.key.cmp(&right.key));
+
+        Ok(listed)
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), StoreError> {
+        self.enter(FakeOp::Delete, key, 0).await?;
+        self.objects.lock().expect("not poisoned").remove(key);
+
+        Ok(())
+    }
 }
 
 impl ObjectStore for Arc<FakeObjectStore> {
@@ -408,6 +457,14 @@ impl ObjectStore for Arc<FakeObjectStore> {
 
     async fn exists(&self, key: &str) -> Result<bool, StoreError> {
         (**self).exists(key).await
+    }
+
+    async fn list(&self, prefix: &str) -> Result<Vec<ListedObject>, StoreError> {
+        (**self).list(prefix).await
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), StoreError> {
+        (**self).delete(key).await
     }
 }
 
@@ -515,6 +572,11 @@ pub(crate) struct TestComputer {
     clock: Arc<AtomicI64>,
     slot: FakeSlot,
     applied: Arc<Mutex<Recorded>>,
+    /// Whether `applier()` hands back the REAL apply path instead of the recorder.
+    ///
+    /// Opt-in because most tests here count requests and assert on the messages a batch carried;
+    /// the row-level convergence proofs (Story 23) need the batch to actually land in the tables.
+    apply_for_real: bool,
     _dir: Arc<TempDir>,
 }
 
@@ -599,6 +661,7 @@ pub(crate) fn test_computer(
             live: Arc::clone(&live),
         },
         applied: Arc::clone(&applied),
+        apply_for_real: false,
         _dir: Arc::clone(&dir),
     };
 
@@ -623,6 +686,11 @@ impl TestComputer {
     /// "no sync code path runs for a local-only dataset".
     pub(crate) fn local_only(mut self) -> Self {
         self.kind = DatasetKind::Local;
+        self
+    }
+
+    pub(crate) fn applying_for_real(mut self) -> Self {
+        self.apply_for_real = true;
         self
     }
 }
@@ -864,6 +932,12 @@ impl crate::sync::manager::SyncHost for TestComputer {
     }
 
     fn applier(&self) -> Box<dyn Applier + Send> {
+        if self.apply_for_real {
+            if let Ok(applier) = crate::sync::apply::DatasetApplier::open(&self.db_path, None) {
+                return Box::new(applier);
+            }
+        }
+
         Box::new(RecordingApplier(Arc::clone(&self.applied)))
     }
 

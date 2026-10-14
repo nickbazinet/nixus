@@ -23,6 +23,7 @@ pub mod object;
 pub mod owner;
 pub mod reconcile;
 pub mod registry;
+pub mod retention;
 pub mod restore;
 pub mod s3;
 pub mod segment;
@@ -62,6 +63,8 @@ mod tests_manager;
 mod tests_port_boundary;
 #[cfg(test)]
 mod tests_reconcile;
+#[cfg(test)]
+mod tests_retention;
 #[cfg(test)]
 mod tests_restore;
 #[cfg(test)]

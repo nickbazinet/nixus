@@ -28,8 +28,8 @@ use sha2::{Digest, Sha256};
 
 use super::object::hex_lower;
 use super::store::{
-    validate_relative_key, ConditionalGet, ETag, ImmutablePut, MalformedObject, ObjectMeta,
-    ObjectStore, StoreError, StoreOp, StoredObject,
+    validate_relative_key, ConditionalGet, ETag, ImmutablePut, ListedObject, MalformedObject,
+    ObjectMeta, ObjectStore, StoreError, StoreOp, StoredObject,
 };
 
 /// User metadata key (sent as `x-amz-meta-content-sha256`) holding the lowercase hex
@@ -366,6 +366,84 @@ impl ObjectStore for S3ObjectStore {
     async fn exists(&self, key: &str) -> Result<bool, StoreError> {
         let absolute = self.absolute(key)?;
         self.exact_key_exists(&absolute).await
+    }
+
+    async fn list(&self, prefix: &str) -> Result<Vec<ListedObject>, StoreError> {
+        let absolute = self.absolute(prefix)?;
+        let mut listed = Vec::new();
+        let mut continuation: Option<String> = None;
+
+        loop {
+            let mut request = self
+                .client
+                .list_objects_v2()
+                .bucket(&self.bucket)
+                .prefix(&absolute);
+            if let Some(token) = &continuation {
+                request = request.continuation_token(token);
+            }
+
+            let page = match request.send().await {
+                Ok(page) => page,
+                Err(error) => {
+                    return Err(match classify(&error) {
+                        Fault::AccessDenied => StoreError::Forbidden,
+                        other => other.into_unambiguous(StoreOp::List),
+                    })
+                }
+            };
+
+            for object in page.contents() {
+                // Keys are handed back RELATIVE, so a caller can only ever pass them to another
+                // port call that re-joins the prefix: nothing downstream can be handed an absolute
+                // key that escapes this account (AD-7).
+                let Some(relative) = object
+                    .key()
+                    .and_then(|key| key.strip_prefix(self.account_prefix.as_str()))
+                else {
+                    continue;
+                };
+                listed.push(ListedObject {
+                    key: relative.to_string(),
+                    size: u64::try_from(object.size().unwrap_or(0)).unwrap_or(0),
+                    last_modified_ms: object
+                        .last_modified()
+                        .map(|at| at.to_millis().unwrap_or(0))
+                        .unwrap_or(0),
+                });
+            }
+
+            match page.next_continuation_token() {
+                Some(token) if page.is_truncated().unwrap_or(false) => {
+                    continuation = Some(token.to_string());
+                }
+                _ => break,
+            }
+        }
+
+        Ok(listed)
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), StoreError> {
+        let absolute = self.absolute(key)?;
+        let removed = self
+            .client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(&absolute)
+            .send()
+            .await;
+
+        match removed {
+            Ok(_) => Ok(()),
+            // S3 answers 204 for a key that was not there, so a `NotFound` can only come from the
+            // bucket side of the request; treating it as success keeps two computers sweeping the
+            // same segment from turning into a fault for the loser.
+            Err(error) => match classify(&error) {
+                Fault::NotFound => Ok(()),
+                other => Err(other.into_unambiguous(StoreOp::Delete)),
+            },
+        }
     }
 }
 

@@ -586,7 +586,7 @@ fn bounded_batch(tail: Vec<UnshippedMessage>) -> Result<(Vec<i64>, Vec<SegmentMe
     Ok((ids, messages))
 }
 
-fn wire_message(row: UnshippedMessage) -> Result<SegmentMessage, AppError> {
+pub(crate) fn wire_message(row: UnshippedMessage) -> Result<SegmentMessage, AppError> {
     let malformed = |what: &str| AppError::Database {
         message: format!("a sync_log row holds a {what} the segment writer cannot encode"),
     };
@@ -811,6 +811,12 @@ pub struct Roster {
 }
 
 impl Roster {
+    /// The roster that holds exactly `installs`, sorted and de-duplicated. Used by AD-13's prune,
+    /// which is the only caller that makes a roster SMALLER.
+    pub fn of(installs: impl IntoIterator<Item = String>) -> Self {
+        Self::normalized(installs)
+    }
+
     fn normalized(installs: impl IntoIterator<Item = String>) -> Self {
         let unique: BTreeSet<String> = installs.into_iter().filter(|id| is_install_id(id)).collect();
 
@@ -959,7 +965,7 @@ pub(crate) struct PullCursor {
 }
 
 /// What one poll cost and what it moved. Counts only (AD-16).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct PollReport {
     pub conditional_gets: u64,
     pub segments_fetched: u64,
@@ -967,6 +973,10 @@ pub(crate) struct PollReport {
     pub messages_applied: u64,
     /// Segments the head claims and the store does not have yet, holding later ones back.
     pub gaps: u64,
+    /// Every `(install, seq)` a GET answered `NotFound` for. The pull side cannot tell "not
+    /// visible yet" from "reclaimed by AD-13" on its own — the manager decides, by comparing the
+    /// seq with the current snapshot's watermark.
+    pub unfillable_gaps: Vec<(String, i64)>,
     /// Repair-path probes. Zero on every normal poll; a test asserts that.
     pub repairs: u64,
 }
@@ -1145,6 +1155,7 @@ where
                     // already held when the missing one lands.
                     Err(GatedError::Store(StoreError::NotFound)) => {
                         report.gaps += 1;
+                        report.unfillable_gaps.push((install.clone(), seq));
                         if state.probed.insert(seq) {
                             report.repairs += 1;
                             store.exists(&segment_key(install, seq)).await?;

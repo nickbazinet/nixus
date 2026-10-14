@@ -24,6 +24,13 @@ type Actor = SyncActor<TestComputer>;
 
 fn tuning() -> SyncTuning {
     SyncTuning {
+        // Story 23 made the snapshot trigger the UNSNAPSHOTTED TAIL rather than "something
+        // changed". These fixtures are about the settle window, the minimum interval and the
+        // compare-and-swap, so they set both thresholds to 0: every tail qualifies and the
+        // behaviour each test names is still the thing under test. The thresholds themselves
+        // are proven in `tests_retention.rs`.
+        snapshot_tail_max_bytes: 0,
+        snapshot_tail_max_messages: 0,
         poll_interval: Duration::from_secs(1),
         settle_window: SETTLE,
         min_upload_interval: MIN_UPLOAD,

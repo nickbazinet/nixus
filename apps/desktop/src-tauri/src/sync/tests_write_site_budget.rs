@@ -89,7 +89,9 @@ const JUSTIFICATIONS: &[(&str, &str)] = &[
     (
         "db/backup.rs::copy_table",
         "RESTORE INTERNALS (AD-9, Story 25): a table-by-table copy into the replacement file, \
-         which the dataset's own transaction cannot wrap because the file is not the live one yet.",
+         which the dataset's own transaction cannot wrap because the file is not the live one \
+         yet. Story 23 gave it an additive mode for `sync_log` rather than a second function, so \
+         the two restore-internal writes stay two.",
     ),
     (
         "db/danger_zone.rs::wipe_all",
@@ -411,6 +413,7 @@ fn the_idle_reconcile_trigger_follows_the_write_site_budget() {
 /// | 70 | 44 | 17 | every finance write site |
 /// | 44 | 7  | 18 | projects, maintenance, chat, config, audit |
 /// | 7  | 7  | 22 | nothing: the remainder is the structural four, each justified |
+/// | 7  | 7  | 23 | nothing: `copy_table` took an additive mode instead of a second function |
 ///
 /// The procedure, unchanged: move the caller onto `ActiveDataset::write`, put
 /// `CAPTURE-SANCTIONED (AD-3)` in the comment block directly above the `db::*` function, then

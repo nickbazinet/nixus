@@ -19,7 +19,7 @@
 //! costs one page-cache read, it needs no schema, no trigger and no write of our own, and
 //! it cannot miss a commit. Milestone 2 Story 15 replaces it with the pre-update hook.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
@@ -46,8 +46,12 @@ use super::gate::{
 };
 use super::clock::Clock;
 use super::owner::{owner_object_body, owner_sub_from_body, OWNER_OBJECT_KEY};
+use tracing::{info, warn};
+
+use super::apply;
 use super::reconcile;
-use super::segment::{self, Applier, Head, PollReport, PullCursor, SegmentError};
+use super::retention;
+use super::segment::{self, Applier, Head, PollReport, PullCursor, SegmentBatch, SegmentError};
 use super::snapshot::{self, LatestSnapshot, SnapshotError, UploadOutcome};
 use super::store::{ETag, ObjectStore, StoreError};
 
@@ -370,6 +374,11 @@ pub struct SyncTuning {
     /// The floor between two sweeps of the expired tombstones (AD-5: a delete is restorable for 30
     /// days). Local file work only, so it runs whatever the entitlement and whatever the network.
     pub tombstone_purge_interval: Duration,
+    /// AD-9's snapshot trigger: a new snapshot is written once the tail the current one does not
+    /// cover exceeds EITHER of these. Two limits and not one because the two failure modes differ —
+    /// bytes bound a new computer's download, messages bound how long applying the tail takes.
+    pub snapshot_tail_max_bytes: u64,
+    pub snapshot_tail_max_messages: u64,
     /// The floor between two reconcile passes (AD-3).
     ///
     /// Dated from CONSTRUCTION like the two log floors, so the startup pass happens one interval
@@ -392,6 +401,8 @@ impl Default for SyncTuning {
             segment_interval: Duration::from_secs(10),
             tombstone_purge_interval: Duration::from_secs(6 * 60 * 60),
             reconcile_interval: Duration::from_secs(60),
+            snapshot_tail_max_bytes: 2 * 1024 * 1024,
+            snapshot_tail_max_messages: 5_000,
         }
     }
 }
@@ -485,6 +496,9 @@ pub struct SyncDiagnostics {
     pub segments_fetched: u64,
     pub messages_received: u64,
     pub reconcile_messages: u64,
+    pub segments_deleted: u64,
+    pub snapshots_deleted: u64,
+    pub roster_pruned: u64,
     pub conflicts: u64,
     pub restores: u64,
     pub failures: u64,
@@ -513,6 +527,9 @@ struct SyncStats {
     reconcile_messages: u64,
     conflicts: u64,
     restores: u64,
+    snapshots_deleted: u64,
+    segments_deleted: u64,
+    roster_pruned: u64,
     failures: u64,
     blocked: u64,
     last_build_ms: Option<u64>,
@@ -569,6 +586,13 @@ pub(crate) struct SyncActor<H: SyncHost> {
     state: SyncState,
     enabled: bool,
     known_latest: Option<ETag>,
+    /// What the `snap/LATEST` this computer last read or wrote already contains, per install. The
+    /// snapshot trigger and the unfillable-gap test are both expressed against it.
+    snapshot_watermark: BTreeMap<String, i64>,
+    /// Set when a segment this computer still owes is BELOW the current snapshot's watermark: the
+    /// object is gone (AD-13 reclaimed it) and the snapshot is the only remaining copy, so the
+    /// gap is not fillable and the next tick re-bootstraps.
+    needs_rebootstrap: bool,
     pending: Option<PendingDecision>,
     last_change: Option<Instant>,
     last_upload: Option<Instant>,
@@ -633,6 +657,8 @@ impl<H: SyncHost> SyncActor<H> {
             state: SyncState::Unlinked,
             enabled: false,
             known_latest: None,
+            snapshot_watermark: BTreeMap::new(),
+            needs_rebootstrap: false,
             pending: None,
             last_change: None,
             last_upload: None,
@@ -679,6 +705,21 @@ impl<H: SyncHost> SyncActor<H> {
         }
     }
 
+    /// Arranges the `remote_changed` prompt.
+    ///
+    /// Story 23 left exactly one way to reach it: a `snap/LATEST` that appeared BETWEEN the
+    /// bootstrap assessment and the create-only publish of a first snapshot. Two computers over
+    /// one fake cloud cannot be interleaved inside a single `enable` call, so the state is set
+    /// here and both resolutions are then driven through the real `resolve_remote`.
+    #[cfg(test)]
+    pub(in crate::sync) fn arrange_remote_changed(&mut self, theirs: LatestSnapshot, etag: ETag) {
+        self.pending = Some(PendingDecision::RemoteChanged {
+            theirs,
+            their_etag: etag,
+        });
+        self.state = SyncState::RemoteChanged;
+    }
+
     /// The pull cursor, so a test can assert what is buffered, what is owed, and arrange the one
     /// state the protocol cannot produce by itself: a head re-read after it was already consumed.
     #[cfg(test)]
@@ -700,6 +741,9 @@ impl<H: SyncHost> SyncActor<H> {
             segments_fetched: self.stats.segments_fetched,
             messages_received: self.stats.messages_received,
             reconcile_messages: self.stats.reconcile_messages,
+            segments_deleted: self.stats.segments_deleted,
+            snapshots_deleted: self.stats.snapshots_deleted,
+            roster_pruned: self.stats.roster_pruned,
             conflicts: self.stats.conflicts,
             restores: self.stats.restores,
             failures: self.stats.failures,
@@ -847,6 +891,15 @@ impl<H: SyncHost> SyncActor<H> {
                 match &outcome {
                     SyncEnableOutcome::Enabled { .. } => {
                         self.enabled = true;
+                        // AD-9 restores the snapshot AND the tail after its vector. The log cycle
+                        // is what fetches that tail, and without this call a freshly linked
+                        // computer would sit on a snapshot-aged dataset until the first poll
+                        // interval elapsed (Story 19 recorded exactly that gap).
+                        if self.pending.is_none() {
+                            if let Err(fault) = self.log_cycle(true).await {
+                                self.record_fault(&fault);
+                            }
+                        }
                         if self.pending.is_some() {
                             self.clear_error();
                             self.publish(SyncState::RemoteChanged);
@@ -889,6 +942,7 @@ impl<H: SyncHost> SyncActor<H> {
             }
             BootstrapPlan::NoSnapshot => self.publish_snapshot(&session, None).await,
             BootstrapPlan::Restore { latest, etag } => {
+                self.close_applier();
                 let report = bootstrap::restore_latest(
                     &session.store,
                     &latest,
@@ -906,6 +960,8 @@ impl<H: SyncHost> SyncActor<H> {
                 self.stats.last_object_bytes = Some(report.object_bytes);
                 self.stats.last_payload_bytes = Some(report.payload_bytes);
                 self.known_latest = Some(etag);
+                self.snapshot_watermark = latest.watermark.clone();
+                self.reopen_applier();
 
                 Ok(SyncEnableOutcome::Enabled {
                     state: SyncState::Idle,
@@ -941,6 +997,7 @@ impl<H: SyncHost> SyncActor<H> {
         etag: ETag,
         choice: LinkChoice,
     ) -> Result<SyncEnableOutcome, SyncFault> {
+        self.close_applier();
         let outcome = bootstrap::apply_choice(
             &session.store,
             latest,
@@ -960,12 +1017,14 @@ impl<H: SyncHost> SyncActor<H> {
         .await?;
 
         self.stats.restores += 1;
+        self.reopen_applier();
 
         match outcome {
             LinkOutcome::Replaced { report } => {
                 self.stats.last_object_bytes = Some(report.object_bytes);
                 self.stats.last_payload_bytes = Some(report.payload_bytes);
                 self.known_latest = Some(etag);
+                self.snapshot_watermark = latest.watermark.clone();
                 self.pending = None;
 
                 Ok(SyncEnableOutcome::Enabled {
@@ -988,7 +1047,10 @@ impl<H: SyncHost> SyncActor<H> {
         session: &HostSession<H>,
         known_latest: Option<&ETag>,
     ) -> Result<SyncEnableOutcome, SyncFault> {
-        let state = match self.upload(session, known_latest).await? {
+        let state = match self
+            .upload(session, known_latest, LostCas::Prompt)
+            .await?
+        {
             UploadStep::Published => SyncState::Idle,
             UploadStep::RemoteChanged => SyncState::RemoteChanged,
         };
@@ -1000,6 +1062,7 @@ impl<H: SyncHost> SyncActor<H> {
         &mut self,
         session: &HostSession<H>,
         known_latest: Option<&ETag>,
+        lost_cas: LostCas,
     ) -> Result<UploadStep, SyncFault> {
         // Blobs FIRST, and the snapshot only if they all succeeded: a snapshot names its
         // pictures by `image_sha256`, so publishing it before their objects exist would give
@@ -1020,18 +1083,69 @@ impl<H: SyncHost> SyncActor<H> {
             UploadOutcome::Published { latest, .. } => {
                 self.stats.uploads += 1;
                 self.known_latest = Some(latest);
+                self.snapshot_watermark = built.watermark.clone();
                 self.pending = None;
+                self.compact(session).await;
 
                 Ok(UploadStep::Published)
             }
+            // AD-13's own argument, applied to the pointer: in continuous sync a lost
+            // compare-and-swap means another computer published a NEWER snapshot of the same
+            // converged account, not that two sources of truth disagree. Adopting theirs costs
+            // nothing (every message either side holds is in the log) and asking the user to
+            // choose between two views of one dataset would be a question with no wrong answer.
+            // The enable path keeps the prompt: there the two files really can be different data.
             UploadOutcome::RemoteChanged {
                 theirs, their_etag, ..
             } => {
                 self.stats.conflicts += 1;
-                self.pending = Some(PendingDecision::RemoteChanged { theirs, their_etag });
+                match lost_cas {
+                    LostCas::Adopt => {
+                        self.snapshot_watermark = theirs.watermark.clone();
+                        self.known_latest = Some(their_etag);
+                        self.pending = None;
 
-                Ok(UploadStep::RemoteChanged)
+                        Ok(UploadStep::Published)
+                    }
+                    LostCas::Prompt => {
+                        self.pending = Some(PendingDecision::RemoteChanged { theirs, their_etag });
+
+                        Ok(UploadStep::RemoteChanged)
+                    }
+                }
             }
+        }
+    }
+
+    /// Closes the AD-11 apply connection so nothing holds the dataset file during a swap (AD-9).
+    fn close_applier(&mut self) {
+        self.applier = Box::new(ClosedApplier);
+    }
+
+    /// Reopens it against the file that is now there, and forgets the fetch cursor: the restored
+    /// file carries its own `sync_applied_vector`, which is the only honest statement of what it
+    /// already holds.
+    fn reopen_applier(&mut self) {
+        self.applier = self.host.applier();
+        self.pull = PullCursor::default();
+    }
+
+    /// AD-13's sweep, run only by the computer that has just published a snapshot.
+    ///
+    /// Never fatal: reclaiming storage is maintenance, so a failure is logged and the next
+    /// publish tries again rather than putting the actor into backoff and stopping replication.
+    async fn compact(&mut self, session: &HostSession<H>) {
+        let Ok(install) = self.install() else {
+            return;
+        };
+
+        match retention::compact(&session.store, &install, self.host.now_ms()).await {
+            Ok(report) => {
+                self.stats.segments_deleted += report.segments_deleted as u64;
+                self.stats.snapshots_deleted += report.snapshots_deleted as u64;
+                self.stats.roster_pruned += report.roster_pruned as u64;
+            }
+            Err(error) => warn!("the retention sweep did not finish: {}", error),
         }
     }
 
@@ -1257,6 +1371,13 @@ impl<H: SyncHost> SyncActor<H> {
         // The gate first: a local-only, un-entitled or Frozen dataset must not even read its own
         // install id for a cycle it is not allowed to run (AD-14).
         let session = self.host.connect().await?;
+
+        // BEFORE anything reads the dataset: a re-bootstrap replaces the file, so an install id or
+        // a reconcile cursor read before it would describe a database that no longer exists.
+        if self.needs_rebootstrap {
+            self.rebootstrap(&session).await?;
+        }
+
         let install = self.install()?;
 
         // BEFORE the ship, so whatever reconcile had to emit leaves in this same cycle (AD-3).
@@ -1357,6 +1478,8 @@ impl<H: SyncHost> SyncActor<H> {
 
         self.stats.segments_fetched += report.segments_fetched;
         self.stats.messages_received += report.messages_applied;
+        let unfillable = std::mem::take(&mut report.unfillable_gaps);
+        self.note_unfillable_gaps(session, &unfillable).await?;
 
         Ok(())
     }
@@ -1406,6 +1529,13 @@ impl<H: SyncHost> SyncActor<H> {
                 return;
             }
         }
+        // THE BEHAVIOUR CHANGE Story 23 makes (AD-9): a snapshot is no longer written because
+        // something changed — the log already moved every change — but because the tail the
+        // current snapshot does not cover has grown past what a new computer should have to
+        // replay. The settle window still gates it so a build never runs mid-burst.
+        if !self.snapshot_due() {
+            return;
+        }
 
         let _ = self.run_upload().await;
     }
@@ -1428,6 +1558,129 @@ impl<H: SyncHost> SyncActor<H> {
         self.run_upload().await
     }
 
+    /// Whether the unsnapshotted tail has passed either AD-9 threshold.
+    ///
+    /// A computer that has never seen a `snap/LATEST` is NOT due: its first snapshot is the one
+    /// `enable` publishes, and treating "no watermark" as "everything is uncovered" would make
+    /// every linked computer race to republish the account on its first tick.
+    fn snapshot_due(&mut self) -> bool {
+        if self.known_latest.is_none() {
+            return false;
+        }
+
+        let watermark = self.snapshot_watermark.clone();
+        match self
+            .host
+            .with_dataset(|conn| crate::db::snapshot_strip::tail_since_watermark(conn, &watermark))
+        {
+            Ok((messages, bytes)) => {
+                messages >= self.tuning.snapshot_tail_max_messages
+                    || bytes >= self.tuning.snapshot_tail_max_bytes
+            }
+            Err(fault) => {
+                self.record_fault(&fault);
+                false
+            }
+        }
+    }
+
+    /// AD-13's "offline longer than that re-bootstraps": the segment this computer still owes was
+    /// reclaimed, and the snapshot that claims it is the only remaining copy.
+    ///
+    /// Decided from the pull side alone — a gap whose `seq` is at or below the current snapshot's
+    /// watermark — so no listing and no extra request is needed to tell "not visible yet" from
+    /// "gone forever".
+    async fn note_unfillable_gaps(
+        &mut self,
+        session: &HostSession<H>,
+        gaps: &[(String, i64)],
+    ) -> Result<(), SyncFault> {
+        if gaps.is_empty() {
+            return Ok(());
+        }
+
+        // The pointer is re-read HERE and only here: a gap is the one moment the difference
+        // between "not visible yet" and "reclaimed" matters, and the current watermark is the only
+        // thing that can tell them apart. Steady-state polling still costs what AD-6 says it does.
+        if let Some((latest, _)) = snapshot::fetch_latest(&session.store).await? {
+            self.snapshot_watermark = latest.watermark;
+        }
+
+        for (install, seq) in gaps {
+            if self
+                .snapshot_watermark
+                .get(install)
+                .is_some_and(|claimed| *seq <= *claimed)
+            {
+                self.needs_rebootstrap = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Restores the current snapshot over this dataset and replays this computer's own unsent log.
+    ///
+    /// The dated backup is REQUIRED: this path displaces local data, and CAP-5's rule that nothing
+    /// is replaced without a copy does not stop applying because the cause was retention.
+    async fn rebootstrap(&mut self, session: &HostSession<H>) -> Result<(), SyncFault> {
+        let Some((latest, etag)) = snapshot::fetch_latest(&session.store).await? else {
+            self.needs_rebootstrap = false;
+            return Ok(());
+        };
+
+        self.close_applier();
+        let report = bootstrap::restore_latest(
+            &session.store,
+            &latest,
+            &RestoreTarget {
+                db_path: self.host.db_path(),
+                dated_backup_dir: Some(self.host.backup_dir()),
+            },
+            self.host.slot(),
+        )
+        .await?;
+
+        self.stats.restores += 1;
+        self.stats.last_object_bytes = Some(report.object_bytes);
+        self.stats.last_payload_bytes = Some(report.payload_bytes);
+        self.known_latest = Some(etag);
+        self.snapshot_watermark = latest.watermark.clone();
+        self.needs_rebootstrap = false;
+        self.reopen_applier();
+        self.replay_unsent()?;
+
+        Ok(())
+    }
+
+    /// Re-materializes the unsent log the guarded swap carried over (AD-9).
+    ///
+    /// Its own `Clock` instance for this install, the arrangement reconcile and the applier
+    /// already have: nothing it stamps is a new message, so a collision could at worst make a
+    /// replayed field lose its own comparison and be re-emitted by the next reconcile pass.
+    fn replay_unsent(&mut self) -> Result<(), SyncFault> {
+        let install = self.install()?;
+        let clock = match Clock::new(&install) {
+            Ok(clock) => clock,
+            Err(error) => {
+                warn!("the unsent log could not be replayed after a restore: {}", error);
+                return Ok(());
+            }
+        };
+
+        let report: apply::ApplyReport = self
+            .host
+            .with_dataset(|conn| apply::replay_own_unsent(conn, &clock, &install))?;
+        if report.handled() > 0 {
+            info!(
+                "replayed {} of this computer's own unsent message(s) after a restore",
+                report.handled()
+            );
+        }
+
+        Ok(())
+    }
+
     async fn run_upload(&mut self) -> Result<(), SyncFault> {
         self.publish(SyncState::Syncing);
 
@@ -1440,7 +1693,7 @@ impl<H: SyncHost> SyncActor<H> {
         };
 
         let known = self.known_latest.clone();
-        match self.upload(&session, known.as_ref()).await {
+        match self.upload(&session, known.as_ref(), LostCas::Adopt).await {
             Ok(UploadStep::Published) => {
                 self.mark_synced();
                 Ok(())
@@ -1480,6 +1733,7 @@ impl<H: SyncHost> SyncActor<H> {
                     }
                 };
 
+                self.close_applier();
                 let restored = bootstrap::restore_latest(
                     &session.store,
                     &theirs,
@@ -1500,6 +1754,8 @@ impl<H: SyncHost> SyncActor<H> {
                         self.stats.last_payload_bytes = Some(report.payload_bytes);
                         self.pending = None;
                         self.known_latest = Some(their_etag);
+                        self.snapshot_watermark = theirs.watermark.clone();
+                        self.reopen_applier();
                         self.mark_synced();
 
                         Ok(())
@@ -1546,6 +1802,31 @@ impl<H: SyncHost> SyncActor<H> {
         self.host.forget_credentials().await;
         self.publish(SyncState::Unlinked);
     }
+}
+
+/// Stands in for the AD-11 apply connection while a file swap is in progress.
+///
+/// REFUSES rather than counts: a batch handed to it must stay owed, because the file it would
+/// have been applied to is being replaced. The real applier holds its own connection to the
+/// dataset file (AD-11's one exception), and that connection has to be closed before the swap and
+/// reopened afterwards — a connection to a file that has been copied over is a connection to a
+/// database SQLite no longer has consistent state for.
+#[derive(Debug, Default)]
+struct ClosedApplier;
+
+impl Applier for ClosedApplier {
+    fn apply(&mut self, _batch: &SegmentBatch) -> Result<usize, crate::error::AppError> {
+        Err(crate::error::AppError::Database {
+            message: "the dataset is being replaced; the apply connection is closed".to_string(),
+        })
+    }
+}
+
+/// What a lost `snap/LATEST` compare-and-swap means to the caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LostCas {
+    Adopt,
+    Prompt,
 }
 
 enum UploadStep {

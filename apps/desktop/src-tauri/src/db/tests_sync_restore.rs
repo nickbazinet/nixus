@@ -282,21 +282,16 @@ fn the_local_only_tables_and_credential_config_keys_are_carried_over() {
     let report =
         restore_snapshot_file(&slot, &db_path, &payload, None).expect("the restore succeeds");
 
-    // Both `sync_*` tables are discovered from the file's own `sqlite_master`, which is why
-    // AD-10's upload marker is carried with no edit here: the restored dataset keeps knowing
-    // which pictures this computer already put in the cloud.
+    // INTENTIONAL BEHAVIOUR CHANGE (Story 23): a snapshot now CARRIES the account's merge and
+    // identity state, so a restore must not overwrite it with this computer's copy. Only the three
+    // tables that describe THIS computer come back from the safety copy — and `sync_log` is the
+    // union rather than a replacement, because `next_seq` is derived from it.
     assert_eq!(
         report.carried.tables,
         vec![
-            "sync_applied_vector".to_string(),
-            "sync_field_state".to_string(),
             "sync_image_blobs".to_string(),
             "sync_log".to_string(),
-            "sync_pending".to_string(),
-            "sync_quarantine".to_string(),
             "sync_state".to_string(),
-            "sync_tombstone".to_string(),
-            "sync_uuid".to_string(),
         ]
     );
     assert_eq!(report.carried.rows, 1);
@@ -324,67 +319,124 @@ fn the_local_only_tables_and_credential_config_keys_are_carried_over() {
     );
 }
 
-/// The other half of the round trip (AD-9, AD-15): what the snapshot travels WITHOUT, the guarded
-/// restore must put back from the safety copy. Story 14's seven tables are discovered by the same
-/// `sync\_%` name match as `sync_state` and `sync_image_blobs`, so they are carried with no edit —
-/// and this test is what proves that rather than assuming it.
+/// The other half of Story 23's round trip (AD-9, AD-15): the snapshot's merge state SURVIVES the
+/// swap, this computer's own state comes back from the safety copy, and `sync_log` is the union of
+/// both.
+///
+/// INTENTIONAL BEHAVIOUR CHANGE from Milestone 1, which carried every `sync\_%` table back and so
+/// discarded whatever the snapshot had brought.
 #[test]
-fn every_sync_bookkeeping_table_is_carried_over_by_a_guarded_restore() {
-    let mut seeded = 0;
+fn a_restore_keeps_the_snapshots_merge_state_and_this_computers_log() {
+    let live_row: [u8; 16] = [0x11; 16];
+    let snapshot_row: [u8; 16] = [0x33; 16];
     let (_dir, db_path) = live_dataset("live", |conn| {
         link_sync_state(conn);
-        seeded = crate::db::test_dataset::seed_sync_bookkeeping(conn);
+        crate::db::test_dataset::seed_sync_bookkeeping(conn);
+        // An unsent message of this computer's own: nobody else has it yet.
+        conn.execute(
+            "INSERT INTO sync_log (install, hlc, kind, table_name, row_uuid, column_name)
+             VALUES ('0123456789abcdef', '0000000000000009-0123456789abcdef', 'field',
+                     'accounts', ?1, 'name')",
+            [live_row.to_vec()],
+        )
+        .expect("an unsent message");
+        conn.execute(
+            "INSERT INTO sync_log (install, seq, idx, hlc, kind, table_name, row_uuid, column_name)
+             VALUES ('0123456789abcdef', 4, 0, '0000000000000008-0123456789abcdef', 'field',
+                     'accounts', ?1, 'name')",
+            [live_row.to_vec()],
+        )
+        .expect("a shipped message of this computer's own");
     });
     let slot = TestSlot::holding(&db_path, Sabotage::None);
 
-    // A payload built the way a snapshot is: every `sync_*` table empty.
-    let payload = database_bytes("from the cloud", |_| {});
+    // A payload shaped like a Story-23 snapshot: no `sync_state`, no `sync_image_blobs`, but the
+    // account's identities and a SHIPPED message of its own.
+    let payload = database_bytes("from the cloud", |conn| {
+        conn.execute(
+            "INSERT INTO sync_uuid (table_name, row_id, uuid) VALUES ('accounts', 9, ?1)",
+            [snapshot_row.to_vec()],
+        )
+        .expect("the account's identity");
+        conn.execute(
+            "INSERT INTO sync_applied_vector (install, seq, applied_offset)
+             VALUES ('aaaaaaaaaaaaaaaa', 12, 3)",
+            [],
+        )
+        .expect("the snapshot's watermark");
+        conn.execute(
+            "INSERT INTO sync_log (install, seq, idx, hlc, kind, table_name, row_uuid, cause_uuid, payload)
+             VALUES ('aaaaaaaaaaaaaaaa', 12, 0, '0000000000000005-aaaaaaaaaaaaaaaa',
+                     'balance_delta', 'accounts', ?1, ?2, x'01')",
+            rusqlite::params![snapshot_row.to_vec(), snapshot_row.to_vec()],
+        )
+        .expect("a shipped increment message");
+    });
 
     let report =
         restore_snapshot_file(&slot, &db_path, &payload, None).expect("the restore succeeds");
 
-    // One `sync_state` row plus one per Story 14 table; `sync_image_blobs` was never populated
-    // here, which is what keeps this a statement about the seven.
-    assert_eq!(report.carried.rows, seeded + 1);
+    assert_eq!(
+        report.carried.tables,
+        vec![
+            "sync_image_blobs".to_string(),
+            "sync_log".to_string(),
+            "sync_state".to_string(),
+        ]
+    );
 
     let held = slot.held.lock().expect("not poisoned");
     let conn = held.as_ref().expect("a connection");
-    let count = |table: &str| -> i64 {
-        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+    let count = |sql: &str| -> i64 {
+        conn.query_row(sql, [], |row| row.get(0))
             .expect("the count reads")
     };
 
-    for table in [
-        "sync_uuid",
-        "sync_log",
-        "sync_field_state",
-        "sync_applied_vector",
-        "sync_tombstone",
-        "sync_pending",
-        "sync_quarantine",
-    ] {
-        assert_eq!(count(table), 1, "{table} must survive the file swap");
-    }
+    // The snapshot's identities and watermark are the ones that survived.
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_uuid WHERE row_id = 9"),
+        1,
+        "the snapshot's identity for the account is what the dataset keeps"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_uuid"),
+        1,
+        "and this computer's old mapping did not come back on top of it"
+    );
+    assert_eq!(
+        count("SELECT seq FROM sync_applied_vector WHERE install = 'aaaaaaaaaaaaaaaa'"),
+        12,
+        "the snapshot's watermark is the honest statement of what the file holds"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_applied_vector"),
+        1,
+        "the old file's vector claimed segments this file does not contain"
+    );
 
-    // The values, not just the counts: a carry-over that renumbered or truncated a row would pass
-    // a count check and lose the identity every message depends on.
-    let uuid: Vec<u8> = conn
-        .query_row(
-            "SELECT uuid FROM sync_uuid WHERE table_name = 'accounts' AND row_id = 1",
-            [],
-            |row| row.get(0),
-        )
-        .expect("the identity reads");
-    assert_eq!(uuid, vec![0x11u8; 16]);
+    // The log is the UNION: the snapshot's increment message (which IS the balance merge state)
+    // and this computer's unsent row, which must still be shippable.
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE kind = 'balance_delta'"),
+        1,
+        "the snapshot's merge state for the balance survived the swap"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL"),
+        2,
+        "both unsent rows of the old file (the fixture's and the explicit one) are still unsent"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE install = '0123456789abcdef' AND seq IS NOT NULL"),
+        1,
+        "its shipped rows came back too, so `next_seq` cannot rewind (Story 19)"
+    );
 
-    let applied: (String, i64) = conn
-        .query_row(
-            "SELECT install, seq FROM sync_applied_vector",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("the vector reads");
-    assert_eq!(applied, ("fedcba9876543210".to_string(), 7));
+    // This computer's own state came back from the safety copy.
+    let state = crate::db::sync_state::load(conn)
+        .expect("the state reads")
+        .expect("the row was carried over");
+    assert_eq!(state.install_id, "0123456789abcdef");
 
     // And the restored file is still the cloud's data, not the old one.
     assert_eq!(read_marker(conn), "from the cloud");

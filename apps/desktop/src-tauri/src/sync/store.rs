@@ -47,6 +47,7 @@ pub enum StoreOp {
     PutIfAbsent,
     PutIfMatch,
     List,
+    Delete,
 }
 
 impl fmt::Display for StoreOp {
@@ -58,6 +59,7 @@ impl fmt::Display for StoreOp {
             StoreOp::PutIfAbsent => "put_if_absent",
             StoreOp::PutIfMatch => "put_if_match",
             StoreOp::List => "list",
+            StoreOp::Delete => "delete",
         };
         f.write_str(name)
     }
@@ -227,6 +229,19 @@ pub fn validate_relative_key(key: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// One entry of a prefix listing: enough to decide retention (AD-13) and nothing more.
+///
+/// `last_modified_ms` is the store's own idea of when the object was written, which is what AD-13's
+/// "older than 90 days" has to be measured against: an age taken from a document another computer
+/// wrote would be that computer's clock, and AD-4 already assumes clocks disagree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedObject {
+    /// Relative to the account prefix, exactly as a caller would pass it back in.
+    pub key: String,
+    pub size: u64,
+    pub last_modified_ms: i64,
+}
+
 /// The transport port. Implemented with `async fn` in trait, so it is used through a
 /// type parameter rather than `dyn`: the adapter is chosen once when the sync manager
 /// is constructed, and static dispatch keeps the port free of boxing ceremony.
@@ -267,6 +282,14 @@ pub trait ObjectStore {
     /// repair path and the disambiguation the prefix-conditioned `s3:ListBucket`
     /// grant forces on GET/HEAD (see `s3.rs`).
     async fn exists(&self, key: &str) -> Result<bool, StoreError>;
+
+    /// Every object under `prefix`, with its size and age. AD-6 keeps LIST off the normal path;
+    /// AD-13's retention sweep is the one maintenance path that cannot be expressed without it.
+    async fn list(&self, prefix: &str) -> Result<Vec<ListedObject>, StoreError>;
+
+    /// Removes one object. An absent key is success, not `NotFound`: S3's delete is idempotent and
+    /// AD-13's sweep must converge when two computers decide to drop the same segment.
+    async fn delete(&self, key: &str) -> Result<(), StoreError>;
 }
 
 #[cfg(test)]

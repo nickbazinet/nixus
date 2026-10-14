@@ -3,7 +3,7 @@
   "_why_these_remain": {
     "avatar_store.rs::save_avatar": "A DIFFERENT DATABASE: `user_avatars` lives in the account-level avatar store keyed by `cognito_sub`, not in a dataset, and `registry::TABLES` therefore does not classify it. There is no dataset transaction for it to join.",
     "db/backup.rs::carry_local_only": "RESTORE INTERNALS (AD-9, Story 25): it carries this computer's local-only rows back into a file that has just replaced the live one. Capturing it would emit messages for rows that are by definition local-only.",
-    "db/backup.rs::copy_table": "RESTORE INTERNALS (AD-9, Story 25): a table-by-table copy into the replacement file, which the dataset's own transaction cannot wrap because the file is not the live one yet.",
+    "db/backup.rs::copy_table": "RESTORE INTERNALS (AD-9, Story 25): a table-by-table copy into the replacement file, which the dataset's own transaction cannot wrap because the file is not the live one yet. Story 23 gave it an additive mode for `sync_log` rather than a second function, so the two restore-internal writes stay two.",
     "db/danger_zone.rs::wipe_all": "WIPE INTERNALS (AD-15, Story 25): the whole point is to leave no trace, and a message per deleted row is the opposite. It is the `write_uncaptured`/`detached` seam's caller.",
     "db/projects.rs::blank_project_image_bytes": "SNAPSHOT COPY (AD-9/AD-10): it runs on the copy being uploaded, never on the live dataset, so there is nothing local to describe.",
     "db/projects.rs::set_project_image_bytes": "BLOB FETCH (AD-10): its one caller is `sync::manager::fetch_image`, on the sync actor's own connection. The bytes are `Excluded` and the metadata beside them arrived in the remote message that asked for the download."

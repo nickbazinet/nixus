@@ -275,6 +275,17 @@ mod tests {
         async fn exists(&self, _key: &str) -> Result<bool, StoreError> {
             unimplemented!("not part of the blob path")
         }
+
+        async fn list(
+            &self,
+            _prefix: &str,
+        ) -> Result<Vec<crate::sync::store::ListedObject>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        async fn delete(&self, _key: &str) -> Result<(), StoreError> {
+            Ok(())
+        }
     }
 
     struct FixedCapabilities(bool);
