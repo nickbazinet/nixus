@@ -27,6 +27,33 @@ Parameters:
       Existing public app client id. Already committed as COGNITO_CLIENT_ID in
       apps/desktop/src-tauri/src/commands/auth.rs and public by design (it
       travels in the address bar). Drift-guarded by infra/sync/verify-template.py.
+  AlertEmail:
+    Type: String
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    Description: >-
+      Operator address subscribed to the request-volume alarm and the cost budget.
+      No default, and the same shape as the AlertEmail parameter of
+      apps/api-bedrock/template.yaml: the value comes from the repository's
+      ALERT_EMAIL secret through sync-infra.yml, so the address is never committed.
+  RequestVolumeAlarmThreshold:
+    Type: Number
+    Default: 200000
+    MinValue: 1000
+    Description: >-
+      S3 requests in one hour that count as abnormal (AD-18). AD-18 fixes no number,
+      so this is a conservative default from the measured steady state: AD-6 bills
+      sync at 1 + <computers> conditional GETs per 30 s, i.e. under 500 requests an
+      hour per computer, so 200000 is unreachable by correct clients at this scale
+      and still catches a runaway loop or a stolen credential within the hour.
+  MonthlyCostBudget:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    Description: >-
+      Monthly USD budget for S3 (AD-18). Conservative default rather than an
+      architecture-fixed figure: the measured snapshot is ~2 MB per account and the
+      steady state is a few hundred requests an hour, so real spend is cents and
+      anything approaching 20 USD is itself the signal.
 
 Resources:
   # ---------------------------------------------------------------------------
@@ -73,6 +100,13 @@ Resources:
             Status: Enabled
             AbortIncompleteMultipartUpload:
               DaysAfterInitiation: 7
+      # AD-18. Request metrics are NOT on by default, and without them
+      # AWS/S3 only publishes daily storage metrics — so there would be no
+      # request series for the alarm below to watch. Whole-bucket filter and
+      # no prefix: isolation here is by key prefix (AD-6), so a per-account
+      # filter would be one metrics configuration per user.
+      MetricsConfigurations:
+        - Id: EntireBucket
 
   SyncBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -212,6 +246,95 @@ Resources:
       Roles:
         authenticated: !GetAtt SyncAuthenticatedRole.Arn
 
+  # ---------------------------------------------------------------------------
+  # AD-18 — cost and abuse are WATCHED here and BOUNDED in the client. Every
+  # resource below notifies; none of them can stop a request. That is the whole
+  # point of the split: the stack is compute-free (AD-17), so there is nothing
+  # in the request path to enforce anything, and a control that pretended to
+  # would be a control nobody could trust. The caps that really bind live in
+  # apps/desktop/src-tauri/src/sync/limits.rs.
+  # ---------------------------------------------------------------------------
+  SyncAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Nixus sync alerts
+
+  SyncAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SyncAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  SyncRequestVolumeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: >-
+        Total S3 requests against the sync bucket in one hour. AD-18's abuse
+        signal: a correct client's cost is bounded by AD-6's conditional-GET
+        steady state, so an hour of this volume means a loop, a modified client
+        or a leaked credential. Notifies only.
+      Namespace: AWS/S3
+      MetricName: AllRequests
+      Dimensions:
+        - Name: BucketName
+          Value: !Ref SyncBucket
+        # Required, and it has to name the MetricsConfiguration above: request
+        # metrics are published per filter, not per bucket.
+        - Name: FilterId
+          Value: EntireBucket
+      Statistic: Sum
+      Period: 3600
+      # One hour, one period: the threshold is already two orders of magnitude
+      # above normal, so waiting for a second hour would only delay the mail.
+      EvaluationPeriods: 1
+      Threshold: !Ref RequestVolumeAlarmThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      # An idle account publishes no request metrics at all, and "no requests"
+      # is the healthiest state this bucket has.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SyncAlertTopic
+
+  SyncCostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-s3-monthly'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyCostBudget
+          Unit: USD
+        # Account-wide S3 spend. Isolating it to this one bucket is not claimed:
+        # that needs verified cost-allocation tags, exactly as recorded for the
+        # Bedrock budget in apps/api-bedrock/template.yaml.
+        CostFilters:
+          Service:
+            - Amazon Simple Storage Service
+      # EMAIL subscribers rather than the SNS topic above, matching the Bedrock
+      # budget: an SNS-delivered budget notification also needs a topic policy
+      # granting budgets.amazonaws.com sns:Publish, which is a resource and a
+      # permission more for the same mail. ACTUAL, not FORECASTED: a forecast on
+      # a few cents of real spend is noise.
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
 Outputs:
   # No Export: nothing consumes these cross-stack, and an export would pin the
   # logical names forever.
@@ -233,3 +356,12 @@ Outputs:
   Region:
     Description: Region of the bucket, the identity pool and the user pool.
     Value: !Ref AWS::Region
+  AlertTopicArn:
+    Description: SNS topic backing the sync request-volume alarm (AD-18).
+    Value: !Ref SyncAlertTopic
+  RequestVolumeAlarmName:
+    Description: Name of the request-volume alarm, for the attestation.
+    Value: !Ref SyncRequestVolumeAlarm
+  CostBudgetName:
+    Description: Monthly S3 cost budget with 80% and 100% alerts (AD-18).
+    Value: !Sub '${AWS::StackName}-s3-monthly'

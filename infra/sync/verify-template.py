@@ -33,6 +33,11 @@ DELETABLE_PREFIXES = {
     BUCKET_ARN + SUB_PREFIX + "log/*",
     BUCKET_ARN + SUB_PREFIX + "snap/*",
 }
+# AD-18: the bucket's request-metrics filter id, which the alarm's FilterId
+# dimension has to repeat exactly — S3 publishes request metrics per filter, so a
+# mismatch leaves the alarm watching a series that is never written.
+METRICS_FILTER_ID = "EntireBucket"
+REQUEST_METRICS = {"AllRequests", "GetRequests", "PutRequests"}
 
 failures: list[str] = []
 
@@ -255,6 +260,146 @@ def main() -> int:
         "role attachment must declare no RoleMappings (they widen reachable roles)",
     )
 
+    # 6b. AD-18 cost and abuse watching. Each of these would, if dropped, leave the
+    # product with no signal that a client is burning requests or money — and
+    # unlike the isolation properties above, nothing else in the pipeline notices.
+    metrics = props.get("MetricsConfigurations")
+    check(metrics, "the bucket must enable S3 request metrics (AD-18)")
+    if metrics:
+        whole_bucket = [m for m in metrics if "Prefix" not in m and "TagFilters" not in m]
+        check(
+            len(whole_bucket) >= 1,
+            "one metrics configuration must cover the WHOLE bucket, with no prefix filter",
+        )
+        check(
+            {m.get("Id") for m in metrics} == {METRICS_FILTER_ID},
+            f"the metrics filter must be {METRICS_FILTER_ID}, the id the alarm's FilterId names",
+        )
+
+    topic_subscriptions = [
+        r
+        for r in resources.values()
+        if r.get("Type") == "AWS::SNS::Subscription"
+        and r["Properties"].get("TopicArn") == {"Ref": "SyncAlertTopic"}
+    ]
+    check(
+        resources.get("SyncAlertTopic", {}).get("Type") == "AWS::SNS::Topic",
+        "the alert topic must exist (AD-18)",
+    )
+    check(
+        len(topic_subscriptions) == 1,
+        "the alert topic must carry exactly one subscription",
+    )
+    for subscription in topic_subscriptions:
+        check(
+            subscription["Properties"].get("Protocol") == "email",
+            "the alert subscription must be email, like the api-bedrock pattern",
+        )
+        check(
+            subscription["Properties"].get("Endpoint") == {"Ref": "AlertEmail"},
+            "the alert subscription must take the address from the AlertEmail parameter, "
+            "never a committed literal",
+        )
+    check(
+        "Default" not in params["AlertEmail"],
+        "AlertEmail must have no default: the address comes from the ALERT_EMAIL secret",
+    )
+    check(
+        "@" in str(params["AlertEmail"].get("AllowedPattern", "")),
+        "AlertEmail must be pattern-checked as an address",
+    )
+
+    alarms = {
+        name: r for name, r in resources.items() if r.get("Type") == "AWS::CloudWatch::Alarm"
+    }
+    check(alarms, "a request-volume alarm must exist (AD-18)")
+    for name, alarm in alarms.items():
+        alarm_props = alarm["Properties"]
+        check(
+            alarm_props.get("Namespace") == "AWS/S3",
+            f"{name} must watch the AWS/S3 namespace",
+        )
+        check(
+            alarm_props.get("MetricName") in REQUEST_METRICS,
+            f"{name} must watch request volume, one of {sorted(REQUEST_METRICS)}: "
+            f"{alarm_props.get('MetricName')}",
+        )
+        dimensions = {d["Name"]: d["Value"] for d in alarm_props.get("Dimensions", [])}
+        check(
+            dimensions.get("BucketName") == {"Ref": "SyncBucket"},
+            f"{name} must be dimensioned on this stack's bucket",
+        )
+        check(
+            dimensions.get("FilterId") == METRICS_FILTER_ID,
+            f"{name} must name the bucket's metrics filter, or it watches a series that does "
+            "not exist",
+        )
+        check(
+            alarm_props.get("AlarmActions") == [{"Ref": "SyncAlertTopic"}],
+            f"{name} must notify the alert topic and nothing else",
+        )
+        check(
+            int(alarm_props.get("EvaluationPeriods", 0)) >= 1
+            and int(alarm_props.get("Period", 0)) >= 300,
+            f"{name} must evaluate at least one period of at least 5 minutes",
+        )
+        check(
+            alarm_props.get("Threshold") == {"Ref": "RequestVolumeAlarmThreshold"},
+            f"{name} must take its threshold from the parameter, so it is reviewable",
+        )
+
+    budgets = {name: r for name, r in resources.items() if r.get("Type") == "AWS::Budgets::Budget"}
+    check(len(budgets) == 1, "exactly one AWS Budget is expected (AD-18)")
+    for name, budget in budgets.items():
+        spec = budget["Properties"]["Budget"]
+        check(spec.get("BudgetType") == "COST", f"{name} must be a COST budget")
+        check(spec.get("TimeUnit") == "MONTHLY", f"{name} must be monthly")
+        check(
+            spec["BudgetLimit"].get("Unit") == "USD"
+            and spec["BudgetLimit"].get("Amount") == {"Ref": "MonthlyCostBudget"},
+            f"{name} must take its amount from the MonthlyCostBudget parameter, in USD",
+        )
+        check(
+            spec.get("CostFilters", {}).get("Service") == ["Amazon Simple Storage Service"],
+            f"{name} must be scoped to S3 (AD-18)",
+        )
+        notifications = budget["Properties"]["NotificationsWithSubscribers"]
+        thresholds = {
+            (
+                entry["Notification"]["Threshold"],
+                entry["Notification"]["NotificationType"],
+                entry["Notification"]["ThresholdType"],
+            )
+            for entry in notifications
+        }
+        # AD-18 names both alerts. 100% alone would only ever say "too late", and
+        # 80% alone would never say "it kept going".
+        for level in (80, 100):
+            check(
+                (level, "ACTUAL", "PERCENTAGE") in thresholds,
+                f"{name} must alert at {level}% of ACTUAL spend: {sorted(thresholds)}",
+            )
+        for entry in notifications:
+            subscribers = entry["Subscribers"]
+            check(
+                all(s.get("SubscriptionType") == "EMAIL" for s in subscribers),
+                f"{name} notifications must reach the operator by email",
+            )
+            check(
+                all(s.get("Address") == {"Ref": "AlertEmail"} for s in subscribers),
+                f"{name} notifications must use the AlertEmail parameter",
+            )
+
+    # Alerts notify; they never stop traffic. Nothing in this stack may deny a
+    # request on volume or on spend, so the only Deny stays the TLS one asserted
+    # above and no alarm may carry an action that is not the topic.
+    for name, alarm in alarms.items():
+        for field in ("OKActions", "InsufficientDataActions"):
+            check(
+                not alarm["Properties"].get(field),
+                f"{name} must declare no {field}: an alert is mail, not a control loop",
+            )
+
     # 7. Drift between the template, the workflow and the desktop client
     workflow_text = WORKFLOW.read_text(encoding="utf-8")
     workflow = yaml.safe_load(workflow_text)
@@ -299,6 +444,12 @@ def main() -> int:
         "--capabilities CAPABILITY_NAMED_IAM",
         "--disable-rollback",
         "--region us-east-1",
+        # AD-18's address has no default, so a deploy that stopped passing it would
+        # fail on the parameter instead of quietly alerting nobody.
+        '"AlertEmail=${alert_email}"',
+        "ParameterKey=AlertEmail,ParameterValue=${alert_email}",
+        "secrets.ALERT_EMAIL",
+        "::add-mask::",
     ):
         check(literal in workflow_text, f"workflow deploy command must contain {literal}")
     check(

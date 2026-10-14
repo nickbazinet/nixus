@@ -18,6 +18,10 @@ Claims, each printed with a `PROVEN BY <api call>` line:
   pool       enhanced flow only (AllowClassicFlow=false,
              AllowUnauthenticatedIdentities=false) and exactly our user pool and
              app client
+  watchers   (AD-18) whole-bucket S3 request metrics, a request-volume alarm on
+             those metrics that notifies the alert topic and carries no other
+             action, an email subscription on that topic, and a monthly S3 COST
+             budget alerting at 80% and 100% of ACTUAL spend
   bedrock    nixus-bedrock-api still carries its pre-sync baseline
 
 STRICTLY READ-ONLY: describe/get APIs only. It creates nothing, modifies nothing
@@ -55,12 +59,21 @@ BEDROCK_BASELINE_STATUS = "UPDATE_COMPLETE"
 BEDROCK_BASELINE_LAST_UPDATED = "2026-09-16T00:00:18.481000+00:00"
 
 COMPLETE_STACK_STATES = ("CREATE_COMPLETE", "UPDATE_COMPLETE")
+# AD-18. The filter id the bucket publishes request metrics under, which the
+# alarm's FilterId dimension has to repeat; kept in step with
+# infra/sync/template.yaml by infra/sync/verify-template.py.
+METRICS_FILTER_ID = "EntireBucket"
+REQUEST_METRICS = ("AllRequests", "GetRequests", "PutRequests")
 PAB_FLAGS = ("BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls", "RestrictPublicBuckets")
 # Codes that mean "the credentials may not read this", as opposed to "the
 # property is missing", which is a real failure.
 DENIED_CODES = (
     "AccessDenied",
     "AccessDeniedException",
+    # SNS spells a denial this way, and budgets/cloudwatch reads were never
+    # granted to the static repository credentials at all (AD-18 story 26).
+    "AuthorizationError",
+    "InsufficientPrivilegesException",
     "AllAccessDisabled",
     "UnauthorizedOperation",
     "InvalidAccessKeyId",
@@ -315,6 +328,98 @@ def check_ownership(report: Report, response: dict) -> None:
     )
 
 
+def check_metrics_configurations(report: Report, response: dict) -> None:
+    api = "s3 list-bucket-metrics-configurations"
+    configurations = response.get("MetricsConfigurationList", [])
+    whole_bucket = [
+        c
+        for c in configurations
+        if c.get("Id") == METRICS_FILTER_ID and not c.get("Filter")
+    ]
+    report.assert_that(
+        len(whole_bucket) == 1,
+        f"S3 request metrics are published for the whole bucket as {METRICS_FILTER_ID} (AD-18)",
+        api,
+        f"ids={[c.get('Id') for c in configurations]}",
+    )
+
+
+def check_request_alarm(report: Report, response: dict, topic_arn: str) -> None:
+    api = "cloudwatch describe-alarms"
+    alarms = response.get("MetricAlarms", [])
+    report.assert_that(
+        len(alarms) == 1,
+        "the request-volume alarm exists (AD-18)",
+        api,
+        f"names={[a.get('AlarmName') for a in alarms]}",
+    )
+    for alarm in alarms:
+        dimensions = {d["Name"]: d["Value"] for d in alarm.get("Dimensions", [])}
+        report.assert_that(
+            alarm.get("Namespace") == "AWS/S3"
+            and alarm.get("MetricName") in REQUEST_METRICS
+            and dimensions.get("FilterId") == METRICS_FILTER_ID,
+            "the alarm watches this bucket's S3 request metrics",
+            api,
+            f"{alarm.get('Namespace')}/{alarm.get('MetricName')} dimensions={dimensions}",
+        )
+        report.assert_that(
+            alarm.get("AlarmActions") == [topic_arn] if topic_arn else bool(alarm.get("AlarmActions")),
+            "the alarm notifies the sync alert topic",
+            api,
+            f"actions={alarm.get('AlarmActions')}",
+        )
+        # An alert must not be a control loop: AD-18 says these notify and never
+        # stop traffic, so a deployed OK/InsufficientData action would be a
+        # capability nobody reviewed.
+        report.assert_that(
+            not alarm.get("OKActions") and not alarm.get("InsufficientDataActions"),
+            "the alarm carries no action other than the notification",
+            api,
+            f"ok={alarm.get('OKActions')} insufficient={alarm.get('InsufficientDataActions')}",
+        )
+
+
+def check_topic_subscription(report: Report, response: dict) -> None:
+    api = "sns list-subscriptions-by-topic"
+    protocols = sorted({s.get("Protocol") for s in response.get("Subscriptions", [])})
+    report.assert_that(
+        protocols == ["email"],
+        "the alert topic has exactly an email subscription (AD-18)",
+        api,
+        # The address itself is never printed: an operator address in a public
+        # build log is an address a scraper can read.
+        f"protocols={protocols}",
+    )
+
+
+def check_budget(report: Report, response: dict) -> None:
+    api = "budgets describe-budget"
+    budget = response.get("Budget", {})
+    report.assert_that(
+        budget.get("BudgetType") == "COST" and budget.get("TimeUnit") == "MONTHLY",
+        "the sync cost budget is a monthly COST budget (AD-18)",
+        api,
+        f"{budget.get('BudgetType')}/{budget.get('TimeUnit')}",
+    )
+
+
+def check_budget_notifications(report: Report, response: dict) -> None:
+    api = "budgets describe-notifications-for-budget"
+    notifications = response.get("Notifications", [])
+    thresholds = sorted(
+        n.get("Threshold")
+        for n in notifications
+        if n.get("NotificationType") == "ACTUAL" and n.get("ThresholdType") == "PERCENTAGE"
+    )
+    report.assert_that(
+        80 in thresholds and 100 in thresholds,
+        "the budget alerts at 80% and 100% of ACTUAL spend (AD-18)",
+        api,
+        f"actual thresholds={thresholds}",
+    )
+
+
 def check_identity_pool(report: Report, pool: dict) -> None:
     api = "cognito-identity describe-identity-pool"
     report.assert_that(
@@ -494,6 +599,71 @@ def main() -> int:
             "cloudformation describe-stacks",
             "output IdentityPoolId is absent",
         )
+
+    # AD-18's watchers, each read-only. The static repository credentials were
+    # never granted cloudwatch, sns or budgets reads, so an AccessDenied here is
+    # expected and is reported as UNPROVEN with the exact action rather than as a
+    # pass or a failure.
+    if bucket:
+        metrics = read(
+            report,
+            f"S3 request metrics are published for the whole bucket as {METRICS_FILTER_ID} (AD-18)",
+            "s3:GetMetricsConfiguration",
+            s3.list_bucket_metrics_configurations,
+            Bucket=bucket,
+        )
+        if metrics is not None:
+            check_metrics_configurations(report, metrics)
+
+    topic_arn = outputs.get("AlertTopicArn", "")
+    alarm_name = outputs.get("RequestVolumeAlarmName", "")
+    budget_name = outputs.get("CostBudgetName", "")
+
+    if alarm_name:
+        alarms = read(
+            report,
+            "the request-volume alarm exists (AD-18)",
+            "cloudwatch:DescribeAlarms",
+            boto3.client("cloudwatch", region_name=REGION).describe_alarms,
+            AlarmNames=[alarm_name],
+        )
+        if alarms is not None:
+            check_request_alarm(report, alarms, topic_arn)
+
+    if topic_arn:
+        subscriptions = read(
+            report,
+            "the alert topic has exactly an email subscription (AD-18)",
+            "sns:ListSubscriptionsByTopic",
+            boto3.client("sns", region_name=REGION).list_subscriptions_by_topic,
+            TopicArn=topic_arn,
+        )
+        if subscriptions is not None:
+            check_topic_subscription(report, subscriptions)
+
+    if budget_name:
+        account = stack["StackId"].split(":")[4]
+        budgets = boto3.client("budgets", region_name="us-east-1")
+        described_budget = read(
+            report,
+            "the sync cost budget is a monthly COST budget (AD-18)",
+            "budgets:ViewBudget",
+            budgets.describe_budget,
+            AccountId=account,
+            BudgetName=budget_name,
+        )
+        if described_budget is not None:
+            check_budget(report, described_budget)
+        notifications = read(
+            report,
+            "the budget alerts at 80% and 100% of ACTUAL spend (AD-18)",
+            "budgets:DescribeNotificationsForBudget",
+            budgets.describe_notifications_for_budget,
+            AccountId=account,
+            BudgetName=budget_name,
+        )
+        if notifications is not None:
+            check_budget_notifications(report, notifications)
 
     bedrock = read(
         report,

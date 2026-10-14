@@ -165,10 +165,27 @@ jobs:
               exit 1 ;;
           esac
 
+      # AD-18's alert address. The repository secret is the source (same secret
+      # the Bedrock stack uses); the public support address is the fallback, so a
+      # missing secret cannot fail the deploy on a parameter pattern. Never
+      # echoed: an address in a build log is an address a scraper can read.
+      - name: Resolve the alert address
+        id: alert
+        env:
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+        run: |
+          set -euo pipefail
+          resolved="${ALERT_EMAIL:-support@nixus.nicolasbazinet.net}"
+          echo "::add-mask::$resolved"
+          echo "alert_email=$resolved" >> "$GITHUB_OUTPUT"
+          echo "alert address resolved (masked)"
+
       # Primary path. --disable-rollback so a failed first create stays
       # CREATE_FAILED (repairable) instead of ROLLBACK_COMPLETE (deletable only).
       - name: Deploy stack
         id: deploy
+        env:
+          alert_email: ${{ steps.alert.outputs.alert_email }}
         run: |
           set -uo pipefail
           set +e
@@ -181,7 +198,8 @@ jobs:
             --region us-east-1 \
             --parameter-overrides \
               "UserPoolId=${COGNITO_USER_POOL_ID}" \
-              "AppClientId=${COGNITO_APP_CLIENT_ID}"
+              "AppClientId=${COGNITO_APP_CLIENT_ID}" \
+              "AlertEmail=${alert_email}"
           code=$?
           set -e
           echo "deploy_exit=$code" >> "$GITHUB_OUTPUT"
@@ -198,6 +216,8 @@ jobs:
       # execute with --disable-rollback.
       - name: Fallback - scripted change set
         if: steps.deploy.outputs.deploy_exit != '0'
+        env:
+          alert_email: ${{ steps.alert.outputs.alert_email }}
         run: |
           set -euo pipefail
           cs="fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -211,6 +231,7 @@ jobs:
             --parameters \
               "ParameterKey=UserPoolId,ParameterValue=${COGNITO_USER_POOL_ID}" \
               "ParameterKey=AppClientId,ParameterValue=${COGNITO_APP_CLIENT_ID}" \
+              "ParameterKey=AlertEmail,ParameterValue=${alert_email}" \
             --query 'Id' --output text
           aws cloudformation wait change-set-create-complete \
             --stack-name "$STACK_NAME" --change-set-name "$cs" --region "$AWS_REGION" || true
