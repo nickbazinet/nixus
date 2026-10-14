@@ -13,14 +13,15 @@
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 use tracing::{info, warn};
 
 use crate::error::AppError;
 use crate::sync::bootstrap::LinkChoice;
 use crate::sync::host::DatasetHost;
 use crate::sync::manager::{
-    self, RemoteChoice, SyncDiagnostics, SyncEnableOutcome, SyncFault, SyncHandle, SyncState,
-    SyncStatusPayload, SyncTuning,
+    self, RemoteChoice, SyncDiagnostics, SyncEnableOutcome, SyncFault, SyncHandle, SyncPrompt,
+    SyncState, SyncStatusPayload, SyncTuning,
 };
 
 /// The actor for the active dataset, or `None` when that dataset cannot sync.
@@ -194,6 +195,152 @@ pub async fn sync_diagnostics(app: AppHandle) -> Result<SyncDiagnostics, AppErro
     Ok(handle(&app)?.diagnostics().await?)
 }
 
+/// The version of the exported document's own shape. Support reads it before anything else,
+/// so it is the one field that may never be removed or re-used for a different layout.
+const DIAGNOSTICS_EXPORT_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncDiagnosticsExport {
+    pub path: String,
+}
+
+/// The environment half of the report: everything about the computer rather than about sync.
+pub(crate) struct ExportEnvironment {
+    pub app_version: String,
+    pub os: &'static str,
+    pub arch: &'static str,
+    pub generated_ms: i64,
+}
+
+/// Builds the document that leaves the machine, field by field.
+///
+/// Hand-built rather than `serde_json::to_value(diagnostics)` BECAUSE that is the redaction:
+/// a field added to `SyncDiagnostics` later cannot leak into a user-facing file by being
+/// serialized along with everything else — it has to be named here, which is a decision
+/// someone makes once. Two identifiers the diagnostics do carry are dropped on the way out:
+/// `dataset_id` and anything derived from the account. AD-16 asks for counts, states,
+/// timings and codes, and an identifier is none of those; a hash would still be a stable
+/// cross-report correlator, so they are omitted outright rather than hashed.
+pub(crate) fn redacted_document(
+    diagnostics: &SyncDiagnostics,
+    environment: &ExportEnvironment,
+) -> serde_json::Value {
+    serde_json::json!({
+        "export_version": DIAGNOSTICS_EXPORT_VERSION,
+        "generated_ms": environment.generated_ms,
+        "app": {
+            "version": environment.app_version,
+            "os": environment.os,
+            "arch": environment.arch,
+            "schema_version": diagnostics.schema_version,
+        },
+        "sync": {
+            "capability": diagnostics.capability,
+            "state": diagnostics.state,
+            "enabled": diagnostics.enabled,
+            "has_pulled_latest": diagnostics.has_pulled_latest,
+            "pending_prompt": diagnostics.pending_prompt.as_ref().map(prompt_kind),
+            "frozen_reason": diagnostics.frozen_reason,
+            "last_error_code": diagnostics.last_error_code,
+            "last_sync_ms": diagnostics.last_sync_ms,
+            "transitions": diagnostics.transitions,
+        },
+        "counts": {
+            "uploads": diagnostics.uploads,
+            "conflicts": diagnostics.conflicts,
+            "restores": diagnostics.restores,
+            "failures": diagnostics.failures,
+            "blocked": diagnostics.blocked,
+            "local_rows": diagnostics.local_rows,
+            "snapshots": diagnostics.uploads + diagnostics.restores,
+        },
+        "bytes": {
+            "last_object": diagnostics.last_object_bytes,
+            "last_payload": diagnostics.last_payload_bytes,
+        },
+        "timings_ms": {
+            "last_build": diagnostics.last_build_ms,
+            "backoff": diagnostics.backoff_ms,
+            "settle_window": diagnostics.settle_window_ms,
+            "min_upload_interval": diagnostics.min_upload_interval_ms,
+            "poll_interval": diagnostics.poll_interval_ms,
+        },
+    })
+}
+
+/// Only which question is open, never the counts and timestamps the prompt carries about
+/// the other computer's copy.
+fn prompt_kind(prompt: &SyncPrompt) -> &'static str {
+    match prompt {
+        SyncPrompt::LinkChoice { .. } => "link_choice",
+        SyncPrompt::RemoteChanged { .. } => "remote_changed",
+    }
+}
+
+pub(crate) fn diagnostics_json(
+    diagnostics: &SyncDiagnostics,
+    environment: &ExportEnvironment,
+) -> Result<String, AppError> {
+    serde_json::to_string_pretty(&redacted_document(diagnostics, environment)).map_err(|error| {
+        AppError::File {
+            message: format!("Failed to render the diagnostics report: {}", error),
+        }
+    })
+}
+
+/// A cancelled dialog and a dialog that answered with something that is not a filesystem
+/// path are the same outcome: nothing is written and the command answers `Ok(None)`.
+fn chosen_path(chosen: Option<tauri_plugin_dialog::FilePath>) -> Option<std::path::PathBuf> {
+    chosen.and_then(|path| path.as_path().map(|path| path.to_path_buf()))
+}
+
+/// Extracted so the failure path has a test that does not need a dialog, the same way
+/// `backup::copy_db_to_path` is.
+fn write_document(save_path: &std::path::Path, document: &str) -> Result<(), AppError> {
+    std::fs::write(save_path, document).map_err(|error| AppError::File {
+        message: format!("Failed to write the diagnostics report: {}", error),
+    })
+}
+
+/// Saves the redacted diagnostics report to a file the user chooses, for a support report
+/// (AD-16: counts, states, timings and error codes, never values).
+///
+/// `Ok(None)` is a cancelled dialog, which is not an error — the same contract as
+/// `export_backup` and `export_budget_template`, and the dialog is opened on the Rust side
+/// for the same reason: no state lock is held while it is open.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn sync_export_diagnostics(
+    app: AppHandle,
+) -> Result<Option<SyncDiagnosticsExport>, AppError> {
+    let diagnostics = handle(&app)?.diagnostics().await?;
+    let environment = ExportEnvironment {
+        app_version: app.package_info().version.to_string(),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+        generated_ms: chrono::Utc::now().timestamp_millis(),
+    };
+    let document = diagnostics_json(&diagnostics, &environment)?;
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let chosen = app
+        .dialog()
+        .file()
+        .set_file_name(format!("nixus-sync-diagnostics-{}.json", today))
+        .add_filter("JSON", &["json"])
+        .blocking_save_file();
+
+    let Some(save_path) = chosen_path(chosen) else {
+        return Ok(None);
+    };
+
+    write_document(&save_path, &document)?;
+
+    let path = save_path.to_string_lossy().to_string();
+    info!("Sync diagnostics exported to {}", path);
+
+    Ok(Some(SyncDiagnosticsExport { path }))
+}
+
 fn parse_link_choice(choice: &str) -> Result<LinkChoice, AppError> {
     match choice {
         "replace" => Ok(LinkChoice::Replace),
@@ -266,5 +413,172 @@ mod tests {
             }
             other => panic!("expected a validation error naming the field, got {other:?}"),
         }
+    }
+
+    fn environment() -> ExportEnvironment {
+        ExportEnvironment {
+            app_version: "0.1.6".to_string(),
+            os: "macos",
+            arch: "aarch64",
+            generated_ms: 1_760_000_000_000,
+        }
+    }
+
+    /// Every field populated and every optional one present, so a test about what the
+    /// document carries is not quietly testing a document full of nulls.
+    fn full_diagnostics() -> SyncDiagnostics {
+        SyncDiagnostics {
+            dataset_id: "01J0SECRETDATASETID".to_string(),
+            capability: "multi_device_sync",
+            state: SyncState::Offline,
+            transitions: vec![crate::sync::manager::SyncTransition {
+                state: SyncState::Syncing,
+                at_ms: 1_759_999_000_000,
+                error_code: Some("offline".to_string()),
+            }],
+            enabled: true,
+            has_pulled_latest: true,
+            pending_prompt: Some(SyncPrompt::RemoteChanged {
+                remote_created_ms: 1_759_000_000_000,
+                remote_schema_version: 30,
+            }),
+            uploads: 7,
+            conflicts: 2,
+            restores: 1,
+            failures: 3,
+            blocked: 4,
+            last_error_code: Some("offline".to_string()),
+            last_sync_ms: Some(1_759_999_900_000),
+            last_build_ms: Some(719),
+            last_object_bytes: Some(2_131_153),
+            last_payload_bytes: Some(14_950_400),
+            local_rows: Some(26_012),
+            schema_version: 30,
+            frozen_reason: Some("entitlement_lapsed"),
+            backoff_ms: Some(5_000),
+            settle_window_ms: 5_000,
+            min_upload_interval_ms: 60_000,
+            poll_interval_ms: 2_000,
+        }
+    }
+
+    fn strings_in(value: &serde_json::Value, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::String(text) => found.push(text.clone()),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    strings_in(item, found);
+                }
+            }
+            serde_json::Value::Object(fields) => {
+                for field in fields.values() {
+                    strings_in(field, found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn the_exported_document_is_valid_json_with_a_versioned_schema() {
+        let rendered = diagnostics_json(&full_diagnostics(), &environment()).expect("renders");
+
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
+
+        assert_eq!(parsed["export_version"], 1);
+        assert_eq!(parsed["generated_ms"], 1_760_000_000_000_i64);
+        assert_eq!(parsed["app"]["version"], "0.1.6");
+        assert_eq!(parsed["app"]["schema_version"], 30);
+        assert_eq!(parsed["sync"]["state"], "offline");
+        assert_eq!(parsed["sync"]["pending_prompt"], "remote_changed");
+        assert_eq!(parsed["sync"]["last_error_code"], "offline");
+        assert_eq!(parsed["sync"]["transitions"][0]["state"], "syncing");
+        assert_eq!(parsed["counts"]["uploads"], 7);
+        assert_eq!(parsed["counts"]["local_rows"], 26_012);
+        assert_eq!(parsed["counts"]["snapshots"], 8);
+        assert_eq!(parsed["bytes"]["last_object"], 2_131_153);
+        assert_eq!(parsed["timings_ms"]["last_build"], 719);
+        assert_eq!(parsed["timings_ms"]["settle_window"], 5_000);
+    }
+
+    /// The structural half of AD-16's "never values": every string that reaches the file has
+    /// to be one this code chose, which is a property of the whole document rather than of
+    /// the fields someone remembered to check. A `SyncDiagnostics` field added later that
+    /// carries text fails here even if nobody writes a test for it.
+    #[test]
+    fn no_string_in_the_document_can_come_from_the_dataset_or_the_account() {
+        let document = redacted_document(&full_diagnostics(), &environment());
+        let mut found = Vec::new();
+        strings_in(&document, &mut found);
+
+        let allowed = [
+            "multi_device_sync",
+            "offline",
+            "syncing",
+            "remote_changed",
+            "entitlement_lapsed",
+            "macos",
+            "aarch64",
+            "0.1.6",
+        ];
+        for text in &found {
+            assert!(
+                allowed.contains(&text.as_str()),
+                "{text:?} is a string this document did not choose: a value, an identifier \
+                 or a service message would arrive exactly this way"
+            );
+        }
+        assert!(found.len() >= 6, "the fixture must exercise every string field");
+    }
+
+    #[test]
+    fn the_dataset_id_never_leaves_the_backend() {
+        let rendered = diagnostics_json(&full_diagnostics(), &environment()).expect("renders");
+
+        assert!(
+            !rendered.contains("01J0SECRETDATASETID"),
+            "the dataset id is an identifier, not a count, a state, a timing or a code"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_dialog_writes_nothing_and_is_not_an_error() {
+        assert_eq!(chosen_path(None), None);
+    }
+
+    #[test]
+    fn a_chosen_path_is_carried_through_verbatim() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let target = dir.path().join("report.json");
+
+        assert_eq!(
+            chosen_path(Some(tauri_plugin_dialog::FilePath::Path(target.clone()))),
+            Some(target)
+        );
+    }
+
+    #[test]
+    fn a_write_that_fails_is_a_file_error_and_not_a_panic() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+
+        // A directory is the portable way to make a write fail: it is refused on both
+        // macOS and Windows, where a permission bit or a path shape would not be.
+        let outcome = write_document(dir.path(), "{}");
+
+        assert!(
+            matches!(outcome, Err(AppError::File { .. })),
+            "expected a file error, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn a_write_that_succeeds_leaves_the_document_on_disk() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let target = dir.path().join("report.json");
+        let rendered = diagnostics_json(&full_diagnostics(), &environment()).expect("renders");
+
+        write_document(&target, &rendered).expect("the write succeeds");
+
+        assert_eq!(std::fs::read_to_string(&target).expect("readable"), rendered);
     }
 }

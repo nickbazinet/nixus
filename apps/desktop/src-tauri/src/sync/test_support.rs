@@ -465,6 +465,7 @@ pub(crate) struct TestComputer {
 
 /// The test's half of a `TestComputer`.
 pub(crate) struct ComputerProbe {
+    root: PathBuf,
     db_path: PathBuf,
     backup_dir: PathBuf,
     live: Arc<Mutex<Option<Connection>>>,
@@ -543,6 +544,7 @@ pub(crate) fn test_computer(
     };
 
     let probe = ComputerProbe {
+        root: dir.path().to_path_buf(),
         db_path,
         backup_dir,
         live,
@@ -567,6 +569,33 @@ impl TestComputer {
 impl ComputerProbe {
     pub(crate) fn store(&self) -> &Arc<FakeObjectStore> {
         &self.store
+    }
+
+    pub(crate) fn db_path(&self) -> &std::path::Path {
+        &self.db_path
+    }
+
+    /// The app-data root of this simulated computer: where CAP-5 *separate* provisions the
+    /// second profile and where its dataset registry lives.
+    pub(crate) fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    /// Closes the connection standing in for the UI's, so the dataset file can be compared
+    /// byte for byte with no `-wal` left beside it. Reopened lazily by the next read.
+    pub(crate) fn close_live(&self) {
+        if let Ok(mut guard) = self.live.lock() {
+            if let Some(conn) = guard.as_ref() {
+                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+            }
+            drop(guard.take());
+        }
+    }
+
+    /// A read through a connection of the test's own, for the assertions that compare two
+    /// computers' datasets table by table.
+    pub(crate) fn read<T>(&self, read: impl FnOnce(&Connection) -> T) -> T {
+        self.with_live(read)
     }
 
     /// A local write, through the connection that stands in for the UI's. This is what

@@ -19,6 +19,27 @@ use crate::projects::image::sha256_hex;
 
 /// One year of heavy-but-plausible use. The counts are the ones CAP-2's timing budget was written
 /// against, so they are fields rather than literals: a test asserts against what it asked for.
+/// The counts on their own, so the generator can also fill a dataset that already exists
+/// (Story 12's proof suite owns its two app-data dirs and cannot use a temp dir of ours).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HeavyYearShape {
+    pub expenses: usize,
+    pub audit_rows: usize,
+    pub chat_messages: usize,
+    pub project_images: usize,
+    pub image_payload_bytes: usize,
+}
+
+impl HeavyYearShape {
+    pub(crate) const STANDARD: Self = Self {
+        expenses: 6_000,
+        audit_rows: 15_000,
+        chat_messages: 5_000,
+        project_images: 2,
+        image_payload_bytes: 1_500_000,
+    };
+}
+
 pub(crate) struct HeavyYear {
     /// Owns the directory: dropping a `HeavyYear` is what deletes the dataset, so this field is a
     /// lifetime guard rather than something a test reads.
@@ -126,17 +147,20 @@ pub(crate) fn heavy_year_dataset() -> HeavyYear {
     let db_path = dir.path().join("nixus.db");
     let conn = open_configured(&db_path).expect("the synthetic dataset migrates");
 
+    let shape = HeavyYearShape::STANDARD;
     let heavy = HeavyYear {
         dir,
         db_path,
-        expenses: 6_000,
-        audit_rows: 15_000,
-        chat_messages: 5_000,
-        project_images: 2,
-        image_payload_bytes: 1_500_000,
+        expenses: shape.expenses,
+        audit_rows: shape.audit_rows,
+        chat_messages: shape.chat_messages,
+        project_images: shape.project_images,
+        image_payload_bytes: shape.image_payload_bytes,
     };
 
-    seed(&conn, &heavy);
+    seed(&conn, &shape);
+    // A linked install, so a stripping test is proving a DELETE that had something to delete.
+    seed_sync_state(&conn);
     // Closed before the caller can copy or back up the file: a live connection leaves `-wal` and
     // `-shm` beside it, and on Windows an open handle is also what makes a copy or a rename fail.
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -146,7 +170,22 @@ pub(crate) fn heavy_year_dataset() -> HeavyYear {
     heavy
 }
 
-fn seed(conn: &Connection, heavy: &HeavyYear) {
+/// The same content, seeded into a dataset that ALREADY exists at `db_path`.
+///
+/// No `sync_state` row: the install identity of a simulated computer belongs to that
+/// computer, and a foreign pin here would read as another account owning the prefix (AD-7).
+pub(crate) fn seed_heavy_year_into(db_path: &std::path::Path) -> HeavyYearShape {
+    let conn = open_configured(db_path).expect("the existing dataset opens");
+    let shape = HeavyYearShape::STANDARD;
+    seed(&conn, &shape);
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+        .expect("the wal is checkpointed");
+    drop(conn);
+
+    shape
+}
+
+fn seed(conn: &Connection, heavy: &HeavyYearShape) {
     let mut rng = Lcg::new(0x5EED_0008);
 
     conn.execute_batch("BEGIN").expect("the seed transaction opens");
@@ -157,7 +196,6 @@ fn seed(conn: &Connection, heavy: &HeavyYear) {
     seed_chat(conn, &mut rng, heavy.chat_messages);
     seed_projects(conn, &mut rng, heavy);
     seed_config(conn);
-    seed_sync_state(conn);
     conn.execute_batch("COMMIT").expect("the seed transaction commits");
 }
 
@@ -311,7 +349,7 @@ fn seed_chat(conn: &Connection, rng: &mut Lcg, count: usize) {
     }
 }
 
-fn seed_projects(conn: &Connection, rng: &mut Lcg, heavy: &HeavyYear) {
+fn seed_projects(conn: &Connection, rng: &mut Lcg, heavy: &HeavyYearShape) {
     for id in 1..=heavy.project_images as i64 {
         conn.execute(
             "INSERT INTO projects (id, name, target_cents, target_date, priority)
@@ -369,7 +407,103 @@ fn seed_config(conn: &Connection) {
     }
 }
 
-/// A linked install, so a stripping test is proving a DELETE that had something to delete.
+/// Every value a sentinel stamp wrote starts with this, so one substring search over the
+/// bytes of an export answers "did any user text get out?" for all of them at once.
+pub(crate) const SENTINEL_PREFIX: &str = "SENTINEL";
+
+pub(crate) struct SentinelStamp {
+    /// `table.column` for every text column that now holds a sentinel.
+    pub stamped: Vec<String>,
+    /// `table.column: reason` for the ones SQLite refused (an enum, a date or a hash under
+    /// a CHECK). Recorded rather than ignored: a column that cannot hold a sentinel is a
+    /// column that cannot hold user prose either, which is why its absence is not a gap.
+    pub refused: Vec<String>,
+}
+
+/// Overwrites EVERY text column of every user table with a recognizable sentinel, plus
+/// token-shaped and identity-shaped ones, so an AD-16 redaction proof searches for a single
+/// string instead of enumerating the columns a future migration might add.
+///
+/// Discovered from the schema rather than listed, which is the whole point: a column added
+/// later is stamped without anyone editing this function.
+pub(crate) fn stamp_text_columns_with_sentinels(conn: &Connection) -> SentinelStamp {
+    let mut stamp = SentinelStamp {
+        stamped: Vec::new(),
+        refused: Vec::new(),
+    };
+
+    for table in user_tables(conn) {
+        for column in text_columns(conn, &table) {
+            let label = format!("{table}.{column}");
+            // The rowid suffix keeps the values distinct, so a UNIQUE index is not what
+            // decides whether a column can be stamped.
+            let sql = format!(
+                "UPDATE \"{table}\" SET \"{column}\" = '{SENTINEL_PREFIX}-{table}-{column}-' \
+                 || CAST(_rowid_ AS TEXT)"
+            );
+            match conn.execute(&sql, []) {
+                Ok(_) => stamp.stamped.push(label),
+                Err(error) => stamp.refused.push(format!("{label}: {error}")),
+            }
+        }
+    }
+
+    for (key, value) in [
+        ("sentinel_jwt", format!("{SENTINEL_PREFIX}-eyJhbGciOiJIUzI1NiJ9.cGF5bG9hZA.c2ln")),
+        ("sentinel_access_key", format!("{SENTINEL_PREFIX}-AKIAIOSFODNN7EXAMPLE")),
+        (
+            "sentinel_identity_id",
+            format!("{SENTINEL_PREFIX}-us-east-1:11111111-2222-4333-8444-555555555555"),
+        ),
+        ("sentinel_install_id", format!("{SENTINEL_PREFIX}-0a1b2c3d4e5f6071")),
+    ] {
+        conn.execute(
+            "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )
+        .expect("a sentinel config key inserts");
+        stamp.stamped.push(format!("config.{key}"));
+    }
+
+    stamp
+}
+
+fn user_tables(conn: &Connection) -> Vec<String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT name FROM sqlite_master
+             WHERE type = 'table'
+               AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+               AND name NOT LIKE 'sync\\_%' ESCAPE '\\'
+               AND name <> 'schema_version'
+             ORDER BY name",
+        )
+        .expect("the table list prepares");
+    statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("the table list reads")
+        .collect::<Result<_, _>>()
+        .expect("the table list collects")
+}
+
+fn text_columns(conn: &Connection, table: &str) -> Vec<String> {
+    let mut statement = conn
+        .prepare("SELECT name, type FROM pragma_table_info(?1)")
+        .expect("the column list prepares");
+    statement
+        .query_map([table], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("the column list reads")
+        .filter_map(Result::ok)
+        .filter(|(_, declared)| {
+            let declared = declared.to_uppercase();
+            declared.contains("TEXT") || declared.contains("CHAR") || declared.contains("CLOB")
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
 fn seed_sync_state(conn: &Connection) {
     crate::db::sync_state::ensure(conn, "0a1b2c3d4e5f6071", &"a".repeat(64))
         .expect("the sync state row inserts");

@@ -38,6 +38,9 @@ interface SyncMockOptions {
   enableOutcomes?: unknown[];
   enableError?: { type: string; code: string; message: string; recoverable: boolean };
   resolveError?: { type: string; code: string; message: string; recoverable: boolean };
+  /** `null` stands in for a cancelled save dialog, which the Rust command answers with. */
+  diagnosticsExport?: { path: string } | null;
+  diagnosticsExportError?: { type: string; message: string };
 }
 
 const UNLINKED: SyncPayload = {
@@ -147,6 +150,7 @@ async function setupSyncMock(page: Page, options: SyncMockOptions = {}) {
               dataset_id: "default",
               capability: "multi_device_sync",
               state: "idle",
+              transitions: [],
               enabled: true,
               has_pulled_latest: true,
               pending_prompt: null,
@@ -168,6 +172,12 @@ async function setupSyncMock(page: Page, options: SyncMockOptions = {}) {
               min_upload_interval_ms: 60000,
               poll_interval_ms: 2000,
             });
+
+          case "sync_export_diagnostics":
+            if (opts.diagnosticsExportError !== undefined) {
+              return Promise.reject(opts.diagnosticsExportError);
+            }
+            return Promise.resolve(opts.diagnosticsExport ?? null);
 
           case "get_active_profile":
             return Promise.resolve({
@@ -368,6 +378,55 @@ test.describe("sync settings", () => {
     const output = page.getByTestId("sync-diagnostics-output");
     await expect(output).toContainText("Uploads 3");
     await expect(output).toContainText("Conflicts 1");
+  });
+
+  test("the diagnostics report is saved through the same command the app uses for exports", async ({
+    page,
+  }) => {
+    await setupSyncMock(page, {
+      status: { state: "idle", enabled: true },
+      diagnosticsExport: { path: "/tmp/nixus-sync-diagnostics-2026-10-14.json" },
+    });
+    await page.goto(SETTINGS_URL);
+
+    await expect(page.getByTestId("sync-diagnostics-export-path")).toHaveCount(0);
+    await page.getByTestId("sync-diagnostics-export-button").click();
+
+    await expect(page.getByTestId("sync-diagnostics-export-path")).toContainText(
+      "/tmp/nixus-sync-diagnostics-2026-10-14.json"
+    );
+    expect((await syncCalls(page)).map((c) => c.cmd)).toContain(
+      "sync_export_diagnostics"
+    );
+  });
+
+  test("a cancelled save dialog leaves no path and no error", async ({ page }) => {
+    await setupSyncMock(page, {
+      status: { state: "idle", enabled: true },
+      diagnosticsExport: null,
+    });
+    await page.goto(SETTINGS_URL);
+
+    await page.getByTestId("sync-diagnostics-export-button").click();
+
+    expect((await syncCalls(page)).map((c) => c.cmd)).toContain(
+      "sync_export_diagnostics"
+    );
+    await expect(page.getByTestId("sync-diagnostics-export-path")).toHaveCount(0);
+    await expect(page.getByTestId("sync-action-error")).toHaveCount(0);
+  });
+
+  test("a failed export reports a problem instead of claiming a file", async ({ page }) => {
+    await setupSyncMock(page, {
+      status: { state: "idle", enabled: true },
+      diagnosticsExportError: { type: "file", message: "disk full" },
+    });
+    await page.goto(SETTINGS_URL);
+
+    await page.getByTestId("sync-diagnostics-export-button").click();
+
+    await expect(page.getByTestId("sync-action-error")).toBeVisible();
+    await expect(page.getByTestId("sync-diagnostics-export-path")).toHaveCount(0);
   });
 
   test("stopping sync calls sync_disable", async ({ page }) => {

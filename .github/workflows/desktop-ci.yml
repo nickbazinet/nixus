@@ -165,6 +165,13 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo test
 
+      # Already covered by `cargo test` above; run again by name so the Milestone-1
+      # new-computer proof prints its PASS lines with the measured numbers into this log,
+      # on macOS and on Windows. Re-runnable verbatim by hand.
+      - name: Multi-device sync end-to-end proof
+        working-directory: apps/desktop/src-tauri
+        run: cargo test sync_e2e -- --nocapture
+
       - name: Clippy
         working-directory: apps/desktop/src-tauri
         run: cargo clippy --all-targets -- -D warnings

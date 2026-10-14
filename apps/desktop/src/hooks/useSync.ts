@@ -10,6 +10,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { queryKeys } from "@/lib/constants";
 import type {
   SyncDiagnostics,
+  SyncDiagnosticsExport,
   SyncEnableOutcome,
   SyncStatusPayload,
 } from "@/lib/types";
@@ -140,6 +141,18 @@ export function useResolveRemoteChanged() {
     mutationFn: (action: RemoteChangedAction) =>
       invoke<SyncStatusPayload>("sync_resolve_remote_changed", { action }),
     onSuccess: (payload) => publish(queryClient, payload),
+  });
+}
+
+/**
+ * Saves the same redacted report to a file the user picks. The dialog is opened on the Rust
+ * side (this repo's export convention), so there is nothing to invoke but the command, and
+ * `null` is a cancelled dialog rather than a failure.
+ */
+export function useExportSyncDiagnostics() {
+  return useMutation({
+    mutationFn: () =>
+      invoke<SyncDiagnosticsExport | null>("sync_export_diagnostics"),
   });
 }
 
