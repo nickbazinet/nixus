@@ -273,14 +273,25 @@ describe("multi-device sync disclosure", () => {
   it("names what is uploaded, what is stripped, and where it lives", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
-    expect(text).toMatch(/uploads a snapshot/i);
+    expect(text).toMatch(/your changes travel continuously/i);
+    expect(text).toMatch(/periodically, a full snapshot/i);
     /* Fix F-1 wired the blob upload and the on-demand fetch, so the disclosure now has to say
      * so: thumbnails come first, each full-size image is its own object, and it comes down the
      * first time it is viewed. The protection claim has to travel with it. */
     expect(text).toMatch(/Full-size project images travel separately/i);
     expect(text).toMatch(/uploaded as its own object/i);
     expect(text).toMatch(/downloads one the first time you ask to see it/i);
-    expect(text).toMatch(/does not sync continuously/i);
+    /* Milestone 2 shipped continuous sync, so M1's "snapshot copy, not a live mirror / does not
+     * sync continuously / does not merge edits made on two computers at the same time" became
+     * FALSE. These pin the merge rules the code really implements (AD-5): per-field last write
+     * wins, delete beats a simultaneous edit and stays restorable for 30 days, and balances are
+     * merged as additions so two computers never double-count one event. */
+    expect(text).toMatch(/merge those changes field by field/i);
+    expect(text).toMatch(/the later change wins/i);
+    expect(text).toMatch(/the delete wins, and deleted items stay recoverable for 30 days/i);
+    expect(text).toMatch(/merged as additions/i);
+    expect(text).toMatch(/Edits you make offline are kept and sent when you are back online/i);
+    expect(text).not.toMatch(/does not sync continuously|not a live mirror/i);
     expect(text).toMatch(/never uploaded/i);
     expect(text).toMatch(/credential store and are never transmitted to Nixus/i);
     expect(text).toMatch(/operated by Nixus on Amazon Web Services/i);
@@ -317,14 +328,19 @@ describe("multi-device sync disclosure", () => {
     expect(text).toMatch(/local-only profile, no sync code runs/i);
   });
 
-  /* No continuous sync and no merge exist in this milestone, so the Terms must describe
-   * the choice the user is actually offered instead of promising convergence. */
+  /* Sync now converges on its own, so the Terms describe the merge rules and the ONE prompt that
+   * is left (the first link of a computer that already has data) instead of the M1 claim that
+   * nothing is merged at all. */
   it("describes beta availability, the conflict choice and the freeze in the Terms", () => {
     const text = renderText(<TermsPage locale="en" />);
 
     expect(text).toMatch(/optional feature of eligible Nixus Cloud accounts/i);
     expect(text).toMatch(/availability is not guaranteed/i);
-    expect(text).toMatch(/does not merge edits made on two computers at the same time/i);
+    expect(text).toMatch(/merges your computers continuously/i);
+    expect(text).toMatch(/a delete wins over an edit made at the same time/i);
+    expect(text).toMatch(/waits for the update before applying changes that version cannot read/i);
+    expect(text).toMatch(/only unlinks that computer/i);
+    expect(text).not.toMatch(/does not merge edits made on two computers/i);
     expect(text).toMatch(/never silently overwritten/i);
     expect(text).toMatch(/kept as a dated backup/i);
     expect(text).toMatch(/keeping your own backups remains your responsibility/i);
@@ -352,12 +368,18 @@ describe("multi-device sync disclosure", () => {
       expect(privacy).toMatch(/pendant 30 jours/i);
       expect(privacy).toMatch(/au bas de cette page/i);
       expect(privacy).toMatch(/aucun code de synchronisation ne s'exécute/i);
+      expect(privacy).toMatch(/vos modifications voyagent en continu/i);
+      expect(privacy).toMatch(/champ par champ/i);
+      expect(privacy).toMatch(/récupérables pendant 30 jours/i);
+      expect(privacy).not.toMatch(/ne se synchronise pas en continu/i);
 
       const terms = renderText(<TermsPage locale="fr" />);
 
       expect(terms).toMatch(/comptes Nixus Cloud admissibles/i);
       expect(terms).toMatch(/version bêta/i);
-      expect(terms).toMatch(/ne fusionne pas les modifications faites simultanément/i);
+      expect(terms).toMatch(/fusionne vos ordinateurs en continu/i);
+      expect(terms).toMatch(/une suppression l'emporte sur une modification faite au même moment/i);
+      expect(terms).not.toMatch(/ne fusionne pas les modifications faites simultanément/i);
       expect(terms).toMatch(/jamais remplacée en silence/i);
       expect(terms).toMatch(/sauvegarde datée/i);
       expect(terms).toMatch(/Nixus la gèle/i);
