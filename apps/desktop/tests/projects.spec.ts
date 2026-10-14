@@ -70,9 +70,9 @@ interface MockProjectImage {
   /** Lowercase hex sha256 of the full payload: the `blob/<sha256>` this picture is stored under. */
   image_sha256: string;
   /**
-   * Whether this computer holds the full payload. Every image these specs seed does, because no
-   * surface here renders the not-yet-fetched placeholder yet; a spec that needs it sets
-   * `full_image_available: false` with `image_base64: null` and a thumbnail.
+   * Whether this computer holds the full payload (AD-10). `seededImage` says yes; `lazyImage`
+   * below is the other state — metadata and a thumbnail only, which is what a row that arrived in
+   * a snapshot looks like until `sync_fetch_project_image` brings the picture down.
    */
   full_image_available: boolean;
   image_base64: string | null;
@@ -109,6 +109,12 @@ interface MockImageState {
    * write is reached from the tile, so a shared switch could not fail one without arming the other.
    */
   removeRejectField: string | null;
+  /**
+   * The `AppError::Sync` code `sync_fetch_project_image` refuses with, or `null` to let the
+   * download land. Its own knob because it is a different command on a different path: a shared
+   * switch could not refuse the lazy fetch without also breaking the local write.
+   */
+  fetchRejectCode: string | null;
 }
 
 const NO_IMAGES: MockImageState = {
@@ -118,6 +124,7 @@ const NO_IMAGES: MockImageState = {
   validateRejectField: null,
   writeRejectField: null,
   removeRejectField: null,
+  fetchRejectCode: null,
 };
 
 /**
@@ -162,6 +169,24 @@ function seededImage(
     image_base64: ONE_PIXEL_PNG_BASE64,
     thumbnail_base64: null,
     thumbnail_mime: null,
+  };
+}
+
+/**
+ * The AD-10 not-yet-fetched row: the same metadata and the SAME `image_sha256`, no payload, and a
+ * thumbnail to show in its place. The hash matching `seededImage`'s is what makes a fetch mock able
+ * to answer with the full picture for the very same content.
+ */
+function lazyImage(
+  projectId: number,
+  filename = "cover.png"
+): MockProjectImage {
+  return {
+    ...seededImage(projectId, filename),
+    full_image_available: false,
+    image_base64: null,
+    thumbnail_base64: THUMBNAIL_PNG_BASE64,
+    thumbnail_mime: "image/png",
   };
 }
 
@@ -214,6 +239,7 @@ async function setupTauriMock(
       writtenImageBase64,
       writtenImageBytes,
       thumbnailImageBase64,
+      fetchedImageBase64,
     }) => {
       interface MockProject {
         id: number;
@@ -703,6 +729,39 @@ async function setupTauriMock(
             return Promise.resolve(stored ? { ...stored } : null);
           }
 
+          // AD-10's lazy fetch. It answers with the complete `ProjectImage` for the hash the row
+          // already named, which is what lets the UI replace its cache entry instead of re-reading
+          // the payload a second time.
+          case "sync_fetch_project_image": {
+            const projectId = args.project_id as number;
+            if (images.fetchRejectCode !== null)
+              return Promise.reject({
+                type: "sync",
+                code: images.fetchRejectCode,
+                message: `Refused with ${images.fetchRejectCode}`,
+                recoverable: true,
+              });
+            const index = projectImages.findIndex(
+              (image) => image.project_id === projectId
+            );
+            if (index === -1)
+              return Promise.reject({
+                type: "sync",
+                code: "image_missing",
+                message: "No picture for this project",
+                recoverable: true,
+              });
+            // The write-back the Rust command performs: the payload arrives and the row stops
+            // being lazy, keeping its hash and its thumbnail.
+            const filled: MockProjectImage = {
+              ...projectImages[index],
+              full_image_available: true,
+              image_base64: fetchedImageBase64,
+            };
+            projectImages[index] = filled;
+            return Promise.resolve({ ...filled });
+          }
+
           // Returns a bare basename, so no directory component can reach the UI.
           case "validate_project_image":
             if (images.validateRejectField !== null)
@@ -805,6 +864,7 @@ async function setupTauriMock(
       writtenImageBase64: WRITTEN_PNG_BASE64,
       writtenImageBytes: WRITTEN_PNG_BYTES,
       thumbnailImageBase64: THUMBNAIL_PNG_BASE64,
+      fetchedImageBase64: ONE_PIXEL_PNG_BASE64,
     }
   );
 }
@@ -2346,9 +2406,11 @@ test.describe("Project image editing from the row thumbnail", () => {
     return page.getByTestId("project-thumbnail-button");
   }
 
-  // The acceptance criterion the relocation exists for: expansion is financial detail only, and the
-  // ~4 MiB payload command is never sent at all — read at the invoke layer, not inferred from the DOM.
-  test("an expanded row shows no image panel and reads no full-size payload", async ({
+  // INTENTIONAL BEHAVIOUR CHANGE (fix F-1): the expanded row used to show no picture at all and
+  // deliberately never sent `get_project_image`. CAP-6 needs a surface that can say "the full-size
+  // picture is not on this computer yet", so the detail now reads the payload for the ONE project
+  // whose row is open — never for the collapsed list, which still gets thumbnails only.
+  test("an expanded row shows the full picture it holds, and the list still reads only thumbnails", async ({
     page,
   }) => {
     await gotoProjects(page, {
@@ -2356,23 +2418,93 @@ test.describe("Project image editing from the row thumbnail", () => {
       seed: [seededImage(IMAGE_PROJECT.id, "downpayment.png")],
     });
 
+    expect(await invokedCommands(page)).not.toContain("get_project_image");
+
     await page.getByTestId("project-expand-toggle").click();
     await expect(page.getByTestId("project-detail")).toBeVisible();
-    // Anchored on a figure the detail always renders, so the absences below are read after the
-    // expansion settled rather than before it started asking for anything.
     await expect(page.getByTestId("project-saved-amount")).toBeVisible();
 
-    await expect(page.getByTestId("project-image-card")).toHaveCount(0);
-    await expect(page.getByTestId("project-image")).toHaveCount(0);
-    await expect(page.getByTestId("project-image-meta")).toHaveCount(0);
-    await expect(page.getByTestId("project-image-add-button")).toHaveCount(0);
-    await expect(page.getByTestId("project-image-replace-button")).toHaveCount(0);
-    expect(await invokedCommands(page)).not.toContain("get_project_image");
+    const full = page.getByTestId("project-image-full");
+    await expect(full).toBeVisible();
+    expect(await full.getAttribute("src")).toBe(
+      `data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`
+    );
+    await expect(page.getByTestId("project-image-placeholder")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-fetch-button")).toHaveCount(0);
+    expect(await invokedCommands(page)).not.toContain("sync_fetch_project_image");
 
     // The row tile survives the collapse it never depended on.
     await page.getByTestId("project-expand-toggle").click();
     await expect(page.getByTestId("project-detail")).toHaveCount(0);
     await expect(tileButton(page)).toBeVisible();
+  });
+
+  // CAP-6, end to end through the UI: thumbnail + explanation + one button, then the picture.
+  test("a picture that is still in the cloud offers to download it, and shows it afterwards", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [lazyImage(IMAGE_PROJECT.id, "downpayment.png")],
+    });
+
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-image-placeholder")).toBeVisible();
+
+    const preview = page.getByTestId("project-image-thumbnail-preview");
+    expect(await preview.getAttribute("src")).toBe(
+      `data:image/png;base64,${THUMBNAIL_PNG_BASE64}`
+    );
+    await expect(page.getByTestId("project-image-full")).toHaveCount(0);
+    // Nothing is downloaded by opening a row: the gesture is cheap and the payload is not.
+    expect(await invokedCommands(page)).not.toContain("sync_fetch_project_image");
+
+    await page.getByTestId("project-image-fetch-button").click();
+
+    const full = page.getByTestId("project-image-full");
+    await expect(full).toBeVisible();
+    expect(await full.getAttribute("src")).toBe(
+      `data:image/png;base64,${ONE_PIXEL_PNG_BASE64}`
+    );
+    await expect
+      .poll(async () => await full.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+      .toBeGreaterThan(0);
+    await expect(page.getByTestId("project-image-placeholder")).toHaveCount(0);
+    expect(await invokedCommands(page)).toContain("sync_fetch_project_image");
+  });
+
+  test("a refused download keeps the preview, explains itself, and can be retried", async ({
+    page,
+  }) => {
+    await gotoProjects(page, {
+      ...NO_IMAGES,
+      seed: [lazyImage(IMAGE_PROJECT.id, "downpayment.png")],
+      fetchRejectCode: "offline",
+    });
+
+    await page.getByTestId("project-expand-toggle").click();
+    await page.getByTestId("project-image-fetch-button").click();
+
+    await expect(page.getByTestId("project-image-fetch-error")).toBeVisible();
+    // The code's own sentence, not a generic failure line.
+    await expect(page.getByTestId("project-image-fetch-error")).toContainText(
+      "could not reach your cloud space"
+    );
+    await expect(page.getByTestId("project-image-thumbnail-preview")).toBeVisible();
+    await expect(page.getByTestId("project-image-full")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-fetch-retry")).toBeVisible();
+  });
+
+  test("a project with no picture shows no image card at all", async ({ page }) => {
+    await gotoProjects(page, NO_IMAGES);
+
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-detail")).toBeVisible();
+    await expect(page.getByTestId("project-saved-amount")).toBeVisible();
+
+    await expect(page.getByTestId("project-image-card")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-placeholder")).toHaveCount(0);
+    await expect(page.getByTestId("project-image-read-error")).toHaveCount(0);
   });
 
   test("an empty tile is a real button whose name offers to add an image", async ({
@@ -2831,7 +2963,7 @@ test.describe("Project image editing from the row thumbnail", () => {
 
   /* Ten rows expanded at once, which is the shape a real list takes because each row owns its own
    * `expanded` flag and nothing collapses its neighbours. */
-  test("ten expanded rows keep their tiles, read no payload, and leave the page interactive", async ({
+  test("ten expanded rows keep their tiles, read one payload each, and leave the page interactive", async ({
     page,
   }) => {
     const seeded = Array.from({ length: 10 }, (_, index) => ({
@@ -2875,8 +3007,13 @@ test.describe("Project image editing from the row thumbnail", () => {
         )
       )
       .toEqual(seeded.map(() => true));
-    // Ten expanded rows, and not one of them asked for a full-size payload.
-    expect(await invokedCommands(page)).not.toContain("get_project_image");
+    // Ten expanded rows read ten payloads — one per OPEN row and never for the collapsed list —
+    // and not one of them went to the cloud for a picture it already had (fix F-1).
+    const reads = (await invokedCommands(page)).filter(
+      (command) => command === "get_project_image"
+    );
+    expect(reads).toHaveLength(seeded.length);
+    expect(await invokedCommands(page)).not.toContain("sync_fetch_project_image");
     // Ten distinct accessible names, so no two tiles are addressing one shared project.
     const tileNames = await tileButton(page).evaluateAll((nodes) =>
       nodes.map((node) => node.getAttribute("aria-label"))

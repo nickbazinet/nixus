@@ -56,6 +56,8 @@ const ALL_ERROR_CODES: readonly SyncErrorCode[] = [
   "not_enabled",
   "no_pending_prompt",
   "actor_unavailable",
+  "image_missing",
+  "image_corrupt",
 ];
 
 const REQUIRED_KEYS = [

@@ -457,6 +457,7 @@ pub fn run() {
             commands::sync::sync_resolve_remote_changed,
             commands::sync::sync_diagnostics,
             commands::sync::sync_export_diagnostics,
+            commands::sync::sync_fetch_project_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -766,7 +766,10 @@ mod tests {
 
         assert_eq!(built.stripped.blanked_images, heavy.project_images);
         assert_eq!(built.stripped.config_keys, CONFIG_DENY_LIST.len());
-        assert_eq!(built.stripped.local_only_tables, vec!["sync_state"]);
+        assert_eq!(
+            built.stripped.local_only_tables,
+            vec!["sync_image_blobs", "sync_state"]
+        );
         assert_eq!(
             built.stripped.local_only_rows, 1,
             "the install identity row must be deleted, not merely found"

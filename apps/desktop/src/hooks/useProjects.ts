@@ -219,6 +219,28 @@ export function useRemoveProjectImage() {
   });
 }
 
+// AD-10's other half: a row whose `full_image_available` is false names its picture by
+// `image_sha256` and the backend goes and gets `blob/<sha256>` for it, on demand.
+//
+// `setQueryData` rather than `invalidateQueries` because the command answers with the complete
+// `ProjectImage` it just stored: invalidating would send the same multi-megabyte payload across
+// IPC a second time to learn what this one already returned.
+export function useFetchProjectImage() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: number) =>
+      invoke<ProjectImage>("sync_fetch_project_image", {
+        project_id: projectId,
+      }),
+    onSuccess: (image, projectId) => {
+      queryClient.setQueryData(queryKeys.projectImage(projectId), image);
+      // The tile in the list is derived from the thumbnail, which this does not change, so
+      // nothing else is invalidated.
+    },
+  });
+}
+
 export function useProjectSavedTotals() {
   return useQuery({
     queryKey: queryKeys.projectSavedTotals,

@@ -442,7 +442,11 @@ fn re_opening_the_migrated_database_changes_nothing() {
             row.get(0)
         })
         .expect("the version reads");
-    assert_eq!(version, 30, "a re-open must not re-apply or advance anything");
+    assert_eq!(
+        version,
+        crate::db::latest_schema_version(),
+        "a re-open must not re-apply or advance anything"
+    );
 
     let applications: i64 = conn
         .query_row(

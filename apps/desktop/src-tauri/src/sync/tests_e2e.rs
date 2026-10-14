@@ -34,7 +34,7 @@ use crate::db::test_dataset::{
 };
 use crate::db::{config::LOCAL_ONLY_KEYS, open_configured};
 use crate::models::DatasetKind;
-use crate::sync::blob::{fetch_image_blob, put_image_blob};
+use crate::sync::blob::{blob_key, BLOB_KEY_PREFIX};
 use crate::sync::bootstrap::{measure_link, LinkChoice, CAP2_BUDGET, CAP2_BYTES_PER_SECOND};
 use crate::sync::manager::{
     RemoteChoice, SyncActor, SyncEnableOutcome, SyncState, SyncStatusPayload, SyncTuning,
@@ -45,7 +45,7 @@ use crate::sync::auth::{AccountPin, AuthError};
 use crate::sync::gate::{CapabilitySource, GateStateSource, SyncBlocked, SyncGate};
 use crate::sync::state::GateState;
 use crate::sync::test_support::{
-    syncing_fake, test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer,
+    test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer,
     FAKE_IDENTITY_ID, FAKE_OWNER_SUB,
 };
 use crate::sync::tests_bootstrap::{config_map, dump, tables};
@@ -115,6 +115,13 @@ async fn edit_then_settle(actor: &mut Actor, probe: &ComputerProbe, name: &str) 
     actor.tick().await;
     tokio::time::advance(SETTLE + MIN_UPLOAD).await;
     actor.tick().await;
+}
+
+/// The same two polls as `edit_then_settle`, for the tests that run on a real clock: the
+/// tuning's windows are bypassed by asking for the upload explicitly instead of sleeping.
+async fn edit_then_settle_real(actor: &mut Actor, probe: &ComputerProbe) {
+    probe.write_row("later");
+    actor.sync_now().await.expect("the explicit upload succeeds");
 }
 
 fn schema_version() -> u32 {
@@ -205,8 +212,10 @@ async fn sync_e2e_a_new_computer_bootstraps_an_identical_dataset() {
     ));
 }
 
-/// (b) AD-10: only the thumbnails arrive with the snapshot. The full picture is fetched on
-/// demand and the fetched bytes hash-verify to exactly A's.
+/// (b) AD-10 and CAP-6, through the PRODUCTION path on both sides: A's sync cycle uploads the
+/// full pictures as `blob/<sha256>` objects, only the thumbnails arrive with the snapshot, and
+/// `SyncActor::fetch_image` — the one the `sync_fetch_project_image` command calls — brings each
+/// picture down, hash-verified, on demand.
 #[tokio::test]
 async fn sync_e2e_b_project_images_arrive_lazily_and_hash_verify() {
     let cloud = Arc::new(FakeObjectStore::default());
@@ -229,6 +238,18 @@ async fn sync_e2e_b_project_images_arrive_lazily_and_hash_verify() {
         assert!(image.image_bytes.is_some(), "A still has the full picture");
     }
 
+    // A's own cycle put every picture in the cloud, create-only, one object each.
+    let blob_puts = cloud.calls_of_prefix(FakeOp::PutImmutable, BLOB_KEY_PREFIX);
+    assert_eq!(blob_puts, shape.project_images as u64);
+    for image in &originals {
+        assert!(
+            cloud
+                .keys()
+                .contains(&blob_key(&image.image_sha256).expect("a digest is a key")),
+            "the object must be at blob/<image_sha256>"
+        );
+    }
+
     for image in b.read(|conn| {
         (1..=shape.project_images as i64)
             .map(|id| {
@@ -243,32 +264,17 @@ async fn sync_e2e_b_project_images_arrive_lazily_and_hash_verify() {
         assert_eq!(image.byte_size as usize, shape.image_payload_bytes);
     }
 
-    // The lazy fetch, through the production blob path on both sides.
-    let store = syncing_fake(Arc::clone(&cloud));
+    // The lazy fetch, through the command's own path rather than through the blob helpers.
     let mut fetched_bytes = 0usize;
     for original in &originals {
-        let payload = original.image_bytes.clone().expect("A has the bytes");
-        let (hash, _) = put_image_blob(&store, schema_version(), &payload)
+        let payload = computer_b
+            .fetch_image(original.project_id)
             .await
-            .expect("A uploads the blob");
-        assert_eq!(hash, original.image_sha256);
+            .expect("B fetches the picture on demand");
 
-        let downloaded = fetch_image_blob(&store, &original.image_sha256)
-            .await
-            .expect("B fetches the blob");
-        assert_eq!(downloaded, payload, "the fetched bytes are A's bytes");
-        fetched_bytes += downloaded.len();
-
-        let written = b.read(|conn| {
-            crate::db::projects::set_project_image_bytes(
-                conn,
-                original.project_id,
-                &original.image_sha256,
-                &downloaded,
-            )
-            .expect("the write-back runs")
-        });
-        assert!(written, "the hash in the WHERE clause matched the row");
+        assert!(payload.full_image_available);
+        assert_eq!(payload.image_sha256, original.image_sha256);
+        fetched_bytes += payload.byte_size as usize;
     }
 
     let after = b.read(|conn| {
@@ -279,10 +285,19 @@ async fn sync_e2e_b_project_images_arrive_lazily_and_hash_verify() {
     assert_eq!(after.image_bytes, originals[0].image_bytes);
     assert_eq!(after.image_sha256, originals[0].image_sha256);
 
+    // A second cycle on A re-sends nothing: the persisted marker answers it (AD-19's cost lever).
+    edit_then_settle_real(&mut computer_a, &a).await;
+    assert_eq!(
+        cloud.calls_of_prefix(FakeOp::PutImmutable, BLOB_KEY_PREFIX),
+        blob_puts,
+        "a later cycle must re-upload no picture at all"
+    );
+
     report(format!(
-        "(b) {} project images arrived as thumbnails only, then {} B of full image bytes \
-         were fetched and hash-verified against A",
-        shape.project_images, fetched_bytes
+        "(b) {} project images were uploaded once as blob/<sha256> ({} puts, 0 on the next \
+         cycle), arrived on B as thumbnails only, then {} B of full image bytes were fetched on \
+         demand and hash-verified against A",
+        shape.project_images, blob_puts, fetched_bytes
     ));
 }
 
@@ -315,6 +330,11 @@ async fn sync_e2e_c_a_new_computer_is_usable_inside_the_cap2_budget() {
     });
 
     assert_eq!(rows, shape.expenses as i64, "usable means it answers queries");
+    assert_eq!(
+        cloud.calls_of_prefix(FakeOp::Get, BLOB_KEY_PREFIX),
+        0,
+        "CAP-6: the first load carries thumbnails only, so no picture is on the critical path"
+    );
     assert!(
         budget.measured <= NON_NETWORK_CEILING,
         "the CPU/disk half took {:?}, over the {:?} ceiling",

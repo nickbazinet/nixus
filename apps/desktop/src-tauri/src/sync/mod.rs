@@ -37,6 +37,8 @@ mod tests_e2e;
 #[cfg(test)]
 mod tests_gate_boundary;
 #[cfg(test)]
+mod tests_images;
+#[cfg(test)]
 mod tests_manager;
 #[cfg(test)]
 mod tests_port_boundary;

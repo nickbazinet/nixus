@@ -258,7 +258,8 @@ where
         Ok(self.pass().await?.head(key).await?)
     }
 
-    #[allow(dead_code)] // Same: AD-6's repair path is Milestone 2 Story 23.
+    /// AD-6's exact-key existence probe, which is how the lazy-image upload asks whether a blob
+    /// another computer already wrote is there without sending the body (`sync::blob`).
     pub async fn exists(&self, key: &str) -> Result<bool, GatedError> {
         Ok(self.pass().await?.exists(key).await?)
     }

@@ -35,6 +35,7 @@ import {
   SlideOver,
 } from "@nixus/shared";
 import { ProjectContributionForm } from "@/components/projects/ProjectContributionForm";
+import { ProjectImageCard } from "@/components/projects/ProjectImageCard";
 import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
 import {
   useDeleteProjectContribution,
@@ -313,6 +314,8 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
           ) : null}
         </div>
       )}
+
+      <ProjectImageCard project={project} />
 
       <div className="flex items-center justify-between gap-3">
         <span className="text-label text-ink">
