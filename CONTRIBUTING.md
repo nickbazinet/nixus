@@ -239,15 +239,48 @@ other pre-merge coverage, so a red Windows leg is a real failure, not flakiness.
 
 ### Multi-device sync tests
 
-The sync suites are part of `cargo test` above and need no AWS account: they run against an
+**The whole verification gate is one command.** `scripts/sync-verify.sh` runs every gate
+multi-device sync is accepted against, in order, and prints a PASS/FAIL table with the wall time of
+each step. It makes no AWS call and needs no secret, honours `CARGO_TARGET_DIR`, and exits non-zero
+if any step failed.
+
+```bash
+./scripts/sync-verify.sh              # the gate
+./scripts/sync-verify.sh --dry-run    # list the 18 steps and their commands, run nothing
+SIM_SEEDS=200 ./scripts/sync-verify.sh        # a shorter simulator run while developing
+SKIP_SIMULATOR=1 ./scripts/sync-verify.sh     # skip one step; the footer says it was skipped
+```
+
+The steps: zero Rust warnings, Clippy with `-D warnings`, the full `cargo test`, the capture
+regression tests (`INSERT OR REPLACE`, `DELETE` without a `WHERE`, foreign-key cascades,
+`WITHOUT ROWID`), the write-site budget ratchet, classification/registry coverage, the Milestone-1
+and Milestone-2 end-to-end proofs, the release latency gate, the convergence simulator at
+`SIM_SEEDS` seeds in release, the three offline infrastructure checks, the desktop typecheck and
+unit tests, the web typecheck and unit tests, and the Playwright sync and recently-deleted specs.
+A step whose tool is missing locally (`cfn-lint`, `boto3`) reports SKIP rather than FAIL — the
+`sync-infra` workflow runs those on every push. **A skipped step is not a pass**, which is why the
+footer counts them and the final line says so.
+
+If the simulator fails it prints the failing seed and the `NIXUS_SIM_SEED=<n>` command that replays
+exactly that scenario. A rare-seed failure is a real failure: never re-run at a different seed
+count and call it green, and never relax a gate to ship.
+
+The individual suites are also part of `cargo test` and need no AWS account: they run against an
 in-process object-store fake and synthetic datasets in temp dirs.
 
 ```bash
 cd apps/desktop/src-tauri
 cargo test sync::                     # port, credentials, gate, snapshot, bootstrap, manager
+cargo test sync_e2e -- --nocapture    # the Milestone-1 new-computer proof, with its numbers
+cargo test sync_m2_e2e -- --nocapture # the Milestone-2 two-computer proof, with its numbers
 cargo test sync:: -- --ignored        # the S3-endpoint conformance module (see below)
 cd ../.. && pnpm --filter @nixus/desktop exec playwright test tests/sync.spec.ts
 ```
+
+Both proof suites print one `PASS sync_e2e:` / `PASS sync_m2_e2e:` line per test, so the CI log on
+macOS and on Windows *is* the report. In both of them the cloud is an in-process fake: the real S3
+behaviour of the adapter is proven separately by `infra/sync/owner-object-test.py` against the
+deployed bucket and by the adapter's own error-mapping tests.
 
 `sync/tests_s3_endpoint.rs` is `#[ignore]`d because it needs a real S3-compatible endpoint. It
 is parameterised entirely by `NIXUS_SYNC_TEST_{ENDPOINT,BUCKET,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY,IDENTITY,RUN_ID}`;
