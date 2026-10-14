@@ -1,9 +1,11 @@
 //! AD-5's balance arithmetic, in one place.
 //!
-//! WHY it is its own module rather than methods on the reference engine: Story 16's real emitters
-//! are asserted against the SAME rule the simulator's reference engine folds, and "identical
+//! WHY it is its own module rather than methods on one engine: Story 16's real emitters, Story 13's
+//! reference engine and Story 20's apply path all have to reach the SAME conclusion, and "identical
 //! results on every computer" is only evidence if there is exactly one rule to be identical to.
-//! Story 20's apply path replaces the CALLERS of this, not the arithmetic.
+//! Story 20 added the third caller — `sync::apply` folds a row's stored balance messages with this
+//! and writes the result into `accounts.balance_cents` — which is why it is production code and no
+//! longer `#[cfg(test)]`.
 
 use std::collections::BTreeMap;
 

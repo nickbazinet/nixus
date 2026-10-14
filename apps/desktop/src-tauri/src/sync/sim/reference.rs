@@ -467,7 +467,7 @@ impl ReplicaEngine for ReferenceEngine {
                 rows.insert(row, translated);
             }
 
-            observable.insert(table, rows);
+            observable.insert(table.sql(), rows);
         }
 
         Ok(observable)

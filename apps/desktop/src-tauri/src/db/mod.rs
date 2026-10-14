@@ -32,6 +32,7 @@ pub mod recurring_income;
 pub mod retirement;
 pub mod snapshot_strip;
 pub mod spending_trends;
+pub mod sync_apply;
 pub mod sync_blobs;
 pub mod sync_capture;
 pub mod sync_identity;

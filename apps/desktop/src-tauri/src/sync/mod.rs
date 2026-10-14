@@ -9,6 +9,7 @@
 
 pub mod apply;
 pub mod auth;
+pub mod balance;
 pub mod blob;
 pub mod bootstrap;
 pub mod capture;
@@ -31,6 +32,8 @@ pub mod store;
 mod sim;
 #[cfg(test)]
 pub(crate) mod test_support;
+#[cfg(test)]
+mod tests_apply;
 #[cfg(test)]
 mod tests_auth_boundary;
 #[cfg(test)]

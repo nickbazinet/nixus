@@ -6,7 +6,7 @@
 //! single assertion. See the module docs in `sim/mod.rs` for the swap procedure.
 
 use crate::sync::clock::ClockError;
-use crate::sync::sim::model::{Change, Observable};
+use crate::sync::sim::model::{Change, Observable, RowUuid, Table};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SimError {
@@ -60,4 +60,25 @@ pub(crate) trait ReplicaEngine {
     /// Messages the engine is holding because their subject or parent row has not arrived
     /// yet (AD-11 `sync_pending`). A converged system has none left.
     fn pending_count(&self) -> usize;
+
+    /// What this replica currently holds for one cell.
+    ///
+    /// The generator needs it to avoid issuing an edit that changes NOTHING: the real capture hook
+    /// emits a message only for a column whose value actually changed (AD-3), so a no-op edit is an
+    /// intent no replica could ever hear about, while the oracle — which only sees intents — would
+    /// count it as the winning write. Asking the engine is the only way to know, because "unchanged"
+    /// is a fact about this replica's own row and not about the op log.
+    fn current(
+        &self,
+        table: Table,
+        row: RowUuid,
+        column: &str,
+    ) -> Result<Option<crate::db::sim_tables::SimCell>, SimError> {
+        Ok(self
+            .observable()?
+            .get(table.sql())
+            .and_then(|rows| rows.get(&row))
+            .and_then(|cells| cells.get(column))
+            .cloned())
+    }
 }

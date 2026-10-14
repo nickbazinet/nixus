@@ -442,10 +442,31 @@ pub fn table(name: &str) -> Option<&'static TableRule> {
 }
 
 pub fn merge_kind(table: &str, column: &str) -> Option<MergeKind> {
+    column_rule(table, column).map(|rule| rule.merge)
+}
+
+/// The declared rule for one column, whose `column` field is the `&'static str` the SQL of
+/// `db::sync_apply` is built from.
+///
+/// Apply needs the STATIC name and not the one the message carries: every identifier reaching a
+/// formatted statement has to be owned by this registry rather than by another computer.
+pub fn column_rule(table: &str, column: &str) -> Option<&'static ColumnRule> {
     COLUMNS
         .iter()
         .find(|rule| rule.table == table && rule.column == column)
-        .map(|rule| rule.merge)
+}
+
+/// Every declared column of one table, which is what apply materializes a row from.
+pub fn columns_of(table: &str) -> impl Iterator<Item = &'static ColumnRule> + '_ {
+    COLUMNS.iter().filter(move |rule| rule.table == table)
+}
+
+/// Every edge whose parent is `parent_table`: the children a tombstone has to account for before
+/// the local delete runs (AD-12).
+pub fn edges_into(parent_table: &str) -> impl Iterator<Item = &'static EdgeRule> + '_ {
+    EDGES
+        .iter()
+        .filter(move |rule| rule.parent_table == parent_table)
 }
 
 // Story 20 is the first production caller: it consults the policy when a parent tombstone arrives.

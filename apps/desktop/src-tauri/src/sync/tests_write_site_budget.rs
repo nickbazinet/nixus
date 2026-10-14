@@ -45,6 +45,10 @@ const SANCTIONED_PREFIXES: &[&str] = &[
     "db/sync_state.rs",
     "db/sync_blobs.rs",
     "db/sync_segment.rs",
+    // Story 20: the apply path's own SQL. It runs on the AD-11 apply connection, where the capture
+    // hook is off BY DESIGN — a remote change must not be re-captured as a local one — so counting
+    // it as an unmigrated write site would be counting the feature as its own debt.
+    "db/sync_apply.rs",
     "db/snapshot_strip.rs",
 ];
 

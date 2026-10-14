@@ -41,6 +41,15 @@ impl Table {
         Table::MerchantHints,
     ];
 
+    /// The simulated table of this name, or `None` for one the scenario does not drive.
+    ///
+    /// Story 20's whole-schema dump walks the REGISTRY, so it meets table names the closed enum
+    /// does not have, and the four it does have must still be dumped exactly as the oracle computes
+    /// them.
+    pub(crate) fn from_sql(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|table| table.sql() == name)
+    }
+
     pub(crate) fn sql(self) -> &'static str {
         match self {
             Self::Accounts => "accounts",
@@ -206,9 +215,15 @@ pub(crate) struct Segment {
     pub messages: Vec<Message>,
 }
 
-/// Everything two replicas are required to agree on, keyed by row uuid rather than by local
-/// integer id (AD-2).
-pub(crate) type Observable = BTreeMap<Table, BTreeMap<RowUuid, BTreeMap<&'static str, SimCell>>>;
+/// Everything two replicas are required to agree on, keyed by TABLE NAME and by row uuid rather
+/// than by local integer id (AD-2).
+///
+/// Keyed by name and not by [`Table`] since Story 20: the real engine writes through the real apply
+/// path, which can write any table in the schema, so the dump covers every `Synced`/`AppendOnly`
+/// table instead of the four the scenario drives. A table the enum does not know is then a visible
+/// difference rather than an unrepresentable one.
+pub(crate) type Observable =
+    BTreeMap<&'static str, BTreeMap<RowUuid, BTreeMap<&'static str, SimCell>>>;
 
 const ROW_UUID_DOMAIN: &str = "nixus/sync/sim/row/v1";
 const NATURAL_KEY_DOMAIN: &str = "nixus/sync/sim/natural-key/v1";
@@ -226,6 +241,18 @@ fn digest_uuid(domain: &str, parts: &[&[u8]]) -> RowUuid {
     uuid.copy_from_slice(&digest[..16]);
 
     uuid
+}
+
+/// The identity of a row every replica already had before any sync began.
+///
+/// Derived from the table and the integer id, which is only sound because those rows are written
+/// identically on every replica and never edited. It stands in for the identities a bootstrap
+/// snapshot carries in production.
+pub(crate) fn base_row_uuid(table: &str, row_id: i64) -> RowUuid {
+    digest_uuid(
+        NATURAL_KEY_DOMAIN,
+        &[b"base", table.as_bytes(), &row_id.to_be_bytes()],
+    )
 }
 
 /// A fresh identity. The real one is 16 random bytes (AD-2); derived from a counter here so a

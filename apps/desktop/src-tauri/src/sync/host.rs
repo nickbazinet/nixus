@@ -19,7 +19,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tracing::warn;
 
 use crate::datasets;
@@ -35,6 +35,7 @@ use super::auth::{
 use super::config::{production_bucket, IdentityPoolConfig, SYNC_REGION};
 use super::gate::{AccountEntitlement, GatedStore, SyncGate};
 use super::manager::{SyncFault, SyncHost, SyncSession};
+use super::apply::DatasetApplier;
 use super::segment::{Applier, CountingApplier};
 use super::s3::S3ObjectStore;
 use super::state::SyncStateStore;
@@ -208,6 +209,20 @@ impl DatasetHost {
             self.pins()?,
         ))
     }
+
+    /// What apply tells the UI when remote rows land.
+    ///
+    /// `sync:applied` carries a COUNT and nothing else (AD-16 keeps values out of every event). The
+    /// app has no general "the dataset changed" signal to reuse — the existing events are
+    /// per-feature (`recurring:applied`, `chat:*`) — and inventing the query-invalidation wiring
+    /// belongs to the frontend stories, so this is deliberately the whole of it for now.
+    fn data_changed_notifier(&self) -> Box<dyn Fn(usize) + Send> {
+        let app = self.slot.app.clone();
+
+        Box::new(move |applied| {
+            let _ = app.emit("sync:applied", applied);
+        })
+    }
 }
 
 impl SyncHost for DatasetHost {
@@ -265,7 +280,17 @@ impl SyncHost for DatasetHost {
     }
 
     fn applier(&self) -> Box<dyn Applier + Send> {
-        Box::new(CountingApplier::default())
+        // AD-11's second connection, opened on demand so a dataset that never polls never holds a
+        // third handle to the file. A failure to open it is reported as a counting applier rather
+        // than as a failed launch (AD-16: sync never blocks local use); the next cycle retries.
+        match DatasetApplier::open(&self.db_path, Some(self.data_changed_notifier())) {
+            Ok(applier) => Box::new(applier),
+            Err(error) => {
+                warn!("the apply connection could not be opened: {}", error);
+
+                Box::new(CountingApplier::default())
+            }
+        }
     }
 
     fn freeze(&self, reason: sync_state::FrozenReason) {

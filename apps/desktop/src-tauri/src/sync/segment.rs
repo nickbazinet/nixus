@@ -158,7 +158,7 @@ impl MessageKind {
         }
     }
 
-    fn parse(kind: &str) -> Option<Self> {
+    pub fn parse(kind: &str) -> Option<Self> {
         match kind {
             "field" => Some(MessageKind::Field),
             "counter_delta" => Some(MessageKind::CounterDelta),

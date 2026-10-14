@@ -45,8 +45,14 @@
 //! `<temp>/nixus-sim-traces/` (override with `NIXUS_SIM_TRACE_DIR`) and prints both the path
 //! and the one-seed command that reproduces it.
 
-pub(crate) mod balance;
+/// Story 20 moved the ledger into production code (`sync::balance`): the real apply path folds a
+/// balance with it, so it can no longer live behind `#[cfg(test)]`. Re-exported here so the rule
+/// is still reached by the name the simulator and Story 16's tests already use — one rule, now
+/// three callers.
+pub(crate) use crate::sync::balance;
+
 pub(crate) mod engine;
+pub(crate) mod real;
 pub(crate) mod model;
 pub(crate) mod oracle;
 pub(crate) mod reference;

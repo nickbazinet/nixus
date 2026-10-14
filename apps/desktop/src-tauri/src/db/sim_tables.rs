@@ -43,17 +43,24 @@ impl ToSql for SimCell {
 /// mean the same thing on every replica without Story 14's uuid side table.
 pub(crate) const SIM_CATEGORY_IDS: [i64; 4] = [1, 2, 3, 4];
 
+/// A fixed `created_at` for the base rows.
+///
+/// The default is `datetime('now')`, which differs between two replicas opened a second apart, and
+/// Story 20's whole-schema dump compares these rows: "rows the dataset already held when it was
+/// cloned" has to mean byte-identical rows, or the base itself would read as a divergence.
+const BASE_CREATED_AT: &str = "2026-01-01 00:00:00";
+
 pub(crate) fn seed_shared_base(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO budget_groups (id, name, sort_order) VALUES (1, 'Simulated', 0)",
-        [],
+        "INSERT INTO budget_groups (id, name, sort_order, created_at)          VALUES (1, 'Simulated', 0, ?1)",
+        [BASE_CREATED_AT],
     )?;
 
     for id in SIM_CATEGORY_IDS {
         conn.execute(
-            "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order)
-             VALUES (?1, 1, ?2, 100000, ?3)",
-            rusqlite::params![id, format!("Category {id}"), id],
+            "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order, created_at)
+             VALUES (?1, 1, ?2, 100000, ?3, ?4)",
+            rusqlite::params![id, format!("Category {id}"), id, BASE_CREATED_AT],
         )?;
     }
 
@@ -137,6 +144,69 @@ pub(crate) fn child_ids(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(ids)
+}
+
+/// Adds `delta` to a counter column in one statement, so the pre-update hook sees the real
+/// `new - old` an increment produces (AD-5) rather than a value the caller computed.
+pub(crate) fn bump_counter(
+    conn: &Connection,
+    table: &'static str,
+    id: i64,
+    column: &'static str,
+    delta: i64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        &format!("UPDATE {table} SET {column} = {column} + ?1 WHERE id = ?2"),
+        rusqlite::params![delta, id],
+    )?;
+
+    Ok(())
+}
+
+/// Every row of any table, as `(rowid, column -> cell)`, skipping the cells SQLite reports as NULL.
+///
+/// Story 20's whole-schema dump needs this where [`dump_table`] cannot help: it is addressed by
+/// `_rowid_` because not every synced table calls its key `id`, and a NULL column is OMITTED rather
+/// than refused, because most columns of the real schema are nullable and "absent" compares just as
+/// exactly as a null cell would.
+pub(crate) fn dump_rows(
+    conn: &Connection,
+    table: &'static str,
+    columns: &[&'static str],
+) -> rusqlite::Result<Vec<(i64, BTreeMap<&'static str, SimCell>)>> {
+    if columns.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let selected = columns.join(", ");
+    let mut statement = conn.prepare(&format!(
+        "SELECT _rowid_, {selected} FROM {table} ORDER BY _rowid_"
+    ))?;
+
+    let rows = statement
+        .query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let mut cells = BTreeMap::new();
+            for (offset, column) in columns.iter().enumerate() {
+                let cell = match row.get_ref(offset + 1)? {
+                    rusqlite::types::ValueRef::Null => continue,
+                    rusqlite::types::ValueRef::Integer(number) => SimCell::Int(number),
+                    rusqlite::types::ValueRef::Real(number) => SimCell::Text(number.to_string()),
+                    rusqlite::types::ValueRef::Text(bytes) => {
+                        SimCell::Text(String::from_utf8_lossy(bytes).into_owned())
+                    }
+                    rusqlite::types::ValueRef::Blob(bytes) => {
+                        SimCell::Text(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+                    }
+                };
+                cells.insert(*column, cell);
+            }
+
+            Ok((id, cells))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
 }
 
 /// Every row of `table`, as `(integer id, column -> cell)` in id order.

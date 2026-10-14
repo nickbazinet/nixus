@@ -153,7 +153,7 @@ impl Oracle {
 
         let mut expected = Observable::new();
         for table in Table::ALL {
-            expected.insert(table, BTreeMap::new());
+            expected.insert(table.sql(), BTreeMap::new());
         }
 
         for (table, row) in created {
@@ -193,7 +193,7 @@ impl Oracle {
             }
 
             expected
-                .get_mut(&table)
+                .get_mut(table.sql())
                 .expect("every table was seeded above")
                 .insert(row, cells);
         }

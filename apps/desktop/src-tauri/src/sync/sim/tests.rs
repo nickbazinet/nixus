@@ -72,6 +72,39 @@ proptest! {
             return Err(TestCaseError::fail(failure));
         }
     }
+
+    /// The same gate against the REAL pipeline (Story 20): the real capture hook, the real
+    /// segment bytes and the real apply path on a second connection, with the assertions
+    /// unchanged. This is the one that says the product converges; the reference engine above
+    /// says the rules it implements do.
+    #[test]
+    fn the_real_pipeline_converges_under_the_same_faults(seed in seeds()) {
+        if let Err(failure) = runner::run_real(&config_for(seed)) {
+            return Err(TestCaseError::fail(failure));
+        }
+    }
+}
+
+/// The real pipeline on the seeds the reference engine is pinned on, so a divergence between the
+/// two engines is attributable to a seed rather than to a sample size.
+#[test]
+fn the_real_pipeline_agrees_with_the_reference_on_the_pinned_seeds() {
+    const SEEDS: [u64; 5] = [0x5EED_0013, 0xA11CE, 0xB0B, 0xC0FFEE, 0xDEADBEEF];
+
+    for seed in SEEDS {
+        let config = config_for(seed);
+        let reference = runner::run(&config, Mutation::None).expect("the reference converges");
+        let real = runner::run_real(&config).expect("the real pipeline converges");
+
+        assert_eq!(
+            reference.ops, real.ops,
+            "the two engines did not run the same scenario for seed {seed:x}"
+        );
+        assert_eq!(
+            reference.live_rows, real.live_rows,
+            "the two engines disagree about how many rows survived seed {seed:x}"
+        );
+    }
 }
 
 #[test]
@@ -327,7 +360,7 @@ impl Replicas {
         self.engines[replica]
             .observable()
             .expect("the dump reads")
-            .get(&table)?
+            .get(table.sql())?
             .get(&row)?
             .get("name")
             .cloned()
@@ -337,7 +370,7 @@ impl Replicas {
         self.engines[replica]
             .observable()
             .expect("the dump reads")
-            .get(&table)
+            .get(table.sql())
             .map(|rows| rows.len())
             .unwrap_or(0)
     }
@@ -346,7 +379,7 @@ impl Replicas {
         self.engines[replica]
             .observable()
             .expect("the dump reads")
-            .get(&table)?
+            .get(table.sql())?
             .get(&row)?
             .get(column)
             .cloned()

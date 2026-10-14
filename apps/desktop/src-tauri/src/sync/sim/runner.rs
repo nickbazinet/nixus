@@ -137,6 +137,14 @@ struct Driver<E: ReplicaEngine> {
     parents: HashMap<(Table, RowUuid), RowUuid>,
     buried: Vec<RowRecord>,
     causes: Vec<(RowUuid, RowUuid, i64)>,
+    /// Which replica has already emitted which cause.
+    ///
+    /// AD-5's cause key is `(cause row uuid, kind)`, so one computer can only ever emit a given
+    /// cause ONCE: the real-world action it names — this expense created, that one deleted —
+    /// happens once per computer, and `adjust_account_balance` is reached from the write that
+    /// performs it. The same cause from a DIFFERENT replica is the case the dedup rule exists for
+    /// and is still generated.
+    emitted_causes: HashSet<(usize, RowUuid)>,
     next_ordinal: u64,
     outcome: SimOutcome,
     /// Owns the replicas' directories: dropping the driver is what deletes them, so this is a
@@ -182,6 +190,7 @@ impl<E: ReplicaEngine> Driver<E> {
             parents: HashMap::new(),
             buried: Vec::new(),
             causes: Vec::new(),
+            emitted_causes: HashSet::new(),
             next_ordinal: 0,
             outcome: SimOutcome::default(),
             _dirs: dirs,
@@ -240,6 +249,29 @@ impl<E: ReplicaEngine> Driver<E> {
             .into_iter()
             .filter(|record| record.table == table)
             .collect()
+    }
+
+    /// The subset of `records` this replica actually HOLDS right now.
+    ///
+    /// A replica can only edit, delete or increment a row it has: that is what a UI can do. The
+    /// generator's own live set is global — a natural-key row is shared the moment any replica
+    /// creates it — so without this filter it would issue an op on a row whose segment has not
+    /// arrived, which no real computer can do and which the real engine therefore cannot capture.
+    fn present(
+        &self,
+        replica: usize,
+        records: Vec<RowRecord>,
+    ) -> Result<Vec<RowRecord>, SimError> {
+        let state = self.engines[replica].observable()?;
+
+        Ok(records
+            .into_iter()
+            .filter(|record| {
+                state
+                    .get(record.table.sql())
+                    .is_some_and(|rows| rows.contains_key(&record.row))
+            })
+            .collect())
     }
 
     fn shared(&self, table: Table) -> Vec<RowRecord> {
@@ -344,6 +376,20 @@ impl<E: ReplicaEngine> Driver<E> {
             _ => (fresh_row_uuid(self.ordinal()), Some(replica)),
         };
 
+        // A natural-key row that has already been DELETED is not re-created: Story 13 froze the
+        // tombstone as absorbing per row uuid, and a derived identity is the one case where a
+        // re-insert lands on the SAME uuid, so the scenario would be asking the frozen model a
+        // question it has no answer to. `action_reinsert` excludes this table for the same reason;
+        // the ledger records resurrecting a derived identity as Story 21's decision.
+        if matches!(table, Table::MerchantHints)
+            && self
+                .rows
+                .iter()
+                .any(|existing| existing.table == table && existing.row == row && !existing.live)
+        {
+            return Ok(None);
+        }
+
         let parent = match table.parent() {
             Some((parent_table, _)) => {
                 let candidates = self.visible_in(replica, parent_table);
@@ -401,6 +447,12 @@ impl<E: ReplicaEngine> Driver<E> {
             return Ok(());
         };
         let value = self.value_for(record.table, column);
+        // An edit that writes the value the row already holds is not a change: the real capture
+        // hook emits nothing for it (AD-3), so recording it as an intent would make the oracle
+        // expect a write no replica ever received.
+        if self.engines[replica].current(record.table, record.row, column)? == Some(value.clone()) {
+            return Ok(());
+        }
         let parent = self.parents.get(&(record.table, record.row)).copied();
 
         self.write(
@@ -599,6 +651,7 @@ impl<E: ReplicaEngine> Driver<E> {
             .into_iter()
             .filter(|record| !record.table.editable_columns().is_empty())
             .collect();
+        let editable = self.present(replica, editable)?;
         let Some(record) = self.rng.choose(&editable) else {
             return Ok(());
         };
@@ -644,9 +697,14 @@ impl<E: ReplicaEngine> Driver<E> {
             .filter(|(_, account, _)| accounts.iter().any(|record| record.row == *account))
             .copied()
             .collect();
+        let live: Vec<(RowUuid, RowUuid, i64)> = live
+            .into_iter()
+            .filter(|(cause, _, _)| !self.emitted_causes.contains(&(replica, *cause)))
+            .collect();
         let Some((cause, account, cents)) = self.rng.choose(&live) else {
             return Ok(());
         };
+        self.emitted_causes.insert((replica, cause));
 
         self.write(
             replica,
@@ -660,7 +718,10 @@ impl<E: ReplicaEngine> Driver<E> {
     }
 
     fn action_counter_delta(&mut self, replica: usize) -> Result<(), SimError> {
-        let hints = self.visible_in(replica, Table::MerchantHints);
+        // Only a row this replica actually HOLDS can be incremented: a counter delta is an
+        // `UPDATE ... SET count = count + 1` on a real row, and a natural-key row is shared the
+        // moment any replica creates it — before its segment has necessarily arrived here.
+        let hints = self.present(replica, self.visible_in(replica, Table::MerchantHints))?;
         let Some(record) = self.rng.choose(&hints) else {
             return Ok(());
         };
@@ -677,7 +738,7 @@ impl<E: ReplicaEngine> Driver<E> {
     }
 
     fn action_delete(&mut self, replica: usize) -> Result<(), SimError> {
-        let candidates = self.visible(replica);
+        let candidates = self.present(replica, self.visible(replica))?;
         let Some(record) = self.rng.choose(&candidates) else {
             return Ok(());
         };
@@ -697,6 +758,9 @@ impl<E: ReplicaEngine> Driver<E> {
             return Ok(());
         };
         let replica = self.rng.below(self.replicas() as u64) as usize;
+        if self.present(replica, vec![record])?.is_empty() {
+            return Ok(());
+        }
         self.outcome.double_deletes += 1;
 
         self.write(
@@ -724,6 +788,11 @@ impl<E: ReplicaEngine> Driver<E> {
 
         let editor = self.rng.below(self.replicas() as u64) as usize;
         let deleter = self.other_than(editor);
+        if self.present(editor, vec![record])?.is_empty()
+            || self.present(deleter, vec![record])?.is_empty()
+        {
+            return Ok(());
+        }
         self.outcome.concurrent_edit_deletes += 1;
         self.edit(editor, record)?;
 
@@ -768,6 +837,7 @@ impl<E: ReplicaEngine> Driver<E> {
             .into_iter()
             .filter(|record| record.table != Table::MerchantHints)
             .collect();
+        let candidates = self.present(replica, candidates)?;
         let Some(record) = self.rng.choose(&candidates) else {
             return Ok(());
         };
@@ -909,7 +979,7 @@ impl<E: ReplicaEngine> Driver<E> {
     fn assert_balances_sum(&self, state: &Observable) -> Result<(), String> {
         let expected = self.oracle.expected_balances();
         let accounts = state
-            .get(&Table::Accounts)
+            .get(Table::Accounts.sql())
             .ok_or_else(|| "accounts missing from the dump".to_string())?;
 
         for (row, cells) in accounts {
@@ -931,7 +1001,7 @@ impl<E: ReplicaEngine> Driver<E> {
 
     fn assert_deletes_won(&self, state: &Observable) -> Result<(), String> {
         for (table, row) in self.oracle.deleted_rows() {
-            if state.get(&table).is_some_and(|rows| rows.contains_key(&row)) {
+            if state.get(table.sql()).is_some_and(|rows| rows.contains_key(&row)) {
                 return Err(format!(
                     "{}#{} was deleted but survived",
                     table.sql(),
@@ -975,18 +1045,17 @@ fn difference(left: &Observable, right: &Observable) -> String {
     let empty = BTreeMap::new();
     let mut lines = Vec::new();
 
-    for table in Table::ALL {
-        let left_rows = left.get(&table).unwrap_or(&empty);
-        let right_rows = right.get(&table).unwrap_or(&empty);
+    let tables: std::collections::BTreeSet<&'static str> =
+        left.keys().chain(right.keys()).copied().collect();
+    for table in tables {
+        let left_rows = left.get(table).unwrap_or(&empty);
+        let right_rows = right.get(table).unwrap_or(&empty);
 
         for (row, cells) in left_rows {
             match right_rows.get(row) {
-                None => {
-                    lines.push(format!("  - {}#{} only on the left", table.sql(), short(*row)))
-                }
+                None => lines.push(format!("  - {table}#{} only on the left", short(*row))),
                 Some(other) if other != cells => lines.push(format!(
-                    "  ~ {}#{}\n      left  {cells:?}\n      right {other:?}",
-                    table.sql(),
+                    "  ~ {table}#{}\n      left  {cells:?}\n      right {other:?}",
                     short(*row)
                 )),
                 Some(_) => {}
@@ -994,7 +1063,7 @@ fn difference(left: &Observable, right: &Observable) -> String {
         }
         for row in right_rows.keys() {
             if !left_rows.contains_key(row) {
-                lines.push(format!("  + {}#{} only on the right", table.sql(), short(*row)));
+                lines.push(format!("  + {table}#{} only on the right", short(*row)));
             }
         }
     }
@@ -1023,6 +1092,14 @@ where
 pub(crate) fn run(config: &SimConfig, mutation: Mutation) -> Result<SimOutcome, String> {
     run_with(config, |_, install, db_path, wall| {
         ReferenceEngine::open(install, db_path, wall, mutation)
+    })
+}
+
+/// The same scenario against the REAL pipeline: real capture, real segment bytes, real apply
+/// (Story 20). The assertions are the ones above, unchanged.
+pub(crate) fn run_real(config: &SimConfig) -> Result<SimOutcome, String> {
+    run_with(config, |_, install, db_path, wall| {
+        crate::sync::sim::real::RealEngine::open(install, db_path, wall)
     })
 }
 

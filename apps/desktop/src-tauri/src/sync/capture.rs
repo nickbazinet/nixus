@@ -29,6 +29,7 @@ use rusqlite::types::{Value, ValueRef};
 use rusqlite::Connection;
 use tracing::warn;
 
+use crate::db::sync_apply;
 use crate::db::sync_capture::{self, ColumnState, LoggedMessage, CONTENT_HASH_LEN};
 use crate::db::sync_identity::{self, RowUuid};
 use crate::error::AppError;
@@ -149,6 +150,33 @@ pub mod payload {
         }
 
         Ok(fields)
+    }
+
+    /// The inverse of [`encode`].
+    ///
+    /// Untrusted input: these bytes were written by another computer, so every case is a refusal
+    /// rather than a slice that could panic. A text payload that is not UTF-8 is malformed because
+    /// SQLite's own `TEXT` is, and accepting it would store bytes no read could return.
+    pub fn decode(encoded: &[u8]) -> Result<Value, AppError> {
+        let (tag, body) = encoded.split_first().ok_or_else(malformed)?;
+
+        let fixed = |width: usize| -> Result<[u8; 8], AppError> {
+            if body.len() != width {
+                return Err(malformed());
+            }
+            body.try_into().map_err(|_| malformed())
+        };
+
+        match *tag {
+            TAG_NULL if body.is_empty() => Ok(Value::Null),
+            TAG_INTEGER => Ok(Value::Integer(i64::from_be_bytes(fixed(8)?))),
+            TAG_REAL => Ok(Value::Real(f64::from_bits(u64::from_be_bytes(fixed(8)?)))),
+            TAG_TEXT => Ok(Value::Text(
+                std::str::from_utf8(body).map_err(|_| malformed())?.to_string(),
+            )),
+            TAG_BLOB => Ok(Value::Blob(body.to_vec())),
+            _ => Err(malformed()),
+        }
     }
 
     fn take_u32(encoded: &[u8], cursor: &mut usize) -> Result<u32, AppError> {
@@ -836,12 +864,13 @@ impl Capture {
                     row_json,
                 } => {
                     let encoded = payload::encode(&Value::Text(row_json.clone()));
+                    let hlc = stamping.clock.now().encode();
 
                     sync_capture::append(
                         conn,
                         &LoggedMessage {
                             install,
-                            hlc: &stamping.clock.now().encode(),
+                            hlc: &hlc,
                             kind: "tombstone",
                             table_name: table,
                             row_uuid,
@@ -849,6 +878,21 @@ impl Capture {
                             cause_uuid: None,
                             payload: Some(&encoded),
                         },
+                    )?;
+
+                    // A LOCAL delete belongs in `sync_tombstone` for a convergence reason, not only
+                    // for Story 21's restore view: the tombstone is what makes delete WIN over a
+                    // concurrent edit (AD-5, AD-12). An edit arriving from another computer after
+                    // the row is gone here has to be distinguishable from one whose row has not
+                    // arrived yet, or it would wait for a row that is never coming back.
+                    sync_apply::record_tombstone(
+                        conn,
+                        table,
+                        row_uuid,
+                        &hlc,
+                        install,
+                        row_json,
+                        crate::sync::apply::TOMBSTONE_RETENTION_DAYS,
                     )?;
                     written += 1;
                     forgotten.push((table, *row_id, *row_uuid));
