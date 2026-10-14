@@ -1058,3 +1058,32 @@ export interface SyncDiagnostics {
 export interface SyncDiagnosticsExport {
   path: string;
 }
+
+/**
+ * One restorable delete (AD-5: 30 days), as `list_recently_deleted` returns it.
+ *
+ * `id` is `<table>:<uuid hex>` and is the only handle the frontend holds: the row's local integer
+ * id died with the row, and the uuid is what the backend restores by (AD-2).
+ */
+export interface RecentlyDeletedItem {
+  id: string;
+  table_name: string;
+  label: string;
+  deleted_at: string;
+  days_left: number;
+  child_count: number;
+}
+
+/**
+ * `sync_available` is false for a local-only profile: it records no delete at all, so the view
+ * explains that instead of showing an empty list that would read as "nothing was ever deleted".
+ */
+export interface RecentlyDeletedView {
+  sync_available: boolean;
+  items: RecentlyDeletedItem[];
+}
+
+export interface RestoreOutcome {
+  table_name: string;
+  restored_rows: number;
+}

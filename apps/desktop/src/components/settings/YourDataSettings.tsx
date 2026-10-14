@@ -11,6 +11,7 @@ import {
   useSystemTemplates,
 } from "@/hooks/useBudgetTemplates";
 import { DangerZone } from "./DangerZone";
+import { RecentlyDeletedSettings } from "./RecentlyDeletedSettings";
 import { SyncSettings } from "./SyncSettings";
 import { SettingRow, SettingsSection } from "./SettingRow";
 
@@ -310,6 +311,8 @@ export function YourDataSettings() {
       </SettingsSection>
 
       <SyncSettings />
+
+      <RecentlyDeletedSettings />
 
       <DangerZone />
     </div>

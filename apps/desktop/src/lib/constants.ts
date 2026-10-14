@@ -100,4 +100,5 @@ export const queryKeys = {
   projectPace: ["project-pace"] as const,
   syncStatus: ["sync-status"] as const,
   syncDiagnostics: ["sync-diagnostics"] as const,
+  recentlyDeleted: ["recently-deleted"] as const,
 };

@@ -71,7 +71,10 @@ export type SyncErrorCode =
   | "no_pending_prompt"
   | "actor_unavailable"
   | "image_missing"
-  | "image_corrupt";
+  | "image_corrupt"
+  | "restore_not_found"
+  | "restore_parent_missing"
+  | "restore_conflict";
 
 const SYNC_CODES: readonly SyncErrorCode[] = [
   "local_only",
@@ -102,6 +105,9 @@ const SYNC_CODES: readonly SyncErrorCode[] = [
   "actor_unavailable",
   "image_missing",
   "image_corrupt",
+  "restore_not_found",
+  "restore_parent_missing",
+  "restore_conflict",
 ];
 
 export interface SyncError {
@@ -178,6 +184,14 @@ export function syncMessageKey(code: SyncErrorCode): string {
       return "sync.errorImageMissing";
     case "image_corrupt":
       return "sync.errorImageCorrupt";
+    // The three restore refusals each name a different next action: nothing to restore any more,
+    // restore what it belonged to first, or deal with the thing that took its place.
+    case "restore_not_found":
+      return "recentlyDeleted.errorNotFound";
+    case "restore_parent_missing":
+      return "recentlyDeleted.errorParentMissing";
+    case "restore_conflict":
+      return "recentlyDeleted.errorConflict";
   }
 }
 
