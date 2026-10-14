@@ -307,3 +307,52 @@ pub(crate) fn import_budget_groups(conn: &Connection, rows: usize) -> Result<(),
 
     Ok(())
 }
+
+/// A raw `DELETE` of one expense row, so a test can delete a template-generated occurrence the way
+/// the app does (inside a captured write) and reconcile a bypassing one the way it does not.
+pub(crate) fn delete_expense_row(conn: &Connection, id: i64) -> Result<usize, AppError> {
+    Ok(conn.execute("DELETE FROM expenses WHERE id = ?1", params![id])?)
+}
+
+pub(crate) fn count_expenses(conn: &Connection) -> Result<i64, AppError> {
+    Ok(conn.query_row("SELECT COUNT(*) FROM expenses", [], |row| row.get(0))?)
+}
+
+/// A write to a `LocalOnly` table (AD-5), which reconcile must never describe in a message because
+/// those tables never travel at all.
+pub(crate) fn touch_local_only_table(conn: &Connection) -> Result<(), AppError> {
+    conn.execute("UPDATE schema_version SET version = version", [])?;
+
+    Ok(())
+}
+
+/// A raw `config` write, which is what an unmigrated write site looks like for the one table with a
+/// per-ROW exclusion (AD-5): `db::config::set` goes through capture and binds an identity, and that
+/// is exactly what a deny-listed key must never acquire.
+pub(crate) fn set_config_directly(
+    conn: &Connection,
+    key: &str,
+    value: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
+        params![key, value],
+    )?;
+
+    Ok(())
+}
+
+/// A raw edit of ONE captured column of an expense, so a test can produce the partial `field`
+/// message AD-5's delete-wins rule is about.
+pub(crate) fn rename_expense_merchant(
+    conn: &Connection,
+    id: i64,
+    merchant: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE expenses SET merchant = ?1 WHERE id = ?2",
+        params![merchant, id],
+    )?;
+
+    Ok(())
+}

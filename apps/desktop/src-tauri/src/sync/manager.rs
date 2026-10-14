@@ -44,7 +44,9 @@ use super::bootstrap::{
 use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncBlocked, SyncGate,
 };
+use super::clock::Clock;
 use super::owner::{owner_object_body, owner_sub_from_body, OWNER_OBJECT_KEY};
+use super::reconcile;
 use super::segment::{self, Applier, Head, PollReport, PullCursor, SegmentError};
 use super::snapshot::{self, LatestSnapshot, SnapshotError, UploadOutcome};
 use super::store::{ETag, ObjectStore, StoreError};
@@ -368,6 +370,14 @@ pub struct SyncTuning {
     /// The floor between two sweeps of the expired tombstones (AD-5: a delete is restorable for 30
     /// days). Local file work only, so it runs whatever the entitlement and whatever the network.
     pub tombstone_purge_interval: Duration,
+    /// The floor between two reconcile passes (AD-3).
+    ///
+    /// Dated from CONSTRUCTION like the two log floors, so the startup pass happens one interval
+    /// after the app opened the dataset rather than inside the first tick — reconcile reads every
+    /// travelling table, and launch belongs to the snapshot path (AD-16). After that pass only an
+    /// unmigrated write site justifies another one, which is what "when idle while unmigrated write
+    /// sites remain" means.
+    pub reconcile_interval: Duration,
 }
 
 impl Default for SyncTuning {
@@ -381,6 +391,7 @@ impl Default for SyncTuning {
             remote_poll_interval: Duration::from_secs(30),
             segment_interval: Duration::from_secs(10),
             tombstone_purge_interval: Duration::from_secs(6 * 60 * 60),
+            reconcile_interval: Duration::from_secs(60),
         }
     }
 }
@@ -473,6 +484,7 @@ pub struct SyncDiagnostics {
     pub segments_shipped: u64,
     pub segments_fetched: u64,
     pub messages_received: u64,
+    pub reconcile_messages: u64,
     pub conflicts: u64,
     pub restores: u64,
     pub failures: u64,
@@ -497,6 +509,8 @@ struct SyncStats {
     segments_shipped: u64,
     segments_fetched: u64,
     messages_received: u64,
+    /// Messages reconcile had to emit because a write bypassed capture (AD-3). Counts only.
+    reconcile_messages: u64,
     conflicts: u64,
     restores: u64,
     failures: u64,
@@ -575,6 +589,17 @@ pub(crate) struct SyncActor<H: SyncHost> {
     last_segment_ship: Option<Instant>,
     last_remote_poll: Option<Instant>,
     last_tombstone_purge: Option<Instant>,
+    /// The pass in progress, or `None` between passes (AD-3, AD-16: one chunk per cycle).
+    reconcile: Option<reconcile::Cursor>,
+    /// Reconcile's own stamping clock. The capture hook's clock belongs to the UI connection and
+    /// this runs on the actor's, so it is a SECOND instance for the same install id — the same
+    /// arrangement `DatasetApplier` already has. Two instances can only collide on an exact
+    /// `(wall_ms, counter)`, and a collision makes reconcile's own message LOSE the per-column
+    /// comparison, so the next pass simply re-emits it: the failure mode is a retry, not a lost
+    /// write.
+    reconcile_clock: Option<Clock>,
+    last_reconcile: Option<Instant>,
+    reconcile_done_once: bool,
 }
 
 impl<H: SyncHost> SyncActor<H> {
@@ -633,6 +658,10 @@ impl<H: SyncHost> SyncActor<H> {
             // Deliberately NOT dated from construction: the first tick is the startup sweep AD-5
             // asks for, and it is a local `DELETE` on an indexed column rather than a request.
             last_tombstone_purge: None,
+            reconcile: None,
+            reconcile_clock: None,
+            last_reconcile: Some(started),
+            reconcile_done_once: false,
         };
 
         (actor, status_rx, events_rx)
@@ -670,6 +699,7 @@ impl<H: SyncHost> SyncActor<H> {
             segments_shipped: self.stats.segments_shipped,
             segments_fetched: self.stats.segments_fetched,
             messages_received: self.stats.messages_received,
+            reconcile_messages: self.stats.reconcile_messages,
             conflicts: self.stats.conflicts,
             restores: self.stats.restores,
             failures: self.stats.failures,
@@ -1126,6 +1156,85 @@ impl<H: SyncHost> SyncActor<H> {
         }
     }
 
+    /// Whether a reconcile pass should start now (AD-3).
+    ///
+    /// Once after the dataset is opened, and afterwards only while an unmigrated write site exists:
+    /// with every write site migrated there is nothing left that can bypass capture, so a repeating
+    /// pass would be a full-table scan per interval that provably finds nothing.
+    fn reconcile_pass_due(&self) -> bool {
+        let elapsed = self
+            .last_reconcile
+            .is_none_or(|at| at.elapsed() >= self.tuning.reconcile_interval);
+
+        elapsed && (!self.reconcile_done_once || reconcile::unmigrated_write_sites_remain())
+    }
+
+    /// One bounded chunk of a reconcile pass, on the actor's own connection.
+    ///
+    /// Capture is OFF structurally: the hook is per connection and this one never had it, so
+    /// reconcile's `sync_log` rows are messages rather than captured changes. A failure is logged
+    /// and never raised as a sync fault — the cursor keeps its place and the next cycle retries —
+    /// because an unreconciled row costs convergence latency, not correctness, and the alternative
+    /// is a backoff that would also stop shipping and receiving (AD-16).
+    fn reconcile_chunk(&mut self, install: &str) {
+        if self.reconcile.is_none() {
+            if !self.reconcile_pass_due() {
+                return;
+            }
+            self.reconcile = Some(reconcile::Cursor::default());
+        }
+
+        if self.reconcile_clock.is_none() {
+            match Clock::new(install) {
+                Ok(clock) => self.reconcile_clock = Some(clock),
+                Err(error) => {
+                    tracing::warn!("Reconcile could not build a clock: {}", error);
+                    self.reconcile = None;
+                    return;
+                }
+            }
+        }
+
+        let mut cursor = self.reconcile.take().unwrap_or_default();
+        let stepped = {
+            // Unreachable — the clock was just built — and it puts the cursor back rather than
+            // returning with it taken, so an unreachable branch cannot silently lose a pass.
+            let Some(clock) = self.reconcile_clock.as_ref() else {
+                self.reconcile = Some(cursor);
+                return;
+            };
+
+            self.host
+                .with_dataset(|conn| reconcile::step(conn, clock, install, &mut cursor))
+        };
+
+        match stepped {
+            Ok(report) => {
+                self.stats.reconcile_messages += report.messages() as u64;
+                if report.messages() > 0 {
+                    tracing::info!(
+                        "Reconcile emitted {} missing message(s) for {} row(s)",
+                        report.messages(),
+                        report.rows
+                    );
+                }
+            }
+            Err(fault) => {
+                tracing::warn!("A reconcile chunk failed: {}", fault.code());
+                self.reconcile = Some(cursor);
+                return;
+            }
+        }
+
+        if cursor.done() {
+            self.last_reconcile = Some(Instant::now());
+            self.reconcile_done_once = true;
+            self.reconcile = None;
+        } else {
+            self.reconcile = Some(cursor);
+        }
+    }
+
     /// One cycle of the log protocol (AD-6): ship what is local, publish the head and the roster,
     /// then poll the roster and the known heads.
     ///
@@ -1149,6 +1258,9 @@ impl<H: SyncHost> SyncActor<H> {
         // install id for a cycle it is not allowed to run (AD-14).
         let session = self.host.connect().await?;
         let install = self.install()?;
+
+        // BEFORE the ship, so whatever reconcile had to emit leaves in this same cycle (AD-3).
+        self.reconcile_chunk(&install);
 
         if ship_due {
             self.last_segment_ship = Some(Instant::now());

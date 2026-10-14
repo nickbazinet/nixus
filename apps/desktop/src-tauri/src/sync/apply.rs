@@ -440,8 +440,27 @@ fn revives(
 }
 
 /// A derived uuid cannot be re-minted, which is what makes the absorbing rule unsound for it.
+///
+/// `SurrogateOrTemplate` (`expenses`, `income_entries`) is covered too, and the reason it is SAFE
+/// to cover a table that also holds hand-entered rows is the shape of the message rather than the
+/// table: [`is_whole_row`] is only ever an INSERT — capture emits every column on an insert and
+/// only the CHANGED ones on an update, and an update never carries the `Immutable` columns at all —
+/// while a surrogate row the user re-creates mints a FRESH UUIDv4 (AD-2). So a whole-row message
+/// under a uuid a tombstone already claims, stamped after it, cannot be a hand-entered row coming
+/// back: it is a recurring occurrence that every computer regenerates from the same template under
+/// the same derived uuid. Delete-wins over concurrent EDITS is untouched, because a partial field
+/// message is still absorbed.
+///
+/// DELIBERATE DEVIATION from story 21's proposed fix (re-derive
+/// `identity::recurring_{expense,income}` inside apply and treat a match as derived), recorded in
+/// the ledger: that derivation needs the TEMPLATE row to exist locally, so the revive decision
+/// would depend on local state and two replicas could reach opposite answers about the same message
+/// and diverge forever. This rule reads only the message, which is what makes every replica agree.
 fn has_derived_identity(rule: &registry::TableRule) -> bool {
-    matches!(rule.identity, Some(RowIdentity::Natural))
+    matches!(
+        rule.identity,
+        Some(RowIdentity::Natural | RowIdentity::SurrogateOrTemplate)
+    )
 }
 
 /// Whether a field message carries the whole row — every column capture emits for an INSERT.
@@ -1147,7 +1166,7 @@ fn balance_column(table: &str) -> Option<&'static str> {
         .map(|column| column.column)
 }
 
-fn counter_total(
+pub(crate) fn counter_total(
     conn: &Connection,
     table: &str,
     row_uuid: &[u8; 16],
@@ -1165,7 +1184,7 @@ fn counter_total(
 
 /// The fold AD-5 defines, over every balance message this computer holds for the row — its own and
 /// every other computer's.
-fn balance_value(conn: &Connection, table: &str, row_uuid: &[u8; 16]) -> Result<i64, AppError> {
+pub(crate) fn balance_value(conn: &Connection, table: &str, row_uuid: &[u8; 16]) -> Result<i64, AppError> {
     let mut ledger: BalanceLedger<[u8; 16]> = BalanceLedger::default();
 
     for logged in apply_db::balance_messages(conn, table, row_uuid)? {
@@ -1192,7 +1211,7 @@ fn balance_value(conn: &Connection, table: &str, row_uuid: &[u8; 16]) -> Result<
 
 /// The same domain-separated digest capture computes, so a field written by apply and the same field
 /// written locally hash identically and Story 22's reconcile sees no difference.
-fn content_hash(encoded: &[u8]) -> [u8; sync_capture::CONTENT_HASH_LEN] {
+pub(crate) fn content_hash(encoded: &[u8]) -> [u8; sync_capture::CONTENT_HASH_LEN] {
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();

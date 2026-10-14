@@ -501,6 +501,7 @@ mod tests {
             segments_shipped: 9,
             segments_fetched: 5,
             messages_received: 41,
+            reconcile_messages: 2,
             conflicts: 2,
             restores: 1,
             failures: 3,

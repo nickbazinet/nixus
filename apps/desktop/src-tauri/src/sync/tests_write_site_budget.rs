@@ -49,6 +49,8 @@ const SANCTIONED_PREFIXES: &[&str] = &[
     // hook is off BY DESIGN — a remote change must not be re-captured as a local one — so counting
     // it as an unmigrated write site would be counting the feature as its own debt.
     "db/sync_apply.rs",
+    // Story 22: reconcile's own scan SQL, on the same `LocalOnly`/own-connection footing.
+    "db/sync_reconcile.rs",
     "db/snapshot_strip.rs",
 ];
 
@@ -356,6 +358,82 @@ fn the_scanner_sees_the_unmigrated_sites_and_not_the_migrated_one() {
             "{structural} is a structurally-uncaptured write and must still be counted"
         );
     }
+}
+
+/// AD-3's second half: reconcile has to keep running WHILE IDLE for as long as an unmigrated write
+/// site exists, so the production trigger is the budget file minus the justified structural
+/// exclusions — and this is what keeps the two from drifting.
+///
+/// A story that adds an uncaptured write site therefore fails HERE with the exact line to add, and
+/// the idle reconcile turns itself back on; a story that migrates the last one removes it again.
+#[test]
+fn the_idle_reconcile_trigger_follows_the_write_site_budget() {
+    let recorded: Budget = serde_json::from_str(
+        &std::fs::read_to_string(budget_path()).expect("the budget file is checked in"),
+    )
+    .expect("the budget file is valid JSON");
+
+    let justified: BTreeMap<&str, &str> = JUSTIFICATIONS.iter().copied().collect();
+    let mut unjustified: Vec<&str> = recorded
+        .sites
+        .keys()
+        .map(String::as_str)
+        .filter(|site| !justified.contains_key(site))
+        .collect();
+    unjustified.sort_unstable();
+
+    let mut trigger: Vec<&str> = crate::sync::reconcile::UNMIGRATED_WRITE_SITES.to_vec();
+    trigger.sort_unstable();
+
+    assert_eq!(
+        trigger, unjustified,
+        "sync::reconcile::UNMIGRATED_WRITE_SITES must be exactly the budget's unjustified sites, \
+         or the idle reconcile is running for the wrong reason (AD-3)"
+    );
+    assert_eq!(
+        crate::sync::reconcile::unmigrated_write_sites_remain(),
+        !unjustified.is_empty()
+    );
+
+    // Non-vacuity: the comparison is against a file that really lists the remainder.
+    assert!(
+        !recorded.sites.is_empty(),
+        "the budget file lists no site at all, so the comparison above proves nothing"
+    );
+}
+
+/// How to LOWER the budget, as a CHANGELOG the next person reads from the test that fails:
+///
+/// | from | to | story | what moved |
+/// | --- | --- | --- | --- |
+/// | 75 | 75 | 15 | the file was created; `budget_groups` proved the path |
+/// | 75 | 70 | 16 | `insert_account`, `record_merchant_category_hint` |
+/// | 70 | 44 | 17 | every finance write site |
+/// | 44 | 7  | 18 | projects, maintenance, chat, config, audit |
+/// | 7  | 7  | 22 | nothing: the remainder is the structural four, each justified |
+///
+/// The procedure, unchanged: move the caller onto `ActiveDataset::write`, put
+/// `CAPTURE-SANCTIONED (AD-3)` in the comment block directly above the `db::*` function, then
+/// `NIXUS_WRITE_SITE_BUDGET=update cargo test write_site`. The total may only ever SHRINK — the
+/// assertion in `the_write_site_budget_may_only_shrink` is one-directional on purpose, and raising
+/// a recorded number by hand is the one edit to this file that is never correct.
+#[test]
+fn the_budget_total_is_the_recorded_one_and_only_shrinks() {
+    let recorded: Budget = serde_json::from_str(
+        &std::fs::read_to_string(budget_path()).expect("the budget file is checked in"),
+    )
+    .expect("the budget file is valid JSON");
+
+    assert_eq!(
+        recorded.total,
+        recorded.sites.values().sum::<usize>(),
+        "the recorded total must be the sum of the recorded sites"
+    );
+    assert!(
+        recorded.total <= 7,
+        "the budget may only shrink; story 18 left it at 7 and it is now {}",
+        recorded.total
+    );
 }
 
 /// Every surviving site must say why it survives, in the file itself. This is what stops the

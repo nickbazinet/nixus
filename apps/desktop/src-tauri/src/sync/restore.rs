@@ -33,6 +33,7 @@ use crate::error::AppError;
 
 use super::capture;
 use super::identity;
+use super::reconcile;
 use super::registry::{self, MergeKind, RowIdentity};
 
 /// How many deletes the view reads. Large enough that 30 days of ordinary use fits, bounded so one
@@ -111,7 +112,13 @@ pub fn list(active: &ActiveDataset) -> Result<RecentlyDeletedView, AppError> {
         });
     }
 
-    let tombstones = apply_db::recent_tombstones(conn, RECENTLY_DELETED_LIMIT)?;
+    // A reconcile-detected delete (story 22) retained no row, so there is nothing to show and
+    // nothing to bring back: it is dropped from the view rather than listed as an item whose
+    // restore would always fail.
+    let tombstones: Vec<TombstoneRow> = apply_db::recent_tombstones(conn, RECENTLY_DELETED_LIMIT)?
+        .into_iter()
+        .filter(|tombstone| !reconcile::is_reconciled_delete(&tombstone.row_json))
+        .collect();
     let grouped = group(&tombstones);
     let items = tombstones
         .iter()
@@ -129,10 +136,15 @@ pub fn list(active: &ActiveDataset) -> Result<RecentlyDeletedView, AppError> {
 pub fn restore(active: &ActiveDataset, key: &TombstoneKey) -> Result<RestoreOutcome, AppError> {
     let restored = active.write(|tx| {
         let tombstones = apply_db::recent_tombstones(tx, RECENTLY_DELETED_LIMIT)?;
-        if !tombstones
+        let found = tombstones
             .iter()
-            .any(|tombstone| matches(tombstone, key.table, &key.row_uuid))
-        {
+            .find(|tombstone| matches(tombstone, key.table, &key.row_uuid));
+        // `restore_not_found` and not a new code: from the user's side there IS no retained row —
+        // reconcile only ever learned that the row was gone (AD-3), never what it held.
+        let Some(found) = found else {
+            return Err(not_found());
+        };
+        if reconcile::is_reconciled_delete(&found.row_json) {
             return Err(not_found());
         }
 

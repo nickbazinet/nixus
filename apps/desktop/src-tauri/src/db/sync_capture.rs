@@ -319,6 +319,36 @@ pub(crate) fn all_messages(conn: &Connection) -> Result<Vec<StoredMessage>, AppE
     Ok(rows)
 }
 
+/// The messages that have NOT been shipped yet, in insertion order.
+///
+/// What a test means by "what was just emitted": shipping marks a row with its `(seq, idx)` and
+/// leaves it in the log — story 19 needs the history for the balance and counter folds — so the
+/// whole log is not the same question.
+#[cfg(test)]
+pub(crate) fn unshipped_messages(conn: &Connection) -> Result<Vec<StoredMessage>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT install, hlc, kind, table_name, row_uuid, column_name, cause_uuid, payload \
+         FROM sync_log WHERE seq IS NULL ORDER BY id",
+    )?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(StoredMessage {
+                install: row.get(0)?,
+                hlc: row.get(1)?,
+                kind: row.get(2)?,
+                table_name: row.get(3)?,
+                row_uuid: row.get(4)?,
+                column_name: row.get(5)?,
+                cause_uuid: row.get(6)?,
+                payload: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
 /// Drops the merge state of a row that no longer exists.
 ///
 /// A tombstone is absorbing per row uuid and AD-2 removes the identity mapping with it, so a

@@ -172,6 +172,15 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo test sync_e2e -- --nocapture
 
+      # AD-3/AD-19's write-site ratchet, as its OWN step. It is already covered by `cargo test`
+      # above, but a growth in the uncaptured-write budget is a specific, reviewable regression —
+      # "someone added a write that bypasses capture" — and a red step named after it says that,
+      # where one failure line inside a 1,700-test run does not. Cheap by construction: the test
+      # binary is already built by the step above, and the test is a text scan of `src/`.
+      - name: Write-site ratchet (AD-3)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test sync::tests_write_site_budget -- --nocapture
+
       - name: Clippy
         working-directory: apps/desktop/src-tauri
         run: cargo clippy --all-targets -- -D warnings

@@ -33,6 +33,9 @@ fn tuning() -> SyncTuning {
         remote_poll_interval: Duration::ZERO,
         segment_interval: Duration::ZERO,
         tombstone_purge_interval: Duration::from_secs(86_400),
+        // Reconcile is driven directly in `tests_reconcile.rs`: here it would be a full scan of
+        // every travelling table inside a fixture that counts requests (AD-3, story 22).
+        reconcile_interval: Duration::from_secs(86_400),
     }
 }
 
