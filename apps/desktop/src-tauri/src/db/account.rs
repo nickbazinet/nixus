@@ -2,6 +2,7 @@ use rusqlite::{params, Connection};
 
 use crate::error::AppError;
 use crate::models::{Account, CreateAccountInput, UpdateAccountInput};
+use crate::sync::capture::{self, BalanceCause};
 
 const VALID_ACCOUNT_TYPES: &[&str] = &[
     "chequing",
@@ -36,6 +37,25 @@ pub fn is_liability_account_type(account_type: &str) -> bool {
     LIABILITY_ACCOUNT_TYPES.contains(&account_type)
 }
 
+/// The row whose own change moved an account balance, and why — AD-5's cause key, so two
+/// computers reacting to ONE real-world action contribute one delta rather than two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BalanceCauseRow {
+    pub table: &'static str,
+    pub row_id: i64,
+    pub cause: BalanceCause,
+}
+
+impl BalanceCauseRow {
+    pub fn new(table: &'static str, row_id: i64, cause: BalanceCause) -> Self {
+        Self {
+            table,
+            row_id,
+            cause,
+        }
+    }
+}
+
 pub fn balance_delta_cents(
     account_type: &str,
     current_balance_cents: i64,
@@ -59,11 +79,20 @@ pub fn balance_delta_cents(
     sign * new_owed_cents
 }
 
+/// NOT capture-sanctioned yet, deliberately: this function emits correctly inside
+/// `ActiveDataset::write`, but its callers are the expense and income write sites Story 17
+/// migrates, so the ratchet must keep showing it.
+///
+/// AD-5's delta emitter. The signed amount is computed HERE, once, by the computer the user acted
+/// on — including the credit-card sign rules — and shipped verbatim, because a replica that
+/// recomputed it with `balance_delta_cents` against a balance of its own would get a different
+/// number the moment the two balances differ by one unsettled message.
 pub fn adjust_account_balance(
     conn: &Connection,
     account_id: i64,
     kind: CashFlowKind,
     amount_cents: i64,
+    cause: BalanceCauseRow,
 ) -> Result<BalanceChange, AppError> {
     let account = get_account_for_balance_adjustment(conn, account_id)?;
     let new_balance_cents = balance_delta_cents(
@@ -78,6 +107,17 @@ pub fn adjust_account_balance(
         params![new_balance_cents, account_id],
     )?;
 
+    capture::emit_balance_delta(
+        account_id,
+        // `wrapping_sub` for the same reason the counter hook uses it: the row write above already
+        // happened with unchecked arithmetic, so the emitter must not be the thing that panics on
+        // a balance no money can reach.
+        new_balance_cents.wrapping_sub(account.balance_cents),
+        cause.table,
+        cause.row_id,
+        cause.cause,
+    );
+
     Ok(BalanceChange {
         account_id,
         old_balance_cents: account.balance_cents,
@@ -90,13 +130,14 @@ pub fn reverse_adjustment(
     account_id: i64,
     kind: CashFlowKind,
     amount_cents: i64,
+    cause: BalanceCauseRow,
 ) -> Result<BalanceChange, AppError> {
     let reverse_kind = match kind {
         CashFlowKind::Expense => CashFlowKind::Income,
         CashFlowKind::Income => CashFlowKind::Expense,
     };
 
-    adjust_account_balance(conn, account_id, reverse_kind, amount_cents)
+    adjust_account_balance(conn, account_id, reverse_kind, amount_cents, cause)
 }
 
 pub fn get_total_liabilities_cents(conn: &Connection) -> Result<i64, AppError> {
@@ -128,6 +169,10 @@ pub fn get_cad_tfsa_balance_cents(conn: &Connection) -> Result<i64, AppError> {
     .map_err(AppError::from)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached through `ActiveDataset::write`.
+///
+/// AD-5's absolute set: a brand-new account publishes the balance it was created with, so a replica
+/// has a base to add later deltas to instead of guessing the schema default.
 pub fn insert_account(conn: &Connection, input: &CreateAccountInput) -> Result<Account, AppError> {
     let name = input.name.trim();
     if name.is_empty() {
@@ -166,7 +211,7 @@ pub fn insert_account(conn: &Connection, input: &CreateAccountInput) -> Result<A
 
     let id = conn.last_insert_rowid();
 
-    conn.query_row(
+    let account = conn.query_row(
         "SELECT id, name, institution, account_type, currency, balance_cents, created_at, updated_at FROM accounts WHERE id = ?1",
         params![id],
         |row| {
@@ -182,7 +227,11 @@ pub fn insert_account(conn: &Connection, input: &CreateAccountInput) -> Result<A
             })
         },
     )
-    .map_err(AppError::from)
+    .map_err(AppError::from)?;
+
+    capture::emit_balance_set(account.id, account.balance_cents);
+
+    Ok(account)
 }
 
 pub fn get_all_accounts(conn: &Connection) -> Result<Vec<Account>, AppError> {
@@ -211,6 +260,14 @@ pub fn get_all_accounts(conn: &Connection) -> Result<Vec<Account>, AppError> {
 }
 
 /// Returns (old_balance_cents, updated Account)
+///
+/// NOT capture-sanctioned yet, deliberately: `commands/account.rs` reaches it through
+/// `ActiveDataset::write` and emits, but the AI chat `update_balance` action still calls it on a
+/// bare connection (Story 18 migrates `commands/chat.rs`), so the ratchet must keep showing it.
+///
+/// AD-5's absolute set: the user stated the balance, so what travels is the value and not a delta.
+/// Two computers setting the same number land on the same balance whichever stamp wins, and
+/// applying one set twice is a no-op.
 pub fn update_account_balance(
     conn: &Connection,
     id: i64,
@@ -230,6 +287,8 @@ pub fn update_account_balance(
         "UPDATE accounts SET balance_cents = ?1, updated_at = datetime('now') WHERE id = ?2",
         params![balance_cents, id],
     )?;
+
+    capture::emit_balance_set(id, balance_cents);
 
     let account = get_account_by_id(conn, id)?;
     Ok((old_balance, account))
@@ -394,7 +453,14 @@ mod tests {
         )
         .unwrap();
 
-        let change = reverse_adjustment(&conn, 1, CashFlowKind::Expense, 2_500).unwrap();
+        let change = reverse_adjustment(
+            &conn,
+            1,
+            CashFlowKind::Expense,
+            2_500,
+            BalanceCauseRow::new("expenses", 1, BalanceCause::Deleted),
+        )
+        .unwrap();
 
         assert_eq!(change.old_balance_cents, 7_500);
         assert_eq!(change.new_balance_cents, 10_000);

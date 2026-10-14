@@ -370,6 +370,12 @@ impl<E: ReplicaEngine> Driver<E> {
             self.write(replica, Change::BalanceSet { row, cents })?;
         }
 
+        // The real emitters do exactly this pair (Story 16): creating the row publishes its
+        // balance as an absolute set, and its counter as the first delta from zero.
+        if table.counter_column().is_some() {
+            self.write(replica, Change::CounterDelta { table, row, delta: 1 })?;
+        }
+
         let record = RowRecord {
             table,
             row,

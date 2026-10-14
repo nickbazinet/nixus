@@ -1,6 +1,8 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::db::account::{self as account_db, BalanceChange, CashFlowKind};
+use crate::db::account::{self as account_db, BalanceCauseRow, BalanceChange, CashFlowKind};
+use crate::sync::capture::{self as capture, BalanceCause};
+use crate::sync::identity;
 use crate::error::AppError;
 use crate::models::{CreateExpenseInput, Expense, MerchantHint, UpdateExpenseInput};
 
@@ -94,6 +96,7 @@ pub fn insert_expense_with_source_with_balance_changes(
             account_id,
             CashFlowKind::Expense,
             input.amount_cents,
+            BalanceCauseRow::new("expenses", id, BalanceCause::Created),
         )?);
     }
 
@@ -180,6 +183,7 @@ pub fn update_expense(
             account_id,
             CashFlowKind::Expense,
             old_expense.amount_cents,
+            BalanceCauseRow::new("expenses", id, BalanceCause::Edited),
         )?);
     }
 
@@ -209,6 +213,7 @@ pub fn update_expense(
             account_id,
             CashFlowKind::Expense,
             input.amount_cents,
+            BalanceCauseRow::new("expenses", id, BalanceCause::Edited),
         )?);
     }
 
@@ -419,6 +424,7 @@ pub fn delete_expense(conn: &Connection, id: i64) -> Result<Vec<BalanceChange>, 
             account_id,
             CashFlowKind::Expense,
             expense.amount_cents,
+            BalanceCauseRow::new("expenses", id, BalanceCause::Deleted),
         )?);
     }
 
@@ -512,6 +518,10 @@ pub fn get_merchant_category_hints(conn: &Connection) -> Result<Vec<MerchantHint
     Ok(hints)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): reached through `ActiveDataset::write`.
+///
+/// `usage_count` is AD-5's one `Counter` column, so the hook turns every `+ 1` here into a signed
+/// delta and the value becomes the sum of those deltas on every computer.
 pub fn record_merchant_category_hint(
     conn: &Connection,
     merchant: &str,
@@ -527,6 +537,8 @@ pub fn record_merchant_category_hint(
          VALUES (?1, ?2, 1.0, 1)",
         params![normalized, budget_category_id],
     )?;
+
+    bind_merchant_hint_identities(conn, normalized)?;
 
     if user_corrected {
         // User changed the category — reinforce the new correct mapping
@@ -555,6 +567,41 @@ pub fn record_merchant_category_hint(
                  last_updated = datetime('now')
              WHERE merchant = ?1 AND budget_category_id = ?2",
             params![normalized, budget_category_id],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Binds the DERIVED identity (AD-2) of every hint row this merchant has.
+///
+/// Every row, not just the one being reinforced, because the degrade statement below writes to the
+/// merchant's OTHER rows too and capture fails the whole write for a natural-key row that has no
+/// derived identity — including rows that predate capture.
+///
+/// Skipped entirely when nothing is capturing, so a local-only profile still writes no `sync_*` row
+/// at all (inherited AD-12).
+fn bind_merchant_hint_identities(conn: &Connection, merchant: &str) -> Result<(), AppError> {
+    if !capture::is_capturing() {
+        return Ok(());
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, budget_category_id FROM merchant_category_hints WHERE merchant = ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![merchant], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (hint_id, category_id) in rows {
+        let category = identity::uuid_for(conn, "budget_categories", category_id)?;
+        identity::ensure_derived(
+            conn,
+            "merchant_category_hints",
+            hint_id,
+            &identity::merchant_category_hint(merchant, &category),
         )?;
     }
 

@@ -155,6 +155,44 @@ pub(crate) fn insert_account(conn: &Connection, name: &str, cents: i64) -> Resul
     Ok(conn.last_insert_rowid())
 }
 
+/// A plain `UPDATE` of `balance_cents`, which is what AD-5 says must produce no message about that
+/// column even when it runs inside a captured write.
+///
+/// `updated_at` is passed in rather than `datetime('now')` so the statement provably changes a
+/// captured column too: the test's non-vacuity check would otherwise depend on the row having been
+/// created in an earlier second.
+pub(crate) fn set_account_balance_directly(
+    conn: &Connection,
+    id: i64,
+    cents: i64,
+    updated_at: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE accounts SET balance_cents = ?1, updated_at = ?2 WHERE id = ?3",
+        params![cents, updated_at, id],
+    )?;
+
+    Ok(())
+}
+
+/// An expense row, so a balance delta has a real cause row to be keyed by.
+///
+/// Raw rather than `db::expense`, because `insert_expense_with_balance_changes` opens a transaction
+/// of its own and cannot run inside `ActiveDataset::write` until Story 17 migrates it.
+pub(crate) fn insert_expense_row(
+    conn: &Connection,
+    category_id: i64,
+    account_id: i64,
+    cents: i64,
+) -> Result<i64, AppError> {
+    conn.execute(
+        "INSERT INTO expenses (merchant, amount_cents, budget_category_id, account_id, date, source)          VALUES ('Metro', ?1, ?2, ?3, '2026-03-04', 'manual')",
+        params![cents, category_id, account_id],
+    )?;
+
+    Ok(conn.last_insert_rowid())
+}
+
 pub(crate) fn insert_merchant_hint(
     conn: &Connection,
     merchant: &str,

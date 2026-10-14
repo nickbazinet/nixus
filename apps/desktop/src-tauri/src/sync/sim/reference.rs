@@ -23,6 +23,7 @@ use rusqlite::Connection;
 use crate::db::sim_tables::{self, SimCell};
 use crate::db::test_dataset::migrated_dataset;
 use crate::sync::clock::{Clock, Hlc, WallClock};
+use crate::sync::sim::balance::BalanceLedger;
 use crate::sync::sim::engine::{ReplicaEngine, SimError};
 use crate::sync::sim::model::{
     CauseKey, Change, Message, MessageId, Observable, RowUuid, Segment, Table,
@@ -68,8 +69,7 @@ pub(crate) struct ReferenceEngine {
     fields: HashMap<FieldKey, (Hlc, SimCell)>,
     parents: HashMap<(Table, RowUuid), RowUuid>,
     tombstones: HashSet<(Table, RowUuid)>,
-    balance_set: HashMap<RowUuid, (Hlc, i64)>,
-    balance_deltas: HashMap<RowUuid, BTreeMap<CauseKey, (Hlc, i64)>>,
+    balances: HashMap<RowUuid, BalanceLedger<CauseKey>>,
     counters: HashMap<(Table, RowUuid), HashMap<MessageId, i64>>,
     unkeyed_ordinal: u64,
 }
@@ -98,8 +98,7 @@ impl ReferenceEngine {
             fields: HashMap::new(),
             parents: HashMap::new(),
             tombstones: HashSet::new(),
-            balance_set: HashMap::new(),
-            balance_deltas: HashMap::new(),
+            balances: HashMap::new(),
             counters: HashMap::new(),
             unkeyed_ordinal: 0,
         })
@@ -121,29 +120,20 @@ impl ReferenceEngine {
                 Ok(Fold::Applied)
             }
             Change::BalanceSet { row, cents } => {
-                let newer = match self.balance_set.get(row) {
-                    None => true,
-                    Some((stored, _)) => self.wins(&message.hlc, stored),
-                };
-                if newer {
-                    self.balance_set.insert(*row, (message.hlc, *cents));
-                }
+                let force = self.mutation == Mutation::ArrivalOrderWins;
+                self.balances
+                    .entry(*row)
+                    .or_default()
+                    .observe_set(message.hlc, *cents, force);
                 self.materialize_balance(*row)?;
                 Ok(Fold::Applied)
             }
             Change::BalanceDelta { row, cause, cents } => {
                 let key = self.delta_key(*cause);
-                let slot = self.balance_deltas.entry(*row).or_default();
-                match slot.get(&key) {
-                    // AD-5: one real-world cause, one delta. Two replicas that emitted it
-                    // may carry different clocks, so the *earliest* is kept — picking by a
-                    // rule rather than by arrival is what makes every replica agree on
-                    // whether a later `balance_set` absorbed this delta or not.
-                    Some((stored, _)) if *stored <= message.hlc => {}
-                    _ => {
-                        slot.insert(key, (message.hlc, *cents));
-                    }
-                }
+                self.balances
+                    .entry(*row)
+                    .or_default()
+                    .observe_delta(message.hlc, key, *cents);
                 self.materialize_balance(*row)?;
                 Ok(Fold::Applied)
             }
@@ -301,30 +291,14 @@ impl ReferenceEngine {
         Ok(())
     }
 
-    /// AD-5: the latest `balance_set` by clock, plus every delta stamped after it.
     fn balance_of(&self, row: RowUuid) -> i64 {
-        let set = self.balance_set.get(&row);
-        let base = set.map(|(_, cents)| *cents).unwrap_or(0);
-        let later: i64 = self
-            .balance_deltas
-            .get(&row)
-            .map(|deltas| {
-                deltas
-                    .values()
-                    .filter(|(hlc, _)| set.is_none_or(|(set_hlc, _)| hlc > set_hlc))
-                    .map(|(_, cents)| *cents)
-                    .sum()
-            })
-            .unwrap_or(0);
-
-        base + later
+        self.balances.get(&row).map(BalanceLedger::value).unwrap_or(0)
     }
 
-    /// AD-5: a counter's value is the sum of its deltas. The `1` is the schema default the
-    /// row was created with, which is itself the first increment.
+    /// AD-5: a counter's value is the sum of its deltas, base zero — the row's creation emits the
+    /// initial count as its first delta (Story 16), so the schema default is not part of the rule.
     fn counter_of(&self, table: Table, row: RowUuid) -> i64 {
-        1 + self
-            .counters
+        self.counters
             .get(&(table, row))
             .map(|deltas| deltas.values().sum::<i64>())
             .unwrap_or(0)

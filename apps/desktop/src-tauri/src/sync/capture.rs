@@ -186,6 +186,90 @@ pub mod payload {
     }
 }
 
+/// The account table the two balance emitters write, named once (AD-5 gives `balance_cents` to
+/// `accounts` alone, and `registry::COLUMNS` is what pins that).
+const ACCOUNTS: &str = "accounts";
+
+thread_local! {
+    /// The capture of the `ActiveDataset::write` currently running on this thread.
+    ///
+    /// AMBIENT rather than a parameter, and this is the one place in `sync/` where that is the
+    /// right answer. AD-5's emitters live in `db/account.rs` and are reached through
+    /// `adjust_account_balance`, whose callers take `&Connection` all the way up to `commands/`;
+    /// handing them a `&Capture` would mean migrating every finance write site in this story
+    /// instead of in Story 17. The emission goes into the SAME buffer the hook appends to, so
+    /// ordering, savepoint rollback and discard-on-failure are the hook's, not a second mechanism.
+    ///
+    /// An emitter that runs OUTSIDE a write finds nothing and buffers nothing — identical to what
+    /// the hook already does for a write site that has not been migrated yet.
+    static ACTIVE_WRITE: std::cell::RefCell<Option<Arc<CaptureInner>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Makes `capture` the ambient capture until it is dropped, restoring whatever was there before.
+pub(crate) struct ActiveWrite {
+    restore: Option<Arc<CaptureInner>>,
+}
+
+impl Drop for ActiveWrite {
+    fn drop(&mut self) {
+        let restore = self.restore.take();
+        ACTIVE_WRITE.with(|active| *active.borrow_mut() = restore);
+    }
+}
+
+/// Whether a captured `ActiveDataset::write` is running on this thread.
+///
+/// The one question a write site outside `sync/` is allowed to ask, and it exists for AD-2's
+/// derived identities: binding one writes a `sync_uuid` row, which a local-only profile must never
+/// grow (inherited AD-12), while a captured write MUST have it or the flush fails.
+pub fn is_capturing() -> bool {
+    ACTIVE_WRITE.with(|active| active.borrow().is_some())
+}
+
+/// AD-5's absolute set: the user typed a balance, or an account was created with one.
+pub fn emit_balance_set(account_id: i64, balance_cents: i64) {
+    buffer_balance(account_id, BalanceEmission::Set { cents: balance_cents });
+}
+
+/// AD-5's cause-keyed delta: the signed amount that was added to the account locally, computed
+/// ONCE here with the credit-card sign rules, so every replica adds the same number verbatim
+/// instead of recomputing it against a balance of its own.
+pub fn emit_balance_delta(
+    account_id: i64,
+    delta_cents: i64,
+    cause_table: &'static str,
+    cause_row_id: i64,
+    cause: BalanceCause,
+) {
+    if delta_cents == 0 {
+        return;
+    }
+
+    buffer_balance(
+        account_id,
+        BalanceEmission::Delta {
+            cents: delta_cents,
+            cause_table,
+            cause_row_id,
+            cause,
+        },
+    );
+}
+
+fn buffer_balance(account_id: i64, emission: BalanceEmission) {
+    let Some(inner) = ACTIVE_WRITE.with(|active| active.borrow().clone()) else {
+        return;
+    };
+
+    lock(&inner.buffer).changes.push(BufferedChange {
+        table: ACCOUNTS,
+        row_id: Some(account_id),
+        depth: 0,
+        op: ChangeOp::Balance(emission),
+    });
+}
+
 struct ColumnShape {
     name: String,
     merge: MergeKind,
@@ -217,6 +301,52 @@ enum ChangeOp {
     Insert(Vec<Value>),
     Update { old: Vec<Value>, new: Vec<Value> },
     Delete(Vec<Value>),
+    /// AD-5's balance emitters. The hook cannot produce either of these: it sees
+    /// `balance_cents` move and has no way to know whether the move was an absolute set by the
+    /// user or the consequence of one expense, which is the whole of AD-5's balance rule.
+    Balance(BalanceEmission),
+}
+
+enum BalanceEmission {
+    Set {
+        cents: i64,
+    },
+    Delta {
+        cents: i64,
+        cause_table: &'static str,
+        cause_row_id: i64,
+        cause: BalanceCause,
+    },
+}
+
+/// Why a balance moved, which is what a delta is keyed by (AD-5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BalanceCause {
+    /// At most once per cause row, ever.
+    Created,
+    /// At most once per cause row, and INDEPENDENTLY REACHABLE on two computers: both deleting
+    /// the same expense must credit the account once.
+    Deleted,
+    /// Repeatable: each edit is its own event, so its cause carries the emitted stamp and can
+    /// never be mistaken for a replay of the previous edit.
+    Edited,
+}
+
+impl BalanceCause {
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Deleted => "deleted",
+            Self::Edited => "edited",
+        }
+    }
+
+    fn discriminator(self, hlc: &str) -> &str {
+        match self {
+            Self::Created | Self::Deleted => "",
+            Self::Edited => hlc,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -308,6 +438,23 @@ enum Resolved {
     /// A delete of a row that never had an identity: it was never shipped under one, so no other
     /// computer knows it exists. Reconcile (Story 22) owns rows that predate capture.
     Nothing,
+    Balance {
+        table: &'static str,
+        row_uuid: RowUuid,
+        emission: ResolvedBalance,
+    },
+}
+
+enum ResolvedBalance {
+    Set {
+        cents: i64,
+    },
+    Delta {
+        cents: i64,
+        cause_table: &'static str,
+        cause_row: RowUuid,
+        cause: BalanceCause,
+    },
 }
 
 impl Capture {
@@ -442,8 +589,13 @@ impl Capture {
     }
 
     /// Starts a captured transaction: whatever an earlier failure left behind is not part of it.
-    pub(crate) fn begin(&self) {
+    pub(crate) fn begin(&self) -> ActiveWrite {
         self.discard();
+
+        let restore = ACTIVE_WRITE
+            .with(|active| active.borrow_mut().replace(Arc::clone(&self.inner)));
+
+        ActiveWrite { restore }
     }
 
     pub(crate) fn discard(&self) {
@@ -453,8 +605,6 @@ impl Capture {
     }
 
     /// Where the buffer is now, which is what a savepoint rolls back to.
-    // Story 17 is the first production caller, through `WriteTx::savepoint`.
-    #[allow(dead_code)]
     pub(crate) fn mark(&self) -> Mark {
         let buffer = self.buffer();
 
@@ -464,7 +614,6 @@ impl Capture {
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn rollback_to(&self, mark: Mark) {
         let mut buffer = self.buffer();
 
@@ -549,6 +698,47 @@ impl Capture {
         for item in resolved {
             match item {
                 Resolved::Nothing => {}
+                Resolved::Balance {
+                    table,
+                    row_uuid,
+                    emission,
+                } => {
+                    let hlc = stamping.clock.now().encode();
+                    let (kind, cents, cause_uuid) = match emission {
+                        ResolvedBalance::Set { cents } => ("balance_set", *cents, None),
+                        ResolvedBalance::Delta {
+                            cents,
+                            cause_table,
+                            cause_row,
+                            cause,
+                        } => (
+                            "balance_delta",
+                            *cents,
+                            Some(identity::balance_cause(
+                                cause_table,
+                                cause_row,
+                                cause.tag(),
+                                cause.discriminator(&hlc),
+                            )),
+                        ),
+                    };
+                    let encoded = payload::encode(&Value::Integer(cents));
+
+                    sync_capture::append(
+                        conn,
+                        &LoggedMessage {
+                            install,
+                            hlc: &hlc,
+                            kind,
+                            table_name: table,
+                            row_uuid,
+                            column_name: None,
+                            cause_uuid: cause_uuid.as_ref().map(|uuid| uuid.as_slice()),
+                            payload: Some(&encoded),
+                        },
+                    )?;
+                    written += 1;
+                }
                 Resolved::Fields {
                     table,
                     row_uuid,
@@ -722,6 +912,35 @@ fn resolve(
     })?;
 
     match &change.op {
+        ChangeOp::Balance(emission) => {
+            let row_uuid = identity_of(conn, shapes, memo, shape, row_id)?;
+            let emission = match emission {
+                BalanceEmission::Set { cents } => ResolvedBalance::Set { cents: *cents },
+                BalanceEmission::Delta {
+                    cents,
+                    cause_table,
+                    cause_row_id,
+                    cause,
+                } => {
+                    let cause_shape = shapes
+                        .get(*cause_table)
+                        .ok_or_else(|| unknown_table(cause_table))?;
+
+                    ResolvedBalance::Delta {
+                        cents: *cents,
+                        cause_table,
+                        cause_row: identity_of(conn, shapes, memo, cause_shape, *cause_row_id)?,
+                        cause: *cause,
+                    }
+                }
+            };
+
+            Ok(Resolved::Balance {
+                table: shape.table,
+                row_uuid,
+                emission,
+            })
+        }
         ChangeOp::Insert(new) => {
             let row_uuid = identity_of(conn, shapes, memo, shape, row_id)?;
             resolve_fields(conn, shapes, memo, shape, row_uuid, None, new)
@@ -785,15 +1004,15 @@ fn resolve_fields(
                 ),
                 None => fields.push((column.name.clone(), after.clone())),
             },
-            // `before` is `None` when the row was just created, and then there is nothing to
-            // capture: the counter is at the schema default every computer creates it with, so a
-            // delta from nothing would double-count it.
+            // A counter travels as a delta FROM ZERO on insert, so a counter's value is the sum of
+            // its deltas with nothing else in it. Letting the schema default stand in for the
+            // first increment would bake "the default is 1" into the merge rule and would make two
+            // computers that independently create the same hint converge on one use instead of two.
             MergeKind::Counter => {
-                if let Some(previous) = before {
-                    let delta = counter_delta(shape, &column.name, previous, after)?;
-                    if delta != 0 {
-                        counters.push((column.name.clone(), delta));
-                    }
+                let previous = before.unwrap_or(&Value::Integer(0));
+                let delta = counter_delta(shape, &column.name, previous, after)?;
+                if delta != 0 {
+                    counters.push((column.name.clone(), delta));
                 }
             }
             MergeKind::LocalId => {

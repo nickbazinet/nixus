@@ -93,9 +93,6 @@ impl WriteTx<'_> {
     /// Issued as SQL rather than through `Transaction::savepoint`, which needs `&mut self` and
     /// would therefore have to be threaded through every call site that only ever reads the
     /// connection. The name is generated from a depth counter, never from input.
-    // Story 17 is the first production caller: a multi-step write site (reordering a list) is
-    // where one failed step must not discard the ones before it.
-    #[allow(dead_code)]
     pub fn savepoint<T>(
         &self,
         operation: impl FnOnce(&Connection) -> Result<T, AppError>,
@@ -143,9 +140,9 @@ impl ActiveDataset {
     ) -> Result<T, AppError> {
         let conn = self.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-        if let Some(capture) = &self.capture {
-            capture.begin();
-        }
+        // Held for the whole write: `begin` also makes this the ambient capture AD-5's balance
+        // emitters find, and dropping the guard is what takes it away again.
+        let _captured = self.capture.as_ref().map(|capture| capture.begin());
 
         let result = self.commit_write(conn, operation);
 

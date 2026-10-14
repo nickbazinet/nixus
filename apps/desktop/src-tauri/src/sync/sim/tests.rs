@@ -541,7 +541,9 @@ fn a_duplicated_segment_does_not_double_count_a_delta_or_a_counter() {
     );
     assert_eq!(
         replicas.cell(1, Table::MerchantHints, hint, "usage_count"),
-        Some(SimCell::Int(2))
+        Some(SimCell::Int(1)),
+        "one delta delivered four times is still one increment, and a counter's base is zero \
+         (Story 16: the row's creation emits its initial count as its own delta)"
     );
     assert_eq!(
         replicas.engines[0].observable().expect("r0 dumps"),

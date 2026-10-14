@@ -38,6 +38,8 @@ mod tests_capture;
 #[cfg(test)]
 mod tests_capture_latency;
 #[cfg(test)]
+mod tests_balance_emitters;
+#[cfg(test)]
 mod tests_bootstrap;
 #[cfg(test)]
 mod tests_e2e;

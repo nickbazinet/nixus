@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection};
 
-use crate::db::account::{self as account_db, BalanceChange, CashFlowKind};
+use crate::db::account::{self as account_db, BalanceCauseRow, BalanceChange, CashFlowKind};
+use crate::sync::capture::BalanceCause;
 use crate::error::AppError;
 use crate::models::{
     CreateIncomeEntryInput, CreateIncomeSourceInput, IncomeEntry, IncomeSource,
@@ -185,6 +186,7 @@ pub(crate) fn insert_income_entry_from_template(
             account_id,
             CashFlowKind::Income,
             input.amount_cents,
+            BalanceCauseRow::new("income_entries", id, BalanceCause::Created),
         )?);
     }
 
@@ -228,6 +230,7 @@ pub fn update_income_entry(
             account_id,
             CashFlowKind::Income,
             old_entry.amount_cents,
+            BalanceCauseRow::new("income_entries", id, BalanceCause::Edited),
         )?);
     }
 
@@ -250,6 +253,7 @@ pub fn update_income_entry(
             account_id,
             CashFlowKind::Income,
             input.amount_cents,
+            BalanceCauseRow::new("income_entries", id, BalanceCause::Edited),
         )?);
     }
 
@@ -273,6 +277,7 @@ pub fn delete_income_entry(conn: &Connection, id: i64) -> Result<Vec<BalanceChan
             account_id,
             CashFlowKind::Income,
             entry.amount_cents,
+            BalanceCauseRow::new("income_entries", id, BalanceCause::Deleted),
         )?);
     }
 

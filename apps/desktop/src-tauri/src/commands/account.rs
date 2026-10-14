@@ -27,7 +27,7 @@ pub fn create_account(
         account_type,
         currency,
     };
-    let result = account_db::insert_account(conn, &input)?;
+    let result = active.write(|tx| account_db::insert_account(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
     if let Err(e) = audit_db::insert_audit_log(conn, "account", result.id, "create", None, Some(&details)) {
@@ -61,7 +61,8 @@ pub fn update_account_balance(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let (old_balance, account) = account_db::update_account_balance(conn, id, balance_cents)?;
+    let (old_balance, account) =
+        active.write(|tx| account_db::update_account_balance(tx, id, balance_cents))?;
 
     if let Err(e) = audit_db::insert_audit_log(
         conn,

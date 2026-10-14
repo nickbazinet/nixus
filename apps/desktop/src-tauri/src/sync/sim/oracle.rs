@@ -126,7 +126,7 @@ impl Oracle {
         let mut counters: HashMap<(Table, RowUuid), i64> = HashMap::new();
         for (_, change) in &self.log {
             if let Change::CounterDelta { table, row, delta } = change {
-                *counters.entry((*table, *row)).or_insert(1) += delta;
+                *counters.entry((*table, *row)).or_insert(0) += delta;
             }
         }
 
@@ -182,7 +182,7 @@ impl Oracle {
             if let Some(column) = table.counter_column() {
                 cells.insert(
                     column,
-                    SimCell::Int(counters.get(&(table, row)).copied().unwrap_or(1)),
+                    SimCell::Int(counters.get(&(table, row)).copied().unwrap_or(0)),
                 );
             }
             if let Some(column) = table.balance_column() {

@@ -45,6 +45,7 @@
 //! `<temp>/nixus-sim-traces/` (override with `NIXUS_SIM_TRACE_DIR`) and prints both the path
 //! and the one-seed command that reproduces it.
 
+pub(crate) mod balance;
 pub(crate) mod engine;
 pub(crate) mod model;
 pub(crate) mod oracle;

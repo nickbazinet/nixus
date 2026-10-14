@@ -477,21 +477,35 @@ pub fn confirm_import(
     let count = expense_db::bulk_insert_imported_expenses(conn, &tuples)?;
 
     // Record merchant-category hints for future imports
-    for tx in &transactions {
-        if tx.merchant.trim().len() > 2 {
-            let user_corrected = tx
+    //
+    // One captured transaction for the whole batch with a savepoint per hint, so a hint that
+    // cannot be recorded is still skipped with a warning instead of discarding the ones before it.
+    let recorded = active.write(|write| {
+        for imported in &transactions {
+            if imported.merchant.trim().len() <= 2 {
+                continue;
+            }
+
+            let user_corrected = imported
                 .original_suggested_category_id
-                .map(|orig| orig != tx.budget_category_id)
+                .map(|orig| orig != imported.budget_category_id)
                 .unwrap_or(false);
-            if let Err(e) = expense_db::record_merchant_category_hint(
-                conn,
-                &tx.merchant,
-                tx.budget_category_id,
-                user_corrected,
-            ) {
+            if let Err(e) = write.savepoint(|conn| {
+                expense_db::record_merchant_category_hint(
+                    conn,
+                    &imported.merchant,
+                    imported.budget_category_id,
+                    user_corrected,
+                )
+            }) {
                 tracing::warn!("Failed to record merchant hint: {}", e);
             }
         }
+
+        Ok(())
+    });
+    if let Err(e) = recorded {
+        tracing::warn!("Failed to record merchant hints: {}", e);
     }
 
     // Audit log

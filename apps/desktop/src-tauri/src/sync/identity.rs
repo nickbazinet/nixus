@@ -57,8 +57,6 @@ pub fn uuid_for(conn: &Connection, table: &str, row_id: i64) -> Result<RowUuid, 
 /// Returns the binding in force afterwards. Its `row_id` is the caller's own unless this computer
 /// had already generated a local row for the same logical row, in which case the identity stays
 /// with the row that claimed it first and the caller learns which one that is.
-// Story 15 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn ensure_derived(
     conn: &Connection,
     table: &str,
@@ -73,10 +71,38 @@ pub fn ensure_derived(
 ///
 /// The substitution is the point: `budget_category_id` 3 is a different category on every computer,
 /// so a key built from it would collide two unrelated hints and split one hint in two.
-// Story 16 is the first production caller: it maps this identity at the row's insert site.
-#[allow(dead_code)]
 pub fn merchant_category_hint(merchant: &str, category: &RowUuid) -> RowUuid {
     derive("merchant_category_hints", &[merchant.as_bytes(), category])
+}
+
+/// AD-5's cause key for a balance delta, as one uuid: `(cause row uuid, kind)` plus a
+/// discriminator that decides whether the key is per ROW or per OCCURRENCE.
+///
+/// Per row (`discriminator` empty) is what makes a reversal idempotent ACROSS COMPUTERS: two
+/// computers deleting the same expense both derive the same cause, so the account is credited once
+/// rather than twice. Per occurrence (`discriminator` = the emitting message's own `hlc`) is what
+/// keeps a REPEATED cause from being mistaken for a duplicate: editing one expense twice is two
+/// real events, and a key that ignored the occurrence would deduplicate the second into a lost
+/// update.
+///
+/// The cause row's TABLE is part of the material even though a row uuid is already unique, for the
+/// same reason [`derive`] includes it everywhere else: the key has to stay injective if a later
+/// story derives a cause from something that is not a row uuid.
+pub fn balance_cause(
+    cause_table: &str,
+    cause_row: &RowUuid,
+    kind: &str,
+    discriminator: &str,
+) -> RowUuid {
+    derive(
+        "balance_cause",
+        &[
+            cause_table.as_bytes(),
+            cause_row,
+            kind.as_bytes(),
+            discriminator.as_bytes(),
+        ],
+    )
 }
 
 /// `maintenance_tasks (vehicle uuid, task_type_key)` — the schema's `UNIQUE(vehicle_id,
