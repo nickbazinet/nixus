@@ -6,13 +6,14 @@
 //! leaving the previously active dataset (or "none") provably unchanged with no
 //! rollback logic to get wrong.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use rusqlite::Connection;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::ai::{self, AiState};
 use crate::datasets;
@@ -46,15 +47,7 @@ pub(crate) fn select_dataset_now(app: &AppHandle, dataset_id: &str) -> Result<()
     // mid-swap, and only a process that holds no handle to the file can decide which of
     // the two complete databases survived (AD-9, Story 9's `recover_interrupted_restore`).
     let dir = datasets::dataset_dir(app, &entry.id)?;
-    let recovery = crate::db::backup::recover_interrupted_restore(
-        &dir.join(datasets::DB_FILE_NAME),
-    )?;
-    if !recovery.is_noop() {
-        info!(
-            "Recovered an interrupted sync restore for {}: {:?}",
-            entry.id, recovery.outcome
-        );
-    }
+    recover_before_open(&dir.join(datasets::DB_FILE_NAME), &entry.id);
 
     let conn = init_db(&dir)?;
 
@@ -96,6 +89,30 @@ fn is_already_active(lock: &Mutex<ActiveDataset>, dataset_id: &str) -> Result<bo
     })?;
 
     Ok(active.id.as_deref() == Some(dataset_id))
+}
+
+/// The launch-path repair of an interrupted bootstrap, which can only ever be best-effort.
+///
+/// AD-16: a fault must not block launch. The repair is a rollback COPY, so it can fail on a full
+/// disk or a locked file, and propagating that error would panic the app at startup (`lib.rs`
+/// `.expect()`s the default-dataset selection). A failure leaves the file exactly as the
+/// interrupted run left it and the normal open below is what decides whether the dataset is
+/// usable — a reported error instead of a dead app. Logged without any row value.
+fn recover_before_open(db_path: &Path, dataset_id: &str) {
+    match crate::db::backup::recover_interrupted_restore(db_path) {
+        Ok(recovery) => {
+            if !recovery.is_noop() {
+                info!(
+                    "Recovered an interrupted sync restore for {}: {:?}",
+                    dataset_id, recovery.outcome
+                );
+            }
+        }
+        Err(error) => warn!(
+            "Could not repair an interrupted sync restore for {}, opening the dataset as it is: {}",
+            dataset_id, error
+        ),
+    }
 }
 
 /// The swap itself: one lock acquisition, one whole-struct assignment, so `id`
@@ -736,5 +753,28 @@ mod tests {
                 other => panic!("expected AppError::Auth, got {other:?}"),
             }
         }
+    }
+
+    /// AD-16: the launch path survives a repair that cannot be done. The rollback copy is made to
+    /// fail by making the live database path a directory, which is also what makes the file
+    /// unusable, so recovery reaches the copy and the copy cannot land.
+    #[test]
+    fn a_failed_restore_recovery_does_not_block_the_launch_path() {
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join(datasets::DB_FILE_NAME);
+        std::fs::create_dir(&db_path).expect("an unusable database in place");
+        let safety =
+            crate::db::backup::with_suffix(&db_path, crate::db::backup::BOOTSTRAP_SAFETY_SUFFIX);
+        std::fs::write(&safety, b"pre-swap copy").expect("a surviving safety copy");
+
+        assert!(
+            crate::db::backup::recover_interrupted_restore(&db_path).is_err(),
+            "the scenario must be one where the repair really fails"
+        );
+
+        recover_before_open(&db_path, "default");
+
+        assert!(db_path.is_dir(), "a failed repair changes nothing");
+        assert!(safety.exists(), "and keeps the copy it could not put back");
     }
 }

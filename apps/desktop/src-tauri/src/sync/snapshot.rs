@@ -428,54 +428,19 @@ fn copy_in_steps(source: &Connection, destination: &mut Connection) -> Result<()
 
 /// Empties what AD-9 and AD-15 keep out of a snapshot, in one transaction, in the COPY.
 ///
-/// `schema_version` is deliberately NOT emptied even though AD-5 classifies it `LocalOnly`. That
-/// classification is about which rows become replication messages; a snapshot is a database FILE,
-/// and one restored without its version row would have every migration re-applied over populated
-/// tables the first time it was opened.
+/// The statements themselves live in `db/snapshot_strip.rs`, including the `secure_delete` pragma
+/// that has to be set outside the transaction; this is the orchestration and the reporting.
 fn strip_in_copy(conn: &Connection) -> Result<StripReport, AppError> {
-    // LOAD-BEARING, and the reason this is not just a `DELETE`: freeing a page does not erase it.
-    // Without this, the multi-megabyte image payloads and the local-only rows would still be
-    // sitting in the copy's free pages, and the object uploaded to the cloud would carry every byte
-    // AD-9 and AD-10 say must not travel. `secure_delete` overwrites freed pages with zeros, which
-    // also makes them compress away to nothing. It must be set outside a transaction.
-    //
-    // `VACUUM` would reclaim the pages instead, and is deliberately NOT used: it may renumber the
-    // rowids of any table without an explicit `INTEGER PRIMARY KEY` (`config`, `sqlite_sequence`),
-    // which is the very thing AD-9 forbids.
-    conn.execute_batch("PRAGMA secure_delete=ON")?;
+    crate::db::snapshot_strip::enable_secure_delete(conn)?;
 
-    let tx = conn.unchecked_transaction()?;
-    let mut report = StripReport::default();
+    let counts = crate::db::snapshot_strip::strip_local_only(conn, CONFIG_DENY_LIST)?;
 
-    // Discovered from the copy's own schema rather than listed here: `sync_log` and the rest of the
-    // Milestone-2 tables do not exist yet, and a hard-coded list would either fail on the missing
-    // ones now or silently miss the new ones later (AD-15 names them all `sync_*`).
-    let names: Vec<String> = {
-        let mut tables = tx.prepare(
-            "SELECT name FROM sqlite_master
-             WHERE type = 'table' AND name LIKE 'sync\\_%' ESCAPE '\\' ORDER BY name",
-        )?;
-        let found = tables
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<_, _>>()?;
-        found
-    };
-
-    for name in names {
-        // The name comes from `sqlite_master`, never from user input, and is quoted regardless.
-        report.local_only_rows += tx.execute(&format!("DELETE FROM \"{name}\""), [])?;
-        report.local_only_tables.push(name);
-    }
-
-    for key in CONFIG_DENY_LIST {
-        report.config_keys += tx.execute("DELETE FROM config WHERE key = ?1", [key])?;
-    }
-
-    report.blanked_images = crate::db::projects::blank_project_image_bytes(&tx)?;
-
-    tx.commit()?;
-
-    Ok(report)
+    Ok(StripReport {
+        local_only_tables: counts.local_only_tables,
+        local_only_rows: counts.local_only_rows,
+        config_keys: counts.config_keys,
+        blanked_images: counts.blanked_images,
+    })
 }
 
 /// Checks a stored snapshot object and returns the database bytes it carries.

@@ -554,7 +554,6 @@ fn roll_back_swap(
 /// which is the one window where `db_path` may be half written: the live file is kept only
 /// if it opens and passes the **full** `integrity_check` — a crash is rare enough to pay
 /// for the slower check, and `quick_check` does not read every page.
-#[allow(dead_code)] // Story 10 calls this per dataset at launch, before anything opens it.
 pub fn recover_interrupted_restore(db_path: &Path) -> Result<Recovery, AppError> {
     let incoming = with_suffix(db_path, INCOMING_SUFFIX);
     let safety = with_suffix(db_path, BOOTSTRAP_SAFETY_SUFFIX);
