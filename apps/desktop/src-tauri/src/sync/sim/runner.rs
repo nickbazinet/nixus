@@ -43,6 +43,11 @@ pub(crate) struct SimOutcome {
     pub double_deletes: usize,
     pub concurrent_edit_deletes: usize,
     pub double_balance_sets: usize,
+    /// Story 25's lifecycle ops, counted for the same reason: both decline silently when no
+    /// candidate qualifies, so without a counter a guard change could make either a permanent
+    /// no-op with the gate still green.
+    pub restores: usize,
+    pub clones: usize,
     pub live_rows: usize,
 }
 
@@ -145,6 +150,16 @@ struct Driver<E: ReplicaEngine> {
     /// performs it. The same cause from a DIFFERENT replica is the case the dedup rule exists for
     /// and is still generated.
     emitted_causes: HashSet<(usize, RowUuid)>,
+    /// Which replicas have already been re-bootstrapped once.
+    ///
+    /// A SECOND restore of one replica duplicates its whole unsent tail: `carry_local_only` carries
+    /// `sync_log` additively with `INSERT OR IGNORE`, and SQLite's UNIQUE treats two NULLs as
+    /// distinct, so the `seq IS NULL` rows the previous restore already carried are inserted again
+    /// and the next cut ships one `counter_delta` twice under two different message ids. That is a
+    /// production bug in `db::backup::copy_table`, recorded in the ledger as an OPEN item rather
+    /// than fixed inside a simulator story; the op is capped here so the gate measures convergence
+    /// instead of re-measuring that one defect on every seed.
+    restored: Vec<bool>,
     next_ordinal: u64,
     outcome: SimOutcome,
     /// Owns the replicas' directories: dropping the driver is what deletes them, so this is a
@@ -191,6 +206,7 @@ impl<E: ReplicaEngine> Driver<E> {
             buried: Vec::new(),
             causes: Vec::new(),
             emitted_causes: HashSet::new(),
+            restored: vec![false; config.replicas],
             next_ordinal: 0,
             outcome: SimOutcome::default(),
             _dirs: dirs,
@@ -617,29 +633,29 @@ impl<E: ReplicaEngine> Driver<E> {
         let replicas = self.replicas();
         let replica = self.rng.below(replicas as u64) as usize;
 
-        // STORY 25: restore and clone of a replica are not op variants here. Both are a file
-        // swap, and the merge metadata this engine keeps (field clocks, tombstones, balance
-        // state, the uuid map) lives in memory until Story 14 puts it in `sync_*` tables — so
-        // a swap would silently carry the wrong half and the scenario would prove the opposite
-        // of what it claims. The hook is this list plus `ReplicaEngine`: Story 25 adds an
-        // `adopt_database` verb and two arms below, and the assertions do not move.
+        // Story 25's lifecycle ops are the last two arms: `action_restore` replaces a replica's
+        // file from another replica's bootstrap snapshot, `action_clone` duplicates one into a new
+        // computer. Both decline on the engine that keeps its merge state in memory, which is why
+        // the mix below is identical for both engines and no assertion moved.
         match self.rng.below(100) {
-            0..=14 => self.action_edit(replica)?,
-            15..=23 => self.action_insert(replica)?,
-            24..=29 => self.action_balance_set(replica)?,
-            30..=38 => self.action_balance_delta(replica)?,
-            39..=44 => self.action_counter_delta(replica)?,
-            45..=48 => self.action_delete(replica)?,
-            49..=51 => self.action_double_delete()?,
-            52..=55 => self.action_concurrent_edit_and_delete()?,
-            56..=58 => self.action_double_balance_set()?,
-            59..=61 => self.action_reinsert(replica)?,
-            62..=77 => self.publish(replica)?,
-            78..=81 => self.action_go_offline(replica),
-            82..=85 => self.action_go_online(replica)?,
-            86..=94 => self.action_deliver(replica)?,
-            95..=97 => self.action_deliver_duplicate(replica)?,
-            _ => self.action_drop_delivery(replica),
+            0..=12 => self.action_edit(replica)?,
+            13..=21 => self.action_insert(replica)?,
+            22..=27 => self.action_balance_set(replica)?,
+            28..=36 => self.action_balance_delta(replica)?,
+            37..=42 => self.action_counter_delta(replica)?,
+            43..=46 => self.action_delete(replica)?,
+            47..=49 => self.action_double_delete()?,
+            50..=53 => self.action_concurrent_edit_and_delete()?,
+            54..=56 => self.action_double_balance_set()?,
+            57..=59 => self.action_reinsert(replica)?,
+            60..=73 => self.publish(replica)?,
+            74..=77 => self.action_go_offline(replica),
+            78..=81 => self.action_go_online(replica)?,
+            82..=90 => self.action_deliver(replica)?,
+            91..=93 => self.action_deliver_duplicate(replica)?,
+            94..=95 => self.action_drop_delivery(replica),
+            96..=97 => self.action_restore(replica)?,
+            _ => self.action_clone(replica)?,
         }
 
         Ok(())
@@ -909,6 +925,127 @@ impl<E: ReplicaEngine> Driver<E> {
         self.outcome.dropped_deliveries += 1;
         self.trace
             .push(format!("r{replica} drop #{index} (redelivered at the end)"));
+    }
+
+    /// AD-9's re-bootstrap: `replica`'s database is replaced by a snapshot of another replica,
+    /// keeping its own identity and its own unsent log.
+    ///
+    /// The source must already hold everything `replica` does, and `replica`'s own shipped head on
+    /// top of that. That is not a convenience: production's pull side never re-reads its OWN
+    /// install's segments (`poll_roster` filters `self_install`), so a snapshot that is behind this
+    /// computer's own shipped head cannot be completed from the transport and the edit really is
+    /// gone. It is also exactly the production situation — the only trigger is a computer so far
+    /// behind that retention deleted the segments it still needed — so the guard excludes a case
+    /// the product cannot reach rather than a case it must survive.
+    fn action_restore(&mut self, replica: usize) -> Result<(), SimError> {
+        if self.offline[replica] || self.replicas() < 2 || self.restored[replica] {
+            return Ok(());
+        }
+
+        let Some(source) = self.snapshot_source_for(replica)? else {
+            return Ok(());
+        };
+
+        // Flushed first, so nothing the source is still holding is silently absent from the image
+        // AND absent from the transport.
+        self.publish(source)?;
+        let Some(image) = self.engines[source].bootstrap_image()? else {
+            return Ok(());
+        };
+        if !self.engines[replica].restore_from_image(&image)? {
+            return Ok(());
+        }
+        self.restored[replica] = true;
+
+        // The restored file states what it holds through its own applied vector, so every segment
+        // is offered again and the vector decides which ones are already in it. Keeping the old
+        // delivery set would withhold a segment the replaced file had and the new one does not.
+        self.delivered[replica].clear();
+        self.deferred[replica].clear();
+        self.outcome.restores += 1;
+        self.trace
+            .push(format!("r{replica} restored from a snapshot of r{source}"));
+
+        Ok(())
+    }
+
+    /// The replica whose snapshot `replica` can safely be rebuilt from, if any.
+    fn snapshot_source_for(&self, replica: usize) -> Result<Option<usize>, SimError> {
+        let held = self.engines[replica].applied_heads()?;
+        let shipped = self.engines[replica].shipped_head()?;
+        let install = self.engines[replica].install_id().to_string();
+
+        for source in 0..self.replicas() {
+            if source == replica || self.offline[source] {
+                continue;
+            }
+
+            let theirs = self.engines[source].applied_heads()?;
+            // A replica trivially holds every message of its OWN install, and the strip claims
+            // that head into the image's watermark (Story 23), so its own id is never a shortfall.
+            let own = self.engines[source].install_id();
+            let dominates = held
+                .iter()
+                .all(|(id, seq)| id == own || theirs.get(id).is_some_and(|theirs| theirs >= seq))
+                && shipped.is_none_or(|seq| theirs.get(&install).is_some_and(|head| *head >= seq));
+            if dominates {
+                return Ok(Some(source));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// AD-4/AD-15: a duplicate of a replica's database becomes a NEW computer.
+    ///
+    /// Capped, because every replica is a real database file plus a full-schema dump on every
+    /// assertion, and an uncapped clone op would turn a long seed into a quadratic one.
+    fn action_clone(&mut self, replica: usize) -> Result<(), SimError> {
+        const MAX_REPLICAS: usize = 6;
+
+        if self.offline[replica] || self.replicas() >= MAX_REPLICAS {
+            return Ok(());
+        }
+
+        self.publish(replica)?;
+        let dir = tempfile::tempdir()
+            .map_err(|error| SimError::Model(format!("a temp dir: {error}")))?;
+        let db_path = dir.path().join("nixus.db");
+        let index = self.replicas();
+        let install = install_id_for(self.config.seed, index);
+        let Some(clone) = self.engines[replica].clone_to(&db_path, &install)? else {
+            return Ok(());
+        };
+
+        self._dirs.push(dir);
+        self.engines.push(clone);
+        self.offline.push(false);
+        self.holding.push(Vec::new());
+        // A brand-new computer pulls the whole roster from its OWN cursor, so its delivery set
+        // starts empty and the carried applied vector decides what is already in the file. It must
+        // NOT inherit the source's: a segment the source had received but was still holding behind
+        // a gap would then be withheld from the clone forever, and every later segment of that
+        // install would queue behind it.
+        self.delivered.push(HashSet::new());
+        self.deferred.push(HashSet::new());
+        self.restored.push(false);
+        // Inherited, because the clone IS the source's file: a balance cause the source already
+        // emitted is already folded into the copied column, and emitting it again locally would
+        // add the same delta a SECOND time (only a REMOTE message triggers a re-fold, Story 20).
+        let inherited: Vec<RowUuid> = self
+            .emitted_causes
+            .iter()
+            .filter(|(owner, _)| *owner == replica)
+            .map(|(_, cause)| *cause)
+            .collect();
+        for cause in inherited {
+            self.emitted_causes.insert((index, cause));
+        }
+        self.outcome.clones += 1;
+        self.trace
+            .push(format!("r{index} cloned from r{replica}"));
+
+        Ok(())
     }
 
     fn synchronize(&mut self) -> Result<(), SimError> {

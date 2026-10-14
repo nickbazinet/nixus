@@ -87,14 +87,27 @@ proptest! {
 
 /// The real pipeline on the seeds the reference engine is pinned on, so a divergence between the
 /// two engines is attributable to a seed rather than to a sample size.
+///
+/// The scenario comparison holds only for a seed on which the real engine performed NO RESTORE.
+/// A restore is the one op the reference engine cannot express — its merge state lives in memory
+/// and a stripped snapshot file carries none of it, which is the limitation Stories 13, 20 and 23
+/// each recorded — so a restored replica holds a different set of rows from that step on and the
+/// generator asks the two engines different questions. Clones are implemented by BOTH engines
+/// precisely so that the replica COUNT never diverges, which would desynchronize every later
+/// choice. The `compared` guard keeps the claim from quietly becoming vacuous.
 #[test]
 fn the_real_pipeline_agrees_with_the_reference_on_the_pinned_seeds() {
     const SEEDS: [u64; 5] = [0x5EED_0013, 0xA11CE, 0xB0B, 0xC0FFEE, 0xDEADBEEF];
 
+    let mut compared = 0;
     for seed in SEEDS {
         let config = config_for(seed);
         let reference = runner::run(&config, Mutation::None).expect("the reference converges");
         let real = runner::run_real(&config).expect("the real pipeline converges");
+        if real.restores > 0 {
+            continue;
+        }
+        compared += 1;
 
         assert_eq!(
             reference.ops, real.ops,
@@ -105,6 +118,11 @@ fn the_real_pipeline_agrees_with_the_reference_on_the_pinned_seeds() {
             "the two engines disagree about how many rows survived seed {seed:x}"
         );
     }
+
+    assert!(
+        compared > 0,
+        "every pinned seed restored, so the two engines were never actually compared"
+    );
 }
 
 #[test]
@@ -289,6 +307,20 @@ fn the_fault_model_actually_fires() {
         ("surviving rows", totals.live_rows),
     ] {
         assert!(count > 0, "12 seeds produced no {what}");
+    }
+
+    // Restore and clone exist only on the real engine (the reference one keeps its merge state in
+    // memory and declines the file swap), so their non-vacuity has to be measured there.
+    let mut lifecycle = SimOutcome::default();
+    for seed in 0..6u64 {
+        let outcome = runner::run_real(&config_for(seed * 0xD1B5_4A32))
+            .expect("the real pipeline converges");
+        lifecycle.restores += outcome.restores;
+        lifecycle.clones += outcome.clones;
+    }
+
+    for (what, count) in [("restores", lifecycle.restores), ("clones", lifecycle.clones)] {
+        assert!(count > 0, "6 real-pipeline seeds produced no {what}");
     }
 }
 

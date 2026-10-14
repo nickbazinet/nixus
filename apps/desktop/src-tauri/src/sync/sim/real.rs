@@ -24,14 +24,16 @@
 //!   computer has never seen. In production that agreement comes from the bootstrap snapshot, which
 //!   is why the ledger records that Story 23's snapshot MUST carry `sync_uuid`.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
+use crate::db::backup::{self, DatasetSlot};
 use crate::db::sim_tables::{self, SimCell};
 use crate::db::sync_apply as apply_db;
-use crate::db::{sync_identity, sync_state, test_dataset, ActiveDataset};
+use crate::db::{snapshot_strip, sync_capture, sync_identity, sync_segment, sync_state, test_dataset, ActiveDataset};
 use crate::models::DatasetKind;
 use crate::sync::apply;
 use crate::sync::capture::{BalanceCause, Capture};
@@ -40,6 +42,8 @@ use crate::sync::registry::{self, MergeKind, TableClass};
 use crate::sync::segment::{self, SegmentBatch};
 use crate::sync::sim::engine::{ReplicaEngine, SimError};
 use crate::sync::sim::model::{self, Change, Observable, RowUuid, Table};
+use crate::sync::snapshot;
+use crate::sync::state::{remint_install_on, InstallOutcome};
 
 /// The table a simulated balance cause is attributed to.
 ///
@@ -60,6 +64,7 @@ pub(crate) struct RealSegment {
 
 pub(crate) struct RealEngine {
     install: String,
+    db_path: PathBuf,
     dataset: ActiveDataset,
     /// AD-11's second connection: WAL, busy timeout, foreign keys on, and no capture hook because
     /// the hook is per connection.
@@ -105,6 +110,7 @@ impl RealEngine {
 
         Ok(Self {
             install: install_id.to_string(),
+            db_path: db_path.to_path_buf(),
             dataset: ActiveDataset {
                 id: Some(format!("sim-{install_id}")),
                 conn: Some(conn),
@@ -116,6 +122,51 @@ impl RealEngine {
             next_cause_row_id: 1,
             buffered: BTreeMap::new(),
         })
+    }
+
+    /// Opens a database that is ALREADY a dataset — restored, or copied from another replica —
+    /// instead of migrating and seeding a fresh one.
+    ///
+    /// Everything `open` does to a blank file (migrate, seed the shared base, mint an install id,
+    /// bind the base identities) is already in this file, and re-doing any of it would either
+    /// duplicate the base rows or split the `(install, seq)` space.
+    fn attach_existing(db_path: &Path, conn: Connection) -> Result<(ActiveDataset, Connection, String, Clock), SimError> {
+        let install = sync_state::load(&conn)
+            .map_err(sql)?
+            .ok_or_else(|| SimError::Model("an adopted dataset has no sync_state row".into()))?
+            .install_id;
+
+        let capture = Capture::for_dataset(DatasetKind::CloudLinked, &conn)
+            .map_err(sql)?
+            .ok_or_else(|| SimError::Model("a cloud-linked dataset must capture".into()))?;
+        capture.attach(&conn).map_err(sql)?;
+
+        let apply = crate::db::open_configured(db_path).map_err(sql)?;
+        let clock = Clock::new(&install)?;
+
+        Ok((
+            ActiveDataset {
+                id: Some(format!("sim-{install}")),
+                conn: Some(conn),
+                capture: Some(capture),
+            },
+            apply,
+            install,
+            clock,
+        ))
+    }
+
+    /// Folds the WAL back into the main database file.
+    ///
+    /// Mandatory before anything reads this dataset as a FILE: a `-wal` holding the most recent
+    /// commits does not travel with a `fs::copy`, so a copy taken without this is a silently
+    /// stale database. Every production copy site checkpoints first for the same reason.
+    fn fold_wal(&self) -> Result<(), SimError> {
+        self.conn()?
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        self.apply.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+
+        Ok(())
     }
 
     fn conn(&self) -> Result<&Connection, SimError> {
@@ -338,6 +389,41 @@ fn sql(error: crate::error::AppError) -> SimError {
     SimError::Sql(error.to_string())
 }
 
+/// The `DatasetSlot` a replica is, for the one call that needs it.
+///
+/// `restore_snapshot_file` closes the dataset's connections through this seam and publishes the
+/// restored one back through it, and it takes `&self` while the engine owns itself by `&mut self`
+/// — the exact shape Story 25 recorded as the blocker. The engine therefore MOVES its connections
+/// in here before the call and takes the restored one back out after it, so the live file is still
+/// open while `carry_local_only` reads this computer's own state out of it (AD-9) and closed before
+/// the single copy that replaces it.
+#[derive(Default)]
+struct ReplicaSlot {
+    live: RefCell<Vec<Connection>>,
+    restored: RefCell<Option<Connection>>,
+}
+
+impl DatasetSlot for ReplicaSlot {
+    fn close(&self) -> Result<(), crate::error::AppError> {
+        for conn in self.live.borrow_mut().drain(..) {
+            if let Err(error) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
+                return Err(crate::error::AppError::Database {
+                    message: error.to_string(),
+                });
+            }
+            drop(conn);
+        }
+
+        Ok(())
+    }
+
+    fn adopt(&self, conn: Connection) -> Result<(), crate::error::AppError> {
+        *self.restored.borrow_mut() = Some(conn);
+
+        Ok(())
+    }
+}
+
 impl ReplicaEngine for RealEngine {
     type Segment = RealSegment;
 
@@ -505,6 +591,122 @@ impl ReplicaEngine for RealEngine {
             .unwrap_or(0);
 
         parked + self.buffered.len()
+    }
+
+    fn install_id(&self) -> &str {
+        &self.install
+    }
+
+    fn shipped_head(&self) -> Result<Option<i64>, SimError> {
+        let next = sync_segment::next_seq(self.conn()?, &self.install).map_err(sql)?;
+
+        Ok((next > 0).then_some(next - 1))
+    }
+
+    fn applied_heads(&self) -> Result<BTreeMap<String, i64>, SimError> {
+        snapshot_strip::read_watermark(self.conn()?).map_err(sql)
+    }
+
+    fn bootstrap_image(&mut self) -> Result<Option<Vec<u8>>, SimError> {
+        self.fold_wal()?;
+        let schema_version = u32::try_from(crate::db::latest_schema_version()).unwrap_or(u32::MAX);
+        let built = snapshot::build_snapshot_blocking(&self.db_path, schema_version)
+            .map_err(|error| SimError::Model(format!("a snapshot could not be built: {error}")))?;
+
+        Ok(Some(built.object))
+    }
+
+    /// The real re-bootstrap (AD-9), end to end: verify the object, swap the file through the
+    /// guarded swap, then re-materialize the unsent log the swap carried over.
+    ///
+    /// Two decisions worth stating because neither is free. (1) The install id is NOT re-minted:
+    /// `carry_local_only` puts THIS computer's `sync_state` back, which is strictly safer than a
+    /// fresh id — the carried unsent rows are keyed by install and a re-mint would orphan them out
+    /// of `segment::cut`'s reach, which is the lost edit the oracle would report. AD-4's re-mint is
+    /// for a DUPLICATED file, which is `clone_to` below. (2) The replay runs on the APPLY
+    /// connection, which has no capture hook: replaying through the hooked one would capture the
+    /// replay as fresh local writes, and a second `counter_delta` for one increment double-counts.
+    fn restore_from_image(&mut self, image: &[u8]) -> Result<bool, SimError> {
+        let verified = snapshot::read_snapshot(image)
+            .map_err(|error| SimError::Model(format!("a snapshot was refused: {error}")))?;
+
+        let slot = ReplicaSlot::default();
+        self.dataset.capture = None;
+        if let Some(conn) = self.dataset.conn.take() {
+            slot.live.borrow_mut().push(conn);
+        }
+        let placeholder = Connection::open_in_memory()?;
+        slot.live
+            .borrow_mut()
+            .push(std::mem::replace(&mut self.apply, placeholder));
+
+        backup::restore_snapshot_file(&slot, &self.db_path, &verified.payload, None)
+            .map_err(|error| SimError::Model(format!("the guarded swap failed: {error}")))?;
+
+        let restored = slot
+            .restored
+            .borrow_mut()
+            .take()
+            .ok_or_else(|| SimError::Model("the guarded swap published no connection".into()))?;
+        let (dataset, apply, install, clock) = Self::attach_existing(&self.db_path, restored)?;
+        self.dataset = dataset;
+        self.apply = apply;
+        self.install = install;
+        self.clock = clock;
+        // The restored file carries its OWN applied vector, so anything buffered behind a gap in
+        // the file that is gone says nothing about the file that replaced it (Story 23's
+        // `reopen_applier` resets the pull cursor for the same reason).
+        self.buffered.clear();
+
+        apply::replay_own_unsent(&self.apply, &self.clock, &self.install).map_err(sql)?;
+
+        Ok(true)
+    }
+
+    /// A second computer holding a duplicate of this one's file (AD-4, AD-15).
+    ///
+    /// `remint_install_on` is the production verb for exactly this case and is what settles the
+    /// `(install, seq)` question; the id it minted is then pinned to the scenario's seed-derived
+    /// one so a failure still replays from a single number (Story 13), which is sound because an
+    /// install id is only ever compared as the LWW tiebreak and the oracle reads the real stamps.
+    ///
+    /// The unsent rows are DROPPED, exactly like CAP-5's replace: the source still ships them
+    /// itself, so nothing is lost, while keeping them would ship one increment from two computers.
+    fn clone_to(&mut self, db_path: &Path, install_id: &str) -> Result<Option<Self>, SimError> {
+        self.fold_wal()?;
+        std::fs::copy(&self.db_path, db_path)
+            .map_err(|error| SimError::Model(format!("the dataset could not be copied: {error}")))?;
+
+        let conn = crate::db::open_configured(db_path).map_err(sql)?;
+        if remint_install_on(&conn).map_err(sql)? != InstallOutcome::Relinked {
+            return Err(SimError::Model(
+                "a copied dataset must RELINK, not mint a first install id".into(),
+            ));
+        }
+        sync_state::relink_install(
+            &conn,
+            install_id,
+            &machine_fingerprint(&MachineSignals::from_environment()),
+        )
+        .map_err(sql)?;
+        sync_capture::discard_unsent(&conn).map_err(sql)?;
+
+        let (dataset, apply, install, clock) = Self::attach_existing(db_path, conn)?;
+
+        Ok(Some(Self {
+            install,
+            db_path: db_path.to_path_buf(),
+            dataset,
+            apply,
+            clock,
+            // Inherited, not reset: the cause-to-row-id map is how a balance delta resolves AD-5's
+            // cause key, and `sync_identity::ensure` is first-writer-wins — a clone that re-minted
+            // row ids for causes the copied `sync_uuid` already binds would emit a DIFFERENT cause
+            // uuid for the same cause and the dedup rule would not fire.
+            causes: self.causes.clone(),
+            next_cause_row_id: self.next_cause_row_id,
+            buffered: BTreeMap::new(),
+        }))
     }
 }
 

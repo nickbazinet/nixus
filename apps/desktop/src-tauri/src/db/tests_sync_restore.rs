@@ -422,9 +422,25 @@ fn a_restore_keeps_the_snapshots_merge_state_and_this_computers_log() {
         "the snapshot's merge state for the balance survived the swap"
     );
     assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL AND install = '0123456789abcdef'"),
+        1,
+        "this computer's own unsent row is still unsent, and still shippable"
+    );
+    // INTENTIONAL BEHAVIOUR CHANGE (Story 25): the carry is scoped to THIS computer's install, so
+    // the fixture's unsent row under a foreign install does NOT come back. An unsent row of another
+    // install is nonsense to begin with — only the computer that captured a message can ship it —
+    // and carrying a FOREIGN install's log row is a lost edit: it is a dedup record for a message
+    // whose row the incoming snapshot does not have, so `apply` skips that message as already
+    // applied and the row never exists here. Found by the convergence simulator's restore op.
+    assert_eq!(
         count("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL"),
-        2,
-        "both unsent rows of the old file (the fixture's and the explicit one) are still unsent"
+        1,
+        "no other install's unsent row came back on top of the snapshot"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE install = '0a1b2c3d4e5f6071'"),
+        0,
+        "the fixture's foreign-install log rows are the snapshot's business, not the old file's"
     );
     assert_eq!(
         count("SELECT COUNT(*) FROM sync_log WHERE install = '0123456789abcdef' AND seq IS NOT NULL"),

@@ -12,6 +12,10 @@ use std::collections::BTreeMap;
 use crate::sync::clock::Hlc;
 
 /// One account's balance state: the latest absolute set, plus every delta keyed by its cause.
+///
+/// `Clone` so a whole ledger can be duplicated with the dataset it belongs to (Story 25's clone op
+/// in the simulator's reference engine); production only ever folds one in place.
+#[derive(Clone)]
 pub(crate) struct BalanceLedger<Cause: Ord> {
     set: Option<(Hlc, i64)>,
     deltas: BTreeMap<Cause, (Hlc, i64)>,

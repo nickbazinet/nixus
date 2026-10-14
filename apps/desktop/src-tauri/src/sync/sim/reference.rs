@@ -16,7 +16,7 @@
 //! simulator would notice if an engine lost it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
@@ -58,6 +58,8 @@ pub(crate) struct ReferenceEngine {
     install: String,
     clock: Clock,
     conn: Connection,
+    db_path: PathBuf,
+    wall: WallClock,
     mutation: Mutation,
 
     seq: u64,
@@ -87,8 +89,10 @@ impl ReferenceEngine {
 
         Ok(Self {
             install: install_id.to_string(),
-            clock: Clock::with_wall_clock(install_id, wall)?,
+            clock: Clock::with_wall_clock(install_id, wall.clone())?,
             conn,
+            db_path: db_path.to_path_buf(),
+            wall,
             mutation,
             seq: 0,
             outbox: Vec::new(),
@@ -367,6 +371,49 @@ impl ReferenceEngine {
 
 impl ReplicaEngine for ReferenceEngine {
     type Segment = Segment;
+
+    fn install_id(&self) -> &str {
+        &self.install
+    }
+
+    /// A clone this engine CAN express, unlike a restore.
+    ///
+    /// Every piece of its merge state is in memory and copyable, and the data is one SQLite file:
+    /// duplicating both is the whole operation. A restore is the opposite case — the image is a
+    /// stripped database file that carries none of these maps — and is why the trait lets an engine
+    /// decline. Both engines implementing CLONE is load-bearing for
+    /// `the_real_pipeline_agrees_with_the_reference_on_the_pinned_seeds`: a replica count that grew
+    /// on one engine only would make the two run different scenarios from that step on.
+    fn clone_to(&mut self, db_path: &Path, install_id: &str) -> Result<Option<Self>, SimError> {
+        self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        std::fs::copy(&self.db_path, db_path)
+            .map_err(|error| SimError::Model(format!("the dataset could not be copied: {error}")))?;
+        let conn = migrated_dataset(db_path);
+        conn.execute_batch("PRAGMA foreign_keys = ON")?;
+
+        Ok(Some(Self {
+            install: install_id.to_string(),
+            clock: Clock::with_wall_clock(install_id, self.wall.clone())?,
+            conn,
+            db_path: db_path.to_path_buf(),
+            wall: self.wall.clone(),
+            mutation: self.mutation,
+            // A FRESH `(install, seq)` space (AD-4), and the source's unsent messages are DROPPED
+            // the way CAP-5's replace drops them: the source still ships them itself, so keeping
+            // them here would put one increment on the wire from two computers.
+            seq: 0,
+            outbox: Vec::new(),
+            seen: self.seen.clone(),
+            pending: self.pending.clone(),
+            ids: self.ids.clone(),
+            fields: self.fields.clone(),
+            parents: self.parents.clone(),
+            tombstones: self.tombstones.clone(),
+            balances: self.balances.clone(),
+            counters: self.counters.clone(),
+            unkeyed_ordinal: self.unkeyed_ordinal,
+        }))
+    }
 
     fn local_write(&mut self, change: &Change) -> Result<Hlc, SimError> {
         let message = Message {

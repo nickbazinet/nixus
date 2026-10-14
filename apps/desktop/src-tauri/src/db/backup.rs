@@ -755,6 +755,16 @@ fn carry_local_only(target: &Connection, source_path: &Path) -> Result<CarryRepo
     }
 
     let source = open_query_only(source_path)?;
+    // Only THIS computer's own log rows are carried. Carrying another install's rows would hand the
+    // restored file a dedup record for a message whose row the incoming snapshot does not have, and
+    // `apply` would then skip that message as already applied and the row would never exist here —
+    // a lost edit. Everything the account knows about other installs travels in the snapshot, which
+    // is the one place it is consistent with the tables beside it.
+    let own_install: Option<String> = source
+        .query_row("SELECT install_id FROM sync_state WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .optional()?;
     let carried: Vec<String> = sync_tables(&source)?
         .into_iter()
         .filter(|name| sync_tables(target).map(|t| t.contains(name)).unwrap_or(false))
@@ -779,7 +789,8 @@ fn carry_local_only(target: &Connection, source_path: &Path) -> Result<CarryRepo
         if SNAPSHOT_OWNED_SYNC_TABLES.contains(&name.as_str()) {
             continue;
         }
-        report.rows += copy_table(&source, &tx, &name, name == "sync_log")?;
+        let additive = (name == "sync_log").then_some(own_install.as_deref()).flatten();
+        report.rows += copy_table(&source, &tx, &name, additive)?;
         report.tables.push(name);
     }
 
@@ -839,12 +850,14 @@ fn sync_tables(conn: &Connection) -> Result<Vec<String>, AppError> {
 
 /// Carries `name`'s rows from the source into the target, column by named column.
 ///
-/// Two modes, and which one a table gets is the safety argument of a Story-23 swap. REPLACE is
-/// the default: the table describes THIS computer (`sync_state`, `sync_image_blobs`) and the
-/// incoming copy of it is meaningless. ADDITIVE is `sync_log` alone, where both sides matter —
-/// the snapshot brought the account's counter and balance history (Story 20: the log IS the merge
-/// state for those two kinds) while the safety copy holds this computer's unsent rows AND the
-/// shipped rows `next_seq` is derived from, so losing either is data loss.
+/// Two modes, and which one a table gets is the safety argument of a Story-23 swap. REPLACE
+/// (`additive: None`) is the default: the table describes THIS computer (`sync_state`,
+/// `sync_image_blobs`) and the incoming copy of it is meaningless. ADDITIVE is `sync_log` alone,
+/// where both sides matter — the snapshot brought the account's counter and balance history
+/// (Story 20: the log IS the merge state for those two kinds) while the safety copy holds this
+/// computer's unsent rows AND the shipped rows `next_seq` is derived from, so losing either is
+/// data loss. Additive mode is SCOPED TO ONE INSTALL for the reason `carry_local_only` states:
+/// another install's dedup record without its row is a message silently skipped forever.
 ///
 /// The columns come from the SOURCE statement, so a column a later migration added to the
 /// target takes its default instead of shifting every value one place to the left — which
@@ -860,18 +873,21 @@ fn copy_table(
     source: &Connection,
     target: &Connection,
     name: &str,
-    additive: bool,
+    additive: Option<&str>,
 ) -> Result<usize, AppError> {
-    if !additive {
+    if additive.is_none() {
         target.execute(&format!("DELETE FROM \"{name}\""), [])?;
     }
 
-    let mut read = source.prepare(&format!("SELECT * FROM \"{name}\""))?;
+    let mut read = match additive {
+        Some(_) => source.prepare(&format!("SELECT * FROM \"{name}\" WHERE install = ?1"))?,
+        None => source.prepare(&format!("SELECT * FROM \"{name}\""))?,
+    };
     let selected: Vec<(usize, String)> = read
         .column_names()
         .iter()
         .enumerate()
-        .filter(|(_, column)| !(additive && **column == "id"))
+        .filter(|(_, column)| !(additive.is_some() && **column == "id"))
         .map(|(at, column)| (at, format!("\"{column}\"")))
         .collect();
     if selected.is_empty() {
@@ -887,7 +903,10 @@ fn copy_table(
     ))?;
 
     let mut copied = 0;
-    let mut rows = read.query([])?;
+    let mut rows = match additive {
+        Some(install) => read.query(rusqlite::params![install])?,
+        None => read.query([])?,
+    };
     while let Some(row) = rows.next()? {
         let values: Vec<Value> = selected
             .iter()

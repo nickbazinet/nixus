@@ -5,6 +5,9 @@
 //! what lets Stories 15, 16, 19, 20 and 21 replace the implementation without touching a
 //! single assertion. See the module docs in `sim/mod.rs` for the swap procedure.
 
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use crate::sync::clock::ClockError;
 use crate::sync::sim::model::{Change, Observable, RowUuid, Table};
 
@@ -80,5 +83,54 @@ pub(crate) trait ReplicaEngine {
             .and_then(|rows| rows.get(&row))
             .and_then(|cells| cells.get(column))
             .cloned())
+    }
+
+    /// The `(install, seq)` space this replica ships under (AD-4).
+    fn install_id(&self) -> &str;
+
+    // ---------------------------------------------------------------------------------------
+    // Story 25's lifecycle verbs. Story 13 reserved one `adopt_database` hook; it is four
+    // verbs here because restore and clone are NOT the same operation. A RESTORE replaces this
+    // replica's file through the real bootstrap path and keeps THIS computer's identity and its
+    // own unsent log (AD-9). A CLONE duplicates another replica's file into a NEW computer,
+    // which must re-mint its install id or two computers would append to one `(install, seq)`
+    // space (AD-4, AD-15).
+    //
+    // Every verb declines by default: an engine whose merge state lives in memory cannot
+    // express a file swap at all, which is the blocker Stories 20/21/23 recorded. The runner
+    // performs the op only when the engine says it happened, so no assertion moves for the
+    // engine that declines.
+    // ---------------------------------------------------------------------------------------
+
+    /// A bootstrap image of this replica's database, built the way production builds one
+    /// (AD-9: a stripped snapshot, never a raw file). `None` from an engine that cannot.
+    fn bootstrap_image(&mut self) -> Result<Option<Vec<u8>>, SimError> {
+        Ok(None)
+    }
+
+    /// The highest `seq` this replica has SHIPPED, if any.
+    fn shipped_head(&self) -> Result<Option<i64>, SimError> {
+        Ok(None)
+    }
+
+    /// The highest `seq` applied per remote install — what a bootstrap image taken here would
+    /// claim as its watermark (AD-9).
+    fn applied_heads(&self) -> Result<BTreeMap<String, i64>, SimError> {
+        Ok(BTreeMap::new())
+    }
+
+    /// Replaces this replica's database with `image` through the guarded swap, keeping this
+    /// computer's identity and re-applying its carried unsent log (AD-9). `false` = declined.
+    fn restore_from_image(&mut self, _image: &[u8]) -> Result<bool, SimError> {
+        Ok(false)
+    }
+
+    /// A duplicate of this replica's database as a brand-new replica at `db_path`, re-minted
+    /// onto `install_id` (AD-4). `None` = declined.
+    fn clone_to(&mut self, _db_path: &Path, _install_id: &str) -> Result<Option<Self>, SimError>
+    where
+        Self: Sized,
+    {
+        Ok(None)
     }
 }
