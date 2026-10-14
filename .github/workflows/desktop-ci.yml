@@ -176,6 +176,20 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
+      # AD-19's local-write latency gate (Story 15) asserts absolute microsecond ceilings ONLY in a
+      # release build, which is the build its recorded baseline was measured in; the `cargo test`
+      # above is a debug build and therefore checks the machine-independent ratio alone. Run on one
+      # thread so the measurement is not competing with the rest of the suite, and with --nocapture
+      # so the measured numbers land in this log.
+      #
+      # macOS only, deliberately: on the Windows runner a release test build is a from-scratch
+      # compile of every dependency in a second profile (well over ten minutes on a cold cache) for
+      # a number the ratio guard already defends there. Windows keeps the relative guard.
+      - name: Capture latency gate (release)
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --release --lib sync::tests_capture_latency -- --test-threads=1 --nocapture
+
       # The Release workflow builds `universal-apple-darwin`, which compiles the
       # crate once per architecture. Only the host arch is covered above, so this
       # proves bindgen also generates the SQLite bindings when cross-compiling —
