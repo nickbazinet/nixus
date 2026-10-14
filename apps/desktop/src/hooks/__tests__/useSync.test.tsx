@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  APPLIED_INVALIDATE_MS,
   useDisableSync,
   useEnableSync,
   useResolveRemoteChanged,
@@ -208,7 +209,8 @@ describe("useSync", () => {
     render(<Probe />);
     await settle();
 
-    expect(listenMock).toHaveBeenCalledTimes(1);
+    expect(listenMock.mock.calls.filter((call) => call[0] === "sync:status"))
+      .toHaveLength(1);
     expect(callsOf("sync_status")).toHaveLength(1);
     expect(container.textContent).toBe("idle");
 
@@ -399,6 +401,66 @@ describe("useSync", () => {
     await settle();
 
     expect(unlistenMock).toHaveBeenCalled();
+  });
+
+  it("refreshes every non-sync query once per applied burst", async () => {
+    invokeMock.mockResolvedValue(payload());
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+
+    function Probe() {
+      useSyncStatus();
+      return null;
+    }
+    render(<Probe />);
+    await settle();
+    spy.mockClear();
+
+    await act(async () => {
+      emitApplied?.(2);
+      emitApplied?.(3);
+    });
+    await act(async () => {
+      await new Promise((resolve) =>
+        setTimeout(resolve, APPLIED_INVALIDATE_MS + 50)
+      );
+    });
+    await settle();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    const predicate = (
+      spy.mock.calls[0][0] as {
+        predicate: (query: { queryKey: readonly unknown[] }) => boolean;
+      }
+    ).predicate;
+    expect(predicate({ queryKey: ["expenses"] })).toBe(true);
+    expect(predicate({ queryKey: queryKeys.accounts })).toBe(true);
+    expect(predicate({ queryKey: queryKeys.syncStatus })).toBe(false);
+    expect(predicate({ queryKey: queryKeys.syncDiagnostics })).toBe(false);
+  });
+
+  it("ignores an applied event that applied nothing", async () => {
+    invokeMock.mockResolvedValue(payload());
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+
+    function Probe() {
+      useSyncStatus();
+      return null;
+    }
+    render(<Probe />);
+    await settle();
+    spy.mockClear();
+
+    await act(async () => {
+      emitApplied?.(0);
+    });
+    await act(async () => {
+      await new Promise((resolve) =>
+        setTimeout(resolve, APPLIED_INVALIDATE_MS + 50)
+      );
+    });
+    await settle();
+
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("reads diagnostics only once asked", async () => {

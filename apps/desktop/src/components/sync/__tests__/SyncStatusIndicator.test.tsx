@@ -18,14 +18,22 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-/* Keyed on the event name so a test can drive `sync:applied` without also standing in for the
- * status subscription the indicator owns. */
-const emitters = new Map<string, (payload: unknown) => void>();
+/* Keyed on the event name, and FAN-OUT like the real event plugin: two hooks subscribe to
+ * `sync:applied` (the cue and the cache refresh), and a single handler per name would let
+ * whichever registered last be the only one a test could drive. */
+const emitters = new Map<string, Set<(payload: unknown) => void>>();
+
+function emitEvent(event: string, payload: unknown) {
+  emitters.get(event)?.forEach((handler) => handler(payload));
+}
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: async (event: string, handler: (e: { payload: unknown }) => void) => {
-    emitters.set(event, (value) => handler({ payload: value }));
-    return () => emitters.delete(event);
+    const registered = emitters.get(event) ?? new Set<(payload: unknown) => void>();
+    const deliver = (value: unknown) => handler({ payload: value });
+    registered.add(deliver);
+    emitters.set(event, registered);
+    return () => registered.delete(deliver);
   },
 }));
 
@@ -491,7 +499,7 @@ describe("SyncStatusIndicator applied cue", () => {
     expect(cue()).toBeNull();
 
     await act(async () => {
-      emitters.get("sync:applied")?.(4);
+      emitEvent("sync:applied", 4);
     });
     await settle();
 
@@ -508,7 +516,7 @@ describe("SyncStatusIndicator applied cue", () => {
     await settle();
 
     await act(async () => {
-      emitters.get("sync:applied")?.(1);
+      emitEvent("sync:applied", 1);
     });
     await settle();
 

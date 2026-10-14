@@ -18,6 +18,25 @@ import type {
 /** How long the "changed on another computer" cue stays up before it removes itself. */
 export const APPLIED_CUE_MS = 8_000;
 
+/**
+ * How long one `sync:applied` burst is collected before the cache is refreshed.
+ *
+ * A pull cycle applies its batches one after another and emits per batch, so without this every
+ * batch of one arrival would re-read every mounted screen.
+ */
+export const APPLIED_INVALIDATE_MS = 300;
+
+/**
+ * The two cache entries sync owns itself, which an apply must NOT invalidate.
+ *
+ * The status is kept current by `sync:status` alone and the diagnostics are read on demand, so
+ * invalidating either here would turn an apply into IPC that answers nothing new.
+ */
+const SYNC_OWNED_QUERY_KEYS: readonly string[] = [
+  queryKeys.syncStatus[0],
+  queryKeys.syncDiagnostics[0],
+];
+
 /** CAP-5's answer: replace this computer's data with the cloud copy, or keep it separate. */
 export type LinkChoice = "replace" | "separate";
 
@@ -51,6 +70,10 @@ function statusQueryOptions() {
  * Exactly ONE caller may use this hook: the always-mounted indicator. A second listener would
  * apply every transition twice, which is the duplication `useAuthSession` already documents — so
  * other readers take `useSyncStatusValue` and share this cache entry.
+ *
+ * It also owns the `sync:applied` subscription that REFRESHES THE CACHE: remote changes are
+ * written straight into the dataset by the actor, so without an invalidation here every screen
+ * keeps rendering what it read before the other computer's edits landed.
  */
 export function useSyncStatus() {
   const queryClient = useQueryClient();
@@ -58,6 +81,8 @@ export function useSyncStatus() {
   useEffect(() => {
     let cleaned = false;
     let unlisten: UnlistenFn | undefined;
+    let unlistenApplied: UnlistenFn | undefined;
+    let burst: ReturnType<typeof setTimeout> | undefined;
 
     const setup = async () => {
       const stop = await listen<SyncStatusPayload>("sync:status", (event) => {
@@ -67,6 +92,19 @@ export function useSyncStatus() {
       // cleanup and every transition is applied twice.
       if (cleaned) stop();
       else unlisten = stop;
+
+      const stopApplied = await listen<number>("sync:applied", (event) => {
+        if (typeof event.payload !== "number" || event.payload <= 0) return;
+        clearTimeout(burst);
+        burst = setTimeout(() => {
+          queryClient.invalidateQueries({
+            predicate: (query) =>
+              !SYNC_OWNED_QUERY_KEYS.includes(String(query.queryKey[0])),
+          });
+        }, APPLIED_INVALIDATE_MS);
+      });
+      if (cleaned) stopApplied();
+      else unlistenApplied = stopApplied;
     };
 
     setup().catch(() => {
@@ -76,7 +114,9 @@ export function useSyncStatus() {
 
     return () => {
       cleaned = true;
+      clearTimeout(burst);
       unlisten?.();
+      unlistenApplied?.();
     };
   }, [queryClient]);
 
