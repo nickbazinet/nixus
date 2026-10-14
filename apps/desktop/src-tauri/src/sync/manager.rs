@@ -365,6 +365,9 @@ pub struct SyncTuning {
     /// The floor between two segment ships, so a burst of edits becomes one object rather than one
     /// per keystroke.
     pub segment_interval: Duration,
+    /// The floor between two sweeps of the expired tombstones (AD-5: a delete is restorable for 30
+    /// days). Local file work only, so it runs whatever the entitlement and whatever the network.
+    pub tombstone_purge_interval: Duration,
 }
 
 impl Default for SyncTuning {
@@ -377,6 +380,7 @@ impl Default for SyncTuning {
             max_backoff: Duration::from_secs(300),
             remote_poll_interval: Duration::from_secs(30),
             segment_interval: Duration::from_secs(10),
+            tombstone_purge_interval: Duration::from_secs(6 * 60 * 60),
         }
     }
 }
@@ -570,6 +574,7 @@ pub(crate) struct SyncActor<H: SyncHost> {
     in_roster: bool,
     last_segment_ship: Option<Instant>,
     last_remote_poll: Option<Instant>,
+    last_tombstone_purge: Option<Instant>,
 }
 
 impl<H: SyncHost> SyncActor<H> {
@@ -625,6 +630,9 @@ impl<H: SyncHost> SyncActor<H> {
             in_roster: false,
             last_segment_ship: Some(started),
             last_remote_poll: Some(started),
+            // Deliberately NOT dated from construction: the first tick is the startup sweep AD-5
+            // asks for, and it is a local `DELETE` on an indexed column rather than a request.
+            last_tombstone_purge: None,
         };
 
         (actor, status_rx, events_rx)
@@ -1093,6 +1101,31 @@ impl<H: SyncHost> SyncActor<H> {
         Ok(state.install_id)
     }
 
+    /// AD-5's retention, swept at the first tick after launch and then while the app idles.
+    ///
+    /// A failure is logged and never raised as a sync fault: an unpurged tombstone costs disk, not
+    /// correctness, and the delete MESSAGE it describes is untouched either way.
+    fn purge_tombstones(&mut self) {
+        let due = self
+            .last_tombstone_purge
+            .is_none_or(|at| at.elapsed() >= self.tuning.tombstone_purge_interval);
+        if !due {
+            return;
+        }
+
+        self.last_tombstone_purge = Some(Instant::now());
+        match self
+            .host
+            .with_dataset(crate::db::sync_apply::purge_expired_tombstones)
+        {
+            Ok(removed) if removed > 0 => {
+                tracing::info!("Purged {} expired tombstone(s)", removed);
+            }
+            Ok(_) => {}
+            Err(fault) => tracing::warn!("Expired tombstones could not be purged: {}", fault.code()),
+        }
+    }
+
     /// One cycle of the log protocol (AD-6): ship what is local, publish the head and the roster,
     /// then poll the roster and the known heads.
     ///
@@ -1218,6 +1251,8 @@ impl<H: SyncHost> SyncActor<H> {
 
     /// One poll: read the change signal, and upload if the dataset has settled.
     pub(in crate::sync) async fn tick(&mut self) {
+        self.purge_tombstones();
+
         if !self.enabled || self.pending.is_some() {
             return;
         }

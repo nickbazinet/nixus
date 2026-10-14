@@ -216,6 +216,24 @@ pub(crate) fn bump_merchant_hint(conn: &Connection, id: i64, by: i64) -> Result<
     Ok(())
 }
 
+/// Ages a tombstone past its retention window, which is the only way a test can reach the state
+/// AD-5's purge sweep is written for: `purge_after` is a stored timestamp and the table's own CHECK
+/// refuses a window that closes before the delete happened.
+pub(crate) fn expire_tombstone(
+    conn: &Connection,
+    table: &str,
+    row_uuid: &[u8],
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE sync_tombstone \
+         SET deleted_at = datetime('now', '-31 days'), purge_after = datetime('now', '-1 day') \
+         WHERE table_name = ?1 AND row_uuid = ?2",
+        params![table, row_uuid],
+    )?;
+
+    Ok(())
+}
+
 /// The two scratch tables the `WITHOUT ROWID` and new-row-id-REPLACE cases need.
 ///
 /// The real schema has neither shape among its travelling tables (`no_travelling_table_of_the_real_

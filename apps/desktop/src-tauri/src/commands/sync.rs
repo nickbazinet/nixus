@@ -12,7 +12,7 @@
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tracing::{info, warn};
 
@@ -20,6 +20,7 @@ use crate::error::AppError;
 use crate::models::ProjectImage;
 use crate::sync::bootstrap::LinkChoice;
 use crate::sync::host::DatasetHost;
+use crate::sync::restore::{self, RecentlyDeletedView, RestoreOutcome};
 use crate::sync::manager::{
     self, RemoteChoice, SyncDiagnostics, SyncEnableOutcome, SyncFault, SyncHandle, SyncPrompt,
     SyncState, SyncStatusPayload, SyncTuning,
@@ -174,6 +175,44 @@ pub async fn sync_now(app: AppHandle) -> Result<SyncStatusPayload, AppError> {
     handle.sync_now().await?;
 
     Ok(handle.status())
+}
+
+/// The deletes that are still restorable (AD-5: 30 days), grouped for display.
+///
+/// Reads only this computer's own `sync_tombstone`, so it costs no request and works offline. A
+/// local-only profile records no delete at all and is answered with `sync_available: false` rather
+/// than with an empty list that would look like a bug.
+#[tauri::command(rename_all = "snake_case")]
+pub fn list_recently_deleted(
+    state: State<crate::db::DbState>,
+) -> Result<RecentlyDeletedView, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    restore::list(&active)
+}
+
+/// Brings one deleted row back, with the rows the schema cascaded away with it (AD-12).
+///
+/// The rows are written as ORDINARY captured changes, so the restore reaches the other computers
+/// the way any local edit does.
+#[tauri::command(rename_all = "snake_case")]
+pub fn restore_deleted(
+    state: State<crate::db::DbState>,
+    id: String,
+) -> Result<RestoreOutcome, AppError> {
+    let key = restore::TombstoneKey::parse(&id)?;
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    let outcome = restore::restore(&active, &key)?;
+
+    let details = serde_json::to_string(&outcome).unwrap_or_default();
+    crate::db::audit::record(&active, "recently_deleted", 0, "restore", None, Some(&details));
+
+    Ok(outcome)
 }
 
 /// Answers the "the cloud copy changed on another computer" prompt. `action` is

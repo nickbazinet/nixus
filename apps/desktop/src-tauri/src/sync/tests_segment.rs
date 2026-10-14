@@ -32,6 +32,7 @@ fn tuning() -> SyncTuning {
         // about the clock that paces it.
         remote_poll_interval: Duration::ZERO,
         segment_interval: Duration::ZERO,
+        tombstone_purge_interval: Duration::from_secs(86_400),
     }
 }
 

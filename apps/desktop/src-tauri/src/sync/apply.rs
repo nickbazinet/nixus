@@ -53,7 +53,7 @@ use crate::error::AppError;
 use super::balance::BalanceLedger;
 use super::capture::{payload, ROW_COLUMN_MARKER};
 use super::clock::{Clock, Hlc};
-use super::registry::{self, FkPolicy, MergeKind, TableClass};
+use super::registry::{self, FkPolicy, MergeKind, RowIdentity, TableClass};
 use super::segment::{Applier, MessageKind, SegmentBatch, SegmentMessage};
 use super::state::ensure_install_on;
 
@@ -377,15 +377,21 @@ fn apply_message(
     let tombstoned = apply_db::tombstone(conn, rule.table, &message.row_uuid)?;
 
     match message.kind {
-        MessageKind::Tombstone => apply_tombstone(conn, rule.table, message, &stored),
+        MessageKind::Tombstone => apply_tombstone(conn, rule, message, &stored),
         MessageKind::Field => {
             // A tombstone is ABSORBING per identity (AD-5, AD-12): an upsert of any clock value
-            // after it is dropped, which is sound precisely because AD-2 drops the uuid mapping
-            // with the tombstone, so a re-insert is a new identity rather than a resurrection.
-            if tombstoned.is_some() {
-                apply_db::record_applied(conn, &stored)?;
+            // after it is dropped, which is sound for a SURROGATE row precisely because AD-2 drops
+            // the uuid mapping with the tombstone, so a re-insert is a new identity rather than a
+            // resurrection. A DERIVED identity has no such escape — its uuid is a function of its
+            // key — so for those a RE-CREATION stamped after the delete revives the row instead.
+            if let Some(tombstone) = &tombstoned {
+                if !revives(rule, message, tombstone)? {
+                    apply_db::record_applied(conn, &stored)?;
 
-                return Ok(Outcome::Dropped);
+                    return Ok(Outcome::Dropped);
+                }
+
+                apply_db::delete_tombstone(conn, rule.table, &message.row_uuid)?;
             }
 
             apply_field(conn, rule.table, rule.class, message, &stored)
@@ -403,6 +409,72 @@ fn apply_message(
             apply_balance(conn, rule.table, message, &stored, tombstoned.is_some())
         }
     }
+}
+
+/// Whether a message revives a tombstoned row.
+///
+/// For a SURROGATE identity: never. AD-2 drops the uuid mapping with the tombstone, so a row the
+/// user re-creates comes back under a new identity and nothing addressed to the dead one may land.
+///
+/// For a DERIVED identity (AD-2: a natural key or a template period) the uuid is a FUNCTION of the
+/// key, so the same logical row re-created anywhere carries the same uuid again — an absorbing
+/// tombstone would make it un-restorable and un-regenerable forever. The rule is therefore LWW
+/// against a RE-CREATION only: a whole-row message, which capture emits for an INSERT and never for
+/// an edit, stamped after the delete. A partial edit is still absorbed, so AD-5's "delete wins over
+/// concurrent edits" is untouched. Both halves of the rule read only the message set, so every
+/// replica reaches the same answer whatever the arrival order.
+fn revives(
+    rule: &registry::TableRule,
+    message: &SegmentMessage,
+    tombstone: &apply_db::TombstoneRow,
+) -> Result<bool, AppError> {
+    if !has_derived_identity(rule) || message.hlc <= tombstone.hlc {
+        return Ok(false);
+    }
+
+    let Some(cells) = decode_cells(message) else {
+        return Ok(false);
+    };
+
+    Ok(is_whole_row(rule.table, &cells))
+}
+
+/// A derived uuid cannot be re-minted, which is what makes the absorbing rule unsound for it.
+fn has_derived_identity(rule: &registry::TableRule) -> bool {
+    matches!(rule.identity, Some(RowIdentity::Natural))
+}
+
+/// Whether a field message carries the whole row — every column capture emits for an INSERT.
+fn is_whole_row(table: &str, cells: &[(String, Vec<u8>)]) -> bool {
+    registry::columns_of(table)
+        .filter(|column| travels_in_a_field_message(table, column))
+        .all(|column| cells.iter().any(|(name, _)| name == column.column))
+}
+
+fn travels_in_a_field_message(table: &str, column: &registry::ColumnRule) -> bool {
+    match column.merge {
+        MergeKind::Lww | MergeKind::Immutable => true,
+        MergeKind::LocalId => registry::fk_parent(table, column.column).is_some(),
+        MergeKind::Counter | MergeKind::Balance | MergeKind::Excluded => false,
+    }
+}
+
+/// When the live row was created, as the OLDEST `hlc` any of its columns was accepted under.
+///
+/// A whole-row insert stamps every column with one `hlc`, so the minimum is that stamp; a later
+/// edit only raises individual columns. It is therefore the stamp a tombstone has to beat for the
+/// delete to still describe the row that is there now.
+fn creation_hlc(
+    conn: &Connection,
+    table: &str,
+    row_uuid: &[u8; 16],
+) -> Result<Option<String>, AppError> {
+    let oldest = sync_capture::field_state_columns(conn, table, row_uuid)?
+        .into_iter()
+        .map(|(_, state)| state.hlc)
+        .min();
+
+    Ok(oldest)
 }
 
 /// AD-5's per-column last-write-wins, with the row created on first sight.
@@ -717,10 +789,11 @@ fn retain_balance_in_tombstone(
 /// schema's own `CASCADE` and `SET NULL` run, and every mapping that went with it is dropped.
 fn apply_tombstone(
     conn: &Connection,
-    table: &'static str,
+    rule: &registry::TableRule,
     message: &SegmentMessage,
     stored: &AppliedMessage<'_>,
 ) -> Result<Outcome, AppError> {
+    let table = rule.table;
     let Some(row_json) = decoded_text(message.payload.as_deref()) else {
         apply_db::quarantine(conn, stored, "malformed_payload", None)?;
         return Ok(Outcome::Quarantined);
@@ -735,6 +808,19 @@ fn apply_tombstone(
     }
 
     let row_id = sync_identity::row_id_for(conn, table, &message.row_uuid)?;
+
+    // The other half of the derived-identity rule in [`revives`]: a row re-created AFTER this
+    // delete is not the row this delete describes, so the delete loses and leaves no tombstone
+    // behind — which is what makes the two halves agree whichever message arrives first.
+    if row_id.is_some() && has_derived_identity(rule) {
+        if let Some(created) = creation_hlc(conn, table, &message.row_uuid)? {
+            if created > message.hlc {
+                apply_db::record_applied(conn, stored)?;
+
+                return Ok(Outcome::Dropped);
+            }
+        }
+    }
 
     // AD-12's one `RESTRICT` edge: a live child WINS and the parent's tombstone is overridden. It is
     // parked rather than dropped, so the delete still happens on the day the child's own tombstone

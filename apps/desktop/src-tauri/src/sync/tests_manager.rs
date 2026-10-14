@@ -33,6 +33,7 @@ fn tuning() -> SyncTuning {
         // one would be counted as an upload. `tests_segment.rs` is where the log cycle is driven.
         remote_poll_interval: Duration::from_secs(86_400),
         segment_interval: Duration::from_secs(86_400),
+        tombstone_purge_interval: Duration::from_secs(86_400),
         max_backoff: Duration::from_secs(120),
     }
 }

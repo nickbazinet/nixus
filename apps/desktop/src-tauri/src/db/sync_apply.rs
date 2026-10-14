@@ -178,9 +178,6 @@ pub fn counter_deltas(
 }
 
 /// A deleted row, kept whole for 30 days (AD-5).
-// Story 21 builds the recently-deleted view and the restore on these fields; apply itself only
-// needs to know a tombstone EXISTS.
-#[allow(dead_code)]
 pub struct TombstoneRow {
     pub table_name: String,
     pub row_uuid: Vec<u8>,
@@ -188,6 +185,7 @@ pub struct TombstoneRow {
     pub install: String,
     pub row_json: String,
     pub deleted_at: String,
+    pub purge_after: String,
 }
 
 pub fn tombstone(
@@ -197,8 +195,8 @@ pub fn tombstone(
 ) -> Result<Option<TombstoneRow>, AppError> {
     let row = conn
         .prepare_cached(
-            "SELECT table_name, row_uuid, hlc, install, row_json, deleted_at FROM sync_tombstone \
-             WHERE table_name = ?1 AND row_uuid = ?2",
+            "SELECT table_name, row_uuid, hlc, install, row_json, deleted_at, purge_after \
+             FROM sync_tombstone WHERE table_name = ?1 AND row_uuid = ?2",
         )?
         .query_row(params![table, row_uuid], read_tombstone)
         .optional()?;
@@ -206,19 +204,38 @@ pub fn tombstone(
     Ok(row)
 }
 
-/// The restorable deletes, newest first. Story 21 builds the view on top of this.
-// Story 21: the recently-deleted view reads this.
-#[allow(dead_code)]
+/// The restorable deletes, newest first. Story 21's recently-deleted view reads this.
 pub fn recent_tombstones(conn: &Connection, limit: i64) -> Result<Vec<TombstoneRow>, AppError> {
     let mut statement = conn.prepare(
-        "SELECT table_name, row_uuid, hlc, install, row_json, deleted_at FROM sync_tombstone \
-         WHERE purge_after > datetime('now') ORDER BY deleted_at DESC, table_name, row_uuid LIMIT ?1",
+        "SELECT table_name, row_uuid, hlc, install, row_json, deleted_at, purge_after \
+         FROM sync_tombstone WHERE purge_after > datetime('now') \
+         ORDER BY deleted_at DESC, table_name, row_uuid LIMIT ?1",
     )?;
     let rows = statement
         .query_map([limit], read_tombstone)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
+}
+
+/// Drops a tombstone, which is what a restore does to the row it brought back: the record of the
+/// delete has to go, or the absorbing rule (AD-5) would drop the restored row's own next message.
+pub fn delete_tombstone(conn: &Connection, table: &str, row_uuid: &[u8]) -> Result<(), AppError> {
+    conn.prepare_cached("DELETE FROM sync_tombstone WHERE table_name = ?1 AND row_uuid = ?2")?
+        .execute(params![table, row_uuid])?;
+
+    Ok(())
+}
+
+/// AD-5's retention: a tombstone older than its `purge_after` stops being restorable and is
+/// removed. The delete MESSAGE in `sync_log` is deliberately untouched — it is replication truth
+/// and other computers may still be owed it; only the restorable copy of the row expires.
+pub fn purge_expired_tombstones(conn: &Connection) -> Result<usize, AppError> {
+    let removed = conn
+        .prepare_cached("DELETE FROM sync_tombstone WHERE purge_after <= datetime('now')")?
+        .execute([])?;
+
+    Ok(removed)
 }
 
 fn read_tombstone(row: &rusqlite::Row<'_>) -> rusqlite::Result<TombstoneRow> {
@@ -229,6 +246,7 @@ fn read_tombstone(row: &rusqlite::Row<'_>) -> rusqlite::Result<TombstoneRow> {
         install: row.get(3)?,
         row_json: row.get(4)?,
         deleted_at: row.get(5)?,
+        purge_after: row.get(6)?,
     })
 }
 
@@ -444,6 +462,14 @@ pub fn insert_row(
     table: &'static str,
     columns: &[(&'static str, Value)],
 ) -> Result<i64, AppError> {
+    execute_insert(conn, table, columns)?.map_err(AppError::from)
+}
+
+fn execute_insert(
+    conn: &Connection,
+    table: &'static str,
+    columns: &[(&'static str, Value)],
+) -> Result<rusqlite::Result<i64>, AppError> {
     if columns.is_empty() {
         return Err(AppError::Database {
             message: format!("a remote {table} row named no column to insert"),
@@ -464,10 +490,44 @@ pub fn insert_row(
         .map(|(_, value)| value as &dyn rusqlite::ToSql)
         .collect();
 
-    conn.prepare_cached(&format!("INSERT INTO {table} ({names}) VALUES ({placeholders})"))?
-        .execute(values.as_slice())?;
+    let executed = conn
+        .prepare_cached(&format!("INSERT INTO {table} ({names}) VALUES ({placeholders})"))?
+        .execute(values.as_slice());
 
-    Ok(conn.last_insert_rowid())
+    Ok(executed.map(|_| conn.last_insert_rowid()))
+}
+
+/// Inserts a restored row, answering `None` when the schema REFUSES it on a constraint.
+///
+/// The refusal is read off SQLite's own error code rather than its message: a natural key the user
+/// has since re-created is the one restore failure that is not a bug, and story 21 turns it into a
+/// typed error the UI can explain instead of a database string.
+pub fn insert_restored_row(
+    conn: &Connection,
+    table: &'static str,
+    columns: &[(&'static str, Value)],
+) -> Result<Option<i64>, AppError> {
+    match execute_insert(conn, table, columns)? {
+        Ok(row_id) => Ok(Some(row_id)),
+        Err(rusqlite::Error::SqliteFailure(failure, _))
+            if failure.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(AppError::from(error)),
+    }
+}
+
+/// The columns the live schema declares as `BLOB`, so a restore can turn the hex a tombstone
+/// carries back into bytes instead of storing the text of it.
+pub fn blob_columns(conn: &Connection, table: &'static str) -> Result<Vec<String>, AppError> {
+    let mut statement =
+        conn.prepare_cached("SELECT name FROM pragma_table_info(?1) WHERE UPPER(type) = 'BLOB'")?;
+    let names = statement
+        .query_map([table], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+
+    Ok(names)
 }
 
 pub fn update_row(

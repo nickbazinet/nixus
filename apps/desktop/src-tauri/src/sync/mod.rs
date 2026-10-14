@@ -22,6 +22,7 @@ pub mod manager;
 pub mod object;
 pub mod owner;
 pub mod registry;
+pub mod restore;
 pub mod s3;
 pub mod segment;
 pub mod snapshot;
@@ -58,6 +59,8 @@ mod tests_images;
 mod tests_manager;
 #[cfg(test)]
 mod tests_port_boundary;
+#[cfg(test)]
+mod tests_restore;
 #[cfg(test)]
 mod tests_s3_endpoint;
 #[cfg(test)]
