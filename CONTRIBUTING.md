@@ -237,6 +237,25 @@ commands plus the frontend typecheck, unit tests and build on both `macos-latest
 `windows-latest` for every PR touching `apps/desktop/` or `packages/shared/`. Windows has no
 other pre-merge coverage, so a red Windows leg is a real failure, not flakiness.
 
+### Multi-device sync tests
+
+The sync suites are part of `cargo test` above and need no AWS account: they run against an
+in-process object-store fake and synthetic datasets in temp dirs.
+
+```bash
+cd apps/desktop/src-tauri
+cargo test sync::                     # port, credentials, gate, snapshot, bootstrap, manager
+cargo test sync:: -- --ignored        # the S3-endpoint conformance module (see below)
+cd ../.. && pnpm --filter @nixus/desktop exec playwright test tests/sync.spec.ts
+```
+
+`sync/tests_s3_endpoint.rs` is `#[ignore]`d because it needs a real S3-compatible endpoint. It
+is parameterised entirely by `NIXUS_SYNC_TEST_{ENDPOINT,BUCKET,REGION,ACCESS_KEY_ID,SECRET_ACCESS_KEY,IDENTITY,RUN_ID}`;
+without those it skips with a reason. The cloud infrastructure itself is never deployed from a
+dev machine — `.github/workflows/sync-infra.yml` owns the `nixus-sync` stack, and
+`infra/sync/verify-template.py` plus `cfn-lint` are the only sync-infra checks you can run
+locally.
+
 ---
 
 ## Building and packaging

@@ -8,7 +8,7 @@
 
 <p align="center"><strong>Automate and track your life — from one place, with your records on your own machine.</strong></p>
 
-Nixus is a **local-first desktop app** for **lifestyle automation and tracking**. It uses technology to take the tedious upkeep out of the things you should be staying on top of — money, your car, and more over time — so you actually keep doing them. Each area of life is a module in one shared app, and your financial records are stored only on your machine. The one exception is the optional AI features: when you use them, the content of that request is sent to an AI provider for processing. See [AI features and your data](#ai-features-and-your-data).
+Nixus is a **local-first desktop app** for **lifestyle automation and tracking**. It uses technology to take the tedious upkeep out of the things you should be staying on top of — money, your car, and more over time — so you actually keep doing them. Each area of life is a module in one shared app, and your financial records are stored on your own machine. Two things can send them off it, and both are off until you turn them on: the optional AI features, which transmit the content of the one request you invoked, and optional sync across your own computers. See [AI features and your data](#ai-features-and-your-data) and [Sync across your computers (optional)](#sync-across-your-computers-optional).
 
 **Finance** is the first module: upload a credit card statement, let AI categorize the transactions, and see your full picture — budget, accounts, assets, net worth — without touching a spreadsheet.
 
@@ -38,7 +38,7 @@ Built by one person because my own spreadsheet stopped scaling. Not a startup pi
 
 - You still track personal finances in a **spreadsheet** (or gave up because it was too much work)
 - You want **budget, expenses, accounts, and net worth** in one desktop app
-- You prefer **local storage** over cloud sync and bank connections
+- You prefer **local storage** over bank connections and always-on cloud services — with optional sync across your own computers if you want it
 - You're okay uploading **credit card statements manually** (screenshot or PDF) instead of linking your bank
 - You use **macOS or Windows**
 
@@ -88,6 +88,7 @@ Before you download: an honest list so you know if this is worth your time.
 - **Desktop only** — macOS and Windows. No mobile app.
 - **Single user** — one person's finances per install.
 - **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for premium Nixus Cloud accounts, through Nixus infrastructure to AWS Bedrock in the United States. See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
+- **Sync, if you turn it on, stores a copy of your records in Nixus-operated cloud storage** — it is off by default, needs a Nixus Cloud account that includes it, and is **not** end-to-end encrypted in this first version. See [Sync across your computers (optional)](#sync-across-your-computers-optional). Leave it off and no copy of your records leaves your machine.
 - **Pre-alpha** — features change and things break between releases.
 - **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
 
@@ -97,9 +98,9 @@ More detail on the marketing site: [nixusapp.com/beta](https://nixusapp.com/beta
 
 ## AI features and your data
 
-Everything Nixus stores — budgets, transactions, accounts, assets, net worth history — lives in a local SQLite database on your machine. Nixus has no cloud account for your financial records and no sync.
+Everything Nixus stores — budgets, transactions, accounts, assets, net worth history — lives in a local SQLite database on your machine. Nixus holds no copy of it unless you turn on [sync](#sync-across-your-computers-optional), which is off by default.
 
-The AI features are the exception, and they are opt-in by nature: they only run when you invoke them (statement import, AI chat, project advice, spending-trends insight). When you do, the content of that one request leaves your machine for processing:
+The AI features are the other exception, and they are opt-in by nature: they only run when you invoke them (statement import, AI chat, project advice, spending-trends insight). When you do, the content of that one request leaves your machine for processing:
 
 - **Bring your own credentials (default).** The request goes directly from your machine to the provider you configured (AWS Bedrock or OpenAI) using credentials you supply. Nixus infrastructure is not involved and cannot see the request.
 - **Nixus Cloud premium (hosted AI).** The request is transmitted **through Nixus's own infrastructure** to **AWS Bedrock**. Nixus does not store the prompt, the attached statement, the model's response, or the file name in its own databases or logs — it records only your account identifier, timestamps, request counts, and token counts for quota and billing purposes.
@@ -112,6 +113,24 @@ Two limits on that guarantee, stated plainly:
 Hosted AI is subject to a **monthly request quota**. When it is unavailable, ineligible, or out of quota, Nixus falls back to your own configured provider where that provider supports the feature, and otherwise reports a normal error — the rest of the app is unaffected either way.
 
 Full terms: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
+
+---
+
+## Sync across your computers (optional)
+
+Nixus is local-only by default. If you want the same records on a second computer, you can turn on multi-device sync — it is off until you do, and it needs a Nixus Cloud account that includes multi-device sync. Leave it off and nothing in this section applies to you; a local-only profile runs no sync code at all.
+
+**What it does.** After your changes settle, Nixus uploads a snapshot of that profile's database — budgets, transactions, accounts, income, assets, net worth history, vehicles, maintenance records, your in-app action history and your app settings. Signing in on a new computer downloads that snapshot and your data is there. Full-size project images are deliberately left out of the snapshot (only their thumbnails and a fingerprint travel), so in this first version a full-size image stays on the computer you added it on.
+
+**What it is not.** This is a snapshot copy, not a live mirror. It does not sync continuously, and it does not merge edits made on two computers at the same time. The cloud copy is never silently overwritten: if it changed since your computer last saw it, Nixus asks you to choose between loading the cloud copy — your current local file is kept as a dated backup — and keeping your local data and publishing it over the cloud copy.
+
+**What is never uploaded.** Your AI provider credentials (they stay in your OS keychain), the settings describing this computer's AI provider configuration, Nixus's internal sync bookkeeping, and anything in a profile you keep local-only.
+
+**Where it lives and who can read it.** A private storage bucket operated by Nixus on AWS in the US East (N. Virginia) region, with a separate location per account. Transfers use TLS; at rest the copy uses Amazon S3 server-side encryption (SSE-S3); each computer gets short-lived credentials scoped to that one account's location. Stated plainly: the copy is **not** end-to-end encrypted. Nixus does not read your records, but a Nixus administrator with access to that AWS account could technically do so, and so could AWS. The stored format reserves a marker for an encryption scheme so a future version can close that gap; it is not closed today.
+
+**Retention and deletion.** Previous versions of each object expire after 30 days. The current copy is kept for as long as sync is on, and it is kept — never deleted — if your account stops being eligible, in which case sync freezes: transfers stop and the local app keeps working normally. There is no way to delete the cloud copy from inside the app in this version (the app is deliberately granted no delete permission, so one computer cannot erase what the others rely on). To have it deleted, [email me](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20sync%20data%20deletion%20request) and ask; it is handled manually. Turning sync off stops transfers but does not delete the copy.
+
+Sync is not a backup service — keeping your own backups is still your responsibility. Full detail: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
 
 ---
 
@@ -155,7 +174,7 @@ Or read the full beta guide on the site: [nixusapp.com/beta](https://nixusapp.co
 | --- | --- |
 | **Stack** | Tauri 2, React 19, Rust, SQLite |
 | **Platforms** | macOS, Windows |
-| **Data** | Local SQLite on your machine — no cloud account required for your records ([AI features are the exception](#ai-features-and-your-data)) |
+| **Data** | Local SQLite on your machine; no account needed for your records ([AI features](#ai-features-and-your-data) and [optional sync](#sync-across-your-computers-optional) are the two exceptions) |
 | **Repo** | pnpm monorepo: desktop app, marketing site, shared UI package |
 
 Open source — inspect the code on GitHub. First-launch warnings (macOS Gatekeeper, Windows SmartScreen) are normal for apps not yet signed by Apple or trusted by Microsoft's reputation system.
