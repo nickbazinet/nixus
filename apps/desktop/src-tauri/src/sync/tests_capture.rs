@@ -15,13 +15,17 @@ use crate::db::{sync_identity, test_dataset, ActiveDataset};
 use crate::error::AppError;
 use crate::models::DatasetKind;
 
-use super::capture::{payload, Capture};
+use super::capture::{payload, Capture, ROW_COLUMN_MARKER};
 use super::registry::{self, MergeKind, RowIdentity, TableClass};
 
 /// A cloud-linked dataset with the hook installed, in a temp dir that is deleted with it.
 struct Harness {
     _dir: TempDir,
     dataset: ActiveDataset,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 impl Harness {
@@ -101,11 +105,27 @@ impl Harness {
         sync_capture::all_messages(self.conn()).expect("the log reads")
     }
 
+    /// The value a `field` message carried for one column, read out of the row payload the
+    /// message carries (`ROW_COLUMN_MARKER`).
     fn payload_of(&self, column: &str) -> Option<Vec<u8>> {
         self.messages()
             .into_iter()
-            .find(|message| message.column_name.as_deref() == Some(column))
-            .and_then(|message| message.payload)
+            .filter(|message| message.kind == "field")
+            .flat_map(|message| decoded_fields(&message))
+            .find(|(name, _)| name == column)
+            .map(|(_, value)| value)
+    }
+
+    /// Every value captured for one column, in message order: what a test that counts "how many
+    /// times was `name` written" needs now that one message carries the whole row.
+    fn values_of(&self, column: &str) -> Vec<Vec<u8>> {
+        self.messages()
+            .into_iter()
+            .filter(|message| message.kind == "field")
+            .flat_map(|message| decoded_fields(&message))
+            .filter(|(name, _)| name == column)
+            .map(|(_, value)| value)
+            .collect()
     }
 
     fn uuid_of(&self, table: &str, row_id: i64) -> Option<[u8; 16]> {
@@ -113,18 +133,31 @@ impl Harness {
     }
 }
 
+fn decoded_fields(message: &StoredMessage) -> Vec<(String, Vec<u8>)> {
+    assert_eq!(
+        message.column_name.as_deref(),
+        Some(ROW_COLUMN_MARKER),
+        "a field message carries the whole changed row under the row marker"
+    );
+
+    payload::decode_row(message.payload.as_deref().expect("a field message has a payload"))
+        .expect("the row payload decodes")
+}
+
 fn field_columns(messages: &[StoredMessage], table: &str) -> Vec<String> {
     let mut columns: Vec<String> = messages
         .iter()
         .filter(|message| message.kind == "field" && message.table_name == table)
-        .filter_map(|message| message.column_name.clone())
+        .flat_map(decoded_fields)
+        .map(|(name, _)| name)
         .collect();
     columns.sort();
+    columns.dedup();
     columns
 }
 
 #[test]
-fn a_committed_insert_becomes_one_field_message_per_captured_column() {
+fn a_committed_insert_becomes_one_message_carrying_every_captured_column() {
     let harness = Harness::cloud_linked();
 
     let id = harness
@@ -140,9 +173,7 @@ fn a_committed_insert_becomes_one_field_message_per_captured_column() {
          replica builds the row from these messages alone"
     );
     assert!(
-        !messages
-            .iter()
-            .any(|message| message.column_name.as_deref() == Some("id")),
+        harness.payload_of("id").is_none(),
         "AD-2 keeps the local integer id out of every message"
     );
     assert_eq!(
@@ -176,16 +207,14 @@ fn an_update_captures_only_the_columns_that_changed() {
         .expect("the update commits");
 
     let added: Vec<_> = harness.messages().split_off(before);
+    assert_eq!(added.len(), 1, "one changed row is one message");
     assert_eq!(
-        added
-            .iter()
-            .map(|message| message.column_name.as_deref())
-            .collect::<Vec<_>>(),
-        vec![Some("name")]
-    );
-    assert_eq!(
-        added[0].payload,
-        Some(payload::encode(&Value::Text("Home".to_string())))
+        decoded_fields(&added[0]),
+        vec![(
+            "name".to_string(),
+            payload::encode(&Value::Text("Home".to_string()))
+        )],
+        "and it carries only the column that changed"
     );
 }
 
@@ -286,7 +315,7 @@ fn a_replace_that_lands_on_a_new_row_id_is_a_tombstone_and_a_new_identity() {
             .iter()
             .map(|message| message.kind.as_str())
             .collect::<Vec<_>>(),
-        vec!["tombstone", "field", "field", "field"],
+        vec!["tombstone", "field"],
         "SQLite deleted one row and inserted another, and that is what the log must say"
     );
     assert_eq!(added[0].row_uuid, original.to_vec());
@@ -500,27 +529,17 @@ fn a_childs_foreign_key_travels_as_the_parents_uuid() {
     let entry_uuid = harness.uuid_of("income_entries", entry).expect("minted");
     assert_ne!(source_uuid, entry_uuid);
 
-    let source_id_message = harness
-        .messages()
-        .into_iter()
-        .find(|message| {
-            message.table_name == "income_entries"
-                && message.column_name.as_deref() == Some("source_id")
-        })
-        .expect("the child's parent link is captured");
-
     assert_eq!(
-        source_id_message.payload,
+        harness.payload_of("source_id"),
         Some(payload::encode(&Value::Blob(source_uuid.to_vec()))),
         "a parent is named by uuid and never by this computer's integer id (AD-2)"
     );
 
-    let nulled = harness
-        .messages()
-        .into_iter()
-        .find(|message| message.column_name.as_deref() == Some("account_id"))
-        .expect("an unset foreign key still has to be stated");
-    assert_eq!(nulled.payload, Some(payload::encode(&Value::Null)));
+    assert_eq!(
+        harness.payload_of("account_id"),
+        Some(payload::encode(&Value::Null)),
+        "an unset foreign key still has to be stated"
+    );
 }
 
 #[test]
@@ -534,9 +553,7 @@ fn the_balance_column_is_never_captured_by_the_generic_hook() {
 
     let messages = harness.messages();
     assert!(
-        !messages
-            .iter()
-            .any(|message| message.column_name.as_deref() == Some("balance_cents")),
+        harness.payload_of("balance_cents").is_none(),
         "AD-5: the balance is written only by Story 16's two emitters"
     );
     assert_eq!(
@@ -712,15 +729,8 @@ fn the_buffer_does_not_survive_into_the_next_write() {
         .write(|tx| fixtures::insert_budget_group(tx, "Kept", 0))
         .expect("the second write commits");
 
-    let names: Vec<_> = harness
-        .messages()
-        .into_iter()
-        .filter(|message| message.column_name.as_deref() == Some("name"))
-        .filter_map(|message| message.payload)
-        .collect();
-
     assert_eq!(
-        names,
+        harness.values_of("name"),
         vec![payload::encode(&Value::Text("Kept".to_string()))],
         "the abandoned row must not reappear as a message under the next write's clock"
     );
@@ -757,14 +767,8 @@ fn a_savepoint_rollback_discards_only_the_inner_changes() {
         1
     );
 
-    let names: Vec<_> = harness
-        .messages()
-        .into_iter()
-        .filter(|message| message.column_name.as_deref() == Some("name"))
-        .filter_map(|message| message.payload)
-        .collect();
     assert_eq!(
-        names,
+        harness.values_of("name"),
         vec![payload::encode(&Value::Text("Kept".to_string()))],
         "the savepoint rolled back its rows, so its messages have to go with them"
     );
@@ -786,14 +790,7 @@ fn a_savepoint_that_succeeds_keeps_its_changes() {
         fixtures::count_budget_groups(harness.conn()).expect("the count reads"),
         2
     );
-    assert_eq!(
-        harness
-            .messages()
-            .into_iter()
-            .filter(|message| message.column_name.as_deref() == Some("name"))
-            .count(),
-        2
-    );
+    assert_eq!(harness.values_of("name").len(), 2);
 }
 
 /// The hook's row id is meaningless for a `WITHOUT ROWID` table, and the one thing capture must
@@ -900,12 +897,7 @@ fn a_detached_closure_captures_nothing_and_the_hook_comes_back_afterwards() {
         .expect("the next write commits");
 
     assert_eq!(
-        harness
-            .messages()
-            .into_iter()
-            .filter(|message| message.column_name.as_deref() == Some("name"))
-            .filter_map(|message| message.payload)
-            .collect::<Vec<_>>(),
+        harness.values_of("name"),
         vec![payload::encode(&Value::Text("Captured".to_string()))],
         "the guard re-attached the hook, and only the row written after it is captured"
     );
@@ -988,4 +980,321 @@ fn the_install_id_capture_stamps_with_is_the_datasets_own() {
         .messages()
         .iter()
         .all(|message| message.install == stored.install_id));
+}
+
+/// AD-12 needs a cascaded child restorable, and a tombstone that cannot say which parent the row
+/// belonged to is not restorable. The parent's tombstone is recorded first and drops the parent's
+/// identity mapping, so the only way the child can still name it is for the flush to render EVERY
+/// deleted row before it drops ANY mapping.
+#[test]
+fn a_cascaded_childs_tombstone_names_the_parent_it_was_deleted_with() {
+    let harness = Harness::cloud_linked();
+    let source = harness
+        .dataset
+        .write(|tx| {
+            let source = fixtures::insert_income_source(tx, "Salary")?;
+            fixtures::insert_income_entry(tx, source, 100_000, "2026-01-15")?;
+            Ok(source)
+        })
+        .expect("the inserts commit");
+    let source_uuid = harness.uuid_of("income_sources", source).expect("minted");
+
+    harness
+        .dataset
+        .write(|tx| fixtures::delete_income_source(tx, source).map(|_| ()))
+        .expect("the delete commits");
+
+    let child = harness
+        .messages()
+        .into_iter()
+        .find(|message| message.kind == "tombstone" && message.table_name == "income_entries")
+        .expect("the cascaded child was captured");
+    let encoded = child.payload.expect("a tombstone carries the row");
+    let json: serde_json::Value = serde_json::from_slice(&encoded[1..]).expect("valid JSON");
+
+    assert_eq!(
+        json["source_id"],
+        serde_json::json!(hex(&source_uuid)),
+        "the child has to name its parent by uuid, not null"
+    );
+    assert_eq!(
+        json["account_id"],
+        serde_json::Value::Null,
+        "a foreign key that really was unset stays null"
+    );
+}
+
+/// The delete half of an `INSERT OR REPLACE` can cascade, so the insert half is NOT the change
+/// right after the delete — the children sit between them.
+#[test]
+fn a_replace_whose_delete_cascades_is_still_collapsed() {
+    let harness = Harness::cloud_linked();
+    let (source, entry) = harness
+        .dataset
+        .write(|tx| {
+            let source = fixtures::insert_income_source(tx, "Salary")?;
+            let entry = fixtures::insert_income_entry(tx, source, 100_000, "2026-01-15")?;
+            Ok((source, entry))
+        })
+        .expect("the inserts commit");
+    let source_uuid = harness.uuid_of("income_sources", source).expect("minted");
+    let entry_uuid = harness.uuid_of("income_entries", entry).expect("minted");
+    let before = harness.messages().len();
+
+    harness
+        .dataset
+        .write(|tx| fixtures::replace_income_source(tx, source, "Contracting"))
+        .expect("the replace commits");
+
+    assert_eq!(
+        fixtures::count_income_entries(harness.conn()).expect("the count reads"),
+        0,
+        "the REPLACE's delete really did cascade, or this test proves nothing"
+    );
+
+    let added: Vec<_> = harness.messages().split_off(before);
+    let parent: Vec<_> = added
+        .iter()
+        .filter(|message| message.table_name == "income_sources")
+        .collect();
+
+    assert!(
+        parent.iter().all(|message| message.kind == "field"),
+        "the parent was upserted, so it must not be tombstoned: {:?}",
+        parent.iter().map(|m| &m.kind).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        harness.uuid_of("income_sources", source),
+        Some(source_uuid),
+        "a collapsed REPLACE keeps the row's identity even when its delete cascaded"
+    );
+
+    let child: Vec<_> = added
+        .iter()
+        .filter(|message| message.table_name == "income_entries")
+        .collect();
+    assert_eq!(child.len(), 1);
+    assert_eq!(child[0].kind, "tombstone");
+    assert_eq!(child[0].row_uuid, entry_uuid.to_vec());
+
+    let json: serde_json::Value = serde_json::from_slice(
+        &child[0].payload.as_ref().expect("the row travels")[1..],
+    )
+    .expect("valid JSON");
+    assert_eq!(
+        json["source_id"],
+        serde_json::json!(hex(&source_uuid)),
+        "the cascaded child still names the parent that survived the REPLACE"
+    );
+}
+
+/// A hook read fault describes one change. If the savepoint that produced it is rolled back, the
+/// change is gone and failing the outer transaction would be failing for nothing.
+#[test]
+fn a_fault_recorded_inside_a_rolled_back_savepoint_does_not_fail_the_write() {
+    let harness = Harness::cloud_linked();
+    let capture = harness
+        .dataset
+        .capture
+        .as_ref()
+        .expect("a cloud-linked harness captures");
+
+    let id = harness
+        .dataset
+        .write(|tx| {
+            let id = fixtures::insert_budget_group(tx, "Kept", 0)?;
+
+            let inner = tx.savepoint(|conn| {
+                fixtures::insert_budget_group(conn, "Discarded", 1)?;
+                capture.record_fault("a column could not be read");
+                Err::<(), AppError>(AppError::Validation {
+                    message: "the inner step failed".to_string(),
+                    field: None,
+                })
+            });
+            assert!(inner.is_err());
+
+            Ok(id)
+        })
+        .expect("the outer transaction still commits");
+
+    assert_eq!(
+        fixtures::budget_group_name(harness.conn(), id).expect("the row reads"),
+        Some("Kept".to_string())
+    );
+    assert_eq!(harness.values_of("name").len(), 1);
+}
+
+#[test]
+fn a_fault_that_predates_the_savepoint_still_fails_the_write() {
+    let harness = Harness::cloud_linked();
+    let capture = harness
+        .dataset
+        .capture
+        .as_ref()
+        .expect("a cloud-linked harness captures");
+
+    let error = harness
+        .dataset
+        .write(|tx| {
+            capture.record_fault("a column could not be read");
+            fixtures::insert_budget_group(tx, "Doomed", 0)?;
+
+            tx.savepoint(|conn| fixtures::insert_budget_group(conn, "Inner", 1))
+                .map(|_| ())
+        })
+        .expect_err("a fault outside the savepoint still describes a change in this transaction");
+
+    assert!(
+        matches!(&error, AppError::Database { message } if message.contains("could not be captured")),
+        "got {error:?}"
+    );
+    assert_eq!(
+        fixtures::count_budget_groups(harness.conn()).expect("the count reads"),
+        0
+    );
+    assert!(harness.messages().is_empty());
+}
+
+/// AD-9 swaps the dataset FILE under a live `Capture` (bootstrap, restore). The file that arrives
+/// carries its own `sync_state`, and stamping its messages with the install id of the file it
+/// replaced would put two machines in one `(install, seq)` space — the exact hazard AD-4 exists to
+/// prevent.
+#[test]
+fn an_adopted_file_is_captured_under_its_own_install_id() {
+    let mut harness = Harness::cloud_linked();
+    let capture = harness
+        .dataset
+        .capture
+        .take()
+        .expect("a cloud-linked harness captures");
+    let original = capture.install_id();
+
+    let adopted_dir = TempDir::new().expect("temp dir");
+    let adopted = test_dataset::migrated_dataset(&adopted_dir.path().join("nixus.db"));
+    let fingerprint = crate::sync::clock::machine_fingerprint(
+        &crate::sync::clock::MachineSignals::from_environment(),
+    );
+    crate::db::sync_state::ensure(&adopted, "0123456789abcdef", &fingerprint)
+        .expect("the adopted file carries its own install identity");
+    assert_ne!(original, "0123456789abcdef");
+
+    capture
+        .attach(&adopted)
+        .expect("the hook moves to the adopted connection");
+
+    let swapped = ActiveDataset {
+        id: Some("capture-test".to_string()),
+        conn: Some(adopted),
+        capture: Some(capture),
+    };
+    swapped
+        .write(|tx| fixtures::insert_budget_group(tx, "After the swap", 0))
+        .expect("the write commits");
+
+    let conn = swapped.conn.as_ref().expect("connected");
+    let messages = sync_capture::all_messages(conn).expect("the log reads");
+
+    assert!(!messages.is_empty());
+    assert!(
+        messages
+            .iter()
+            .all(|message| message.install == "0123456789abcdef"),
+        "every message must carry the adopted file's install id, got {:?}",
+        messages.iter().map(|m| &m.install).collect::<Vec<_>>()
+    );
+    assert!(
+        messages.iter().all(|message| message.install != original),
+        "and never the replaced file's"
+    );
+}
+
+#[test]
+fn every_message_of_one_changed_row_shares_one_stamp() {
+    let harness = Harness::cloud_linked();
+
+    harness
+        .dataset
+        .write(|tx| fixtures::insert_budget_group(tx, "Housing", 0))
+        .expect("the write commits");
+
+    let stamps: std::collections::BTreeSet<String> = harness
+        .messages()
+        .into_iter()
+        .map(|message| message.hlc)
+        .collect();
+
+    assert_eq!(
+        stamps.len(),
+        1,
+        "one user edit is one event: all four of its columns are concurrent by construction, and \
+         a message's identity is (install, seq, idx) rather than its stamp (AD-4)"
+    );
+}
+
+#[test]
+fn a_row_payload_round_trips_and_is_deterministic() {
+    let fields = vec![
+        ("sort_order".to_string(), Value::Integer(3)),
+        ("name".to_string(), Value::Text("Housing".to_string())),
+        ("deleted_at".to_string(), Value::Null),
+    ];
+    let encoded = payload::encode_row(&fields);
+
+    assert_eq!(
+        payload::decode_row(&encoded).expect("it decodes"),
+        vec![
+            ("deleted_at".to_string(), payload::encode(&Value::Null)),
+            (
+                "name".to_string(),
+                payload::encode(&Value::Text("Housing".to_string()))
+            ),
+            ("sort_order".to_string(), payload::encode(&Value::Integer(3))),
+        ],
+        "sorted by column name, so the same change always produces the same bytes"
+    );
+
+    let shuffled = vec![
+        ("name".to_string(), Value::Text("Housing".to_string())),
+        ("deleted_at".to_string(), Value::Null),
+        ("sort_order".to_string(), Value::Integer(3)),
+    ];
+    assert_eq!(payload::encode_row(&shuffled), encoded);
+
+    assert!(
+        payload::decode_row(&encoded[..encoded.len() - 1]).is_err(),
+        "a truncated payload is refused rather than read past its end"
+    );
+    assert!(payload::decode_row(&[]).is_err());
+    assert_eq!(
+        payload::decode_row(&payload::encode_row(&[])).expect("an empty row decodes"),
+        vec![]
+    );
+}
+
+/// The row marker stands in for "every column of this row" inside `column_name`, which migration
+/// 032 requires to be NOT NULL for a `field` message. It only works because no real column can be
+/// called that.
+#[test]
+fn no_column_of_the_real_schema_is_named_like_the_row_marker() {
+    let dir = TempDir::new().expect("temp dir");
+    let conn = test_dataset::migrated_dataset(&dir.path().join("nixus.db"));
+
+    let mut checked = 0;
+    for rule in registry::TABLES {
+        if matches!(rule.class, TableClass::LocalOnly) {
+            continue;
+        }
+
+        for column in sync_capture::table_columns(&conn, rule.table).expect("the columns read") {
+            assert_ne!(
+                column, ROW_COLUMN_MARKER,
+                "{}.{} collides with the row marker",
+                rule.table, column
+            );
+            checked += 1;
+        }
+    }
+
+    assert!(checked > 100, "only {checked} columns were checked");
 }

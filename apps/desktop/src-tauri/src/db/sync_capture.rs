@@ -3,11 +3,16 @@
 //!
 //! WHY it lives in `db/`: it is raw SQL, and raw SQL belongs here (project-context rule 1).
 //! `sync::capture` owns every decision about WHICH message a change becomes; this module owns
-//! nothing but the statements that persist one.
+//! nothing but the statements that persist them.
 //!
 //! Every statement runs on the connection it is handed, which during a captured write is the
 //! transaction `ActiveDataset::write` opened — that is what makes "the row changed" and "the
 //! message exists" one fact instead of two (AD-3).
+//!
+//! Both writers use CACHED prepared statements. A 1,000-row import writes thousands of messages
+//! inside one transaction, so re-parsing the statement per message is measurable. A multi-row
+//! `VALUES` form was measured as well and is only about 4% faster at the SQL level — what costs is
+//! the row plus its indexes — so it is not used: it would need an owned copy of every value.
 
 use rusqlite::{params, Connection};
 
@@ -15,8 +20,9 @@ use crate::error::AppError;
 
 /// One row of `sync_log`, in the shape migration 032 defines.
 ///
-/// Borrowed rather than owned: a flush writes one of these per changed column and the values all
-/// live in the buffer the hook filled, so copying them here would be a copy per message.
+/// Borrowed: the flush resolves a whole batch before it writes any of it (the two-pass flush in
+/// `sync::capture`), so the values already live in owned storage there and copying them again per
+/// message is thousands of allocations for nothing.
 pub struct LoggedMessage<'a> {
     /// 16 lowercase hex characters (AD-4).
     pub install: &'a str,
@@ -34,10 +40,12 @@ pub struct LoggedMessage<'a> {
 }
 
 /// Appends a message to the unshipped tail. `seq`/`idx` stay NULL until Story 19 cuts a segment.
-pub fn append(conn: &Connection, message: &LoggedMessage<'_>) -> Result<i64, AppError> {
-    // `prepare_cached` and not `execute`: a 1,000-row import flushes thousands of these inside one
-    // transaction, and re-parsing the same statement every time is what the latency gate (AD-19)
-    // measured as the dominant cost of capture.
+///
+/// `prepare_cached` and not `execute`: a 1,000-row import writes thousands of these inside one
+/// transaction, and re-parsing the statement every time was measurable. A multi-row `VALUES` form
+/// was measured too and is only 4% faster at the SQL level — the cost is the row and its two
+/// indexes, not the statement — while costing an owned copy of every value, so it is not used.
+pub fn append(conn: &Connection, message: &LoggedMessage<'_>) -> Result<(), AppError> {
     conn.prepare_cached(
         "INSERT INTO sync_log (install, hlc, kind, table_name, row_uuid, column_name, cause_uuid, payload) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -53,7 +61,7 @@ pub fn append(conn: &Connection, message: &LoggedMessage<'_>) -> Result<i64, App
         message.payload,
     ])?;
 
-    Ok(conn.last_insert_rowid())
+    Ok(())
 }
 
 /// Records which write currently owns a field (AD-5).
@@ -102,33 +110,6 @@ pub fn forget_field_state(
     Ok(conn
         .prepare_cached("DELETE FROM sync_field_state WHERE table_name = ?1 AND row_uuid = ?2")?
         .execute(params![table_name, row_uuid])?)
-}
-
-/// A table's columns in the order SQLite stores them, which is the order the pre-update hook
-/// indexes its values by (AD-3): the hook is handed `i` and nothing else, so the names have to be
-/// resolved from the schema before the hook can run at all.
-pub fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<String>, AppError> {
-    let mut stmt = conn.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")?;
-
-    let names = stmt
-        .query_map([table_name], |row| row.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(names)
-}
-
-/// Whether the table has a rowid.
-///
-/// A probe rather than a parse of `sqlite_master.sql`: `WITHOUT ROWID` can be written in any case
-/// and with any spacing, while `SELECT rowid` either compiles or does not. It matters because the
-/// pre-update hook's row id is MEANINGLESS for a `WITHOUT ROWID` table, and keying an identity by
-/// it would silently alias rows (`sync/capture.rs` refuses instead).
-pub fn table_has_rowid(conn: &Connection, table_name: &str) -> Result<bool, AppError> {
-    // The name comes from `sync::registry`'s `&'static str` list, never from input, and a
-    // table name cannot be bound as a parameter.
-    Ok(conn
-        .prepare(&format!("SELECT rowid FROM \"{table_name}\" LIMIT 0"))
-        .is_ok())
 }
 
 /// A `sync_log` row as a test reads it back.
@@ -195,4 +176,31 @@ pub(crate) fn field_state(
 #[cfg(test)]
 pub(crate) fn field_state_count(conn: &Connection) -> Result<i64, AppError> {
     Ok(conn.query_row("SELECT COUNT(*) FROM sync_field_state", [], |row| row.get(0))?)
+}
+
+/// A table's columns in the order SQLite stores them, which is the order the pre-update hook
+/// indexes its values by (AD-3): the hook is handed `i` and nothing else, so the names have to be
+/// resolved from the schema before the hook can run at all.
+pub fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<String>, AppError> {
+    let mut stmt = conn.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")?;
+
+    let names = stmt
+        .query_map([table_name], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(names)
+}
+
+/// Whether the table has a rowid.
+///
+/// A probe rather than a parse of `sqlite_master.sql`: `WITHOUT ROWID` can be written in any case
+/// and with any spacing, while `SELECT rowid` either compiles or does not. It matters because the
+/// pre-update hook's row id is MEANINGLESS for a `WITHOUT ROWID` table, and keying an identity by
+/// it would silently alias rows (`sync/capture.rs` refuses instead).
+pub fn table_has_rowid(conn: &Connection, table_name: &str) -> Result<bool, AppError> {
+    // The name comes from `sync::registry`'s `&'static str` list, never from input, and a
+    // table name cannot be bound as a parameter.
+    Ok(conn
+        .prepare(&format!("SELECT rowid FROM \"{table_name}\" LIMIT 0"))
+        .is_ok())
 }

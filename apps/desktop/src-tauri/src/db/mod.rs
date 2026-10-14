@@ -164,7 +164,14 @@ impl ActiveDataset {
         operation: impl FnOnce(&WriteTx<'_>) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
         let tx = WriteTx {
-            tx: conn.unchecked_transaction()?,
+            // IMMEDIATE and not the default DEFERRED. A deferred transaction takes its read
+            // snapshot on the first SELECT and only asks for the write lock later, so a closure
+            // that reads and then writes — which most of them do, to compute a `sort_order` or
+            // check a row exists — fails with `SQLITE_BUSY_SNAPSHOT` if the other connection
+            // committed in between. That error is NOT retried by any busy handler, because
+            // retrying it would silently re-run the closure against a newer snapshot. Taking the
+            // write lock up front turns the race into a wait `busy_timeout` can absorb.
+            tx: rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?,
             capture: self.capture.as_ref(),
             depth: Cell::new(0),
         };
@@ -198,7 +205,8 @@ impl ActiveDataset {
             None => None,
         };
 
-        let tx = conn.unchecked_transaction()?;
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
         let value = operation(&tx)?;
         tx.commit()?;
 
@@ -309,7 +317,14 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
 pub(crate) fn open_configured(db_path: &Path) -> Result<Connection, AppError> {
     let conn = Connection::open(db_path)?;
 
-    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    // `busy_timeout` and not the default of zero: a synced dataset has a SECOND connection on it
+    // (AD-11's apply loop, AD-9's snapshot reader), so two writers now genuinely contend. Without
+    // it, losing a race is an immediate `SQLITE_BUSY` in the user's face instead of a wait of a few
+    // milliseconds. AD-11 names it for the apply connection; it is set here so every connection to
+    // a dataset is configured the same way.
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+    )?;
 
     info!("Database opened at {:?}", db_path);
 

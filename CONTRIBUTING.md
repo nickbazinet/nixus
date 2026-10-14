@@ -298,6 +298,10 @@ cargo test write_site                                   # the uncaptured-write-s
 NIXUS_WRITE_SITE_BUDGET=update cargo test write_site    # regenerate the budget after migrating one
 ```
 
+The latency gate prints its measurements and asserts a ratio (capture on vs off, same work, same
+process) plus an absolute ceiling, per build profile. Run it ALONE to see real numbers: inside the
+full suite, contention inflates them about 1.6x.
+
 `sync-write-site-budget.json` is the checked-in count of SQL writes that do not yet run through
 `ActiveDataset::write`. It may only shrink: migrate the write site onto `ActiveDataset::write`,
 mark the `db::*` function `CAPTURE-SANCTIONED (AD-3)`, then regenerate.

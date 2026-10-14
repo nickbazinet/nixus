@@ -122,6 +122,21 @@ pub(crate) fn insert_income_entry(
     Ok(conn.last_insert_rowid())
 }
 
+/// `INSERT OR REPLACE` on a parent that HAS children, so the delete half of the REPLACE cascades
+/// and the hook sees `Delete(parent)`, `Delete(child)...`, `Insert(parent)` in that order.
+pub(crate) fn replace_income_source(
+    conn: &Connection,
+    id: i64,
+    name: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "INSERT OR REPLACE INTO income_sources (id, name, income_type) VALUES (?1, ?2, 'freelance')",
+        params![id, name],
+    )?;
+
+    Ok(())
+}
+
 pub(crate) fn delete_income_source(conn: &Connection, id: i64) -> Result<usize, AppError> {
     Ok(conn.execute("DELETE FROM income_sources WHERE id = ?1", params![id])?)
 }

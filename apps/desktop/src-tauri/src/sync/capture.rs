@@ -41,13 +41,31 @@ use super::registry::{self, MergeKind, RowIdentity, TableClass};
 /// other sha256 of the same bytes produced elsewhere in the app.
 const FIELD_HASH_DOMAIN: &[u8] = b"nixus/sync/field-content/v1";
 
+/// The marker a ROW-LEVEL `field` message carries instead of a column name.
+///
+/// AD-5 merges per COLUMN, and it still does: `sync_field_state` holds one row per column with its
+/// own `hlc` and `content_hash`. What this changes is only how those columns TRAVEL — one message
+/// carrying the whole changed row instead of one message per column — because a `sync_log` row with
+/// its two indexes costs 3.6 µs and four of them per inserted row was measured as the dominant
+/// cost of capture (AD-19's latency gate).
+///
+/// WHY a marker and not a NULL `column_name`: migration 032 is already shipped and its
+/// `sync_log_names_a_column_only_when_it_has_one` CHECK requires a `field` message to name a
+/// column. `*` cannot collide with a real column — `no_column_of_the_real_schema_is_named_like_the_
+/// row_marker` checks the live schema — so the marker is unambiguous without a migration. Story 19
+/// freezes the wire format and may replace it with a kind of its own; the ledger records the shape.
+pub const ROW_COLUMN_MARKER: &str = "*";
+
 /// The provisional on-disk payload encoding.
 ///
-/// One tag byte, then the value's bytes. Story 19 freezes the WIRE encoding when it cuts the first
-/// segment; until then nothing has left the machine, so this only has to be unambiguous and
-/// deterministic — which it is, and `the_payload_encoding_is_deterministic` pins it.
+/// One tag byte, then the value's bytes, plus a length-prefixed map form for a row-level message.
+/// Story 19 freezes the WIRE encoding when it cuts the first segment; until then nothing has left
+/// the machine, so this only has to be unambiguous and deterministic — which it is, and
+/// `the_payload_encoding_is_deterministic` and `a_row_payload_round_trips` pin it.
 pub mod payload {
     use rusqlite::types::Value;
+
+    use crate::error::AppError;
 
     pub const TAG_NULL: u8 = 0;
     pub const TAG_INTEGER: u8 = 1;
@@ -64,6 +82,98 @@ pub mod payload {
             Value::Real(number) => with_tag(TAG_REAL, &number.to_bits().to_be_bytes()),
             Value::Text(text) => with_tag(TAG_TEXT, text.as_bytes()),
             Value::Blob(bytes) => with_tag(TAG_BLOB, bytes),
+        }
+    }
+
+    /// A changed row as `count, then (name, value) pairs`, every part length-prefixed big-endian.
+    ///
+    /// Length-prefixed rather than delimited because a column value can contain any byte, and
+    /// sorted by column name so the same change always produces the same bytes.
+    ///
+    /// Capture itself calls [`encode_row_of`], because it has already encoded each value to hash
+    /// it; this is the form Story 19's segment writer and the tests use.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn encode_row(fields: &[(String, Value)]) -> Vec<u8> {
+        let encoded: Vec<(&str, Vec<u8>)> = fields
+            .iter()
+            .map(|(name, value)| (name.as_str(), encode(value)))
+            .collect();
+
+        encode_row_of(&encoded)
+    }
+
+    /// The same, from values that are ALREADY encoded.
+    ///
+    /// The caller hashes each column's bytes for `sync_field_state`, so encoding them a second time
+    /// here would be one extra allocation and one extra pass per captured column — thousands of
+    /// both in a 1,000-row import (AD-19's latency gate).
+    pub fn encode_row_of(fields: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let mut sorted: Vec<&(&str, Vec<u8>)> = fields.iter().collect();
+        sorted.sort_by(|left, right| left.0.cmp(right.0));
+
+        let mut encoded = Vec::with_capacity(sorted.len() * 32);
+        encoded.extend_from_slice(&(sorted.len() as u32).to_be_bytes());
+
+        for (name, value) in sorted {
+            encoded.extend_from_slice(&(name.len() as u32).to_be_bytes());
+            encoded.extend_from_slice(name.as_bytes());
+            encoded.extend_from_slice(&(value.len() as u32).to_be_bytes());
+            encoded.extend_from_slice(value);
+        }
+
+        encoded
+    }
+
+    /// The inverse of [`encode_row`], as the raw per-column payloads the writer encoded.
+    ///
+    /// Returns them still encoded rather than as `Value`s: that is what `sync_field_state`'s
+    /// `content_hash` is computed over, so a reader comparing hashes never has to re-encode and
+    /// cannot re-encode differently.
+    // Story 20 is the first production caller: apply splits a row message back into its columns.
+    #[allow(dead_code)]
+    pub fn decode_row(encoded: &[u8]) -> Result<Vec<(String, Vec<u8>)>, AppError> {
+        let mut cursor = 0;
+        let count = take_u32(encoded, &mut cursor)? as usize;
+        let mut fields = Vec::with_capacity(count);
+
+        for _ in 0..count {
+            let name = take_slice(encoded, &mut cursor)?;
+            let name = std::str::from_utf8(name).map_err(|_| malformed())?.to_string();
+            let value = take_slice(encoded, &mut cursor)?.to_vec();
+            fields.push((name, value));
+        }
+
+        if cursor != encoded.len() {
+            return Err(malformed());
+        }
+
+        Ok(fields)
+    }
+
+    fn take_u32(encoded: &[u8], cursor: &mut usize) -> Result<u32, AppError> {
+        let end = cursor.checked_add(4).ok_or_else(malformed)?;
+        let bytes: [u8; 4] = encoded
+            .get(*cursor..end)
+            .ok_or_else(malformed)?
+            .try_into()
+            .map_err(|_| malformed())?;
+        *cursor = end;
+
+        Ok(u32::from_be_bytes(bytes))
+    }
+
+    fn take_slice<'a>(encoded: &'a [u8], cursor: &mut usize) -> Result<&'a [u8], AppError> {
+        let length = take_u32(encoded, cursor)? as usize;
+        let end = cursor.checked_add(length).ok_or_else(malformed)?;
+        let slice = encoded.get(*cursor..end).ok_or_else(malformed)?;
+        *cursor = end;
+
+        Ok(slice)
+    }
+
+    fn malformed() -> AppError {
+        AppError::Database {
+            message: "a captured row payload is malformed".to_string(),
         }
     }
 
@@ -117,11 +227,36 @@ struct Buffer {
     fault: Option<String>,
 }
 
-struct CaptureInner {
+/// The install id and the clock every message of this dataset is stamped with.
+///
+/// Behind a lock and replaceable rather than fixed at construction: AD-9 swaps the dataset FILE
+/// under a live `Capture` (a bootstrap or a restore), and the file that arrives carries its own
+/// `sync_state`. Stamping messages with the install id of the file that was replaced would put two
+/// machines in one `(install, seq)` space, which is the exact hazard AD-4 exists to prevent.
+struct Stamping {
     install: String,
     clock: Clock,
-    shapes: Arc<Shapes>,
+}
+
+struct CaptureInner {
+    stamping: Mutex<Stamping>,
+    /// Re-resolved on every `attach` for the same reason: the swapped-in file is migrated by
+    /// `open_configured` before capture sees it, and its schema may not be the one the previous
+    /// shapes were read from.
+    shapes: Mutex<Arc<Shapes>>,
     buffer: Arc<Mutex<Buffer>>,
+    /// A table the registry does not classify, for the two cases the real schema cannot express
+    /// (`WITHOUT ROWID`, and a REPLACE that conflicts on a non-primary unique key). Held rather
+    /// than inserted once, because `attach` re-resolves the shapes and would otherwise drop it.
+    #[cfg(test)]
+    extra: Option<ExtraShape>,
+}
+
+#[cfg(test)]
+struct ExtraShape {
+    table: &'static str,
+    identity: RowIdentity,
+    merge: MergeKind,
 }
 
 /// The capture state of one cloud-linked dataset.
@@ -134,6 +269,44 @@ pub struct Capture {
 pub struct FlushReport {
     pub messages: usize,
     pub changes: usize,
+}
+
+/// Where a savepoint found the buffer, so rolling back to it restores exactly that.
+///
+/// It carries the FAULT FLAG as well as the length: a read fault recorded inside a savepoint that
+/// was rolled back describes a change that no longer exists, and failing the outer transaction for
+/// it would be failing for nothing. A fault that was already there is kept, because the change it
+/// describes is still part of this transaction.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Mark {
+    changes: usize,
+    had_fault: bool,
+}
+
+/// Rows of one table keyed by their local id, so a 1,000-child import looks its shared parent up
+/// once instead of a thousand times.
+type IdentityMemo = HashMap<(&'static str, i64), RowUuid>;
+
+/// One buffered change with every database read already done, so the writing pass needs none.
+enum Resolved {
+    Fields {
+        table: &'static str,
+        row_uuid: RowUuid,
+        /// Column name and the value that travels, already translated into uuid space where the
+        /// column is a foreign key (AD-2).
+        fields: Vec<(String, Value)>,
+        /// Column name and the signed delta AD-5 wants for a counter.
+        counters: Vec<(String, i64)>,
+    },
+    Tombstone {
+        table: &'static str,
+        row_id: i64,
+        row_uuid: RowUuid,
+        row_json: String,
+    },
+    /// A delete of a row that never had an identity: it was never shipped under one, so no other
+    /// computer knows it exists. Reconcile (Story 22) owns rows that predate capture.
+    Nothing,
 }
 
 impl Capture {
@@ -154,26 +327,73 @@ impl Capture {
     }
 
     fn new(conn: &Connection) -> Result<Self, AppError> {
-        let state = super::state::ensure_install_on(conn)?;
-
-        Ok(Self {
-            inner: Arc::new(CaptureInner {
-                clock: clock_for(&state.install_id)?,
-                install: state.install_id,
-                shapes: Arc::new(resolve_shapes(conn)?),
-                buffer: Arc::new(Mutex::new(Buffer::default())),
-            }),
-        })
+        Self::build(
+            conn,
+            #[cfg(test)]
+            None,
+        )
     }
 
-    /// Registers the pre-update hook on a connection, discarding anything left buffered.
+    fn build(conn: &Connection, #[cfg(test)] extra: Option<ExtraShape>) -> Result<Self, AppError> {
+        let state = super::state::ensure_install_on(conn)?;
+        let inner = CaptureInner {
+            stamping: Mutex::new(Stamping {
+                clock: clock_for(&state.install_id)?,
+                install: state.install_id,
+            }),
+            shapes: Mutex::new(Arc::new(Shapes::new())),
+            buffer: Arc::new(Mutex::new(Buffer::default())),
+            #[cfg(test)]
+            extra,
+        };
+        let capture = Self {
+            inner: Arc::new(inner),
+        };
+        *lock(&capture.inner.shapes) = Arc::new(capture.resolve_shapes(conn)?);
+
+        Ok(capture)
+    }
+
+    /// The shapes of this dataset, re-read from the live schema.
+    fn resolve_shapes(&self, conn: &Connection) -> Result<Shapes, AppError> {
+        #[cfg_attr(not(test), allow(unused_mut))]
+        let mut shapes = resolve_shapes(conn)?;
+
+        #[cfg(test)]
+        if let Some(extra) = &self.inner.extra {
+            shapes.insert(
+                extra.table,
+                TableShape {
+                    table: extra.table,
+                    identity: extra.identity,
+                    has_rowid: sync_capture::table_has_rowid(conn, extra.table)?,
+                    columns: sync_capture::table_columns(conn, extra.table)?
+                        .into_iter()
+                        .map(|name| ColumnShape {
+                            name,
+                            merge: extra.merge,
+                            parent: None,
+                        })
+                        .collect(),
+                },
+            );
+        }
+
+        Ok(shapes)
+    }
+
+    /// Registers the pre-update hook on a connection, re-reading everything that belongs to the
+    /// FILE rather than to this process, and discarding anything left buffered.
     ///
-    /// Idempotent and re-callable: a restore swaps the file and adopts a NEW connection (AD-9), and
-    /// that connection needs the hook as much as the first one did.
+    /// Idempotent and re-callable, and that is the point: a restore swaps the file and adopts a NEW
+    /// connection (AD-9), so the install id and the schema are re-read here. The clock is kept when
+    /// the install id is unchanged, so Story 13's "strictly increasing" property survives a
+    /// re-attach instead of restarting from the wall clock.
     pub fn attach(&self, conn: &Connection) -> Result<(), AppError> {
         self.discard();
+        self.adopt(conn)?;
 
-        let shapes = Arc::clone(&self.inner.shapes);
+        let shapes = self.shapes();
         let buffer = Arc::clone(&self.inner.buffer);
 
         conn.preupdate_hook(Some(
@@ -181,6 +401,24 @@ impl Capture {
                 observe(&shapes, &buffer, database, table, case);
             },
         ))?;
+
+        Ok(())
+    }
+
+    fn adopt(&self, conn: &Connection) -> Result<(), AppError> {
+        let state = super::state::ensure_install_on(conn)?;
+
+        {
+            let mut stamping = lock(&self.inner.stamping);
+            if stamping.install != state.install_id {
+                *stamping = Stamping {
+                    clock: clock_for(&state.install_id)?,
+                    install: state.install_id,
+                };
+            }
+        }
+
+        *lock(&self.inner.shapes) = Arc::new(self.resolve_shapes(conn)?);
 
         Ok(())
     }
@@ -208,35 +446,53 @@ impl Capture {
     }
 
     pub(crate) fn discard(&self) {
-        let mut buffer = self.lock();
+        let mut buffer = self.buffer();
         buffer.changes.clear();
         buffer.fault = None;
     }
 
-    /// How many changes are buffered, which is what a savepoint rolls back to.
+    /// Where the buffer is now, which is what a savepoint rolls back to.
     // Story 17 is the first production caller, through `WriteTx::savepoint`.
     #[allow(dead_code)]
-    pub(crate) fn mark(&self) -> usize {
-        self.lock().changes.len()
+    pub(crate) fn mark(&self) -> Mark {
+        let buffer = self.buffer();
+
+        Mark {
+            changes: buffer.changes.len(),
+            had_fault: buffer.fault.is_some(),
+        }
     }
 
     #[allow(dead_code)]
-    pub(crate) fn rollback_to(&self, mark: usize) {
-        let mut buffer = self.lock();
-        if mark < buffer.changes.len() {
-            buffer.changes.truncate(mark);
+    pub(crate) fn rollback_to(&self, mark: Mark) {
+        let mut buffer = self.buffer();
+
+        if mark.changes < buffer.changes.len() {
+            buffer.changes.truncate(mark.changes);
+        }
+
+        if !mark.had_fault {
+            buffer.fault = None;
         }
     }
 
     /// Turns everything buffered into messages, on the caller's own transaction.
     ///
-    /// Takes the changes OUT of the buffer before writing any of them, so the hook firing for this
-    /// function's own writes could never deadlock on the buffer's lock. It cannot fire — every
-    /// table written here is `LocalOnly` — and the emptiness check at the end is what proves that
-    /// rather than assuming it.
+    /// TWO PASSES, and the order is the correctness argument. The first pass does every database
+    /// read — minting identities, translating foreign keys into uuids, rendering each deleted row
+    /// as JSON — while every identity mapping of the batch is still intact. The second writes the
+    /// messages and only THEN drops the mappings of the rows that were deleted. A single pass
+    /// cannot do this: a cascade reaches the parent first, so dropping its mapping before the
+    /// child's tombstone is rendered would leave the child's row unable to name its parent, and
+    /// AD-12 needs that child restorable.
+    ///
+    /// It also takes the changes OUT of the buffer before writing any of them, so the hook firing
+    /// for this function's own writes could never deadlock on the buffer's lock. It cannot fire —
+    /// every table written here is `LocalOnly` — and the emptiness check at the end is what proves
+    /// that rather than assuming it.
     pub(crate) fn flush(&self, conn: &Connection) -> Result<FlushReport, AppError> {
         let (changes, fault) = {
-            let mut buffer = self.lock();
+            let mut buffer = self.buffer();
             (std::mem::take(&mut buffer.changes), buffer.fault.take())
         };
 
@@ -248,17 +504,22 @@ impl Capture {
             });
         }
 
-        let changes = collapse_replacements(changes);
-        let mut report = FlushReport {
-            messages: 0,
-            changes: changes.len(),
-        };
-
-        for change in &changes {
-            report.messages += self.write_change(conn, change)?;
+        if changes.is_empty() {
+            return Ok(FlushReport::default());
         }
 
-        let leaked = self.lock().changes.len();
+        let shapes = self.shapes();
+        let changes = collapse_replacements(changes);
+        let mut memo = IdentityMemo::new();
+
+        let mut resolved = Vec::with_capacity(changes.len());
+        for change in &changes {
+            resolved.push(resolve(conn, &shapes, &mut memo, change)?);
+        }
+
+        let report = self.write_resolved(conn, &resolved, changes.len())?;
+
+        let leaked = self.buffer().changes.len();
         if leaked > 0 {
             return Err(AppError::Database {
                 message: format!("the capture flush was itself captured ({leaked} changes)"),
@@ -268,349 +529,432 @@ impl Capture {
         Ok(report)
     }
 
-    fn lock(&self) -> MutexGuard<'_, Buffer> {
-        // A panicking hook cannot leave the buffer half-written — a push either happened or did
-        // not — so the poison flag carries no information worth propagating, and honouring it
-        // would turn an unrelated panic elsewhere into permanently uncapturable writes.
-        self.inner
-            .buffer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn write_change(&self, conn: &Connection, change: &BufferedChange) -> Result<usize, AppError> {
-        let shape = self
-            .inner
-            .shapes
-            .get(change.table)
-            .ok_or_else(|| unknown_table(change.table))?;
-
-        let row_id = change.row_id.ok_or_else(|| AppError::Database {
-            message: format!(
-                "{} is WITHOUT ROWID, so the pre-update hook gives no usable row id and its rows \
-                 cannot be identified by one (AD-3)",
-                change.table
-            ),
-        })?;
-
-        match &change.op {
-            ChangeOp::Insert(new) => {
-                let row_uuid = self.identity_of(conn, shape, row_id)?;
-                self.write_fields(conn, shape, &row_uuid, None, new)
-            }
-            ChangeOp::Update { old, new } => {
-                let row_uuid = self.identity_of(conn, shape, row_id)?;
-                self.write_fields(conn, shape, &row_uuid, Some(old), new)
-            }
-            ChangeOp::Delete(old) => self.write_tombstone(conn, shape, row_id, old),
-        }
-    }
-
-    /// The row's identity, minted now when the row is surrogate and has never been seen.
+    /// The writing pass: one HLC per changed ROW, and no database READ at all.
     ///
-    /// A `Natural` row is an error rather than a mint: its uuid is DERIVED from its natural key
-    /// (AD-2) and only its insert site knows that key, so minting a random one here would split one
-    /// logical row into two on two computers. Failing the transaction is the only honest answer.
-    fn identity_of(
+    /// One stamp per row and not per column, deliberately: one user edit is one event, every column
+    /// of it is concurrent with the others by construction, and a message's identity is
+    /// `(install, seq, idx)` rather than its stamp (AD-4). It is also a quarter of the clock calls.
+    fn write_resolved(
         &self,
         conn: &Connection,
-        shape: &TableShape,
-        row_id: i64,
-    ) -> Result<RowUuid, AppError> {
-        match shape.identity {
-            RowIdentity::Surrogate | RowIdentity::SurrogateOrTemplate => {
-                identity::uuid_for(conn, shape.table, row_id)
-            }
-            RowIdentity::Natural => sync_identity::lookup(conn, shape.table, row_id)?.ok_or_else(
-                || AppError::Database {
-                    message: format!(
-                        "a {} row was written through ActiveDataset::write without the derived \
-                         identity AD-2 requires at its insert site",
-                        shape.table
-                    ),
-                },
-            ),
-        }
-    }
-
-    fn write_fields(
-        &self,
-        conn: &Connection,
-        shape: &TableShape,
-        row_uuid: &RowUuid,
-        old: Option<&[Value]>,
-        new: &[Value],
-    ) -> Result<usize, AppError> {
+        resolved: &[Resolved],
+        changes: usize,
+    ) -> Result<FlushReport, AppError> {
+        let stamping = lock(&self.inner.stamping);
+        let install = stamping.install.as_str();
         let mut written = 0;
+        let mut forgotten: Vec<(&'static str, i64, RowUuid)> = Vec::new();
 
-        for (index, column) in shape.columns.iter().enumerate() {
-            let after = value_at(new, index, shape.table, &column.name)?;
-            let before = match old {
-                Some(values) => Some(value_at(values, index, shape.table, &column.name)?),
-                None => None,
-            };
+        for item in resolved {
+            match item {
+                Resolved::Nothing => {}
+                Resolved::Fields {
+                    table,
+                    row_uuid,
+                    fields,
+                    counters,
+                } => {
+                    let hlc = stamping.clock.now().encode();
 
-            if before == Some(after) {
-                continue;
-            }
+                    // ONE message for the whole changed row (see `ROW_COLUMN_MARKER`), but still
+                    // one `sync_field_state` row per column: AD-5 decides each column on its own
+                    // `hlc`, and this only changes how they travel.
+                    if !fields.is_empty() {
+                        let columns: Vec<(&str, Vec<u8>)> = fields
+                            .iter()
+                            .map(|(column, value)| (column.as_str(), payload::encode(value)))
+                            .collect();
+                        let encoded = payload::encode_row_of(&columns);
 
-            written += match column.merge {
-                MergeKind::Lww => {
-                    self.write_field(conn, shape.table, row_uuid, &column.name, after)?
-                }
-                MergeKind::Immutable => match before {
-                    // AD-5: a later write to an immutable column is a bug, not a concurrent edit,
-                    // and must not silently become an Lww winner on every other computer. Named
-                    // without its value, per AD-16.
-                    Some(_) => {
-                        warn!(
-                            "an immutable column changed locally and was not captured: {}.{}",
-                            shape.table, column.name
-                        );
-                        0
-                    }
-                    None => self.write_field(conn, shape.table, row_uuid, &column.name, after)?,
-                },
-                MergeKind::Counter => match before {
-                    Some(previous) => self.write_counter_delta(
-                        conn,
-                        shape,
-                        row_uuid,
-                        &column.name,
-                        previous,
-                        after,
-                    )?,
-                    // The row was just created, so its counter is at the schema default every
-                    // computer creates it with; a delta from nothing would double-count it.
-                    None => 0,
-                },
-                MergeKind::LocalId => match column.parent {
-                    Some(parent) => {
-                        let resolved = self.parent_reference(conn, parent, after)?;
-                        self.write_field(conn, shape.table, row_uuid, &column.name, &resolved)?
-                    }
-                    None => 0,
-                },
-                // AD-5: `balance_cents` is never generically captured (Story 16's emitters own it),
-                // and AD-10 keeps image bytes out of every message.
-                MergeKind::Balance | MergeKind::Excluded => 0,
-            };
-        }
+                        sync_capture::append(
+                            conn,
+                            &LoggedMessage {
+                                install,
+                                hlc: &hlc,
+                                kind: "field",
+                                table_name: table,
+                                row_uuid,
+                                column_name: Some(ROW_COLUMN_MARKER),
+                                cause_uuid: None,
+                                payload: Some(&encoded),
+                            },
+                        )?;
+                        written += 1;
 
-        Ok(written)
-    }
-
-    fn write_field(
-        &self,
-        conn: &Connection,
-        table: &str,
-        row_uuid: &RowUuid,
-        column: &str,
-        value: &Value,
-    ) -> Result<usize, AppError> {
-        let hlc = self.inner.clock.now().encode();
-        let encoded = payload::encode(value);
-
-        sync_capture::append(
-            conn,
-            &LoggedMessage {
-                install: &self.inner.install,
-                hlc: &hlc,
-                kind: "field",
-                table_name: table,
-                row_uuid,
-                column_name: Some(column),
-                cause_uuid: None,
-                payload: Some(&encoded),
-            },
-        )?;
-
-        sync_capture::upsert_field_state(
-            conn,
-            table,
-            row_uuid,
-            column,
-            &hlc,
-            &self.inner.install,
-            &content_hash(&encoded),
-        )?;
-
-        Ok(1)
-    }
-
-    /// AD-5's counter: the hook's `new − old`, so the value is the sum of deltas and two computers
-    /// incrementing once each end up at two rather than one.
-    fn write_counter_delta(
-        &self,
-        conn: &Connection,
-        shape: &TableShape,
-        row_uuid: &RowUuid,
-        column: &str,
-        before: &Value,
-        after: &Value,
-    ) -> Result<usize, AppError> {
-        let (Value::Integer(before), Value::Integer(after)) = (before, after) else {
-            return Err(AppError::Database {
-                message: format!(
-                    "{}.{} is a counter but did not hold an integer",
-                    shape.table, column
-                ),
-            });
-        };
-
-        let delta = after.wrapping_sub(*before);
-        if delta == 0 {
-            return Ok(0);
-        }
-
-        let hlc = self.inner.clock.now().encode();
-        let encoded = payload::encode(&Value::Integer(delta));
-
-        sync_capture::append(
-            conn,
-            &LoggedMessage {
-                install: &self.inner.install,
-                hlc: &hlc,
-                kind: "counter_delta",
-                table_name: shape.table,
-                row_uuid,
-                column_name: Some(column),
-                cause_uuid: None,
-                payload: Some(&encoded),
-            },
-        )?;
-
-        Ok(1)
-    }
-
-    /// A foreign key in uuid space (AD-2). A NULL stays NULL — that is what the `SET NULL` edges
-    /// replay as (AD-12).
-    fn parent_reference(
-        &self,
-        conn: &Connection,
-        parent: &'static str,
-        value: &Value,
-    ) -> Result<Value, AppError> {
-        let parent_row = match value {
-            Value::Null => return Ok(Value::Null),
-            Value::Integer(row_id) => *row_id,
-            _ => {
-                return Err(AppError::Database {
-                    message: format!("a foreign key into {parent} did not hold an integer"),
-                })
-            }
-        };
-
-        let shape = self
-            .inner
-            .shapes
-            .get(parent)
-            .ok_or_else(|| unknown_table(parent))?;
-
-        Ok(Value::Blob(
-            self.identity_of(conn, shape, parent_row)?.to_vec(),
-        ))
-    }
-
-    /// A delete is one tombstone message carrying the whole row (AD-5, AD-12), after which the
-    /// identity mapping is dropped so a reused rowid cannot inherit the deleted row's identity.
-    ///
-    /// A row with no mapping produces NO message on purpose: it was never given an identity, so it
-    /// has never been shipped under one and no other computer knows it exists. Reconcile (Story 22)
-    /// owns rows that predate capture.
-    fn write_tombstone(
-        &self,
-        conn: &Connection,
-        shape: &TableShape,
-        row_id: i64,
-        old: &[Value],
-    ) -> Result<usize, AppError> {
-        let Some(row_uuid) = sync_identity::lookup(conn, shape.table, row_id)? else {
-            return Ok(0);
-        };
-
-        let row_json = self.row_json(conn, shape, old)?;
-        let hlc = self.inner.clock.now().encode();
-        let encoded = payload::encode(&Value::Text(row_json));
-
-        sync_capture::append(
-            conn,
-            &LoggedMessage {
-                install: &self.inner.install,
-                hlc: &hlc,
-                kind: "tombstone",
-                table_name: shape.table,
-                row_uuid: &row_uuid,
-                column_name: None,
-                cause_uuid: None,
-                payload: Some(&encoded),
-            },
-        )?;
-
-        sync_capture::forget_field_state(conn, shape.table, &row_uuid)?;
-        sync_identity::forget(conn, shape.table, row_id)?;
-
-        Ok(1)
-    }
-
-    /// The deleted row as a JSON object, column name to value.
-    ///
-    /// Self-describing rather than positional because a restore reads it in a LATER app version,
-    /// possibly after a migration added a column. Local integers are left out and foreign keys are
-    /// written as their parent's uuid (AD-2); image bytes are left out (AD-10). A blob is hex so
-    /// the document stays valid JSON.
-    fn row_json(
-        &self,
-        conn: &Connection,
-        shape: &TableShape,
-        values: &[Value],
-    ) -> Result<String, AppError> {
-        let mut row = serde_json::Map::new();
-
-        for (index, column) in shape.columns.iter().enumerate() {
-            let value = value_at(values, index, shape.table, &column.name)?;
-
-            let json = match column.merge {
-                MergeKind::Excluded => continue,
-                // Looked up and never MINTED, unlike a live row's foreign key. A cascade reaches
-                // the parent first (depth 0 before depth 1), and recording its tombstone drops the
-                // parent's mapping — so minting here would bind a brand-new identity to a row that
-                // no longer exists and name it in the child's tombstone, where no replica could
-                // ever resolve it. `null` is the honest answer: the parent is gone too.
-                MergeKind::LocalId => match (column.parent, value) {
-                    (Some(parent), Value::Integer(row_id)) => {
-                        match sync_identity::lookup(conn, parent, *row_id)? {
-                            Some(uuid) => serde_json::Value::String(hex(&uuid)),
-                            None => serde_json::Value::Null,
+                        for (column, value) in &columns {
+                            sync_capture::upsert_field_state(
+                                conn,
+                                table,
+                                row_uuid,
+                                column,
+                                &hlc,
+                                install,
+                                &content_hash(value),
+                            )?;
                         }
                     }
-                    (Some(_), _) => serde_json::Value::Null,
-                    (None, _) => continue,
-                },
-                _ => json_value(value),
-            };
 
-            row.insert(column.name.clone(), json);
+                    // No field state for a counter: its value is the SUM of its deltas, so there is
+                    // no single write that owns it (AD-5). It keeps its own message because its
+                    // payload is a delta rather than a value.
+                    for (column, delta) in counters {
+                        let encoded = payload::encode(&Value::Integer(*delta));
+
+                        sync_capture::append(
+                            conn,
+                            &LoggedMessage {
+                                install,
+                                hlc: &hlc,
+                                kind: "counter_delta",
+                                table_name: table,
+                                row_uuid,
+                                column_name: Some(column),
+                                cause_uuid: None,
+                                payload: Some(&encoded),
+                            },
+                        )?;
+                        written += 1;
+                    }
+                }
+                Resolved::Tombstone {
+                    table,
+                    row_id,
+                    row_uuid,
+                    row_json,
+                } => {
+                    let encoded = payload::encode(&Value::Text(row_json.clone()));
+
+                    sync_capture::append(
+                        conn,
+                        &LoggedMessage {
+                            install,
+                            hlc: &stamping.clock.now().encode(),
+                            kind: "tombstone",
+                            table_name: table,
+                            row_uuid,
+                            column_name: None,
+                            cause_uuid: None,
+                            payload: Some(&encoded),
+                        },
+                    )?;
+                    written += 1;
+                    forgotten.push((table, *row_id, *row_uuid));
+                }
+            }
         }
 
-        serde_json::to_string(&serde_json::Value::Object(row)).map_err(|error| AppError::Database {
-            message: format!("a deleted {} row could not be recorded: {error}", shape.table),
+        // Last, so the reading pass could still resolve every identity this batch names (AD-2 drops
+        // a mapping with its tombstone, and a cascade's children are rendered after their parent's
+        // tombstone would otherwise have dropped it).
+        for (table, row_id, row_uuid) in forgotten {
+            sync_capture::forget_field_state(conn, table, &row_uuid)?;
+            sync_identity::forget(conn, table, row_id)?;
+        }
+
+        Ok(FlushReport {
+            messages: written,
+            changes,
         })
     }
 
+    fn buffer(&self) -> MutexGuard<'_, Buffer> {
+        lock(&self.inner.buffer)
+    }
+
+    fn shapes(&self) -> Arc<Shapes> {
+        Arc::clone(&lock(&self.inner.shapes))
+    }
+
     #[cfg(test)]
-    pub(crate) fn install_id(&self) -> &str {
-        &self.inner.install
+    pub(crate) fn install_id(&self) -> String {
+        lock(&self.inner.stamping).install.clone()
     }
 
     #[cfg(test)]
     pub(crate) fn buffered_depths(&self) -> Vec<(&'static str, i32)> {
-        self.lock()
+        self.buffer()
             .changes
             .iter()
             .map(|change| (change.table, change.depth))
             .collect()
     }
+
+    /// The only way a test can put the buffer in the state a failed hook read leaves it in: the
+    /// hook cannot be made to fail on demand against a real SQLite.
+    #[cfg(test)]
+    pub(crate) fn record_fault(&self, fault: &str) {
+        let mut buffer = self.buffer();
+        if buffer.fault.is_none() {
+            buffer.fault = Some(fault.to_string());
+        }
+    }
+}
+
+/// A panicking hook cannot leave either lock half-written — a push either happened or did not — so
+/// the poison flag carries no information worth propagating, and honouring it would turn an
+/// unrelated panic elsewhere into permanently uncapturable writes.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The reading pass: everything about one buffered change that needs the database.
+fn resolve(
+    conn: &Connection,
+    shapes: &Shapes,
+    memo: &mut IdentityMemo,
+    change: &BufferedChange,
+) -> Result<Resolved, AppError> {
+    let shape = shapes
+        .get(change.table)
+        .ok_or_else(|| unknown_table(change.table))?;
+
+    let row_id = change.row_id.ok_or_else(|| AppError::Database {
+        message: format!(
+            "{} is WITHOUT ROWID, so the pre-update hook gives no usable row id and its rows \
+             cannot be identified by one (AD-3)",
+            change.table
+        ),
+    })?;
+
+    match &change.op {
+        ChangeOp::Insert(new) => {
+            let row_uuid = identity_of(conn, shapes, memo, shape, row_id)?;
+            resolve_fields(conn, shapes, memo, shape, row_uuid, None, new)
+        }
+        ChangeOp::Update { old, new } => {
+            let row_uuid = identity_of(conn, shapes, memo, shape, row_id)?;
+            resolve_fields(conn, shapes, memo, shape, row_uuid, Some(old), new)
+        }
+        ChangeOp::Delete(old) => {
+            let Some(row_uuid) = lookup(conn, memo, shape.table, row_id)? else {
+                return Ok(Resolved::Nothing);
+            };
+
+            let row_json = row_json(conn, memo, shape, old)?;
+            // The mapping is dropped at the end of the writing pass, so the memo must not keep
+            // handing this identity to a row that reuses the row id later in the same batch.
+            memo.remove(&(shape.table, row_id));
+
+            Ok(Resolved::Tombstone {
+                table: shape.table,
+                row_id,
+                row_uuid,
+                row_json,
+            })
+        }
+    }
+}
+
+fn resolve_fields(
+    conn: &Connection,
+    shapes: &Shapes,
+    memo: &mut IdentityMemo,
+    shape: &TableShape,
+    row_uuid: RowUuid,
+    old: Option<&[Value]>,
+    new: &[Value],
+) -> Result<Resolved, AppError> {
+    let mut fields: Vec<(String, Value)> = Vec::new();
+    let mut counters: Vec<(String, i64)> = Vec::new();
+
+    for (index, column) in shape.columns.iter().enumerate() {
+        let after = value_at(new, index, shape.table, &column.name)?;
+        let before = match old {
+            Some(values) => Some(value_at(values, index, shape.table, &column.name)?),
+            None => None,
+        };
+
+        if before == Some(after) {
+            continue;
+        }
+
+        match column.merge {
+            MergeKind::Lww => fields.push((column.name.clone(), after.clone())),
+            MergeKind::Immutable => match before {
+                // AD-5: a later write to an immutable column is a bug, not a concurrent edit, and
+                // must not silently become an Lww winner on every other computer. Named without
+                // its value, per AD-16.
+                Some(_) => warn!(
+                    "an immutable column changed locally and was not captured: {}.{}",
+                    shape.table, column.name
+                ),
+                None => fields.push((column.name.clone(), after.clone())),
+            },
+            // `before` is `None` when the row was just created, and then there is nothing to
+            // capture: the counter is at the schema default every computer creates it with, so a
+            // delta from nothing would double-count it.
+            MergeKind::Counter => {
+                if let Some(previous) = before {
+                    let delta = counter_delta(shape, &column.name, previous, after)?;
+                    if delta != 0 {
+                        counters.push((column.name.clone(), delta));
+                    }
+                }
+            }
+            MergeKind::LocalId => {
+                if let Some(parent) = column.parent {
+                    let resolved = parent_reference(conn, shapes, memo, parent, after)?;
+                    fields.push((column.name.clone(), resolved));
+                }
+            }
+            // AD-5: `balance_cents` is never generically captured (Story 16's emitters own it),
+            // and AD-10 keeps image bytes out of every message.
+            MergeKind::Balance | MergeKind::Excluded => {}
+        }
+    }
+
+    Ok(Resolved::Fields {
+        table: shape.table,
+        row_uuid,
+        fields,
+        counters,
+    })
+}
+
+/// AD-5's counter: the hook's `new − old`, so the value is the sum of deltas and two computers
+/// incrementing once each end up at two rather than one.
+fn counter_delta(
+    shape: &TableShape,
+    column: &str,
+    before: &Value,
+    after: &Value,
+) -> Result<i64, AppError> {
+    let (Value::Integer(before), Value::Integer(after)) = (before, after) else {
+        return Err(AppError::Database {
+            message: format!(
+                "{}.{} is a counter but did not hold an integer",
+                shape.table, column
+            ),
+        });
+    };
+
+    Ok(after.wrapping_sub(*before))
+}
+
+/// The row's identity, minted now when the row is surrogate and has never been seen.
+///
+/// A `Natural` row is an error rather than a mint: its uuid is DERIVED from its natural key (AD-2)
+/// and only its insert site knows that key, so minting a random one here would split one logical
+/// row into two on two computers. Failing the transaction is the only honest answer.
+fn identity_of(
+    conn: &Connection,
+    shapes: &Shapes,
+    memo: &mut IdentityMemo,
+    shape: &TableShape,
+    row_id: i64,
+) -> Result<RowUuid, AppError> {
+    if let Some(found) = lookup(conn, memo, shape.table, row_id)? {
+        return Ok(found);
+    }
+
+    let minted = match shape.identity {
+        RowIdentity::Surrogate | RowIdentity::SurrogateOrTemplate => {
+            identity::uuid_for(conn, shape.table, row_id)?
+        }
+        RowIdentity::Natural => {
+            return Err(AppError::Database {
+                message: format!(
+                    "a {} row was written through ActiveDataset::write without the derived \
+                     identity AD-2 requires at its insert site",
+                    shape.table
+                ),
+            })
+        }
+    };
+
+    debug_assert!(shapes.contains_key(shape.table));
+    memo.insert((shape.table, row_id), minted);
+
+    Ok(minted)
+}
+
+fn lookup(
+    conn: &Connection,
+    memo: &mut IdentityMemo,
+    table: &'static str,
+    row_id: i64,
+) -> Result<Option<RowUuid>, AppError> {
+    if let Some(found) = memo.get(&(table, row_id)) {
+        return Ok(Some(*found));
+    }
+
+    let found = sync_identity::lookup(conn, table, row_id)?;
+    if let Some(found) = found {
+        memo.insert((table, row_id), found);
+    }
+
+    Ok(found)
+}
+
+/// A foreign key in uuid space (AD-2). A NULL stays NULL — that is what the `SET NULL` edges
+/// replay as (AD-12).
+fn parent_reference(
+    conn: &Connection,
+    shapes: &Shapes,
+    memo: &mut IdentityMemo,
+    parent: &'static str,
+    value: &Value,
+) -> Result<Value, AppError> {
+    let parent_row = match value {
+        Value::Null => return Ok(Value::Null),
+        Value::Integer(row_id) => *row_id,
+        _ => {
+            return Err(AppError::Database {
+                message: format!("a foreign key into {parent} did not hold an integer"),
+            })
+        }
+    };
+
+    let shape = shapes.get(parent).ok_or_else(|| unknown_table(parent))?;
+
+    Ok(Value::Blob(
+        identity_of(conn, shapes, memo, shape, parent_row)?.to_vec(),
+    ))
+}
+
+/// The deleted row as a JSON object, column name to value.
+///
+/// Self-describing rather than positional because a restore reads it in a LATER app version,
+/// possibly after a migration added a column. Local integers are left out and foreign keys are
+/// written as their parent's uuid (AD-2); image bytes are left out (AD-10). A blob is hex so the
+/// document stays valid JSON.
+///
+/// The parent uuid is LOOKED UP and never minted: a parent that has no mapping is a parent no
+/// other computer knows, and inventing one would name an unresolvable identity in a tombstone.
+/// Rendering happens before any mapping of the batch is dropped, which is why a cascaded child can
+/// still name the parent that was deleted with it (AD-12).
+fn row_json(
+    conn: &Connection,
+    memo: &mut IdentityMemo,
+    shape: &TableShape,
+    values: &[Value],
+) -> Result<String, AppError> {
+    let mut row = serde_json::Map::new();
+
+    for (index, column) in shape.columns.iter().enumerate() {
+        let value = value_at(values, index, shape.table, &column.name)?;
+
+        let json = match column.merge {
+            MergeKind::Excluded => continue,
+            MergeKind::LocalId => match (column.parent, value) {
+                (Some(parent), Value::Integer(row_id)) => {
+                    match lookup(conn, memo, parent, *row_id)? {
+                        Some(uuid) => serde_json::Value::String(hex(&uuid)),
+                        None => serde_json::Value::Null,
+                    }
+                }
+                (Some(_), _) => serde_json::Value::Null,
+                (None, _) => continue,
+            },
+            _ => json_value(value),
+        };
+
+        row.insert(column.name.clone(), json);
+    }
+
+    serde_json::to_string(&serde_json::Value::Object(row)).map_err(|error| AppError::Database {
+        message: format!("a deleted {} row could not be recorded: {error}", shape.table),
+    })
 }
 
 /// Re-attaches the hook when it goes out of scope, however the scope ends.
@@ -782,29 +1126,49 @@ fn read_failure(shape: &TableShape, index: usize, error: &str) -> String {
 ///
 /// When the row ids DIFFER the pair is not an upsert: SQLite deleted a row that conflicted on some
 /// other unique key and inserted a genuinely new one, so it stays a tombstone plus an insert.
+///
+/// The delete half is SCANNED BACK FOR and not just read off the end, because the deleted row may
+/// have cascaded children: a REPLACE of a parent arrives as `Delete(parent)`, the children's
+/// deletes at depth >= 1, and only then `Insert(parent)`. The scan skips exactly those deeper
+/// changes and stops at the first change at or above the insert's own depth, so it can never reach
+/// past the statement that produced it. The children's tombstones are kept: the cascade really did
+/// delete those rows.
 fn collapse_replacements(changes: Vec<BufferedChange>) -> Vec<BufferedChange> {
     let mut collapsed: Vec<BufferedChange> = Vec::with_capacity(changes.len());
 
     for change in changes {
-        let replaces = matches!(change.op, ChangeOp::Insert(_))
-            && collapsed.last().is_some_and(|previous| {
-                matches!(previous.op, ChangeOp::Delete(_))
-                    && previous.table == change.table
-                    && previous.row_id.is_some()
-                    && previous.row_id == change.row_id
-            });
-
-        match (replaces, collapsed.pop_if(|_| replaces)) {
-            (true, Some(previous)) => collapsed.push(upsert(previous, change)),
-            (true, None) | (false, None) => collapsed.push(change),
-            (false, Some(previous)) => {
-                collapsed.push(previous);
-                collapsed.push(change);
+        match deleted_half(&collapsed, &change) {
+            Some(index) => {
+                let deleted = collapsed.remove(index);
+                collapsed.push(upsert(deleted, change));
             }
+            None => collapsed.push(change),
         }
     }
 
     collapsed
+}
+
+/// The index of the DELETE this INSERT is the other half of, if there is one.
+fn deleted_half(collapsed: &[BufferedChange], inserted: &BufferedChange) -> Option<usize> {
+    if !matches!(inserted.op, ChangeOp::Insert(_)) || inserted.row_id.is_none() {
+        return None;
+    }
+
+    for (index, candidate) in collapsed.iter().enumerate().rev() {
+        if candidate.depth > inserted.depth {
+            continue;
+        }
+
+        let matches_row = matches!(candidate.op, ChangeOp::Delete(_))
+            && candidate.depth == inserted.depth
+            && candidate.table == inserted.table
+            && candidate.row_id == inserted.row_id;
+
+        return matches_row.then_some(index);
+    }
+
+    None
 }
 
 /// The delete half's OLD values plus the insert half's NEW values: the update the REPLACE was.
@@ -816,8 +1180,8 @@ fn upsert(deleted: BufferedChange, inserted: BufferedChange) -> BufferedChange {
             depth: inserted.depth,
             op: ChangeOp::Update { old, new },
         },
-        // Unreachable: the caller matched both halves before popping. Keeping the insert is what
-        // makes this an unreachable branch rather than a lost change.
+        // Unreachable: `deleted_half` matched both halves before this was called. Keeping the
+        // insert is what makes this an unreachable branch rather than a lost change.
         (_, op) => BufferedChange {
             table: inserted.table,
             row_id: inserted.row_id,
@@ -891,36 +1255,14 @@ pub(crate) fn capture_including(
     identity: RowIdentity,
     merge: MergeKind,
 ) -> Result<Capture, AppError> {
-    let state = super::state::ensure_install_on(conn)?;
-    let mut shapes = resolve_shapes(conn)?;
-
-    let columns = sync_capture::table_columns(conn, extra)?
-        .into_iter()
-        .map(|name| ColumnShape {
-            name,
-            merge,
-            parent: None,
-        })
-        .collect();
-
-    shapes.insert(
-        extra,
-        TableShape {
+    Capture::build(
+        conn,
+        Some(ExtraShape {
             table: extra,
             identity,
-            has_rowid: sync_capture::table_has_rowid(conn, extra)?,
-            columns,
-        },
-    );
-
-    Ok(Capture {
-        inner: Arc::new(CaptureInner {
-            clock: clock_for(&state.install_id)?,
-            install: state.install_id,
-            shapes: Arc::new(shapes),
-            buffer: Arc::new(Mutex::new(Buffer::default())),
+            merge,
         }),
-    })
+    )
 }
 
 fn value_at<'a>(
