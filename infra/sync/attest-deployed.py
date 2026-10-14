@@ -407,13 +407,33 @@ def check_budget(report: Report, response: dict) -> None:
 def check_budget_notifications(report: Report, response: dict) -> None:
     api = "budgets describe-notifications-for-budget"
     notifications = response.get("Notifications", [])
+    # ThresholdType PERCENTAGE is the Budgets API default, and the API OMITS
+    # the key from this response when it applies -- confirmed by run
+    # 38652636866 (commit 840bdbd), where the already-deployed, correctly
+    # configured budget (the separate `check_budget` claim above PROVED it)
+    # failed this claim because every notification came back with no
+    # ThresholdType key at all. Only an explicit ABSOLUTE_VALUE is rejected.
     thresholds = sorted(
         n.get("Threshold")
         for n in notifications
-        if n.get("NotificationType") == "ACTUAL" and n.get("ThresholdType") == "PERCENTAGE"
+        if n.get("NotificationType") == "ACTUAL"
+        and n.get("ComparisonOperator") == "GREATER_THAN"
+        and n.get("ThresholdType", "PERCENTAGE") == "PERCENTAGE"
     )
+    ok = 80 in thresholds and 100 in thresholds
+    if not ok:
+        # Raw fields only, for diagnosing a future failure -- never an account
+        # id or a subscriber address, matching this script's no-address rule.
+        for n in notifications:
+            print(
+                "     raw notification: "
+                f"type={n.get('NotificationType')!r} "
+                f"comparison={n.get('ComparisonOperator')!r} "
+                f"threshold={n.get('Threshold')!r} "
+                f"threshold_type={n.get('ThresholdType')!r}"
+            )
     report.assert_that(
-        80 in thresholds and 100 in thresholds,
+        ok,
         "the budget alerts at 80% and 100% of ACTUAL spend (AD-18)",
         api,
         f"actual thresholds={thresholds}",
@@ -463,6 +483,67 @@ def check_bedrock_baseline(report: Report, stack: dict) -> None:
         api,
         f"LastUpdatedTime={actual} baseline={BEDROCK_BASELINE_LAST_UPDATED}",
     )
+
+
+# --------------------------------------------------------------------------- #
+# Offline self-test: no AWS call, no network. `--self-test` runs this instead
+# of `main()`. Fixtures freeze the real `describe_notifications_for_budget`
+# shapes (confirmed against run 38652636866, commit 840bdbd) so the
+# ThresholdType regression this script just had cannot silently return.
+# --------------------------------------------------------------------------- #
+
+
+def _selftest_budget_notifications() -> bool:
+    ok = True
+    cases: list[tuple[str, dict, bool]] = [
+        (
+            "real API shape: ThresholdType omitted (the Budgets API default)",
+            {
+                "Notifications": [
+                    {"NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 80.0},
+                    {"NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 100.0},
+                ]
+            },
+            True,
+        ),
+        (
+            "mutation: one notification is explicitly ABSOLUTE_VALUE",
+            {
+                "Notifications": [
+                    {
+                        "NotificationType": "ACTUAL",
+                        "ComparisonOperator": "GREATER_THAN",
+                        "Threshold": 80.0,
+                        "ThresholdType": "ABSOLUTE_VALUE",
+                    },
+                    {"NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 100.0},
+                ]
+            },
+            False,
+        ),
+        (
+            "mutation: the 100% threshold is missing",
+            {
+                "Notifications": [
+                    {"NotificationType": "ACTUAL", "ComparisonOperator": "GREATER_THAN", "Threshold": 80.0},
+                ]
+            },
+            False,
+        ),
+    ]
+    for name, response, expect_pass in cases:
+        report = Report()
+        check_budget_notifications(report, response)
+        passed = not report.failures
+        status = "ok" if passed == expect_pass else "FAIL"
+        if status == "FAIL":
+            ok = False
+        print(f"SELFTEST {status}: {name} (expected {'PASS' if expect_pass else 'FAIL'}, got {'PASS' if passed else 'FAIL'})")
+    return ok
+
+
+def selftest() -> int:
+    return 0 if _selftest_budget_notifications() else 1
 
 
 # --------------------------------------------------------------------------- #
@@ -679,4 +760,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(selftest() if "--self-test" in sys.argv[1:] else main())
