@@ -458,6 +458,74 @@ fn a_restore_keeps_the_snapshots_merge_state_and_this_computers_log() {
     assert_eq!(read_marker(conn), "from the cloud");
 }
 
+/// A computer can be restored more than once from an image that already holds its own unsent tail
+/// — an imported backup, a copied dataset, a re-bootstrap after a second retention gap. The carry
+/// then adds the live file's `seq IS NULL` rows on top of identical ones, and `UNIQUE (install,
+/// seq, idx)` cannot dedup them: they have no `seq` and SQLite treats two NULLs as distinct. Without
+/// a tuple-level predicate the next cut ships one `counter_delta` twice under two message ids, which
+/// every other computer counts twice.
+#[test]
+fn a_second_restore_does_not_duplicate_the_unsent_tail() {
+    let row: [u8; 16] = [0x44; 16];
+    let unsent_tail = |conn: &Connection| {
+        conn.execute(
+            "INSERT INTO sync_log (install, hlc, kind, table_name, row_uuid, column_name, payload)
+             VALUES ('0123456789abcdef', '000000000000000a-0123456789abcdef', 'counter_delta',
+                     'merchant_category_hints', ?1, 'usage_count', x'0100000000000001')",
+            [row.to_vec()],
+        )
+        .expect("an unsent increment nobody else has yet");
+        conn.execute(
+            "INSERT INTO sync_log (install, hlc, kind, table_name, row_uuid, column_name)
+             VALUES ('0123456789abcdef', '000000000000000b-0123456789abcdef', 'field',
+                     'accounts', ?1, '*')",
+            [row.to_vec()],
+        )
+        .expect("an unsent field message with no cause and no seq");
+    };
+
+    let (_dir, db_path) = live_dataset("live", |conn| {
+        link_sync_state(conn);
+        unsent_tail(conn);
+    });
+    let slot = TestSlot::holding(&db_path, Sabotage::None);
+    let payload = database_bytes("from the image", unsent_tail);
+
+    let count = |sql: &str| -> i64 {
+        let held = slot.held.lock().expect("not poisoned");
+        let conn = held.as_ref().expect("a connection");
+        conn.query_row(sql, [], |found| found.get(0))
+            .expect("the count reads")
+    };
+
+    restore_snapshot_file(&slot, &db_path, &payload, None).expect("the first restore succeeds");
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL"),
+        2,
+        "the tail the image and the live file agree on is carried forward ONCE"
+    );
+
+    restore_snapshot_file(&slot, &db_path, &payload, None).expect("the second restore succeeds");
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL"),
+        2,
+        "and a second restore still carries the SAME tail, not another copy"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sync_log WHERE kind = 'counter_delta'"),
+        1,
+        "so the next cut ships that increment exactly once"
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM sync_log
+             WHERE kind = 'field' AND cause_uuid IS NULL AND seq IS NULL"
+        ),
+        1,
+        "and a message that names no cause is matched too, which `=` would never have done"
+    );
+}
+
 #[test]
 fn an_older_snapshot_is_migrated_before_it_is_ever_put_in_place() {
     let (dir, db_path) = live_dataset("live", |_| {});

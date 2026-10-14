@@ -869,6 +869,13 @@ fn sync_tables(conn: &Connection) -> Result<Vec<String>, AppError> {
 /// reachable there, and stating the conflict rule once keeps the union's rule — a message the
 /// snapshot already carries under the same `(install, seq, idx)` is NOT inserted twice, because a
 /// duplicated `counter_delta` would double-count.
+///
+/// `OR IGNORE` is NOT enough for the UNSENT tail, and that is why `unsent_already_carried`
+/// exists: `UNIQUE (install, seq, idx)` is the identity of a SHIPPED message, and SQLite treats
+/// two NULLs as distinct, so a second restore of the same computer would re-insert every
+/// `seq IS NULL` row a previous restore carried and the next cut would ship one `counter_delta`
+/// twice under two message ids. An unsent row has no `(seq, idx)` to be identified by, so its
+/// identity is its whole message tuple instead.
 fn copy_table(
     source: &Connection,
     target: &Connection,
@@ -908,6 +915,9 @@ fn copy_table(
         None => read.query([])?,
     };
     while let Some(row) = rows.next()? {
+        if additive.is_some() && unsent_already_carried(target, name, row)? {
+            continue;
+        }
         let values: Vec<Value> = selected
             .iter()
             .map(|(at, _)| row.get::<_, Value>(*at))
@@ -916,6 +926,48 @@ fn copy_table(
     }
 
     Ok(copied)
+}
+
+/// Answers whether `row` — an unsent (`seq IS NULL`) `sync_log` row of the file being carried
+/// forward — is already in the target under the same message tuple.
+///
+/// A shipped row is identified by `(install, seq, idx)` and `OR IGNORE` handles it. An unsent one
+/// has neither, and `UNIQUE` lets two NULLs coexist, so without this a second restore of the same
+/// computer duplicates its whole unsent tail and the next cut ships one `counter_delta` twice.
+/// The identity used is everything a message IS: who stamped it, when, what it addresses and what
+/// it says. `IS` rather than `=` on the three nullable columns, because `NULL = NULL` is NULL and
+/// the comparison would never match a message that names no column or no cause.
+fn unsent_already_carried(
+    target: &Connection,
+    name: &str,
+    row: &rusqlite::Row<'_>,
+) -> Result<bool, AppError> {
+    if name != "sync_log" || row.get::<_, Option<i64>>("seq")?.is_some() {
+        return Ok(false);
+    }
+
+    let found: Option<i64> = target
+        .query_row(
+            "SELECT 1 FROM sync_log
+             WHERE seq IS NULL
+               AND install = ?1 AND hlc = ?2 AND kind = ?3 AND table_name = ?4
+               AND row_uuid IS ?5 AND column_name IS ?6 AND cause_uuid IS ?7 AND payload IS ?8
+             LIMIT 1",
+            rusqlite::params![
+                row.get::<_, String>("install")?,
+                row.get::<_, String>("hlc")?,
+                row.get::<_, String>("kind")?,
+                row.get::<_, String>("table_name")?,
+                row.get::<_, Value>("row_uuid")?,
+                row.get::<_, Value>("column_name")?,
+                row.get::<_, Value>("cause_uuid")?,
+                row.get::<_, Value>("payload")?,
+            ],
+            |found| found.get(0),
+        )
+        .optional()?;
+
+    Ok(found.is_some())
 }
 
 /// Removes a file this module owns, treating an absent one as done.

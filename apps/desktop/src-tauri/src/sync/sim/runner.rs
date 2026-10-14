@@ -152,14 +152,6 @@ struct Driver<E: ReplicaEngine> {
     emitted_causes: HashSet<(usize, RowUuid)>,
     /// Which replicas have already been re-bootstrapped once.
     ///
-    /// A SECOND restore of one replica duplicates its whole unsent tail: `carry_local_only` carries
-    /// `sync_log` additively with `INSERT OR IGNORE`, and SQLite's UNIQUE treats two NULLs as
-    /// distinct, so the `seq IS NULL` rows the previous restore already carried are inserted again
-    /// and the next cut ships one `counter_delta` twice under two different message ids. That is a
-    /// production bug in `db::backup::copy_table`, recorded in the ledger as an OPEN item rather
-    /// than fixed inside a simulator story; the op is capped here so the gate measures convergence
-    /// instead of re-measuring that one defect on every seed.
-    restored: Vec<bool>,
     next_ordinal: u64,
     outcome: SimOutcome,
     /// Owns the replicas' directories: dropping the driver is what deletes them, so this is a
@@ -206,7 +198,6 @@ impl<E: ReplicaEngine> Driver<E> {
             buried: Vec::new(),
             causes: Vec::new(),
             emitted_causes: HashSet::new(),
-            restored: vec![false; config.replicas],
             next_ordinal: 0,
             outcome: SimOutcome::default(),
             _dirs: dirs,
@@ -938,7 +929,7 @@ impl<E: ReplicaEngine> Driver<E> {
     /// behind that retention deleted the segments it still needed — so the guard excludes a case
     /// the product cannot reach rather than a case it must survive.
     fn action_restore(&mut self, replica: usize) -> Result<(), SimError> {
-        if self.offline[replica] || self.replicas() < 2 || self.restored[replica] {
+        if self.offline[replica] || self.replicas() < 2 {
             return Ok(());
         }
 
@@ -955,7 +946,6 @@ impl<E: ReplicaEngine> Driver<E> {
         if !self.engines[replica].restore_from_image(&image)? {
             return Ok(());
         }
-        self.restored[replica] = true;
 
         // The restored file states what it holds through its own applied vector, so every segment
         // is offered again and the vector decides which ones are already in it. Keeping the old
@@ -1028,7 +1018,6 @@ impl<E: ReplicaEngine> Driver<E> {
         // install would queue behind it.
         self.delivered.push(HashSet::new());
         self.deferred.push(HashSet::new());
-        self.restored.push(false);
         // Inherited, because the clone IS the source's file: a balance cause the source already
         // emitted is already folded into the copied column, and emitting it again locally would
         // add the same delta a SECOND time (only a REMOTE message triggers a re-fold, Story 20).
