@@ -20,6 +20,7 @@ from cfnlint.decode import cfn_yaml
 REPO = Path(__file__).resolve().parents[2]
 TEMPLATE = REPO / "infra" / "sync" / "template.yaml"
 WORKFLOW = REPO / ".github" / "workflows" / "sync-infra.yml"
+ATTEST = REPO / "infra" / "sync" / "attest-deployed.py"
 AUTH_RS = REPO / "apps" / "desktop" / "src-tauri" / "src" / "commands" / "auth.rs"
 
 SUB_PREFIX = "acct/${cognito-identity.amazonaws.com:sub}/"
@@ -245,6 +246,17 @@ def main() -> int:
         params["UserPoolId"]["Default"] in workflow_text,
         "workflow must pass the same user pool id",
     )
+    # The attestation asserts the LIVE pool trusts exactly these two ids, so a
+    # drifted copy there would attest the wrong provider and still pass.
+    attest_text = ATTEST.read_text(encoding="utf-8")
+    check(
+        f'APP_CLIENT_ID = "{client_id}"' in attest_text,
+        "attest-deployed.py APP_CLIENT_ID drifted from the template default",
+    )
+    check(
+        f'USER_POOL_ID = "{params["UserPoolId"]["Default"]}"' in attest_text,
+        "attest-deployed.py USER_POOL_ID drifted from the template default",
+    )
     for literal in (
         "--stack-name nixus-sync",
         "--capabilities CAPABILITY_NAMED_IAM",
@@ -262,24 +274,34 @@ def main() -> int:
     )
     jobs = workflow["jobs"]
     check(
-        {"verify", "deploy", "isolation"} <= set(jobs),
-        "workflow must define the verify, deploy and isolation jobs",
+        {"verify", "deploy", "isolation", "attest"} <= set(jobs),
+        "workflow must define the verify, deploy, isolation and attest jobs",
     )
     check(
         jobs["deploy"].get("needs") in ("verify", ["verify"]),
         "deploy must depend on verify",
     )
-    # The AD-19 isolation gate has to run on pull requests as well, so a merge
-    # cannot land without the cross-account denial having been proven.
-    isolation = jobs.get("isolation", {})
+    # The AD-19 isolation gate and the deployed-state attestation both have to
+    # run on pull requests as well, so a merge cannot land without the
+    # cross-account denial and the live bucket properties having been proven.
+    for gate in ("isolation", "attest"):
+        job = jobs.get(gate, {})
+        check(
+            set(as_list(job.get("needs"))) == {"verify", "deploy"},
+            f"{gate} must depend on both verify and deploy",
+        )
+        check(
+            "always()" in str(job.get("if", "")) and "skipped" in str(job.get("if", "")),
+            f"{gate} must still run when deploy is skipped (pull requests)",
+        )
+        check(
+            "head.repo.full_name == github.repository" in str(job.get("if", "")),
+            f"{gate} must be skipped on fork pull requests, which carry no credentials",
+        )
+    attest_steps = [str(step.get("run", "")) for step in jobs.get("attest", {}).get("steps", [])]
     check(
-        set(as_list(isolation.get("needs"))) == {"verify", "deploy"},
-        "isolation must depend on both verify and deploy",
-    )
-    check(
-        "always()" in str(isolation.get("if", ""))
-        and "skipped" in str(isolation.get("if", "")),
-        "isolation must still run when deploy is skipped (pull requests)",
+        any("infra/sync/attest-deployed.py" in run for run in attest_steps),
+        "attest must run infra/sync/attest-deployed.py",
     )
     for job_name, job in jobs.items():
         check(
