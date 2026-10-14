@@ -55,16 +55,25 @@ describe("useRecentlyDeleted", () => {
     });
   };
 
+  const tick = async () => {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  };
+
+  /* react-query resolves a read in a promise chain and only re-renders afterwards, so a single
+   * macrotask tick is not a settling point on a loaded machine (CI): flush until nothing is in
+   * flight, with a cap so a genuine hang still fails instead of spinning, then flush once more
+   * so the resulting render (the hook snapshot the test reads) has actually landed. */
   const settle = async () => {
     const deadline = Date.now() + 2_000;
     do {
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      });
+      await tick();
     } while (
       (queryClient.isFetching() > 0 || queryClient.isMutating() > 0) &&
       Date.now() < deadline
     );
+    await tick();
   };
 
   beforeEach(() => {
