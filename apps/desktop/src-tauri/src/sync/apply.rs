@@ -755,12 +755,24 @@ fn apply_counter(
 
     // A delta for a row that has not arrived is KEPT, not parked: the row is created from the sum of
     // whatever is recorded, so the increment is neither lost nor applied twice.
-    if let Some(row_id) = sync_identity::row_id_for(conn, table, &message.row_uuid)? {
-        let total = counter_total(conn, table, &message.row_uuid, column.column)?;
-        apply_db::update_row(conn, table, row_id, &[(column.column, Value::Integer(total))])?;
-    }
+    refold_counter(conn, table, &message.row_uuid, column.column)?;
 
     Ok(Outcome::Applied)
+}
+
+/// Writes a counter column's folded value, wherever the message that moved it came from.
+pub(crate) fn refold_counter(
+    conn: &Connection,
+    table: &'static str,
+    row_uuid: &[u8; 16],
+    column: &'static str,
+) -> Result<(), AppError> {
+    if let Some(row_id) = sync_identity::row_id_for(conn, table, row_uuid)? {
+        let total = counter_total(conn, table, row_uuid, column)?;
+        apply_db::set_folded_value(conn, table, row_id, column, total)?;
+    }
+
+    Ok(())
 }
 
 /// AD-5's balance: the latest `balance_set` by `hlc` plus every delta stamped after it, folded by
@@ -793,10 +805,89 @@ fn apply_balance(
     }
 
     if let Some(row_id) = sync_identity::row_id_for(conn, table, &message.row_uuid)? {
-        apply_db::update_row(conn, table, row_id, &[(column, Value::Integer(value))])?;
+        apply_db::set_folded_value(conn, table, row_id, column, value)?;
     }
 
     Ok(Outcome::Applied)
+}
+
+/// Writes an account's folded balance, wherever the message that moved it came from.
+///
+/// THE one code path for the balance column, and the reason it is `pub(crate)`: `sync::capture`
+/// calls it in the same transaction as a LOCAL emission (AD-5, fix F1). A local emitter adding its
+/// own delta straight to the column is only right until a second computer emits the SAME cause —
+/// the cause-keyed fold then keeps the minimum-HLC copy, which an intervening `balance_set` may
+/// absorb, and a column that was accumulated per write cannot reach that conclusion.
+pub(crate) fn refold_balance(
+    conn: &Connection,
+    table: &'static str,
+    row_uuid: &[u8; 16],
+    require_base: bool,
+) -> Result<(), AppError> {
+    if let Some(row_id) = sync_identity::row_id_for(conn, table, row_uuid)? {
+        let Some(column) = balance_column(table) else {
+            return Ok(());
+        };
+        let ledger = balance_ledger(conn, table, row_uuid)?;
+        if require_base && !ledger.has_base() {
+            return Ok(());
+        }
+        apply_db::set_folded_value(conn, table, row_id, column, ledger.value())?;
+    }
+
+    Ok(())
+}
+
+/// Re-folds every balance and every counter the log knows about.
+///
+/// What a FILE SWAP needs, and the half AD-9 left implicit. A restore takes its table values from
+/// someone else's snapshot while keeping this computer's own `sync_log` rows beside them, and a
+/// clone/`replace` DROPS unsent rows out of a log whose effects are still in the columns. In both
+/// cases the column and the log stop agreeing for every row no later message happens to touch, so
+/// the fold is re-driven for all of them rather than for the ones that were replayed.
+pub fn refold_increments(conn: &Connection) -> Result<usize, AppError> {
+    let mut refolded = 0;
+
+    for (table, row_uuid) in apply_db::balance_rows(conn)? {
+        let (Some(rule), Ok(row_uuid)) = (
+            registry::table(&table),
+            <[u8; 16]>::try_from(row_uuid.as_slice()),
+        ) else {
+            continue;
+        };
+        refold_balance(conn, rule.table, &row_uuid, true)?;
+        refolded += 1;
+    }
+
+    for (table, row_uuid, column) in apply_db::counter_rows(conn)? {
+        let (Some(rule), Some(column), Ok(row_uuid)) = (
+            registry::table(&table),
+            registry::column_rule(&table, &column)
+                .filter(|column| matches!(column.merge, MergeKind::Counter)),
+            <[u8; 16]>::try_from(row_uuid.as_slice()),
+        ) else {
+            continue;
+        };
+        refold_counter(conn, rule.table, &row_uuid, column.column)?;
+        refolded += 1;
+    }
+
+    Ok(refolded)
+}
+
+/// `db::sync_capture::discard_unsent` plus the re-fold it leaves owed (AD-5, fix F1).
+///
+/// The two CAP-5 paths that drop this computer's unsent tail — a `replace` link choice and
+/// `load_remote` — delete balance and counter deltas whose effect is still in the columns the swap
+/// brought in. Without the re-fold those columns stay ahead of the log until some later message
+/// re-folds them, and then silently jump.
+pub fn discard_unsent_and_refold(conn: &Connection) -> Result<usize, AppError> {
+    in_transaction(conn, false, |conn| {
+        let dropped = sync_capture::discard_unsent(conn)?;
+        refold_increments(conn)?;
+
+        Ok(dropped)
+    })
 }
 
 fn retain_balance_in_tombstone(
@@ -1059,6 +1150,11 @@ pub fn replay_own_unsent(
     clock: &Clock,
     install: &str,
 ) -> Result<ApplyReport, AppError> {
+    // Before the replay, and unconditionally: the snapshot's own balances and counters were folded
+    // from the log of the computer that WROTE it, which does not hold this computer's rows. Rows no
+    // unsent message happens to name would otherwise keep that stale value for good (fix F1).
+    in_transaction(conn, false, refold_increments)?;
+
     let rows = crate::db::sync_segment::unshipped(conn, install, REPLAY_MAX_MESSAGES)?;
     if rows.is_empty() {
         return Ok(ApplyReport::default());
@@ -1248,6 +1344,14 @@ pub(crate) fn counter_total(
 /// The fold AD-5 defines, over every balance message this computer holds for the row — its own and
 /// every other computer's.
 pub(crate) fn balance_value(conn: &Connection, table: &str, row_uuid: &[u8; 16]) -> Result<i64, AppError> {
+    Ok(balance_ledger(conn, table, row_uuid)?.value())
+}
+
+fn balance_ledger(
+    conn: &Connection,
+    table: &str,
+    row_uuid: &[u8; 16],
+) -> Result<BalanceLedger<[u8; 16]>, AppError> {
     let mut ledger: BalanceLedger<[u8; 16]> = BalanceLedger::default();
 
     for logged in apply_db::balance_messages(conn, table, row_uuid)? {
@@ -1269,7 +1373,7 @@ pub(crate) fn balance_value(conn: &Connection, table: &str, row_uuid: &[u8; 16])
         }
     }
 
-    Ok(ledger.value())
+    Ok(ledger)
 }
 
 /// The same domain-separated digest capture computes, so a field written by apply and the same field

@@ -60,6 +60,28 @@ fn seeds() -> BoxedStrategy<u64> {
     }
 }
 
+/// Fix F1's three regression seeds, replayed with NO randomness.
+///
+/// Each one is a money divergence the randomized gate found and the default 64 seeds then hid:
+/// (1) two replicas emitting the SAME cause with one of them setting the balance absolutely in
+/// between, which a column accumulated per local write cannot re-fold; (2) the same shape through
+/// two restores; (3) the same shape at three replicas, which only CI's Windows run happened to
+/// draw. Pinning them means the shapes are proven by name on every `cargo test`, not by luck of
+/// the seed sample.
+#[test]
+fn the_real_pipeline_converges_on_the_fix_f1_seeds() {
+    const SEEDS: [u64; 3] = [
+        3_509_570_159_215_783_270,
+        11_361_690_501_041_322_842,
+        2_765_768_482_577_167_761,
+    ];
+
+    for seed in SEEDS {
+        runner::run_real(&config_for(seed))
+            .unwrap_or_else(|failure| panic!("fix F1 seed {seed} diverged again: {failure}"));
+    }
+}
+
 proptest! {
     #![proptest_config(proptest_config())]
 

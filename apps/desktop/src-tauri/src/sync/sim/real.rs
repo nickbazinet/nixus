@@ -33,7 +33,7 @@ use rusqlite::Connection;
 use crate::db::backup::{self, DatasetSlot};
 use crate::db::sim_tables::{self, SimCell};
 use crate::db::sync_apply as apply_db;
-use crate::db::{snapshot_strip, sync_capture, sync_identity, sync_segment, sync_state, test_dataset, ActiveDataset};
+use crate::db::{snapshot_strip, sync_identity, sync_segment, sync_state, test_dataset, ActiveDataset};
 use crate::models::DatasetKind;
 use crate::sync::apply;
 use crate::sync::capture::{BalanceCause, Capture};
@@ -207,9 +207,39 @@ impl RealEngine {
         Ok(())
     }
 
-    fn cause_row_id(&mut self, cause: RowUuid) -> i64 {
-        let next = self.next_cause_row_id;
-        *self.causes.entry(cause).or_insert_with(|| next)
+    /// The local id of a cause row, taken from the FILE whenever the file already names it.
+    ///
+    /// The cause key is a function of the cause ROW'S uuid (Story 16), so an id this engine made up
+    /// on its own is only usable while no other numbering is in the file. A restore puts one there:
+    /// the snapshot carries the account's cause rows together with their `sync_uuid` mappings, under
+    /// the id they had on the computer that wrote it, and `sync_identity::ensure` is
+    /// first-writer-wins on the uuid — so a private counter would quietly bind a FRESH uuid to its
+    /// own id and emit a different cause key for the same real-world action. In production the cause
+    /// row is a real `expenses` row whose id and uuid travel together for exactly this reason; here
+    /// the rows are identities only, so the engine has to ask the file the same question.
+    fn cause_row_id(&mut self, cause: RowUuid) -> Result<i64, SimError> {
+        if let Some(row_id) =
+            sync_identity::row_id_for(self.conn()?, CAUSE_TABLE, &cause).map_err(sql)?
+        {
+            self.causes.insert(cause, row_id);
+            return Ok(row_id);
+        }
+
+        if let Some(row_id) = self.causes.get(&cause) {
+            return Ok(*row_id);
+        }
+
+        let mut row_id = self.next_cause_row_id;
+        while sync_identity::lookup(self.conn()?, CAUSE_TABLE, row_id)
+            .map_err(sql)?
+            .is_some()
+        {
+            row_id += 1;
+        }
+        self.next_cause_row_id = row_id + 1;
+        self.causes.insert(cause, row_id);
+
+        Ok(row_id)
     }
 
     /// The stamp capture gave the messages this write produced, read back out of the log.
@@ -326,11 +356,7 @@ impl RealEngine {
         let Some(row_id) = self.row_id_of(Table::Accounts, row)? else {
             return Err(SimError::Model("a balance delta before its account".into()));
         };
-        let cause_row_id = self.cause_row_id(cause);
-        let fresh = self.causes.len() as i64 >= self.next_cause_row_id;
-        if fresh {
-            self.next_cause_row_id += 1;
-        }
+        let cause_row_id = self.cause_row_id(cause)?;
 
         self.dataset
             .write(|tx| {
@@ -689,7 +715,7 @@ impl ReplicaEngine for RealEngine {
             &machine_fingerprint(&MachineSignals::from_environment()),
         )
         .map_err(sql)?;
-        sync_capture::discard_unsent(&conn).map_err(sql)?;
+        apply::discard_unsent_and_refold(&conn).map_err(sql)?;
 
         let (dataset, apply, install, clock) = Self::attach_existing(db_path, conn)?;
 

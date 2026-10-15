@@ -60,6 +60,17 @@ impl<Cause: Ord> BalanceLedger<Cause> {
         }
     }
 
+    /// Whether the messages folded so far carry an absolute BASE at all.
+    ///
+    /// The one question a LOCAL re-fold has to ask before it overwrites the column: a row that
+    /// predates capture has published no `balance_set`, so `value()` would read its opening balance
+    /// as zero and the user would watch a real balance collapse to the sum of its deltas. Story
+    /// 22's reconcile is what gives such a row a base; until it has one, the column is the truth
+    /// and the log is only the part of it that travels.
+    pub(crate) fn has_base(&self) -> bool {
+        self.set.is_some()
+    }
+
     /// The latest `balance_set` by clock, plus every delta stamped after it.
     pub(crate) fn value(&self) -> i64 {
         let base = self.set.map(|(_, cents)| cents).unwrap_or(0);

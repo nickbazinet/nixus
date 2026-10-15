@@ -35,6 +35,7 @@ use crate::db::sync_identity::{self, RowUuid};
 use crate::error::AppError;
 use crate::models::DatasetKind;
 
+use super::apply;
 use super::clock::Clock;
 use super::identity;
 use super::registry::{self, MergeKind, RowIdentity, TableClass};
@@ -707,6 +708,7 @@ impl Capture {
         }
 
         let report = self.write_resolved(conn, &resolved, changes.len())?;
+        refold_emitted_balances(self, conn, &resolved)?;
 
         let leaked = self.buffer().changes.len();
         if leaked > 0 {
@@ -950,6 +952,56 @@ impl Capture {
 /// unrelated panic elsewhere into permanently uncapturable writes.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Re-reads the balance column of every account this flush emitted a message for, as the FOLD of
+/// the log (AD-5), in the flush's own transaction.
+///
+/// WHY the emitters cannot simply keep adding their delta to the column, which is what fix F1
+/// repairs: AD-5 keys a delta by its CAUSE, so when a second computer emits the same cause the rule
+/// keeps the minimum-HLC copy, and a `balance_set` stamped after that copy absorbs it. A column
+/// accumulated one local write at a time has already spent the delta and has no way back, so the
+/// two computers disagree for good. Folding here instead makes the local and the remote path the
+/// SAME code path, and a later arrival of an earlier copy of a cause, a restore or a replay all
+/// re-fold to the same number.
+///
+/// `require_base` is NOT optional here: a row that predates capture has published no
+/// `balance_set`, and re-folding it would read its opening balance as zero and reset a real
+/// balance to the sum of its deltas. Story 22's reconcile is what publishes a base for such a row.
+///
+/// The buffer MARK is what keeps this off AD-3's books: the hook sees the `UPDATE` this makes (it
+/// is on the UI connection, and it only fires at all when the fold differs from what the emitter
+/// wrote), and that observation describes no user change — `accounts.balance_cents` is never
+/// captured by the generic hook — so it is rolled back out of the buffer rather than left to leak
+/// into the next write.
+fn refold_emitted_balances(
+    capture: &Capture,
+    conn: &Connection,
+    resolved: &[Resolved],
+) -> Result<(), AppError> {
+    let mut refolded: Vec<(&'static str, RowUuid)> = Vec::new();
+    for item in resolved {
+        if let Resolved::Balance {
+            table, row_uuid, ..
+        } = item
+        {
+            if !refolded.contains(&(table, *row_uuid)) {
+                refolded.push((table, *row_uuid));
+            }
+        }
+    }
+
+    if refolded.is_empty() {
+        return Ok(());
+    }
+
+    let mark = capture.mark();
+    let folded = refolded
+        .iter()
+        .try_for_each(|(table, row_uuid)| apply::refold_balance(conn, table, row_uuid, true));
+    capture.rollback_to(mark);
+
+    folded
 }
 
 /// The reading pass: everything about one buffered change that needs the database.

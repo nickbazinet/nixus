@@ -1211,7 +1211,7 @@ impl<H: SyncHost> SyncActor<H> {
     fn discard_unsent_log(&self) {
         match self
             .host
-            .with_dataset(crate::db::sync_capture::discard_unsent)
+            .with_dataset(apply::discard_unsent_and_refold)
         {
             Ok(dropped) if dropped > 0 => {
                 info!("{dropped} unsent change(s) dropped with this computer's replaced data");

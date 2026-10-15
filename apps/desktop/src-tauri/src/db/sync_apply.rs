@@ -188,6 +188,54 @@ pub fn counter_deltas(
     Ok(rows)
 }
 
+/// Every row the log holds a balance message for, so a file swap can re-fold all of them.
+pub fn balance_rows(conn: &Connection) -> Result<Vec<(String, Vec<u8>)>, AppError> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT table_name, row_uuid FROM sync_log \
+         WHERE kind IN ('balance_set', 'balance_delta') AND row_uuid IS NOT NULL",
+    )?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Every column the log holds a counter delta for, so a file swap can re-fold all of them.
+pub fn counter_rows(conn: &Connection) -> Result<Vec<(String, Vec<u8>, String)>, AppError> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT table_name, row_uuid, column_name FROM sync_log \
+         WHERE kind = 'counter_delta' AND row_uuid IS NOT NULL AND column_name IS NOT NULL",
+    )?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Writes a folded `Counter`/`Balance` value into its column, and ONLY when it differs.
+///
+/// The guard is not an optimization, it is what keeps the fold off the capture hook: the common
+/// case is a local emitter whose fold equals the value the emitter itself just wrote, and SQLite
+/// fires no pre-update callback for an `UPDATE` that matches no row. `IS NOT` rather than `<>`, so
+/// a column that is somehow NULL is still corrected.
+pub fn set_folded_value(
+    conn: &Connection,
+    table: &'static str,
+    row_id: i64,
+    column: &'static str,
+    value: i64,
+) -> Result<bool, AppError> {
+    let changed = conn
+        .prepare_cached(&format!(
+            "UPDATE {table} SET {column} = ?1 WHERE _rowid_ = ?2 AND {column} IS NOT ?1"
+        ))?
+        .execute(params![value, row_id])?;
+
+    Ok(changed > 0)
+}
+
 /// A deleted row, kept whole for 30 days (AD-5).
 pub struct TombstoneRow {
     pub table_name: String,
