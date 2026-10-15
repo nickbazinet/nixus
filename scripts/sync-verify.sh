@@ -49,7 +49,7 @@ STEPS=(
   "TESTS|full cargo test|$TAURI_DIR|cargo test"
   "CAPTURE_REGRESSION|capture regression: REPLACE, DELETE without WHERE, cascades, WITHOUT ROWID|$TAURI_DIR|cargo test --lib sync::tests_capture:: -- --nocapture --skip latency"
   "WRITE_SITE_BUDGET|write-site budget ratchet (AD-3)|$TAURI_DIR|cargo test --lib sync::tests_write_site_budget -- --nocapture"
-  "CLASSIFICATION|classification and registry coverage|$TAURI_DIR|cargo test --lib sync::registry:: sync::identity:: -- --nocapture"
+  "CLASSIFICATION|classification and registry coverage|$TAURI_DIR|cargo test --lib sync::registry:: -- --nocapture && cargo test --lib sync::identity:: -- --nocapture"
   "M1_PROOF|Milestone-1 end-to-end proof|$TAURI_DIR|cargo test sync_e2e -- --nocapture"
   "M2_PROOF|Milestone-2 two-computer proof|$TAURI_DIR|cargo test sync_m2_e2e -- --nocapture"
   "LATENCY|capture latency gate (release, single-threaded)|$TAURI_DIR|cargo test --release --lib sync::tests_capture_latency -- --test-threads=1 --nocapture"
@@ -103,27 +103,51 @@ HINT
   return 1
 }
 
-# The three infra checks each need a Python package a dev machine may not have. A missing package
-# is reported as SKIP and not as FAIL: the gate is "the template still says what it must", and
-# `.github/workflows/sync-infra.yml` installs both packages and runs all three on every push.
-__python_module() {
-  python3 -c "import $1" >/dev/null 2>&1
+# The three infra checks each need a Python package a dev machine may not have, and on a machine
+# whose `python3` is an externally-managed install (PEP 668) `pip install` refuses outright — so
+# `uv run --with`, which builds a throwaway environment, is the fallback that makes them runnable
+# locally at all. With neither the package nor `uv`, the step reports SKIP and never PASS: the gate
+# is "the template still says what it must", and `.github/workflows/sync-infra.yml` installs the
+# packages and runs all three on every push.
+__python_check() {
+  local modules="$1" packages="$2"
+  shift 2
+
+  local missing=""
+  local module
+  for module in $modules; do
+    python3 -c "import $module" >/dev/null 2>&1 || missing="$missing $module"
+  done
+  if [ -z "$missing" ]; then
+    python3 "$@"
+    return
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    local with_args=()
+    local package
+    for package in $packages; do
+      with_args+=(--with "$package")
+    done
+    echo "python3 is missing:$missing — supplying them with uv instead"
+    uv run --quiet --no-project "${with_args[@]}" python3 "$@"
+    return
+  fi
+
+  echo "python3 is missing:$missing, and uv is not installed to supply them."
+  echo "install either of these, then re-run:"
+  echo "    uv run --no-project${packages:+ --with ${packages// / --with }} python3 $*"
+  echo "    python3 -m pip install --user $packages   (add --break-system-packages on a PEP-668 python3)"
+  echo "the sync-infra workflow installs $packages and runs this check on every push."
+  return 2
 }
 
 __verify_template() {
-  if ! __python_module cfnlint; then
-    echo "cfn-lint (the cfnlint package) is not installed; the sync-infra workflow runs this check."
-    return 2
-  fi
-  python3 infra/sync/verify-template.py
+  __python_check "yaml cfnlint" "pyyaml cfn-lint" infra/sync/verify-template.py
 }
 
 __attest_selftest() {
-  if ! __python_module boto3; then
-    echo "boto3 is not installed; the sync-infra workflow runs this self-test."
-    return 2
-  fi
-  python3 infra/sync/attest-deployed.py --self-test
+  __python_check "boto3" "boto3" infra/sync/attest-deployed.py --self-test
 }
 
 # Absent rather than failing: cfn-lint is an optional local tool and the workflow runs it anyway.
