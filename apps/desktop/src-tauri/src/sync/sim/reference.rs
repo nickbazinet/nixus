@@ -70,10 +70,21 @@ pub(crate) struct ReferenceEngine {
     ids: HashMap<(Table, RowUuid), i64>,
     fields: HashMap<FieldKey, (Hlc, SimCell)>,
     parents: HashMap<(Table, RowUuid), RowUuid>,
-    tombstones: HashSet<(Table, RowUuid)>,
+    /// Keyed by row, carrying the stamp of the delete, because story 21's rule for a DERIVED
+    /// identity is last-writer-wins between the tombstone and a re-creation.
+    tombstones: HashMap<(Table, RowUuid), Hlc>,
     balances: HashMap<RowUuid, BalanceLedger<CauseKey>>,
     counters: HashMap<(Table, RowUuid), HashMap<MessageId, i64>>,
     unkeyed_ordinal: u64,
+}
+
+/// Whether a write names every last-write-wins column of its table: capture's INSERT shape, which
+/// an edit never has (`apply::is_whole_row`).
+fn names_every_column(table: Table, fields: &[(&'static str, SimCell)]) -> bool {
+    table
+        .lww_columns()
+        .iter()
+        .all(|column| fields.iter().any(|(name, _)| name == column))
 }
 
 impl ReferenceEngine {
@@ -101,7 +112,7 @@ impl ReferenceEngine {
             ids: HashMap::new(),
             fields: HashMap::new(),
             parents: HashMap::new(),
-            tombstones: HashSet::new(),
+            tombstones: HashMap::new(),
             balances: HashMap::new(),
             counters: HashMap::new(),
             unkeyed_ordinal: 0,
@@ -120,7 +131,18 @@ impl ReferenceEngine {
                 if self.mutation == Mutation::IgnoreTombstones {
                     return Ok(Fold::Applied);
                 }
-                self.remove_row(*table, *row)?;
+                // The other half of the derived-identity rule in `fold_upsert`: a row created
+                // AFTER this delete is not the row the delete describes, so the delete loses and
+                // leaves no tombstone — which is what makes the two halves agree whichever of the
+                // two messages arrives first.
+                if table.derived_identity()
+                    && self
+                        .creation_of(*table, *row)
+                        .is_some_and(|created| created > message.hlc)
+                {
+                    return Ok(Fold::Applied);
+                }
+                self.remove_row(*table, *row, message.hlc)?;
                 Ok(Fold::Applied)
             }
             Change::BalanceSet { row, cents } => {
@@ -163,14 +185,24 @@ impl ReferenceEngine {
         parent: Option<RowUuid>,
         fields: &[(&'static str, SimCell)],
     ) -> Result<Fold, SimError> {
-        if self.tombstones.contains(&(table, row)) {
-            return Ok(Fold::Applied);
+        if let Some(deleted_at) = self.tombstones.get(&(table, row)).copied() {
+            // AD-2: a whole-row write stamped after the delete is the same logical row minted from
+            // its own key again, so for a derived identity it REVIVES the row; everything else a
+            // tombstone absorbs (AD-5's delete-wins over a concurrent edit).
+            if !table.derived_identity()
+                || message.hlc <= deleted_at
+                || !names_every_column(table, fields)
+            {
+                return Ok(Fold::Applied);
+            }
+
+            self.tombstones.remove(&(table, row));
         }
 
         if let (Some(parent_row), Some((parent_table, _))) = (parent, table.parent()) {
             // AD-12: a child message addressed to a tombstoned parent is dropped, not parked
             // — parking it would wait forever for a row that is never coming back.
-            if self.tombstones.contains(&(parent_table, parent_row)) {
+            if self.tombstones.contains_key(&(parent_table, parent_row)) {
                 return Ok(Fold::Applied);
             }
             if !self.ids.contains_key(&(parent_table, parent_row)) {
@@ -308,11 +340,26 @@ impl ReferenceEngine {
             .unwrap_or(0)
     }
 
+    /// When the live row was created: the OLDEST stamp any of its columns is held under, the way
+    /// `apply::creation_hlc` reads it. A whole-row insert stamps every column at once, so the
+    /// minimum IS that insert, and a later edit only raises individual columns.
+    fn creation_of(&self, table: Table, row: RowUuid) -> Option<Hlc> {
+        if !self.ids.contains_key(&(table, row)) {
+            return None;
+        }
+
+        self.fields
+            .iter()
+            .filter(|((stored_table, stored_row, _), _)| *stored_table == table && *stored_row == row)
+            .map(|(_, (hlc, _))| *hlc)
+            .min()
+    }
+
     /// AD-12: deleting a parent lets the schema's `ON DELETE CASCADE` run, and each cascaded
     /// child becomes its own tombstone so a later message addressed to it is dropped rather
     /// than resurrecting it.
-    fn remove_row(&mut self, table: Table, row: RowUuid) -> Result<(), SimError> {
-        self.tombstones.insert((table, row));
+    fn remove_row(&mut self, table: Table, row: RowUuid, deleted_at: Hlc) -> Result<(), SimError> {
+        self.tombstones.insert((table, row), deleted_at);
 
         let cascaded: Vec<(Table, RowUuid)> = self
             .parents
@@ -329,7 +376,7 @@ impl ReferenceEngine {
 
         self.forget(table, row);
         for (child_table, child_row) in cascaded {
-            self.tombstones.insert((child_table, child_row));
+            self.tombstones.insert((child_table, child_row), deleted_at);
             self.ids.remove(&(child_table, child_row));
             self.forget(child_table, child_row);
         }
@@ -337,14 +384,20 @@ impl ReferenceEngine {
         Ok(())
     }
 
-    /// Drops the merge state of a tombstoned row, except its balance: AD-12 keeps a delta
-    /// addressed to a deleted account against the retained row, and nothing observable reads
-    /// it, so throwing it away would be a silent decision rather than a visible one.
+    /// Drops the merge state of a tombstoned row, except its balance and its counter.
+    ///
+    /// AD-12 keeps a delta addressed to a deleted account against the retained row, and nothing
+    /// observable reads it, so throwing it away would be a silent decision rather than a visible
+    /// one. The COUNTER is kept for a load-bearing reason (fix F7): AD-5 makes a counter the sum of
+    /// its deltas de-duplicated by message id, and in the real engine that sum is folded from
+    /// `sync_log`, which a tombstone does not touch — so a row a re-creation revives comes back
+    /// holding every delta ever recorded for it. Forgetting them here made the count depend on
+    /// WHICH replica had processed the delete before the revive, which is a divergence
+    /// (seed 6251799010395204023: usage_count 2 against 1).
     fn forget(&mut self, table: Table, row: RowUuid) {
         self.fields
             .retain(|(stored_table, stored_row, _), _| *stored_table != table || *stored_row != row);
         self.parents.remove(&(table, row));
-        self.counters.remove(&(table, row));
     }
 
     fn retry_pending(&mut self) -> Result<(), SimError> {

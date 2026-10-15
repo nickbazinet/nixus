@@ -10,7 +10,8 @@ use proptest::test_runner::{Config as ProptestConfig, TestCaseError};
 use tempfile::TempDir;
 
 use crate::db::sim_tables::SimCell;
-use crate::sync::clock::WallClock;
+use crate::sync::clock::{Hlc, WallClock};
+use crate::sync::sim::oracle::Oracle;
 use crate::sync::sim::engine::{ReplicaEngine, SimError};
 use crate::sync::sim::model::{fresh_row_uuid, natural_key_uuid, Change, RowUuid, Table};
 use crate::sync::sim::reference::{Mutation, ReferenceEngine};
@@ -79,6 +80,183 @@ fn the_real_pipeline_converges_on_the_fix_f1_seeds() {
     for seed in SEEDS {
         runner::run_real(&config_for(seed))
             .unwrap_or_else(|failure| panic!("fix F1 seed {seed} diverged again: {failure}"));
+    }
+}
+
+/// The seeds fixes F5, F6 and F7 were found by, replayed with NO randomness.
+///
+/// Each one is a rule the default 64 seeds hid and a 1,000+ seed release run found. (1) and (2):
+/// one HLC per install, and a clock that starts ahead of the stamps its own dataset already holds
+/// — a clone re-minting its install id inside the same millisecond as the file it copied.
+/// (3), (4) and (5) are the three halves of the derived-identity rule the MODELS got wrong while
+/// the engine had it right: the oracle and the reference engine absorbed a re-creation story 21
+/// says revives the row; the reference engine forgot a revived row's counter deltas, which the
+/// real engine keeps in `sync_log`; and the generator recorded a re-creation of a natural-key row
+/// the replica ALREADY HELD, which capture emits nothing for.
+#[test]
+fn the_real_pipeline_converges_on_the_later_fix_seeds() {
+    const SEEDS: [u64; 6] = [
+        13_140_973_808_823_921_385,
+        2_663_001_441_877_517_665,
+        151_724_099_557_534_434,
+        3_510_927_277_782_565_120,
+        6_251_799_010_395_204_023,
+        4_393_696_342_695_816_003,
+    ];
+
+    for seed in SEEDS {
+        runner::run_real(&config_for(seed))
+            .unwrap_or_else(|failure| panic!("pinned seed {seed} diverged again: {failure}"));
+        runner::run(&config_for(seed), Mutation::None)
+            .unwrap_or_else(|failure| panic!("pinned seed {seed} diverged again: {failure}"));
+    }
+}
+
+/// Story 21's frozen rule, stated on the ORACLE because the oracle is what says who is right:
+/// a tombstone is absorbing for a surrogate identity and last-writer-wins against a RE-CREATION
+/// for a derived one (AD-2, AD-5). Fix F7: the oracle had no revive rule at all, so it expected a
+/// row gone that every replica correctly held — found by seed 3510927277782565120.
+#[test]
+fn the_oracle_revives_a_derived_identity_re_created_after_its_delete() {
+    let hints = Table::MerchantHints;
+    let row = natural_key_uuid(hints, &[b"Costco", &4i64.to_be_bytes()]);
+    let created = stamp(1);
+    let deleted = stamp(2);
+    let recreated = stamp(3);
+
+    let present = |oracle: &Oracle| {
+        oracle
+            .expected()
+            .get(hints.sql())
+            .expect("the hints table is always dumped")
+            .contains_key(&row)
+    };
+
+    let mut revived = Oracle::default();
+    revived.record(created, create_hint(row));
+    revived.record(deleted, Change::Tombstone { table: hints, row });
+    revived.record(recreated, create_hint(row));
+    assert!(
+        present(&revived),
+        "a whole-row re-creation stamped after the delete brings a derived identity back"
+    );
+    assert!(
+        !revived.deleted_rows().contains(&(hints, row)),
+        "and the delete that lost leaves nothing for the delete-wins assertion to require"
+    );
+
+    let mut absorbed = Oracle::default();
+    absorbed.record(created, create_hint(row));
+    absorbed.record(recreated, Change::Tombstone { table: hints, row });
+    absorbed.record(deleted, create_hint(row));
+    assert!(
+        !present(&absorbed),
+        "a re-creation stamped BEFORE the delete loses, whatever order the two were recorded in"
+    );
+    assert!(
+        absorbed.deleted_rows().contains(&(hints, row)),
+        "and the delete that won is still required to have won"
+    );
+}
+
+/// The two halves the revive rule must NOT touch: a surrogate identity never comes back (AD-2
+/// retires its uuid with the row), and a partial edit stamped after a delete is still absorbed
+/// (AD-5 delete-wins over a concurrent edit).
+#[test]
+fn the_oracle_keeps_a_surrogate_row_and_a_later_edit_dead() {
+    let accounts = Table::Accounts;
+    let account = fresh_row_uuid(1);
+    let mut surrogate = Oracle::default();
+    surrogate.record(stamp(1), create_account(account));
+    surrogate.record(stamp(2), Change::Tombstone { table: accounts, row: account });
+    surrogate.record(stamp(3), create_account(account));
+    assert!(
+        !surrogate
+            .expected()
+            .get(accounts.sql())
+            .expect("the accounts table is always dumped")
+            .contains_key(&account),
+        "a surrogate tombstone is absorbing, so the re-creation is a different row"
+    );
+
+    let entries = Table::IncomeEntries;
+    let entry = fresh_row_uuid(2);
+    let source = fresh_row_uuid(3);
+    let mut edited = Oracle::default();
+    edited.record(stamp(1), create_income_source(source));
+    edited.record(
+        stamp(2),
+        Change::Upsert {
+            table: entries,
+            row: entry,
+            parent: Some(source),
+            fields: vec![
+                ("amount_cents", SimCell::Int(1_000)),
+                ("date", SimCell::Text("2026-01-01".to_string())),
+                ("month", SimCell::Text("2026-01".to_string())),
+            ],
+        },
+    );
+    edited.record(stamp(3), Change::Tombstone { table: entries, row: entry });
+    edited.record(
+        stamp(4),
+        Change::Upsert {
+            table: entries,
+            row: entry,
+            parent: Some(source),
+            fields: vec![("amount_cents", SimCell::Int(2_000))],
+        },
+    );
+    assert!(
+        !edited
+            .expected()
+            .get(entries.sql())
+            .expect("the entries table is always dumped")
+            .contains_key(&entry),
+        "a partial edit is absorbed even for a derived identity: delete wins over an edit"
+    );
+}
+
+/// An arithmetic stamp, so the three orderings a tombstone rule has to answer are exact rather
+/// than drawn from a clock.
+fn stamp(time: u64) -> Hlc {
+    Hlc::decode(&format!("{time:016x}-aaaaaaaaaaaaaaaa")).expect("a crafted stamp decodes")
+}
+
+fn create_hint(row: RowUuid) -> Change {
+    Change::Upsert {
+        table: Table::MerchantHints,
+        row,
+        parent: None,
+        fields: vec![
+            ("merchant", SimCell::Text("Costco".to_string())),
+            ("budget_category_id", SimCell::Int(4)),
+        ],
+    }
+}
+
+fn create_account(row: RowUuid) -> Change {
+    Change::Upsert {
+        table: Table::Accounts,
+        row,
+        parent: None,
+        fields: vec![
+            ("name", SimCell::Text("Account".to_string())),
+            ("institution", SimCell::Text("Bank".to_string())),
+            ("account_type", SimCell::Text("chequing".to_string())),
+        ],
+    }
+}
+
+fn create_income_source(row: RowUuid) -> Change {
+    Change::Upsert {
+        table: Table::IncomeSources,
+        row,
+        parent: None,
+        fields: vec![
+            ("name", SimCell::Text("Source".to_string())),
+            ("income_type", SimCell::Text("employment".to_string())),
+        ],
     }
 }
 

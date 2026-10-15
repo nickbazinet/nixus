@@ -26,14 +26,56 @@ impl Oracle {
         self.log.len()
     }
 
+    /// Rows a delete removed FOR GOOD.
+    ///
+    /// AD-2 and story 21's frozen rule: a surrogate row cannot come back, because its uuid died
+    /// with it and the row the user re-creates is a new identity, so its tombstone is absorbing.
+    /// A DERIVED identity (a natural key, a template period) is re-minted by its own key, so the
+    /// same logical row created again anywhere carries the same uuid — an absorbing tombstone
+    /// would make it unregenerable forever — and the tombstone is LAST-WRITER-WINS against a
+    /// RE-CREATION instead: a whole-row write stamped after the delete brings the row back.
+    /// A partial edit and a counter delta never do, which is what keeps AD-5's "delete wins over a
+    /// concurrent edit" intact.
     fn tombstoned(&self) -> HashSet<(Table, RowUuid)> {
+        let mut deleted: HashMap<(Table, RowUuid), Hlc> = HashMap::new();
+        for (hlc, change) in &self.log {
+            if let Change::Tombstone { table, row } = change {
+                let key = (*table, *row);
+                if deleted.get(&key).is_none_or(|stored| hlc > stored) {
+                    deleted.insert(key, *hlc);
+                }
+            }
+        }
+
+        deleted
+            .into_iter()
+            .filter(|((table, row), deleted_at)| {
+                !table.derived_identity()
+                    || self
+                        .latest_creation(*table, *row)
+                        .is_none_or(|created| created <= *deleted_at)
+            })
+            .map(|(key, _)| key)
+            .collect()
+    }
+
+    /// When this row was last created from scratch: the stamp of the latest WHOLE-ROW write, which
+    /// is the only shape capture emits for an INSERT and never for an edit.
+    fn latest_creation(&self, table: Table, row: RowUuid) -> Option<Hlc> {
         self.log
             .iter()
-            .filter_map(|(_, change)| match change {
-                Change::Tombstone { table, row } => Some((*table, *row)),
+            .filter_map(|(hlc, change)| match change {
+                Change::Upsert {
+                    table: written,
+                    row: written_row,
+                    fields,
+                    ..
+                } if *written == table && *written_row == row && names_every_column(table, fields) => {
+                    Some(*hlc)
+                }
                 _ => None,
             })
-            .collect()
+            .max()
     }
 
     fn parents(&self) -> HashMap<(Table, RowUuid), RowUuid> {
@@ -207,9 +249,20 @@ impl Oracle {
         self.balances()
     }
 
-    /// Rows a delete was issued for. Issued twice or concurrently with an edit makes no
-    /// difference: the row must be gone from every replica exactly once.
+    /// Rows a delete was issued for and NOTHING brought back. Issued twice or concurrently with
+    /// an edit makes no difference: the row must be gone from every replica exactly once.
     pub(crate) fn deleted_rows(&self) -> HashSet<(Table, RowUuid)> {
         self.tombstoned()
     }
+}
+
+/// Whether a write names every last-write-wins column of its table, which is what tells a
+/// creation apart from an edit: the generator writes them all when it creates a row and exactly
+/// one when it edits one, the same way capture emits every column for an INSERT and only the
+/// changed ones for an UPDATE.
+fn names_every_column(table: Table, fields: &[(&'static str, SimCell)]) -> bool {
+    table
+        .lww_columns()
+        .iter()
+        .all(|column| fields.iter().any(|(name, _)| name == column))
 }

@@ -409,6 +409,21 @@ impl<E: ReplicaEngine> Driver<E> {
             return Ok(None);
         }
 
+        // ... and a natural-key row THIS replica already holds is not re-created either, for
+        // Story 20 change (a)'s reason: its columns ARE its key, so the upsert writes the values
+        // the row already has, the real capture hook emits nothing for an unchanged column (AD-3),
+        // and recording the intent would make the oracle expect a whole-row message — now a
+        // RE-CREATION, which beats a tombstone (fix F7) — that no replica ever sent. A replica
+        // that does NOT hold the row is still free to create it: that is AD-2's two computers
+        // minting one identity from the same key, and it is a real message.
+        if matches!(table, Table::MerchantHints)
+            && !self
+                .present(replica, vec![RowRecord { table, row, owner, live: true }])?
+                .is_empty()
+        {
+            return Ok(None);
+        }
+
         let parent = match table.parent() {
             Some((parent_table, _)) => {
                 let candidates = self.visible_in(replica, parent_table);

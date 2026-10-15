@@ -59,6 +59,21 @@ impl Table {
         }
     }
 
+    /// Whether this table's uuid is DERIVED from the row itself (AD-2), which is what decides
+    /// whether a tombstone can ever be beaten by a re-creation (story 21's frozen rule, mirrored
+    /// from `registry`: `Natural` for the hints' `(merchant, category)` key, `SurrogateOrTemplate`
+    /// for `income_entries`, which a recurring template regenerates under the same uuid on every
+    /// computer).
+    ///
+    /// A surrogate row cannot come back: AD-2 drops the uuid mapping with the tombstone, so the
+    /// re-created row is a NEW identity and the tombstone stays absorbing forever.
+    pub(crate) fn derived_identity(self) -> bool {
+        match self {
+            Self::IncomeEntries | Self::MerchantHints => true,
+            Self::Accounts | Self::IncomeSources => false,
+        }
+    }
+
     /// The parent table and the foreign-key column that points at it.
     pub(crate) fn parent(self) -> Option<(Table, &'static str)> {
         match self {
