@@ -527,7 +527,7 @@ impl Capture {
         let state = super::state::ensure_install_on(conn)?;
         let inner = CaptureInner {
             stamping: Mutex::new(Stamping {
-                clock: clock_for(conn, &state.install_id)?,
+                clock: clock::shared(conn, &state.install_id)?,
                 install: state.install_id,
             }),
             shapes: Mutex::new(Arc::new(Shapes::new())),
@@ -602,7 +602,7 @@ impl Capture {
             let mut stamping = lock(&self.inner.stamping);
             if stamping.install != state.install_id {
                 *stamping = Stamping {
-                    clock: clock_for(conn, &state.install_id)?,
+                    clock: clock::shared(conn, &state.install_id)?,
                     install: state.install_id,
                 };
             }
@@ -1369,12 +1369,6 @@ impl Drop for Detached<'_> {
             warn!("the capture hook could not be re-attached: {}", error);
         }
     }
-}
-
-fn clock_for(conn: &Connection, install_id: &str) -> Result<Arc<Clock>, AppError> {
-    clock::shared(install_id, &clock::dataset_key(conn)).map_err(|error| AppError::Database {
-        message: format!("the dataset's install id is unusable: {error}"),
-    })
 }
 
 fn observe(

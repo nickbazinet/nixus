@@ -174,6 +174,45 @@ mod packed {
             message: "sync_field_state holds a malformed column map".to_string(),
         }
     }
+
+    /// The greatest stamp in one packed map, read out of the bytes without decoding them.
+    ///
+    /// Allocation-free and borrow-returning because the one caller walks EVERY row of
+    /// `sync_field_state` once per dataset open: building a `String` per column there would turn a
+    /// bounded scan into one allocation per stored column. Malformed bytes stop the walk and
+    /// report what was found so far rather than failing — the caller only ever moves a clock
+    /// forward with the answer, and the length of each field is pinned by a CHECK anyway.
+    pub fn max_hlc(encoded: &[u8]) -> Option<&str> {
+        let count = encoded
+            .get(0..2)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(|bytes| u16::from_be_bytes(bytes) as usize)
+            .unwrap_or_default();
+
+        let mut cursor = 2;
+        let mut greatest: Option<&str> = None;
+
+        for _ in 0..count {
+            let Some(name_len) = encoded.get(cursor).map(|len| *len as usize) else {
+                break;
+            };
+            cursor += 1 + name_len;
+
+            let Some(hlc) = encoded
+                .get(cursor..cursor + HLC_LEN)
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            else {
+                break;
+            };
+            cursor += HLC_LEN + CONTENT_HASH_LEN;
+
+            if greatest.is_none_or(|current| hlc > current) {
+                greatest = Some(hlc);
+            }
+        }
+
+        greatest
+    }
 }
 
 /// Records which writes own which columns of ONE row (AD-5), merging them into its packed map.
@@ -347,6 +386,44 @@ pub(crate) fn unshipped_messages(conn: &Connection) -> Result<Vec<StoredMessage>
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
+}
+
+/// The greatest hybrid logical clock stamp this dataset records ANYWHERE (AD-4).
+///
+/// Three places keep one, and all three outlive the clock instance that produced it: the log
+/// (every message this computer captured AND every remote message it applied), the per-column
+/// field state (which survives a compacted log and arrives inside a snapshot without one), and
+/// the tombstones. The encoding is fixed-width and lowercase (Story 13), so `MAX` over the text
+/// IS the clock order and nothing has to be decoded to compare two of them.
+pub fn max_recorded_hlc(conn: &Connection) -> Result<Option<String>, AppError> {
+    let mut greatest: Option<String> = None;
+
+    for sql in [
+        "SELECT MAX(hlc) FROM sync_log",
+        "SELECT MAX(hlc) FROM sync_tombstone",
+    ] {
+        let recorded: Option<String> = conn.query_row(sql, [], |row| row.get(0))?;
+        keep_greater(&mut greatest, recorded.as_deref());
+    }
+
+    let mut stmt = conn.prepare("SELECT columns FROM sync_field_state")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let packed: Vec<u8> = row.get(0)?;
+        keep_greater(&mut greatest, packed::max_hlc(&packed));
+    }
+
+    Ok(greatest)
+}
+
+fn keep_greater(greatest: &mut Option<String>, candidate: Option<&str>) {
+    let Some(candidate) = candidate else {
+        return;
+    };
+
+    if greatest.as_deref().is_none_or(|current| candidate > current) {
+        *greatest = Some(candidate.to_string());
+    }
 }
 
 /// Drops the merge state of a row that no longer exists.

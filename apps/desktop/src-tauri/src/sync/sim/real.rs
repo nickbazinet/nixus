@@ -110,7 +110,7 @@ impl RealEngine {
         capture.attach(&conn).map_err(sql)?;
 
         let apply = crate::db::open_configured(db_path).map_err(sql)?;
-        let clock = clock::shared(install_id, &clock::dataset_key(&apply))?;
+        let clock = clock::shared(&apply, install_id).map_err(sql)?;
 
         Ok(Self {
             install: install_id.to_string(),
@@ -146,7 +146,7 @@ impl RealEngine {
         capture.attach(&conn).map_err(sql)?;
 
         let apply = crate::db::open_configured(db_path).map_err(sql)?;
-        let clock = clock::shared(&install, &clock::dataset_key(&apply))?;
+        let clock = clock::shared(&apply, &install).map_err(sql)?;
 
         Ok((
             ActiveDataset {

@@ -5,17 +5,20 @@
 //! COMMIT. An in-memory rollback would prove nothing about the thing that matters: that what was
 //! committed and what was logged are the same transaction.
 
+use std::sync::Arc;
+
 use rusqlite::types::Value;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::db::capture_fixtures as fixtures;
 use crate::db::sync_capture::{self, StoredMessage};
-use crate::db::{sync_identity, test_dataset, ActiveDataset};
+use crate::db::{sync_identity, sync_state, test_dataset, ActiveDataset};
 use crate::error::AppError;
 use crate::models::DatasetKind;
 
 use super::capture::{payload, Capture, ROW_COLUMN_MARKER};
+use super::clock;
 use super::registry::{self, MergeKind, RowIdentity, TableClass};
 
 /// A cloud-linked dataset with the hook installed, in a temp dir that is deleted with it.
@@ -297,6 +300,100 @@ fn the_field_state_hash_follows_the_value_and_the_clock_moves_forward() {
         vec!["created_at", "deleted_at", "name", "sort_order"],
         "reconcile (Story 22) walks the row's columns"
     );
+}
+
+/// AD-4 and AD-5 (fix F6): a clock built over a dataset that ALREADY holds stamps — a clone with a
+/// re-minted install id, a restore, or simply the next launch — stamps AHEAD of them.
+///
+/// `uhlc` only promises a stamp later than the ones its own instance produced or accepted, and the
+/// capture path writes `sync_field_state` unconditionally on the strength of that promise. A fresh
+/// install stamping inside the same millisecond as the file it copied therefore wrote its value
+/// under a stamp that LOST the install-id tiebreak: the clone showed the new value, every other
+/// computer refused it and kept the old one, and that column never converged again.
+#[test]
+fn a_relinked_install_stamps_ahead_of_the_stamps_the_dataset_already_holds() {
+    let dir = TempDir::new().expect("temp dir");
+    let path = dir.path().join("nixus.db");
+    // ONE frozen millisecond for both installs, which is all the divergence ever needed: the two
+    // stamps in the failing trace were equal in every bit but the install id.
+    let _wall = clock::scope_default_wall_clock(Arc::new(|| 1_770_000_000_000));
+    // This order is the one that diverged: the second computer's id sorts BELOW the first's, so
+    // its stamp loses an exact tie instead of winning it by luck.
+    let copied = "ffffffffffffffff";
+    let relinked = "0000000000000001";
+    // THIS machine's fingerprint on both sides: AD-4 re-mints the install id of a file whose
+    // fingerprint is foreign, and a random id would take the install-id tiebreak away from the
+    // scenario.
+    let fingerprint = clock::machine_fingerprint(&clock::MachineSignals::from_environment());
+
+    let (group_id, row_uuid, before) = {
+        let conn = test_dataset::migrated_dataset(&path);
+        sync_state::ensure(&conn, copied, &fingerprint).expect("the install id is stored");
+        let dataset = attached_capture(conn);
+        let group_id = dataset
+            .write(|tx| fixtures::insert_budget_group(tx, "Housing", 0))
+            .expect("the insert commits");
+        let conn = dataset.conn.as_ref().expect("the connection is live");
+        let row_uuid = sync_identity::lookup(conn, "budget_groups", group_id)
+            .expect("the mapping reads")
+            .expect("the insert minted a uuid");
+        let before = sync_capture::field_state(conn, "budget_groups", &row_uuid, "name")
+            .expect("the state reads")
+            .expect("the field is owned");
+
+        (group_id, row_uuid, before)
+    };
+
+    let conn = crate::db::open_configured(&path).expect("the copied file opens");
+    sync_state::relink_install(&conn, relinked, &fingerprint).expect("the copy relinks");
+    let dataset = attached_capture(conn);
+    dataset
+        .write(|tx| fixtures::rename_budget_group(tx, group_id, "Home"))
+        .expect("the update commits");
+
+    let conn = dataset.conn.as_ref().expect("the connection is live");
+    let after = sync_capture::field_state(conn, "budget_groups", &row_uuid, "name")
+        .expect("the state reads")
+        .expect("the field is owned");
+
+    assert_ne!(
+        after.install(),
+        before.install(),
+        "the scenario is a re-minted install, not a second write by the same one"
+    );
+    assert!(
+        after.hlc > before.hlc,
+        "a local write has to out-stamp the state its own dataset already held: {} is not greater than {}",
+        after.hlc,
+        before.hlc
+    );
+
+    let shipped: Vec<String> = sync_capture::all_messages(conn)
+        .expect("the log reads")
+        .into_iter()
+        .filter(|message| message.install == relinked)
+        .map(|message| message.hlc)
+        .collect();
+    assert!(
+        !shipped.is_empty() && shipped.iter().all(|hlc| hlc.as_str() > before.hlc.as_str()),
+        "every message the relinked install ships has to beat the stamps it inherited: {shipped:?} against {}",
+        before.hlc
+    );
+}
+
+/// A cloud-linked dataset over an ALREADY prepared connection, so a test can decide the install id
+/// before the clock that stamps under it exists.
+fn attached_capture(conn: Connection) -> ActiveDataset {
+    let capture = Capture::for_dataset(DatasetKind::CloudLinked, &conn)
+        .expect("capture is built")
+        .expect("a cloud-linked dataset captures");
+    capture.attach(&conn).expect("the hook is installed");
+
+    ActiveDataset {
+        id: Some("capture-test".to_string()),
+        conn: Some(conn),
+        capture: Some(capture),
+    }
 }
 
 #[test]

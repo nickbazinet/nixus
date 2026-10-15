@@ -1500,11 +1500,7 @@ impl DatasetApplier {
         let install = ensure_install_on(&conn)?.install_id;
         // The SAME clock capture stamps from (AD-4): a stamp this path accepts has to be in the
         // past of the next local write, or the two computers order the two messages differently.
-        let clock = clock::shared(&install, &clock::dataset_key(&conn)).map_err(|error| {
-            AppError::Database {
-                message: format!("the dataset's install id is unusable: {error}"),
-            }
-        })?;
+        let clock = clock::shared(&conn, &install)?;
 
         Ok(Self {
             conn,

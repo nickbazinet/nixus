@@ -19,6 +19,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sha2::{Digest, Sha256};
 use uhlc::{HLCBuilder, Timestamp, HLC, ID, NTP64};
 
+use crate::db::sync_capture;
+use crate::error::AppError;
+
 /// 8 random bytes as lowercase hex (AD-4), so the id is usable verbatim as an object-key
 /// segment (`log/<install>/<seq>`) with no escaping anywhere.
 pub const INSTALL_ID_LEN: usize = 16;
@@ -338,12 +341,12 @@ static CLOCKS: Mutex<Option<ClockRegistry>> = Mutex::new(None);
 
 /// How a dataset names itself to [`shared`]: its file, or the install id again for a database
 /// that has no file (`:memory:`), where there is nothing else to tell two of them apart.
-pub fn dataset_key(conn: &rusqlite::Connection) -> String {
+fn dataset_key(conn: &rusqlite::Connection) -> String {
     conn.path().unwrap_or_default().to_string()
 }
 
-pub fn shared(install_id: &str, dataset: &str) -> Result<Arc<Clock>, ClockError> {
-    let key = (install_id.to_string(), dataset.to_string());
+pub fn shared(conn: &rusqlite::Connection, install_id: &str) -> Result<Arc<Clock>, AppError> {
+    let key = (install_id.to_string(), dataset_key(conn));
     let mut registry = CLOCKS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let clocks = registry.get_or_insert_with(ClockRegistry::new);
 
@@ -351,10 +354,43 @@ pub fn shared(install_id: &str, dataset: &str) -> Result<Arc<Clock>, ClockError>
         return Ok(Arc::clone(clock));
     }
 
-    let clock = Arc::new(Clock::new(install_id)?);
+    let clock = Arc::new(Clock::new(install_id).map_err(|error| AppError::Database {
+        message: format!("the dataset's install id is unusable: {error}"),
+    })?);
+    catch_up(conn, &clock)?;
     clocks.insert(key, Arc::clone(&clock));
 
     Ok(clock)
+}
+
+/// Advances `clock` past every stamp the dataset it stamps ALREADY holds (AD-4, AD-5).
+///
+/// WHY a clock cannot simply start from the wall clock: `uhlc` guarantees "later than every stamp
+/// THIS INSTANCE produced or accepted", and a dataset outlives the instance — every restart builds
+/// a new one, a restore swaps the file under it, and a clone mints a NEW install id over a copied
+/// file (AD-9). The capture path writes `sync_field_state` UNCONDITIONALLY because a local write is
+/// supposed to be the newest stamp for the columns it touches; when it is not, the column's value
+/// and its stamp disagree, every other computer keeps the older value, and that column never
+/// converges again. Fix F6 is exactly that: a clone stamped its first edit inside the same
+/// millisecond as the file it had copied, lost the install-id tiebreak, and kept a value no other
+/// replica would ever accept.
+pub fn catch_up(conn: &rusqlite::Connection, clock: &Clock) -> Result<(), AppError> {
+    let Some(recorded) = sync_capture::max_recorded_hlc(conn)? else {
+        return Ok(());
+    };
+
+    match Hlc::decode(&recorded).and_then(|stamp| clock.adopt(&stamp)) {
+        Ok(()) => Ok(()),
+        // Logged, not raised: a dataset whose own greatest stamp is unusable — malformed, or
+        // further ahead than AD-4's bound because the machine's clock moved backwards — must still
+        // open and still sync. The clock then stays behind for the columns that stamp owns, which
+        // is the state every build before this one was always in.
+        Err(error) => {
+            tracing::warn!("this dataset's own latest timestamp could not be adopted: {error}");
+
+            Ok(())
+        }
+    }
 }
 
 /// One HLC per install (AD-4), with the 5-minute maximum delta configured.
@@ -435,6 +471,22 @@ impl Clock {
         self.hlc
             .update_with_timestamp(&stamped)
             .map_err(|_| self.record_skew(ahead_ms))
+    }
+
+    /// Folds in a stamp this clock did not produce but its own dataset already holds, so the next
+    /// [`Clock::now`] is strictly later than it.
+    ///
+    /// [`Clock::observe`]'s sibling without the skew bookkeeping: AD-16's `clock_skew` status
+    /// describes a REMOTE computer whose clock is wrong, and a stamp read out of this dataset is
+    /// this computer's own history, however it got there.
+    pub fn adopt(&self, stamp: &Hlc) -> Result<(), ClockError> {
+        let stamped = stamp.timestamp()?;
+        let _guard = self.install_wall_clock();
+        self.hlc
+            .update_with_timestamp(&stamped)
+            .map_err(|_| ClockError::Skew {
+                ahead_ms: stamp.wall_ms() - (self.wall)(),
+            })
     }
 
     fn record_skew(&self, ahead_ms: i64) -> ClockError {

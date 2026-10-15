@@ -45,7 +45,7 @@ use super::bootstrap::{
 use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncBlocked, SyncGate,
 };
-use super::clock::Clock;
+use super::clock::{self, Clock};
 use super::limits::{DatasetLimits, Oversize, RequestRateCap};
 use super::owner::{owner_object_body, owner_sub_from_body, OWNER_OBJECT_KEY};
 use tracing::{info, warn};
@@ -660,13 +660,12 @@ pub(crate) struct SyncActor<H: SyncHost> {
     last_tombstone_purge: Option<Instant>,
     /// The pass in progress, or `None` between passes (AD-3, AD-16: one chunk per cycle).
     reconcile: Option<reconcile::Cursor>,
-    /// Reconcile's own stamping clock. The capture hook's clock belongs to the UI connection and
-    /// this runs on the actor's, so it is a SECOND instance for the same install id — the same
-    /// arrangement `DatasetApplier` already has. Two instances can only collide on an exact
-    /// `(wall_ms, counter)`, and a collision makes reconcile's own message LOSE the per-column
-    /// comparison, so the next pass simply re-emits it: the failure mode is a retry, not a lost
-    /// write.
-    reconcile_clock: Option<Clock>,
+    /// Reconcile's stamping clock: the ONE clock of this install (AD-4), shared with the capture
+    /// hook and the applier even though this pass runs on the actor's own connection. A second
+    /// instance would stamp from a clock that had never heard the other's stamps, and a reconcile
+    /// message that loses its own per-column comparison re-emits the value the tables already hold
+    /// forever (fix F5, fix F6).
+    reconcile_clock: Option<Arc<Clock>>,
     last_reconcile: Option<Instant>,
     reconcile_done_once: bool,
     /// The furthest a refused remote stamp was ahead of this computer (AD-4). Kept for diagnostics
@@ -1395,10 +1394,10 @@ impl<H: SyncHost> SyncActor<H> {
         }
 
         if self.reconcile_clock.is_none() {
-            match Clock::new(install) {
+            match self.host.with_dataset(|conn| clock::shared(conn, install)) {
                 Ok(clock) => self.reconcile_clock = Some(clock),
                 Err(error) => {
-                    tracing::warn!("Reconcile could not build a clock: {}", error);
+                    tracing::warn!("Reconcile could not build a clock: {:?}", error);
                     self.reconcile = None;
                     return;
                 }
@@ -1801,15 +1800,22 @@ impl<H: SyncHost> SyncActor<H> {
 
     /// Re-materializes the unsent log the guarded swap carried over (AD-9).
     ///
-    /// Its own `Clock` instance for this install, the arrangement reconcile and the applier
-    /// already have: nothing it stamps is a new message, so a collision could at worst make a
-    /// replayed field lose its own comparison and be re-emitted by the next reconcile pass.
+    /// The ONE clock of this install (AD-4), caught up to the file that was just swapped in: the
+    /// restored copy carries stamps from every computer the snapshot had heard from, and a clock
+    /// this process was already holding accepted none of them. Without that, a replayed field —
+    /// and every later local write to the same column — can be stamped BEHIND the value the
+    /// restored file already holds, which no other computer would ever accept (fix F6).
     fn replay_unsent(&mut self) -> Result<(), SyncFault> {
         let install = self.install()?;
-        let clock = match Clock::new(&install) {
+        let clock = match self.host.with_dataset(|conn| {
+            let clock = clock::shared(conn, &install)?;
+            clock::catch_up(conn, &clock)?;
+
+            Ok(clock)
+        }) {
             Ok(clock) => clock,
             Err(error) => {
-                warn!("the unsent log could not be replayed after a restore: {}", error);
+                warn!("the unsent log could not be replayed after a restore: {:?}", error);
                 return Ok(());
             }
         };
