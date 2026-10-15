@@ -284,6 +284,17 @@ async fn sync_m2_e2e_a_two_computers_converge_on_every_change_kind() {
         b.read(fixtures::count_expenses).expect("the count reads") >= 2,
         "B must hold both its own offline expense and A's"
     );
+    // ABSOLUTE, not comparative: A's opening group plus the 1,000 imported ones. A count that is
+    // merely "at least as many as A has" is satisfied by both computers losing the same rows.
+    for probe in [&a, &b] {
+        assert_eq!(
+            probe
+                .read(fixtures::count_budget_groups)
+                .expect("the count reads"),
+            1 + 1_000,
+            "the whole import must be on both computers, row for row"
+        );
+    }
 
     // A DOUBLE ABSOLUTE SET: the same value twice, so the second is a no-op rather than a second
     // event. It runs BEFORE the credits on purpose: the fold is `set + the deltas stamped AFTER
@@ -848,6 +859,118 @@ async fn sync_m2_e2e_h_the_diagnostics_export_carries_no_value_from_the_m2_flow(
         payload_hits,
         shape.expenses,
         rendered.len()
+    ));
+}
+
+/// (9) AD-5, fix F1: two computers emitting the SAME cause with an absolute `balance_set` stamped
+/// between the two copies must both land on the set, to the cent.
+///
+/// The shape proof (1) cannot express, and the one a divergent pipeline survived. AD-5 keys a delta
+/// by its cause and keeps the EARLIEST copy when two computers emitted it, so a `balance_set`
+/// stamped after that copy ABSORBS it — and the computer that emits the LATER copy has to reach
+/// that same conclusion about its own delta, with nothing arriving afterwards to make it look
+/// again. It only can if the column is the FOLD of the log rather than a running total.
+///
+/// The cause is a `Created` one (two computers generating the same recurring expense from one
+/// template, AD-5's other double-count case) precisely so the row survives: a double DELETE
+/// removes the cause row on the first computer, and the second can then no longer reach the cause
+/// at all.
+#[tokio::test(start_paused = true)]
+async fn sync_m2_e2e_i_a_duplicated_cause_counts_once_across_an_intervening_balance_set() {
+    const OPENING: i64 = 100_000;
+    const EXPENSE_CENTS: i64 = 2_500;
+    const ABSOLUTE_SET: i64 = 41_000;
+
+    let cloud = Arc::new(FakeObjectStore::default());
+    let (mut first, a, mut second, b) = two_computers(&cloud);
+
+    a.captured(|tx| {
+        let group = fixtures::insert_budget_group(tx, "Housing", 0)?;
+        let category = fixtures::insert_budget_category(tx, group, "Groceries")?;
+        let account = fixtures::insert_account(tx, "Chequing", OPENING)?;
+        fixtures::insert_expense_row(tx, category, account, EXPENSE_CENTS)?;
+        Ok(())
+    })
+    .expect("A's opening rows");
+
+    first.enable(None).await.expect("A enables and publishes");
+    second.enable(None).await.expect("B bootstraps");
+    settle(&mut first, &mut second, &a, &b).await;
+
+    // A credits the account for the shared expense, then sets the balance ABSOLUTELY, so its own
+    // copy of the cause is stamped BEFORE the set.
+    let (a_expense, a_account) = (local_expense_on(&a), local_account_on(&a));
+    a.captured(|tx| {
+        crate::db::account::adjust_account_balance(
+            tx,
+            a_account,
+            CashFlowKind::Income,
+            EXPENSE_CENTS,
+            crate::db::account::BalanceCauseRow::new(
+                "expenses",
+                a_expense,
+                crate::sync::capture::BalanceCause::Created,
+            ),
+        )
+    })
+    .expect("A's credit commits");
+    a.captured(|tx| crate::db::account::update_account_balance(tx, a_account, ABSOLUTE_SET))
+        .expect("A sets the balance absolutely, after its own credit");
+
+    settle(&mut first, &mut second, &a, &b).await;
+    assert_eq!(
+        account_balance_by_name(&b, "Chequing"),
+        ABSOLUTE_SET,
+        "B must hold the set that absorbed A's credit before B does anything of its own"
+    );
+
+    // B now reaches the SAME cause — the same expense row, the same kind — and its clock runs 1 s
+    // ahead of A's, so its copy is stamped AFTER the set. Nothing of A's is owed to B afterwards,
+    // which is the whole point: the correction cannot come from a later arrival.
+    let (b_expense, b_account) = (local_expense_on(&b), local_account_on(&b));
+    b.captured(|tx| {
+        crate::db::account::adjust_account_balance(
+            tx,
+            b_account,
+            CashFlowKind::Income,
+            EXPENSE_CENTS,
+            crate::db::account::BalanceCauseRow::new(
+                "expenses",
+                b_expense,
+                crate::sync::capture::BalanceCause::Created,
+            ),
+        )
+    })
+    .expect("B's credit commits");
+    assert_eq!(
+        account_balance_by_name(&b, "Chequing"),
+        ABSOLUTE_SET,
+        "B's own later copy of a cause already absorbed by the set must count ZERO times, in the \
+         transaction that emitted it"
+    );
+
+    settle(&mut first, &mut second, &a, &b).await;
+
+    for probe in [&a, &b] {
+        assert_eq!(
+            account_balance_by_name(probe, "Chequing"),
+            ABSOLUTE_SET,
+            "both computers must agree on the cent after the duplicated cause has travelled"
+        );
+    }
+    assert_eq!(parked(&a) + parked(&b), 0, "nothing may be left parked");
+    assert_eq!(
+        quarantined(&a) + quarantined(&b),
+        0,
+        "nothing legal may be quarantined"
+    );
+
+    report(format!(
+        "(9) one cause emitted by both computers with an absolute set of {} cents stamped between \
+         the two copies leaves both on {} cents — the later copy, worth {} cents, counted ZERO \
+         times on the computer that emitted it and needed no further arrival to say so, 0 parked, \
+         0 quarantined",
+        ABSOLUTE_SET, ABSOLUTE_SET, EXPENSE_CENTS
     ));
 }
 
