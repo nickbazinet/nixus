@@ -72,15 +72,17 @@ impl<Cause: Ord> BalanceLedger<Cause> {
     }
 
     /// The latest `balance_set` by clock, plus every delta stamped after it.
+    ///
+    /// `wrapping_add` and not `saturating_add`, for the reason `apply::counter_total` wraps too:
+    /// the fold has to reach the SAME number on every computer (AD-5), a saturating sum clamps to
+    /// a value that depends on the order the deltas happen to be added in, and a debug build must
+    /// not panic on a balance no money can reach.
     pub(crate) fn value(&self) -> i64 {
         let base = self.set.map(|(_, cents)| cents).unwrap_or(0);
-        let later: i64 = self
-            .deltas
+
+        self.deltas
             .values()
             .filter(|(hlc, _)| self.set.is_none_or(|(set_hlc, _)| *hlc > set_hlc))
-            .map(|(_, cents)| *cents)
-            .sum();
-
-        base + later
+            .fold(base, |total, (_, cents)| total.wrapping_add(*cents))
     }
 }

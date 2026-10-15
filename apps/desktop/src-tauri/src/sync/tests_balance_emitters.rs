@@ -675,3 +675,31 @@ fn a_local_only_profile_emits_no_balance_message_and_binds_no_identity() {
     );
     assert_eq!(sync_identity::count(conn).expect("the mappings count"), 0);
 }
+
+/// A synthetic stamp for the fold's own arithmetic, where no real write is involved.
+fn stamp(order: u64) -> Hlc {
+    Hlc::decode(&format!("{order:016x}-00000000000000a1")).expect("a synthetic stamp decodes")
+}
+
+/// AD-5's fold is plain `i64` arithmetic over numbers a user can type into a balance field, and a
+/// debug build must report one rather than abort: the ledger is folded inside the apply
+/// transaction, where a panic would take the whole batch — and every computer has to wrap to the
+/// SAME number.
+#[test]
+fn the_fold_reports_a_number_at_the_i64_boundaries_instead_of_overflowing() {
+    let mut ceiling: BalanceLedger<Vec<u8>> = BalanceLedger::default();
+    ceiling.observe_set(stamp(1), i64::MAX - 10, false);
+    ceiling.observe_delta(stamp(2), b"first".to_vec(), 100);
+    ceiling.observe_delta(stamp(3), b"second".to_vec(), 100);
+    assert_eq!(ceiling.value(), (i64::MAX - 10).wrapping_add(200));
+
+    let mut floor: BalanceLedger<Vec<u8>> = BalanceLedger::default();
+    floor.observe_set(stamp(1), i64::MIN + 10, false);
+    floor.observe_delta(stamp(2), b"first".to_vec(), -100);
+    assert_eq!(floor.value(), (i64::MIN + 10).wrapping_sub(100));
+
+    let mut baseless: BalanceLedger<Vec<u8>> = BalanceLedger::default();
+    baseless.observe_delta(stamp(1), b"first".to_vec(), i64::MAX);
+    baseless.observe_delta(stamp(2), b"second".to_vec(), i64::MAX);
+    assert_eq!(baseless.value(), i64::MAX.wrapping_add(i64::MAX));
+}

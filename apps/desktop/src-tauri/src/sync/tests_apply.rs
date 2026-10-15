@@ -22,6 +22,7 @@ use crate::models::{CreateAccountInput, DatasetKind};
 use super::apply::{self, ApplyReport};
 use super::capture::{payload, BalanceCause, Capture};
 use super::clock::Clock;
+use super::reconcile;
 use super::segment::{self, MessageKind, SegmentBatch, SegmentMessage};
 use super::state::ensure_install_on;
 
@@ -775,6 +776,84 @@ fn the_same_cause_from_two_computers_is_counted_once() {
     assert_eq!(
         left_balance, 2_500,
         "one real-world deletion was counted twice (expected the 2,500 the expense had taken back)"
+    );
+}
+
+/// AD-5, fix F4: a remote delta addressed to a row that PREDATES capture must move the opening
+/// balance the column holds instead of replacing it with the sum of the deltas — the remote
+/// counterpart of the `require_base` guard the local re-fold has (fix F1) — and once Story 22's
+/// reconcile publishes a base for that row the two computers must agree on one number.
+#[test]
+fn a_remote_delta_for_a_pre_capture_account_keeps_its_opening_balance() {
+    let mut origin = Computer::open();
+    let mut receiver = Computer::open();
+
+    let group = origin.write(|tx| fixtures::insert_budget_group(tx, "Living", 0));
+    let category = origin.write(|tx| fixtures::insert_budget_category(tx, group, "Groceries"));
+    let origin_account = origin.seed_account("Chequing");
+    let uuid = origin.uuid_of("accounts", origin_account);
+    let expense =
+        origin.write(|tx| fixtures::insert_expense_row(tx, category, origin_account, 2_500));
+    origin.write(|tx| {
+        account_db::reverse_adjustment(
+            tx,
+            origin_account,
+            CashFlowKind::Expense,
+            2_500,
+            BalanceCauseRow::new("expenses", expense, BalanceCause::Deleted),
+        )
+    });
+
+    // The receiver's account is the pre-capture row the fix is about: raw SQL on the connection
+    // that carries no hook, so its 10,000 cents of opening balance are in the column and NOTHING
+    // in the log describes them.
+    let local_account =
+        fixtures::insert_account(&receiver.apply, "Chequing", 10_000).expect("the row inserts");
+    sync_identity::ensure(&receiver.apply, "accounts", local_account, &uuid)
+        .expect("the identity binds");
+
+    // Only the delta travels: the origin's own `balance_set` would hand the row the very base the
+    // scenario is about not having yet.
+    let shipped = origin.ship();
+    let credit = SegmentBatch {
+        install: shipped.install.clone(),
+        seq: shipped.seq,
+        messages: shipped
+            .messages
+            .iter()
+            .filter(|message| message.kind == MessageKind::BalanceDelta)
+            .cloned()
+            .collect(),
+    };
+    assert_eq!(credit.messages.len(), 1, "the fixture must emit one delta");
+
+    let report = receiver.receive(&credit);
+    assert_eq!(report.applied, 1, "the delta did not apply: {report:?}");
+    assert_eq!(
+        receiver.number("SELECT balance_cents FROM accounts LIMIT 1"),
+        12_500,
+        "the remote credit wiped out the opening balance instead of moving it"
+    );
+
+    let reconciled = reconcile::reconcile_all(&receiver.apply, &receiver.clock, &receiver.install)
+        .expect("the reconcile pass runs");
+    assert_eq!(
+        reconciled.balances, 1,
+        "reconcile must publish the base the row never had: {reconciled:?}"
+    );
+
+    let published = receiver.ship();
+    origin.receive(&published);
+
+    assert_eq!(
+        origin.number("SELECT balance_cents FROM accounts LIMIT 1"),
+        receiver.number("SELECT balance_cents FROM accounts LIMIT 1"),
+        "the two computers disagree once the base is published"
+    );
+    assert_eq!(
+        origin.number("SELECT balance_cents FROM accounts LIMIT 1"),
+        12_500,
+        "and they agree on the opening balance plus the credit"
     );
 }
 

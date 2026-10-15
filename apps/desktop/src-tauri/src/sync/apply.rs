@@ -793,19 +793,45 @@ fn apply_balance(
         return Ok(Outcome::Quarantined);
     }
 
+    // AD-5, fix F4: the fold is the whole truth only for a row that has published a BASE. A row
+    // that predates capture holds its opening balance in the COLUMN and nothing about it in the
+    // log, so folding a remote delta over base zero would replace a real opening balance with the
+    // sum of the deltas — exactly the trap `refold_emitted_balances` guards against locally (fix
+    // F1). The part of the column the log has never described is carried as an OFFSET
+    // (`column - fold without this message`, which is the opening balance by induction), so a
+    // delta is additive until Story 22's reconcile publishes a base and the fold takes over. Both
+    // halves stay a pure function of the log plus that offset, so a replay re-folds to the same
+    // number and a duplicated cause is still counted once.
+    let described = balance_value(conn, table, &message.row_uuid)?;
     apply_db::record_applied(conn, stored)?;
-    let value = balance_value(conn, table, &message.row_uuid)?;
+    let ledger = balance_ledger(conn, table, &message.row_uuid)?;
+    let folded = ledger.value();
+    let based = ledger.has_base();
+    let resolved = move |current: i64| {
+        if based {
+            folded
+        } else {
+            current.wrapping_sub(described).wrapping_add(folded)
+        }
+    };
 
     // AD-12: a delta addressed to an already-deleted account is added to the row retained in
     // `sync_tombstone`, so a restore brings back the balance the other computers agree on.
     if tombstoned {
-        retain_balance_in_tombstone(conn, table, &message.row_uuid, column, value)?;
+        retain_balance_in_tombstone(conn, table, &message.row_uuid, column, resolved)?;
 
         return Ok(Outcome::Applied);
     }
 
     if let Some(row_id) = sync_identity::row_id_for(conn, table, &message.row_uuid)? {
-        apply_db::set_folded_value(conn, table, row_id, column, value)?;
+        let current = apply_db::read_columns(conn, table, row_id, &[column])?
+            .into_iter()
+            .find_map(|(_, value)| match value {
+                Value::Integer(cents) => Some(cents),
+                _ => None,
+            })
+            .unwrap_or(0);
+        apply_db::set_folded_value(conn, table, row_id, column, resolved(current))?;
     }
 
     Ok(Outcome::Applied)
@@ -895,7 +921,7 @@ fn retain_balance_in_tombstone(
     table: &'static str,
     row_uuid: &[u8; 16],
     column: &'static str,
-    value: i64,
+    value: impl FnOnce(i64) -> i64,
 ) -> Result<(), AppError> {
     let Some(tombstone) = apply_db::tombstone(conn, table, row_uuid)? else {
         return Ok(());
@@ -906,7 +932,11 @@ fn retain_balance_in_tombstone(
         return Ok(());
     };
 
-    row.insert(column.to_string(), serde_json::Value::from(value));
+    let retained = row
+        .get(column)
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    row.insert(column.to_string(), serde_json::Value::from(value(retained)));
     let document = serde_json::Value::Object(row).to_string();
     apply_db::set_tombstone_row_json(conn, table, row_uuid, &document)?;
 
