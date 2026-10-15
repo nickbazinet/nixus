@@ -48,11 +48,13 @@ use tracing::warn;
 use crate::db::sync_apply::{self as apply_db, AppliedMessage};
 use crate::db::sync_capture::{self, ColumnState};
 use crate::db::{open_configured, sync_identity};
+use std::sync::Arc;
+
 use crate::error::AppError;
 
 use super::balance::BalanceLedger;
 use super::capture::{payload, ROW_COLUMN_MARKER};
-use super::clock::{Clock, Hlc};
+use super::clock::{self, Clock, Hlc};
 use super::registry::{self, FkPolicy, MergeKind, RowIdentity, TableClass};
 use super::segment::{Applier, MessageKind, SegmentBatch, SegmentMessage};
 use super::state::ensure_install_on;
@@ -1481,7 +1483,7 @@ fn in_savepoint<T>(
 /// The real `Applier` (AD-11): the actor's second connection to the active dataset file.
 pub(crate) struct DatasetApplier {
     conn: Connection,
-    clock: Clock,
+    clock: Arc<Clock>,
     notify: Option<Box<dyn Fn(usize) + Send>>,
 }
 
@@ -1496,8 +1498,12 @@ impl DatasetApplier {
         // The same function capture and the segment cutter call, so a COPIED database is re-minted
         // by AD-4's fingerprint check instead of applying under the original's install id.
         let install = ensure_install_on(&conn)?.install_id;
-        let clock = Clock::new(&install).map_err(|error| AppError::Database {
-            message: format!("the dataset's install id is unusable: {error}"),
+        // The SAME clock capture stamps from (AD-4): a stamp this path accepts has to be in the
+        // past of the next local write, or the two computers order the two messages differently.
+        let clock = clock::shared(&install, &clock::dataset_key(&conn)).map_err(|error| {
+            AppError::Database {
+                message: format!("the dataset's install id is unusable: {error}"),
+            }
         })?;
 
         Ok(Self {

@@ -11,8 +11,9 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering as AtomicOrdering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sha2::{Digest, Sha256};
@@ -279,6 +280,83 @@ pub fn system_wall_clock() -> WallClock {
     })
 }
 
+// The wall clock [`Clock::new`] reads when the caller names none. Empty in production, where it
+// resolves to `system_wall_clock()` and there is one code path as before.
+//
+// WHY it is replaceable at all: `Capture` builds the clock that stamps every captured write from
+// the dataset's install id ALONE, so a caller that needs a deterministic clock behind the real
+// pipeline — the N-replica simulator, whose value is being a pure function of its seed — has no
+// argument to pass one through. With the system clock there, two ops on two replicas inside the
+// same millisecond are ordered by the install-id tiebreak instead of by the order they happened,
+// and which of the two it is depends on how fast the machine runs.
+thread_local! {
+    static DEFAULT_WALL_CLOCK: RefCell<Option<WallClock>> = const { RefCell::new(None) };
+}
+
+fn default_wall_clock() -> WallClock {
+    DEFAULT_WALL_CLOCK
+        .with(|slot| slot.borrow().clone())
+        .unwrap_or_else(system_wall_clock)
+}
+
+/// Makes `wall` the default of every [`Clock::new`] on THIS thread until the guard drops.
+#[cfg(test)]
+pub(crate) fn scope_default_wall_clock(wall: WallClock) -> DefaultWallClockGuard {
+    let previous = DEFAULT_WALL_CLOCK.with(|slot| slot.borrow_mut().replace(wall));
+
+    DefaultWallClockGuard(previous)
+}
+
+/// Restores the previous default even if the body panics, for the reason [`WallClockGuard`] has.
+#[cfg(test)]
+pub(crate) struct DefaultWallClockGuard(Option<WallClock>);
+
+#[cfg(test)]
+impl Drop for DefaultWallClockGuard {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        DEFAULT_WALL_CLOCK.with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+// ONE clock per (install, dataset file), which is AD-4 read verbatim: "one HLC per install".
+//
+// WHY a registry and not a `Clock` per caller, which is what capture, the applier, reconcile and
+// the restore replay each held: `uhlc` guarantees "strictly later than every stamp THIS INSTANCE
+// produced or accepted", so four instances guarantee nothing about each other. The applier would
+// accept a remote stamp, advance its own clock, and the very next captured write would be stamped
+// from a clock that had never heard of it — a LOCAL message ordered BEFORE a message this computer
+// had already applied. AD-5's delete-versus-re-creation rule then reaches opposite conclusions on
+// two computers holding the same two messages (seed 2663001441877517665: a delete stamped
+// `...0001` against a creation stamped `...000c` in the same millisecond), and they never
+// converge again. The key carries the FILE as well as the install because a restore or a clone
+// swaps the file under the same process (AD-9) and a re-minted install must not inherit a clock.
+/// Keyed by `(install id, dataset file)`.
+type ClockRegistry = HashMap<(String, String), Arc<Clock>>;
+
+static CLOCKS: Mutex<Option<ClockRegistry>> = Mutex::new(None);
+
+/// How a dataset names itself to [`shared`]: its file, or the install id again for a database
+/// that has no file (`:memory:`), where there is nothing else to tell two of them apart.
+pub fn dataset_key(conn: &rusqlite::Connection) -> String {
+    conn.path().unwrap_or_default().to_string()
+}
+
+pub fn shared(install_id: &str, dataset: &str) -> Result<Arc<Clock>, ClockError> {
+    let key = (install_id.to_string(), dataset.to_string());
+    let mut registry = CLOCKS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let clocks = registry.get_or_insert_with(ClockRegistry::new);
+
+    if let Some(clock) = clocks.get(&key) {
+        return Ok(Arc::clone(clock));
+    }
+
+    let clock = Arc::new(Clock::new(install_id)?);
+    clocks.insert(key, Arc::clone(&clock));
+
+    Ok(clock)
+}
+
 /// One HLC per install (AD-4), with the 5-minute maximum delta configured.
 pub struct Clock {
     hlc: HLC,
@@ -296,7 +374,7 @@ pub struct Clock {
 
 impl Clock {
     pub fn new(install_id: &str) -> Result<Self, ClockError> {
-        Self::with_wall_clock(install_id, system_wall_clock())
+        Self::with_wall_clock(install_id, default_wall_clock())
     }
 
     pub fn with_wall_clock(install_id: &str, wall: WallClock) -> Result<Self, ClockError> {

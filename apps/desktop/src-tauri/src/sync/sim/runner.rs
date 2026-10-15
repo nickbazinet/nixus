@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use crate::db::sim_tables::{SimCell, SIM_CATEGORY_IDS};
-use crate::sync::clock::{Hlc, WallClock};
+use crate::sync::clock::{self, Hlc, WallClock};
 use crate::sync::sim::engine::{ReplicaEngine, SimError};
 use crate::sync::sim::model::{
     fresh_row_uuid, natural_key_uuid, short, Change, Observable, RowUuid, Table,
@@ -162,6 +162,9 @@ struct Driver<E: ReplicaEngine> {
     /// Owns the replicas' directories: dropping the driver is what deletes them, so this is a
     /// lifetime guard rather than something the simulator reads.
     _dirs: Vec<TempDir>,
+    /// Holds the deterministic wall clock in place for as long as the replicas exist, for the same
+    /// lifetime reason.
+    _wall_default: clock::DefaultWallClockGuard,
 }
 
 impl<E: ReplicaEngine> Driver<E> {
@@ -170,6 +173,9 @@ impl<E: ReplicaEngine> Driver<E> {
         F: Fn(usize, &str, &Path, WallClock) -> Result<E, SimError>,
     {
         let now_ms = Arc::new(AtomicI64::new(1_767_225_600_000));
+        // The REAL engine's clocks are built inside `Capture` from an install id alone, so the
+        // thread default is what puts them on the same millisecond as the reference engine's.
+        let wall_default = clock::scope_default_wall_clock(shared_wall_clock(&now_ms));
         let mut engines = Vec::new();
         let mut dirs = Vec::new();
 
@@ -206,6 +212,7 @@ impl<E: ReplicaEngine> Driver<E> {
             next_ordinal: 0,
             outcome: SimOutcome::default(),
             _dirs: dirs,
+            _wall_default: wall_default,
         })
     }
 

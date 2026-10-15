@@ -36,7 +36,7 @@ use crate::error::AppError;
 use crate::models::DatasetKind;
 
 use super::apply;
-use super::clock::Clock;
+use super::clock::{self, Clock};
 use super::identity;
 use super::registry::{self, MergeKind, RowIdentity, TableClass};
 
@@ -400,7 +400,7 @@ struct Buffer {
 /// machines in one `(install, seq)` space, which is the exact hazard AD-4 exists to prevent.
 struct Stamping {
     install: String,
-    clock: Clock,
+    clock: Arc<Clock>,
 }
 
 struct CaptureInner {
@@ -527,7 +527,7 @@ impl Capture {
         let state = super::state::ensure_install_on(conn)?;
         let inner = CaptureInner {
             stamping: Mutex::new(Stamping {
-                clock: clock_for(&state.install_id)?,
+                clock: clock_for(conn, &state.install_id)?,
                 install: state.install_id,
             }),
             shapes: Mutex::new(Arc::new(Shapes::new())),
@@ -602,7 +602,7 @@ impl Capture {
             let mut stamping = lock(&self.inner.stamping);
             if stamping.install != state.install_id {
                 *stamping = Stamping {
-                    clock: clock_for(&state.install_id)?,
+                    clock: clock_for(conn, &state.install_id)?,
                     install: state.install_id,
                 };
             }
@@ -1371,8 +1371,8 @@ impl Drop for Detached<'_> {
     }
 }
 
-fn clock_for(install_id: &str) -> Result<Clock, AppError> {
-    Clock::new(install_id).map_err(|error| AppError::Database {
+fn clock_for(conn: &Connection, install_id: &str) -> Result<Arc<Clock>, AppError> {
+    clock::shared(install_id, &clock::dataset_key(conn)).map_err(|error| AppError::Database {
         message: format!("the dataset's install id is unusable: {error}"),
     })
 }

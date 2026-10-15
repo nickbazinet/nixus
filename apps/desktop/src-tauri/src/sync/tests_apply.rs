@@ -1205,3 +1205,82 @@ fn a_delta_for_a_tombstoned_account_lands_in_the_retained_row() {
         "the account came back"
     );
 }
+
+/// AD-4 with AD-5/AD-12: the delete-versus-re-creation rule for a DERIVED identity has to be
+/// order-independent, because the two messages travel in two different segments and every
+/// computer sees them in its own order.
+///
+/// An `Hlc` is totally ordered by (physical time, uhlc's logical counter, install id) and the
+/// encoding compares as text, so two DISTINCT messages can never legitimately compare equal. What
+/// this pins is that BOTH halves read that full order — `revives` on the tombstone side and the
+/// creation-stamp check in `apply_tombstone` on the live-row side — rather than a coarser prefix
+/// or an inconsistent `>` against `>=`: the pairs below tie on the physical time and differ only
+/// in the install, and tie on both and differ only in the logical counter.
+#[test]
+fn a_delete_and_a_re_creation_of_a_derived_identity_agree_in_both_arrival_orders() {
+    const EARLY: &str = "7fff000000000001";
+    const LATE: &str = "7fff00000000000c";
+    const ONE: &str = "aaaaaaaaaaaaaaaa";
+    const TWO: &str = "bbbbbbbbbbbbbbbb";
+    const UUID: [u8; 16] = [7; 16];
+
+    let tombstone = |hlc: &str| SegmentMessage {
+        hlc: hlc.to_string(),
+        kind: MessageKind::Tombstone,
+        table_name: "config".to_string(),
+        row_uuid: UUID,
+        column_name: None,
+        cause_uuid: None,
+        payload: Some(payload::encode(&rusqlite::types::Value::Text(
+            r#"{"key":"theme","value":"dark"}"#.to_string(),
+        ))),
+    };
+    let creation = |hlc: &str| {
+        field_message(
+            hlc,
+            "config",
+            UUID,
+            &[
+                ("key", rusqlite::types::Value::Text("theme".to_string())),
+                ("value", rusqlite::types::Value::Text("dark".to_string())),
+            ],
+        )
+    };
+    let survives = |first: SegmentMessage, second: SegmentMessage| {
+        let receiver = Computer::open();
+        for (index, message) in [first, second].into_iter().enumerate() {
+            let install = message.hlc[17..].to_string();
+            receiver.receive(&SegmentBatch {
+                install,
+                seq: index as i64,
+                messages: vec![message],
+            });
+        }
+
+        receiver.number("SELECT COUNT(*) FROM config WHERE key = 'theme'") == 1
+    };
+
+    for (delete_at, create_at) in [
+        // A tie on the physical time, decided by the install id — both ways round.
+        (format!("{EARLY}-{ONE}"), format!("{EARLY}-{TWO}")),
+        (format!("{EARLY}-{TWO}"), format!("{EARLY}-{ONE}")),
+        // One install, one physical millisecond, two values of uhlc's logical counter: the shape
+        // that made two computers disagree for good (sim seed 2663001441877517665).
+        (format!("{EARLY}-{ONE}"), format!("{LATE}-{ONE}")),
+        (format!("{LATE}-{ONE}"), format!("{EARLY}-{ONE}")),
+    ] {
+        let delete_first = survives(tombstone(&delete_at), creation(&create_at));
+        let creation_first = survives(creation(&create_at), tombstone(&delete_at));
+
+        assert_eq!(
+            delete_first, creation_first,
+            "the two arrival orders disagree for delete={delete_at} creation={create_at}"
+        );
+        assert_eq!(
+            delete_first,
+            create_at > delete_at,
+            "the row must survive exactly when the re-creation is the later stamp \
+             (delete={delete_at} creation={create_at})"
+        );
+    }
+}

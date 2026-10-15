@@ -13,11 +13,13 @@
 //! * The TRANSPORT is the runner's in-memory vector of objects. The bytes are the real framed,
 //!   compressed, hash-checked segment; what is missing is S3's conditional writes, which Story 19
 //!   proves against `FakeObjectStore` instead.
-//! * The WALL CLOCK is each dataset's own, not the runner's shared one: capture builds its `Clock`
-//!   inside `Capture::attach` from the install id in `sync_state`, and that is deliberately not
-//!   injectable (Story 13's uhlc trap). Convergence does not depend on it — the oracle computes
-//!   expected winners from the stamps `local_write` returns — and the reference engine still
-//!   exercises the same-millisecond tiebreak.
+//! * The WALL CLOCK is each dataset's own: capture builds its `Clock` inside `Capture::attach`
+//!   from the install id in `sync_state`, so what the runner injects is the thread's DEFAULT wall
+//!   clock (`clock::scope_default_wall_clock`) rather than an argument. It has to inject one: with
+//!   the system clock behind the real pipeline, two ops landing in the same millisecond are
+//!   resolved by the install-id tiebreak instead of by the order they happened, which made a
+//!   pinned seed pass or fail depending on how fast the machine ran. The reference engine reads
+//!   the same millisecond, so the same-millisecond tiebreak is still exercised — deterministically.
 //! * The SHARED BASE rows (`budget_groups`, `budget_categories`) are given DETERMINISTIC identities
 //!   at open. They stand for the rows a dataset already held when it was cloned, and every replica
 //!   has to agree on them or a hint's `budget_category_id` would travel as a uuid the other
@@ -27,6 +29,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rusqlite::Connection;
 
@@ -37,7 +40,7 @@ use crate::db::{snapshot_strip, sync_identity, sync_segment, sync_state, test_da
 use crate::models::DatasetKind;
 use crate::sync::apply;
 use crate::sync::capture::{BalanceCause, Capture};
-use crate::sync::clock::{machine_fingerprint, Clock, Hlc, MachineSignals, WallClock};
+use crate::sync::clock::{self, machine_fingerprint, Clock, Hlc, MachineSignals, WallClock};
 use crate::sync::registry::{self, MergeKind, TableClass};
 use crate::sync::segment::{self, SegmentBatch};
 use crate::sync::sim::engine::{ReplicaEngine, SimError};
@@ -69,7 +72,7 @@ pub(crate) struct RealEngine {
     /// AD-11's second connection: WAL, busy timeout, foreign keys on, and no capture hook because
     /// the hook is per connection.
     apply: Connection,
-    clock: Clock,
+    clock: Arc<Clock>,
     causes: HashMap<RowUuid, i64>,
     next_cause_row_id: i64,
     /// Segments that arrived ahead of a gap, keyed `(install, seq)`.
@@ -107,6 +110,7 @@ impl RealEngine {
         capture.attach(&conn).map_err(sql)?;
 
         let apply = crate::db::open_configured(db_path).map_err(sql)?;
+        let clock = clock::shared(install_id, &clock::dataset_key(&apply))?;
 
         Ok(Self {
             install: install_id.to_string(),
@@ -117,7 +121,7 @@ impl RealEngine {
                 capture: Some(capture),
             },
             apply,
-            clock: Clock::new(install_id)?,
+            clock,
             causes: HashMap::new(),
             next_cause_row_id: 1,
             buffered: BTreeMap::new(),
@@ -130,7 +134,7 @@ impl RealEngine {
     /// Everything `open` does to a blank file (migrate, seed the shared base, mint an install id,
     /// bind the base identities) is already in this file, and re-doing any of it would either
     /// duplicate the base rows or split the `(install, seq)` space.
-    fn attach_existing(db_path: &Path, conn: Connection) -> Result<(ActiveDataset, Connection, String, Clock), SimError> {
+    fn attach_existing(db_path: &Path, conn: Connection) -> Result<(ActiveDataset, Connection, String, Arc<Clock>), SimError> {
         let install = sync_state::load(&conn)
             .map_err(sql)?
             .ok_or_else(|| SimError::Model("an adopted dataset has no sync_state row".into()))?
@@ -142,7 +146,7 @@ impl RealEngine {
         capture.attach(&conn).map_err(sql)?;
 
         let apply = crate::db::open_configured(db_path).map_err(sql)?;
-        let clock = Clock::new(&install)?;
+        let clock = clock::shared(&install, &clock::dataset_key(&apply))?;
 
         Ok((
             ActiveDataset {
