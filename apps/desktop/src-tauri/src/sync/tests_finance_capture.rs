@@ -9,7 +9,6 @@
 
 use std::collections::BTreeSet;
 
-use chrono::Datelike;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -600,10 +599,15 @@ fn the_recurring_template_write_sites_are_captured() {
 /// computers that both backfill the same month are talking about one row and not two.
 #[test]
 fn a_backfilled_recurring_row_takes_its_derived_identity() {
-    // Both backfills only generate the occurrence that falls between the template's own
-    // `created_at` and today, so the fixture has to aim at today's date rather than a literal.
-    let today = chrono::Local::now().date_naive();
-    let period = today.format("%Y-%m").to_string();
+    // A fixed past period, not "today": the income backfill starts at the template's own
+    // `created_at`, which SQLite writes in UTC, while it compares against the LOCAL date. Any
+    // fixture aimed at today therefore generates nothing whenever the two dates differ (a local
+    // evening east of UTC). The period under test is pinned instead, and the expense half is asked
+    // for the same one by value.
+    const PERIOD: &str = "2024-01";
+    const DAY_OF_MONTH: i32 = 5;
+    const CREATED_AT: &str = "2024-01-01 12:00:00";
+    const OCCURRENCE: &str = "2024-01-05";
 
     let identities_of = |replica: &Replica| -> (Vec<u8>, Vec<u8>) {
         let category = replica.seed_category();
@@ -617,7 +621,7 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
                         merchant: "Gym".to_string(),
                         amount_cents: 5_000,
                         budget_category_id: category,
-                        day_of_month: today.day() as i32,
+                        day_of_month: DAY_OF_MONTH,
                     },
                 )
             })
@@ -629,12 +633,22 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
                     &CreateRecurringIncomeTemplateInput {
                         source_id: source,
                         amount_cents: 100_000,
-                        day_of_month: today.day() as i32,
+                        day_of_month: DAY_OF_MONTH,
                         account_id: None,
                     },
                 )
             })
             .expect("the income template is created");
+
+        // The income backfill derives its first occurrence from `created_at`, so the fixture pins
+        // it rather than inheriting the clock.
+        replica
+            .conn()
+            .execute(
+                "UPDATE recurring_income_templates SET created_at = ?1 WHERE id = ?2",
+                rusqlite::params![CREATED_AT, income_template.id],
+            )
+            .expect("the income template start date is pinned");
 
         // Both templates are bound to the SAME uuid on both replicas, which is what the apply path
         // will do for real (Story 20) and what makes the derived rows comparable at all.
@@ -648,26 +662,25 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
         }
 
         let expenses = replica
-            .write(|tx| {
-                recurring_db::apply_recurring_for_month(tx, today.year(), today.month())
-            })
+            .write(|tx| recurring_db::apply_recurring_for_month(tx, 2024, 1))
             .expect("the month applies");
         assert_eq!(expenses.len(), 1, "exactly one generated expense");
 
         let entries = replica
             .write(|tx| recurring_income_db::apply_due_recurring_income(tx))
             .expect("the income backfills");
-        assert!(
-            !entries.entries.is_empty(),
-            "the fixture must actually generate an income entry"
-        );
+        let generated = entries
+            .entries
+            .iter()
+            .find(|entry| entry.date == OCCURRENCE)
+            .expect("the fixture must actually generate the income entry of the pinned period");
 
         (
             sync_identity::lookup(replica.conn(), "expenses", expenses[0].id)
                 .expect("the mapping reads")
                 .expect("a generated expense has an identity")
                 .to_vec(),
-            sync_identity::lookup(replica.conn(), "income_entries", entries.entries[0].id)
+            sync_identity::lookup(replica.conn(), "income_entries", generated.id)
                 .expect("the mapping reads")
                 .expect("a generated entry has an identity")
                 .to_vec(),
@@ -681,8 +694,13 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
 
     assert_eq!(
         one_expense,
-        identity::recurring_expense(&[0xA1; 16], &period).to_vec(),
+        identity::recurring_expense(&[0xA1; 16], PERIOD).to_vec(),
         "the generated expense takes (template uuid, period)"
+    );
+    assert_eq!(
+        one_entry,
+        identity::recurring_income(&[0xB2; 16], PERIOD).to_vec(),
+        "and the generated entry takes (template uuid, period) too"
     );
     assert_eq!(
         one_expense, two_expense,
