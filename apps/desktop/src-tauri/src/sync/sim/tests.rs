@@ -307,6 +307,7 @@ fn the_fault_model_actually_fires() {
         totals.deliveries += outcome.deliveries;
         totals.duplicate_deliveries += outcome.duplicate_deliveries;
         totals.dropped_deliveries += outcome.dropped_deliveries;
+        totals.reorders += outcome.reorders;
         totals.offline_periods += outcome.offline_periods;
         totals.deletes += outcome.deletes;
         totals.double_deletes += outcome.double_deletes;
@@ -321,6 +322,7 @@ fn the_fault_model_actually_fires() {
         ("deliveries", totals.deliveries),
         ("duplicate deliveries", totals.duplicate_deliveries),
         ("delayed segments", totals.dropped_deliveries),
+        ("out-of-order deliveries", totals.reorders),
         ("offline periods", totals.offline_periods),
         ("deletes", totals.deletes),
         ("double deletes", totals.double_deletes),

@@ -28,7 +28,7 @@ use crate::models::{
     UpdateRecurringIncomeTemplateInput,
 };
 
-use super::capture::Capture;
+use super::capture::{payload, Capture};
 use super::identity;
 
 struct Replica {
@@ -99,6 +99,31 @@ impl Replica {
             .into_iter()
             .filter(|message| message.table_name == table)
             .map(|message| message.kind)
+            .collect()
+    }
+
+    /// Every column named by a `field` message about `table` since the last clear.
+    ///
+    /// WHY the balance assertions read the PAYLOAD instead of counting messages: `updated_at` is
+    /// an `Lww` column every finance write path sets to `datetime('now')`, whose granularity is
+    /// one SECOND, so a write that lands in a later second than the seed legitimately adds a
+    /// `field` message and one that lands in the same second does not. An exact message vector is
+    /// therefore a wall-clock race, while what AD-5 actually forbids — the balance travelling as
+    /// an ordinary field — is a statement about the columns a field message carries.
+    fn field_columns(&self, table: &str) -> BTreeSet<String> {
+        self.messages()
+            .into_iter()
+            .filter(|message| message.table_name == table && message.kind == "field")
+            .flat_map(|message| {
+                payload::decode_row(
+                    message
+                        .payload
+                        .as_deref()
+                        .expect("a field message has a payload"),
+                )
+                .expect("the row payload decodes")
+            })
+            .map(|(column, _)| column)
             .collect()
     }
 
@@ -276,9 +301,17 @@ fn the_expense_write_sites_are_captured() {
         .expense;
     assert_eq!(replica.kinds_for("expenses"), vec!["field"]);
     assert_eq!(
-        replica.kinds_for("accounts"),
-        vec!["balance_delta"],
-        "the linked account moves by AD-5's cause-keyed delta, never by a balance field"
+        replica
+            .kinds_for("accounts")
+            .iter()
+            .filter(|kind| *kind == "balance_delta")
+            .count(),
+        1,
+        "the linked account moves by AD-5's cause-keyed delta"
+    );
+    assert!(
+        !replica.field_columns("accounts").contains("balance_cents"),
+        "and never by a balance field"
     );
 
     replica.clear_log();

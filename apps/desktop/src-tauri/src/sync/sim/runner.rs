@@ -34,6 +34,11 @@ pub(crate) struct SimOutcome {
     pub deliveries: usize,
     pub duplicate_deliveries: usize,
     pub dropped_deliveries: usize,
+    /// AD-19's reordering fault, counted for the same non-vacuity reason as the others: the
+    /// shuffle is unconditional, so nothing would notice a change that made it deal every
+    /// segment in publication order. A delivery counts when the segment it carries was
+    /// published BEFORE one this replica already holds.
+    pub reorders: usize,
     pub offline_periods: usize,
     pub deletes: usize,
     /// The three AD-19 faults that are compound actions rather than single ops. Counted
@@ -537,9 +542,13 @@ impl<E: ReplicaEngine> Driver<E> {
         }
 
         self.engines[replica].deliver(&segment)?;
+        let newest_held = self.delivered[replica].iter().copied().max();
         let first_time = self.delivered[replica].insert(index);
         if first_time {
             self.outcome.deliveries += 1;
+            if newest_held.is_some_and(|newest| index < newest) {
+                self.outcome.reorders += 1;
+            }
         } else {
             self.outcome.duplicate_deliveries += 1;
         }
