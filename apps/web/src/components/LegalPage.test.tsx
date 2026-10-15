@@ -311,15 +311,26 @@ describe("multi-device sync disclosure", () => {
     expect(text).not.toMatch(/only you can read/i);
   });
 
-  /* The sync role holds no delete permission, so a self-serve deletion promise would be
-   * unimplementable; the retention window is the lifecycle rule on the bucket. */
+  /* Story 23 gave the sync role s3:DeleteObject on its own log/* and snap/* only, so the
+   * blanket "no permission to delete anything" claim became false. These pin what the grant
+   * really is: cleanup of superseded segments and snapshots inside the account's own location,
+   * nothing else deletable, and still no self-serve deletion of the copy as a whole. */
   it("states the 30-day version window and that deletion is a manual request", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
     expect(text).toMatch(/previous versions of each object for 30 days/i);
+    expect(text).toMatch(/only delete permission is the cleanup/i);
+    expect(text).toMatch(/change-log segments a newer snapshot already covers/i);
+    expect(text).toMatch(/snapshots a newer one supersedes/i);
+    expect(text).toMatch(
+      /no permission to delete the record binding that location to your account/i
+    );
+    expect(text).toMatch(/pointers and roster your computers coordinate through/i);
+    expect(text).toMatch(/or your project images/i);
     expect(text).toMatch(/no way to delete the cloud copy from inside the app/i);
     expect(text).toMatch(/email the address at the bottom of this page/i);
     expect(text).toMatch(/stops transfers but does not delete the copy/i);
+    expect(text).not.toMatch(/no permission to delete anything/i);
   });
 
   it("keeps the local-only promise intact in the Privacy Policy", () => {
@@ -367,6 +378,12 @@ describe("multi-device sync disclosure", () => {
       expect(privacy).toMatch(/administrateur de Nixus ayant accès à ce compte AWS/i);
       expect(privacy).toMatch(/pendant 30 jours/i);
       expect(privacy).toMatch(/au bas de cette page/i);
+      expect(privacy).toMatch(/seule permission de suppression/i);
+      expect(privacy).toMatch(/qu'un instantané plus récent couvre déjà/i);
+      expect(privacy).toMatch(/aucune permission de supprimer l'enregistrement/i);
+      expect(privacy).toMatch(/ni vos images de projet/i);
+      expect(privacy).toMatch(/rien dans l'application ne permet encore de supprimer/i);
+      expect(privacy).not.toMatch(/aucune permission de suppression,/i);
       expect(privacy).toMatch(/aucun code de synchronisation ne s'exécute/i);
       expect(privacy).toMatch(/vos modifications voyagent en continu/i);
       expect(privacy).toMatch(/champ par champ/i);
