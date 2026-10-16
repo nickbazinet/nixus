@@ -336,6 +336,7 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               state: "unlinked",
               dataset_id: "default",
               enabled: false,
+              paused: false,
               last_sync_ms: null,
               error_code: null,
               recoverable: true,

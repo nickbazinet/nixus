@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { Alert, AlertDescription, AlertTitle, Button, Card } from "@nixus/shared";
+import { Alert, AlertDescription, AlertTitle, Button, Card, Switch } from "@nixus/shared";
 import { isSyncError, parseAppError, syncMessageKey } from "@/lib/appError";
 import {
   formatSyncTimestamp,
@@ -65,6 +65,43 @@ export function SyncSettings() {
           : null;
 
   const busy = enableSync.isPending || disableSync.isPending || syncNow.isPending;
+  const paused = payload?.paused === true;
+
+  // What the AUTOMATIC state is, in the user's terms. Sync is on by default for an account that
+  // includes it, so every line here answers "why is it not moving right now" rather than "how do
+  // I switch it on" — and the account's access is still never precomputed (AD-14): it is learned
+  // from the code the backend reports, which is why `not_entitled` is read and not guessed.
+  const automatic = ((): { labelKey: string; detailKey: string } => {
+    if (ineligible === "local_only") {
+      return {
+        labelKey: "sync.unavailableLocalOnlyTitle",
+        detailKey: "sync.unavailableLocalOnlyBody",
+      };
+    }
+    if (paused) {
+      return { labelKey: "sync.stateOffByYouLabel", detailKey: "sync.stateOffByYouDetail" };
+    }
+    if (payload?.error_code === "not_entitled") {
+      return {
+        labelKey: "sync.stateNotIncludedLabel",
+        detailKey: "sync.stateNotIncludedDetail",
+      };
+    }
+    if (ineligible === "signed_out" || payload?.error_code === "signed_out") {
+      return {
+        labelKey: "sync.stateWaitingForSignInLabel",
+        detailKey: "sync.stateWaitingForSignInDetail",
+      };
+    }
+    if (state === "offline") {
+      return {
+        labelKey: "sync.stateWaitingForNetworkLabel",
+        detailKey: "sync.stateWaitingForNetworkDetail",
+      };
+    }
+
+    return { labelKey: syncStateLabelKey(state), detailKey: syncStateDetailKey(state) };
+  })();
 
   // `preparing` while the command is in flight, then whatever the actor's own transition says:
   // the dialog reads the shared status rather than keeping a second copy of the progress.
@@ -88,6 +125,8 @@ export function SyncSettings() {
     return t("sync.errorTransport");
   };
 
+  // Only reachable from the switch being turned back ON. The automatic join shows no dialog at
+  // all, which is the whole point: the first-sync progress dialog is no longer part of normal use.
   const handleEnable = () => {
     setError(null);
     setSeparateProfileId(null);
@@ -122,6 +161,11 @@ export function SyncSettings() {
     disableSync.mutate(undefined, {
       onError: (err) => setError(describeFailure(err)),
     });
+  };
+
+  const handleToggle = (next: boolean) => {
+    if (next) handleEnable();
+    else handleDisable();
   };
 
   const handleRetry = () => {
@@ -177,90 +221,49 @@ export function SyncSettings() {
           data-testid="setting-sync-account"
         />
 
-        {ineligible !== null ? (
-          <SettingRow
-            title={t(
-              ineligible === "local_only"
-                ? "sync.unavailableLocalOnlyTitle"
-                : "sync.unavailableSignedOutTitle"
-            )}
-            description={t(
-              ineligible === "local_only"
-                ? "sync.unavailableLocalOnlyBody"
-                : "sync.unavailableSignedOutBody"
-            )}
-            control={
+        <SettingRow
+          title={t("sync.autoTitle")}
+          description={t("sync.autoBody")}
+          control={
+            <Switch
+              checked={!paused && ineligible === null}
+              disabled={ineligible !== null || busy}
+              onCheckedChange={handleToggle}
+              aria-label={t("sync.autoTitle")}
+              data-testid="sync-switch"
+            />
+          }
+          data-testid="setting-sync-switch"
+        />
+
+        <SettingRow
+          title={t("sync.statusTitle")}
+          description={`${t(automatic.labelKey)} — ${t(automatic.detailKey)}`}
+          control={
+            state === "error" || state === "offline" ? (
               <Button
-                disabled
-                aria-disabled="true"
-                data-testid="sync-enable-button"
-              >
-                {t("sync.enableAction")}
-              </Button>
-            }
-            data-testid="setting-sync-unavailable"
-          />
-        ) : enabled ? (
-          <>
-            <SettingRow
-              title={t("sync.statusTitle")}
-              description={`${t(syncStateLabelKey(state))} — ${t(syncStateDetailKey(state))}`}
-              control={
-                state === "error" || state === "offline" ? (
-                  <Button
-                    variant="outline"
-                    onClick={handleRetry}
-                    disabled={busy}
-                    aria-disabled={busy || undefined}
-                    data-testid="sync-retry-button"
-                  >
-                    {syncNow.isPending ? t("sync.retrying") : t("sync.retry")}
-                  </Button>
-                ) : undefined
-              }
-              data-testid="setting-sync-status"
-            />
-            <SettingRow
-              title={t("sync.lastSyncTitle")}
-              description={
-                payload?.last_sync_ms === undefined || payload.last_sync_ms === null
-                  ? t("sync.lastSyncNever")
-                  : formatSyncTimestamp(payload.last_sync_ms, i18n.language)
-              }
-              data-testid="setting-sync-last-sync"
-            />
-            <SettingRow
-              title={t("sync.disableTitle")}
-              description={t("sync.disableBody")}
-              control={
-                <Button
-                  variant="outline"
-                  onClick={handleDisable}
-                  disabled={busy}
-                  aria-disabled={busy || undefined}
-                  data-testid="sync-disable-button"
-                >
-                  {disableSync.isPending ? t("sync.disabling") : t("sync.disableAction")}
-                </Button>
-              }
-              data-testid="setting-sync-disable"
-            />
-          </>
-        ) : (
-          <SettingRow
-            title={t("sync.enableTitle")}
-            description={t("sync.enableBody")}
-            control={
-              <Button
-                onClick={handleEnable}
+                variant="outline"
+                onClick={handleRetry}
                 disabled={busy}
                 aria-disabled={busy || undefined}
-                data-testid="sync-enable-button"
+                data-testid="sync-retry-button"
               >
-                {enableSync.isPending ? t("sync.enabling") : t("sync.enableAction")}
+                {syncNow.isPending ? t("sync.retrying") : t("sync.retry")}
               </Button>
+            ) : undefined
+          }
+          data-testid="setting-sync-status"
+        />
+
+        {enabled && (
+          <SettingRow
+            title={t("sync.lastSyncTitle")}
+            description={
+              payload?.last_sync_ms === undefined || payload.last_sync_ms === null
+                ? t("sync.lastSyncNever")
+                : formatSyncTimestamp(payload.last_sync_ms, i18n.language)
             }
-            data-testid="setting-sync-enable"
+            data-testid="setting-sync-last-sync"
           />
         )}
 

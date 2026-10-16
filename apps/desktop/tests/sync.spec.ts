@@ -48,6 +48,7 @@ const UNLINKED: SyncPayload = {
   state: "unlinked",
   dataset_id: "default",
   enabled: false,
+  paused: false,
   last_sync_ms: null,
   error_code: null,
   recoverable: true,
@@ -80,6 +81,7 @@ async function setupSyncMock(page: Page, options: SyncMockOptions = {}) {
       state: "unlinked",
       dataset_id: "default",
       enabled: false,
+      paused: false,
       last_sync_ms: null,
       error_code: null,
       recoverable: true,
@@ -269,8 +271,13 @@ const SETTINGS_URL = "/settings/ai-provider?section=data";
 const indicator = (page: Page) => page.getByTestId("sync-status-indicator");
 
 test.describe("sync settings", () => {
-  test("explains what is synced and turns sync on", async ({ page }) => {
-    await setupSyncMock(page);
+  // INTENTIONAL BEHAVIOUR CHANGE (fix F8): the section is no longer an onboarding step. Sync is
+  // automatic for an account that includes it, so the control is a switch over the automatic
+  // state and the progress dialog is only ever reached by turning a switched-OFF profile back on.
+  test("explains what is synced and turns sync back on after it was switched off", async ({
+    page,
+  }) => {
+    await setupSyncMock(page, { status: { paused: true } });
     await page.goto(SETTINGS_URL);
 
     const section = page.getByTestId("settings-sync");
@@ -281,8 +288,11 @@ test.describe("sync settings", () => {
     await expect(page.getByTestId("setting-sync-explainer")).toContainText(
       "never sent"
     );
+    await expect(page.getByTestId("setting-sync-status")).toContainText(
+      "Your records stay on this computer"
+    );
 
-    await page.getByTestId("sync-enable-button").click();
+    await page.getByTestId("sync-switch").click();
 
     await expect(page.getByTestId("sync-first-sync-dialog")).toBeVisible();
     await expect(page.getByTestId("sync-first-sync-stage")).toHaveAttribute(
@@ -320,24 +330,27 @@ test.describe("sync settings", () => {
     expect((await syncCalls(page)).map((c) => c.cmd)).toContain("sync_enable");
   });
 
-  test("a local-only profile cannot enable sync and is told why", async ({ page }) => {
+  test("a local-only profile has no switch to press and is told why", async ({ page }) => {
     await setupSyncMock(page, { profileKind: "local", signedIn: false });
     await page.goto(SETTINGS_URL);
 
-    const row = page.getByTestId("setting-sync-unavailable");
-    await expect(row).toContainText("kept on this computer only");
-    await expect(page.getByTestId("sync-enable-button")).toBeDisabled();
+    await expect(page.getByTestId("setting-sync-status")).toContainText(
+      "kept on this computer only"
+    );
+    await expect(page.getByTestId("sync-switch")).toBeDisabled();
     await expect(page.getByTestId("sync-sign-in-link")).toHaveCount(0);
   });
 
-  test("a signed-out cloud profile is sent to sign in", async ({ page }) => {
+  test("a signed-out cloud profile is waiting for a sign-in, not failing", async ({
+    page,
+  }) => {
     await setupSyncMock(page, { signedIn: false });
     await page.goto(SETTINGS_URL);
 
-    await expect(page.getByTestId("setting-sync-unavailable")).toContainText(
-      "Sign in to use sync"
+    await expect(page.getByTestId("setting-sync-status")).toContainText(
+      "sync starts on its own"
     );
-    await expect(page.getByTestId("sync-enable-button")).toBeDisabled();
+    await expect(page.getByTestId("sync-switch")).toBeDisabled();
     await expect(page.getByTestId("sync-sign-in-link")).toBeVisible();
   });
 
@@ -345,21 +358,15 @@ test.describe("sync settings", () => {
     page,
   }) => {
     await setupSyncMock(page, {
-      enableError: {
-        type: "sync",
-        code: "not_entitled",
-        message: "this account is not entitled to multi-device sync",
-        recoverable: false,
-      },
+      status: { state: "unlinked", error_code: "not_entitled", recoverable: false },
     });
     await page.goto(SETTINGS_URL);
 
-    await page.getByTestId("sync-enable-button").click();
-
-    const error = page.getByTestId("sync-action-error");
-    await expect(error).toBeVisible();
-    await expect(error).toContainText("does not currently include syncing");
-    await expect(error).not.toContainText(/premium/i);
+    const row = page.getByTestId("setting-sync-status");
+    await expect(row).toContainText("not included with this account");
+    await expect(row).not.toContainText(/premium/i);
+    // The indicator stays hidden: an account without sync carries no sync chrome at all.
+    await expect(indicator(page)).toHaveCount(0);
   });
 
   test("an errored status offers a retry that calls sync_now", async ({ page }) => {
@@ -448,7 +455,7 @@ test.describe("sync settings", () => {
     });
     await page.goto(SETTINGS_URL);
 
-    await page.getByTestId("sync-disable-button").click();
+    await page.getByTestId("sync-switch").click();
     expect((await syncCalls(page)).map((c) => c.cmd)).toContain("sync_disable");
   });
 });
@@ -518,6 +525,7 @@ test.describe("sync prompts", () => {
   const LINK_CHOICE_STATUS: Partial<SyncPayload> = {
     state: "link_choice_required",
     enabled: false,
+    paused: false,
     prompt: {
       kind: "link_choice",
       local_rows: 1234,

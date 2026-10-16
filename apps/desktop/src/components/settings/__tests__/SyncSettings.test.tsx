@@ -68,6 +68,22 @@ vi.mock("@nixus/shared", () => {
         {children}
       </button>
     ),
+    Switch: ({
+      checked,
+      onCheckedChange,
+      ...props
+    }: Record<string, unknown> & {
+      checked?: boolean;
+      onCheckedChange?: (next: boolean) => void;
+    }) => (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onCheckedChange?.(!checked)}
+        {...props}
+      />
+    ),
     Dialog: ({ open, children }: { open: boolean; children?: React.ReactNode }) =>
       open ? <div role="dialog">{children}</div> : null,
     DialogContent: passthrough("div"),
@@ -95,6 +111,7 @@ function status(overrides: Partial<SyncStatusPayload> = {}): SyncStatusPayload {
     state: "unlinked",
     dataset_id: "default",
     enabled: false,
+    paused: false,
     last_sync_ms: null,
     error_code: null,
     recoverable: true,
@@ -193,62 +210,66 @@ describe("SyncSettings", () => {
     expect(explainer?.textContent).toContain(EN["sync.whereItLivesBody"]);
   });
 
-  it("offers the enable button for a signed-in cloud profile", async () => {
-    mount({});
+  // INTENTIONAL BEHAVIOUR CHANGE (fix F8): this section is no longer an onboarding step. Sync is
+  // on by default for an account that includes it, so the control is a switch over the automatic
+  // state and there is no "enable sync" button to offer, disable or press.
+  it("shows the automatic state as ON for a signed-in cloud profile", async () => {
+    mount({ status: status({ state: "idle", enabled: true }) });
     await settle();
 
-    expect(at("setting-sync-unavailable")).toBeNull();
-    const button = at("sync-enable-button") as HTMLButtonElement | null;
-    expect(button?.hasAttribute("disabled")).toBe(false);
-
-    invokeMock.mockResolvedValue({ outcome: "enabled", state: "syncing" });
-    await click("sync-enable-button");
-
-    expect(invokeMock).toHaveBeenCalledWith("sync_enable", { link_choice: null });
-    expect(at("sync-first-sync-dialog")).not.toBeNull();
+    const toggle = at("sync-switch");
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    expect(toggle?.hasAttribute("disabled")).toBe(false);
+    expect(at("setting-sync-status")?.textContent).toContain(EN["sync.stateIdle"]);
+    expect(at("sync-first-sync-dialog")).toBeNull();
   });
 
-  it("disables enabling for a local-only profile and says why", async () => {
+  it("explains a local-only profile and offers no switch to press", async () => {
     mount({ profile: profile({ kind: "local", is_signed_in: false }) });
     await settle();
 
-    const row = at("setting-sync-unavailable");
+    const row = at("setting-sync-status");
     expect(row?.textContent).toContain(EN["sync.unavailableLocalOnlyTitle"]);
     expect(row?.textContent).toContain(EN["sync.unavailableLocalOnlyBody"]);
-    expect(
-      (at("sync-enable-button") as HTMLButtonElement | null)?.hasAttribute("disabled")
-    ).toBe(true);
+    expect((at("sync-switch") as HTMLButtonElement | null)?.hasAttribute("disabled")).toBe(
+      true
+    );
     expect(at("sync-sign-in-link")).toBeNull();
   });
 
-  it("disables enabling for a signed-out cloud profile and offers sign-in", async () => {
+  it("says it is waiting for a sign-in rather than reporting a failure", async () => {
     mount({ profile: profile({ is_signed_in: false }) });
     await settle();
 
-    const row = at("setting-sync-unavailable");
-    expect(row?.textContent).toContain(EN["sync.unavailableSignedOutTitle"]);
-    expect(
-      (at("sync-enable-button") as HTMLButtonElement | null)?.hasAttribute("disabled")
-    ).toBe(true);
+    expect(at("setting-sync-status")?.textContent).toContain(
+      EN["sync.stateWaitingForSignInDetail"]
+    );
+    expect((at("sync-switch") as HTMLButtonElement | null)?.hasAttribute("disabled")).toBe(
+      true
+    );
     expect(at("sync-sign-in-link")).not.toBeNull();
   });
 
-  it("renders an account without access from the failure code, naming no tier", async () => {
-    mount({});
+  it("renders an account without access from the status code, naming no tier", async () => {
+    mount({ status: status({ state: "unlinked", error_code: "not_entitled" }) });
     await settle();
 
-    invokeMock.mockRejectedValue({
-      type: "sync",
-      code: "not_entitled",
-      message: "this account is not entitled to multi-computer sync",
-      recoverable: false,
-    });
-    await click("sync-enable-button");
-
-    expect(at("sync-action-error")?.textContent).toBe(EN["sync.errorNotEntitled"]);
+    const row = at("setting-sync-status");
+    expect(row?.textContent).toContain(EN["sync.stateNotIncludedLabel"]);
+    expect(row?.textContent).toContain(EN["sync.stateNotIncludedDetail"]);
+    expect(row?.textContent).not.toMatch(/premium|tier/i);
   });
 
-  it("shows the last sync time and the disable action once sync is on", async () => {
+  it("says it is waiting for the network while offline", async () => {
+    mount({ status: status({ state: "offline", enabled: true, error_code: "offline" }) });
+    await settle();
+
+    expect(at("setting-sync-status")?.textContent).toContain(
+      EN["sync.stateWaitingForNetworkDetail"]
+    );
+  });
+
+  it("shows the last sync time and turns sync off through the switch", async () => {
     mount({
       status: status({
         state: "idle",
@@ -264,8 +285,22 @@ describe("SyncSettings", () => {
     expect(at("setting-sync-status")?.textContent).toContain(EN["sync.stateIdle"]);
 
     invokeMock.mockResolvedValue(undefined);
-    await click("sync-disable-button");
+    await click("sync-switch");
     expect(invokeMock).toHaveBeenCalledWith("sync_disable");
+  });
+
+  it("reports the switch being off as the user's own decision", async () => {
+    mount({ status: status({ state: "unlinked", paused: true }) });
+    await settle();
+
+    const row = at("setting-sync-status");
+    expect(row?.textContent).toContain(EN["sync.stateOffByYouLabel"]);
+    expect(row?.textContent).toContain(EN["sync.stateOffByYouDetail"]);
+    expect(at("sync-switch")?.getAttribute("aria-checked")).toBe("false");
+
+    invokeMock.mockResolvedValue({ outcome: "enabled", state: "syncing" });
+    await click("sync-switch");
+    expect(invokeMock).toHaveBeenCalledWith("sync_enable", { link_choice: null });
   });
 
   it("reports an errored status and retries through sync_now", async () => {
@@ -343,7 +378,7 @@ describe("SyncSettings", () => {
   });
 
   it("closes the first-sync dialog when the link choice takes over", async () => {
-    mount({});
+    mount({ status: status({ state: "unlinked", paused: true }) });
     await settle();
 
     invokeMock.mockResolvedValue({
@@ -352,21 +387,21 @@ describe("SyncSettings", () => {
       remote_created_ms: 1_760_000_000_000,
       remote_schema_version: 30,
     });
-    await click("sync-enable-button");
+    await click("sync-switch");
 
     expect(at("sync-first-sync-dialog")).toBeNull();
     expect(at("sync-action-error")).toBeNull();
   });
 
   it("explains the separate profile it just created", async () => {
-    mount({});
+    mount({ status: status({ state: "unlinked", paused: true }) });
     await settle();
 
     invokeMock.mockResolvedValue({
       outcome: "separate_profile_created",
       dataset_id: "second",
     });
-    await click("sync-enable-button");
+    await click("sync-switch");
 
     expect(at("sync-separate-profile-notice")?.textContent).toContain(
       EN["sync.separateProfileBody"]

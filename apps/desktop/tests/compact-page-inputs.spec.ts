@@ -36,6 +36,7 @@ async function setupPage(page: Page, surface: Surface) {
               state: "unlinked",
               dataset_id: "default",
               enabled: false,
+              paused: false,
               last_sync_ms: null,
               error_code: null,
               recoverable: true,

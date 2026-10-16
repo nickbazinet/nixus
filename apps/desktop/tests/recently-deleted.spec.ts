@@ -98,6 +98,7 @@ async function setupMock(page: Page, options: MockOptions = {}) {
               state: "idle",
               dataset_id: "default",
               enabled: true,
+              paused: false,
               last_sync_ms: 1760000000000,
               error_code: null,
               recoverable: true,

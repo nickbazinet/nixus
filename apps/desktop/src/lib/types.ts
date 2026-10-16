@@ -996,6 +996,11 @@ export interface SyncStatusPayload {
   state: SyncState;
   dataset_id: string;
   enabled: boolean;
+  /**
+   * The user's durable "sync across my computers" switch. Distinct from `!enabled`, which is also
+   * true while an automatic join is still waiting for a network or a session.
+   */
+  paused: boolean;
   last_sync_ms: number | null;
   error_code: string | null;
   recoverable: boolean;
@@ -1015,7 +1020,8 @@ export type SyncEnableOutcome =
       remote_created_ms: number;
       remote_schema_version: number;
     }
-  | { outcome: "separate_profile_created"; dataset_id: string };
+  | { outcome: "separate_profile_created"; dataset_id: string }
+  | { outcome: "waiting" };
 
 /** One entry of the bounded transition history `sync_diagnostics` carries (AD-16). */
 export interface SyncTransition {

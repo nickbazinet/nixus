@@ -52,6 +52,7 @@ function payload(overrides: Partial<SyncStatusPayload> = {}): SyncStatusPayload 
     state: "idle",
     dataset_id: "default",
     enabled: true,
+    paused: false,
     last_sync_ms: 1_760_000_000_000,
     error_code: null,
     recoverable: true,
