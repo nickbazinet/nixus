@@ -77,10 +77,26 @@ pub struct SyncState {
     pub owner_sub: Option<String>,
     pub link_state: LinkState,
     pub frozen_reason: Option<FrozenReason>,
+    /// When this dataset actually JOINED the account's sync: a first publish, a restore or an
+    /// answered CAP-5 replace. `None` means it never has — which is NOT the same as `link_state`,
+    /// written at the first credential vend, before any of those has completed.
+    pub joined_at: Option<String>,
+    /// The user's durable "sync across my computers" switch, off by default (`false` = sync on).
+    /// Survives relaunch, sign-in and a dataset switch because it lives in the dataset file.
+    pub sync_disabled: bool,
+}
+
+impl SyncState {
+    /// Whether this dataset has completed a join, which is the one fact a resume may be decided
+    /// from (a pinned-but-undecided dataset must never count).
+    pub fn joined(&self) -> bool {
+        self.joined_at.is_some()
+    }
 }
 
 const SELECT_ROW: &str = "SELECT install_id, machine_fingerprint, identity_id, owner_sub, \
-                          link_state, frozen_reason FROM sync_state WHERE id = 1";
+                          link_state, frozen_reason, joined_at, sync_disabled FROM sync_state \
+                          WHERE id = 1";
 
 /// The row exactly as stored. Read and parsed in two steps because the row reader must
 /// answer `rusqlite::Result` while an unknown enum value has to surface as an `AppError`.
@@ -91,6 +107,8 @@ struct StoredRow {
     owner_sub: Option<String>,
     link_state: String,
     frozen_reason: Option<String>,
+    joined_at: Option<String>,
+    sync_disabled: i64,
 }
 
 fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredRow> {
@@ -101,6 +119,8 @@ fn read_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredRow> {
         owner_sub: row.get(3)?,
         link_state: row.get(4)?,
         frozen_reason: row.get(5)?,
+        joined_at: row.get(6)?,
+        sync_disabled: row.get(7)?,
     })
 }
 
@@ -116,6 +136,8 @@ fn parse_row(raw: StoredRow) -> Result<SyncState, AppError> {
             .as_deref()
             .map(FrozenReason::parse)
             .transpose()?,
+        joined_at: raw.joined_at,
+        sync_disabled: raw.sync_disabled != 0,
     })
 }
 
@@ -204,6 +226,46 @@ pub fn set_frozen_reason(conn: &Connection, reason: Option<FrozenReason>) -> Res
     expect_the_single_row(updated)
 }
 
+/// Records that this dataset has completed a join, and when.
+///
+/// Idempotent and write-once: the stamp answers "has this computer ever joined", so a later join
+/// path must not move it and make a long-standing dataset look freshly linked. Called only after
+/// a publish, a restore or an answered CAP-5 replace has actually succeeded — never by `set_pin`,
+/// which runs at the first credential vend, before any of them.
+pub fn mark_joined(conn: &Connection) -> Result<(), AppError> {
+    let updated = conn.execute(
+        "UPDATE sync_state SET joined_at = datetime('now'), updated_at = datetime('now') \
+         WHERE id = 1 AND joined_at IS NULL",
+        [],
+    )?;
+
+    if updated == 1 {
+        return Ok(());
+    }
+
+    // Already joined is success: this is the write-once half, not a lost update. Only a missing
+    // row is a real failure, and that is what the second read distinguishes.
+    match load(conn)? {
+        Some(state) if state.joined() => Ok(()),
+        _ => Err(AppError::Database {
+            message: "sync_state has no row to mark as joined".to_string(),
+        }),
+    }
+}
+
+/// Persists the user's "sync across my computers" switch.
+///
+/// Durable on purpose: an in-memory disable is undone by the next launch, which is what made
+/// turning sync off — and wiping a dataset — look like it had not worked.
+pub fn set_sync_disabled(conn: &Connection, disabled: bool) -> Result<(), AppError> {
+    let updated = conn.execute(
+        "UPDATE sync_state SET sync_disabled = ?1, updated_at = datetime('now') WHERE id = 1",
+        rusqlite::params![i64::from(disabled)],
+    )?;
+
+    expect_the_single_row(updated)
+}
+
 /// Turns "the row was not there" into an error instead of a silent no-op: every mutator
 /// here is only ever called after `ensure`, so zero rows affected means the row was
 /// deleted underneath the caller (a wipe) and the mutation was lost.
@@ -220,7 +282,7 @@ fn expect_the_single_row(updated: usize) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{run_migrations, MIGRATIONS};
+    use crate::db::run_migrations;
 
     const INSTALL: &str = "0123456789abcdef";
     const FINGERPRINT: &str = "ab00000000000000000000000000000000000000000000000000000000000000";
@@ -239,22 +301,7 @@ mod tests {
         let conn = Connection::open_in_memory().expect("open in-memory db");
         conn.execute_batch("PRAGMA foreign_keys=ON;")
             .expect("enable fks");
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER PRIMARY KEY,
-                applied_at TEXT NOT NULL
-            )",
-        )
-        .expect("create schema_version");
-
-        for (version, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= max_version) {
-            conn.execute_batch(sql).expect("apply migration");
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?1, datetime('now'))",
-                rusqlite::params![version],
-            )
-            .expect("record migration");
-        }
+        crate::db::run_migrations_up_to(&conn, max_version).expect("apply migrations");
 
         conn
     }
@@ -452,8 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_stored_value_is_an_error_rather_than_a_panic() {
-        let conn = migrated_db();
+    fn an_unreadable_stored_value_is_an_error_rather_than_a_panic() {        let conn = migrated_db();
         ensure(&conn, INSTALL, FINGERPRINT).expect("ensure");
         // The CHECK constraints make this unreachable through the app; a hand-edited or
         // downgraded file is the case this guards, simulated by suspending the checks.
@@ -466,5 +512,98 @@ mod tests {
 
         let error = load(&conn).expect_err("load must refuse");
         assert!(matches!(error, AppError::Database { .. }));
+    }
+
+    #[test]
+    fn a_pinned_dataset_is_not_joined_until_a_join_completes() {
+        let conn = migrated_db();
+        ensure(&conn, INSTALL, FINGERPRINT).expect("ensure");
+
+        set_pin(&conn, "us-east-1:abc", "sub-1").expect("set pin");
+        let pinned = load(&conn).expect("load").expect("row exists");
+        assert_eq!(pinned.link_state, LinkState::Linked);
+        assert!(
+            !pinned.joined(),
+            "the first credential vend is not a join; re-asking the link question depended on it"
+        );
+        assert!(!pinned.sync_disabled, "sync is on by default");
+
+        mark_joined(&conn).expect("mark joined");
+        let joined = load(&conn).expect("load").expect("row exists");
+        assert!(joined.joined());
+
+        let stamp = joined.joined_at.clone();
+        mark_joined(&conn).expect("marking again is success");
+        assert_eq!(
+            load(&conn).expect("load").expect("row exists").joined_at,
+            stamp,
+            "the stamp answers 'has it ever joined' and must not move"
+        );
+    }
+
+    #[test]
+    fn the_opt_out_round_trips_and_is_refused_on_a_wiped_row() {
+        let conn = migrated_db();
+        ensure(&conn, INSTALL, FINGERPRINT).expect("ensure");
+
+        set_sync_disabled(&conn, true).expect("opt out");
+        assert!(load(&conn).expect("load").expect("row").sync_disabled);
+
+        set_sync_disabled(&conn, false).expect("opt back in");
+        assert!(!load(&conn).expect("load").expect("row").sync_disabled);
+
+        conn.execute("DELETE FROM sync_state", []).expect("wipe");
+        assert!(set_sync_disabled(&conn, true).is_err());
+        assert!(mark_joined(&conn).is_err());
+    }
+
+    #[test]
+    fn the_schema_refuses_a_disabled_flag_that_is_not_a_boolean() {
+        let conn = migrated_db();
+        ensure(&conn, INSTALL, FINGERPRINT).expect("ensure");
+
+        let error = conn
+            .execute("UPDATE sync_state SET sync_disabled = 2 WHERE id = 1", [])
+            .expect_err("the domain must be 0/1");
+
+        assert!(
+            error.to_string().contains("sync_state_disabled_is_boolean"),
+            "expected the named constraint to fire, got {error}"
+        );
+    }
+
+    /// The owner's own dataset is exactly this case: linked by Milestone 1 and holding records,
+    /// so the upgrade has to read as joined or it would be asked the first-connect question.
+    #[test]
+    fn the_migration_backfills_every_linked_row_as_already_joined() {
+        let conn = db_at_version(34);
+        conn.execute(
+            "INSERT INTO sync_state (id, install_id, machine_fingerprint, identity_id, owner_sub, \
+             link_state) VALUES (1, ?1, ?2, 'us-east-1:abc', 'sub-1', 'linked')",
+            rusqlite::params![INSTALL, FINGERPRINT],
+        )
+        .expect("seed a Milestone-1 linked row");
+
+        run_migrations(&conn).expect("forward migrate");
+
+        let state = load(&conn).expect("load").expect("row exists");
+        assert!(state.joined(), "a Milestone-1 linked dataset is already joined");
+        assert!(!state.sync_disabled, "the upgrade must not opt anyone out");
+        assert_eq!(state.install_id, INSTALL, "the upgrade carries the install id");
+        assert_eq!(state.owner_sub.as_deref(), Some("sub-1"));
+    }
+
+    #[test]
+    fn the_migration_leaves_an_unlinked_row_unjoined() {
+        let conn = db_at_version(34);
+        conn.execute(
+            "INSERT INTO sync_state (id, install_id, machine_fingerprint) VALUES (1, ?1, ?2)",
+            rusqlite::params![INSTALL, FINGERPRINT],
+        )
+        .expect("seed an unlinked row");
+
+        run_migrations(&conn).expect("forward migrate");
+
+        assert!(!load(&conn).expect("load").expect("row").joined());
     }
 }

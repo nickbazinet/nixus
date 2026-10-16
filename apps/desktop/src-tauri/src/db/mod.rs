@@ -369,6 +369,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         34,
         include_str!("../../migrations/034_audit_log_entity_uuid.sql"),
     ),
+    (
+        35,
+        include_str!("../../migrations/035_sync_join_marker.sql"),
+    ),
 ];
 
 /// The scalar SQL function migration 030 backfills `project_images.image_sha256` with.
