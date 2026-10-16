@@ -30,6 +30,18 @@ pub async fn delete_all_data(app: AppHandle, state: State<'_, DbState>) -> Resul
     let deleted = active.write_uncaptured(danger_zone_db::wipe_all)?;
     info!("Danger Zone wipe complete: {} rows deleted", deleted);
 
+    // The wipe deleted `sync_state` and the capture hook's re-attach re-seeded it with a fresh
+    // install id (AD-4). Marking that row opted out is what stops the next launch from silently
+    // downloading the cloud copy of everything the user has just erased; the cloud copy and the
+    // other computers are still untouched, and nothing is captured, so no tombstone is produced.
+    if active.capture.is_some() {
+        if let Some(conn) = active.conn.as_ref() {
+            if let Err(error) = crate::db::sync_state::set_sync_disabled(conn, true) {
+                warn!("The wiped dataset could not be marked as opted out of sync: {}", error);
+            }
+        }
+    }
+
     let conn = active.conn.as_mut().ok_or(AppError::NotConfigured)?;
 
     // Non-fatal: the rows are already gone, this only reclaims disk space.

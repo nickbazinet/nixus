@@ -127,6 +127,15 @@ pub enum BootstrapPlan {
     /// The owner exists but no snapshot has been published yet — another computer created
     /// the binding and has not finished its initial upload.
     NoSnapshot,
+    /// `snap/LATEST` names a snapshot written before row identities travelled (Milestone 1), so
+    /// restoring it and then applying the log would re-create every row it already holds.
+    ///
+    /// Not an error and not a first enable: the joined computer that published it republishes an
+    /// identity-bearing snapshot once its reconcile pass completes, so this resolves by itself
+    /// within a cycle or two. Waiting is the only option that cannot duplicate money rows — the
+    /// alternative, treating the log as authoritative over a snapshot that shares no identities
+    /// with it, would have to guess which local rows the log's creations describe.
+    SnapshotNotReady,
     /// The local dataset holds no user data, so the cloud copy can be restored without
     /// asking anything.
     Restore { latest: LatestSnapshot, etag: ETag },
@@ -228,6 +237,10 @@ where
             found: latest.schema_version,
             supported,
         });
+    }
+
+    if !latest.carries_identities {
+        return Ok(BootstrapPlan::SnapshotNotReady);
     }
 
     if local.is_empty() {

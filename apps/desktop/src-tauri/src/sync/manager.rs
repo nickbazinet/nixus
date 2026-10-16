@@ -101,6 +101,10 @@ pub struct SyncStatusPayload {
     pub state: SyncState,
     pub dataset_id: String,
     pub enabled: bool,
+    /// The user's durable "sync across my computers" switch, read back from the dataset. Distinct
+    /// from `!enabled`, which is also true while an automatic join is still waiting for a network
+    /// or a session — the UI has to tell "you turned this off" from "not started yet".
+    pub paused: bool,
     pub last_sync_ms: Option<i64>,
     pub error_code: Option<String>,
     pub recoverable: bool,
@@ -127,6 +131,10 @@ pub enum SyncEnableOutcome {
     SeparateProfileCreated {
         dataset_id: String,
     },
+    /// Nothing could be joined yet and there is nothing for anyone to do: the account's current
+    /// snapshot predates row identities, and the computer that owns it republishes an
+    /// identity-bearing one within a cycle or two. Retried automatically.
+    Waiting,
 }
 
 /// The answer to a conflict prompt.
@@ -413,6 +421,13 @@ pub struct SyncTuning {
     /// unmigrated write site justifies another one, which is what "when idle while unmigrated write
     /// sites remain" means.
     pub reconcile_interval: Duration,
+    /// The floor between two attempts at the AUTOMATIC join, which is how a join that could not
+    /// run yet (offline, no session, throttled) starts by itself instead of waiting for a relaunch.
+    pub auto_join_interval: Duration,
+    /// The floor between two attempts for an account that does not hold the capability. Far longer
+    /// than `auto_join_interval` and on its own cadence so an upgrade mid-session is still picked
+    /// up without an un-entitled account being re-asked every half minute (AD-14, AD-18).
+    pub capability_recheck_interval: Duration,
 }
 
 impl Default for SyncTuning {
@@ -427,6 +442,8 @@ impl Default for SyncTuning {
             segment_interval: Duration::from_secs(10),
             tombstone_purge_interval: Duration::from_secs(6 * 60 * 60),
             reconcile_interval: Duration::from_secs(60),
+            auto_join_interval: Duration::from_secs(30),
+            capability_recheck_interval: Duration::from_secs(15 * 60),
             request_rate: RequestRateCap::default(),
             snapshot_tail_max_bytes: 2 * 1024 * 1024,
             snapshot_tail_max_messages: 5_000,
@@ -672,6 +689,17 @@ pub(crate) struct SyncActor<H: SyncHost> {
     /// after the state has cleared, because "it happened and then it was fixed" is what support
     /// needs to read.
     last_clock_skew_ms: Option<i64>,
+    /// The user's durable opt-out, cached so building a status payload never reads the dataset.
+    opted_out: bool,
+    last_auto_join: Option<Instant>,
+    /// Whether the last automatic join was refused for a reason the user is not supposed to see
+    /// (no capability, no session). Keeps the refusal off the indicator and out of the log after
+    /// the first time, and selects the slower retry cadence.
+    auto_join_quiet: bool,
+    /// Whether the `snap/LATEST` this computer last read was written before row identities
+    /// travelled. A joined computer that finds one republishes, which is what stops a new computer
+    /// from ever having to bootstrap off it.
+    latest_carries_identities: bool,
 }
 
 impl<H: SyncHost> SyncActor<H> {
@@ -683,10 +711,16 @@ impl<H: SyncHost> SyncActor<H> {
         watch::Receiver<SyncStatusPayload>,
         mpsc::UnboundedReceiver<SyncStatusPayload>,
     ) {
+        let opted_out = host
+            .with_dataset(crate::db::sync_state::load)
+            .ok()
+            .flatten()
+            .is_some_and(|state| state.sync_disabled);
         let initial = SyncStatusPayload {
             state: SyncState::Unlinked,
             dataset_id: host.dataset_id().to_string(),
             enabled: false,
+            paused: opted_out,
             last_sync_ms: None,
             error_code: None,
             recoverable: true,
@@ -741,6 +775,13 @@ impl<H: SyncHost> SyncActor<H> {
             last_reconcile: Some(started),
             reconcile_done_once: false,
             last_clock_skew_ms: None,
+            opted_out,
+            // Dated from CONSTRUCTION like the two log floors: the unattended retry in `tick` is
+            // the backstop, and launch's own attempt comes from the explicit `auto_start_now`
+            // the supervisor issues, which is not subject to the floor.
+            last_auto_join: Some(started),
+            auto_join_quiet: false,
+            latest_carries_identities: true,
         };
 
         (actor, status_rx, events_rx)
@@ -751,6 +792,7 @@ impl<H: SyncHost> SyncActor<H> {
             state: self.state,
             dataset_id: self.host.dataset_id().to_string(),
             enabled: self.enabled,
+            paused: self.opted_out,
             last_sync_ms: self.last_sync_ms,
             error_code: self.last_error.map(str::to_string),
             recoverable: self.recoverable,
@@ -949,43 +991,130 @@ impl<H: SyncHost> SyncActor<H> {
         self.publish(SyncState::Idle);
     }
 
+    /// Whether this dataset has really joined the account's sync, read from the dataset itself.
+    ///
+    /// `link_state` cannot answer this: it is set at the first credential vend, so a computer that
+    /// only saw CAP-5's question and dismissed it would read as linked and be asked again forever.
+    fn joined(&self) -> bool {
+        self.host
+            .with_dataset(crate::db::sync_state::load)
+            .ok()
+            .flatten()
+            .is_some_and(|state| state.joined())
+    }
+
+    fn refresh_opt_out(&mut self) {
+        if let Ok(Some(state)) = self.host.with_dataset(crate::db::sync_state::load) {
+            self.opted_out = state.sync_disabled;
+        }
+    }
+
+    /// Writes the user's switch through to the dataset, which is what makes it survive a relaunch,
+    /// a sign-in, a dataset switch and a wipe. `install()` first because the row has to exist.
+    fn set_opted_out(&mut self, disabled: bool) {
+        self.opted_out = disabled;
+
+        if let Err(fault) = self.install().and_then(|_| {
+            self.host
+                .with_dataset(|conn| crate::db::sync_state::set_sync_disabled(conn, disabled))
+        }) {
+            warn!("the sync switch could not be stored: {}", fault.code());
+        }
+    }
+
+    /// Records that a join genuinely completed — a first publish, a restore or an answered
+    /// replace. Deliberately unreachable from the credential vend, which runs before any of them.
+    fn mark_joined(&mut self) {
+        if let Err(fault) = self
+            .install()
+            .and_then(|_| self.host.with_dataset(crate::db::sync_state::mark_joined))
+        {
+            warn!("the sync join marker could not be stored: {}", fault.code());
+        }
+    }
+
+    /// The AUTOMATIC join: the user configures nothing and is asked nothing.
+    ///
+    /// Driven at launch, at a dataset switch and from every `tick`, which is what makes it
+    /// self-healing — a join that could not run because the machine was offline, the session was
+    /// not there yet or the account had just been upgraded starts by itself, with no restart.
+    /// Refusals the user cannot act on are SILENT: the state stays `unlinked`, no backoff is
+    /// scheduled, and nothing is logged twice.
+    /// The launch / dataset-switch attempt: the same join, without the unattended retry floor.
+    pub(in crate::sync) async fn auto_start_now(&mut self) {
+        self.last_auto_join = None;
+        self.auto_start().await;
+    }
+
+    pub(in crate::sync) async fn auto_start(&mut self) {
+        if self.enabled || self.pending.is_some() {
+            return;
+        }
+
+        // An un-entitled account is re-checked on its own slow cadence: an upgrade mid-session
+        // still gets picked up, without the account endpoint being asked every half minute.
+        let floor = match self.last_error {
+            Some("not_entitled") | Some("not_configured") => {
+                self.tuning.capability_recheck_interval
+            }
+            _ => self.tuning.auto_join_interval,
+        };
+        if self.last_auto_join.is_some_and(|at| at.elapsed() < floor) {
+            return;
+        }
+        self.last_auto_join = Some(Instant::now());
+
+        self.refresh_opt_out();
+        if self.opted_out {
+            return;
+        }
+
+        // Only for a dataset that has something to resume: showing `syncing` to an account that
+        // is about to be refused for want of the capability is exactly the chrome AD-14 forbids.
+        if self.joined() {
+            self.publish(SyncState::Syncing);
+        }
+
+        match self.enable_inner(None).await {
+            Ok(outcome) => {
+                self.auto_join_quiet = false;
+                self.settle_enable(&outcome).await;
+            }
+            Err(fault) if quiet_for_auto_join(&fault) => self.note_quiet_refusal(&fault),
+            Err(fault) => self.record_fault(&fault),
+        }
+    }
+
+    /// A refusal the user is not meant to see as a failure: no capability, no session yet.
+    ///
+    /// The state stays `unlinked`, so the always-mounted indicator renders nothing at all, while
+    /// the CODE is kept so the settings screen can explain why sync is not running.
+    fn note_quiet_refusal(&mut self, fault: &SyncFault) {
+        if !self.auto_join_quiet {
+            info!("Sync is not starting automatically: {}", fault.code());
+            self.auto_join_quiet = true;
+        }
+
+        self.stats.blocked += 1;
+        self.backoff = None;
+        self.last_error = Some(fault.code());
+        self.recoverable = fault.recoverable();
+        self.frozen_reason = None;
+        self.publish(SyncState::Unlinked);
+    }
+
+    /// The user turning sync on, or answering CAP-5's question. Clears the durable opt-out,
+    /// because this call IS the user asking for it.
     pub(in crate::sync) async fn enable(
         &mut self,
         choice: Option<LinkChoice>,
     ) -> Result<SyncEnableOutcome, SyncFault> {
+        self.set_opted_out(false);
         self.publish(SyncState::Syncing);
 
         match self.enable_inner(choice).await {
             Ok(outcome) => {
-                match &outcome {
-                    SyncEnableOutcome::Enabled { .. } => {
-                        self.enabled = true;
-                        // AD-9 restores the snapshot AND the tail after its vector. The log cycle
-                        // is what fetches that tail, and without this call a freshly linked
-                        // computer would sit on a snapshot-aged dataset until the first poll
-                        // interval elapsed (Story 19 recorded exactly that gap).
-                        if self.pending.is_none() {
-                            if let Err(fault) = self.log_cycle(true).await {
-                                self.record_fault(&fault);
-                            }
-                        }
-                        if self.pending.is_some() {
-                            self.clear_error();
-                            self.publish(SyncState::RemoteChanged);
-                        } else {
-                            self.mark_synced();
-                        }
-                    }
-                    SyncEnableOutcome::LinkChoiceRequired { .. } => {
-                        self.publish(SyncState::LinkChoiceRequired)
-                    }
-                    SyncEnableOutcome::SeparateProfileCreated { .. } => {
-                        self.enabled = false;
-                        self.pending = None;
-                        self.clear_error();
-                        self.publish(SyncState::Unlinked);
-                    }
-                }
+                self.settle_enable(&outcome).await;
 
                 Ok(outcome)
             }
@@ -996,20 +1125,73 @@ impl<H: SyncHost> SyncActor<H> {
         }
     }
 
+    async fn settle_enable(&mut self, outcome: &SyncEnableOutcome) {
+        match outcome {
+            SyncEnableOutcome::Enabled { .. } => {
+                self.enabled = true;
+                // AD-9 restores the snapshot AND the tail after its vector. The log cycle
+                // is what fetches that tail, and without this call a freshly linked
+                // computer would sit on a snapshot-aged dataset until the first poll
+                // interval elapsed (Story 19 recorded exactly that gap).
+                if self.pending.is_none() {
+                    self.mark_joined();
+                    if let Err(fault) = self.log_cycle(true).await {
+                        self.record_fault(&fault);
+                    }
+                }
+                if self.pending.is_some() {
+                    self.clear_error();
+                    self.publish(SyncState::RemoteChanged);
+                } else {
+                    self.mark_synced();
+                }
+            }
+            SyncEnableOutcome::LinkChoiceRequired { .. } => {
+                self.publish(SyncState::LinkChoiceRequired)
+            }
+            SyncEnableOutcome::SeparateProfileCreated { .. } => {
+                self.enabled = false;
+                self.pending = None;
+                // This dataset is CAP-5's deliberately-unsynced half: the cloud copy went to the
+                // new profile. Persisting the switch is what stops the automatic join from asking
+                // the same question again on the very next tick.
+                self.set_opted_out(true);
+                self.clear_error();
+                self.publish(SyncState::Unlinked);
+            }
+            SyncEnableOutcome::Waiting => {
+                self.enabled = false;
+                self.clear_error();
+                self.publish(SyncState::Unlinked);
+            }
+        }
+    }
+
     async fn enable_inner(
         &mut self,
         choice: Option<LinkChoice>,
     ) -> Result<SyncEnableOutcome, SyncFault> {
         let session = self.host.connect().await?;
+
+        // A dataset that has joined is never assessed again: `assess` answers `ChoiceRequired` for
+        // any dataset that holds rows while the account holds a snapshot, which is true of every
+        // launch of every computer that is already syncing.
+        if self.joined() {
+            return self.resume(&session).await;
+        }
+
         let local = self.host.local_data()?;
         let plan = bootstrap::assess(&session.store, &session.pin, &local).await?;
 
         match plan {
             BootstrapPlan::FirstEnable => {
                 claim_owner(&session, self.host.now_ms()).await?;
-                self.publish_snapshot(&session, None).await
+                self.publish_snapshot(&session, None, LostCas::Prompt).await
             }
-            BootstrapPlan::NoSnapshot => self.publish_snapshot(&session, None).await,
+            BootstrapPlan::NoSnapshot => {
+                self.publish_snapshot(&session, None, LostCas::Prompt).await
+            }
+            BootstrapPlan::SnapshotNotReady => Ok(SyncEnableOutcome::Waiting),
             BootstrapPlan::Restore { latest, etag } => {
                 self.close_applier();
                 let report = bootstrap::restore_latest(
@@ -1030,6 +1212,7 @@ impl<H: SyncHost> SyncActor<H> {
                 self.stats.last_payload_bytes = Some(report.payload_bytes);
                 self.known_latest = Some(etag);
                 self.snapshot_watermark = latest.watermark.clone();
+                self.latest_carries_identities = latest.carries_identities;
                 self.reopen_applier();
 
                 Ok(SyncEnableOutcome::Enabled {
@@ -1056,6 +1239,47 @@ impl<H: SyncHost> SyncActor<H> {
                 }
                 Some(choice) => self.apply_link_choice(&session, &latest, etag, choice).await,
             },
+        }
+    }
+
+    /// Resumes a dataset that has already joined: no assessment, no question, ever.
+    ///
+    /// The owner object is still verified, because AD-7's rule that a prefix owned by another
+    /// account must freeze rather than sync does not depend on how sync was started. After that it
+    /// is the ordinary cycle — the other computers' tail applied by HLC and per-field LWW, local
+    /// changes pushed — which is the whole of what "seamless and automatic" means.
+    async fn resume(&mut self, session: &HostSession<H>) -> Result<SyncEnableOutcome, SyncFault> {
+        match session.store.get(OWNER_OBJECT_KEY).await {
+            Ok(stored) => {
+                let owner_sub = owner_sub_from_body(&stored.bytes).map_err(SyncFault::Auth)?;
+                if owner_sub != session.pin.owner_sub {
+                    return Err(SyncFault::OwnerMismatch);
+                }
+            }
+            // No binding at all: there is nothing to resume ONTO, so this is a first enable in
+            // everything but name. Re-claiming and publishing asks the user nothing.
+            Err(GatedError::Store(StoreError::NotFound)) => {
+                claim_owner(session, self.host.now_ms()).await?;
+
+                return self.publish_snapshot(session, None, LostCas::Adopt).await;
+            }
+            Err(error) => return Err(error.into()),
+        }
+
+        match snapshot::fetch_latest(&session.store).await? {
+            Some((latest, etag)) => {
+                self.snapshot_watermark = latest.watermark;
+                self.latest_carries_identities = latest.carries_identities;
+                self.known_latest = Some(etag);
+
+                Ok(SyncEnableOutcome::Enabled {
+                    state: SyncState::Idle,
+                })
+            }
+            // Joined, but the pointer is missing: publishing is the `NoSnapshot` path, and the
+            // lost-CAS prompt has no place here — the log has already carried every change both
+            // ways, so a pointer that appeared meanwhile is the same converged account (story 23).
+            None => self.publish_snapshot(session, None, LostCas::Adopt).await,
         }
     }
 
@@ -1095,6 +1319,7 @@ impl<H: SyncHost> SyncActor<H> {
                 self.stats.last_payload_bytes = Some(report.payload_bytes);
                 self.known_latest = Some(etag);
                 self.snapshot_watermark = latest.watermark.clone();
+                self.latest_carries_identities = latest.carries_identities;
                 self.pending = None;
 
                 Ok(SyncEnableOutcome::Enabled {
@@ -1116,11 +1341,9 @@ impl<H: SyncHost> SyncActor<H> {
         &mut self,
         session: &HostSession<H>,
         known_latest: Option<&ETag>,
+        lost_cas: LostCas,
     ) -> Result<SyncEnableOutcome, SyncFault> {
-        let state = match self
-            .upload(session, known_latest, LostCas::Prompt)
-            .await?
-        {
+        let state = match self.upload(session, known_latest, lost_cas).await? {
             UploadStep::Published => SyncState::Idle,
             UploadStep::RemoteChanged => SyncState::RemoteChanged,
         };
@@ -1154,6 +1377,10 @@ impl<H: SyncHost> SyncActor<H> {
                 self.stats.uploads += 1;
                 self.known_latest = Some(latest);
                 self.snapshot_watermark = built.watermark.clone();
+                // Anything this build writes carries a watermark and row identities, so a publish
+                // is also how an account's Milestone-1 snapshot stops being the one a new computer
+                // would have to bootstrap from.
+                self.latest_carries_identities = true;
                 self.pending = None;
                 self.compact(session).await;
 
@@ -1172,6 +1399,7 @@ impl<H: SyncHost> SyncActor<H> {
                 match lost_cas {
                     LostCas::Adopt => {
                         self.snapshot_watermark = theirs.watermark.clone();
+                        self.latest_carries_identities = theirs.carries_identities;
                         self.known_latest = Some(their_etag);
                         self.pending = None;
 
@@ -1633,7 +1861,7 @@ impl<H: SyncHost> SyncActor<H> {
     pub(in crate::sync) async fn tick(&mut self) {
         self.purge_tombstones();
 
-        if !self.enabled || self.pending.is_some() {
+        if self.pending.is_some() {
             return;
         }
 
@@ -1641,6 +1869,14 @@ impl<H: SyncHost> SyncActor<H> {
             if Instant::now() < backoff.until {
                 return;
             }
+        }
+
+        // Self-healing, and the whole of "the user never enables anything": a join that could not
+        // run at launch is retried here until it succeeds, so sync starts by itself once the
+        // network or the session is back and without an app restart.
+        if !self.enabled {
+            self.auto_start().await;
+            return;
         }
 
         // The log protocol runs on every tick, independently of the snapshot settle window: it
@@ -1661,6 +1897,14 @@ impl<H: SyncHost> SyncActor<H> {
                 self.record_fault(&fault);
                 return;
             }
+        }
+
+        // Before the settle window, because this one is not driven by a local edit: the account's
+        // current snapshot predates row identities, this computer has now minted them for every
+        // row, and until it republishes no new computer can bootstrap at all.
+        if self.snapshot_upgrade_due() {
+            let _ = self.run_upload().await;
+            return;
         }
 
         let Some(changed_at) = self.last_change else {
@@ -1701,6 +1945,16 @@ impl<H: SyncHost> SyncActor<H> {
         }
 
         self.run_upload().await
+    }
+
+    /// Whether the account's current snapshot has to be replaced because it predates row
+    /// identities (Milestone 1 stripped `sync_uuid` and published no watermark).
+    ///
+    /// Gated on a COMPLETED reconcile pass: only then does every local row have an identity and a
+    /// creation message, which is what makes the replacement snapshot one a new computer can
+    /// bootstrap from and then apply this computer's tail on top of without duplicating rows.
+    fn snapshot_upgrade_due(&self) -> bool {
+        self.known_latest.is_some() && !self.latest_carries_identities && self.reconcile_done_once
     }
 
     /// Whether the unsnapshotted tail has passed either AD-9 threshold.
@@ -1749,6 +2003,7 @@ impl<H: SyncHost> SyncActor<H> {
         // thing that can tell them apart. Steady-state polling still costs what AD-6 says it does.
         if let Some((latest, _)) = snapshot::fetch_latest(&session.store).await? {
             self.snapshot_watermark = latest.watermark;
+            self.latest_carries_identities = latest.carries_identities;
         }
 
         for (install, seq) in gaps {
@@ -1791,6 +2046,7 @@ impl<H: SyncHost> SyncActor<H> {
         self.stats.last_payload_bytes = Some(report.payload_bytes);
         self.known_latest = Some(etag);
         self.snapshot_watermark = latest.watermark.clone();
+        self.latest_carries_identities = latest.carries_identities;
         self.needs_rebootstrap = false;
         self.reopen_applier();
         self.replay_unsent()?;
@@ -1907,6 +2163,7 @@ impl<H: SyncHost> SyncActor<H> {
                         self.pending = None;
                         self.known_latest = Some(their_etag);
                         self.snapshot_watermark = theirs.watermark.clone();
+                        self.latest_carries_identities = theirs.carries_identities;
                         self.reopen_applier();
                         self.discard_unsent_log();
                         self.mark_synced();
@@ -1937,7 +2194,16 @@ impl<H: SyncHost> SyncActor<H> {
         }
     }
 
-    pub(in crate::sync) async fn disable(&mut self) {
+    /// Stops syncing this dataset.
+    ///
+    /// `persist` is the difference between the USER turning the switch off — which has to survive
+    /// a relaunch, or the next launch would silently turn sync back on — and the teardown a
+    /// dataset switch, a sign-out or a process exit does, which must change nothing durable.
+    pub(in crate::sync) async fn disable(&mut self, persist: bool) {
+        if persist {
+            self.set_opted_out(true);
+        }
+
         self.enabled = false;
         self.pending = None;
         self.last_change = None;
@@ -1973,6 +2239,19 @@ impl Applier for ClosedApplier {
             message: "the dataset is being replaced; the apply connection is closed".to_string(),
         })
     }
+}
+
+/// Whether an automatic join's refusal is one the user must not be shown as a failure.
+///
+/// An account without the capability and a process with no session yet are STATES of the product,
+/// not faults: AD-14 says such a user sees no sync at all, and AD-16 says a fault never becomes
+/// chrome. Everything else (offline, transport, a frozen dataset) keeps its ordinary state so the
+/// user can see that sync is waiting on something real.
+pub(in crate::sync) fn quiet_for_auto_join(fault: &SyncFault) -> bool {
+    matches!(
+        fault.code(),
+        "not_entitled" | "signed_out" | "not_configured" | "local_only"
+    )
 }
 
 /// What a lost `snap/LATEST` compare-and-swap means to the caller.
@@ -2032,6 +2311,10 @@ enum SyncCommand {
         reply: oneshot::Sender<Result<SyncEnableOutcome, SyncFault>>,
     },
     Disable {
+        persist: bool,
+        reply: oneshot::Sender<()>,
+    },
+    AutoStart {
         reply: oneshot::Sender<()>,
     },
     Now {
@@ -2089,8 +2372,19 @@ impl SyncHandle {
             .await?
     }
 
+    /// The user's switch: durable, so a relaunch does not turn sync back on.
     pub async fn disable(&self) -> Result<(), SyncFault> {
-        self.request(|reply| SyncCommand::Disable { reply }).await
+        self.request(|reply| SyncCommand::Disable {
+            persist: true,
+            reply,
+        })
+        .await
+    }
+
+    /// Asks the actor to join automatically if it may. Carries no choice and no user intent, so it
+    /// respects the durable switch and reports nothing the user cannot act on.
+    pub async fn auto_start(&self) -> Result<(), SyncFault> {
+        self.request(|reply| SyncCommand::AutoStart { reply }).await
     }
 
     pub async fn sync_now(&self) -> Result<(), SyncFault> {
@@ -2138,8 +2432,12 @@ async fn serve<H: SyncHost>(
                 Some(SyncCommand::Enable { choice, reply }) => {
                     let _ = reply.send(actor.enable(choice).await);
                 }
-                Some(SyncCommand::Disable { reply }) => {
-                    actor.disable().await;
+                Some(SyncCommand::Disable { persist, reply }) => {
+                    actor.disable(persist).await;
+                    let _ = reply.send(());
+                }
+                Some(SyncCommand::AutoStart { reply }) => {
+                    actor.auto_start_now().await;
                     let _ = reply.send(());
                 }
                 Some(SyncCommand::Now { reply }) => {
@@ -2159,7 +2457,7 @@ async fn serve<H: SyncHost>(
         }
     }
 
-    actor.disable().await;
+    actor.disable(false).await;
 }
 
 /// How many commands may queue before `enable`/`sync_now` wait. Small on purpose: the UI

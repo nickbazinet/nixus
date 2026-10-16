@@ -198,6 +198,15 @@ pub struct LatestSnapshot {
     /// redundant, and downloading a multi-megabyte snapshot to read one table would make the
     /// sweep cost more than the storage it reclaims.
     pub watermark: BTreeMap<String, i64>,
+    /// Whether the pointer carried a `watermark` KEY at all — the one reliable marker that the
+    /// snapshot it names was written by Milestone 2 or later and therefore carries row identities
+    /// (`sync_uuid`). Milestone 1 stripped identities and wrote no watermark field.
+    ///
+    /// Deliberately NOT `watermark.is_empty()`, which an ordinary first publish also produces: a
+    /// snapshot of a dataset that has shipped nothing yet claims nothing and still has identities.
+    /// Applying a tail on top of an identity-less snapshot would re-create every row it already
+    /// holds, so the two cases must never be confused.
+    pub carries_identities: bool,
 }
 
 impl LatestSnapshot {
@@ -267,6 +276,7 @@ impl LatestSnapshot {
         // empty one is exactly the honest reading of it — nothing is claimed, so no segment is
         // deletable and a bootstrap applies the whole tail.
         let mut watermark = BTreeMap::new();
+        let carries_identities = document.get("watermark").is_some();
         if let Some(entries) = document.get("watermark").and_then(|value| value.as_object()) {
             for (install, seq) in entries {
                 let seq = seq.as_i64().ok_or(SnapshotError::MalformedLatest)?;
@@ -283,6 +293,7 @@ impl LatestSnapshot {
             schema_version,
             created_ms: number("created_ms")?,
             watermark,
+            carries_identities,
         })
     }
 }
@@ -609,6 +620,7 @@ where
         schema_version: snapshot.schema_version,
         created_ms,
         watermark: snapshot.watermark.clone(),
+        carries_identities: true,
     };
 
     let published = match known_latest {
@@ -1182,6 +1194,7 @@ mod tests {
             schema_version: 30,
             created_ms: 1,
             watermark: Default::default(),
+            carries_identities: true,
         };
 
         assert_eq!(
@@ -1212,6 +1225,7 @@ mod tests {
             schema_version: 30,
             created_ms: 1_760_000_000_000,
             watermark: Default::default(),
+            carries_identities: true,
         };
 
         let body = latest.body();
@@ -1261,8 +1275,20 @@ mod tests {
                 hash: "ff".to_string(),
                 schema_version: 2,
                 created_ms: 1,
-            watermark: Default::default(),
+                watermark: Default::default(),
+                // No `watermark` key at all is a Milestone-1 pointer: nothing is claimed AND the
+                // snapshot it names carries no row identities, which is a different fact from an
+                // empty watermark and the one a bootstrap has to refuse on.
+                carries_identities: false,
             }
+        );
+        assert!(
+            LatestSnapshot::parse(
+                br#"{"created_ms":1,"hash":"ff","schema_version":2,"snap_id":"aa","v":1,"watermark":{}}"#
+            )
+            .expect("an empty watermark is a valid claim of nothing")
+            .carries_identities,
+            "a first publish claims nothing and still carries identities"
         );
 
         for refused in [
@@ -1324,6 +1350,7 @@ mod tests {
                 schema_version: built.schema_version,
                 created_ms: 1_760_000_000_000,
             watermark: Default::default(),
+            carries_identities: true,
             }
         );
 
@@ -1351,6 +1378,7 @@ mod tests {
             schema_version: built.schema_version,
             created_ms: 1_760_000_500_000,
             watermark: Default::default(),
+            carries_identities: true,
         };
         fake.seed(SNAP_LATEST_KEY, theirs.body());
         let store = syncing_fake(Arc::clone(&fake));
@@ -1389,6 +1417,7 @@ mod tests {
             schema_version: built.schema_version,
             created_ms: 1,
             watermark: Default::default(),
+            carries_identities: true,
         };
         fake.seed(SNAP_LATEST_KEY, theirs.body());
         let store = syncing_fake(Arc::clone(&fake));
@@ -1417,6 +1446,7 @@ mod tests {
             schema_version: built.schema_version,
             created_ms: 3,
             watermark: Default::default(),
+            carries_identities: true,
         };
         let etag = fake.seed(SNAP_LATEST_KEY, theirs.body());
         fake.fail_next(FakeOp::PutIfMatch, StoreError::NotFound);
@@ -1442,6 +1472,7 @@ mod tests {
             schema_version: 30,
             created_ms: 7,
             watermark: Default::default(),
+            carries_identities: true,
         };
         let etag = fake.seed(SNAP_LATEST_KEY, latest.body());
 

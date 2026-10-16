@@ -47,6 +47,8 @@ mod tests_capture_latency;
 #[cfg(test)]
 mod tests_balance_emitters;
 #[cfg(test)]
+mod tests_auto;
+#[cfg(test)]
 mod tests_bootstrap;
 #[cfg(test)]
 mod tests_domain_capture;

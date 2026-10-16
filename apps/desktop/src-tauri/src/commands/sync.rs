@@ -106,8 +106,6 @@ pub(crate) fn start_for_active_dataset(app: &AppHandle) {
         }
     };
 
-    let resume = host.resume_wanted();
-
     let (handle, mut events) = match manager::spawn(host, SyncTuning::default()) {
         Ok(started) => started,
         Err(error) => {
@@ -128,16 +126,16 @@ pub(crate) fn start_for_active_dataset(app: &AppHandle) {
         }
     });
 
-    if resume {
-        // Fire-and-forget: a dataset that was synced on a previous launch resumes on its
-        // own, and the first thing that happens is still a gate check, so a lapsed
-        // entitlement resumes as `frozen` instead of as a transfer.
-        tauri::async_runtime::spawn(async move {
-            if let Err(fault) = handle.enable(None).await {
-                info!("Sync did not resume: {}", fault.code());
-            }
-        });
-    }
+    // Fire-and-forget, and UNCONDITIONAL for a cloud-linked dataset: sync is on by default for an
+    // account that holds the capability, and the actor itself decides — it respects the user's
+    // durable switch, and the first thing that happens is still a gate check, so an account
+    // without the capability joins nothing and is told nothing. A join that cannot run yet is
+    // retried from the actor's own tick rather than waiting for the next launch.
+    tauri::async_runtime::spawn(async move {
+        if let Err(fault) = handle.auto_start().await {
+            info!("Sync could not be asked to start: {}", fault.code());
+        }
+    });
 }
 
 fn handle(app: &AppHandle) -> Result<SyncHandle, AppError> {
@@ -158,8 +156,10 @@ pub async fn sync_enable(
     Ok(handle(&app)?.enable(choice).await?)
 }
 
-/// Stops syncing this dataset without touching the cloud copy (AD-14: the cloud copy is
-/// never deleted) and without unlinking the profile.
+/// Turns "sync across my computers" off for this dataset, durably.
+///
+/// The cloud copy is never deleted (AD-14) and the profile stays linked; the switch is stored in
+/// the dataset so a relaunch, a sign-in or a dataset switch does not turn sync back on.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn sync_disable(app: AppHandle) -> Result<(), AppError> {
     Ok(handle(&app)?.disable().await?)
@@ -180,6 +180,7 @@ pub fn sync_status(app: AppHandle) -> Result<SyncStatusPayload, AppError> {
             state: SyncState::Unlinked,
             dataset_id,
             enabled: false,
+            paused: false,
             last_sync_ms: None,
             error_code: None,
             recoverable: true,

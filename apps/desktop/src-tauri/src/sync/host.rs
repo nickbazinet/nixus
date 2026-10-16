@@ -24,7 +24,7 @@ use tracing::warn;
 
 use crate::datasets;
 use crate::db::backup::{local_data_summary, DatasetSlot, LocalData};
-use crate::db::sync_state::{self, LinkState};
+use crate::db::sync_state;
 use crate::db::{data_version, open_configured, DbState};
 use crate::error::AppError;
 use crate::models::DatasetKind;
@@ -168,17 +168,6 @@ impl DatasetHost {
             },
             limits: Arc::new(DatasetLimits::default()),
         }))
-    }
-
-    /// Whether this dataset was already synced on a previous launch, which is what makes
-    /// `sync_enable` a one-time action rather than something the user repeats every start.
-    /// A pin is the record of that: it is written the first time sync is enabled and is
-    /// carried by backup, restore and the guarded swap because it lives in the file.
-    pub fn resume_wanted(&self) -> bool {
-        self.with_conn(sync_state::load)
-            .ok()
-            .flatten()
-            .is_some_and(|state| matches!(state.link_state, LinkState::Linked))
     }
 
     fn with_conn<T>(
