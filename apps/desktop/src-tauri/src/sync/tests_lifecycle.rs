@@ -70,11 +70,16 @@ impl Computer {
             .expect("the captured write succeeds")
     }
 
-    /// The wipe exactly as `commands::danger_zone::delete_all_data` performs it.
+    /// The wipe exactly as `commands::danger_zone::delete_all_data` performs it, including the
+    /// final step that marks the re-seeded row opted out of sync.
     fn wipe(&self) -> u64 {
-        self.dataset
+        let deleted = self
+            .dataset
             .write_uncaptured(danger_zone::wipe_all)
-            .expect("the wipe succeeds")
+            .expect("the wipe succeeds");
+        sync_state::set_sync_disabled(self.conn(), true).expect("the wiped row is opted out");
+
+        deleted
     }
 
     fn cut(&mut self) -> Option<SegmentBatch> {
@@ -178,6 +183,17 @@ fn a_wipe_unlinks_the_dataset_with_a_fresh_install_identity_and_no_pin() {
     assert_eq!(after.identity_id, None, "the account pin survived the wipe");
     assert_eq!(after.owner_sub, None, "the account pin survived the wipe");
     assert_eq!(after.frozen_reason, None);
+    assert!(
+        !after.joined(),
+        "a wiped dataset has joined nothing: it holds none of the account's rows any more"
+    );
+    // INTENTIONAL BEHAVIOUR CHANGE (fix F8). Sync is automatic now, so an unlinked dataset would
+    // be re-joined on the next launch and would download the cloud copy of exactly what the user
+    // asked to erase. The cloud copy and the other computers are still untouched.
+    assert!(
+        after.sync_disabled,
+        "a wipe must not be undone by the next launch re-downloading the cloud copy"
+    );
 }
 
 #[test]

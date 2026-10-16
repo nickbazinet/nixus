@@ -623,6 +623,28 @@ pub(crate) fn marker_rows(conn: &Connection) -> Vec<String> {
     rows
 }
 
+/// Renames a marker row, which is the per-field last-write-wins case (AD-5).
+pub(crate) fn rename_marker_row(conn: &Connection, from: &str, to: &str) {
+    let updated = conn
+        .execute(
+            "UPDATE budget_groups SET name = ?2 WHERE name = ?1",
+            rusqlite::params![from, to],
+        )
+        .expect("a marker row renames");
+    assert_eq!(updated, 1, "{from} must exist to be renamed");
+}
+
+/// Deletes a marker row, which is the tombstone case (AD-5: delete wins over a concurrent edit).
+pub(crate) fn delete_marker_row(conn: &Connection, name: &str) {
+    let deleted = conn
+        .execute(
+            "DELETE FROM budget_groups WHERE name = ?1",
+            rusqlite::params![name],
+        )
+        .expect("a marker row deletes");
+    assert_eq!(deleted, 1, "{name} must exist to be deleted");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

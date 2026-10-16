@@ -46,6 +46,11 @@ fn tuning() -> SyncTuning {
         // every travelling table inside a fixture that counts requests (AD-3, story 22).
         reconcile_interval: Duration::from_secs(86_400),
         max_backoff: Duration::from_secs(120),
+        // The automatic join is driven explicitly in `tests_auto.rs`: these fixtures measure
+        // request counts and drive `tick` while sync is off, and one unattended join would both
+        // publish a snapshot and add requests none of them is about.
+        auto_join_interval: Duration::from_secs(86_400),
+        capability_recheck_interval: Duration::from_secs(86_400),
         request_rate: RequestRateCap::default(),
     }
 }
@@ -459,7 +464,7 @@ async fn a_fetch_does_not_require_an_enabled_upload_cycle() {
 
     computer_a.enable(None).await.expect("A enables");
     computer_b.enable(None).await.expect("B bootstraps");
-    computer_b.disable().await;
+    computer_b.disable(false).await;
 
     assert_eq!(computer_b.status().state, SyncState::Unlinked);
 

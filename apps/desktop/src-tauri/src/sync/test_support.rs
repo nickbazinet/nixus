@@ -741,6 +741,40 @@ impl TestComputer {
 }
 
 impl ComputerProbe {
+    /// The same computer, relaunched: a brand-new actor over the same dataset file, the same
+    /// account and the same cloud.
+    ///
+    /// The actor-side connection is fresh and every in-memory cursor starts empty, which is
+    /// exactly what a process restart produces — while the dataset FILE persists, so `sync_state`
+    /// (and with it the join marker and the user's switch) is the only thing carried across. That
+    /// is the whole subject of a "does it ask again on every launch" proof.
+    pub(crate) fn relaunch(&self, clock_base: i64, apply_for_real: bool) -> TestComputer {
+        let own = Arc::new(Mutex::new(None));
+
+        TestComputer {
+            id: self.id.clone(),
+            label: format!("Computer {}", self.id),
+            root: self.root.clone(),
+            db_path: self.db_path.clone(),
+            backup_dir: self.backup_dir.clone(),
+            own: Arc::clone(&own),
+            store: Arc::clone(&self.store),
+            kind: DatasetKind::CloudLinked,
+            entitled: Arc::clone(&self.entitled),
+            frozen: Arc::clone(&self.frozen),
+            clock: Arc::new(AtomicI64::new(clock_base)),
+            schema_version: Arc::clone(&self.schema_version),
+            slot: FakeSlot {
+                own,
+                live: Arc::clone(&self.live),
+            },
+            applied: Arc::clone(&self.applied),
+            apply_for_real,
+            limits: Arc::new(DatasetLimits::default()),
+            _dir: Arc::clone(&self._dir),
+        }
+    }
+
     pub(crate) fn store(&self) -> &Arc<FakeObjectStore> {
         &self.store
     }

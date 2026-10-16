@@ -280,6 +280,7 @@ async fn a_sweep_deletes_only_up_to_the_re_read_watermark() {
         schema_version: 34,
         created_ms: NOW_MS,
         watermark: BTreeMap::from([(install.to_string(), 0)]),
+        carries_identities: true,
     };
     cloud.seed(SNAP_LATEST_KEY, behind.body());
 

@@ -331,6 +331,11 @@ fn a_restore_keeps_the_snapshots_merge_state_and_this_computers_log() {
     let snapshot_row: [u8; 16] = [0x33; 16];
     let (_dir, db_path) = live_dataset("live", |conn| {
         link_sync_state(conn);
+        // This computer's own decisions, which the snapshot never carries (it strips `sync_state`)
+        // and the restore therefore has to carry back, or a restore would silently re-ask the
+        // link question and undo the user's switch.
+        crate::db::sync_state::mark_joined(conn).expect("this computer has joined");
+        crate::db::sync_state::set_sync_disabled(conn, true).expect("and the user switched it off");
         crate::db::test_dataset::seed_sync_bookkeeping(conn);
         // An unsent message of this computer's own: nobody else has it yet.
         conn.execute(
@@ -391,6 +396,15 @@ fn a_restore_keeps_the_snapshots_merge_state_and_this_computers_log() {
         conn.query_row(sql, [], |row| row.get(0))
             .expect("the count reads")
     };
+
+    let carried_state = crate::db::sync_state::load(conn)
+        .expect("the row reads")
+        .expect("the restore carried this computer's own sync state");
+    assert!(carried_state.joined(), "a restore does not un-join this computer");
+    assert!(
+        carried_state.sync_disabled,
+        "a restore does not undo the user's switch"
+    );
 
     // The snapshot's identities and watermark are the ones that survived.
     assert_eq!(
