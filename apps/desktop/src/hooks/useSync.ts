@@ -158,26 +158,6 @@ export function useEnableSync() {
   });
 }
 
-export function useDisableSync() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => invoke<void>("sync_disable"),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.syncStatus });
-      queryClient.invalidateQueries({ queryKey: queryKeys.syncDiagnostics });
-    },
-  });
-}
-
-/** Uploads now, ignoring the settle window and the minimum interval. This is the retry action. */
-export function useSyncNow() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => invoke<SyncStatusPayload>("sync_now"),
-    onSuccess: (payload) => publish(queryClient, payload),
-  });
-}
-
 export function useResolveRemoteChanged() {
   const queryClient = useQueryClient();
   return useMutation({

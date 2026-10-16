@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SyncSettings } from "@/components/settings/SyncSettings";
 import { queryKeys } from "@/lib/constants";
 import en from "@/locales/en.json";
-import type { ActiveProfile } from "@/hooks/useDatasets";
 import type { SyncStatusPayload } from "@/lib/types";
 
 declare global {
@@ -20,11 +19,6 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: async () => () => {},
-}));
-
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
-  Link: ({ children }: { children?: React.ReactNode }) => <a>{children}</a>,
 }));
 
 const EN = en as Record<string, string>;
@@ -68,41 +62,6 @@ vi.mock("@nixus/shared", () => {
         {children}
       </button>
     ),
-    Switch: ({
-      checked,
-      onCheckedChange,
-      ...props
-    }: Record<string, unknown> & {
-      checked?: boolean;
-      onCheckedChange?: (next: boolean) => void;
-    }) => (
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onCheckedChange?.(!checked)}
-        {...props}
-      />
-    ),
-    Dialog: ({ open, children }: { open: boolean; children?: React.ReactNode }) =>
-      open ? <div role="dialog">{children}</div> : null,
-    DialogContent: passthrough("div"),
-    DialogHeader: passthrough("div"),
-    DialogTitle: passthrough("p"),
-    DialogDescription: passthrough("p"),
-    DialogFooter: passthrough("div"),
-    StepProgress: ({ label, valueText }: { label: string; valueText?: string }) => (
-      <div role="progressbar" aria-label={label} aria-valuetext={valueText} />
-    ),
-    TooltipProvider: passthrough("div"),
-    Tooltip: passthrough("div"),
-    TooltipContent: passthrough("div"),
-    TooltipTrigger: ({
-      children,
-      ...props
-    }: Record<string, unknown> & { children?: React.ReactNode }) => (
-      <button {...props}>{children}</button>
-    ),
   };
 });
 
@@ -120,27 +79,13 @@ function status(overrides: Partial<SyncStatusPayload> = {}): SyncStatusPayload {
   };
 }
 
-function profile(overrides: Partial<ActiveProfile> = {}): ActiveProfile {
-  return {
-    dataset_id: "default",
-    kind: "cloud-linked",
-    label: "Nicolas",
-    is_signed_in: true,
-    ...overrides,
-  };
-}
-
 describe("SyncSettings", () => {
   let container: HTMLDivElement;
   let root: Root;
   let queryClient: QueryClient;
 
-  const mount = (seeded: {
-    status?: SyncStatusPayload;
-    profile?: ActiveProfile;
-  }) => {
+  const mount = (seeded: { status?: SyncStatusPayload }) => {
     queryClient.setQueryData(queryKeys.syncStatus, seeded.status ?? status());
-    queryClient.setQueryData(queryKeys.activeProfile, seeded.profile ?? profile());
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
@@ -210,100 +155,19 @@ describe("SyncSettings", () => {
     expect(explainer?.textContent).toContain(EN["sync.whereItLivesBody"]);
   });
 
-  // INTENTIONAL BEHAVIOUR CHANGE (fix F8): this section is no longer an onboarding step. Sync is
-  // on by default for an account that includes it, so the control is a switch over the automatic
-  // state and there is no "enable sync" button to offer, disable or press.
-  it("shows the automatic state as ON for a signed-in cloud profile", async () => {
-    mount({ status: status({ state: "idle", enabled: true }) });
+  // Sync is automatic now (no user switch), so the only surfaced status is a problem alert — the
+  // settings page carries no status row, account row or switch at all; the sidebar indicator is
+  // the discovery path for current state.
+  it("does not render the removed account, switch, or status controls", async () => {
+    mount({});
     await settle();
 
-    const toggle = at("sync-switch");
-    expect(toggle?.getAttribute("aria-checked")).toBe("true");
-    expect(toggle?.hasAttribute("disabled")).toBe(false);
-    expect(at("setting-sync-status")?.textContent).toContain(EN["sync.stateIdle"]);
-    expect(at("sync-first-sync-dialog")).toBeNull();
+    expect(at("sync-switch")).toBeNull();
+    expect(at("setting-sync-status")).toBeNull();
+    expect(at("setting-sync-account")).toBeNull();
   });
 
-  it("explains a local-only profile and offers no switch to press", async () => {
-    mount({ profile: profile({ kind: "local", is_signed_in: false }) });
-    await settle();
-
-    const row = at("setting-sync-status");
-    expect(row?.textContent).toContain(EN["sync.unavailableLocalOnlyTitle"]);
-    expect(row?.textContent).toContain(EN["sync.unavailableLocalOnlyBody"]);
-    expect((at("sync-switch") as HTMLButtonElement | null)?.hasAttribute("disabled")).toBe(
-      true
-    );
-    expect(at("sync-sign-in-link")).toBeNull();
-  });
-
-  it("says it is waiting for a sign-in rather than reporting a failure", async () => {
-    mount({ profile: profile({ is_signed_in: false }) });
-    await settle();
-
-    expect(at("setting-sync-status")?.textContent).toContain(
-      EN["sync.stateWaitingForSignInDetail"]
-    );
-    expect((at("sync-switch") as HTMLButtonElement | null)?.hasAttribute("disabled")).toBe(
-      true
-    );
-    expect(at("sync-sign-in-link")).not.toBeNull();
-  });
-
-  it("renders an account without access from the status code, naming no tier", async () => {
-    mount({ status: status({ state: "unlinked", error_code: "not_entitled" }) });
-    await settle();
-
-    const row = at("setting-sync-status");
-    expect(row?.textContent).toContain(EN["sync.stateNotIncludedLabel"]);
-    expect(row?.textContent).toContain(EN["sync.stateNotIncludedDetail"]);
-    expect(row?.textContent).not.toMatch(/premium|tier/i);
-  });
-
-  it("says it is waiting for the network while offline", async () => {
-    mount({ status: status({ state: "offline", enabled: true, error_code: "offline" }) });
-    await settle();
-
-    expect(at("setting-sync-status")?.textContent).toContain(
-      EN["sync.stateWaitingForNetworkDetail"]
-    );
-  });
-
-  it("shows the last sync time and turns sync off through the switch", async () => {
-    mount({
-      status: status({
-        state: "idle",
-        enabled: true,
-        last_sync_ms: 1_760_000_000_000,
-      }),
-    });
-    await settle();
-
-    expect(at("setting-sync-last-sync")?.textContent).not.toContain(
-      EN["sync.lastSyncNever"]
-    );
-    expect(at("setting-sync-status")?.textContent).toContain(EN["sync.stateIdle"]);
-
-    invokeMock.mockResolvedValue(undefined);
-    await click("sync-switch");
-    expect(invokeMock).toHaveBeenCalledWith("sync_disable");
-  });
-
-  it("reports the switch being off as the user's own decision", async () => {
-    mount({ status: status({ state: "unlinked", paused: true }) });
-    await settle();
-
-    const row = at("setting-sync-status");
-    expect(row?.textContent).toContain(EN["sync.stateOffByYouLabel"]);
-    expect(row?.textContent).toContain(EN["sync.stateOffByYouDetail"]);
-    expect(at("sync-switch")?.getAttribute("aria-checked")).toBe("false");
-
-    invokeMock.mockResolvedValue({ outcome: "enabled", state: "syncing" });
-    await click("sync-switch");
-    expect(invokeMock).toHaveBeenCalledWith("sync_enable", { link_choice: null });
-  });
-
-  it("reports an errored status and retries through sync_now", async () => {
+  it("renders a status-error alert for an errored status", async () => {
     mount({
       status: status({
         state: "error",
@@ -317,10 +181,6 @@ describe("SyncSettings", () => {
     expect(at("sync-status-error")?.textContent).toContain(
       EN["sync.errorSnapshotBuild"]
     );
-
-    invokeMock.mockResolvedValue(status({ state: "syncing", enabled: true }));
-    await click("sync-retry-button");
-    expect(invokeMock).toHaveBeenCalledWith("sync_now");
   });
 
   it("renders an unknown error code rather than dropping it", async () => {
@@ -377,36 +237,6 @@ describe("SyncSettings", () => {
     expect(output).toContain(EN["sync.stateIdle"]);
   });
 
-  it("closes the first-sync dialog when the link choice takes over", async () => {
-    mount({ status: status({ state: "unlinked", paused: true }) });
-    await settle();
-
-    invokeMock.mockResolvedValue({
-      outcome: "link_choice_required",
-      local_rows: 42,
-      remote_created_ms: 1_760_000_000_000,
-      remote_schema_version: 30,
-    });
-    await click("sync-switch");
-
-    expect(at("sync-first-sync-dialog")).toBeNull();
-    expect(at("sync-action-error")).toBeNull();
-  });
-
-  it("explains the separate profile it just created", async () => {
-    mount({ status: status({ state: "unlinked", paused: true }) });
-    await settle();
-
-    invokeMock.mockResolvedValue({
-      outcome: "separate_profile_created",
-      dataset_id: "second",
-    });
-    await click("sync-switch");
-
-    expect(at("sync-separate-profile-notice")?.textContent).toContain(
-      EN["sync.separateProfileBody"]
-    );
-  });
   it("saves a diagnostics report and names the file it wrote", async () => {
     mount({});
     await settle();

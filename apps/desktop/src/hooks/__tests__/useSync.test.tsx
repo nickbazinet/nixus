@@ -4,12 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   APPLIED_INVALIDATE_MS,
-  useDisableSync,
   useEnableSync,
   useResolveRemoteChanged,
   useSyncApplied,
   useSyncDiagnostics,
-  useSyncNow,
   useSyncStatus,
   useSyncStatusValue,
 } from "@/hooks/useSync";
@@ -299,23 +297,16 @@ describe("useSync", () => {
     expect(callsOf("sync_status")).toHaveLength(2);
   });
 
-  it("publishes the payload sync_now and the prompt answer return", async () => {
+  it("publishes the prompt answer's returned payload", async () => {
     const resolved = payload({ state: "idle", last_sync_ms: 42 });
     invokeMock.mockResolvedValue(resolved);
 
-    let syncNow: ReturnType<typeof useSyncNow>;
     let resolveRemote: ReturnType<typeof useResolveRemoteChanged>;
     function Probe() {
-      syncNow = useSyncNow();
       resolveRemote = useResolveRemoteChanged();
       return null;
     }
     render(<Probe />);
-
-    await act(async () => {
-      await syncNow!.mutateAsync();
-    });
-    expect(queryClient.getQueryData(queryKeys.syncStatus)).toEqual(resolved);
 
     queryClient.setQueryData(queryKeys.syncStatus, payload({ state: "error" }));
     await act(async () => {
@@ -326,24 +317,6 @@ describe("useSync", () => {
       { action: "load_remote" },
     ]);
     expect(queryClient.getQueryData(queryKeys.syncStatus)).toEqual(resolved);
-  });
-
-  it("invalidates the status and the diagnostics after disabling", async () => {
-    invokeMock.mockResolvedValue(undefined);
-    const spy = vi.spyOn(queryClient, "invalidateQueries");
-
-    let disable: ReturnType<typeof useDisableSync>;
-    function Probe() {
-      disable = useDisableSync();
-      return null;
-    }
-    render(<Probe />);
-    await act(async () => {
-      await disable!.mutateAsync();
-    });
-
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.syncStatus });
-    expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.syncDiagnostics });
   });
 
   it("raises the applied cue on a sync:applied event and dismisses it by hand", async () => {

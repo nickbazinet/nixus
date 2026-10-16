@@ -271,12 +271,10 @@ const SETTINGS_URL = "/settings/ai-provider?section=data";
 const indicator = (page: Page) => page.getByTestId("sync-status-indicator");
 
 test.describe("sync settings", () => {
-  // INTENTIONAL BEHAVIOUR CHANGE (fix F8): the section is no longer an onboarding step. Sync is
-  // automatic for an account that includes it, so the control is a switch over the automatic
-  // state and the progress dialog is only ever reached by turning a switched-OFF profile back on.
-  test("explains what is synced and turns sync back on after it was switched off", async ({
-    page,
-  }) => {
+  // Sync is automatic now (no user-facing switch): the settings section carries only the
+  // explainer and diagnostics, and a problem is surfaced through an alert. Current state lives
+  // in the sidebar indicator instead.
+  test("explains what is synced and does not render the removed controls", async ({ page }) => {
     await setupSyncMock(page, { status: { paused: true } });
     await page.goto(SETTINGS_URL);
 
@@ -288,88 +286,13 @@ test.describe("sync settings", () => {
     await expect(page.getByTestId("setting-sync-explainer")).toContainText(
       "never sent"
     );
-    await expect(page.getByTestId("setting-sync-status")).toContainText(
-      "Your records stay on this computer"
-    );
 
-    await page.getByTestId("sync-switch").click();
-
-    await expect(page.getByTestId("sync-first-sync-dialog")).toBeVisible();
-    await expect(page.getByTestId("sync-first-sync-stage")).toHaveAttribute(
-      "data-stage",
-      /preparing|uploading/
-    );
-
-    await emitSync(page, {
-      ...UNLINKED,
-      state: "syncing",
-      enabled: true,
-    });
-    await expect(page.getByTestId("sync-first-sync-stage")).toHaveAttribute(
-      "data-stage",
-      "uploading"
-    );
-
-    await emitSync(page, {
-      ...UNLINKED,
-      state: "idle",
-      enabled: true,
-      last_sync_ms: 1760000000000,
-    });
-    await expect(page.getByTestId("sync-first-sync-stage")).toHaveAttribute(
-      "data-stage",
-      "done"
-    );
-
-    await page.getByTestId("sync-first-sync-close").click();
-    await expect(page.getByTestId("setting-sync-last-sync")).not.toContainText(
-      "Not yet"
-    );
-    await expect(indicator(page)).toHaveAttribute("data-sync-state", "idle");
-
-    expect((await syncCalls(page)).map((c) => c.cmd)).toContain("sync_enable");
+    await expect(page.getByTestId("sync-switch")).toHaveCount(0);
+    await expect(page.getByTestId("setting-sync-status")).toHaveCount(0);
+    await expect(page.getByTestId("setting-sync-account")).toHaveCount(0);
   });
 
-  test("a local-only profile has no switch to press and is told why", async ({ page }) => {
-    await setupSyncMock(page, { profileKind: "local", signedIn: false });
-    await page.goto(SETTINGS_URL);
-
-    await expect(page.getByTestId("setting-sync-status")).toContainText(
-      "kept on this computer only"
-    );
-    await expect(page.getByTestId("sync-switch")).toBeDisabled();
-    await expect(page.getByTestId("sync-sign-in-link")).toHaveCount(0);
-  });
-
-  test("a signed-out cloud profile is waiting for a sign-in, not failing", async ({
-    page,
-  }) => {
-    await setupSyncMock(page, { signedIn: false });
-    await page.goto(SETTINGS_URL);
-
-    await expect(page.getByTestId("setting-sync-status")).toContainText(
-      "sync starts on its own"
-    );
-    await expect(page.getByTestId("sync-switch")).toBeDisabled();
-    await expect(page.getByTestId("sync-sign-in-link")).toBeVisible();
-  });
-
-  test("an account without access is reported from the backend code, naming no tier", async ({
-    page,
-  }) => {
-    await setupSyncMock(page, {
-      status: { state: "unlinked", error_code: "not_entitled", recoverable: false },
-    });
-    await page.goto(SETTINGS_URL);
-
-    const row = page.getByTestId("setting-sync-status");
-    await expect(row).toContainText("not included with this account");
-    await expect(row).not.toContainText(/premium/i);
-    // The indicator stays hidden: an account without sync carries no sync chrome at all.
-    await expect(indicator(page)).toHaveCount(0);
-  });
-
-  test("an errored status offers a retry that calls sync_now", async ({ page }) => {
+  test("an errored status renders a problem alert", async ({ page }) => {
     await setupSyncMock(page, {
       status: {
         state: "error",
@@ -383,9 +306,21 @@ test.describe("sync settings", () => {
     await expect(page.getByTestId("sync-status-error")).toContainText(
       "could not be prepared"
     );
+  });
 
-    await page.getByTestId("sync-retry-button").click();
-    expect((await syncCalls(page)).map((c) => c.cmd)).toContain("sync_now");
+  test("renders an unknown error code rather than dropping it", async ({ page }) => {
+    await setupSyncMock(page, {
+      status: {
+        state: "error",
+        enabled: true,
+        error_code: "a_code_from_a_newer_build",
+      },
+    });
+    await page.goto(SETTINGS_URL);
+
+    await expect(page.getByTestId("sync-status-error")).toContainText(
+      "Sync could not finish"
+    );
   });
 
   test("diagnostics show counts on demand and never a stored value", async ({ page }) => {
@@ -447,16 +382,6 @@ test.describe("sync settings", () => {
 
     await expect(page.getByTestId("sync-action-error")).toBeVisible();
     await expect(page.getByTestId("sync-diagnostics-export-path")).toHaveCount(0);
-  });
-
-  test("stopping sync calls sync_disable", async ({ page }) => {
-    await setupSyncMock(page, {
-      status: { state: "idle", enabled: true, last_sync_ms: 1760000000000 },
-    });
-    await page.goto(SETTINGS_URL);
-
-    await page.getByTestId("sync-switch").click();
-    expect((await syncCalls(page)).map((c) => c.cmd)).toContain("sync_disable");
   });
 });
 
