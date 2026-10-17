@@ -269,6 +269,21 @@ export function ProfileMenu() {
             </DropdownMenuItem>
           ) : null}
 
+          {/* Keeps the session: the picker then offers "Continue as <email>" alongside the local
+           * profiles. Sign out below is the action that actually ends the session. */}
+          {account !== null ? (
+            <DropdownMenuItem
+              onClick={() => {
+                void navigate({ to: "/picker", search: { from: "switch" } });
+                setOpen(false);
+              }}
+              data-testid="profile-menu-switch-profile"
+            >
+              <ArrowLeftRight aria-hidden="true" />
+              {t("datasets.switchProfile")}
+            </DropdownMenuItem>
+          ) : null}
+
           {account !== null ? (
             <DropdownMenuItem
               // Closed unconditionally rather than in onSuccess: sign-out can fail, and a panel

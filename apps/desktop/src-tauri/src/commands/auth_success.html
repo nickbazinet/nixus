@@ -64,7 +64,7 @@
     color: var(--good);
     animation: pop 260ms cubic-bezier(0.34, 1.4, 0.64, 1) 120ms both;
   }
-  h1, .lede, .foot { text-wrap: balance; }
+  h1, .lede { text-wrap: balance; }
   h1 {
     margin: 0;
     font-size: 21px;
@@ -76,14 +76,6 @@
     margin: 8px auto 0;
     max-width: 28ch;
     color: var(--ink-dim);
-  }
-  .foot {
-    margin: 0;
-    border-top: 1px solid var(--line);
-    padding: 14px 20px;
-    color: var(--ink-dim);
-    font-size: 13px;
-    line-height: 1.45;
   }
   /* Both animations mark the moment sign-in landed, and both run on compositor
      properties only. Each keyframe set declares just a `from`, so the resting
@@ -117,12 +109,6 @@
     <h1>Sign-in complete</h1>
     <p class="lede">You can close this tab and head back to the Nixus app.</p>
   </div>
-  <footer class="foot">Nixus served this page from your own machine.</footer>
 </main>
-<script>
-  // Closes the tab outright in the rare case it has no redirect history. It is
-  // a silent no-op otherwise, which is why the page above stands on its own.
-  window.close();
-</script>
 </body>
 </html>

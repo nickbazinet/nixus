@@ -125,6 +125,19 @@ impl AuthorizeEntry {
         }
     }
 
+    /// Only the sign-in entry forces credentials. The Hosted UI keeps its own
+    /// browser session cookie, which survives the app's local sign-out; without
+    /// `prompt=login` that cookie silently re-authenticates the previous user.
+    /// Every `start_login` happens with no usable local session (a live one is
+    /// resumed by `continue_cloud_session` with no browser), so asking for
+    /// credentials here never interrupts a session that was still good.
+    fn query_suffix(self) -> &'static str {
+        match self {
+            Self::SignIn => "&prompt=login",
+            Self::SignUp => "",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::SignIn => "sign_in",
@@ -192,7 +205,7 @@ fn generate_pkce(intent: LoginIntent) -> PendingAttempt {
 
 fn build_authorize_url(entry: AuthorizeEntry, code_challenge: &str, state: &str) -> String {
     format!(
-        "{}{}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}",
+        "{}{}?response_type=code&client_id={}&redirect_uri={}&scope={}&code_challenge={}&code_challenge_method=S256&state={}{}",
         COGNITO_HOSTED_UI_BASE_URL,
         entry.path(),
         urlencoding::encode(COGNITO_CLIENT_ID),
@@ -200,6 +213,7 @@ fn build_authorize_url(entry: AuthorizeEntry, code_challenge: &str, state: &str)
         urlencoding::encode(COGNITO_SCOPES),
         urlencoding::encode(code_challenge),
         urlencoding::encode(state),
+        entry.query_suffix(),
     )
 }
 
@@ -1439,7 +1453,8 @@ mod tests {
              &scope=openid%20email%20profile%20nixus-api%2Fai.invoke\
              &code_challenge=CHALLENGE\
              &code_challenge_method=S256\
-             &state=STATE"
+             &state=STATE\
+             &prompt=login"
         );
     }
 
@@ -1473,7 +1488,8 @@ mod tests {
         let (sign_in_path, sign_in_query) = sign_in.split_once('?').expect("has a query");
         let (sign_up_path, sign_up_query) = sign_up.split_once('?').expect("has a query");
 
-        assert_eq!(sign_in_query, sign_up_query);
+        // Sign-in alone forces credentials; everything else is shared.
+        assert_eq!(sign_in_query, format!("{sign_up_query}&prompt=login"));
         assert_eq!(sign_in_path, "https://auth.nixusapp.com/oauth2/authorize");
         assert_eq!(sign_up_path, "https://auth.nixusapp.com/signup");
     }
@@ -1516,7 +1532,7 @@ mod tests {
             assert!(!url.contains("client_secret"));
             assert!(!url.contains("nonce"));
             assert!(!url.contains("identity_provider"));
-            assert!(!url.contains("prompt"));
+            assert_eq!(url.contains("prompt=login"), entry == AuthorizeEntry::SignIn);
             assert!(!url.contains("resource"));
         }
     }
