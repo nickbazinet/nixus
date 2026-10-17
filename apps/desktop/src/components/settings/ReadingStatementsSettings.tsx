@@ -1,10 +1,12 @@
 import { useTranslation } from "react-i18next";
 import { Alert, AlertTitle, AlertDescription, Card } from "@nixus/shared";
+import { usePremiumEntitlement } from "@/hooks/useAuth";
 import { CredentialsForm } from "./CredentialsForm";
 import { SettingRow, SettingsSection } from "./SettingRow";
 
 export function ReadingStatementsSettings() {
   const { t } = useTranslation();
+  const isPremium = usePremiumEntitlement();
 
   return (
     <div className="space-y-section-gap" data-testid="settings-reading-statements">
@@ -14,6 +16,20 @@ export function ReadingStatementsSettings() {
           {t("settings.readingDescription")}
         </p>
       </div>
+
+      {isPremium && (
+        <Card flush data-testid="settings-reading-premium-banner">
+          {/* Gold, not green: the design system reserves green (`good`) for budget status and gives
+            * the premium entitlement its own `premium-ink` token, matching the profile badge. */}
+          <Alert
+            variant="info"
+            className="border-premium-ink bg-[color-mix(in_srgb,var(--premium-ink)_12%,transparent)]"
+          >
+            <AlertTitle className="text-premium-ink">{t("settings.readingPremiumTitle")}</AlertTitle>
+            <AlertDescription>{t("settings.readingPremiumBody")}</AlertDescription>
+          </Alert>
+        </Card>
+      )}
 
       <Card flush>
         <Alert variant="info">

@@ -878,6 +878,8 @@
   "settings.trayDescription": "Fermer la fenêtre quitte complètement Nixus : les rappels s'arrêtent jusqu'à la prochaine ouverture. Le maintien dans la barre de menus n'existe pas encore, il n'y a donc rien à activer ici.",
   "settings.readingTitle": "Lecture des relevés",
   "settings.readingDescription": "Nixus utilise un service d'IA pour lire vos relevés et classer les transactions. Vous fournissez la clé, et c'est la seule partie de Nixus qui utilise Internet.",
+  "settings.readingPremiumTitle": "La lecture IA des relevés est incluse avec Premium.",
+  "settings.readingPremiumBody": "Votre forfait Premium inclut Nixus Cloud AI : rien à configurer, ni compte, ni clé d’API. Importez simplement un relevé et Nixus le lit pour vous.",
   "settings.readingReassuranceTitle": "Tout le reste fonctionne sans cela.",
   "settings.readingReassuranceBody": "Budgets, comptes, valeur nette et saisie manuelle ne touchent jamais au réseau. Si vous préférez ne pas configurer de clé, vous pouvez saisir vos transactions vous-même.",
   "settings.sectionService": "Service",

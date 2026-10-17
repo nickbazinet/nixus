@@ -18,6 +18,7 @@ import {
 import { Link } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { cn } from "@/lib/utils";
+import { usePremiumEntitlement } from "@/hooks/useAuth";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { SyncStatusIndicator } from "@/components/sync/SyncStatusIndicator";
 import {
@@ -58,6 +59,8 @@ function ActiveMarker() {
 }
 
 export function AppSidebar() {
+  // Paying cloud subscribers are not shown the donation prompt.
+  const isPremium = usePremiumEntitlement();
   const [hovered, setHovered] = useState(false);
   const [focusWithin, setFocusWithin] = useState(false);
   const [collapsed, setCollapsed] = useState(readCollapsedPreference);
@@ -215,13 +218,15 @@ export function AppSidebar() {
           <span className={railLabelClass(expanded)}>{t("sidebar.settings")}</span>
           {isSettingsSection && <ActiveMarker />}
         </Link>
-        <RailButton
-          onClick={() => openUrl(BUY_ME_A_COFFEE_URL)}
-          icon={BuyMeACoffeeIcon}
-          label={t("sidebar.buyMeACoffee")}
-          expanded={expanded}
-          testId="buy-me-a-coffee-link"
-        />
+        {!isPremium && (
+          <RailButton
+            onClick={() => openUrl(BUY_ME_A_COFFEE_URL)}
+            icon={BuyMeACoffeeIcon}
+            label={t("sidebar.buyMeACoffee")}
+            expanded={expanded}
+            testId="buy-me-a-coffee-link"
+          />
+        )}
         {/* The rail owns its item recipe, so the indicator is handed the class rather than
           * importing it back out of this file. */}
         <SyncStatusIndicator
