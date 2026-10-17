@@ -4,6 +4,10 @@ import { focusRing } from "@nixus/shared";
 import { ProfileMenu } from "@/components/auth/ProfileMenu";
 import { cn } from "@/lib/utils";
 
+// The handler in __root.tsx accepts Cmd or Ctrl; show the one that matches the platform.
+const IS_MAC = /Mac|iPhone|iPad/i.test(navigator.userAgent);
+const SEARCH_SHORTCUT = IS_MAC ? "⌘K" : "Ctrl+K";
+
 interface TopBarProps {
   onSearchClick?: () => void;
 }
@@ -29,7 +33,7 @@ export function TopBar({ onSearchClick }: TopBarProps) {
         </span>
         {/* Read as content, not a badge, so it sits at the 13px caption floor rather than micro. */}
         <kbd className="rounded-sm border border-line bg-track px-1.5 py-0.5 text-caption text-ink-faint">
-          ⌘K
+          {SEARCH_SHORTCUT}
         </kbd>
       </button>
 
