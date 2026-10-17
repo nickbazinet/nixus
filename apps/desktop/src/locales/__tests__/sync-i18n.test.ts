@@ -67,10 +67,6 @@ const ALL_ERROR_CODES: readonly SyncErrorCode[] = [
 
 const REQUIRED_KEYS = [
   "sync.sectionHeading",
-  "sync.whatIsSyncedTitle",
-  "sync.whatIsSyncedBody",
-  "sync.whatIsNotSyncedBody",
-  "sync.whereItLivesBody",
   "sync.lastSyncAt",
   "sync.diagnosticsAction",
   "sync.diagnosticsSummary",

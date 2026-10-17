@@ -138,6 +138,21 @@ pub(crate) fn start_for_active_dataset(app: &AppHandle) {
     });
 }
 
+/// Starts the actor for the active dataset unless one is already running.
+///
+/// Sign-in needs this: `sign_out` stops the actor, and signing back in re-selects the dataset that
+/// is already open, which `select_dataset_now` treats as a no-op, so nothing else would restart it
+/// and the profile would sit unsynced (and the indicator hidden) until the next launch.
+pub(crate) fn ensure_started(app: &AppHandle) {
+    let running = app
+        .try_state::<SyncSupervisor>()
+        .is_some_and(|supervisor| supervisor.current().is_some());
+
+    if !running {
+        start_for_active_dataset(app);
+    }
+}
+
 fn handle(app: &AppHandle) -> Result<SyncHandle, AppError> {
     app.try_state::<SyncSupervisor>()
         .and_then(|supervisor| supervisor.current())

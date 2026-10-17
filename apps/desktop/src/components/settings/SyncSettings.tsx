@@ -52,18 +52,6 @@ export function SyncSettings() {
     <SettingsSection heading={t("sync.sectionHeading")}>
       <Card flush data-testid="settings-sync">
         <SettingRow
-          title={t("sync.whatIsSyncedTitle")}
-          description={
-            <>
-              <span className="block">{t("sync.whatIsSyncedBody")}</span>
-              <span className="mt-1 block">{t("sync.whatIsNotSyncedBody")}</span>
-              <span className="mt-1 block">{t("sync.whereItLivesBody")}</span>
-            </>
-          }
-          data-testid="setting-sync-explainer"
-        />
-
-        <SettingRow
           title={t("sync.diagnosticsTitle")}
           description={
             diagnostics.data === undefined ? (

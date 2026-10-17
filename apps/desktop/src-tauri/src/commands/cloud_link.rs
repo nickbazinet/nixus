@@ -92,6 +92,7 @@ fn checkpoint_active_source(
 /// so the in-app Migrate path is unaffected.
 async fn activate(app: &AppHandle, dataset: &Dataset) -> Result<(), AppError> {
     select_dataset_now(app, &dataset.id)?;
+    crate::commands::sync::ensure_started(app);
     refresh_ai_state(app, &dataset.id).await;
     mark_picker_passed();
 

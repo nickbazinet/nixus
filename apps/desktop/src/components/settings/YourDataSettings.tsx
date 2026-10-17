@@ -214,23 +214,6 @@ export function YourDataSettings() {
         </Card>
       </SettingsSection>
 
-      {/* No export command exists on the Rust side, so there is no button to wire. The absence is
-        * stated rather than hidden, because a spreadsheet user's exit route is the question that
-        * decides whether she adopts the product at all. */}
-      <SettingsSection heading={t("settings.sectionExport")}>
-        <Card flush>
-          <SettingRow
-            title={t("settings.exportOwnershipLine")}
-            data-testid="setting-export-promise"
-          />
-          <SettingRow
-            title={t("settings.exportUnavailableTitle")}
-            description={t("settings.exportUnavailableBody")}
-            data-testid="setting-export-unavailable"
-          />
-        </Card>
-      </SettingsSection>
-
       <SettingsSection heading={t("settings.sectionTemplates")}>
         <Card flush>
           {starterTemplates.isPending ? (

@@ -145,16 +145,6 @@ describe("SyncSettings", () => {
     queryClient.clear();
   });
 
-  it("explains what is synced and what is not", async () => {
-    mount({});
-    await settle();
-
-    const explainer = at("setting-sync-explainer");
-    expect(explainer?.textContent).toContain(EN["sync.whatIsSyncedBody"]);
-    expect(explainer?.textContent).toContain(EN["sync.whatIsNotSyncedBody"]);
-    expect(explainer?.textContent).toContain(EN["sync.whereItLivesBody"]);
-  });
-
   // Sync is automatic now (no user switch), so the only surfaced status is a problem alert — the
   // settings page carries no status row, account row or switch at all; the sidebar indicator is
   // the discovery path for current state.
