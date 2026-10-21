@@ -25,7 +25,7 @@ describe("<FeatureGrid />", () => {
 
     const h2 = within(section).getByRole("heading", { level: 2 });
     expect(h2).toHaveAttribute("id", "features-heading");
-    expect(h2).toHaveTextContent(/financial copilot on your machine/i);
+    expect(h2).toHaveTextContent(/the rest of what.s inside/i);
   });
 
   it("renders each feature's translated title and description", () => {

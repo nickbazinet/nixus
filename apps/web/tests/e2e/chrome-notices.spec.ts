@@ -102,7 +102,7 @@ async function paintedColour(page: Page, expression: string): Promise<string> {
  * purely on asset-transfer timing.
  */
 async function settleHydration(page: Page): Promise<void> {
-  const cta = page.locator("#main-content").getByTestId("download-cta").first();
+  const cta = page.getByTestId("hero").getByTestId("download-cta").first();
   await expect(cta).not.toHaveAttribute("data-os", "choose");
 }
 

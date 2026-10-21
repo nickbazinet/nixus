@@ -1,15 +1,18 @@
-import { Car, Compass, FileUp, type LucideIcon } from "lucide-react";
-
-/** Stable ids for `pillars.<id>.title` / `pillars.<id>.description` i18n keys. */
+/** Stable ids for `pillars.<id>.*` i18n keys. */
 export type PillarId = "automation" | "nextAction" | "lifeUpkeep";
 
 export type Pillar = {
-  id: PillarId;
-  icon: LucideIcon;
+  readonly id: PillarId;
 };
 
+/**
+ * Icons were dropped with the editorial restyle: the pillars now sit under a
+ * rule rather than a tinted icon square, because three icon-square grids in a
+ * row (trust band, pillars, capability cards) is what made three structurally
+ * different sections read as one repeated template.
+ */
 export const pillars: readonly Pillar[] = [
-  { id: "automation", icon: FileUp },
-  { id: "nextAction", icon: Compass },
-  { id: "lifeUpkeep", icon: Car },
+  { id: "automation" },
+  { id: "nextAction" },
+  { id: "lifeUpkeep" },
 ] as const;

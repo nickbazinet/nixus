@@ -12,6 +12,7 @@ describe("SiteFooter", () => {
     renderWithProviders(<SiteFooter />);
     const link = screen.getByRole("link", { name: /github/i });
     expect(link).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /github/i })).toHaveLength(1);
     expect(link).toHaveAttribute(
       "href",
       "https://github.com/nickbazinet/nixus",
@@ -50,23 +51,24 @@ describe("SiteFooter", () => {
 
   it("renders a mailto contact link to the new support address", () => {
     renderWithProviders(<SiteFooter />);
-    const mail = screen.getByRole("link", {
-      name: new RegExp(CONTACT_EMAIL.replace(/\./g, "\\."), "i"),
-    });
+    const mail = screen.getByRole("link", { name: /^Contact$/i });
     expect(mail).toHaveAttribute("href", `mailto:${CONTACT_EMAIL}`);
   });
 
   it("renders a Buy Me a Coffee link with the creator profile URL", () => {
     renderWithProviders(<SiteFooter />);
     const link = screen.getByRole("link", { name: /buy me a coffee/i });
+    expect(screen.getAllByRole("link", { name: /buy me a coffee/i })).toHaveLength(1);
     expect(link).toHaveAttribute("href", "https://buymeacoffee.com/nickbaz");
     expect(link).toHaveAttribute("target", "_blank");
     expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it("renders the Pre-alpha label in the nav row", () => {
+  // The banner, the is/isn't section and the FAQ all state the pre-alpha status
+  // already; a fifth repetition in the bottom bar read as padding.
+  it("does not restate the pre-alpha status in the bottom bar", () => {
     renderWithProviders(<SiteFooter />);
-    expect(screen.getByText("Pre-alpha")).toBeInTheDocument();
+    expect(screen.queryByText("Pre-alpha")).not.toBeInTheDocument();
   });
 
   it("renders the new copyright line and drops the legacy attribution", () => {
@@ -109,9 +111,9 @@ describe("SiteFooter", () => {
     expect(link).toHaveAttribute("href", "/privacy");
   });
 
-  it("keeps both legal links inside the labelled footer nav", () => {
+  it("keeps both legal links inside the labelled Legal nav", () => {
     renderWithProviders(<SiteFooter />);
-    const nav = screen.getByRole("navigation", { name: /footer/i });
+    const nav = screen.getByRole("navigation", { name: /^legal$/i });
     expect(nav).toContainElement(screen.getByRole("link", { name: /^Terms$/i }));
     expect(nav).toContainElement(
       screen.getByRole("link", { name: /^Privacy$/i }),

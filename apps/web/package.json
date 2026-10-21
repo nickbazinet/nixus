@@ -21,6 +21,7 @@
     "verify:routes": "tsx scripts/verify-routes.ts"
   },
   "dependencies": {
+    "@fontsource-variable/newsreader": "^5.3.0",
     "@nixus/shared": "workspace:*",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-router": "^1.167.0",

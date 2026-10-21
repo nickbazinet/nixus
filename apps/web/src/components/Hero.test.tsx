@@ -266,13 +266,22 @@ describe("Warm Editorial token discipline", () => {
 });
 
 describe("homepage composition", () => {
+  it("mounts Hero once and no standalone AI demo section", () => {
+    const tree = source("./HomeSections.tsx");
+
+    expect(tree.match(/<Hero\b/g) ?? []).toHaveLength(1);
+    expect(tree).not.toMatch(/AIDemo/);
+  });
+
+  // Both locale routes must render the shared composition rather than listing
+  // sections themselves — that duplication is what let `/` and `/fr/` drift.
   it.each(["../routes/index.tsx", "../routes/fr/index.tsx"])(
-    "mounts Hero once and no standalone AI demo section in %s",
+    "delegates the whole page to HomeSections in %s",
     (route) => {
       const tree = source(route);
 
-      expect(tree.match(/<Hero\b/g) ?? []).toHaveLength(1);
-      expect(tree).not.toMatch(/AIDemo/);
+      expect(tree).toMatch(/component:\s*HomeSections/);
+      expect(tree.match(/<Hero\b/g) ?? []).toHaveLength(0);
     },
   );
 });

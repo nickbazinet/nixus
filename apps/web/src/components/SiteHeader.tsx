@@ -4,7 +4,7 @@ import { useLocation } from "@tanstack/react-router";
 import { cn, NixusLogo } from "@nixus/shared";
 
 import { DownloadCTA } from "@/features/download/DownloadCTA";
-import { betaPagePath, localeFromLanguage } from "@/lib/localePaths";
+import { betaPagePath, homePath, localeFromLanguage } from "@/lib/localePaths";
 import { LanguageToggle } from "./LanguageToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -25,6 +25,27 @@ import { ThemeToggle } from "./ThemeToggle";
  * affordance, which overflowed an 80px bar and painted over page content.
  * The hero is the single full conversion affordance on a phone.
  */
+/**
+ * Section destinations, desktop tier only.
+ *
+ * Anchors rather than routes: the homepage is now long enough that a visitor who
+ * lands mid-consideration needs a way to jump, and a mature marketing site is
+ * expected to offer one. They are `lg:`-gated because DESIGN.md's responsive
+ * tier fixes phone chrome at brand + Founding + the two toggles and nothing
+ * else — four more destinations do not fit a 56px bar, and the page's own
+ * section order is the phone's navigation.
+ *
+ * Href is built per-locale rather than hardcoded to `/#id` so a visitor on
+ * `/fr/` jumping to a section does not get silently switched to English.
+ */
+const SECTION_LINKS = [
+  { id: "how-it-works", labelKey: "nav.howItWorks" },
+  { id: "how", labelKey: "nav.product" },
+  { id: "features", labelKey: "nav.features" },
+  { id: "privacy", labelKey: "nav.privacy" },
+  { id: "faq", labelKey: "nav.faq" },
+] as const;
+
 export function SiteHeader() {
   const { t, i18n } = useTranslation();
   const { pathname } = useLocation();
@@ -33,6 +54,7 @@ export function SiteHeader() {
   const betaHref = betaPagePath(locale);
   const onBetaPage =
     pathname === "/beta" || pathname === "/fr/beta";
+  const sectionBase = homePath(locale);
 
   useEffect(() => {
     let raf = 0;
@@ -75,6 +97,22 @@ export function SiteHeader() {
             ixus
           </span>
         </a>
+
+        <nav
+          aria-label={t("nav.sectionsAria")}
+          data-testid="header-sections"
+          className="hidden lg:flex lg:items-center lg:gap-1"
+        >
+          {SECTION_LINKS.map((link) => (
+            <a
+              key={link.id}
+              href={`${sectionBase}#${link.id}`}
+              className="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              {t(link.labelKey)}
+            </a>
+          ))}
+        </nav>
 
         <div className="flex items-center gap-0.5 sm:gap-2 md:gap-3">
           <a

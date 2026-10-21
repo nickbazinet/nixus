@@ -14,7 +14,7 @@ test.describe("phone and tablet conversion path", () => {
       page.locator("header").getByTestId("download-cta"),
     ).toBeHidden();
 
-    const inPage = page.locator("#main-content").getByTestId("download-cta");
+    const inPage = page.getByTestId("hero").getByTestId("download-cta");
     await expect(inPage).toHaveCount(1);
     await expect(inPage).toBeVisible();
     await expect(
@@ -22,6 +22,12 @@ test.describe("phone and tablet conversion path", () => {
     ).toBeVisible();
     await expect(
       inPage.getByTestId("download-cta-mobile-affordance"),
+    ).toBeVisible();
+
+    // The closing band repeats the affordance so a convinced reader who has
+    // scrolled the whole page does not have to scroll back up to act.
+    await expect(
+      page.getByTestId("closing-cta").getByTestId("download-cta"),
     ).toBeVisible();
   });
 
@@ -72,16 +78,16 @@ test.describe("desktop download behaviour is unchanged", () => {
     await expect(headerCta).toBeVisible();
 
     const primaries = page.getByTestId("download-cta-primary");
-    await expect(primaries).toHaveCount(2);
+    // Header, hero, and the closing band each carry one.
+    await expect(primaries).toHaveCount(3);
     for (const anchor of await primaries.all()) {
       await expect(anchor).toHaveAttribute("href", /\.dmg$/);
       await expect(anchor).toHaveAttribute("download", "");
     }
 
-    await expect(page.getByTestId("download-cta-alt")).toHaveAttribute(
-      "href",
-      /\.exe$/,
-    );
+    for (const alt of await page.getByTestId("download-cta-alt").all()) {
+      await expect(alt).toHaveAttribute("href", /\.exe$/);
+    }
     await expect(
       page.getByTestId("download-cta-mobile-headline"),
     ).toHaveCount(0);
@@ -92,7 +98,7 @@ test.describe("desktop download behaviour is unchanged", () => {
 
     test("keeps the platform chooser and both direct links", async ({ page }) => {
       await page.goto("/");
-      const hero = page.locator("#main-content").getByTestId("download-cta");
+      const hero = page.getByTestId("hero").getByTestId("download-cta");
       await expect(hero.getByTestId("download-cta-macos")).toHaveAttribute(
         "href",
         /\.dmg$/,
@@ -115,12 +121,15 @@ test.describe("desktop download behaviour is unchanged", () => {
      * server shape is the whole no-JS fallback (NFR-W7). */
     test("still gets both prerendered download links", async ({ page }) => {
       await page.goto("/");
-      await expect(
-        page.locator("#main-content").getByTestId("download-cta-macos"),
-      ).toHaveAttribute("href", /\.dmg$/);
-      await expect(
-        page.locator("#main-content").getByTestId("download-cta-windows"),
-      ).toHaveAttribute("href", /\.exe$/);
+      const hero = page.getByTestId("hero");
+      await expect(hero.getByTestId("download-cta-macos")).toHaveAttribute(
+        "href",
+        /\.dmg$/,
+      );
+      await expect(hero.getByTestId("download-cta-windows")).toHaveAttribute(
+        "href",
+        /\.exe$/,
+      );
     });
   });
 });

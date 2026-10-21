@@ -8,7 +8,8 @@ test.describe("reduced motion", () => {
     await page.goto("/");
 
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByTestId("download-cta")).toHaveCount(2);
+    // Header, hero, and the closing band.
+    await expect(page.getByTestId("download-cta")).toHaveCount(3);
     await expect(page.getByTestId("ai-demo-summary")).toBeVisible();
 
     // The demo's value prop is carried by the end state, so reduced motion has
@@ -61,7 +62,7 @@ test.describe("animated contrast", () => {
     // be created with the figure already out of view and never fire. The CTA
     // leaving its OS-neutral SSR value is the hydration barrier.
     await expect(
-      page.locator("#main-content").getByTestId("download-cta"),
+      page.getByTestId("hero").getByTestId("download-cta"),
     ).not.toHaveAttribute("data-os", "choose");
 
     const demo = page.getByTestId("ai-demo");

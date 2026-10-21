@@ -67,8 +67,11 @@ test.describe("touch targets below the desktop tier", () => {
     const main = page.locator("#main-content");
     expect(
       await undersized([
-        { name: "send-to-computer-copy", locator: main.getByTestId("download-cta-mobile-copy") },
-        { name: "send-to-computer-email", locator: main.getByTestId("download-cta-mobile-email") },
+        { name: "send-to-computer-copy", locator: main.getByTestId("download-cta-mobile-copy").first() },
+        { name: "send-to-computer-email", locator: main.getByTestId("download-cta-mobile-email").first() },
+        { name: "closing-cta", locator: page.getByTestId("closing-cta").getByTestId("download-cta-mobile-copy") },
+        { name: "trust-github", locator: main.getByTestId("trust-github-link") },
+        { name: "privacy-policy", locator: main.getByTestId("privacy-policy-link") },
         { name: "beta-invite-cta", locator: main.getByTestId("beta-invite-cta") },
         { name: "beta-full-guide", locator: main.getByTestId("beta-full-guide-link") },
         { name: "faq-trigger", locator: main.getByTestId("faq").getByRole("button") },

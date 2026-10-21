@@ -1,6 +1,17 @@
 @import "tailwindcss";
 @import "@nixus/shared/styles/tokens.css";
 
+/* Newsreader — the marketing display face, `{marketing-type}` in DESIGN.md.
+ *
+ * Self-hosted via npm, never a Google Fonts `@import`: the spine bans a CDN font
+ * outright ("Bundle woff2 fonts locally"). `wght.css` not `index.css` — the
+ * optical-size axis would ship a second file for a page that names two sizes.
+ *
+ * Scope is display headings only. Inter still carries every word a visitor
+ * READS, and the whole desktop app, so the site gains an editorial voice without
+ * drifting from the product. See `--font-display` below. */
+@import "@fontsource-variable/newsreader/wght.css";
+
 /* Scan the workspace-linked @nixus/shared package so Tailwind generates
  * the utilities used inside its shadcn primitives (Button, DropdownMenu,
  * etc.). pnpm symlinks ./node_modules/@nixus/shared, but Tailwind v4
@@ -80,18 +91,58 @@
  * intent visible at the call site.
  */
 @theme {
-  --text-display-xl: clamp(2.25rem, 1.5rem + 3.75vw, 4rem);
-  --text-display-xl--line-height: 1.05;
-  --text-display-xl--letter-spacing: -0.02em;
-  --text-display-xl--font-weight: 700;
+  /* The editorial display family. A `--font-*` entry so `font-display` exists as
+   * a utility for the rare heading that needs it without a type role. */
+  --font-display:
+    "Newsreader Variable", ui-serif, Georgia, Cambria, "Times New Roman", serif;
+
+  --text-display-xl: clamp(2.25rem, 1.5rem + 3.75vw, 3.5rem);
+  --text-display-xl--line-height: 1.06;
+  --text-display-xl--letter-spacing: -0.015em;
+  --text-display-xl--font-weight: 500;
 
   --text-display-l: clamp(1.875rem, 1.25rem + 3.125vw, 3rem);
-  --text-display-l--line-height: 1.1;
-  --text-display-l--letter-spacing: -0.02em;
-  --text-display-l--font-weight: 700;
+  --text-display-l--line-height: 1.12;
+  --text-display-l--letter-spacing: -0.012em;
+  --text-display-l--font-weight: 500;
+
+  /* The showcase-row rank. Ceiling is 34px — the app's own `{typography.display}`
+   * size — so the marketing mid-tier reuses a number already in the spine rather
+   * than inventing one.
+   *
+   * It exists because the stage rows and the section intro above them were both
+   * set in `display-l`, which is a hierarchy bug: a row heading rendered at the
+   * section heading's size tells a reader they are peers. It also fixes the line
+   * breaks — 48px serif in a 5fr column wrapped to three lines and split clauses
+   * mid-phrase, where 34px lands in two. */
+  --text-display-m: clamp(1.5rem, 1.0714rem + 2.1429vw, 2.125rem);
+  --text-display-m--line-height: 1.18;
+  --text-display-m--letter-spacing: -0.01em;
+  --text-display-m--font-weight: 500;
 
   --text-lead: clamp(1.0625rem, 1rem + 0.3125vw, 1.25rem);
   --text-lead--line-height: 1.5;
+}
+
+/* Tailwind's `--text-*` namespace takes `line-height`, `letter-spacing`, and
+ * `font-weight` companions but NOT `font-family`, so the family is attached to
+ * the two display utilities here instead of at every call site. That choice is
+ * deliberate: `EditorialHeading` and `Hero` reach for a type role by name, and a
+ * role that resolved its size but not its face would silently render Inter at
+ * display size — the exact drift the spine's "reach for a type role" rule exists
+ * to stop. Unlayered so it beats the layered utility regardless of sort order,
+ * the same mechanism `.mkt-tap` below relies on.
+ *
+ * Reverting to an all-Inter site is one line: point `--font-display` at
+ * `var(--font-sans)`. */
+.text-display-xl,
+.text-display-l,
+.text-display-m {
+  font-family: var(--font-display);
+  /* A serif at display size needs its lining figures explicitly; Newsreader
+   * defaults to oldstyle, which drops the "2026" in a headline below the
+   * baseline and reads as a rendering bug. */
+  font-variant-numeric: lining-nums;
 }
 
 /* Responsive rhythm + touch contract.
@@ -204,6 +255,53 @@
     0 14px 30px -16px rgba(58, 44, 24, 0.18);
 }
 
+/* Section bands — `{marketing-bands}` in DESIGN.md.
+ *
+ * A long landing page needs a scroll rhythm, and the page previously improvised
+ * one: `bg-accent/40`, `bg-accent/30`, `bg-background`, and `dark:bg-background`
+ * appeared in four sections in three different combinations, so two adjacent
+ * bands could land on the same tone while two distant ones differed. Naming the
+ * three tones makes the alternation a decision instead of an accident.
+ *
+ * Three, not more. `paper` is the page itself, `tint` is the band tone, and
+ * `deep` is `--brand-soft` carrying the one closing CTA band. That last one is a
+ * tint on the band that CONTAINS the primary action, not a decorative use of
+ * brand — `--brand` itself still only ever fills the button.
+ *
+ * `tint` is a literal in light mode, and that is the one deliberate exception to
+ * "every value dereferences a token". It started as `var(--chrome)` (#F5F2EC),
+ * which is a 2% luminance step off `--bg` (#FAF8F5) — measured on the rendered
+ * page, adjacent bands were indistinguishable and the whole middle of the site
+ * read as one continuous scroll with hairlines in it. #EFEAE1 is not a new hue:
+ * it is `{colors.track}` from DESIGN.md's own warm-direction frontmatter, which
+ * the shipped `tokens.css` never adopted because the dark palette went cool. So
+ * the value is already sanctioned by the spine; it just had no variable here to
+ * live in. `--chrome` keeps its own job (header and chrome surfaces) untouched.
+ *
+ * Dark needs no equivalent: `--chrome` there is #111A2B against a #080D18 page,
+ * which is already a legible step. */
+:root {
+  --mkt-band-paper: var(--bg);
+  --mkt-band-tint: var(--chrome);
+  --mkt-band-deep: var(--brand-soft);
+}
+
+:root:not(.dark) {
+  --mkt-band-tint: #efeae1;
+}
+
+.mkt-band-paper {
+  background-color: var(--mkt-band-paper);
+}
+
+.mkt-band-tint {
+  background-color: var(--mkt-band-tint);
+}
+
+.mkt-band-deep {
+  background-color: var(--mkt-band-deep);
+}
+
 :root:not(.dark) {
   --mkt-ambient-opacity: 0.22;
 }
@@ -234,6 +332,33 @@
   .mkt-asym-hero {
     grid-template-columns: var(--mkt-asym-hero-cols);
     align-items: center;
+  }
+}
+
+/* Showcase rows — the alternating stage composition.
+ *
+ * A separate grammar from `.mkt-asym-hero` on purpose. The hero's split is fixed
+ * because its prose column is always on the left; a showcase row mirrors, so
+ * reusing the hero class and swapping the children with `order` would leave the
+ * screenshot sitting in the narrow 5fr track on every mirrored row. The column
+ * template has to flip with the content, which is what `data-visual="first"`
+ * does here. DESIGN.md permits asymmetry in "marketing hero AND showcase
+ * compositions", so this is the second sanctioned member of that set, not a new
+ * exception. */
+.mkt-showcase {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mkt-asym-gap);
+}
+
+@media (width >= 64rem) {
+  .mkt-showcase {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    align-items: center;
+  }
+
+  .mkt-showcase[data-visual="first"] {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
   }
 }
 

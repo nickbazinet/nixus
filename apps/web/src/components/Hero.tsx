@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { DownloadCTA } from "@/features/download/DownloadCTA";
 
 import { AIDemoFigure } from "./AIDemo";
+import { HeroVideoBackdrop } from "./HeroVideoBackdrop";
 
 /**
  * CSS backgrounds bypass the preload scanner, so these hrefs live beside the
@@ -130,8 +131,9 @@ export function Hero({ eyebrow }: HeroProps) {
   return (
     <section
       data-testid="hero"
-      className={`mkt-hero-y relative isolate overflow-x-clip bg-page ${HERO_BACKDROP_CLASS}`}
+      className={`mkt-hero-y mkt-band-paper relative isolate overflow-x-clip ${HERO_BACKDROP_CLASS}`}
     >
+      <HeroVideoBackdrop />
       <div className="mkt-page-x mkt-asym-hero mx-auto max-w-[1280px]">
         <div className="mkt-measure-lead">
           {eyebrowText ? (

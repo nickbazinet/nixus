@@ -43,6 +43,22 @@ const QUIET_LEDGER_DARK = {
   ink: "rgb(232, 237, 245)",
 } as const;
 
+/** The three named section bands, as Chromium serialises each value. */
+const BAND = {
+  /** `--mkt-band-paper` -> `--bg`. */
+  paper: "rgb(250, 248, 245)",
+  /** `--mkt-band-tint` -> DESIGN.md's warm `{colors.track}`. */
+  tint: "rgb(239, 234, 225)",
+  /** `--mkt-band-deep` -> `--brand-soft`, spent once on the closing band. */
+  deep: "rgb(239, 237, 251)",
+} as const;
+
+const BAND_DARK = {
+  paper: "rgb(8, 13, 24)",
+  tint: "rgb(17, 26, 43)",
+  deep: "rgb(30, 37, 71)",
+} as const;
+
 /** The one warm elevation DESIGN.md permits, on `ProductFrame` imagery only. */
 const FRAME_SHADOW =
   "rgba(58, 44, 24, 0.05) 0px 1px 2px 0px, rgba(58, 44, 24, 0.18) 0px 14px 30px -16px";
@@ -52,16 +68,18 @@ type SurfaceReport = {
   headerBarHeight: number;
   bodyBackground: string;
   bodyInk: string;
-  pageSection: string;
-  featureBand: string;
+  bandPaper: string;
+  bandTint: string;
+  bandDeep: string;
   cardBackground: string;
   cardBorder: string;
   cardShadow: string;
   cardInkDim: string;
   accordionBorder: string;
   accordionInk: string;
-  brandFill: string;
-  brandFillInk: string;
+  ghostCtaFill: string;
+  ghostCtaInk: string;
+  ghostCtaBorder: string;
 };
 
 type TokenName = "chrome" | "hover" | "brandSoft" | "brandInk" | "inkFaint" | "focusRing";
@@ -87,7 +105,7 @@ type MaterialReport = {
  * the visitor ends up with. `data-os` leaving `choose` is that barrier.
  */
 async function settleHydration(page: Page): Promise<void> {
-  const cta = page.locator("#main-content").getByTestId("download-cta").first();
+  const cta = page.getByTestId("hero").getByTestId("download-cta").first();
   await expect(cta).not.toHaveAttribute("data-os", "choose");
 }
 
@@ -105,16 +123,18 @@ async function readSurfaces(page: Page): Promise<SurfaceReport> {
       headerBarHeight: bar ? Math.round(bar.getBoundingClientRect().height) : 0,
       bodyBackground: body.backgroundColor,
       bodyInk: body.color,
-      pageSection: read('[data-testid="faq"]', "background-color"),
-      featureBand: read('[data-testid="feature-grid"]', "background-color"),
+      bandPaper: read('[data-testid="faq"]', "background-color"),
+      bandTint: read('[data-testid="how-it-works"]', "background-color"),
+      bandDeep: read('[data-testid="closing-cta"]', "background-color"),
       cardBackground: read('[data-testid="feature-card"]', "background-color"),
       cardBorder: read('[data-testid="feature-card"]', "border-top-color"),
       cardShadow: read('[data-testid="feature-card"]', "box-shadow"),
       cardInkDim: read('[data-testid="feature-card"] p', "color"),
       accordionBorder: read('[data-slot="accordion-item"]', "border-bottom-color"),
       accordionInk: read('[data-slot="accordion-trigger"]', "color"),
-      brandFill: read('[data-testid="beta-invite-cta"]', "background-color"),
-      brandFillInk: read('[data-testid="beta-invite-cta"]', "color"),
+      ghostCtaFill: read('[data-testid="beta-invite-cta"]', "background-color"),
+      ghostCtaInk: read('[data-testid="beta-invite-cta"]', "color"),
+      ghostCtaBorder: read('[data-testid="beta-invite-cta"]', "border-top-color"),
     };
   });
 }
@@ -198,15 +218,23 @@ test.describe("Warm Editorial light palette", () => {
       cardInkDim: WARM.inkDim,
       accordionBorder: WARM.line,
       accordionInk: WARM.ink,
-      brandFill: WARM.brand,
-      brandFillInk: WARM.brandOn,
+      // The founding CTA is deliberately ghost, not brand fill: downloading is
+      // the page's primary action, and a second brand-filled button above the
+      // closing band gave the page two conclusions.
+      ghostCtaFill: WARM.card,
+      ghostCtaInk: WARM.ink,
+      ghostCtaBorder: WARM.lineStrong,
     });
 
-    // The FAQ band shares the feature section's tinted surface rather than the
-    // plain page paper, so the two editorial bands must resolve identically and
-    // must not collapse back to the body background.
-    expect(surfaces.pageSection).toBe(surfaces.featureBand);
-    expect(surfaces.pageSection).not.toBe(WARM.bg);
+    // The three named bands, and the thing that makes them worth naming: they
+    // have to be mutually distinguishable. `--mkt-band-tint` started as
+    // `--chrome`, a 2% luminance step off the page, and adjacent bands were
+    // indistinguishable on the rendered page — so "distinct" is the contract,
+    // not just "declared".
+    expect(surfaces.bandPaper).toBe(BAND.paper);
+    expect(surfaces.bandTint).toBe(BAND.tint);
+    expect(surfaces.bandDeep).toBe(BAND.deep);
+    expect(new Set([surfaces.bandPaper, surfaces.bandTint, surfaces.bandDeep]).size).toBe(3);
 
     // The one bounded shadow exception is ProductFrame imagery. An ordinary
     // marketing card stays hairline-only, warm palette or not.
@@ -240,7 +268,7 @@ test.describe("Warm Editorial light palette", () => {
     // project asserting nothing.
     const primary = isDesktopTier(page);
     const button = page
-      .locator("#main-content")
+      .getByTestId("hero")
       .getByTestId(primary ? "download-cta-primary" : "download-cta-mobile-copy")
       .first();
     await expect(button).toBeVisible();
@@ -309,7 +337,7 @@ test.describe("dark mode keeps Quiet Ledger", () => {
     expect(surfaces).toMatchObject({
       bodyBackground: QUIET_LEDGER_DARK.bg,
       bodyInk: QUIET_LEDGER_DARK.ink,
-      pageSection: QUIET_LEDGER_DARK.bg,
+      bandPaper: QUIET_LEDGER_DARK.bg,
       cardBackground: QUIET_LEDGER_DARK.card,
       cardBorder: QUIET_LEDGER_DARK.line,
       accordionBorder: QUIET_LEDGER_DARK.line,
@@ -317,7 +345,13 @@ test.describe("dark mode keeps Quiet Ledger", () => {
     expect(surfaces.bodyBackground).not.toBe(WARM.bg);
     expect(surfaces.cardBackground).not.toBe(WARM.card);
     expect(surfaces.accordionInk).not.toBe(WARM.ink);
-    expect(surfaces.brandFill).not.toBe(WARM.brand);
+    expect(surfaces.ghostCtaFill).not.toBe(WARM.card);
+
+    // Dark gets the band rhythm too — it previously had none, because the old
+    // ad-hoc classes resolved every band back to the page colour in dark.
+    expect(surfaces.bandTint).toBe(BAND_DARK.tint);
+    expect(surfaces.bandDeep).toBe(BAND_DARK.deep);
+    expect(new Set([surfaces.bandPaper, surfaces.bandTint, surfaces.bandDeep]).size).toBe(3);
 
     // Focus and contrast survive the mode: the ring still resolves to an opaque
     // colour, and it is not the light ring.
