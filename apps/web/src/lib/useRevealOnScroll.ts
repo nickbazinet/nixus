@@ -27,8 +27,8 @@ import { useEffect } from "react";
  * matters — **no target is ever hidden while it is in the viewport** — without
  * spending the reveal on content the reader has not arrived at yet.
  *
- * The listeners detach as soon as nothing is left to reveal, so a fully-revealed
- * page carries no scroll handler.
+ * Late-mounted targets (lazy chunks) are picked up by a MutationObserver, so the
+ * listeners stay attached for the life of the route.
  */
 const REVEAL_SELECTOR = "[data-reveal-item]:not([data-revealed])";
 
@@ -38,7 +38,6 @@ const NEAR_VIEWPORT = 0.92;
 export function useRevealOnScroll(routeKey: string): void {
   useEffect(() => {
     if (document.documentElement.getAttribute("data-reveal") !== "on") return;
-    if (document.querySelector(REVEAL_SELECTOR) === null) return;
 
     /** Reveals what has reached the fold; returns how many are still below it. */
     const revealVisible = (): number => {
@@ -64,9 +63,13 @@ export function useRevealOnScroll(routeKey: string): void {
       },
       { rootMargin: "0px 0px -8% 0px", threshold: 0 },
     );
-    for (const el of document.querySelectorAll(REVEAL_SELECTOR)) {
-      observer.observe(el);
-    }
+    /** Items from lazy-loaded sections mount after this effect; observing is idempotent. */
+    const observeAll = (): void => {
+      for (const el of document.querySelectorAll(REVEAL_SELECTOR)) {
+        observer.observe(el);
+      }
+    };
+    observeAll();
 
     let frame = 0;
 
@@ -79,15 +82,24 @@ export function useRevealOnScroll(routeKey: string): void {
       if (frame !== 0) return;
       frame = window.requestAnimationFrame(() => {
         frame = 0;
-        if (revealVisible() === 0) detach();
+        revealVisible();
       });
     };
 
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("resize", onScroll, { passive: true });
-    if (revealVisible() === 0) detach();
+
+    // Lazy route chunks (HomeSections) add targets after mount. Without this the
+    // hook would see zero targets, detach, and leave them hidden forever.
+    const mutations = new MutationObserver(() => {
+      observeAll();
+      onScroll();
+    });
+    mutations.observe(document.body, { childList: true, subtree: true });
+    revealVisible();
 
     return () => {
+      mutations.disconnect();
       observer.disconnect();
       detach();
       if (frame !== 0) window.cancelAnimationFrame(frame);
