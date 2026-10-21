@@ -1,17 +1,6 @@
 @import "tailwindcss";
 @import "@nixus/shared/styles/tokens.css";
 
-/* Newsreader — the marketing display face, `{marketing-type}` in DESIGN.md.
- *
- * Self-hosted via npm, never a Google Fonts `@import`: the spine bans a CDN font
- * outright ("Bundle woff2 fonts locally"). `wght.css` not `index.css` — the
- * optical-size axis would ship a second file for a page that names two sizes.
- *
- * Scope is display headings only. Inter still carries every word a visitor
- * READS, and the whole desktop app, so the site gains an editorial voice without
- * drifting from the product. See `--font-display` below. */
-@import "@fontsource-variable/newsreader/wght.css";
-
 /* Scan the workspace-linked @nixus/shared package so Tailwind generates
  * the utilities used inside its shadcn primitives (Button, DropdownMenu,
  * etc.). pnpm symlinks ./node_modules/@nixus/shared, but Tailwind v4
@@ -91,10 +80,8 @@
  * intent visible at the call site.
  */
 @theme {
-  /* The editorial display family. A `--font-*` entry so `font-display` exists as
-   * a utility for the rare heading that needs it without a type role. */
-  --font-display:
-    "Newsreader Variable", ui-serif, Georgia, Cambria, "Times New Roman", serif;
+  /* Display family: Inter, same as body. A `--font-*` entry so `font-display` exists. */
+  --font-display: var(--font-sans);
 
   --text-display-xl: clamp(2.25rem, 1.5rem + 3.75vw, 3.5rem);
   --text-display-xl--line-height: 1.06;
@@ -139,9 +126,6 @@
 .text-display-l,
 .text-display-m {
   font-family: var(--font-display);
-  /* A serif at display size needs its lining figures explicitly; Newsreader
-   * defaults to oldstyle, which drops the "2026" in a headline below the
-   * baseline and reads as a rendering bug. */
   font-variant-numeric: lining-nums;
 }
 
