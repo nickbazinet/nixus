@@ -89,6 +89,14 @@ describe("hosted-AI precedence disclosure", () => {
     expect(text).not.toMatch(/United Kingdom/);
   });
 
+  it("states what is not stored and makes no claim about retaining request metadata", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/does not store the prompt, the attached statement/i);
+    expect(text).not.toMatch(/does record, and retain/i);
+    expect(text).not.toMatch(/request latency|token counts/i);
+  });
+
   /* The Terms are the other half of AD-13's disclosure mechanism: a reader who accepts
    * the Terms without opening the Privacy Policy must still learn where their statement
    * is processed. */
@@ -152,6 +160,16 @@ describe("French disclosures carry the same facts", () => {
 
       expect(text).not.toMatch(/Europe \(Londres\)/);
       expect(text).not.toContain("eu-west-2");
+    });
+  });
+
+  it("makes no claim in French about retaining request metadata", async () => {
+    await withFrench(() => {
+      const text = renderText(<PrivacyPage locale="fr" />);
+
+      expect(text).toMatch(/ne stocke ni la requête/i);
+      expect(text).not.toMatch(/enregistre et conserve/i);
+      expect(text).not.toMatch(/latence de la requête|nombre de jetons/i);
     });
   });
 
@@ -256,110 +274,104 @@ describe("EN and FR locality claims stay in step", () => {
 });
 
 /*
- * AD-13 extends to sync: Terms and Privacy are the only disclosure, there is no in-app
- * consent gate. Every claim here is pinned to something the code actually does, because
- * a disclosure that overstates the protection is worse than none.
+ * AD-13 extends to the optional cloud copy: Terms and Privacy are the only disclosure,
+ * there is no in-app consent gate. Every claim here is pinned to something the code
+ * actually does, because a disclosure that overstates the protection is worse than none.
+ * The Privacy Policy states it generally; the Terms carry the behavioural detail.
  */
-describe("multi-device sync disclosure", () => {
-  it("states that sync is opt-in and entitlement-bound without naming a tier", () => {
+describe("optional cloud copy disclosure", () => {
+  it("states that the cloud copy is opt-in and account-bound without naming a tier", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
-    expect(text).toMatch(/off until you turn it on/i);
-    expect(text).toMatch(/a Nixus Cloud account that includes multi-device sync/i);
-    // AD-14: no sync copy may name a tier.
+    expect(text).toMatch(/off until you turn them on/i);
+    expect(text).toMatch(/require a Nixus Cloud account/i);
+    // AD-14: no cloud-copy wording may name a tier.
     expect(text).not.toMatch(/premium multi-device|multi-device sync tier/i);
   });
 
-  it("names what is uploaded, what is stripped, and where it lives", () => {
+  it("says what is kept and where, in one general sentence each", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
-    expect(text).toMatch(/your changes travel continuously/i);
-    expect(text).toMatch(/periodically, a full snapshot/i);
-    /* Fix F-1 wired the blob upload and the on-demand fetch, so the disclosure now has to say
-     * so: thumbnails come first, each full-size image is its own object, and it comes down the
-     * first time it is viewed. The protection claim has to travel with it. */
-    expect(text).toMatch(/Full-size project images travel separately/i);
-    expect(text).toMatch(/uploaded as its own object/i);
-    expect(text).toMatch(/downloads one the first time you ask to see it/i);
-    /* Milestone 2 shipped continuous sync, so M1's "snapshot copy, not a live mirror / does not
-     * sync continuously / does not merge edits made on two computers at the same time" became
-     * FALSE. These pin the merge rules the code really implements (AD-5): per-field last write
-     * wins, delete beats a simultaneous edit and stays restorable for 30 days, and balances are
-     * merged as additions so two computers never double-count one event. */
-    expect(text).toMatch(/merge those changes field by field/i);
-    expect(text).toMatch(/the later change wins/i);
-    expect(text).toMatch(/the delete wins, and deleted items stay recoverable for 30 days/i);
-    expect(text).toMatch(/merged as additions/i);
-    expect(text).toMatch(/Edits you make offline are kept and sent when you are back online/i);
-    expect(text).not.toMatch(/does not sync continuously|not a live mirror/i);
-    expect(text).toMatch(/never uploaded/i);
-    expect(text).toMatch(/credential store and are never transmitted to Nixus/i);
-    expect(text).toMatch(/operated by Nixus on Amazon Web Services/i);
-    expect(text).toMatch(/US East \(N\. Virginia\)/);
+    expect(text).toMatch(/keep a copy of your data in Nixus-operated cloud storage/i);
+    expect(text).toMatch(/Amazon Web Services in the United States/i);
   });
 
-  /* AD-8 is SSE-S3 only. Claiming or implying end-to-end encryption would be the one
-   * unrecoverable error in this document. */
+  /* The Privacy Policy is deliberately general about this feature: it names the optional
+   * cloud copy, not how sync works. The mechanics (merge rules, snapshots, retention windows,
+   * the delete grant) were cut by decision, and the Terms keep the behavioural promises. This
+   * pins that decision so the detail does not creep back in one well-meant paragraph at a time. */
+  it("stays general rather than describing how the feature works", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).not.toMatch(/multi-device|\bsync\b/i);
+    expect(text).not.toMatch(/change-log|snapshot|field by field|roster|thumbnail/i);
+    expect(text).not.toMatch(/SSE-S3|N\. Virginia|30 days|90 days/i);
+  });
+
+  /* Claiming or implying end-to-end encryption would be the one unrecoverable error in this
+   * document, so this survives every trim. */
   it("refuses to imply end-to-end encryption and says who could read the copy", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
-    expect(text).toMatch(/server-side encryption \(SSE-S3\)/i);
+    expect(text).toMatch(/encrypted in transit and at rest/i);
     expect(text).toMatch(/not end-to-end encrypted/i);
     expect(text).toMatch(/administrator with access to that AWS account/i);
-    expect(text).toMatch(/reserves a marker for an encryption scheme/i);
     expect(text).not.toMatch(/end-to-end encrypted\.(?! )/);
     expect(text).not.toMatch(/only you can read/i);
   });
 
-  /* Story 23 gave the sync role s3:DeleteObject on its own log/* and snap/* only, so the
-   * blanket "no permission to delete anything" claim became false. These pin what the grant
-   * really is: cleanup of superseded segments and snapshots inside the account's own location,
-   * nothing else deletable, and still no self-serve deletion of the copy as a whole. */
-  it("states the 30-day version window and that deletion is a manual request", () => {
+  it("says turning a cloud feature off keeps the copy and that deletion is by email", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
-    expect(text).toMatch(/previous versions of each object for 30 days/i);
-    expect(text).toMatch(/only delete permission is the cleanup/i);
-    expect(text).toMatch(/change-log segments a newer snapshot already covers/i);
-    expect(text).toMatch(/snapshots a newer one supersedes/i);
-    expect(text).toMatch(
-      /no permission to delete the record binding that location to your account/i
-    );
-    expect(text).toMatch(/pointers and roster your computers coordinate through/i);
-    expect(text).toMatch(/or your project images/i);
-    expect(text).toMatch(/no way to delete the cloud copy from inside the app/i);
-    expect(text).toMatch(/email the address at the bottom of this page/i);
     expect(text).toMatch(/stops transfers but does not delete the copy/i);
+    expect(text).toMatch(/email the address at the bottom of this page/i);
+    expect(text).toMatch(/handled manually/i);
     expect(text).not.toMatch(/no permission to delete anything/i);
   });
 
   it("keeps the local-only promise intact in the Privacy Policy", () => {
     const text = renderText(<PrivacyPage locale="en" />);
 
-    expect(text).toMatch(/local-only profile, no sync code runs/i);
+    expect(text).toMatch(/local-only profile, nothing is uploaded/i);
   });
 
-  /* Sync now converges on its own, so the Terms describe the merge rules and the ONE prompt that
-   * is left (the first link of a computer that already has data) instead of the M1 claim that
-   * nothing is merged at all. */
-  it("describes beta availability, the conflict choice and the freeze in the Terms", () => {
+  /* The Terms say what a reader can rely on about the optional cloud copy, and no more:
+   * who it is for, that it is off until turned on, that it is an alpha that can change or be
+   * withdrawn, and what happens when an account stops qualifying. The merge rules, the
+   * first-link prompt and the version-gating were cut by decision; they are product behaviour
+   * the app shows, not terms a reader agrees to. */
+  it("describes availability, suspension and eligibility without describing how it works", () => {
     const text = renderText(<TermsPage locale="en" />);
 
-    expect(text).toMatch(/optional feature of eligible Nixus Cloud accounts/i);
+    expect(text).toMatch(/available to eligible Nixus Cloud accounts/i);
+    expect(text).toMatch(/off until you turn them on/i);
     expect(text).toMatch(/availability is not guaranteed/i);
-    expect(text).toMatch(/merges your computers continuously/i);
-    expect(text).toMatch(/a delete wins over an edit made at the same time/i);
-    expect(text).toMatch(/waits for the update before applying changes that version cannot read/i);
-    expect(text).toMatch(/only unlinks that computer/i);
-    expect(text).not.toMatch(/does not merge edits made on two computers/i);
-    expect(text).toMatch(/never silently overwritten/i);
-    expect(text).toMatch(/kept as a dated backup/i);
-    expect(text).toMatch(/keeping your own backups remains your responsibility/i);
-    expect(text).toMatch(/Nixus freezes it/i);
-    expect(text).toMatch(/keeps working normally with your local data/i);
+    expect(text).toMatch(/changed, interrupted, or withdrawn/i);
+    expect(text).toMatch(/Nixus may suspend them for an account/i);
+    expect(text).toMatch(/If an account stops being eligible/i);
+    expect(text).toMatch(/app keeps working with your local data/i);
+    // AD-14: no cloud-copy wording may name a tier.
+    expect(text).not.toMatch(/premium multi-device|multi-device sync tier/i);
   });
 
-  it("no longer claims that Nixus never syncs or holds a copy", () => {
+  it("keeps backups the reader's responsibility without a sync-specific paragraph", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/does not operate a backup service/i);
+    expect(text).toMatch(/keeping your own backups is your responsibility/i);
+  });
+
+  /* The Terms stay general about the feature, as the Privacy Policy does. This pins that
+   * decision so the mechanics do not come back one well-meant paragraph at a time. */
+  it("stays general in the Terms rather than naming the feature or its mechanics", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).not.toMatch(/multi-device|\bsync\b/i);
+    expect(text).not.toMatch(/field by field|merged as additions|dated backup|relinks?/i);
+    expect(text).not.toMatch(/credit card statement import|AI chat|project advice|spending-trends/i);
+  });
+
+  it("no longer claims that Nixus never holds a copy", () => {
     for (const page of [<TermsPage locale="en" />, <PrivacyPage locale="en" />]) {
       const text = renderText(page);
       expect(text).not.toMatch(/does not back them up, sync them, or hold a copy/i);
@@ -367,67 +379,56 @@ describe("multi-device sync disclosure", () => {
     }
   });
 
-  it("carries the same sync facts in French", async () => {
+  it("carries the same cloud-copy facts in French", async () => {
     await withFrench(() => {
       const privacy = renderText(<PrivacyPage locale="fr" />);
 
-      expect(privacy).toMatch(/désactivée jusqu'à ce que vous l'activiez/i);
-      expect(privacy).toMatch(/compte Nixus Cloud qui inclut la synchronisation/i);
-      expect(privacy).toMatch(/Virginie du Nord/i);
+      expect(privacy).toMatch(/désactivées jusqu'à ce que vous les activiez/i);
+      expect(privacy).toMatch(/exigent un compte Nixus Cloud/i);
+      expect(privacy).toMatch(/stockage infonuagique exploité par Nixus/i);
+      expect(privacy).toMatch(/Amazon Web Services, aux États-Unis/i);
+      expect(privacy).toMatch(/chiffrée en transit et au repos/i);
       expect(privacy).toMatch(/n'est pas chiffrée de bout en bout/i);
       expect(privacy).toMatch(/administrateur de Nixus ayant accès à ce compte AWS/i);
-      expect(privacy).toMatch(/pendant 30 jours/i);
+      expect(privacy).toMatch(/ne supprime pas la copie/i);
       expect(privacy).toMatch(/au bas de cette page/i);
-      expect(privacy).toMatch(/seule permission de suppression/i);
-      expect(privacy).toMatch(/qu'un instantané plus récent couvre déjà/i);
-      expect(privacy).toMatch(/aucune permission de supprimer l'enregistrement/i);
-      expect(privacy).toMatch(/ni vos images de projet/i);
-      expect(privacy).toMatch(/rien dans l'application ne permet encore de supprimer/i);
-      expect(privacy).not.toMatch(/aucune permission de suppression,/i);
-      expect(privacy).toMatch(/aucun code de synchronisation ne s'exécute/i);
-      expect(privacy).toMatch(/vos modifications voyagent en continu/i);
-      expect(privacy).toMatch(/champ par champ/i);
-      expect(privacy).toMatch(/récupérables pendant 30 jours/i);
-      expect(privacy).not.toMatch(/ne se synchronise pas en continu/i);
+      expect(privacy).toMatch(/traitées manuellement/i);
+      expect(privacy).toMatch(/profil local seulement, rien n'est téléversé/i);
+      // Same decision as the English policy: the feature is named generally.
+      expect(privacy).not.toMatch(/synchronisation multi-appareils|instantané|champ par champ/i);
 
       const terms = renderText(<TermsPage locale="fr" />);
 
-      expect(terms).toMatch(/comptes Nixus Cloud admissibles/i);
-      expect(terms).toMatch(/version bêta/i);
-      expect(terms).toMatch(/fusionne vos ordinateurs en continu/i);
-      expect(terms).toMatch(/une suppression l'emporte sur une modification faite au même moment/i);
-      expect(terms).not.toMatch(/ne fusionne pas les modifications faites simultanément/i);
-      expect(terms).toMatch(/jamais remplacée en silence/i);
-      expect(terms).toMatch(/sauvegarde datée/i);
-      expect(terms).toMatch(/Nixus la gèle/i);
-      expect(terms).not.toMatch(/ne les synchronise pas/i);
+      expect(terms).toMatch(/offertes aux comptes Nixus Cloud admissibles/i);
+      expect(terms).toMatch(/désactivées jusqu'à ce que vous les activiez/i);
+      expect(terms).toMatch(/disponibilité n'est pas garantie/i);
+      expect(terms).toMatch(/modifiées, interrompues ou retirées/i);
+      expect(terms).toMatch(/Nixus peut les suspendre pour un compte/i);
+      expect(terms).toMatch(/Si un compte cesse d'être admissible/i);
+      expect(terms).toMatch(/continue de fonctionner avec vos données locales/i);
+      expect(terms).toMatch(/il vous incombe de faire vos propres sauvegardes/i);
+      expect(terms).not.toMatch(/synchronisation multi-appareils|champ par champ|sauvegarde datée/i);
+      expect(terms).not.toMatch(/import de relevés|clavardage IA|conseils de projet|tendances de dépenses/i);
     });
   });
 
-  it("keeps both documents' sync paragraphs in the rendered section order", () => {
+  it("keeps both documents' cloud-copy paragraphs in the rendered section order", () => {
     const termsKeys = TERMS_SECTIONS.flatMap((section) => section.bodyKeys);
     const privacyKeys = PRIVACY_SECTIONS.flatMap((section) => section.bodyKeys);
 
     expect(termsKeys).toEqual(
-      expect.arrayContaining([
-        "termsPage.sync.body",
-        "termsPage.sync.conflict",
-        "termsPage.sync.backups",
-        "termsPage.sync.freeze",
-      ])
+      expect.arrayContaining(["termsPage.cloud.body", "termsPage.cloud.availability"])
     );
     expect(privacyKeys).toEqual(
       expect.arrayContaining([
-        "privacyPage.sync.body",
-        "privacyPage.sync.what",
-        "privacyPage.sync.notSynced",
-        "privacyPage.sync.where",
-        "privacyPage.sync.protection",
-        "privacyPage.sync.retention",
-        "privacyPage.sync.deletion",
-        "privacyPage.sync.localOnly",
+        "privacyPage.cloud.body",
+        "privacyPage.cloud.protection",
+        "privacyPage.cloud.deletion",
       ])
     );
+    // Removed because it was false: it said Nixus retains request latency, status and
+    // token counts, but most of that exists only in logs that expire after 14 days.
+    expect(privacyKeys).not.toContain("privacyPage.hosted.retained");
   });
 });
 

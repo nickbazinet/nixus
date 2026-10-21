@@ -47,13 +47,53 @@ export const heroVideo: {
 };
 
 /**
- * The product-tour film. The one slot on the page that wants a real edit rather
- * than a screenshot — a short run through import, budget, and dashboard.
+ * The product-tour film.
+ *
+ * `width` and `height` are the film's own pixel size, and the frame on the page
+ * takes its SHAPE from those two numbers — there is no 16:9 anywhere in the
+ * layout. That is why a screen recording of a window (1546 x 1080 here) fits
+ * with no letterboxing and no re-edit. `media.test.ts` reads the real size out
+ * of the file and fails if these numbers disagree with it, so replacing the
+ * film cannot silently leave the frame the wrong shape.
+ *
+ * To replace it: drop the new MP4 in `public/product/`, update `src`, `width`
+ * and `height`, and give the file a NEW NAME (`tour-v2.mp4`, not `tour-v1.mp4`
+ * again). Media is cached for a week, so reusing a name leaves returning
+ * visitors on the old film until their cache expires.
+ *
+ * `poster` is the still shown before play. Export it at the film's exact shape;
+ * a different shape is letterboxed until the first frame replaces it.
+ *
+ * What the file should be: H.264 in an MP4, no audio track, "fast start" (index
+ * at the front, so it can begin playing before it has finished downloading),
+ * ideally under ~6 MB. It loads only when a visitor presses play.
  */
 export const productTour: {
   readonly src?: string;
   readonly poster?: string;
+  readonly width: number;
+  readonly height: number;
 } = {
-  src: undefined,
-  poster: undefined,
+  src: "/product/tour-v1.mp4",
+  poster: "/product/tour-v1-poster.webp",
+  width: 1546,
+  height: 1080,
+};
+
+/**
+ * The closing band's photograph.
+ *
+ * The only band on the page where imagery belongs, because it is the only one
+ * with no body copy for a picture to endanger — the photo sits in its own
+ * column, never behind text. A person using Nixus at a desk or kitchen table
+ * reads better here than another screenshot: the page has already shown four of
+ * those, and this moment is about the decision, not the feature.
+ */
+export const closingPhoto: {
+  readonly src?: string;
+} = {
+  /* 1400 x 933 (3:2) WebP, 108 KB. The slot's declared aspect must stay in step
+   * with this file's real ratio, or the stand-in reserves a different box than
+   * the asset and the band shifts on load. */
+  src: "/product/closing-couple.webp",
 };

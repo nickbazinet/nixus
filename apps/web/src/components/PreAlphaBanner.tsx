@@ -43,7 +43,7 @@ export function PreAlphaBanner() {
       aria-label={t("preAlpha.banner.ariaLabel")}
       className="w-full border-b border-caution/25 bg-caution-bg text-caution-ink"
     >
-      <div className="mkt-page-x mx-auto flex max-w-[1280px] items-center gap-2 py-2 text-sm sm:gap-3">
+      <div className="mkt-page-x mkt-container flex items-center gap-2 py-2 text-sm sm:gap-3">
         <AlertTriangle aria-hidden="true" className="size-4 shrink-0" />
         {/* The link sits inside the sentence rather than beside it as a third
             flex item: as a sibling it reserved ~130px of the row, squeezing the

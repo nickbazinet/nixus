@@ -236,9 +236,14 @@ test.describe("Warm Editorial light palette", () => {
     expect(surfaces.bandDeep).toBe(BAND.deep);
     expect(new Set([surfaces.bandPaper, surfaces.bandTint, surfaces.bandDeep]).size).toBe(3);
 
-    // The one bounded shadow exception is ProductFrame imagery. An ordinary
-    // marketing card stays hairline-only, warm palette or not.
-    expect(surfaces.cardShadow).toBe("none");
+    // Marketing cards carry the soft `--mkt-shadow-card` elevation. Inside the
+    // app, `shadow: none` is right because elevation competes with the numbers;
+    // on a marketing page with eleven bands and no numbers to protect, a card
+    // with no elevation reads as a flat box. The assertion is that the
+    // elevation RESOLVES — a typo in the token name would silently fall back to
+    // none and nobody would notice until a screenshot review.
+    expect(surfaces.cardShadow).not.toBe("none");
+    expect(surfaces.cardShadow).toContain("rgba(58, 44, 24, 0.04)");
     // The responsive header contract is a separate token family this task must
     // not disturb while rewriting colour.
     expect(surfaces.headerBarHeight).toBe(expectedHeaderHeight(viewportWidth(page)));

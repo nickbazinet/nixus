@@ -46,6 +46,8 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
   ".woff": "font/woff",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
 };
 
 /**
@@ -68,6 +70,28 @@ const COMPRESSIBLE = new Set([
 
 function contentType(filePath: string): string {
   return CONTENT_TYPES[extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
+/**
+ * Parses a single `Range: bytes=a-b` request. `null` means "serve the whole
+ * object" (no header, or a form this server does not honour); `"unsatisfiable"`
+ * is a 416. S3 behind CloudFront answers ranges natively, and a video element
+ * needs them: Safari refuses to play a file it cannot seek, and every browser
+ * seeks by range. Without this the local server would pass in Chromium and fail
+ * in the browser the video is most likely to be watched in.
+ */
+function parseRange(
+  header: string | undefined,
+  size: number,
+): { start: number; end: number } | "unsatisfiable" | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header ?? "");
+  if (match === null) return null;
+  const [, from = "", to = ""] = match;
+  if (from === "" && to === "") return null;
+  // `bytes=-500` is the last 500 bytes.
+  const start = from === "" ? Math.max(size - Number(to), 0) : Number(from);
+  const end = from === "" || to === "" ? size - 1 : Math.min(Number(to), size - 1);
+  return start > end || start >= size ? "unsatisfiable" : { start, end };
 }
 
 /** Hashed build assets are immutable; HTML must revalidate to pick up a deploy. */
@@ -109,12 +133,37 @@ const server = createServer((request, response) => {
   const acceptEncoding = String(request.headers["accept-encoding"] ?? "");
   const encoding = encodingFor(object, acceptEncoding);
 
-  response.writeHead(found === null ? 404 : 200, {
+  const size = statSync(object).size;
+  const range =
+    encoding === null && found !== null
+      ? parseRange(request.headers.range, size)
+      : null;
+
+  if (range === "unsatisfiable") {
+    response.writeHead(416, { "content-range": `bytes */${size}` });
+    response.end();
+    return;
+  }
+
+  response.writeHead(range === null ? (found === null ? 404 : 200) : 206, {
     "content-type": contentType(object),
     "cache-control": cacheControl(object),
     vary: "accept-encoding",
-    ...(encoding === null ? {} : { "content-encoding": encoding }),
+    ...(encoding === null
+      ? {
+          "accept-ranges": "bytes",
+          "content-length": String(range === null ? size : range.end - range.start + 1),
+        }
+      : { "content-encoding": encoding }),
+    ...(range === null
+      ? {}
+      : { "content-range": `bytes ${range.start}-${range.end}/${size}` }),
   });
+
+  if (range !== null) {
+    createReadStream(object, { start: range.start, end: range.end }).pipe(response);
+    return;
+  }
 
   const body = createReadStream(object);
   if (encoding === "br") {

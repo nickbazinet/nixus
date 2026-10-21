@@ -133,8 +133,9 @@ export function Hero({ eyebrow }: HeroProps) {
       data-testid="hero"
       className={`mkt-hero-y mkt-band-paper relative isolate overflow-x-clip ${HERO_BACKDROP_CLASS}`}
     >
+      <div aria-hidden="true" data-testid="hero-wash" className="mkt-hero-wash" />
       <HeroVideoBackdrop />
-      <div className="mkt-page-x mkt-asym-hero mx-auto max-w-[1280px]">
+      <div className="mkt-page-x mkt-asym-hero mkt-container">
         <div className="mkt-measure-lead">
           {eyebrowText ? (
             <p

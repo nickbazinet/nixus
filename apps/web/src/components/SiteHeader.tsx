@@ -78,12 +78,15 @@ export function SiteHeader() {
       role="banner"
       className={cn(
         "sticky top-0 z-50 w-full motion-safe:transition-[background-color,backdrop-filter,border-color] motion-safe:duration-200",
+        // A brand-tinted glass bar at BOTH states, not just when scrolled. At
+        // rest it used to be fully transparent over the hero's paper, so the bar
+        // and the first section were the same colour and the chrome had no edge.
         scrolled
-          ? "border-b border-border bg-background/85 backdrop-blur"
-          : "border-b border-transparent bg-background/0",
+          ? "bg-accent/80 backdrop-blur"
+          : "bg-accent/45 backdrop-blur-sm",
       )}
     >
-      <div className="mkt-page-x mx-auto flex h-14 max-w-[1280px] items-center justify-between gap-2 sm:h-16 lg:h-20">
+      <div className="mkt-page-x mkt-container flex h-14 items-center justify-between gap-2 sm:h-16 lg:h-20">
         <a
           href="/"
           aria-label={t("header.brandHome")}
@@ -135,6 +138,17 @@ export function SiteHeader() {
           </div>
         </div>
       </div>
+      {/* After the bar, not before it: the layout specs measure the bar as
+          `header.firstElementChild`, and the rule is absolutely positioned so its
+          source order is free. */}
+      <span
+        aria-hidden="true"
+        data-testid="header-rule"
+        className={cn(
+          "pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-[#818CF8] via-[#A78BFA] to-[#F472B6] motion-safe:transition-opacity motion-safe:duration-200",
+          scrolled ? "opacity-100" : "opacity-40",
+        )}
+      />
     </header>
   );
 }

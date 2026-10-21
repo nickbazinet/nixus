@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { betaGetStartedStepIds } from "@/content/betaPage";
@@ -43,6 +44,7 @@ export function BetaGetStarted({ faqHomeHref }: BetaGetStartedProps) {
                   className="mkt-tap mt-2 inline-flex items-center text-primary underline-offset-4 hover:underline"
                 >
                   {t("betaPage.getStarted.installHelpLink")}
+                  <ArrowRight aria-hidden="true" className="ml-1 size-4" />
                 </a>
               ) : null}
             </div>

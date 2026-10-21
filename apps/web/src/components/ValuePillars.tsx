@@ -1,5 +1,8 @@
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SectionIntro } from "@/components/SectionIntro";
+import { rampStop } from "@/components/IconChip";
 import { pillars } from "@/content/pillars";
 
 /**
@@ -22,28 +25,29 @@ export function ValuePillars() {
       id="why"
       data-testid="value-pillars"
       aria-labelledby="pillars-heading"
-      className="mkt-band-paper mkt-section-y"
+      className="mkt-band-paper mkt-wash mkt-wash-violet mkt-section-y"
     >
-      <div className="mkt-page-x mx-auto max-w-[1280px]">
-        <div className="mkt-section-lead mkt-measure-prose">
-          <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
-            {t("pillars.eyebrow")}
-          </p>
-          <h2 id="pillars-heading" className="text-display-l text-foreground">
-            {t("pillars.heading")}
-          </h2>
-          <p className="mt-4 text-lead text-muted-foreground">
-            {t("pillars.subhead")}
-          </p>
-        </div>
+      <div className="mkt-page-x mkt-container">
+        <SectionIntro
+          id="pillars-heading"
+          eyebrow={t("pillars.eyebrow")}
+          heading={t("pillars.heading")}
+          lead={t("pillars.subhead")}
+          align="center"
+        />
         <ul
           role="list"
           className="grid grid-cols-1 gap-8 md:grid-cols-3 md:gap-10 lg:gap-14"
         >
-          {pillars.map((pillar) => (
+          {pillars.map((pillar, index) => (
             <li key={pillar.id}>
-              <article data-testid="pillar-card" className="h-full">
-                <div aria-hidden="true" className="mkt-rule" />
+              <article
+                data-testid="pillar-card"
+                data-reveal-item=""
+                style={{ "--reveal-i": index } as CSSProperties}
+                className="h-full"
+              >
+                <div aria-hidden="true" data-stop={rampStop(index)} className="mkt-rule" />
                 <h3 className="text-lg font-semibold text-foreground">
                   {t(`pillars.${pillar.id}.title`)}
                 </h3>

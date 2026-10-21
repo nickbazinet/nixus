@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -156,6 +157,7 @@ export function BetaPage() {
             className="mkt-tap mt-6 inline-flex items-center text-sm font-medium text-primary underline-offset-4 hover:underline"
           >
             {t("betaPage.faq.moreLink")}
+            <ArrowRight aria-hidden="true" className="ml-1 size-4" />
           </a>
         </section>
       </div>

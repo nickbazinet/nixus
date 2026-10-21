@@ -1,4 +1,8 @@
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+
+import { SectionIntro } from "@/components/SectionIntro";
+import { IconChip, rampStop } from "@/components/IconChip";
 import { Check, Compass, FileUp, Sparkles, type LucideIcon } from "lucide-react";
 
 /**
@@ -30,23 +34,16 @@ export function HowItWorks() {
       id="how-it-works"
       data-testid="how-it-works"
       aria-labelledby="how-it-works-heading"
-      className="mkt-band-tint mkt-section-y border-y border-border"
+      className="mkt-band-tint mkt-wash mkt-wash-pink mkt-section-y border-y border-border"
     >
-      <div className="mkt-page-x mx-auto max-w-[1280px]">
-        <div className="mkt-section-lead mkt-measure-prose">
-          <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
-            {t("howItWorks.eyebrow")}
-          </p>
-          <h2
-            id="how-it-works-heading"
-            className="text-display-l text-foreground"
-          >
-            {t("howItWorks.heading")}
-          </h2>
-          <p className="mt-4 text-lead text-muted-foreground">
-            {t("howItWorks.subhead")}
-          </p>
-        </div>
+      <div className="mkt-page-x mkt-container">
+        <SectionIntro
+          id="how-it-works-heading"
+          eyebrow={t("howItWorks.eyebrow")}
+          heading={t("howItWorks.heading")}
+          lead={t("howItWorks.subhead")}
+          align="center"
+        />
 
         <ol
           role="list"
@@ -58,15 +55,12 @@ export function HowItWorks() {
               <li
                 key={stepId}
                 data-testid="how-it-works-step"
-                className="flex flex-col gap-4 rounded-lg border border-border bg-card p-6 md:p-7"
+                data-reveal-item=""
+                style={{ "--reveal-i": index } as CSSProperties}
+                className="mkt-card mkt-panel flex flex-col gap-4 border border-border bg-card p-6 md:p-7"
               >
                 <div className="flex items-center gap-3">
-                  <span
-                    aria-hidden="true"
-                    className="inline-flex size-9 items-center justify-center rounded-md bg-brand-soft text-brand-ink"
-                  >
-                    <Icon className="size-[18px]" />
-                  </span>
+                  <IconChip icon={Icon} stop={rampStop(index)} />
                   <span
                     aria-hidden="true"
                     className="text-xs font-semibold tracking-wider text-ink-faint tabular-nums"
@@ -94,9 +88,6 @@ export function HowItWorks() {
           })}
         </ol>
 
-        <p className="mt-6 text-sm text-muted-foreground">
-          {t("howItWorks.footnote")}
-        </p>
       </div>
     </section>
   );

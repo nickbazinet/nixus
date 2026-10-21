@@ -45,11 +45,11 @@ describe("<PreAlphaBanner />", () => {
     expect(screen.getByTestId("pre-alpha-banner")).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Nixus is in pre-alpha — the product is still maturing/,
+        /Nixus is in alpha — the product is still maturing/,
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Dismiss pre-alpha notice" }),
+      screen.getByRole("button", { name: "Dismiss alpha notice" }),
     ).toBeInTheDocument();
   });
 
@@ -84,7 +84,7 @@ describe("<PreAlphaBanner />", () => {
   it("dismisses, persists to localStorage, and sets the html attribute", () => {
     renderWithProviders(<PreAlphaBanner />);
     fireEvent.click(
-      screen.getByRole("button", { name: "Dismiss pre-alpha notice" }),
+      screen.getByRole("button", { name: "Dismiss alpha notice" }),
     );
     expect(screen.queryByTestId("pre-alpha-banner")).toBeNull();
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("1");
@@ -102,7 +102,7 @@ describe("<PreAlphaBanner />", () => {
     renderWithProviders(<PreAlphaBanner />);
     expect(() =>
       fireEvent.click(
-        screen.getByRole("button", { name: "Dismiss pre-alpha notice" }),
+        screen.getByRole("button", { name: "Dismiss alpha notice" }),
       ),
     ).not.toThrow();
     expect(screen.queryByTestId("pre-alpha-banner")).toBeNull();
@@ -123,7 +123,7 @@ describe("<PreAlphaBanner />", () => {
         root: root.className,
         link: screen.getByRole("link", { name: /Learn more/i }).className,
         dismiss: screen.getByRole("button", {
-          name: "Dismiss pre-alpha notice",
+          name: "Dismiss alpha notice",
         }).className,
       };
     }
@@ -192,7 +192,7 @@ describe("<PreAlphaBanner />", () => {
       const root = screen.getByTestId("pre-alpha-banner");
       const bar = root.firstElementChild;
       const dismiss = screen.getByRole("button", {
-        name: "Dismiss pre-alpha notice",
+        name: "Dismiss alpha notice",
       });
 
       // Full-bleed band above the sticky header, not inside it: `headerReport()`
@@ -202,7 +202,9 @@ describe("<PreAlphaBanner />", () => {
       expect(root).toHaveAttribute("role", "region");
 
       expect(bar?.className).toContain("mkt-page-x");
-      expect(bar?.className).toContain("max-w-[1280px]");
+      // Shares the responsive container with the header, so the notice and the
+      // nav below it stay flush at every width.
+      expect(bar?.className).toContain("mkt-container");
       expect(bar?.className).toContain("py-2");
 
       // The 44px floor below 1024px comes from `mkt-tap`; `size-7` is the
@@ -222,11 +224,11 @@ describe("<PreAlphaBanner />", () => {
     renderWithProviders(<PreAlphaBanner />);
     expect(
       screen.getByText(
-        /Nixus est en pré-alpha — le produit évolue encore/,
+        /Nixus est en alpha — le produit évolue encore/,
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Fermer l'avis pré-alpha" }),
+      screen.getByRole("button", { name: "Fermer l'avis alpha" }),
     ).toBeInTheDocument();
     const link = screen.getByRole("link", { name: /En savoir plus/i });
     expect(link).toHaveAttribute("href", "/fr/beta");

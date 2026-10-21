@@ -3,6 +3,7 @@ import {
   Outlet,
   Scripts,
   createRootRoute,
+  useLocation,
   useRouterState,
 } from "@tanstack/react-router";
 import { useEffect } from "react";
@@ -16,6 +17,7 @@ import { SiteHeader } from "../components/SiteHeader";
 import { DownloadStateProvider } from "../features/download/DownloadStateContext";
 import { i18nForLocale } from "@/lib/i18n";
 import { localeFromPath } from "@/lib/localePaths";
+import { useRevealOnScroll } from "@/lib/useRevealOnScroll";
 import type { Locale } from "@/lib/site";
 
 // Inline script that runs synchronously before React hydrates so the
@@ -24,7 +26,7 @@ import type { Locale } from "@/lib/site";
 // while the React tree mounts and `next-themes` reads localStorage.
 // Also applies `data-pre-alpha-dismissed` so the pre-alpha banner stays
 // hidden via CSS for returning dismissed visitors (no flash).
-const FLASH_MITIGATION = `(function(){try{var t=localStorage.getItem('theme');var dark=t==='dark'||((t==='system'||!t)&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(dark){document.documentElement.classList.add('dark');}document.documentElement.style.colorScheme=dark?'dark':'light';}catch(e){}try{if(localStorage.getItem('nixus.preAlphaDismissed')==='1'){document.documentElement.setAttribute('data-pre-alpha-dismissed','1');}}catch(e){}})();`;
+const FLASH_MITIGATION = `(function(){try{var t=localStorage.getItem('theme');var dark=t==='dark'||((t==='system'||!t)&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(dark){document.documentElement.classList.add('dark');}document.documentElement.style.colorScheme=dark?'dark':'light';}catch(e){}try{if(localStorage.getItem('nixus.preAlphaDismissed')==='1'){document.documentElement.setAttribute('data-pre-alpha-dismissed','1');}}catch(e){}try{if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){document.documentElement.setAttribute('data-reveal','on');}}catch(e){}})();`;
 
 export const Route = createRootRoute({
   head: () => ({
@@ -65,7 +67,11 @@ function useCloudflareAnalytics(): void {
 // the `<I18nextProvider>` tree. The provider must wrap any consumer.
 function ShellInner({ locale }: { locale: Locale }) {
   const { t } = useTranslation();
+  const { pathname } = useLocation();
   useCloudflareAnalytics();
+  // Re-swept per route: the reveal targets differ between pages, and a client
+  // navigation mounts a new set that the previous observer never saw.
+  useRevealOnScroll(pathname);
   return (
     // `suppressHydrationWarning` covers the `class` and `style` that
     // FLASH_MITIGATION writes onto this element before React hydrates. Without

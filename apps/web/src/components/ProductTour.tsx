@@ -1,86 +1,93 @@
-import { useTranslation } from "react-i18next";
+import type { CSSProperties } from "react";
 import { Play } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
+import { SectionIntro } from "@/components/SectionIntro";
+import { TourPlayer } from "@/components/TourPlayer";
 import { productTour } from "@/content/media";
 
 /**
  * The product-tour band.
  *
- * Carries `controls` and no autoplay, unlike the hero's ambient layer: this is
- * content a visitor chooses to watch, so it must be startable, pausable, and
- * seekable. `preload="none"` keeps a film the visitor may never play out of the
- * page's load budget — the poster frame is all that ships until they click.
+ * The frame is shaped by the film, not by a layout default. `width` and `height`
+ * in `content/media.ts` become `--mkt-tour-ratio`, and the same ratio is used
+ * whether or not a film is configured, so the stand-in reserves exactly the box
+ * the film will fill and the page does not move when it lands. `.mkt-tour` in
+ * `main.css` explains the width cap that keeps the whole frame on screen.
+ *
+ * The film is the surface, so it gets no white mat — that treatment is for UI
+ * screenshots, which need a border to read as a captured window. A black stage
+ * also absorbs the recording's own margin: a window captured on a black canvas
+ * is the film's content, not letterboxing to be hidden.
+ *
+ * It loads only when played (`preload="none"` in `TourPlayer`), so a visitor who
+ * never presses play pays for the poster and nothing else.
+ *
+ * The caption does two jobs. It tells the reader what is in the film, and it is
+ * the text alternative for a video with no audio and no captions to carry the
+ * information — a visitor who cannot watch still learns what it shows.
  *
  * While no file is configured the band renders a stand-in rather than
- * disappearing, so the section's rhythm is verifiable now. The stand-in's copy
- * is written for a VISITOR, not for whoever is wiring the asset up: a review
- * build that tells the public which directory to drop an MP4 into is worse than
- * no placeholder at all. The wiring instructions live in `content/media.ts`,
- * where the person who needs them is already looking.
+ * disappearing. Its copy is written for a VISITOR, not for whoever is wiring the
+ * asset up; the wiring instructions live in `content/media.ts`.
  */
 export function ProductTour() {
   const { t } = useTranslation();
-  const hasFilm = productTour.src !== undefined;
+  const { src, poster, width, height } = productTour;
+  const hasFilm = src !== undefined;
+  const frame = { "--mkt-tour-ratio": (width / height).toFixed(4) } as CSSProperties;
 
   return (
     <section
       id="tour"
       data-testid="product-tour"
       aria-labelledby="tour-heading"
-      className="mkt-band-tint mkt-section-y border-y border-border"
+      className="mkt-band-tint mkt-wash mkt-wash-violet mkt-section-y border-y border-border"
     >
-      <div className="mkt-page-x mx-auto max-w-[960px]">
-        <div className="mkt-section-lead text-center">
-          <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
-            {t("tour.eyebrow")}
-          </p>
-          <h2 id="tour-heading" className="text-display-l text-foreground">
-            {t("tour.heading")}
-          </h2>
-          <p className="mx-auto mt-4 max-w-[540px] text-lead text-muted-foreground">
-            {t("tour.subhead")}
-          </p>
-        </div>
+      <div className="mkt-page-x mx-auto max-w-[68rem] 2xl:max-w-[80rem]">
+        <SectionIntro
+          id="tour-heading"
+          eyebrow={t("tour.eyebrow")}
+          heading={t("tour.heading")}
+          align="center"
+        />
 
         <figure
           data-testid="product-tour-frame"
-          className="mkt-product-frame rounded-xl border border-border bg-card p-2 sm:p-3"
+          data-reveal-item=""
+          style={frame}
+          className="mkt-tour"
         >
-          {hasFilm ? (
-            <video
-              data-testid="product-tour-video"
-              src={productTour.src}
-              poster={productTour.poster}
-              controls
-              playsInline
-              preload="none"
-              className="aspect-video h-auto w-full rounded-lg bg-track"
-            >
-              {t("tour.unsupported")}
-            </video>
-          ) : (
-            <div
-              data-testid="product-tour-placeholder"
-              role="img"
-              aria-label={t("tour.placeholder.label")}
-              className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line-strong bg-track px-6 text-center"
-            >
-              <span
-                aria-hidden="true"
-                className="inline-flex size-12 items-center justify-center rounded-full border border-line-strong bg-card"
+          <div
+            data-testid="product-tour-stage"
+            className={`mkt-tour-stage mkt-product-frame mkt-panel relative overflow-hidden border border-border ${hasFilm ? "bg-black" : "bg-brand-soft"}`}
+          >
+            {hasFilm ? (
+              <TourPlayer src={src} poster={poster} />
+            ) : (
+              <div
+                data-testid="product-tour-placeholder"
+                role="img"
+                aria-label={t("tour.placeholder.label")}
+                className="flex size-full flex-col items-center justify-center gap-3 border border-dashed border-brand/30 px-6 text-center"
               >
-                <Play className="size-5 text-primary" />
-              </span>
-              <p className="text-base font-medium text-foreground">
-                {t("tour.placeholder.label")}
-              </p>
-              <p className="max-w-[420px] text-sm text-muted-foreground">
-                {t("tour.placeholder.hint")}
-              </p>
-            </div>
-          )}
+                <span
+                  aria-hidden="true"
+                  className="inline-flex size-12 items-center justify-center rounded-full border border-line-strong bg-card"
+                >
+                  <Play className="size-5 text-primary" />
+                </span>
+                <p className="text-base font-medium text-foreground">
+                  {t("tour.placeholder.label")}
+                </p>
+                <p className="max-w-[420px] text-sm text-muted-foreground">
+                  {t("tour.placeholder.hint")}
+                </p>
+              </div>
+            )}
+          </div>
           {hasFilm ? (
-            <figcaption className="px-1 pt-3 pb-1 text-sm text-muted-foreground sm:px-2">
+            <figcaption className="mt-3 text-center text-sm text-muted-foreground">
               {t("tour.caption")}
             </figcaption>
           ) : null}

@@ -113,10 +113,12 @@ describe("SiteHeader", () => {
         );
       }
 
-      // The sticky surface at rest. The scrolled swap to `border-border` +
-      // `bg-background/85` is measured for real in
-      // `tests/e2e/chrome-notices.spec.ts`, where a stale cool hairline fails.
-      expect(owned.header?.className).toContain("bg-background/0");
+      // The sticky surface at rest: a brand-tinted glass bar rather than the
+      // transparent one it used to be, which left the bar and the hero the same
+      // colour with nothing marking the edge. The scrolled strengthening is
+      // measured for real in `tests/e2e/chrome-notices.spec.ts`.
+      expect(owned.header?.className).toContain("bg-accent/45");
+      expect(owned.header?.className).not.toContain("bg-background/0");
       expect(owned.header?.className).toContain("sticky");
     });
   });

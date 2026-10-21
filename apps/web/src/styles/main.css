@@ -400,6 +400,242 @@
   box-shadow: var(--mkt-product-frame-shadow);
 }
 
+/* Hero wash — the identity gradient as an atmospheric field across the hero.
+ *
+ * Light: all of the hero's colour used to sit on the right (the ambient glow
+ * behind the demo, plus the skyline), with flat paper on the left, so the prose
+ * half read as blank and the hand-off to the imagery was a hard edge. The wash
+ * spans the whole band with the logo's three stops — periwinkle at the prose
+ * side, violet bridging the centre, pink meeting the glow — so the two halves
+ * are one continuous field.
+ *
+ * Dark: the photograph IS the surface, and it was costing legibility — a lit
+ * skyline window sat directly behind the subhead at 1.00:1 against its ink. So
+ * the dark wash has two jobs. An indigo-navy scrim, strongest on the prose side
+ * and gone by the demo, pushes the photo back behind the text and lets it emerge
+ * on the right; and deep aurora glows ride on top, in hues that echo the
+ * photo's own neon so the two read as one image rather than a layer on a layer.
+ *
+ * It is a SEPARATE element rather than an extension of the hero's `::before`
+ * because that pseudo-element carries the measured backdrop contract (asset per
+ * colour scheme, mask geometry, per-tier opacity) that `dev-console.spec.ts`
+ * pins in fifteen assertions. The dark wash sits ABOVE that photo (`-z-5`
+ * against its `-z-10`) — it has to, to dim it — whereas the light wash sits
+ * beneath so the photo's `mix-blend-multiply` blends the two.
+ *
+ * The alphas are capped by a text budget, not by taste. Live prose sits on
+ * this, and `tests/e2e/contrast.spec.ts` measures the worst-case rendered pixel
+ * behind every hero text node in both modes.
+ */
+.mkt-hero-wash {
+  position: absolute;
+  inset: 0;
+  z-index: -20;
+  pointer-events: none;
+  opacity: 0;
+}
+
+:root:not(.dark) .mkt-hero-wash {
+  opacity: 1;
+  background-image:
+    radial-gradient(
+      115% 85% at -10% 10%,
+      color-mix(in oklab, var(--logo-stop-1) 12%, transparent) 0%,
+      transparent 58%
+    ),
+    radial-gradient(
+      85% 70% at 40% 112%,
+      color-mix(in oklab, var(--logo-stop-2) 15%, transparent) 0%,
+      transparent 66%
+    ),
+    radial-gradient(
+      95% 105% at 104% 42%,
+      color-mix(in oklab, var(--logo-stop-3) 24%, transparent) 0%,
+      transparent 62%
+    );
+}
+
+.dark .mkt-hero-wash {
+  opacity: 1;
+  z-index: -5;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 8rem), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 8rem), transparent 100%);
+  background-image:
+    linear-gradient(
+      100deg,
+      color-mix(in oklab, var(--mkt-scrim) 94%, transparent) 0%,
+      color-mix(in oklab, var(--mkt-scrim) 86%, transparent) 36%,
+      color-mix(in oklab, var(--mkt-scrim) 38%, transparent) 58%,
+      transparent 78%
+    ),
+    radial-gradient(
+      70% 80% at 102% 50%,
+      color-mix(in oklab, var(--mkt-glow-3) 30%, transparent) 0%,
+      transparent 64%
+    ),
+    radial-gradient(
+      55% 70% at 54% 108%,
+      color-mix(in oklab, var(--mkt-glow-2) 30%, transparent) 0%,
+      transparent 66%
+    ),
+    radial-gradient(
+      60% 60% at -4% -6%,
+      color-mix(in oklab, var(--mkt-glow-1) 36%, transparent) 0%,
+      transparent 68%
+    );
+}
+
+/* Below the desktop tier the prose spans the full width and the photo is behind
+ * ALL of it, so a left-to-right scrim would leave the right half of the text
+ * exposed. A flat veil instead: the photo becomes texture, which on a phone is
+ * all it ever was behind a single stacked column. */
+@media (width < 64rem) {
+  .dark .mkt-hero-wash {
+    background-image:
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--mkt-scrim) 90%, transparent) 0%,
+        color-mix(in oklab, var(--mkt-scrim) 82%, transparent) 100%
+      ),
+      radial-gradient(
+        90% 55% at 100% 100%,
+        color-mix(in oklab, var(--mkt-glow-3) 30%, transparent) 0%,
+        transparent 70%
+      ),
+      radial-gradient(
+        90% 50% at 0% 0%,
+        color-mix(in oklab, var(--mkt-glow-1) 34%, transparent) 0%,
+        transparent 70%
+      );
+  }
+}
+
+/* Marketing surfaces — radii, elevation, and container width.
+ *
+ * These three deliberately DIVERGE from the app spine, and the reason is that
+ * the spine's rules here are register rules written for the product, not
+ * universal truths. "Crisp, not soft — large radii read 'consumer app'; a
+ * financial statement is squarer" is exactly right for a dense working surface
+ * a user stares at for an hour. It is wrong for the page whose job is to make a
+ * nervous first-time visitor feel this is approachable. Same for `shadow: none`:
+ * inside the app, elevation competes with the numbers, and the hairline plus
+ * tonal step is the better separator. On a marketing page with eleven bands and
+ * no numbers to protect, cards with no elevation read as flat boxes.
+ *
+ * Both references the brand is being measured against agree: Monarch and
+ * Quicken run 12-20px radii and soft shadows on every marketing card. Matching
+ * the app's 7px here is what made the cards read as technical.
+ *
+ * Scope is marketing surfaces only, via local classes. `{rounded.*}` and the
+ * shared primitives are untouched, so the app and `@nixus/shared` keep the crisp
+ * register unchanged.
+ */
+:root {
+  --mkt-radius-card: 0.75rem;
+  --mkt-radius-panel: 1rem;
+  --mkt-shadow-card: 0 1px 2px rgba(58, 44, 24, 0.04),
+    0 4px 12px -6px rgba(58, 44, 24, 0.1);
+  /* 1280px is the spine's content measure and stays the default. Past 1536px a
+   * fixed 1280 column leaves the full-bleed bands reading as large empty colour
+   * fields on either side of it, which is the single most common complaint on a
+   * wide monitor. */
+  --mkt-container: 80rem;
+}
+
+.dark {
+  /* A warm shadow is invisible on a near-black page, so dark carries the
+   * elevation as a true black cast instead of tinted warmth. */
+  --mkt-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3),
+    0 4px 14px -6px rgba(0, 0, 0, 0.45);
+}
+
+@media (width >= 96rem) {
+  :root {
+    --mkt-container: 90rem;
+  }
+}
+
+.mkt-container {
+  margin-inline: auto;
+  max-inline-size: var(--mkt-container);
+}
+
+.mkt-card {
+  border-radius: var(--mkt-radius-card);
+  box-shadow: var(--mkt-shadow-card);
+}
+
+.mkt-panel {
+  border-radius: var(--mkt-radius-panel);
+}
+
+/* Product-tour frame.
+ *
+ * The shape is the film's own, not a 16:9 default: `--mkt-tour-ratio` is set from
+ * the pixel size in `content/media.ts`, so a window recording fits without
+ * letterboxing or a re-edit. Taller-than-16:9 film has a cost, though — at full
+ * container width it can be taller than a laptop viewport, which hides the
+ * controls below the fold. So the width is the smaller of the container and
+ * whatever width yields a height that fits under the sticky header
+ * (5rem header + 4rem of breathing room); on a phone the container is the
+ * smaller one and the cap never applies. Where `dvh` is unsupported the whole
+ * declaration is dropped and the frame simply fills the container.
+ */
+.mkt-tour {
+  margin-inline: auto;
+  inline-size: min(100%, calc((100dvh - 9rem) * var(--mkt-tour-ratio)));
+}
+
+.mkt-tour-stage {
+  aspect-ratio: var(--mkt-tour-ratio);
+}
+
+/* Scroll reveal.
+ *
+ * The hidden state is gated behind `html[data-reveal="on"]`, which the
+ * pre-hydration script in `__root.tsx` sets ONLY when JavaScript is running,
+ * `IntersectionObserver` exists, and the visitor has not asked for reduced
+ * motion. That gate is the whole safety design: a no-JS visitor, an old browser,
+ * or a reduced-motion visitor never gets the attribute, so nothing is ever
+ * hidden from them and there is no state the page can get stuck in. The global
+ * `prefers-reduced-motion` kill-switch in `tokens.css` collapses transitions to
+ * 0.01ms, which would otherwise leave an un-revealed element invisible rather
+ * than un-animated — hence gating the hidden state instead of the animation.
+ *
+ * `opacity` and `transform` only, deliberately. `visibility` or `display` would
+ * take the element out of Playwright's visibility check and out of the
+ * accessibility tree before it reveals; opacity leaves the box measurable and
+ * focusable the whole time. Both properties are GPU-composited, and neither
+ * affects layout, so a reveal cannot contribute CLS.
+ *
+ * One shot, 450ms, settling at opacity 1 — not a loop. The looping AI demo has
+ * to guarantee "never caught mid-fade" for WCAG 1.4.3 because it is on screen
+ * indefinitely; a single entrance that ends opaque does not.
+ */
+:root {
+  --mkt-reveal-shift: 14px;
+  --mkt-reveal-duration: 450ms;
+  --mkt-reveal-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --mkt-reveal-step: 70ms;
+}
+
+[data-reveal="on"] [data-reveal-item] {
+  opacity: 0;
+  transform: translate3d(0, var(--mkt-reveal-shift), 0);
+}
+
+[data-reveal="on"] [data-reveal-item][data-revealed="1"] {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--mkt-reveal-duration) var(--mkt-reveal-ease),
+    transform var(--mkt-reveal-duration) var(--mkt-reveal-ease);
+  /* Stagger within a group, capped at the 4th item: an 8-card grid cascading at
+   * 70ms a card would take 560ms to finish, which stops reading as one group
+   * arriving and starts reading as cards loading in one by one. */
+  transition-delay: calc(min(var(--reveal-i, 0), 3) * var(--mkt-reveal-step));
+}
+
 html,
 body {
   background: var(--background);
@@ -411,4 +647,166 @@ body {
  * dismissed visitors, so the banner is hidden before React mounts. */
 html[data-pre-alpha-dismissed="1"] [data-pre-alpha-banner] {
   display: none;
+}
+
+/* Section colour devices.
+ *
+ * The lower half of the page ran out of colour: five consecutive sections were
+ * white cards on a neutral band with a 16px purple icon as the only hue, so the
+ * scroll flattened out exactly where a reader is deciding.
+ *
+ * Each section gets ONE device rather than a shared tint, so they read as
+ * different sections instead of one long pattern. `.mkt-wash-*` are corner
+ * radials for band atmosphere; `.mkt-tint-*` are card fills.
+ *
+ * ## Dark glows are deeper, not just dimmer
+ *
+ * The same recipe cannot simply be re-run at a lower alpha. A wash on paper
+ * SUBTRACTS luminance and lands as a pastel; a glow on near-black ADDS it, and
+ * luminance is exactly the budget text contrast is drawn from. The logo's own
+ * stops are pastels (`#818CF8` is L≈0.30), so at any alpha strong enough to read
+ * as colour they push the backdrop past what `--brand` eyebrow text (4.5:1)
+ * can tolerate — measured: 4.47:1 at 25%, a fail. Deeper, more saturated hues
+ * from the same three families (indigo, violet, magenta) give the same visible
+ * colour for roughly a third of the luminance, so they can be run at 24-36%
+ * and still clear the text floor. That is what "proper colour for dark" means
+ * here: low luminance, high chroma, same hue family as the identity.
+ *
+ * Every alpha below is therefore a tuned ceiling, enforced by
+ * `tests/e2e/contrast.spec.ts` in both modes rather than trusted.
+ */
+:root {
+  --mkt-wash-1: var(--logo-stop-1);
+  --mkt-wash-2: var(--logo-stop-2);
+  --mkt-wash-3: var(--logo-stop-3);
+}
+
+.dark {
+  --mkt-glow-1: #4f46e5;
+  --mkt-glow-2: #7c3aed;
+  /* Magenta, not the pink-600 it started as. A low-alpha hot pink over near-black
+   * lands as wine/maroon because red dominates and lightness is low; adding blue
+   * keeps it reading as the pink end of the violet-to-pink journey. */
+  --mkt-glow-3: #c42ab0;
+  /* Indigo-navy, not black: the left of the dark hero should read as part of the
+   * gradient, not as a hole in it. Derived, so it follows the dark `--bg`. */
+  --mkt-scrim: color-mix(in oklab, var(--mkt-glow-1) 16%, var(--bg));
+  --mkt-wash-1: var(--mkt-glow-1);
+  --mkt-wash-2: var(--mkt-glow-2);
+  --mkt-wash-3: var(--mkt-glow-3);
+  --mkt-wash-a: 26%;
+}
+
+.mkt-wash {
+  position: relative;
+  isolation: isolate;
+}
+
+.mkt-wash::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* The per-class fallback is the LIGHT alpha, so light is unchanged from the
+ * values already measured; `.dark` overrides all of them with one variable. */
+.mkt-wash-brand::before {
+  background-image: radial-gradient(
+    70% 60% at 88% 8%,
+    color-mix(in oklab, var(--mkt-wash-1) var(--mkt-wash-a, 16%), transparent) 0%,
+    transparent 62%
+  );
+}
+
+.mkt-wash-violet::before {
+  background-image: radial-gradient(
+    75% 65% at 8% 95%,
+    color-mix(in oklab, var(--mkt-wash-2) var(--mkt-wash-a, 15%), transparent) 0%,
+    transparent 60%
+  );
+}
+
+.mkt-wash-pink::before {
+  background-image: radial-gradient(
+    70% 60% at 95% 92%,
+    color-mix(in oklab, var(--mkt-wash-3) var(--mkt-wash-a, 14%), transparent) 0%,
+    transparent 58%
+  );
+}
+
+.mkt-tint-neutral {
+  background-color: var(--mkt-band-tint);
+  border-color: var(--line-strong);
+}
+
+.mkt-tint-brand {
+  background-color: var(--brand-soft);
+  border-color: color-mix(in oklab, var(--brand) 20%, var(--line));
+}
+
+/* The identity gradient as a top rule on a card. Permitted as a rule, not a
+   fill — same scope as the header hairline. */
+.mkt-rule-gradient {
+  position: relative;
+  overflow: hidden;
+}
+
+.mkt-rule-gradient::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 0;
+  block-size: 3px;
+  background-image: var(--logo-gradient);
+}
+
+/* Logo-ramp stops. `--chart-1..4` are the logo's own hue journey (periwinkle,
+ * violet, purple, pink), so anything coloured by `data-stop` stays on the
+ * gradient. Chips and the pillar rules both read `--mkt-stop`. */
+[data-stop="1"] { --mkt-stop: var(--chart-1); }
+[data-stop="2"] { --mkt-stop: var(--chart-2); }
+[data-stop="3"] { --mkt-stop: var(--chart-3); }
+[data-stop="4"] { --mkt-stop: var(--chart-4); }
+
+.mkt-chip {
+  background-color: color-mix(in oklab, var(--mkt-stop) 14%, transparent);
+  color: var(--mkt-stop);
+}
+
+/* Overrides the custom property on the element only. The token itself — and the
+ * spec that measures it on a bare `.mkt-rule` — is untouched. */
+.mkt-rule[data-stop] {
+  --mkt-rule-color: var(--mkt-stop);
+}
+
+/* A section tall enough that a single corner glow is off-screen for most of the
+ * scroll gets one at each end. */
+.mkt-wash-dual::before {
+  background-image:
+    radial-gradient(
+      60% 22% at 92% 3%,
+      color-mix(in oklab, var(--mkt-wash-1) var(--mkt-wash-a, 15%), transparent) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      60% 22% at 6% 97%,
+      color-mix(in oklab, var(--mkt-wash-3) var(--mkt-wash-a, 14%), transparent) 0%,
+      transparent 70%
+    );
+}
+
+/* Windows High Contrast. The spine requires `forced-colors: active` to be
+ * handled rather than assumed: the system repaints backgrounds with its own
+ * palette and text is forced to a guaranteed-contrast pair, so a decorative
+ * gradient behind it can only subtract from that guarantee. The washes are
+ * atmosphere with no information in them, so under forced colors they simply
+ * do not exist. */
+@media (forced-colors: active) {
+  .mkt-hero-wash,
+  .mkt-wash::before,
+  .mkt-rule-gradient::after {
+    display: none;
+  }
 }

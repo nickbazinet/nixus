@@ -17,11 +17,12 @@ import { ImageIcon, PlayIcon } from "lucide-react";
  * a declared ratio would reflow the page the day the file lands.
  */
 
-export type MediaSlotAspect = "16/10" | "16/9" | "4/3" | "1/1";
+export type MediaSlotAspect = "16/10" | "16/9" | "3/2" | "4/3" | "1/1";
 
 const ASPECT_CLASS: Record<MediaSlotAspect, string> = {
   "16/10": "aspect-[16/10]",
   "16/9": "aspect-[16/9]",
+  "3/2": "aspect-[3/2]",
   "4/3": "aspect-[4/3]",
   "1/1": "aspect-square",
 };
@@ -81,7 +82,7 @@ export function MediaSlot({
       data-aspect={aspect}
       role="img"
       aria-label={label}
-      className={`${ASPECT_CLASS[aspect]} flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line-strong bg-track px-4 text-center`}
+      className={`${ASPECT_CLASS[aspect]} flex w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-brand/30 bg-brand-soft px-4 text-center`}
     >
       <Icon aria-hidden="true" className="size-5 text-muted-foreground" />
       <p className="text-sm font-medium text-foreground">{label}</p>

@@ -80,7 +80,7 @@ export function SiteFooter() {
 
   return (
     <footer role="contentinfo" className="border-t border-border bg-background">
-      <div className="mkt-page-x mx-auto max-w-[1280px] py-10 md:py-14">
+      <div className="mkt-page-x mkt-container py-10 md:py-14">
         <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 lg:grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))] lg:gap-8">
           <div>
             <a

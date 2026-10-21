@@ -1,4 +1,6 @@
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
+import { IconChip, rampStop } from "@/components/IconChip";
 
 import { trustClaims } from "@/content/trust";
 
@@ -28,24 +30,23 @@ export function TrustStrip() {
       aria-label={t("trust.heading")}
       className="mkt-band-tint mkt-section-y mkt-overlap-clear border-y border-border"
     >
-      <div className="mkt-page-x mx-auto max-w-[1280px]">
+      <div className="mkt-page-x mkt-container">
         <ul
           role="list"
           className="grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-4"
         >
-          {trustClaims.map((claim) => {
+          {trustClaims.map((claim, index) => {
             const Icon = claim.icon;
             const isOpenSource = claim.id === "openSource";
             return (
               <li
                 key={claim.id}
                 data-testid="trust-claim"
+                data-reveal-item=""
+                style={{ "--reveal-i": index } as CSSProperties}
                 className="flex gap-3"
               >
-                <Icon
-                  aria-hidden="true"
-                  className="mt-0.5 size-5 shrink-0 text-primary"
-                />
+                <IconChip icon={Icon} stop={rampStop(index)} />
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-foreground">
                     {t(`trust.${claim.id}.title`)}

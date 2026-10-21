@@ -43,7 +43,7 @@ export function FAQ() {
       id="faq"
       data-testid="faq"
       aria-labelledby="faq-heading"
-      className="mkt-band-paper mkt-section-y"
+      className="mkt-band-paper mkt-wash mkt-wash-brand mkt-section-y"
     >
       <div className="mkt-page-x mx-auto max-w-[720px]">
         <div className="mkt-section-lead text-center">
@@ -55,6 +55,11 @@ export function FAQ() {
           </h2>
         </div>
 
+        <div
+          data-testid="faq-surface"
+          data-reveal-item=""
+          className="mkt-card mkt-panel border border-border bg-card px-5 py-2 sm:px-7 sm:py-3"
+        >
         <Accordion
           value={openIds}
           onValueChange={(value) => {
@@ -113,6 +118,7 @@ export function FAQ() {
             </AccordionItem>
           ))}
         </Accordion>
+        </div>
 
         <p className="mt-8 text-center text-sm break-words text-muted-foreground md:mt-12">
           {t("faq.stillHaveQuestions")}{" "}

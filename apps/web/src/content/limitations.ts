@@ -2,7 +2,7 @@
 export type LimitationId =
   | "noBankSync"
   | "desktopOnly"
-  | "singleUser"
+  | "noHousehold"
   | "aiCredentials"
   | "preAlphaStability"
   | "notProfessionalAdvice";
@@ -10,7 +10,7 @@ export type LimitationId =
 export const limitationIds: readonly LimitationId[] = [
   "noBankSync",
   "desktopOnly",
-  "singleUser",
+  "noHousehold",
   "aiCredentials",
   "preAlphaStability",
   "notProfessionalAdvice",

@@ -1,5 +1,8 @@
 import { useTranslation } from "react-i18next";
+import type { CSSProperties } from "react";
 import { Check, Minus } from "lucide-react";
+
+import { SectionIntro } from "@/components/SectionIntro";
 
 /**
  * "What Nixus is — and isn't", as two facing columns.
@@ -21,7 +24,7 @@ const IS_IDS = ["spreadsheet", "localData", "noLogins", "canadian"] as const;
 const ISNT_IDS = [
   "noBankSync",
   "desktopOnly",
-  "singleUser",
+  "noHousehold",
   "preAlphaStability",
   "notProfessionalAdvice",
 ] as const;
@@ -34,25 +37,22 @@ export function IsIsnt() {
       id="honest"
       data-testid="is-isnt"
       aria-labelledby="is-isnt-heading"
-      className="mkt-band-paper mkt-section-y"
+      className="mkt-band-paper mkt-wash mkt-wash-pink mkt-section-y"
     >
-      <div className="mkt-page-x mx-auto max-w-[1080px]">
-        <div className="mkt-section-lead mkt-measure-prose">
-          <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
-            {t("isIsnt.eyebrow")}
-          </p>
-          <h2 id="is-isnt-heading" className="text-display-l text-foreground">
-            {t("isIsnt.heading")}
-          </h2>
-          <p className="mt-4 text-lead text-muted-foreground">
-            {t("isIsnt.subhead")}
-          </p>
-        </div>
+      <div className="mkt-page-x mkt-container">
+        <SectionIntro
+          id="is-isnt-heading"
+          eyebrow={t("isIsnt.eyebrow")}
+          heading={t("isIsnt.heading")}
+          lead={t("isIsnt.subhead")}
+          align="center"
+        />
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
           <div
             data-testid="is-isnt-is"
-            className="rounded-lg border border-border bg-card p-6 sm:p-8"
+            data-reveal-item=""
+            className="mkt-card mkt-panel mkt-tint-brand border p-6 sm:p-8"
           >
             <h3 className="text-base font-semibold text-foreground">
               {t("isIsnt.is.heading")}
@@ -74,7 +74,9 @@ export function IsIsnt() {
 
           <div
             data-testid="is-isnt-isnt"
-            className="rounded-lg border border-border bg-card p-6 sm:p-8"
+            data-reveal-item=""
+            style={{ "--reveal-i": 1 } as CSSProperties}
+            className="mkt-card mkt-panel mkt-tint-neutral border p-6 sm:p-8"
           >
             <h3 className="text-base font-semibold text-foreground">
               {t("isIsnt.isnt.heading")}
@@ -95,9 +97,6 @@ export function IsIsnt() {
           </div>
         </div>
 
-        <p className="mt-6 text-sm text-muted-foreground">
-          {t("isIsnt.footnote")}
-        </p>
       </div>
     </section>
   );

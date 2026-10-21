@@ -55,13 +55,13 @@ export const stages: readonly Stage[] = [
   {
     id: "guide",
     icon: BrainCircuit,
-    image: "/product/stage-guide.png",
+    image: "/product/stage-guide.webp",
     pointIds: ["health", "chat", "confirm"],
   },
   {
     id: "automate",
     icon: Repeat2,
-    image: "/product/stage-automate.png",
+    image: "/product/stage-automate.webp",
     pointIds: ["recurring", "maintenance", "updates"],
   },
 ] as const;

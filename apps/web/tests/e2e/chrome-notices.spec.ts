@@ -313,22 +313,34 @@ test.describe("header identity and destinations are preserved", () => {
         };
       });
 
-    /* `bg-background/85` and `border-border`, which alias `--bg` and `--line`.
-     * Both are Warm Editorial values, so a stale cool `#E2E8F0` hairline or a
-     * slate surface fails here. The surface expectation is painted rather than
-     * written as `rgba(...)` because Tailwind's `/85` compiles to `color-mix`,
-     * which Chromium serialises as `oklab(...)`. Polling to the settled value
-     * rather than sampling once is what makes the 200ms scrolled fade a
-     * non-issue — a single read lands mid-transition at a partial alpha. */
+    /* `bg-accent/80`, and `accent` aliases `--brand-soft`, a Warm Editorial
+     * value — so a stale cool surface fails here. The expectation is painted
+     * rather than written as `rgba(...)` because Tailwind's `/80` compiles to
+     * `color-mix`, which Chromium serialises as `oklab(...)`. Polling to the
+     * settled value rather than sampling once is what makes the 200ms scrolled
+     * fade a non-issue — a single read lands mid-transition at a partial alpha.
+     *
+     * The bar no longer owns a `border-bottom`: the edge is a 1px identity
+     * gradient rule (`header-rule`), asserted below. */
     const scrolledSurface = await paintedColour(
       page,
-      "color-mix(in oklab, var(--bg) 85%, transparent)",
+      "color-mix(in oklab, var(--brand-soft) 80%, transparent)",
     );
     await page.evaluate(() => window.scrollTo(0, 400));
     await expect.poll(async () => (await readChrome()).background).toBe(scrolledSurface);
 
     const chrome = await readChrome();
     expect(chrome.position).toBe("sticky");
-    expect(chrome.borderBottom).toBe("rgb(232, 227, 218)");
+
+    const rule = await page.getByTestId("header-rule").evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        height: style.height,
+        gradient: style.backgroundImage.includes("linear-gradient"),
+        opacity: style.opacity,
+      };
+    });
+    // Fully strengthened once scrolled, and still a 1px rule rather than a fill.
+    expect(rule).toEqual({ height: "1px", gradient: true, opacity: "1" });
   });
 });

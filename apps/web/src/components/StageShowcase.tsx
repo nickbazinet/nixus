@@ -1,6 +1,9 @@
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ProductFrame } from "@/components/ProductFrame";
+import { IconChip, rampStop } from "@/components/IconChip";
+import { SectionIntro } from "@/components/SectionIntro";
 import { stages } from "@/content/stages";
 
 /**
@@ -28,20 +31,41 @@ export function StageShowcase() {
       id="how"
       data-testid="stage-showcase"
       aria-labelledby="stages-heading"
-      className="mkt-band-paper mkt-section-y"
+      className="mkt-band-paper mkt-wash mkt-wash-dual mkt-section-y"
     >
-      <div className="mkt-page-x mx-auto max-w-[1280px]">
-        <div className="mkt-section-lead mkt-measure-prose">
-          <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
-            {t("stages.eyebrow")}
-          </p>
-          <h2 id="stages-heading" className="text-display-l text-foreground">
-            {t("stages.heading")}
-          </h2>
-          <p className="mt-4 text-lead text-muted-foreground">
-            {t("stages.subhead")}
-          </p>
-        </div>
+      <div className="mkt-page-x mkt-container">
+        <SectionIntro
+          id="stages-heading"
+          eyebrow={t("stages.eyebrow")}
+          heading={t("stages.heading")}
+          lead={t("stages.subhead")}
+          aside={
+            <ol
+              role="list"
+              data-testid="stage-index"
+              className="flex flex-col gap-0 border-t border-border"
+            >
+              {stages.map((stage, index) => (
+                <li key={stage.id}>
+                  <a
+                    href={`#stage-${stage.id}`}
+                    className="mkt-tap flex items-baseline gap-4 border-b border-border py-3 text-sm outline-none transition-colors hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+                  >
+                    <span className="text-xs font-semibold text-ink-faint tabular-nums">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <span className="font-semibold text-foreground">
+                      {t(`stages.${stage.id}.stage`)}
+                    </span>
+                    <span className="ml-auto text-right text-muted-foreground">
+                      {t(`stages.${stage.id}.question`)}
+                    </span>
+                  </a>
+                </li>
+              ))}
+            </ol>
+          }
+        />
 
         <ol role="list" className="flex flex-col gap-16 md:gap-24 lg:gap-32">
           {stages.map((stage, index) => {
@@ -61,6 +85,7 @@ export function StageShowcase() {
                 className="mkt-showcase scroll-mt-24"
               >
                 <div
+                  data-reveal-item=""
                   className={
                     visualFirst
                       ? "lg:order-2 lg:pl-4 xl:pl-8"
@@ -68,12 +93,7 @@ export function StageShowcase() {
                   }
                 >
                   <div className="flex items-center gap-3">
-                    <span
-                      aria-hidden="true"
-                      className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-brand-soft text-brand-ink"
-                    >
-                      <Icon className="size-[18px]" />
-                    </span>
+                    <IconChip icon={Icon} stop={rampStop(index)} />
                     <p className="text-xs font-semibold tracking-wider text-primary uppercase">
                       <span className="text-ink-faint">{ordinal}</span>{" "}
                       {t(`stages.${stage.id}.stage`)}
@@ -109,7 +129,11 @@ export function StageShowcase() {
                   </ul>
                 </div>
 
-                <div className={visualFirst ? "lg:order-1" : "lg:order-2"}>
+                <div
+                  data-reveal-item=""
+                  style={{ "--reveal-i": 1 } as CSSProperties}
+                  className={visualFirst ? "lg:order-1" : "lg:order-2"}
+                >
                   <ProductFrame
                     id={`stage-${stage.id}-frame`}
                     kind="image"

@@ -1,6 +1,9 @@
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, HardDrive, Sparkles, RefreshCw } from "lucide-react";
 
+import { SectionIntro } from "@/components/SectionIntro";
+import { IconChip } from "@/components/IconChip";
 import { PRIVACY_PAGE_PATHS } from "./LegalPage";
 import { localeFromLanguage } from "@/lib/localePaths";
 
@@ -32,28 +35,22 @@ export function PrivacySection() {
       id="privacy"
       data-testid="privacy-section"
       aria-labelledby="privacy-heading"
-      className="mkt-band-tint mkt-section-y border-y border-border"
+      className="mkt-band-tint mkt-wash mkt-wash-violet mkt-section-y border-y border-border"
     >
-      <div className="mkt-page-x mx-auto max-w-[1280px]">
-        <div className="mkt-section-lead mkt-measure-prose">
-          <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
-            {t("privacy.eyebrow")}
-          </p>
-          <h2 id="privacy-heading" className="text-display-l text-foreground">
-            {t("privacy.heading")}
-          </h2>
-          <p className="mt-4 text-lead text-muted-foreground">
-            {t("privacy.subhead")}
-          </p>
-        </div>
+      <div className="mkt-page-x mkt-container">
+        <SectionIntro
+          id="privacy-heading"
+          eyebrow={t("privacy.eyebrow")}
+          heading={t("privacy.heading")}
+          lead={t("privacy.subhead")}
+          align="center"
+        />
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-5 lg:gap-8">
-          <div className="self-start rounded-lg border border-border bg-card p-6 lg:col-span-2 lg:p-8">
+          <div data-reveal-item=""
+            className="mkt-card mkt-panel mkt-tint-brand self-start border p-6 lg:col-span-2 lg:p-8">
             <div className="flex items-center gap-3">
-              <HardDrive
-                aria-hidden="true"
-                className="size-5 shrink-0 text-primary"
-              />
+              <IconChip icon={HardDrive} stop={1} />
               <h3 className="text-base font-semibold text-foreground">
                 {t("privacy.stays.heading")}
               </h3>
@@ -74,30 +71,23 @@ export function PrivacySection() {
           </div>
 
           <div className="lg:col-span-3">
-            <p className="text-sm font-semibold text-foreground">
-              {t("privacy.exceptions.heading")}
-            </p>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              {t("privacy.exceptions.intro")}
-            </p>
-            <ul role="list" className="mt-5 flex flex-col gap-4">
-              {EXCEPTION_IDS.map((id) => {
+            <ul role="list" className="flex flex-col gap-4">
+              {EXCEPTION_IDS.map((id, index) => {
                 const Icon = EXCEPTION_ICONS[id];
                 return (
                   <li
                     key={id}
                     data-testid="privacy-exception"
-                    className="rounded-lg border border-border bg-card p-5 sm:p-6"
+                    data-reveal-item=""
+                    style={{ "--reveal-i": index + 1 } as CSSProperties}
+                    className="mkt-card mkt-panel border border-border bg-card p-5 sm:p-6"
                   >
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                      <Icon
-                        aria-hidden="true"
-                        className="size-[18px] shrink-0 text-primary"
-                      />
+                      <IconChip icon={Icon} stop={id === "ai" ? 3 : 4} size="sm" />
                       <h3 className="text-base font-semibold text-foreground">
                         {t(`privacy.exceptions.items.${id}.title`)}
                       </h3>
-                      <span className="rounded-md bg-neutral-bg px-1.5 py-0.5 text-xs font-semibold tracking-wider text-neutral-ink uppercase">
+                      <span className="rounded-md bg-brand-soft px-1.5 py-0.5 text-xs font-semibold tracking-wider text-brand-ink uppercase">
                         {t("privacy.exceptions.optInBadge")}
                       </span>
                     </div>

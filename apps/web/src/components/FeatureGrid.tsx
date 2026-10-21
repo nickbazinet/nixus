@@ -1,5 +1,8 @@
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
+import { SectionIntro } from "@/components/SectionIntro";
+import { IconChip, rampStop } from "@/components/IconChip";
 import { features } from "@/content/features";
 
 /**
@@ -24,37 +27,32 @@ export function FeatureGrid() {
       id="features"
       data-testid="feature-grid"
       aria-labelledby="features-heading"
-      className="mkt-band-paper mkt-section-y"
+      className="mkt-band-paper mkt-wash mkt-wash-brand mkt-section-y"
     >
-      <div className="mkt-page-x mx-auto max-w-[1280px]">
-        <div className="mkt-section-lead mkt-measure-prose">
-          <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
-            {t("features.eyebrow")}
-          </p>
-          <h2 id="features-heading" className="text-display-l text-foreground">
-            {t("features.heading")}
-          </h2>
-          <p className="mt-4 text-lead text-muted-foreground">
-            {t("features.subhead")}
-          </p>
-        </div>
+      <div className="mkt-page-x mkt-container">
+        <SectionIntro
+          id="features-heading"
+          eyebrow={t("features.eyebrow")}
+          heading={t("features.heading")}
+          lead={t("features.subhead")}
+          align="center"
+        />
         <ul
           role="list"
           className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
         >
-          {features.map((feature) => {
+          {features.map((feature, index) => {
             const Icon = feature.icon;
             return (
               <li key={feature.id}>
                 <article
                   data-testid="feature-card"
-                  className="h-full rounded-lg border border-border bg-card p-5"
+                  data-reveal-item=""
+                  style={{ "--reveal-i": index } as CSSProperties}
+                  className="mkt-card h-full border border-border bg-card p-5"
                 >
-                  <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <Icon
-                      aria-hidden="true"
-                      className="size-4 shrink-0 text-primary"
-                    />
+                  <h3 className="flex items-center gap-2.5 text-sm font-semibold text-foreground">
+                    <IconChip icon={Icon} stop={rampStop(index)} size="sm" />
                     {t(`features.${feature.id}.title`)}
                   </h3>
                   <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
