@@ -837,10 +837,13 @@ mod tests {
         assert!(config_key_is_local_only("aws_region"));
         assert!(!config_key_is_local_only("theme"));
         assert!(!config_key_is_local_only("onboarding_completed"));
+        assert!(config_key_is_local_only(crate::db::sync_wipe::WIPE_EPOCH_KEY));
+        assert!(config_key_is_local_only(crate::db::sync_wipe::WIPE_PENDING_KEY));
         assert_eq!(
             crate::db::config::LOCAL_ONLY_KEYS.len(),
-            3,
-            "AD-5 names exactly three credential-state keys"
+            5,
+            "AD-5's three credential-state keys plus story wipe-epoch's two; a key added without \
+             a reason recorded here is a key that may be travelling by accident"
         );
     }
 

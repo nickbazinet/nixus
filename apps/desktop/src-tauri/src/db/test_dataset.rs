@@ -390,8 +390,14 @@ fn seed_projects(conn: &Connection, rng: &mut Lcg, heavy: &HeavyYearShape) {
     }
 }
 
-/// The three keys AD-5's deny list names, plus one ordinary key, so a stripping test can prove it
-/// removes exactly the credential-state keys and nothing else.
+/// The three CREDENTIAL-STATE keys AD-5's deny list names, plus one ordinary key, so a stripping
+/// test can prove it removes exactly the local-only keys and nothing else.
+///
+/// Story wipe-epoch's two deny-listed keys are deliberately NOT seeded here. Neither is a setting
+/// a fixture may invent a value for: `sync_wipe_pending` is an instruction to register a wipe with
+/// the account, and `sync_wipe_epoch` admits only a decimal (`db::sync_wipe` refuses the dataset
+/// outright otherwise, which is the point of it). The strip assertions therefore count the
+/// deny-listed keys the source actually HOLDS rather than the length of the list.
 fn seed_config(conn: &Connection) {
     for (key, value) in [
         ("ai_configured", "true"),

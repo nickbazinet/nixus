@@ -186,6 +186,14 @@ pub fn ensure(
 /// discarding the pin would make the next vend adopt whatever account signs in. The
 /// link drops to `unlinked` because the new install has uploaded nothing yet; Story 9
 /// owns the bootstrap that follows.
+///
+/// `joined_at` is deliberately NOT touched here, and that is load-bearing (story wipe-epoch).
+/// This function has two callers with opposite knowledge. `sync::state::ensure_install_outcome`
+/// reaches it when the stored machine FINGERPRINT no longer matches, which a renamed computer or
+/// a missing host environment variable produces on a perfectly healthy synced dataset — clearing
+/// the join marker there would make that computer re-assess, raise CAP-5's question, and risk
+/// `replace` dropping its unsent edits. Only `sync::state::remint_install_on`, whose caller KNOWS
+/// the file was replaced or copied, also calls `clear_joined_at`.
 pub fn relink_install(
     conn: &Connection,
     install_id: &str,
@@ -195,6 +203,23 @@ pub fn relink_install(
         "UPDATE sync_state SET install_id = ?1, machine_fingerprint = ?2, \
          link_state = 'unlinked', updated_at = datetime('now') WHERE id = 1",
         rusqlite::params![install_id, machine_fingerprint],
+    )?;
+
+    expect_the_single_row(updated)
+}
+
+/// Forgets that this dataset ever joined, for a file that was REPLACED or COPIED (story wipe-epoch).
+///
+/// The opposite of `mark_joined`, and reachable only from `sync::state::remint_install_on` — the
+/// verb whose caller knows a copy or a restore happened, which the file itself cannot tell. Two
+/// things depend on it: `enable_inner` assesses rather than resumes, so CAP-5's question is asked
+/// exactly as "restoring a backup or copying a profile relinks that computer" claims; and the wipe
+/// epoch's self-wipe never fires for it, so an imported backup holding data the account has never
+/// seen is asked about instead of being destroyed.
+pub fn clear_joined_at(conn: &Connection) -> Result<(), AppError> {
+    let updated = conn.execute(
+        "UPDATE sync_state SET joined_at = NULL, updated_at = datetime('now') WHERE id = 1",
+        [],
     )?;
 
     expect_the_single_row(updated)
@@ -482,6 +507,40 @@ mod tests {
         assert_eq!(state.owner_sub.as_deref(), Some("sub-1"));
     }
 
+    /// B1: the two relink callers have opposite knowledge, so only one of them may forget the
+    /// join. `sync::state::ensure_install_outcome` reaches `relink_install` whenever the stored
+    /// machine fingerprint drifts — a renamed computer, a missing host environment variable — and
+    /// a healthy synced dataset that re-assessed there would be asked CAP-5's question and could
+    /// lose its unsent edits to `replace`.
+    #[test]
+    fn a_fingerprint_relink_keeps_the_join_and_only_the_copy_verb_forgets_it() {
+        let conn = migrated_db();
+        ensure(&conn, INSTALL, FINGERPRINT).expect("ensure");
+        set_pin(&conn, "us-east-1:abc", "sub-1").expect("set pin");
+        mark_joined(&conn).expect("this computer has joined the account");
+
+        let other = "cd00000000000000000000000000000000000000000000000000000000000000";
+        relink_install(&conn, "fedcba9876543210", other).expect("relink");
+
+        let relinked = load(&conn).expect("load").expect("row exists");
+        assert!(
+            relinked.joined(),
+            "a fingerprint relink must not un-join a synced dataset: it would re-assess, raise \
+             CAP-5's question and risk dropping this computer's unsent edits"
+        );
+        assert_eq!(relinked.link_state, LinkState::Unlinked);
+
+        clear_joined_at(&conn).expect("the copy/restore verb forgets the join");
+
+        let copied = load(&conn).expect("load").expect("row exists");
+        assert!(!copied.joined(), "a copied or restored file has joined nothing");
+        assert_eq!(
+            copied.install_id, "fedcba9876543210",
+            "clearing the marker must change nothing else"
+        );
+        assert_eq!(copied.identity_id.as_deref(), Some("us-east-1:abc"));
+    }
+
     #[test]
     fn a_mutation_against_a_wiped_row_is_an_error_not_a_silent_no_op() {
         let conn = migrated_db();
@@ -493,6 +552,7 @@ mod tests {
             set_pin(&conn, "us-east-1:abc", "sub-1").expect_err("set_pin must fail"),
             set_frozen_reason(&conn, Some(FrozenReason::Support)).expect_err("freeze must fail"),
             relink_install(&conn, INSTALL, FINGERPRINT).expect_err("relink must fail"),
+            clear_joined_at(&conn).expect_err("clearing the join marker must fail"),
         ] {
             assert!(matches!(error, AppError::Database { .. }));
         }

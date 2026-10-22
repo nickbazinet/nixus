@@ -207,6 +207,13 @@ pub struct LatestSnapshot {
     /// Applying a tail on top of an identity-less snapshot would re-create every row it already
     /// holds, so the two cases must never be confused.
     pub carries_identities: bool,
+    /// Which wipe epoch the publishing computer was running at (story wipe-epoch).
+    ///
+    /// Absent in the document — and therefore 0 here — for every pointer written before the wipe
+    /// epoch existed and for every account that has never used "delete everything". A pointer
+    /// whose epoch is BELOW the account's current one names a snapshot of data the user has
+    /// deleted; `fetch_latest_at` is what makes that unreadable rather than merely discouraged.
+    pub wipe_epoch: u64,
 }
 
 impl LatestSnapshot {
@@ -237,14 +244,23 @@ impl LatestSnapshot {
             .collect::<Vec<String>>()
             .join(",");
 
+        // `wipe_epoch` is OMITTED at 0, which keeps the document of an account that has never been
+        // wiped byte for byte what every earlier build wrote — and `parse` reads an absent field as
+        // 0, so the two spellings can never disagree. It sorts last, after `watermark`.
+        let wipe_epoch = match self.wipe_epoch {
+            0 => String::new(),
+            epoch => format!(",\"wipe_epoch\":{epoch}"),
+        };
+
         format!(
-            "{{\"created_ms\":{},\"hash\":\"{}\",\"schema_version\":{},\"snap_id\":\"{}\",\"v\":{},\"watermark\":{{{}}}}}",
+            "{{\"created_ms\":{},\"hash\":\"{}\",\"schema_version\":{},\"snap_id\":\"{}\",\"v\":{},\"watermark\":{{{}}}{}}}",
             self.created_ms,
             self.hash,
             self.schema_version,
             self.snap_id,
             SNAP_LATEST_VERSION,
-            watermark
+            watermark,
+            wipe_epoch
         )
         .into_bytes()
     }
@@ -287,6 +303,16 @@ impl LatestSnapshot {
             }
         }
 
+        // OPTIONAL, deliberately, for the same reason as the watermark: a pointer written before
+        // the wipe epoch existed carries no field, and 0 ("this account has never been wiped") is
+        // the honest reading of its absence.
+        let wipe_epoch = match document.get("wipe_epoch") {
+            None => 0,
+            Some(value) => value
+                .as_u64()
+                .ok_or(SnapshotError::MalformedLatest)?,
+        };
+
         Ok(Self {
             snap_id: text("snap_id")?,
             hash: text("hash")?,
@@ -294,6 +320,7 @@ impl LatestSnapshot {
             created_ms: number("created_ms")?,
             watermark,
             carries_identities,
+            wipe_epoch,
         })
     }
 }
@@ -599,6 +626,7 @@ pub async fn upload_snapshot<S, L, C, T>(
     snapshot: &BuiltSnapshot,
     known_latest: Option<&ETag>,
     created_ms: i64,
+    wipe_epoch: u64,
 ) -> Result<UploadOutcome, SnapshotError>
 where
     S: ObjectStore,
@@ -621,6 +649,10 @@ where
         created_ms,
         watermark: snapshot.watermark.clone(),
         carries_identities: true,
+        // Stamped with the PUBLISHER's own epoch, which is what lets every reader tell a pointer
+        // that describes the account as it is now from one that describes data the user deleted.
+        // `manager::upload` refuses to come this far while the cloud epoch is ahead of it.
+        wipe_epoch,
     };
 
     let published = match known_latest {
@@ -667,8 +699,14 @@ where
     })
 }
 
-/// Reads `snap/LATEST`, or `None` when no computer has ever published one.
-pub async fn fetch_latest<S, L, C, T>(
+/// Reads `snap/LATEST`, WITHOUT applying the wipe cutoff.
+///
+/// Private on purpose (story wipe-epoch). Every restore path in the app used to call this, and a
+/// cutoff the caller has to remember to apply is a cutoff somebody eventually does not — which is
+/// exactly how a pre-wipe snapshot got restored. `fetch_latest_at` is the reader; this is its
+/// transport half, and `retention` is the one other caller, because a sweep is about which objects
+/// a pointer still CLAIMS and not about whether this computer may load it.
+pub(in crate::sync) async fn fetch_latest<S, L, C, T>(
     store: &GatedStore<S, SyncGate<L, C, T>>,
 ) -> Result<Option<(LatestSnapshot, ETag)>, SnapshotError>
 where
@@ -687,6 +725,48 @@ where
     }
 }
 
+/// What a read of `snap/LATEST` means to a computer running at a given wipe epoch.
+///
+/// Three outcomes rather than an `Option`, because "there is a pointer and you may not use it" is a
+/// state of its own and the one the old `Option` could not express (story wipe-epoch).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LatestFetch {
+    /// No computer has ever published a pointer.
+    Absent,
+    /// The pointer names a snapshot of data the account has since deleted. Never restored, never
+    /// used to seed a watermark. The ETag travels so the computer that is about to publish ITS OWN
+    /// post-wipe snapshot can compare-and-swap over it rather than racing a create-only put.
+    Stale { etag: ETag },
+    Current(LatestSnapshot, ETag),
+}
+
+/// Reads `snap/LATEST` and applies the wipe cutoff (story wipe-epoch).
+///
+/// `cloud_epoch` is the account's current epoch, as `wipe::WipeWatch` read it. A pointer stamped
+/// BELOW it was published before the latest "delete everything" and describes rows the user
+/// erased, so it is `Stale` — and because the check lives HERE, at the one place the pointer is
+/// fetched, no restore path can be written that forgets it.
+pub async fn fetch_latest_at<S, L, C, T>(
+    store: &GatedStore<S, SyncGate<L, C, T>>,
+    cloud_epoch: u64,
+) -> Result<LatestFetch, SnapshotError>
+where
+    S: ObjectStore,
+    L: DatasetLink,
+    C: CapabilitySource,
+    T: GateStateSource,
+{
+    let Some((latest, etag)) = fetch_latest(store).await? else {
+        return Ok(LatestFetch::Absent);
+    };
+
+    if latest.wipe_epoch < cloud_epoch {
+        return Ok(LatestFetch::Stale { etag });
+    }
+
+    Ok(LatestFetch::Current(latest, etag))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,6 +776,26 @@ mod tests {
     use crate::sync::test_support::{gated_fake, syncing_fake, FakeObjectStore, FakeOp};
     use std::collections::BTreeMap;
     use std::sync::Arc;
+
+    /// How many of `db::config::LOCAL_ONLY_KEYS` a dataset actually holds.
+    ///
+    /// Counted rather than taken from the list's length: story wipe-epoch added two keys no
+    /// fixture may seed (one is an instruction to register a wipe), so the length and the number
+    /// a strip can remove are no longer the same number.
+    fn denied_keys_in(conn: &Connection) -> usize {
+        CONFIG_DENY_LIST
+            .iter()
+            .filter(|key| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM config WHERE key = ?1",
+                    [key],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("the key counts")
+                    > 0
+            })
+            .count()
+    }
 
     /// The columns AD-9 and AD-10 make claims about, named so the assertions below read as claims
     /// rather than as tuple indices.
@@ -830,7 +930,7 @@ mod tests {
         }
 
         assert_eq!(built.stripped.blanked_images, heavy.project_images);
-        assert_eq!(built.stripped.config_keys, CONFIG_DENY_LIST.len());
+        assert_eq!(built.stripped.config_keys, denied_keys_in(&live));
         // INTENTIONAL BEHAVIOUR CHANGE (Story 23, closing Stories 20/22's OPEN item): only the two
         // tables that describe THIS computer are emptied; the account's merge and identity state
         // travels, or a bootstrapped computer parks every message naming a snapshot row.
@@ -876,13 +976,7 @@ mod tests {
             count("SELECT COUNT(*) FROM project_images WHERE image_bytes IS NOT NULL"),
             heavy.project_images as i64
         );
-        assert_eq!(
-            count(
-                "SELECT COUNT(*) FROM config
-                 WHERE key IN ('ai_configured', 'ai_provider', 'aws_region')"
-            ),
-            CONFIG_DENY_LIST.len() as i64
-        );
+        assert_eq!(denied_keys_in(&conn), 3, "the live dataset keeps its own settings");
         drop(conn);
 
         assert_eq!(
@@ -991,7 +1085,7 @@ mod tests {
                 // Emptied on purpose (AD-15); the new computer mints its own install identity.
                 "sync_state" => assert!(after[table].is_empty(), "sync_state must travel empty"),
                 "config" => {
-                    assert_eq!(after[table].len(), rows.len() - CONFIG_DENY_LIST.len());
+                    assert_eq!(after[table].len(), rows.len() - denied_keys_in(&original));
                     let present = |conn: &Connection, key: &str| -> i64 {
                         conn.query_row("SELECT COUNT(*) FROM config WHERE key = ?1", [key], |row| {
                             row.get(0)
@@ -1195,6 +1289,7 @@ mod tests {
             created_ms: 1,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         };
 
         assert_eq!(
@@ -1217,6 +1312,45 @@ mod tests {
         }
     }
 
+    /// Story wipe-epoch's field, both ways round. The ABSENT case is the load-bearing one: every
+    /// pointer written before the epoch existed has no field, and reading that as 0 is what keeps
+    /// an account that has never used "delete everything" working exactly as it did.
+    #[test]
+    fn the_pointer_carries_the_wipe_epoch_and_reads_an_absent_one_as_never_wiped() {
+        let at = |wipe_epoch: u64| LatestSnapshot {
+            snap_id: "a".repeat(64),
+            hash: "b".repeat(64),
+            schema_version: 30,
+            created_ms: 7,
+            watermark: Default::default(),
+            carries_identities: true,
+            wipe_epoch,
+        };
+
+        assert_eq!(
+            at(0).body(),
+            br#"{"created_ms":7,"hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","schema_version":30,"snap_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":1,"watermark":{}}"#.to_vec(),
+            "epoch 0 must produce the bytes every earlier build wrote"
+        );
+        assert_eq!(LatestSnapshot::parse(&at(0).body()), Ok(at(0)));
+
+        let stamped = at(3);
+        assert!(
+            String::from_utf8_lossy(&stamped.body()).ends_with(",\"wipe_epoch\":3}"),
+            "the keys are sorted, so the epoch is last: {}",
+            String::from_utf8_lossy(&stamped.body())
+        );
+        assert_eq!(LatestSnapshot::parse(&stamped.body()), Ok(stamped));
+
+        assert_eq!(
+            LatestSnapshot::parse(
+                br#"{"created_ms":7,"hash":"bb","schema_version":30,"snap_id":"aa","v":1,"watermark":{},"wipe_epoch":-1}"#
+            ),
+            Err(SnapshotError::MalformedLatest),
+            "an epoch that is not a count is refused rather than read as never wiped"
+        );
+    }
+
     #[test]
     fn the_latest_document_round_trips_and_refuses_what_it_cannot_read() {
         let latest = LatestSnapshot {
@@ -1226,6 +1360,7 @@ mod tests {
             created_ms: 1_760_000_000_000,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         };
 
         let body = latest.body();
@@ -1280,6 +1415,7 @@ mod tests {
                 // snapshot it names carries no row identities, which is a different fact from an
                 // empty watermark and the one a bootstrap has to refuse on.
                 carries_identities: false,
+                wipe_epoch: 0,
             }
         );
         assert!(
@@ -1315,7 +1451,7 @@ mod tests {
         let fake = Arc::new(FakeObjectStore::default());
         let store = syncing_fake(Arc::clone(&fake));
 
-        let outcome = upload_snapshot(&store, &built, None, 1_760_000_000_000)
+        let outcome = upload_snapshot(&store, &built, None, 1_760_000_000_000, 0)
             .await
             .expect("the upload succeeds");
 
@@ -1351,12 +1487,13 @@ mod tests {
                 created_ms: 1_760_000_000_000,
             watermark: Default::default(),
             carries_identities: true,
+                wipe_epoch: 0,
             }
         );
 
         // A retry of the same snapshot is idempotent: the immutable key already holds exactly these
         // bytes, which AD-6 reports as success rather than as an install-id collision.
-        let again = upload_snapshot(&store, &built, Some(&etag), 1_760_000_000_001)
+        let again = upload_snapshot(&store, &built, Some(&etag), 1_760_000_000_001, 0)
             .await
             .expect("the retry succeeds");
         assert!(matches!(
@@ -1379,12 +1516,13 @@ mod tests {
             created_ms: 1_760_000_500_000,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         };
         fake.seed(SNAP_LATEST_KEY, theirs.body());
         let store = syncing_fake(Arc::clone(&fake));
 
         let stale = ETag::new("\"pulled-before-they-wrote\"");
-        let outcome = upload_snapshot(&store, &built, Some(&stale), 1_760_000_000_000)
+        let outcome = upload_snapshot(&store, &built, Some(&stale), 1_760_000_000_000, 0)
             .await
             .expect("a conflict is an outcome, not a failure");
 
@@ -1418,11 +1556,12 @@ mod tests {
             created_ms: 1,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         };
         fake.seed(SNAP_LATEST_KEY, theirs.body());
         let store = syncing_fake(Arc::clone(&fake));
 
-        let outcome = upload_snapshot(&store, &built, None, 2)
+        let outcome = upload_snapshot(&store, &built, None, 2, 0)
             .await
             .expect("the race is an outcome");
 
@@ -1447,12 +1586,13 @@ mod tests {
             created_ms: 3,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         };
         let etag = fake.seed(SNAP_LATEST_KEY, theirs.body());
         fake.fail_next(FakeOp::PutIfMatch, StoreError::NotFound);
         let store = syncing_fake(Arc::clone(&fake));
 
-        let outcome = upload_snapshot(&store, &built, Some(&etag), 4)
+        let outcome = upload_snapshot(&store, &built, Some(&etag), 4, 0)
             .await
             .expect("it is reported, not failed");
 
@@ -1473,6 +1613,7 @@ mod tests {
             created_ms: 7,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         };
         let etag = fake.seed(SNAP_LATEST_KEY, latest.body());
 
@@ -1510,7 +1651,7 @@ mod tests {
             let fake = Arc::new(FakeObjectStore::default());
             let store = gated_fake(Arc::clone(&fake), kind, entitled, frozen);
 
-            let refused = upload_snapshot(&store, &built, None, 1).await;
+            let refused = upload_snapshot(&store, &built, None, 1, 0).await;
             assert!(
                 matches!(refused, Err(SnapshotError::Store(GatedError::Blocked(_)))),
                 "{case} must be refused, got {refused:?}"

@@ -158,6 +158,11 @@ fn the_same_delete_through_the_captured_path_does_produce_a_tombstone() {
     );
 }
 
+/// Still true and still the mechanism (story wipe-epoch did not change it): the wipe leaves a
+/// never-joined, unpinned dataset with a new install identity. What CHANGED is only what happens
+/// next — the dataset no longer rejoins and re-downloads the account's copy, because
+/// `delete_all_data` also leaves `config.sync_wipe_pending` and the next join registers a wipe
+/// EVENT that moves the whole account forward. That half is proven in `tests_wipe_epoch.rs`.
 #[test]
 fn a_wipe_unlinks_the_dataset_with_a_fresh_install_identity_and_no_pin() {
     let computer = Computer::open("unlink");
@@ -183,15 +188,26 @@ fn a_wipe_unlinks_the_dataset_with_a_fresh_install_identity_and_no_pin() {
         "a wiped dataset has joined nothing: it holds none of the account's rows any more"
     );
     // There is no user-facing off switch, so a wipe must not leave a permanent opt-out nobody can
-    // clear: the wiped dataset is a never-joined empty computer and simply rejoins the account.
+    // clear: the wiped dataset is a never-joined empty computer that rejoins — at the NEW epoch
+    // its own join registers (story wipe-epoch), which is what stops the rejoin from being a
+    // re-download of what the user just deleted.
     assert!(
         !after.sync_disabled,
         "a wipe must not leave sync permanently switched off"
     );
 }
 
+/// INTENTIONAL BEHAVIOUR REVERSAL in the TITLE's claim, not in this test's mechanism (story
+/// wipe-epoch, revising AD-15). The other computer no longer keeps everything: it empties itself
+/// when it reads the account's new wipe epoch, which `tests_wipe_epoch.rs` proves end to end.
+///
+/// What is asserted here is the part that had to stay true for that to be safe, and that this
+/// harness is the only one that can prove: the wipe captures NOTHING, so there is no segment to
+/// ship and the other computer's data is never deleted by a flood of replicated tombstones. The
+/// account is told out of band by the `wipe` marker instead — bounded, one object, and not
+/// restorable from `sync_tombstone` for 30 days as a captured delete would have been.
 #[test]
-fn another_computer_keeps_everything_after_this_one_is_wiped() {
+fn a_wipe_ships_no_message_so_no_tombstone_ever_deletes_another_computers_rows() {
     let mut wiped = Computer::open("wiped");
     let other = Computer::open("other");
 
@@ -203,19 +219,22 @@ fn another_computer_keeps_everything_after_this_one_is_wiped() {
 
     wiped.wipe();
 
-    // Nothing to cut is the whole claim about the cloud and the other computers: the wipe
-    // produced no message, so there is nothing to upload and nothing for anyone to apply. The
-    // pin is gone as well, so the gate would refuse a request even if one were attempted.
+    // Nothing to cut is the claim: the wipe produced no message, so there is nothing to upload and
+    // nothing for anyone to apply. The pin is gone as well, so the gate would refuse a request
+    // even if one were attempted. The other computer IS emptied — by the wipe epoch, on its own
+    // next cycle (`tests_wipe_epoch.rs`) — and this is what proves it does not happen through the
+    // log, which would have been an unbounded tombstone flood.
     assert!(
         wiped.cut().is_none(),
-        "the wipe left something to ship, which would delete the other computer's data"
+        "the wipe left something to ship, which would delete the other computer's rows through \
+         the log instead of through the bounded account-wide event"
     );
     assert_eq!(wiped.state().identity_id, None);
 
     assert_eq!(
         other.applied_number("SELECT COUNT(*) FROM income_sources"),
         2,
-        "the other computer lost data to a local wipe"
+        "the other computer's rows were deleted by a replicated message rather than by the event"
     );
     assert_eq!(other.applied_number("SELECT COUNT(*) FROM sync_tombstone"), 0);
 }

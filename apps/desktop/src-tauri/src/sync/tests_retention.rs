@@ -281,10 +281,11 @@ async fn a_sweep_deletes_only_up_to_the_re_read_watermark() {
         created_ms: NOW_MS,
         watermark: BTreeMap::from([(install.to_string(), 0)]),
         carries_identities: true,
+        wipe_epoch: 0,
     };
     cloud.seed(SNAP_LATEST_KEY, behind.body());
 
-    let report = crate::sync::retention::compact(&gated, install, NOW_MS)
+    let report = crate::sync::retention::compact(&gated, install, NOW_MS, 0)
         .await
         .expect("the sweep runs");
 
@@ -303,7 +304,7 @@ async fn a_sweep_deletes_only_up_to_the_re_read_watermark() {
     // And with no pointer at all nothing is deletable, however old: an account whose snapshot is
     // gone has no statement about what is redundant.
     cloud.remove(SNAP_LATEST_KEY);
-    let report = crate::sync::retention::compact(&gated, install, NOW_MS)
+    let report = crate::sync::retention::compact(&gated, install, NOW_MS, 0)
         .await
         .expect("the sweep runs");
     assert_eq!(report.segments_deleted, 0);

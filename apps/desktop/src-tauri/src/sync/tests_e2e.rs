@@ -89,6 +89,10 @@ fn tuning() -> SyncTuning {
         // requests to pin the SNAPSHOT debounce, and a conditional roster poll in the middle of
         // one would be counted as an upload. `tests_segment.rs` is where the log cycle is driven.
         remote_poll_interval: Duration::from_secs(86_400),
+        // Left at the production value, not collapsed: these fixtures COUNT requests, and the
+        // absence floor is what keeps a never-wiped account's `wipe` probe off every cycle
+        // (story wipe-epoch).
+        wipe_absence_recheck: Duration::from_secs(30),
         segment_interval: Duration::from_secs(86_400),
         tombstone_purge_interval: Duration::from_secs(86_400),
         // Reconcile is driven directly in `tests_reconcile.rs`: here it would be a full scan of

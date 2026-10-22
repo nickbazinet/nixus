@@ -34,6 +34,7 @@ pub mod settle;
 pub mod snapshot;
 pub mod state;
 pub mod store;
+pub mod wipe;
 
 #[cfg(test)]
 mod sim;
@@ -89,5 +90,7 @@ mod tests_s3_endpoint;
 mod tests_segment;
 #[cfg(test)]
 mod tests_skew;
+#[cfg(test)]
+mod tests_wipe_epoch;
 #[cfg(test)]
 mod tests_write_site_budget;

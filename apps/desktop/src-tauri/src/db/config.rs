@@ -3,14 +3,26 @@ use rusqlite::Connection;
 use crate::error::AppError;
 use crate::sync::{capture, identity};
 
-/// The `config` keys that describe THIS computer's credential state and therefore never
-/// travel between computers (AD-5's deny list). Everything else in `config` is the user's
-/// own setting and syncs.
+/// The `config` keys that describe THIS computer's credential state — or its own place in the
+/// account's wipe history — and therefore never travel between computers (AD-5's deny list).
+/// Everything else in `config` is the user's own setting and syncs.
 ///
 /// One source of truth for both halves of the round trip: `sync::snapshot` empties them
 /// from the copy it uploads, and `db::backup` carries them back from the safety copy when
 /// a snapshot is restored over this computer's file.
-pub(crate) const LOCAL_ONLY_KEYS: &[&str] = &["ai_configured", "ai_provider", "aws_region"];
+///
+/// The last two are story wipe-epoch's (`db::sync_wipe` documents them): the epoch this dataset
+/// runs at, and a wipe performed here that still owes the account its event. They are deny-listed
+/// for a stronger reason than the credential keys — an epoch that travelled would make every other
+/// computer believe it had already adopted a wipe it has not, and a pending marker that travelled
+/// would make each of them register a wipe of their own.
+pub(crate) const LOCAL_ONLY_KEYS: &[&str] = &[
+    "ai_configured",
+    "ai_provider",
+    "aws_region",
+    crate::db::sync_wipe::WIPE_EPOCH_KEY,
+    crate::db::sync_wipe::WIPE_PENDING_KEY,
+];
 
 pub fn get(conn: &Connection, key: &str) -> Option<String> {
     conn.query_row(

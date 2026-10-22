@@ -16,14 +16,18 @@ use crate::error::AppError;
 /// migration cannot silently add a table that survives "delete all data".
 pub const WIPE_TABLES: &[&str] = &[
     // AD-15: a wipe of a synced dataset unlinks it. Deleting the row *is* the
-    // Unlinked state, and it never touches the cloud copy or another computer.
+    // Unlinked state. It still touches no cloud object here — the account learns of the wipe
+    // through `commands::danger_zone`'s pending marker and `sync::wipe`'s separate `wipe` object
+    // (story wipe-epoch), never through this transaction.
     "sync_state",
     // AD-10: what this computer has already uploaded. Forgetting it costs one
     // conditional request per picture afterwards, never a wrong answer.
     "sync_image_blobs",
-    // AD-15: Story 14's seven. A wipe deletes locally and clears the sync tables; it
-    // never touches the cloud copy or another computer. Order is free among them
-    // because none has a foreign key — into each other or into a data table.
+    // AD-15: Story 14's seven. A wipe deletes locally and clears the sync tables, and emits
+    // nothing: no tombstone, no message, no object. The other computers are emptied by the
+    // account-wide wipe EVENT instead (story wipe-epoch), which is bounded and is registered
+    // outside this transaction. Order is free among them because none has a foreign key — into
+    // each other or into a data table.
     "sync_uuid",
     "sync_log",
     "sync_field_state",

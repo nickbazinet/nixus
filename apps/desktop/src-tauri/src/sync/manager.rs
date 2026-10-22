@@ -55,7 +55,8 @@ use super::reconcile;
 use super::retention;
 use super::settle;
 use super::segment::{self, Applier, Head, PollReport, PullCursor, SegmentBatch, SegmentError};
-use super::snapshot::{self, LatestSnapshot, SnapshotError, UploadOutcome};
+use super::snapshot::{self, LatestFetch, LatestSnapshot, SnapshotError, UploadOutcome};
+use super::wipe::{self, WipeError, WipeWatch};
 use super::store::{ETag, ObjectStore, StoreError};
 
 /// What the UI shows, and what `sync:status` carries (AD-16).
@@ -175,6 +176,12 @@ pub enum SyncFault {
     Registry,
     /// The dataset's own database could not be read.
     StateUnavailable,
+    /// Story wipe-epoch's publish gate: the account has been wiped at an epoch this computer has
+    /// not adopted yet, so publishing anything would put pre-wipe data back where every other
+    /// computer reads from. Refused until the self-wipe at the top of the next cycle adopts it,
+    /// which is why it is neither retried nor backed off from — the cure is one cycle away and
+    /// backing off would only delay it.
+    WipedElsewhere,
     /// The project has no picture, so there is nothing to fetch for it.
     ImageMissing,
     /// What came back is not the picture the row names: the payload does not hash to the key, or
@@ -223,6 +230,7 @@ impl SyncFault {
             SyncFault::Swap { .. } => "restore_failed",
             SyncFault::OwnerMismatch => "owner_mismatch",
             SyncFault::Registry => "profile_create_failed",
+            SyncFault::WipedElsewhere => "wiped_elsewhere",
             SyncFault::ImageMissing => "image_missing",
             SyncFault::ImageCorrupt => "image_corrupt",
             SyncFault::NotEnabled => "not_enabled",
@@ -262,6 +270,7 @@ impl SyncFault {
             | SyncFault::Swap { .. }
             | SyncFault::Registry
             | SyncFault::StateUnavailable
+            | SyncFault::WipedElsewhere
             | SyncFault::ImageMissing
             | SyncFault::ImageCorrupt
             | SyncFault::NotEnabled
@@ -305,6 +314,9 @@ impl SyncFault {
             "apply_failed" => "A change from another computer could not be applied yet.",
             "clock_skew" => "This computer's date and time are too far off to order changes.",
             "payload_too_large" => "This change is too large to send to the cloud.",
+            "wiped_elsewhere" => {
+                "Everything was deleted on another computer; this computer is catching up."
+            }
             _ => "Sync is unavailable.",
         }
     }
@@ -342,6 +354,19 @@ impl From<BlobError> for SyncFault {
             BlobError::InvalidHash | BlobError::ContentMismatch { .. } | BlobError::Header(_) => {
                 SyncFault::ImageCorrupt
             }
+        }
+    }
+}
+
+impl From<WipeError> for SyncFault {
+    fn from(error: WipeError) -> Self {
+        match error {
+            WipeError::Store(error) => SyncFault::from(error),
+            // A marker this build cannot read and one every computer is writing at once are both
+            // "the account's wipe state is unknown right now", and the one thing neither may do is
+            // read as "nothing was ever wiped" (see `sync::wipe`).
+            WipeError::Malformed => SyncFault::Snapshot(SnapshotError::MalformedLatest),
+            WipeError::Contended => SyncFault::Store(StoreError::ConditionalConflict),
         }
     }
 }
@@ -400,6 +425,17 @@ pub struct SyncTuning {
     /// because AD-6 bills a `304` as a GET: the steady-state cost of sync is
     /// `1 + <known heads>` requests per interval, whatever the edit rate.
     pub remote_poll_interval: Duration,
+    /// The floor between two probes of a `wipe` marker already proven ABSENT (story wipe-epoch).
+    ///
+    /// Its own knob rather than a reuse of `remote_poll_interval`, because the two measure
+    /// different things and the tests that collapse the protocol's pace must NOT collapse this
+    /// one: an absent marker has no ETag to be conditional against, and on real S3 the 403 that
+    /// a missing key answers costs a `ListObjectsV2` disambiguation on top of the GET (`s3.rs`).
+    /// Re-probing it every cycle would therefore put two billed requests per cycle on every
+    /// account that has never used "delete everything" — against a documented steady state of
+    /// `1 + <known computers>` per poll interval. A marker that EXISTS is read conditionally on
+    /// every cycle and this floor never applies to it, so a later wipe is still seen at once.
+    pub wipe_absence_recheck: Duration,
     /// The floor between two segment ships, so a burst of edits becomes one object rather than one
     /// per keystroke.
     pub segment_interval: Duration,
@@ -440,6 +476,7 @@ impl Default for SyncTuning {
             initial_backoff: Duration::from_secs(5),
             max_backoff: Duration::from_secs(300),
             remote_poll_interval: Duration::from_secs(30),
+            wipe_absence_recheck: Duration::from_secs(30),
             segment_interval: Duration::from_secs(10),
             tombstone_purge_interval: Duration::from_secs(6 * 60 * 60),
             reconcile_interval: Duration::from_secs(60),
@@ -510,6 +547,16 @@ pub(crate) trait SyncHost {
     fn release(&self);
     /// Records that transfers must stop until support intervenes (AD-14, AD-7).
     fn freeze(&self, reason: FrozenReason);
+    /// Story wipe-epoch: empties this dataset because the user ran "delete everything" on ANOTHER
+    /// of their computers, and records `epoch` as the one this file now runs at.
+    ///
+    /// One call and not two, because the two writes have to be ONE transaction: a crash between
+    /// them would leave a dataset that is empty and does not know why. It goes through
+    /// `ActiveDataset::write_uncaptured` for the same reason `delete_all_data` does — a wipe that
+    /// captured would emit a tombstone per row and ship the user's whole dataset as deletions
+    /// (AD-15) — and it deletes DATASET tables only: the global profile store is PII that belongs
+    /// to the person, not to the dataset, and is erased only by the computer the user asked.
+    fn wipe_local(&self, epoch: u64) -> Result<u64, SyncFault>;
     /// Drops the vended AWS credentials. Async because the cache is behind an async mutex
     /// that a concurrent refresh may be holding.
     fn forget_credentials(&self) -> Pin<Box<dyn std::future::Future<Output = ()> + '_>>;
@@ -701,6 +748,9 @@ pub(crate) struct SyncActor<H: SyncHost> {
     /// travelled. A joined computer that finds one republishes, which is what stops a new computer
     /// from ever having to bootstrap off it.
     latest_carries_identities: bool,
+    /// Story wipe-epoch's one reader of the account's wipe epoch, with the ETag it last saw, so
+    /// the check at the top of every cycle is a conditional GET that usually answers `304`.
+    wipe: WipeWatch,
     /// Whether every record in THIS FILE that predates sync has been given its identity.
     ///
     /// The precondition of the first remote apply and of the first snapshot built from the file:
@@ -791,6 +841,7 @@ impl<H: SyncHost> SyncActor<H> {
             last_auto_join: Some(started),
             auto_join_quiet: false,
             latest_carries_identities: true,
+            wipe: WipeWatch::default(),
             settled: false,
         };
 
@@ -830,6 +881,16 @@ impl<H: SyncHost> SyncActor<H> {
     #[cfg(test)]
     pub(in crate::sync) fn pull(&mut self) -> &mut super::segment::PullCursor {
         &mut self.pull
+    }
+
+    /// Arranges AD-13's unfillable gap, so the third restore path can be driven directly.
+    ///
+    /// Reaching it for real takes a 90-day-old segment, a sweep that reclaimed it and a peer that
+    /// then asks for it; `tests_retention.rs` proves that chain, and this is how the story
+    /// wipe-epoch refusal on the SAME path gets a test that is about the refusal.
+    #[cfg(test)]
+    pub(in crate::sync) fn arrange_rebootstrap(&mut self) {
+        self.needs_rebootstrap = true;
     }
 
     pub(in crate::sync) fn diagnostics(&self) -> SyncDiagnostics {
@@ -938,6 +999,9 @@ impl<H: SyncHost> SyncActor<H> {
             SyncFault::UpdateNeeded { .. }
             | SyncFault::Snapshot(SnapshotError::SchemaTooNew { .. }) => SyncState::UpdateNeeded,
             SyncFault::ClockSkew { .. } => SyncState::ClockSkew,
+            // Not an error the user has to see: the next cycle's epoch check wipes this computer
+            // and rejoins, so the honest state is "working on it" (story wipe-epoch).
+            SyncFault::WipedElsewhere => SyncState::Syncing,
             other if other.retryable() => SyncState::Offline,
             _ => SyncState::Error,
         };
@@ -953,6 +1017,11 @@ impl<H: SyncHost> SyncActor<H> {
             // to be updated and a wrong clock has to be corrected. Backing off would also stop the
             // segments this build CAN still apply, which AD-11 forbids.
             SyncState::UpdateNeeded | SyncState::ClockSkew => {
+                self.backoff = None;
+            }
+            // Neither a failure nor something to wait out: the refusal IS the protocol working,
+            // and a backoff would delay the self-wipe that clears it (story wipe-epoch).
+            SyncState::Syncing => {
                 self.backoff = None;
             }
             SyncState::Offline => {
@@ -1011,6 +1080,171 @@ impl<H: SyncHost> SyncActor<H> {
             .ok()
             .flatten()
             .is_some_and(|state| state.joined())
+    }
+
+    /// The wipe epoch THIS dataset runs at (story wipe-epoch, `db::sync_wipe`).
+    ///
+    /// Read from the file on every use rather than cached: a restore, a replace and a
+    /// re-bootstrap all swap the file under this actor, and a stale epoch is the one value that
+    /// would make it either wipe itself for nothing or fail to wipe itself at all.
+    fn local_epoch(&self) -> Result<u64, SyncFault> {
+        self.host.with_dataset(crate::db::sync_wipe::local_epoch)
+    }
+
+    /// Records the epoch a COMPLETED join happened at (story wipe-epoch).
+    ///
+    /// Idempotent and forward-only (`db::sync_wipe::set_local_epoch` refuses to go back). This is
+    /// what stops a computer that has just restored a post-wipe snapshot from reading the account
+    /// as ahead of itself on the very next cycle and wiping what it has only just received.
+    fn adopt_epoch(&mut self, epoch: u64) -> Result<(), SyncFault> {
+        // `>=` and not `==`, which is what lets two callers compose into a MAX without either of
+        // them knowing about the other: the restore paths adopt the epoch their POINTER was
+        // stamped at and `enable_inner` adopts the one the read was filtered against, and the
+        // lower of the two is simply a no-op instead of a refused backwards write (story
+        // wipe-epoch; `db::sync_wipe::set_local_epoch` is the forward-only guard).
+        if self.local_epoch()? >= epoch {
+            return Ok(());
+        }
+
+        self.host
+            .with_dataset(|conn| crate::db::sync_wipe::set_local_epoch(conn, epoch))
+    }
+
+    /// Registers a wipe this computer performed and could not tell the account about yet.
+    ///
+    /// FIRST in `enable_inner`, before `joined()`, before `assess`, before any restore and before
+    /// any upload: the whole point of the pending marker is that the user ran "delete everything"
+    /// offline, and a join that restored the account's pre-wipe snapshot before registering the
+    /// event would hand the data straight back. A failure (offline, signed out, contended) is
+    /// returned as a fault so the existing backoff retries it, and NOTHING is restored or
+    /// uploaded on the way out.
+    async fn register_pending_wipe(
+        &mut self,
+        session: &HostSession<H>,
+    ) -> Result<(), SyncFault> {
+        let Some(owed_by) = self
+            .host
+            .with_dataset(crate::db::sync_wipe::pending_wipe)?
+        else {
+            return Ok(());
+        };
+
+        let adopted = wipe::register(
+            &session.store,
+            self.local_epoch()?,
+            self.host.now_ms(),
+        )
+        .await?;
+
+        // One transaction: the epoch and the cleared marker are two halves of "the event is
+        // registered", and a crash between them would either re-register it (a second epoch every
+        // other computer would wipe itself for) or lose the epoch this computer now owes.
+        self.host.with_dataset(|conn| {
+            crate::db::sync_wipe::set_local_epoch(conn, adopted)?;
+            crate::db::sync_wipe::clear_pending_wipe(conn)
+        })?;
+        // The ETag this watch holds predates this computer's own write.
+        self.wipe.forget();
+
+        info!(
+            "A wipe performed on this computer (install {}) is registered as epoch {adopted}",
+            owed_by.chars().take(8).collect::<String>()
+        );
+
+        Ok(())
+    }
+
+    /// Story wipe-epoch's trigger, run before anything else reads or writes the account.
+    ///
+    /// The comparison is asymmetric, and the asymmetry is the data-safety argument. A dataset that
+    /// has JOINED holds the account's rows and nothing else, so when the account says those rows
+    /// were deleted there is nothing of the user's to lose by emptying it. A dataset that has NOT
+    /// joined under its current install id — an imported backup, a copied file, a brand-new
+    /// computer — may hold data the account has never seen, so it is never wiped automatically: it
+    /// takes the ordinary join, which means CAP-5's question and a dated backup.
+    async fn settle_wipe_epoch(
+        &mut self,
+        session: &HostSession<H>,
+    ) -> Result<WipeStance, SyncFault> {
+        let cloud = self
+            .wipe
+            .read(&session.store, self.tuning.wipe_absence_recheck)
+            .await?;
+        if cloud <= self.local_epoch()? {
+            return Ok(WipeStance::Aligned);
+        }
+
+        if !self.joined() {
+            return Ok(WipeStance::AheadUnjoined(cloud));
+        }
+
+        self.self_wipe(cloud)?;
+
+        Ok(WipeStance::JustWiped)
+    }
+
+    /// Empties this computer because the user ran "delete everything" on another of theirs.
+    ///
+    /// Everything about it is the local half of `commands::danger_zone::delete_all_data`: no
+    /// capture, so no tombstone and no message (AD-15); dataset tables only, so the global profile
+    /// store — PII that belongs to the person and not to this dataset — is untouched; and the new
+    /// epoch stored in the SAME transaction as the deletes, so there is no state in which the file
+    /// is empty and does not know why.
+    ///
+    /// Afterwards this actor is an EMPTY, NEVER-JOINED computer: the install id is re-minted on
+    /// the wiped file, every cursor is dropped, and `last_auto_join` is cleared so the next tick
+    /// rejoins immediately instead of waiting out the floor. The join that follows restores the
+    /// account's current-epoch snapshot (or publishes an empty one at the new epoch).
+    fn self_wipe(&mut self, epoch: u64) -> Result<(), SyncFault> {
+        // The apply connection has to be closed around a wipe for the same reason a file swap
+        // closes it: a batch landing in tables that are being emptied would re-create rows the
+        // event says are gone.
+        self.close_applier();
+        let deleted = self.host.wipe_local(epoch);
+        self.reopen_applier();
+        let deleted = deleted?;
+
+        info!(
+            "Everything was deleted on another computer (wipe epoch {epoch}); {deleted} local \
+             row(s) removed and this computer rejoins as an empty one"
+        );
+
+        self.enabled = false;
+        self.install = None;
+        self.known_latest = None;
+        self.snapshot_watermark = BTreeMap::new();
+        self.latest_carries_identities = true;
+        self.needs_rebootstrap = false;
+        self.pending = None;
+        self.pull = PullCursor::default();
+        self.head_etag = None;
+        self.published_seq = None;
+        self.in_roster = false;
+        self.reconcile = None;
+        self.reconcile_clock = None;
+        self.reconcile_done_once = false;
+        self.last_change = None;
+        self.last_upload = None;
+        self.last_seen_version = self.host.data_version().ok();
+        self.opted_out = false;
+        self.last_auto_join = None;
+        self.clear_error();
+        self.publish(SyncState::Syncing);
+
+        Ok(())
+    }
+
+    /// Puts this actor back into the state an unjoined computer is in, so `tick` re-attempts the
+    /// ordinary join instead of cycling against an account it cannot reach.
+    ///
+    /// The same shape `SyncEnableOutcome::Waiting` produces in `settle_enable` — not enabled, no
+    /// error, `unlinked` so the always-mounted indicator renders nothing (AD-16) — plus clearing
+    /// `last_auto_join` so the retry happens on the next tick rather than one floor later.
+    fn stop_until_rejoined(&mut self) {
+        self.enabled = false;
+        self.last_auto_join = None;
+        self.clear_error();
+        self.publish(SyncState::Unlinked);
     }
 
     fn refresh_opt_out(&mut self) {
@@ -1183,25 +1417,74 @@ impl<H: SyncHost> SyncActor<H> {
     ) -> Result<SyncEnableOutcome, SyncFault> {
         let session = self.host.connect().await?;
 
+        // BEFORE everything, in this order (story wipe-epoch): a wipe this computer owes the
+        // account is registered first, and only then is the account's epoch compared against this
+        // dataset's — so an offline wipe can never be followed by a restore of what it erased.
+        self.register_pending_wipe(&session).await?;
+        let stance = self.settle_wipe_epoch(&session).await?;
+
+        let outcome = self.join_at(&session, choice, stance).await?;
+
+        // A COMPLETED join — a restore, a publish or an answered replace — is this dataset
+        // adopting the epoch it joined at. Without it the very next cycle would read the account
+        // as ahead and wipe what was just received.
+        if matches!(outcome, SyncEnableOutcome::Enabled { .. }) {
+            self.adopt_epoch(stance.epoch_for_reads(self.local_epoch()?))?;
+        }
+
+        Ok(outcome)
+    }
+
+    async fn join_at(
+        &mut self,
+        session: &HostSession<H>,
+        choice: Option<LinkChoice>,
+        stance: WipeStance,
+    ) -> Result<SyncEnableOutcome, SyncFault> {
+        let cutoff = stance.epoch_for_reads(self.local_epoch()?);
+
         // A dataset that has joined is never assessed again: `assess` answers `ChoiceRequired` for
         // any dataset that holds rows while the account holds a snapshot, which is true of every
         // launch of every computer that is already syncing.
         if self.joined() {
-            return self.resume(&session).await;
+            return self.resume(session, cutoff).await;
         }
 
         let local = self.host.local_data()?;
-        let plan = bootstrap::assess(&session.store, &session.pin, &local).await?;
+        let plan = bootstrap::assess(&session.store, &session.pin, &local, cutoff).await?;
+
+        // An unjoined dataset whose epoch is BEHIND the account's may only ADOPT the account's
+        // state — a restore, or CAP-5's answered question. It must never publish: the rows it
+        // holds were never shown to the account, and writing them over a post-wipe pointer is
+        // exactly the resurrection the epoch exists to stop. Waiting costs a cycle or two, until
+        // some post-wipe computer has published a pointer this one can be asked about.
+        if matches!(stance, WipeStance::AheadUnjoined(_))
+            && !matches!(
+                plan,
+                BootstrapPlan::Restore { .. } | BootstrapPlan::ChoiceRequired { .. }
+            )
+        {
+            return Ok(SyncEnableOutcome::Waiting);
+        }
 
         match plan {
             BootstrapPlan::FirstEnable => {
-                claim_owner(&session, self.host.now_ms()).await?;
-                self.publish_snapshot(&session, None, LostCas::Prompt).await
+                claim_owner(session, self.host.now_ms()).await?;
+                self.publish_snapshot(session, None, LostCas::Prompt).await
             }
             BootstrapPlan::NoSnapshot => {
-                self.publish_snapshot(&session, None, LostCas::Prompt).await
+                self.publish_snapshot(session, None, LostCas::Prompt).await
             }
             BootstrapPlan::SnapshotNotReady => Ok(SyncEnableOutcome::Waiting),
+            // The pointer describes data the user deleted. Publishing this computer's own — the
+            // wiped computer's is empty, a post-wipe one's holds whatever was entered since — over
+            // it by `If-Match` is what makes the account's current state readable again. `Adopt`
+            // and never `Prompt`: a lost race means another post-wipe computer got there first,
+            // and CAP-5's question has no honest wording for data that has been erased.
+            BootstrapPlan::StaleSnapshot { etag } => {
+                self.publish_snapshot(session, Some(&etag), LostCas::Adopt)
+                    .await
+            }
             BootstrapPlan::Restore { latest, etag } => {
                 self.close_applier();
                 let report = bootstrap::restore_latest(
@@ -1224,6 +1507,13 @@ impl<H: SyncHost> SyncActor<H> {
                 self.snapshot_watermark = latest.watermark.clone();
                 self.latest_carries_identities = latest.carries_identities;
                 self.reopen_applier();
+                // The POINTER's epoch, which `fetch_latest_at` admits when it is at or ABOVE the
+                // cutoff. A snapshot stamped higher than the `wipe` marker this computer read is
+                // the ordinary race — the publisher registered its wipe and published before this
+                // computer's own read landed — and adopting the cutoff alone would leave this
+                // dataset behind the data it has just restored, so the next cycle would read the
+                // account as ahead and wipe it (story wipe-epoch).
+                self.adopt_epoch(latest.wipe_epoch)?;
 
                 Ok(SyncEnableOutcome::Enabled {
                     state: SyncState::Idle,
@@ -1247,7 +1537,7 @@ impl<H: SyncHost> SyncActor<H> {
 
                     Ok(outcome)
                 }
-                Some(choice) => self.apply_link_choice(&session, &latest, etag, choice).await,
+                Some(choice) => self.apply_link_choice(session, &latest, etag, choice).await,
             },
         }
     }
@@ -1258,7 +1548,11 @@ impl<H: SyncHost> SyncActor<H> {
     /// account must freeze rather than sync does not depend on how sync was started. After that it
     /// is the ordinary cycle — the other computers' tail applied by HLC and per-field LWW, local
     /// changes pushed — which is the whole of what "seamless and automatic" means.
-    async fn resume(&mut self, session: &HostSession<H>) -> Result<SyncEnableOutcome, SyncFault> {
+    async fn resume(
+        &mut self,
+        session: &HostSession<H>,
+        cutoff: u64,
+    ) -> Result<SyncEnableOutcome, SyncFault> {
         match session.store.get(OWNER_OBJECT_KEY).await {
             Ok(stored) => {
                 let owner_sub = owner_sub_from_body(&stored.bytes).map_err(SyncFault::Auth)?;
@@ -1276,8 +1570,8 @@ impl<H: SyncHost> SyncActor<H> {
             Err(error) => return Err(error.into()),
         }
 
-        match snapshot::fetch_latest(&session.store).await? {
-            Some((latest, etag)) => {
+        match snapshot::fetch_latest_at(&session.store, cutoff).await? {
+            LatestFetch::Current(latest, etag) => {
                 self.snapshot_watermark = latest.watermark;
                 self.latest_carries_identities = latest.carries_identities;
                 self.known_latest = Some(etag);
@@ -1289,7 +1583,16 @@ impl<H: SyncHost> SyncActor<H> {
             // Joined, but the pointer is missing: publishing is the `NoSnapshot` path, and the
             // lost-CAS prompt has no place here — the log has already carried every change both
             // ways, so a pointer that appeared meanwhile is the same converged account (story 23).
-            None => self.publish_snapshot(session, None, LostCas::Adopt).await,
+            LatestFetch::Absent => self.publish_snapshot(session, None, LostCas::Adopt).await,
+            // A joined computer whose epoch is already current but whose pointer is not: another
+            // computer has registered the wipe and has not published its post-wipe snapshot yet.
+            // Nothing is adopted and — above all — nothing is published, because `known_latest`
+            // stays `None` and the publish gate would refuse anyway. The cycle that follows polls
+            // the current epoch's roster, and the wiping computer's pointer lands within it
+            // (story wipe-epoch).
+            LatestFetch::Stale { .. } => Ok(SyncEnableOutcome::Enabled {
+                state: SyncState::Syncing,
+            }),
         }
     }
 
@@ -1331,6 +1634,9 @@ impl<H: SyncHost> SyncActor<H> {
                 self.snapshot_watermark = latest.watermark.clone();
                 self.latest_carries_identities = latest.carries_identities;
                 self.pending = None;
+                // Same rule as the `Restore` arm: this dataset now HOLDS the snapshot the pointer
+                // named, so it must run at the epoch that pointer was stamped at (story wipe-epoch).
+                self.adopt_epoch(latest.wipe_epoch)?;
 
                 Ok(SyncEnableOutcome::Enabled {
                     state: SyncState::Idle,
@@ -1367,6 +1673,21 @@ impl<H: SyncHost> SyncActor<H> {
         known_latest: Option<&ETag>,
         lost_cas: LostCas,
     ) -> Result<UploadStep, SyncFault> {
+        // THE PUBLISH GATE (story wipe-epoch), and it is here because `upload` is the single
+        // funnel every snapshot publish goes through — `enable`, `resume`, `sync_now` and the
+        // AD-9 tail trigger all arrive at this line.
+        //
+        // The hazard it closes: `LostCas::Adopt` refreshes `known_latest` from the pointer it just
+        // lost to, so a computer that has not yet heard about the wipe would, on its NEXT cycle,
+        // hold a valid `If-Match` token for the post-wipe pointer and overwrite it with a
+        // pre-wipe snapshot. The read is UNCONDITIONAL and not `WipeWatch`'s cached one: a `304`
+        // only proves nothing changed since this computer last looked, and "last looked" is
+        // exactly what is in doubt on the path that is about to clobber the account.
+        let epoch = self.local_epoch()?;
+        if wipe::read_now(&session.store).await? > epoch {
+            return Err(SyncFault::WipedElsewhere);
+        }
+
         // A snapshot is built from the file as it is, so the file has to be settled first: whoever
         // restores it then starts with every record under the identity the tail will name.
         self.settle_identities().await?;
@@ -1384,8 +1705,14 @@ impl<H: SyncHost> SyncActor<H> {
         self.stats.last_object_bytes = Some(built.object_bytes());
         self.stats.last_payload_bytes = Some(built.payload_bytes);
 
-        match snapshot::upload_snapshot(&session.store, &built, known_latest, self.host.now_ms())
-            .await?
+        match snapshot::upload_snapshot(
+            &session.store,
+            &built,
+            known_latest,
+            self.host.now_ms(),
+            epoch,
+        )
+        .await?
         {
             UploadOutcome::Published { latest, .. } => {
                 self.stats.uploads += 1;
@@ -1479,7 +1806,11 @@ impl<H: SyncHost> SyncActor<H> {
             return;
         };
 
-        match retention::compact(&session.store, &install, self.host.now_ms()).await {
+        let Ok(epoch) = self.local_epoch() else {
+            return;
+        };
+
+        match retention::compact(&session.store, &install, self.host.now_ms(), epoch).await {
             Ok(report) => {
                 self.stats.segments_deleted += report.segments_deleted as u64;
                 self.stats.snapshots_deleted += report.snapshots_deleted as u64;
@@ -1742,10 +2073,31 @@ impl<H: SyncHost> SyncActor<H> {
         // install id for a cycle it is not allowed to run (AD-14).
         let session = self.host.connect().await?;
 
+        // BEFORE the re-bootstrap branch, before the ship and before the poll (story wipe-epoch).
+        // One conditional GET that usually answers `304`: if the account has been wiped at an
+        // epoch this computer has not adopted, every other step of this cycle would be work on
+        // data that no longer exists — a restore of it, a poll of the installs that held it, or a
+        // ship of changes nobody at the new epoch will ever read.
+        let epoch = match self.settle_wipe_epoch(&session).await? {
+            WipeStance::Aligned => self.local_epoch()?,
+            // This computer has just emptied itself: `self_wipe` already left it disabled with
+            // every cursor dropped, so the next tick's `auto_start` is the rejoin.
+            WipeStance::JustWiped => return Ok(()),
+            // It holds data the account has never seen and may not be emptied automatically, so
+            // nothing may be shipped, polled or published — but it must also be STOPPED. `tick`
+            // only re-attempts the join while `!enabled`, so returning with the actor still
+            // enabled would leave it cycling forever against an account it can never reach, and
+            // the CAP-5 question it is owed would never be asked (story wipe-epoch).
+            WipeStance::AheadUnjoined(_) => {
+                self.stop_until_rejoined();
+                return Ok(());
+            }
+        };
+
         // BEFORE anything reads the dataset: a re-bootstrap replaces the file, so an install id or
         // a reconcile cursor read before it would describe a database that no longer exists.
         if self.needs_rebootstrap {
-            self.rebootstrap(&session).await?;
+            self.rebootstrap(&session, epoch).await?;
         }
 
         let install = self.install()?;
@@ -1759,11 +2111,11 @@ impl<H: SyncHost> SyncActor<H> {
 
         if ship_due {
             self.last_segment_ship = Some(Instant::now());
-            self.ship_log(&session, &install).await?;
+            self.ship_log(&session, &install, epoch).await?;
         }
         if poll_due {
             self.last_remote_poll = Some(Instant::now());
-            self.poll_remote(&session, &install).await?;
+            self.poll_remote(&session, &install, epoch).await?;
         }
 
         self.settle_cycle_states();
@@ -1824,7 +2176,14 @@ impl<H: SyncHost> SyncActor<H> {
         &mut self,
         session: &HostSession<H>,
         install: &str,
+        epoch: u64,
     ) -> Result<(), SyncFault> {
+        // `epoch` is this computer's, as `log_cycle` settled it against the account's one line
+        // before calling here (story wipe-epoch). THAT is the refusal for the ship path, and it is
+        // not re-read: `log_cycle` is the only caller, it returns before this line unless the two
+        // epochs agree, and a second unconditional GET per cycle would double AD-6's steady-state
+        // request budget to prove something the cycle has just proved. The snapshot path differs
+        // and does read again (`upload`), because it is reachable without a cycle.
         let schema_version = self.host.schema_version();
         let mut highest = None;
 
@@ -1863,7 +2222,7 @@ impl<H: SyncHost> SyncActor<H> {
         // On first publish, and never again: the roster is a membership list, so one successful
         // compare-and-swap is the whole of this computer's interest in it.
         if !self.in_roster {
-            segment::join_roster(&session.store, install).await?;
+            segment::join_roster(&session.store, install, epoch).await?;
             self.in_roster = true;
         }
 
@@ -1874,10 +2233,14 @@ impl<H: SyncHost> SyncActor<H> {
         &mut self,
         session: &HostSession<H>,
         install: &str,
+        epoch: u64,
     ) -> Result<(), SyncFault> {
         let mut report = PollReport::default();
+        // The roster of THIS computer's epoch, which is the whole of why a wipe needs no list of
+        // retired installs: every pre-wipe install is in a list nobody at this epoch reads.
         let installs =
-            segment::poll_roster(&session.store, &mut self.pull, install, &mut report).await?;
+            segment::poll_roster(&session.store, &mut self.pull, install, epoch, &mut report)
+                .await?;
 
         for remote in &installs {
             if !self.pull.knows(remote) {
@@ -1903,7 +2266,7 @@ impl<H: SyncHost> SyncActor<H> {
         self.stats.segments_fetched += report.segments_fetched;
         self.stats.messages_received += report.messages_applied;
         let unfillable = std::mem::take(&mut report.unfillable_gaps);
-        self.note_unfillable_gaps(session, &unfillable).await?;
+        self.note_unfillable_gaps(session, &unfillable, epoch).await?;
 
         Ok(())
     }
@@ -2044,6 +2407,7 @@ impl<H: SyncHost> SyncActor<H> {
         &mut self,
         session: &HostSession<H>,
         gaps: &[(String, i64)],
+        epoch: u64,
     ) -> Result<(), SyncFault> {
         if gaps.is_empty() {
             return Ok(());
@@ -2052,9 +2416,16 @@ impl<H: SyncHost> SyncActor<H> {
         // The pointer is re-read HERE and only here: a gap is the one moment the difference
         // between "not visible yet" and "reclaimed" matters, and the current watermark is the only
         // thing that can tell them apart. Steady-state polling still costs what AD-6 says it does.
-        if let Some((latest, _)) = snapshot::fetch_latest(&session.store).await? {
-            self.snapshot_watermark = latest.watermark;
-            self.latest_carries_identities = latest.carries_identities;
+        match snapshot::fetch_latest_at(&session.store, epoch).await? {
+            LatestFetch::Current(latest, _) => {
+                self.snapshot_watermark = latest.watermark;
+                self.latest_carries_identities = latest.carries_identities;
+            }
+            // A pre-wipe pointer may not seed the watermark, and therefore may not be used to
+            // conclude that a gap is unfillable either: its claims are about segments of data the
+            // account has deleted. No re-bootstrap is scheduled from it (story wipe-epoch).
+            LatestFetch::Stale { .. } => return Ok(()),
+            LatestFetch::Absent => {}
         }
 
         for (install, seq) in gaps {
@@ -2074,10 +2445,31 @@ impl<H: SyncHost> SyncActor<H> {
     ///
     /// The dated backup is REQUIRED: this path displaces local data, and CAP-5's rule that nothing
     /// is replaced without a copy does not stop applying because the cause was retention.
-    async fn rebootstrap(&mut self, session: &HostSession<H>) -> Result<(), SyncFault> {
-        let Some((latest, etag)) = snapshot::fetch_latest(&session.store).await? else {
-            self.needs_rebootstrap = false;
-            return Ok(());
+    async fn rebootstrap(
+        &mut self,
+        session: &HostSession<H>,
+        epoch: u64,
+    ) -> Result<(), SyncFault> {
+        let (latest, etag) = match snapshot::fetch_latest_at(&session.store, epoch).await? {
+            LatestFetch::Current(latest, etag) => (latest, etag),
+            LatestFetch::Absent => {
+                self.needs_rebootstrap = false;
+                return Ok(());
+            }
+            // The third restore path, and the one that had no guard at all: a re-bootstrap
+            // displaces this computer's whole file, so restoring a PRE-WIPE pointer here would put
+            // the deleted dataset back and keep the post-wipe data only as a dated backup. REFUSED
+            // and nothing is downloaded; the flag is dropped because the computer that registered
+            // the wipe publishes its own pointer within a cycle or two, and the gap it was about
+            // belongs to data the account no longer has (story wipe-epoch).
+            LatestFetch::Stale { .. } => {
+                warn!(
+                    "a re-bootstrap was refused: the cloud pointer predates the account's latest \
+                     deletion of everything"
+                );
+                self.needs_rebootstrap = false;
+                return Ok(());
+            }
         };
 
         self.close_applier();
@@ -2304,6 +2696,33 @@ pub(in crate::sync) fn quiet_for_auto_join(fault: &SyncFault) -> bool {
         fault.code(),
         "not_entitled" | "signed_out" | "not_configured" | "local_only"
     )
+}
+
+/// Where this computer stands against the account's wipe epoch (story wipe-epoch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WipeStance {
+    /// This dataset has adopted the account's epoch; every ordinary rule applies.
+    Aligned,
+    /// This dataset had joined, the account is ahead, and it has just emptied itself to catch up.
+    JustWiped,
+    /// The account is ahead and this dataset has NOT joined under its current install id, so it
+    /// may hold data the account has never seen and is never emptied automatically. Carries the
+    /// account's epoch, because that — not this dataset's — is the cutoff its reads must apply.
+    AheadUnjoined(u64),
+}
+
+impl WipeStance {
+    /// The epoch a `snap/LATEST` read must be filtered against.
+    ///
+    /// `local` for the two aligned cases, which is the same number as the account's and is never
+    /// below it; the account's own for `AheadUnjoined`, where this dataset's is deliberately
+    /// behind and using it would admit exactly the pointer that has to be refused.
+    fn epoch_for_reads(self, local: u64) -> u64 {
+        match self {
+            WipeStance::Aligned | WipeStance::JustWiped => local,
+            WipeStance::AheadUnjoined(cloud) => cloud,
+        }
+    }
 }
 
 /// What a lost `snap/LATEST` compare-and-swap means to the caller.

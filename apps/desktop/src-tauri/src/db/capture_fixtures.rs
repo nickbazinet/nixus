@@ -73,6 +73,21 @@ pub(crate) fn count_budget_groups(conn: &Connection) -> Result<i64, AppError> {
     Ok(conn.query_row("SELECT COUNT(*) FROM budget_groups", [], |row| row.get(0))?)
 }
 
+/// Every group name, ordered, so a replication proof can say WHICH rows a computer holds instead
+/// of only how many — which is the difference between "nothing came back" and "something did".
+pub(crate) fn budget_group_names(conn: &Connection) -> Vec<String> {
+    let mut statement = conn
+        .prepare("SELECT name FROM budget_groups ORDER BY name")
+        .expect("the name read prepares");
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("the names map")
+        .map(|row| row.expect("a name"))
+        .collect();
+
+    names
+}
+
 pub(crate) fn budget_group_name(conn: &Connection, id: i64) -> Result<Option<String>, AppError> {
     use rusqlite::OptionalExtension;
 

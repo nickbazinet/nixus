@@ -651,10 +651,18 @@ async fn sync_m2_e2e_d_a_new_computer_is_usable_inside_the_cap2_budget() {
     ));
 }
 
-/// (5) AD-15: a wipe unlinks THIS computer and nothing else — no request reaches the cloud and the
-/// other computer keeps syncing as if nothing happened.
+/// (5) INTENTIONAL BEHAVIOUR REVERSAL (story wipe-epoch, revising AD-15). This proof used to
+/// assert that a wipe reached nothing but the computer it ran on, and that claim was the bug: the
+/// next join restored `snap/LATEST`, replayed the other installs' log and handed the user back
+/// everything they had just deleted.
+///
+/// What is asserted now is the half of AD-15 that is still true and still load-bearing — the wipe
+/// itself captures nothing, so not one tombstone and not one segment of the user's deleted rows is
+/// ever written — together with the half that replaced the rest: the local wipe alone writes NO
+/// object at all, and the account is told through the separate `wipe` marker that the restarted
+/// actor registers. `tests_wipe_epoch.rs` owns the account-wide consequences.
 #[tokio::test(start_paused = true)]
-async fn sync_m2_e2e_e_a_wipe_unlinks_only_this_computer() {
+async fn sync_m2_e2e_e_a_wipe_ships_nothing_and_tells_the_account_out_of_band() {
     let cloud = Arc::new(FakeObjectStore::default());
     let (mut first, a, mut second, b) = two_computers(&cloud);
 
@@ -684,16 +692,30 @@ async fn sync_m2_e2e_e_a_wipe_unlinks_only_this_computer() {
         + cloud.calls_of(FakeOp::Delete);
     assert_eq!(
         writes_after, writes_before,
-        "AD-15: a wipe writes and deletes nothing in the cloud"
+        "the wipe itself must write and delete nothing: the account is told by the restarted \
+         actor registering a `wipe` marker, not by this transaction"
     );
     assert_eq!(
         cloud.keys(),
         keys_before,
-        "so every object the account relies on is still there, byte for byte the same set"
+        "and no object is removed — the app holds no permission to delete the user's data \
+         (AD-13); the epoch makes the pre-wipe objects unreachable and retention expires them"
     );
-    assert_eq!(a.unshipped(), 0, "there is nothing to cut: nothing was captured");
+    assert_eq!(
+        a.unshipped(),
+        0,
+        "there is nothing to cut: nothing was captured, so the user's deleted rows never travel \
+         as a flood of tombstones (the still-true half of AD-15)"
+    );
+    assert_eq!(
+        a.read(crate::db::sync_wipe::pending_wipe).expect("the marker reads"),
+        None,
+        "this wipe went through `write_uncaptured(wipe_all)` only, exactly as the M2 proof did; \
+         the pending marker is `delete_all_data`'s own step and `tests_wipe_epoch.rs` drives it"
+    );
 
-    // The other computer is untouched and still syncing.
+    // Until the event is registered, the other computer is untouched and still syncing — which is
+    // what makes the registration, and not the local delete, the thing that reaches it.
     assert_eq!(
         b.read(fixtures::count_budget_groups).expect("count"),
         1,
@@ -711,7 +733,8 @@ async fn sync_m2_e2e_e_a_wipe_unlinks_only_this_computer() {
 
     report(format!(
         "(5) a wipe deleted {deleted} local rows with 0 cloud writes or deletes and {} cloud \
-         keys unchanged, while the other computer kept its rows and shipped its next write",
+         keys unchanged, and shipped nothing; the account learns of it through the `wipe` marker \
+         (tests_wipe_epoch.rs)",
         keys_before.len(),
     ));
 }

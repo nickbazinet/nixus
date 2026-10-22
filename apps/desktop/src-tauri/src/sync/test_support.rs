@@ -1074,6 +1074,23 @@ impl crate::sync::manager::SyncHost for TestComputer {
         }
     }
 
+    fn wipe_local(&self, epoch: u64) -> Result<u64, crate::sync::manager::SyncFault> {
+        // The production host reaches `ActiveDataset::write_uncaptured`, whose whole job is to
+        // detach the capture hook; this harness's own connection never had one, so the same
+        // transaction on it is the same thing. Both writes are in it for the same reason.
+        self.with_own(|conn| {
+            let tx = rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let deleted = crate::db::danger_zone::wipe_all(&tx)?;
+            crate::db::sync_wipe::set_local_epoch(&tx, epoch)?;
+            tx.commit()?;
+
+            Ok(deleted)
+        })
+    }
+
     fn freeze(&self, reason: FrozenReason) {
         *self.frozen.lock().expect("the frozen reason lock") = Some(reason);
     }

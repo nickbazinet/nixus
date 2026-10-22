@@ -123,6 +123,7 @@ async fn published_cloud(source: &Path) -> (Arc<FakeObjectStore>, FakeGatedStore
             created_ms: 1_760_000_000_000,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         }
         .body(),
     );
@@ -140,6 +141,7 @@ fn latest_of(built: &BuiltSnapshot) -> LatestSnapshot {
         created_ms: 1_760_000_000_000,
             watermark: Default::default(),
             carries_identities: true,
+        wipe_epoch: 0,
     }
 }
 
@@ -209,7 +211,7 @@ async fn a_local_only_dataset_runs_no_bootstrap_code_and_reaches_no_network() {
     let store = Arc::new(FakeObjectStore::default());
     let gated = gated_fake(Arc::clone(&store), DatasetKind::Local, true, None);
 
-    let refused = assess(&gated, &pin(), &empty_summary())
+    let refused = assess(&gated, &pin(), &empty_summary(), 0)
         .await
         .expect_err("a local profile must not bootstrap");
 
@@ -231,7 +233,7 @@ async fn a_frozen_or_unentitled_account_transfers_nothing() {
         let gated = gated_fake(Arc::clone(&store), DatasetKind::CloudLinked, entitled, frozen);
 
         assert!(matches!(
-            assess(&gated, &pin(), &empty_summary()).await,
+            assess(&gated, &pin(), &empty_summary(), 0).await,
             Err(BootstrapError::Blocked(_))
         ));
         assert_eq!(store.calls(), 0, "entitled={entitled} frozen={frozen:?}");
@@ -244,7 +246,7 @@ async fn an_account_with_no_owner_object_is_a_first_enable_and_not_a_bootstrap()
     let gated = syncing_fake(Arc::clone(&store));
 
     assert_eq!(
-        assess(&gated, &pin(), &empty_summary())
+        assess(&gated, &pin(), &empty_summary(), 0)
             .await
             .expect("the assessment succeeds"),
         BootstrapPlan::FirstEnable
@@ -266,7 +268,7 @@ async fn an_owner_object_naming_a_different_account_refuses_to_sync() {
     let gated = syncing_fake(Arc::clone(&store));
 
     assert_eq!(
-        assess(&gated, &pin(), &empty_summary()).await,
+        assess(&gated, &pin(), &empty_summary(), 0).await,
         Err(BootstrapError::OwnerMismatch)
     );
     assert_eq!(
@@ -283,7 +285,7 @@ async fn a_malformed_owner_object_is_never_read_as_an_absent_one() {
     let gated = syncing_fake(Arc::clone(&store));
 
     assert_eq!(
-        assess(&gated, &pin(), &empty_summary()).await,
+        assess(&gated, &pin(), &empty_summary(), 0).await,
         Err(BootstrapError::Auth(AuthError::MalformedOwnerObject))
     );
 }
@@ -295,7 +297,7 @@ async fn an_owner_without_a_published_snapshot_has_nothing_to_restore() {
     let gated = syncing_fake(Arc::clone(&store));
 
     assert_eq!(
-        assess(&gated, &pin(), &empty_summary())
+        assess(&gated, &pin(), &empty_summary(), 0)
             .await
             .expect("the assessment succeeds"),
         BootstrapPlan::NoSnapshot
@@ -308,7 +310,7 @@ async fn an_empty_dataset_restores_without_a_choice_and_one_with_data_requires_i
     let (_store, gated, built) = published_cloud(&heavy.db_path).await;
 
     assert!(matches!(
-        assess(&gated, &pin(), &empty_summary())
+        assess(&gated, &pin(), &empty_summary(), 0)
             .await
             .expect("the assessment succeeds"),
         BootstrapPlan::Restore { latest, .. } if latest.snap_id == built.snap_id
@@ -317,7 +319,7 @@ async fn an_empty_dataset_restores_without_a_choice_and_one_with_data_requires_i
     let local = summary_of(&heavy.db_path);
     assert!(!local.is_empty(), "the heavy-year fixture holds user data");
 
-    let plan = assess(&gated, &pin(), &local)
+    let plan = assess(&gated, &pin(), &local, 0)
         .await
         .expect("the assessment succeeds");
     let BootstrapPlan::ChoiceRequired { local: counted, .. } = plan else {
@@ -340,13 +342,14 @@ async fn a_snapshot_from_a_newer_build_is_refused_before_it_is_downloaded() {
             created_ms: 1,
             watermark: Default::default(),
             carries_identities: true,
+            wipe_epoch: 0,
         }
         .body(),
     );
     let before = store.transferred_bytes();
 
     assert_eq!(
-        assess(&gated, &pin(), &empty_summary()).await,
+        assess(&gated, &pin(), &empty_summary(), 0).await,
         Err(BootstrapError::SnapshotTooNew {
             found: newer,
             supported: schema_version(),
@@ -494,17 +497,21 @@ async fn a_heavy_year_snapshot_restores_into_a_fresh_data_dir_minus_what_is_stri
 
         for table in tables(&source) {
             match table.as_str() {
-                // The three AD-5 deny-listed keys are stripped and the user's own settings
+                // Every deny-listed key the source HOLDS is stripped and the user's own settings
                 // are not. Read as a map rather than dumped, because deleting rows leaves
-                // `config`'s rowids with gaps the source does not have.
+                // `config`'s rowids with gaps the source does not have. Counted rather than taken
+                // from the list's length: story wipe-epoch added two keys the fixture may not
+                // seed (`db::test_dataset::seed_config` records why).
                 "config" => {
                     let mut expected = config_map(&source);
-                    for key in crate::db::config::LOCAL_ONLY_KEYS {
-                        assert!(
-                            expected.remove(*key).is_some(),
-                            "the fixture must set {key} for the strip to be observable"
-                        );
-                    }
+                    let stripped = crate::db::config::LOCAL_ONLY_KEYS
+                        .iter()
+                        .filter(|key| expected.remove(**key).is_some())
+                        .count();
+                    assert_eq!(
+                        stripped, 3,
+                        "the fixture must set the deny-listed keys for the strip to be observable"
+                    );
                     assert_eq!(config_map(restored), expected);
                 }
                 // AD-10: the bytes are lazy, everything else about the image travels.
@@ -591,6 +598,7 @@ async fn an_older_snapshot_is_migrated_on_the_way_in() {
         created_ms: 1,
             watermark: Default::default(),
             carries_identities: true,
+        wipe_epoch: 0,
     };
 
     let store = Arc::new(FakeObjectStore::default());
@@ -825,7 +833,7 @@ async fn the_new_computer_link_fits_in_the_cap2_budget_against_a_heavy_year_data
 
     let (outcome, budget) = measure_link(
         async {
-            let plan = assess(&gated, &pin(), &empty_summary()).await?;
+            let plan = assess(&gated, &pin(), &empty_summary(), 0).await?;
             let BootstrapPlan::Restore { latest, .. } = plan else {
                 panic!("an empty dataset must restore without a choice, got {plan:?}");
             };

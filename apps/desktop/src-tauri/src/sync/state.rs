@@ -121,6 +121,14 @@ pub fn ensure_install_on(conn: &Connection) -> Result<sync_state::SyncState, App
 /// under one `(install, seq)` space — the exact thing AD-15 forbids. The caller knows a copy
 /// happened; the file cannot. The pin is KEPT (a copy is almost always the same user, Story 6)
 /// and the dataset is left Unlinked, so the next enable goes through the CAP-5 choice.
+///
+/// The JOIN MARKER is cleared here and ONLY here (story wipe-epoch). `ensure_install_outcome`
+/// below reaches `relink_install` on mere fingerprint drift — a renamed computer, a missing host
+/// environment variable — and a healthy synced dataset must not be turned into an unjoined one by
+/// that: it would re-assess, raise CAP-5's question, and `replace` would drop its unsent edits.
+/// Here the caller knows the file is a copy, so "it has not joined under this install id" is
+/// simply true, and it is what makes the CAP-5 choice happen and what keeps an imported backup
+/// out of the wipe epoch's self-wipe.
 pub fn remint_install_on(conn: &Connection) -> Result<InstallOutcome, AppError> {
     let fingerprint = machine_fingerprint(&MachineSignals::from_environment());
 
@@ -130,6 +138,7 @@ pub fn remint_install_on(conn: &Connection) -> Result<InstallOutcome, AppError> 
     }
 
     sync_state::relink_install(conn, &new_install_id(), &fingerprint)?;
+    sync_state::clear_joined_at(conn)?;
 
     Ok(InstallOutcome::Relinked)
 }

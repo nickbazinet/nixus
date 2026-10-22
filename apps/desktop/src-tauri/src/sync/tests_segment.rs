@@ -39,6 +39,10 @@ fn tuning() -> SyncTuning {
         // Zero so a single `tick()` is one whole log cycle: these tests are about the protocol, not
         // about the clock that paces it.
         remote_poll_interval: Duration::ZERO,
+        // Left at the production value, not collapsed: these fixtures COUNT requests, and the
+        // absence floor is what keeps a never-wiped account's `wipe` probe off every cycle
+        // (story wipe-epoch).
+        wipe_absence_recheck: Duration::from_secs(30),
         segment_interval: Duration::ZERO,
         tombstone_purge_interval: Duration::from_secs(86_400),
         // Reconcile is driven directly in `tests_reconcile.rs`: here it would be a full scan of
@@ -160,7 +164,10 @@ async fn a_second_cycle_with_no_change_costs_one_conditional_get_per_known_key_a
     assert_eq!(
         cloud.calls_of(FakeOp::Get) - plain,
         0,
-        "nothing is re-read unconditionally"
+        "nothing is re-read unconditionally. Story wipe-epoch's `wipe` marker is the one read that \
+         could be: this account has never been wiped, so there is no ETag to be conditional \
+         against — and a marker already proven absent is re-probed only once per \
+         `remote_poll_interval`, which has not elapsed between these two ticks"
     );
     assert_eq!(
         cloud.calls_of(FakeOp::Exists) - listings,
@@ -334,12 +341,12 @@ async fn two_computers_racing_on_the_roster_both_end_up_in_it() {
     let gated = syncing_fake(Arc::clone(&cloud));
     let (first, second) = ("0123456789abcdef", "fedcba9876543210");
 
-    let mine = segment::join_roster(&gated, first).await.expect("A joins");
+    let mine = segment::join_roster(&gated, first, 0).await.expect("A joins");
     assert_eq!(mine.installs, vec![first.to_string()]);
 
     // B loses the compare-and-swap once, which is exactly what a concurrent writer looks like.
     cloud.fail_next(FakeOp::PutIfMatch, StoreError::PreconditionFailed);
-    let merged = segment::join_roster(&gated, second)
+    let merged = segment::join_roster(&gated, second, 0)
         .await
         .expect("B re-reads, merges and writes");
 
@@ -351,7 +358,7 @@ async fn two_computers_racing_on_the_roster_both_end_up_in_it() {
         "what is stored is the union, not one computer's view of it"
     );
 
-    let again = segment::join_roster(&gated, first).await.expect("A re-joins");
+    let again = segment::join_roster(&gated, first, 0).await.expect("A re-joins");
     assert_eq!(again, merged, "an install already listed writes nothing");
 }
 
@@ -532,4 +539,29 @@ fn the_frozen_format_numbers_are_the_ones_that_shipped() {
     assert_eq!(segment::LOG_KEY_PREFIX, "log/");
     assert_eq!(segment::HEAD_KEY_PREFIX, "head/");
     assert_eq!(segment::ROSTER_KEY, "roster");
+}
+
+/// Story wipe-epoch: an account nobody has ever wiped keeps the bare `roster` key, byte for byte
+/// the one every existing install already writes, and each wipe moves the whole account to a fresh
+/// list. That is what makes a pre-wipe install unreachable with no retired-installs blacklist.
+#[test]
+fn the_roster_is_scoped_to_the_wipe_epoch() {
+    assert_eq!(
+        segment::roster_key(0),
+        segment::ROSTER_KEY,
+        "epoch 0 must not change the key, or every existing account would re-discover itself"
+    );
+    assert_eq!(segment::roster_key(1), "roster/e1");
+    assert_eq!(segment::roster_key(42), "roster/e42");
+
+    // Inside the account prefix and traversal-free, so the port accepts it and the existing
+    // `acct/<id>/*` IAM grant already covers it: no new permission (checked in template.yaml).
+    for epoch in [0, 1, 42, u64::MAX] {
+        let key = segment::roster_key(epoch);
+        assert!(
+            crate::sync::store::validate_relative_key(&key).is_ok(),
+            "{key} would be refused before any request was made"
+        );
+        assert!(!key.starts_with('/') && !key.contains(".."));
+    }
 }

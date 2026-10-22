@@ -163,7 +163,8 @@ async fn a_parked_segment_is_not_requested_again_until_the_build_catches_up() {
     let per_cycle = (cloud.calls_of(FakeOp::Get) - after_first) / 2;
     assert_eq!(
         per_cycle, 0,
-        "a parked seq costs no plain GET per poll; only the conditional head reads remain"
+        "a parked seq costs no plain GET per poll, and neither does story wipe-epoch's `wipe` \
+         marker: absent on this account, so re-probed only once per `wipe_absence_recheck`"
     );
     assert_eq!(second.diagnostics().parked_segments, 1, "still exactly one");
 }

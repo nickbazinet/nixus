@@ -287,6 +287,48 @@ impl SyncHost for DatasetHost {
         }
     }
 
+    /// Story wipe-epoch's remote half of "delete everything".
+    ///
+    /// It goes through the UI's `ActiveDataset` and not this host's own connection, because
+    /// `write_uncaptured` is the seam that detaches the pre-update hook for the transaction
+    /// (AD-15: a wipe must emit no message) and re-attaches afterwards. The epoch is written
+    /// INSIDE the same transaction, so there is no crash window in which the data is gone and the
+    /// reason is not. The fresh install id comes LATER and from somewhere else — `sync_state` is
+    /// `WIPE_TABLES[0]`, so the row is simply gone, and the next `state::ensure_install_on`
+    /// (the actor's own `install()`, or capture's first touch) creates it.
+    ///
+    /// `profile_store` is deliberately NOT touched: the user's name and email belong to the
+    /// person, not to this dataset, and only the computer where they pressed the button erases
+    /// them (`commands::danger_zone::delete_all_data`).
+    fn wipe_local(&self, epoch: u64) -> Result<u64, SyncFault> {
+        let state = self.slot.app.state::<DbState>();
+        let active = state.0.lock().map_err(|_| SyncFault::StateUnavailable)?;
+
+        let deleted = active
+            .write_uncaptured(|conn| {
+                let deleted = crate::db::danger_zone::wipe_all(conn)?;
+                crate::db::sync_wipe::set_local_epoch(conn, epoch)?;
+
+                Ok(deleted)
+            })
+            .map_err(|error| {
+                warn!("the remote wipe could not be applied to this dataset: {error}");
+
+                SyncFault::StateUnavailable
+            })?;
+
+        // The lock is released before the event: the listener invalidates every query, and those
+        // reads go back through this same `DbState`.
+        drop(active);
+
+        // The applier's own signal, reused verbatim rather than invented (AD-16: a count, never a
+        // value). Every open screen reloads from an empty dataset, which is what a wipe looks like
+        // to a user who is watching one of their other computers.
+        let _ = self.slot.app.emit("sync:applied", deleted);
+
+        Ok(deleted)
+    }
+
     fn freeze(&self, reason: sync_state::FrozenReason) {
         if let Ok(pins) = self.pins() {
             if let Err(error) = pins.set_frozen_reason(Some(reason)) {

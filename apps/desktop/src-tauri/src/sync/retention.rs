@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncGate,
 };
-use super::segment::{head_key, Roster, HEAD_KEY_PREFIX, LOG_KEY_PREFIX, ROSTER_KEY};
+use super::segment::{head_key, roster_key, Roster, HEAD_KEY_PREFIX, LOG_KEY_PREFIX};
 use super::snapshot::{
     fetch_latest, LatestSnapshot, SnapshotError, SNAP_KEY_PREFIX, SNAP_LATEST_KEY,
 };
@@ -52,6 +52,7 @@ pub async fn compact<S, L, C, T>(
     store: &GatedStore<S, SyncGate<L, C, T>>,
     our_install: &str,
     now_ms: i64,
+    epoch: u64,
 ) -> Result<RetentionReport, SnapshotError>
 where
     S: ObjectStore,
@@ -68,7 +69,7 @@ where
     Ok(RetentionReport {
         segments_deleted: sweep_segments(store, &latest.watermark, cutoff).await?,
         snapshots_deleted: sweep_snapshots(store, &latest).await?,
-        roster_pruned: prune_roster(store, our_install, cutoff).await?,
+        roster_pruned: prune_roster(store, our_install, cutoff, epoch).await?,
     })
 }
 
@@ -173,6 +174,10 @@ where
 
 /// Drops roster members whose `head/<install>` has not moved for 90 days (AD-13).
 ///
+/// Scoped to `epoch`'s own roster (story wipe-epoch): a sweep run by a post-wipe computer must
+/// never touch the pre-wipe list, whose members are exactly the ones a wipe made unreachable and
+/// whose heads are by definition no longer moving.
+///
 /// The head OBJECT is left in place on purpose: deleting it would make an install that comes back
 /// read as "never synced" and re-mint its identity, and the roster entry is the only thing a poll
 /// actually costs.
@@ -180,6 +185,7 @@ async fn prune_roster<S, L, C, T>(
     store: &GatedStore<S, SyncGate<L, C, T>>,
     our_install: &str,
     cutoff: i64,
+    epoch: u64,
 ) -> Result<usize, SnapshotError>
 where
     S: ObjectStore,
@@ -187,7 +193,8 @@ where
     C: CapabilitySource,
     T: GateStateSource,
 {
-    let stored = match store.get(ROSTER_KEY).await {
+    let key = roster_key(epoch);
+    let stored = match store.get(&key).await {
         Ok(stored) => stored,
         Err(GatedError::Store(StoreError::NotFound)) => return Ok(0),
         Err(error) => return Err(SnapshotError::Store(error)),
@@ -230,7 +237,7 @@ where
 
     let body = Roster::of(keep).body();
     match store
-        .put_if_match(ROSTER_KEY, &stored.meta.etag, body)
+        .put_if_match(&key, &stored.meta.etag, body)
         .await
     {
         Ok(_) => Ok(pruned),

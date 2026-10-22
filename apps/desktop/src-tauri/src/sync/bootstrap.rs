@@ -32,7 +32,7 @@ use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncBlocked,
 };
 use super::owner::{owner_sub_from_body, OWNER_OBJECT_KEY};
-use super::snapshot::{fetch_latest, read_snapshot, LatestSnapshot, SnapshotError};
+use super::snapshot::{fetch_latest_at, read_snapshot, LatestFetch, LatestSnapshot, SnapshotError};
 use super::store::{ETag, ObjectStore, StoreError};
 
 /// CAP-2's link budget: "usable within 5 s on a 10 Mbps connection".
@@ -136,6 +136,14 @@ pub enum BootstrapPlan {
     /// alternative, treating the log as authoritative over a snapshot that shares no identities
     /// with it, would have to guess which local rows the log's creations describe.
     SnapshotNotReady,
+    /// `snap/LATEST` names a snapshot published BEFORE the account's latest "delete everything"
+    /// (story wipe-epoch), so it describes rows the user erased and must never be restored.
+    ///
+    /// The answer is for this computer to publish its own — possibly empty — snapshot at the new
+    /// epoch over it, by compare-and-swap on `etag`. Deliberately NOT routed through `NoSnapshot`:
+    /// that path is a create-only put whose lost race raises CAP-5's "load the cloud copy?"
+    /// prompt, and the cloud copy there is exactly the data the user just deleted.
+    StaleSnapshot { etag: ETag },
     /// The local dataset holds no user data, so the cloud copy can be restored without
     /// asking anything.
     Restore { latest: LatestSnapshot, etag: ETag },
@@ -201,10 +209,15 @@ pub enum LinkOutcome {
 /// summary `db::backup::local_data_summary` produced for the dataset about to be linked.
 /// Both travel in rather than being read here: this file opens no database and vends no
 /// credential, which is what keeps the gate the only path to the network.
+///
+/// `cloud_epoch` is the account's wipe epoch (story wipe-epoch). It travels in for the same
+/// reason: reading the `wipe` object is `sync::wipe`'s job and this file makes no request it does
+/// not have to. A pointer below it answers `StaleSnapshot` and nothing is downloaded.
 pub async fn assess<S, L, C, T>(
     store: &GatedStore<S, super::gate::SyncGate<L, C, T>>,
     observed: &AccountPin,
     local: &LocalData,
+    cloud_epoch: u64,
 ) -> Result<BootstrapPlan, BootstrapError>
 where
     S: ObjectStore,
@@ -223,8 +236,10 @@ where
         Err(error) => return Err(error.into()),
     }
 
-    let Some((latest, etag)) = fetch_latest(store).await? else {
-        return Ok(BootstrapPlan::NoSnapshot);
+    let (latest, etag) = match fetch_latest_at(store, cloud_epoch).await? {
+        LatestFetch::Absent => return Ok(BootstrapPlan::NoSnapshot),
+        LatestFetch::Stale { etag } => return Ok(BootstrapPlan::StaleSnapshot { etag }),
+        LatestFetch::Current(latest, etag) => (latest, etag),
     };
 
     // Refused here rather than after the download: the pointer carries the version that

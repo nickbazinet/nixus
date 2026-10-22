@@ -45,8 +45,31 @@ pub const LOG_KEY_PREFIX: &str = "log/";
 /// AD-6's per-install head namespace: one mutable key, one writer.
 pub const HEAD_KEY_PREFIX: &str = "head/";
 
-/// AD-6's install directory. The only key every computer on the account writes.
+/// AD-6's install directory at epoch 0. The only key every computer on the account writes.
+///
+/// Kept as the bare `roster` for the never-wiped account, so nothing about an account that has
+/// never used "delete everything" changes: see `roster_key`.
 pub const ROSTER_KEY: &str = "roster";
+
+/// Which roster an epoch's computers meet in (story wipe-epoch).
+///
+/// Epoch 0 — an account nobody has ever wiped — is the bare `roster`, byte for byte the key every
+/// existing install already writes. Every wipe moves the whole account to a FRESH list at
+/// `roster/e<N>`, and that is what makes a wipe effective without a blacklist: a computer only ever
+/// polls the installs named in the roster OF ITS OWN EPOCH, so every pre-wipe install is
+/// structurally unreachable rather than listed somewhere as retired. It also means nothing has to
+/// delete a pre-wipe head or segment for the data to stop coming back.
+///
+/// Inside the account prefix (AD-7) and traversal-free, so `store::validate_relative_key` accepts
+/// it and the `acct/<id>/*` IAM grant already covers it — no new permission (AD-13's delete
+/// statement is deliberately left scoped to `log/*` and `snap/*`).
+pub fn roster_key(epoch: u64) -> String {
+    if epoch == 0 {
+        return ROSTER_KEY.to_string();
+    }
+
+    format!("{ROSTER_KEY}/e{epoch}")
+}
 
 /// FROZEN with the object format version, for the same reason as the snapshot's level: raising it
 /// changes every byte of every segment, so it moves only together with the format version. 3 is
@@ -909,7 +932,7 @@ impl Roster {
     }
 }
 
-/// Adds `install` to the roster by compare-and-swap, merging whatever it finds (AD-6).
+/// Adds `install` to the roster of `epoch` by compare-and-swap, merging whatever it finds (AD-6).
 ///
 /// The merge is a UNION, which is what makes a race benign: the loser of a 412 re-reads, sees the
 /// winner's list, adds itself to THAT and writes again, so both end up in the roster rather than
@@ -917,6 +940,7 @@ impl Roster {
 pub async fn join_roster<S, L, C, T>(
     store: &GatedStore<S, SyncGate<L, C, T>>,
     install: &str,
+    epoch: u64,
 ) -> Result<Roster, SegmentError>
 where
     S: ObjectStore,
@@ -924,8 +948,10 @@ where
     C: CapabilitySource,
     T: GateStateSource,
 {
+    let key = roster_key(epoch);
+
     for _ in 0..ROSTER_CAS_ATTEMPTS {
-        let current = match store.get(ROSTER_KEY).await {
+        let current = match store.get(&key).await {
             Ok(stored) => Some((Roster::parse(&stored.bytes)?, stored.meta.etag)),
             Err(GatedError::Store(StoreError::NotFound)) => None,
             Err(error) => return Err(SegmentError::Store(error)),
@@ -936,14 +962,14 @@ where
             Some((roster, etag)) => {
                 let merged = roster.with(install);
                 store
-                    .put_if_match(ROSTER_KEY, etag, merged.body())
+                    .put_if_match(&key, etag, merged.body())
                     .await
                     .map(|_| merged)
             }
             None => {
                 let mine = Roster::normalized([install.to_string()]);
                 store
-                    .put_if_absent(ROSTER_KEY, mine.body())
+                    .put_if_absent(&key, mine.body())
                     .await
                     .map(|_| mine)
             }
@@ -1101,6 +1127,7 @@ pub(crate) async fn poll_roster<S, L, C, T>(
     store: &GatedStore<S, SyncGate<L, C, T>>,
     cursor: &mut PullCursor,
     self_install: &str,
+    epoch: u64,
     report: &mut PollReport,
 ) -> Result<Vec<String>, SegmentError>
 where
@@ -1110,9 +1137,10 @@ where
     T: GateStateSource,
 {
     report.conditional_gets += 1;
+    let key = roster_key(epoch);
 
     let fetched = match &cursor.roster_etag {
-        Some(etag) => match store.get_if_none_match(ROSTER_KEY, etag).await {
+        Some(etag) => match store.get_if_none_match(&key, etag).await {
             Ok(ConditionalGet::NotModified) => None,
             Ok(ConditionalGet::Modified(stored)) => Some(stored),
             // The roster this computer knew is gone: forget the ETag so the next poll reads it in
@@ -1124,7 +1152,7 @@ where
             }
             Err(error) => return Err(SegmentError::Store(error)),
         },
-        None => match store.get(ROSTER_KEY).await {
+        None => match store.get(&key).await {
             Ok(stored) => Some(stored),
             // No computer has published a roster yet, which is the ordinary state of a brand-new
             // account: not a fault, and not worth a repair probe.
