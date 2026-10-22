@@ -63,6 +63,31 @@ pub(crate) fn stop(app: &AppHandle) {
     }
 }
 
+/// Stops the actor for the active dataset and returns only once it holds no connection to the
+/// dataset file, for a caller that is about to overwrite that file in place (a backup restore).
+///
+/// `stop` is not enough there: it only queues a message, so the actor's own connection and its
+/// AD-11 apply connection can still be open when the copy lands, and a connection that outlives
+/// the copy keeps a `-wal`/`-shm` describing the previous file's pages ("database disk image is
+/// malformed"). Never fails the caller: an actor that is already gone is exactly the state wanted.
+pub(crate) async fn shutdown(app: &AppHandle) {
+    let Some(handle) = app
+        .try_state::<SyncSupervisor>()
+        .and_then(|supervisor| supervisor.take())
+    else {
+        return;
+    };
+
+    match handle.shutdown().await {
+        Ok(()) => info!("Sync shut down for dataset {}", handle.dataset_id()),
+        Err(error) => info!(
+            "Sync was already stopped for dataset {} ({})",
+            handle.dataset_id(),
+            error.code()
+        ),
+    }
+}
+
 /// Disables sync and stops the actor, for a caller that is about to unlink the dataset.
 ///
 /// `disable` first and `stop` second: disabling is what releases the actor's connection and

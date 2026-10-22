@@ -2802,6 +2802,14 @@ enum SyncCommand {
         project_id: i64,
         reply: oneshot::Sender<Result<ProjectImage, SyncFault>>,
     },
+    /// Releases every connection this actor holds to the dataset file, answers, and exits.
+    ///
+    /// `Stop` is fire-and-forget, so a caller about to overwrite the dataset file cannot know
+    /// when the actor's connections are gone. This is the handshake that can tell it: the reply
+    /// is sent only after both the host's own connection and the apply connection are closed.
+    Shutdown {
+        reply: oneshot::Sender<()>,
+    },
     Stop,
 }
 
@@ -2885,6 +2893,16 @@ impl SyncHandle {
     pub fn stop(&self) {
         let _ = self.commands.try_send(SyncCommand::Stop);
     }
+
+    /// Stops the actor and returns only once it holds no connection to the dataset file.
+    ///
+    /// For a caller that is about to replace the file in place (a backup restore): a connection
+    /// that survives the copy keeps a `-wal`/`-shm` describing the previous file's pages, which
+    /// SQLite reports as "database disk image is malformed". `ActorUnavailable` means the actor
+    /// was already gone, which is the state the caller wanted.
+    pub async fn shutdown(&self) -> Result<(), SyncFault> {
+        self.request(|reply| SyncCommand::Shutdown { reply }).await
+    }
 }
 
 /// Serves the mailbox and the poll tick until `Stop` or the last sender is dropped. The
@@ -2900,6 +2918,14 @@ async fn serve<H: SyncHost>(
         tokio::select! {
             command = commands.recv() => match command {
                 None | Some(SyncCommand::Stop) => break,
+                Some(SyncCommand::Shutdown { reply }) => {
+                    actor.disable(false).await;
+                    // `disable` releases the host's own connection; the apply connection is a
+                    // separate handle that would otherwise live until the actor is dropped.
+                    actor.close_applier();
+                    let _ = reply.send(());
+                    break;
+                }
                 Some(SyncCommand::Enable { choice, reply }) => {
                     let _ = reply.send(actor.enable(choice).await);
                 }

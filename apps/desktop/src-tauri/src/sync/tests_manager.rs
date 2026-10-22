@@ -688,6 +688,46 @@ async fn the_spawned_actor_answers_immediately_and_stops_on_request() {
     assert!(saw_idle, "the sync:status stream carried the transitions");
 }
 
+/// Regression test for "database disk image is malformed" on a backup restore: the actor's two
+/// connections to the dataset file must be gone once `shutdown` has answered, or the in-place
+/// copy lands under handles whose `-wal`/`-shm` describe the previous file.
+#[tokio::test]
+async fn a_shut_down_actor_leaves_the_dataset_file_restorable() {
+    use crate::db::backup::restore_from_file;
+    use crate::db::open_configured;
+
+    let store = Arc::new(FakeObjectStore::default());
+    let (host, probe) = test_computer("A", store, 1_700_000_000_000);
+    let host = host.applying_for_real();
+    probe.write_row("live");
+    probe.close_live();
+
+    let backup_dir = tempfile::tempdir().expect("a temp dir for the backup");
+    let backup_path = backup_dir.path().join("backup.db");
+    {
+        let backup = open_configured(&backup_path).expect("the backup dataset opens");
+        // Larger than the live file: a restore only trips over a surviving wal-index when the
+        // incoming file has pages the old index does not describe.
+        let names: Vec<String> = (0..3000).map(|at| format!("from-backup-{at}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        crate::db::test_dataset::insert_marker_rows(&backup, &names);
+        backup
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("the backup is checkpointed");
+    }
+
+    let (handle, _events) = manager::spawn(host, tuning()).expect("the actor thread starts");
+    handle.enable(None).await.expect("enable opens the actor's connections");
+
+    handle.shutdown().await.expect("the actor shuts down");
+
+    let mut slot = open_configured(probe.db_path()).expect("the UI's connection opens");
+    restore_from_file(&mut slot, probe.db_path(), &backup_path)
+        .expect("a restore after shutdown must not hit stale wal-index state");
+
+    assert_eq!(crate::db::test_dataset::marker_rows(&slot).len(), 3000);
+}
+
 /// A fault the actor cannot recover from must still leave a readable status rather than a
 /// panic in a thread nobody is awaiting.
 #[tokio::test(start_paused = true)]

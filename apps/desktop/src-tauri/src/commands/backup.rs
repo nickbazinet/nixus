@@ -139,6 +139,34 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
         message: format!("Cannot read backup file: {}", e),
     })?;
 
+    // The sync actor of a cloud-linked dataset holds two connections of its own to this file
+    // (AD-11). `restore_from_file` can only close the one in `DbState`, so with the actor still
+    // running the copy lands under live connections whose `-wal`/`-shm` describe the previous
+    // file, and the restore (or the next sync poll) fails with "database disk image is
+    // malformed". Awaited BEFORE the `DbState` guard is taken: the actor's host reads the active
+    // dataset through that same lock while it shuts down.
+    crate::commands::sync::shutdown(&app_handle).await;
+
+    let restored = restore_into_active_dataset(&app_handle, &root, &source);
+
+    // After the guard is released and on every outcome: the dataset is usable again either way
+    // (`restore_from_file` rolls back on failure), and the actor is built from whichever file is
+    // there now. `ensure_started` and not `start_for_active_dataset`, which would orphan an actor
+    // a concurrent dataset switch had started in the meantime.
+    crate::commands::sync::ensure_started(&app_handle);
+
+    restored?;
+
+    info!("Database restored from {}", selected_path.display());
+
+    Ok(true)
+}
+
+fn restore_into_active_dataset(
+    app_handle: &AppHandle,
+    root: &Path,
+    source: &Path,
+) -> Result<(), AppError> {
     let db_state = app_handle.state::<DbState>();
     let mut active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
@@ -148,10 +176,10 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
     // `export_backup`: a restore must never be able to overwrite a sibling
     // dataset's database because a switch landed after the path was resolved.
     let active_dir =
-        datasets::dataset_dir_from_root(&root, active.id.as_deref().ok_or(AppError::NotConfigured)?);
+        datasets::dataset_dir_from_root(root, active.id.as_deref().ok_or(AppError::NotConfigured)?);
     let db_path = active_dir.join(DB_FILE_NAME);
 
-    if !is_restorable_source(&source, &db_path, &root, &active_dir) {
+    if !is_restorable_source(source, &db_path, root, &active_dir) {
         return Err(AppError::File {
             message: "Cannot restore from a file inside another profile's data".to_string(),
         });
@@ -162,7 +190,7 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
     let active = &mut *active;
     let conn = active.conn.as_mut().ok_or(AppError::NotConfigured)?;
 
-    crate::db::backup::restore_from_file(&mut *conn, &db_path, &source)?;
+    crate::db::backup::restore_from_file(&mut *conn, &db_path, source)?;
 
     // AD-4/AD-9: the restored file is a copy of this dataset — possibly from another computer,
     // possibly an older copy of this one — so it gets a fresh install identity and is left
@@ -177,9 +205,7 @@ pub async fn import_backup(app_handle: AppHandle) -> Result<bool, AppError> {
         capture.attach(conn)?;
     }
 
-    info!("Database restored from {}", selected_path.display());
-
-    Ok(true)
+    Ok(())
 }
 
 pub fn validate_backup_file(path: &PathBuf) -> Result<(), AppError> {
