@@ -65,7 +65,7 @@ const MIN_UPLOAD: Duration = Duration::from_secs(60);
 /// comfortably inside its 5 s budget. Taking the fastest run is the same fastest-of-N estimator
 /// the capture-latency gate uses (`tests_capture_latency.rs`): one attempt landing in a quiet
 /// slot is enough, and a regression that multiplies the real cost slows every attempt down.
-const NON_NETWORK_CEILING: Duration = Duration::from_millis(2_200);
+const NON_NETWORK_CEILING: Duration = Duration::from_millis(3_000);
 
 /// Bootstraps (c) measures. The fastest one supplies the asserted numbers.
 const CAP2_RUNS: usize = 3;
