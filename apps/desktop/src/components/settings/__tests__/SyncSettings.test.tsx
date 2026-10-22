@@ -266,4 +266,97 @@ describe("SyncSettings", () => {
     expect(at("sync-diagnostics-export-path")).toBeNull();
     expect(at("sync-action-error")).not.toBeNull();
   });
+
+  describe("duplicate records", () => {
+    const duplicates = (total: number) => ({
+      sync_available: true,
+      total,
+      tables: total === 0 ? [] : [{ table: "expenses", records: total }],
+    });
+
+    const answer = (replies: Record<string, unknown | (() => unknown)>) => {
+      invokeMock.mockImplementation(async (command: string) => {
+        const reply = replies[command];
+        if (reply === undefined) return status();
+        if (typeof reply === "function") return (reply as () => unknown)();
+        return reply;
+      });
+    };
+
+    const calls = (command: string) => invokeMock.mock.calls.filter((c) => c[0] === command);
+
+    it("looks only when asked, and says what it found without naming a record", async () => {
+      answer({ sync_duplicates: duplicates(3) });
+      mount({ status: status({ state: "idle", enabled: true }) });
+      await settle();
+
+      expect(calls("sync_duplicates")).toHaveLength(0);
+      expect(at("sync-duplicates-output")?.textContent).toBe(EN["sync.duplicatesBody"]);
+
+      await click("sync-duplicates-check-button");
+
+      expect(calls("sync_duplicates")).toHaveLength(1);
+      expect(at("sync-duplicates-output")?.textContent).toBe("3 duplicate records found.");
+      expect(at("sync-duplicates-remove-button")?.textContent).toBe("Remove 3 duplicates");
+    });
+
+    it("says so, and offers nothing to remove, when there are none", async () => {
+      answer({ sync_duplicates: duplicates(0) });
+      mount({ status: status({ state: "idle", enabled: true }) });
+      await settle();
+
+      await click("sync-duplicates-check-button");
+
+      expect(at("sync-duplicates-output")?.textContent).toBe(EN["sync.duplicatesNone"]);
+      expect(at("sync-duplicates-remove-button")).toBeNull();
+      expect(at("sync-duplicates-check-button")).not.toBeNull();
+    });
+
+    it("explains a profile that has nothing to compare", async () => {
+      answer({ sync_duplicates: { sync_available: false, total: 0, tables: [] } });
+      mount({});
+      await settle();
+
+      await click("sync-duplicates-check-button");
+
+      expect(at("sync-duplicates-output")?.textContent).toBe(EN["sync.duplicatesUnavailable"]);
+    });
+
+    it("removes them only on the second, explicit click, then reports what went", async () => {
+      answer({
+        sync_duplicates: duplicates(2),
+        sync_remove_duplicates: duplicates(2),
+      });
+      mount({ status: status({ state: "idle", enabled: true }) });
+      await settle();
+
+      await click("sync-duplicates-check-button");
+      expect(calls("sync_remove_duplicates")).toHaveLength(0);
+
+      await click("sync-duplicates-remove-button");
+
+      expect(calls("sync_remove_duplicates")).toHaveLength(1);
+      expect(at("sync-duplicates-output")?.textContent).toBe("2 duplicate records removed.");
+      expect(at("sync-duplicates-remove-button")).toBeNull();
+      expect(at("sync-duplicates-check-button")).not.toBeNull();
+    });
+
+    it("changes nothing on screen but a plain message when the removal fails", async () => {
+      answer({
+        sync_duplicates: duplicates(2),
+        sync_remove_duplicates: () => {
+          throw { type: "database", message: "locked" };
+        },
+      });
+      mount({ status: status({ state: "idle", enabled: true }) });
+      await settle();
+
+      await click("sync-duplicates-check-button");
+      await click("sync-duplicates-remove-button");
+
+      expect(at("sync-action-error")?.textContent).toBe(EN["sync.duplicatesFailed"]);
+      expect(at("sync-duplicates-output")?.textContent).toBe("2 duplicate records found.");
+      expect(at("sync-duplicates-remove-button")).not.toBeNull();
+    });
+  });
 });

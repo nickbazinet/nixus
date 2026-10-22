@@ -779,6 +779,11 @@ impl ComputerProbe {
         &self.store
     }
 
+    /// Where this simulated computer keeps the dated copies it saves before a destructive step.
+    pub(crate) fn backup_dir(&self) -> &std::path::Path {
+        &self.backup_dir
+    }
+
     pub(crate) fn db_path(&self) -> &std::path::Path {
         &self.db_path
     }

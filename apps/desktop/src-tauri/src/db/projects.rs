@@ -523,7 +523,7 @@ fn bind_project_image_identity(conn: &Connection, project_id: i64) -> Result<(),
         return Ok(());
     }
 
-    let project = identity::uuid_for(conn, "projects", project_id)?;
+    let project = identity::existing_uuid_for(conn, "projects", project_id)?;
     let derived = identity::project_image(&project);
 
     let mapping = identity::ensure_derived(conn, "project_images", project_id, &derived)?;

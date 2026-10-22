@@ -42,6 +42,8 @@ interface SyncMockOptions {
   /** `null` stands in for a cancelled save dialog, which the Rust command answers with. */
   diagnosticsExport?: { path: string } | null;
   diagnosticsExportError?: { type: string; message: string };
+  /** What `sync_duplicates` answers; `sync_remove_duplicates` answers the same shape. */
+  duplicates?: { sync_available: boolean; total: number; tables: { table: string; records: number }[] };
 }
 
 const UNLINKED: SyncPayload = {
@@ -183,6 +185,15 @@ async function setupSyncMock(page: Page, options: SyncMockOptions = {}) {
               poll_interval_ms: 2000,
             });
 
+          case "sync_duplicates":
+            return Promise.resolve(
+              opts.duplicates ?? { sync_available: true, total: 0, tables: [] }
+            );
+          case "sync_remove_duplicates":
+            return Promise.resolve(
+              opts.duplicates ?? { sync_available: true, total: 0, tables: [] }
+            );
+
           case "sync_export_diagnostics":
             if (opts.diagnosticsExportError !== undefined) {
               return Promise.reject(opts.diagnosticsExportError);
@@ -271,21 +282,16 @@ const SETTINGS_URL = "/settings/ai-provider?section=data";
 const indicator = (page: Page) => page.getByTestId("sync-status-indicator");
 
 test.describe("sync settings", () => {
-  // Sync is automatic now (no user-facing switch): the settings section carries only the
-  // explainer and diagnostics, and a problem is surfaced through an alert. Current state lives
-  // in the sidebar indicator instead.
-  test("explains what is synced and does not render the removed controls", async ({ page }) => {
+  // Sync is automatic now (no user-facing switch): the settings section carries only diagnostics
+  // and the duplicate-records repair, and a problem is surfaced through an alert. Current state
+  // lives in the sidebar indicator instead. (The explainer row this test used to assert was
+  // removed from the page in 0573d1a; the unit test was updated then, this spec was not.)
+  test("does not render the removed controls", async ({ page }) => {
     await setupSyncMock(page, { status: { paused: true } });
     await page.goto(SETTINGS_URL);
 
     const section = page.getByTestId("settings-sync");
     await expect(section).toBeVisible();
-    await expect(page.getByTestId("setting-sync-explainer")).toContainText(
-      "Pictures are not downloaded up front"
-    );
-    await expect(page.getByTestId("setting-sync-explainer")).toContainText(
-      "never sent"
-    );
 
     await expect(page.getByTestId("sync-switch")).toHaveCount(0);
     await expect(page.getByTestId("setting-sync-status")).toHaveCount(0);
@@ -333,6 +339,35 @@ test.describe("sync settings", () => {
     const output = page.getByTestId("sync-diagnostics-output");
     await expect(output).toContainText("Uploads 3");
     await expect(output).toContainText("Conflicts 1");
+  });
+
+  test("duplicate records are looked for on demand and removed only on a second click", async ({
+    page,
+  }) => {
+    await setupSyncMock(page, {
+      status: { state: "idle", enabled: true },
+      duplicates: {
+        sync_available: true,
+        total: 3,
+        tables: [{ table: "expenses", records: 3 }],
+      },
+    });
+    await page.goto(SETTINGS_URL);
+
+    const output = page.getByTestId("sync-duplicates-output");
+    await expect(output).toContainText("two computers each saved their own copy");
+    await expect(page.getByTestId("sync-duplicates-remove-button")).toHaveCount(0);
+
+    await page.getByTestId("sync-duplicates-check-button").click();
+    await expect(output).toContainText("3 duplicate records found.");
+    await expect(page.getByTestId("sync-duplicates-remove-button")).toContainText(
+      "Remove 3 duplicates"
+    );
+
+    await page.getByTestId("sync-duplicates-remove-button").click();
+    await expect(output).toContainText("3 duplicate records removed.");
+    await expect(page.getByTestId("sync-duplicates-remove-button")).toHaveCount(0);
+    await expect(page.getByTestId("sync-duplicates-check-button")).toBeVisible();
   });
 
   test("the diagnostics report is saved through the same command the app uses for exports", async ({

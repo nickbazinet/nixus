@@ -34,7 +34,10 @@ pub enum TableClass {
 /// row: a template-generated expense or income entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowIdentity {
-    /// Random (UUIDv4), minted lazily into `sync_uuid` on first sight.
+    /// Random (UUIDv4) for a row the writing statement is creating, minted lazily into `sync_uuid`
+    /// on first sight. A row that already EXISTED with no identity — it predates sync — is adopted
+    /// instead: its identity is derived from its creation facts (`sync::adopt`), so two computers
+    /// holding the same record agree on it without a coordinator.
     Surrogate,
 
     /// Always derived (UUIDv5) from the schema's natural key, expressed in referenced uuids.

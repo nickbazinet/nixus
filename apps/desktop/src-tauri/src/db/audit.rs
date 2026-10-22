@@ -25,7 +25,7 @@ const AUDITED_TABLES: &[(&str, &str)] = &[
     ("vehicle", "vehicles"),
 ];
 
-fn entity_table(entity_type: &str) -> Option<&'static str> {
+pub(crate) fn entity_table(entity_type: &str) -> Option<&'static str> {
     AUDITED_TABLES
         .iter()
         .find(|(audited, _)| *audited == entity_type)

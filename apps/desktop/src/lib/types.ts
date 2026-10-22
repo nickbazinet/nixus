@@ -1099,3 +1099,14 @@ export interface RestoreOutcome {
   table_name: string;
   restored_rows: number;
 }
+
+/**
+ * Records that exist twice because two computers each saved their own copy, as counts per table.
+ * Never a value: a person decides whether to remove them from "how many", not from "which".
+ * `sync_available` is false for a profile that is not synced, which has nothing to compare.
+ */
+export interface DuplicatesView {
+  sync_available: boolean;
+  total: number;
+  tables: { table: string; records: number }[];
+}

@@ -210,7 +210,7 @@ fn bind_task_identity(conn: &Connection, task_id: i64) -> Result<(), AppError> {
         return Ok(());
     };
 
-    let vehicle = identity::uuid_for(conn, "vehicles", vehicle_id)?;
+    let vehicle = identity::existing_uuid_for(conn, "vehicles", vehicle_id)?;
     let derived = identity::maintenance_task(&vehicle, &task_type_key);
 
     let mapping = identity::ensure_derived(conn, "maintenance_tasks", task_id, &derived)?;

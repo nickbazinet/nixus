@@ -34,6 +34,30 @@ pub fn live_row_ids(
     Ok(ids)
 }
 
+/// The local ids of up to `limit` rows after `after` that have NO identity yet, in rowid order.
+///
+/// The rows a record predating sync leaves behind: nothing ever bound a `sync_uuid` to them. Keyed
+/// and bounded like the scan above, so the settle pass that reads it can stop anywhere and resume.
+pub fn unmapped_row_ids(
+    conn: &Connection,
+    table: &'static str,
+    after: i64,
+    limit: usize,
+) -> Result<Vec<i64>, AppError> {
+    let mut statement = conn.prepare_cached(&format!(
+        "SELECT t._rowid_ FROM {table} t \
+         WHERE t._rowid_ > ?1 \
+           AND NOT EXISTS (SELECT 1 FROM sync_uuid u \
+                           WHERE u.table_name = ?2 AND u.row_id = t._rowid_) \
+         ORDER BY t._rowid_ LIMIT ?3"
+    ))?;
+    let ids = statement
+        .query_map(params![after, table, limit as i64], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(ids)
+}
+
 /// Up to `limit` identity mappings of one table after `after`, in uuid order.
 ///
 /// Ordered by uuid rather than by `row_id` so the cursor is stable while reconcile DELETES the
@@ -97,6 +121,32 @@ mod tests {
 
         assert!(row_exists(&conn, "budget_groups", 3).expect("the probe reads"));
         assert!(!row_exists(&conn, "budget_groups", 99).expect("the probe reads"));
+    }
+
+    #[test]
+    fn the_unmapped_scan_finds_only_rows_without_an_identity_and_resumes() {
+        let dir = TempDir::new().expect("temp dir");
+        let conn = test_dataset::migrated_dataset(&dir.path().join("nixus.db"));
+
+        for index in 0..5 {
+            fixtures::insert_budget_group(&conn, &format!("group {index}"), index)
+                .expect("a group inserts");
+        }
+        crate::db::sync_identity::ensure(&conn, "budget_groups", 2, &[0x11; 16])
+            .expect("row 2 is mapped");
+        // The same row id in ANOTHER table must not hide an unmapped row here.
+        crate::db::sync_identity::ensure(&conn, "accounts", 4, &[0x22; 16])
+            .expect("an unrelated mapping");
+
+        assert_eq!(
+            unmapped_row_ids(&conn, "budget_groups", 0, 100).expect("the scan reads"),
+            vec![1, 3, 4, 5]
+        );
+        assert_eq!(
+            unmapped_row_ids(&conn, "budget_groups", 3, 1).expect("the scan reads"),
+            vec![4],
+            "bounded by the limit and resumed after the last key it saw"
+        );
     }
 
     #[test]

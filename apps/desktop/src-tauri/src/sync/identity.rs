@@ -134,6 +134,44 @@ pub fn recurring_income(template: &RowUuid, period: &str) -> RowUuid {
     derive("income_entries", &[template, period.as_bytes()])
 }
 
+/// A record that EXISTED BEFORE IT HAD AN IDENTITY: `(table, digest of its creation facts, ordinal)`.
+///
+/// The one place a surrogate table's identity is a function of the row instead of a coin toss, and
+/// the reason it exists is that there is no coordinator to hand out the random kind. Two computers
+/// that hold the same records (a second computer signing in, a restored backup, an older snapshot)
+/// each have to give every record an identity before any of them can be exchanged, and if those
+/// identities were random every record would end up under two of them — one row per identity, on
+/// both computers. Derived, both computers compute the same identity from the same facts, in any
+/// order, with nothing said between them (see `adopt` for which facts, and why).
+///
+/// `facts_digest` is `adopt`'s v1 digest and `ordinal` numbers records whose facts are identical
+/// (three coffees on one day), so such records get distinct identities that the other computer
+/// derives in the same order. Both are part of the stored format: this construction is frozen by
+/// `the_legacy_derivation_has_the_value_it_shipped_with`.
+pub fn legacy_row(table: &str, facts_digest: &[u8], ordinal: u32) -> RowUuid {
+    derive(
+        "legacy_row",
+        &[table.as_bytes(), facts_digest, &ordinal.to_be_bytes()],
+    )
+}
+
+/// The identity of a row that ALREADY EXISTED before the write that is asking about it.
+///
+/// Its recorded identity if it has one. Otherwise it is a record that predates sync, and it gets
+/// the identity every computer derives for it (see [`legacy_row`]) — never a random one.
+///
+/// This is what every "I need the parent's uuid to derive a child's" call site wants, and it is
+/// deliberately NOT [`uuid_for`]: that one is for a row the caller is creating right now, where a
+/// random identity is exactly right because nobody else can have the same row.
+pub fn existing_uuid_for(conn: &Connection, table: &str, row_id: i64) -> Result<RowUuid, AppError> {
+    match super::adopt::legacy_identity(conn, table, row_id, None, None)? {
+        Some(found) => Ok(found),
+        // No such row, so no record another computer could hold: a random identity is exactly
+        // what the caller always got for it.
+        None => Ok(sync_identity::ensure(conn, table, row_id, Uuid::new_v4().as_bytes())?.uuid),
+    }
+}
+
 /// UUIDv5 over the table name and the key parts, each part LENGTH-PREFIXED.
 ///
 /// The length prefix is what makes the construction injective: without it `("ab", "c")` and
@@ -209,6 +247,51 @@ mod tests {
         assert_eq!(
             hex(&recurring_income(&TEMPLATE, "2026-10")),
             "5aed10a8ef97533d948f0e409d0a75e3"
+        );
+    }
+
+    /// The legacy-record derivation is stored format as much as the natural-key ones are: a record
+    /// adopted by one build must be adopted identically by every other, or two versions of the app
+    /// disagree about which record is which.
+    #[test]
+    fn the_legacy_derivation_has_the_value_it_shipped_with() {
+        let digest = [0x7a; 32];
+
+        assert_eq!(
+            hex(&legacy_row("expenses", &digest, 0)),
+            "87736bbcf98e50c0a702f5fa113d1a78"
+        );
+        assert_eq!(
+            hex(&legacy_row("expenses", &digest, 1)),
+            "84c69bcf06045d2c9fee5f0e643db923"
+        );
+        assert_eq!(
+            hex(&legacy_row("accounts", &digest, 0)),
+            "c6a756c2094f5855959df3e3f0d0b92f"
+        );
+    }
+
+    #[test]
+    fn the_legacy_derivation_separates_tables_ordinals_and_facts() {
+        let digest = [0x7a; 32];
+        let other_digest = [0x7b; 32];
+
+        let derived = [
+            legacy_row("expenses", &digest, 0),
+            legacy_row("expenses", &digest, 1),
+            legacy_row("accounts", &digest, 0),
+            legacy_row("expenses", &other_digest, 0),
+        ];
+        assert_eq!(
+            derived.iter().collect::<HashSet<_>>().len(),
+            derived.len(),
+            "a different table, ordinal or set of facts is a different record"
+        );
+        assert_eq!(Uuid::from_bytes(derived[0]).get_version_num(), 5);
+        assert_eq!(
+            legacy_row("expenses", &digest, 0),
+            legacy_row("expenses", &digest, 0),
+            "and the same record is the same record, whenever and wherever it is derived"
         );
     }
 

@@ -42,6 +42,7 @@ use crate::db::sync_identity::{self, RowUuid};
 use crate::db::{sync_apply as apply_db, sync_reconcile as reconcile_db};
 use crate::error::AppError;
 
+use super::adopt;
 use super::apply::{self, TOMBSTONE_RETENTION_DAYS};
 use super::capture::{payload, ROW_COLUMN_MARKER};
 use super::clock::Clock;
@@ -172,7 +173,7 @@ impl Cursor {
 }
 
 /// Every table whose rows travel, in a fixed order so a cursor means the same thing twice.
-fn travelling() -> Vec<&'static registry::TableRule> {
+pub(crate) fn travelling() -> Vec<&'static registry::TableRule> {
     registry::TABLES
         .iter()
         .filter(|rule| !matches!(rule.class, TableClass::LocalOnly))
@@ -645,7 +646,7 @@ fn parent_reference(
         .map(|uuid| Value::Blob(uuid.to_vec())))
 }
 
-fn parent_values(
+pub(crate) fn parent_values(
     conn: &Connection,
     table: &'static str,
     row_id: i64,
@@ -665,7 +666,7 @@ fn parent_values(
 /// row in two across computers (story 16 trap (c)). Reconcile has the whole row in front of it, so
 /// it can compute the key the insert site would have computed — the only place in the app other
 /// than that insert site where that is true.
-fn identity_for(
+pub(crate) fn identity_for(
     conn: &Connection,
     table: &'static str,
     row_id: i64,
@@ -680,11 +681,15 @@ fn identity_for(
     };
 
     let derived = match rule.identity {
-        Some(RowIdentity::Surrogate) => return Ok(Some(identity::uuid_for(conn, table, row_id)?)),
+        // A record with no identity that reconcile is looking at EXISTED BEFORE it: it predates
+        // sync, or was written by a site that bypassed capture. It is given the identity every
+        // computer gives it (`adopt`), never a random one — a random identity is what made two
+        // computers holding the same records give each of them two.
+        Some(RowIdentity::Surrogate) => return adopt::legacy_identity(conn, table, row_id, None, None),
         Some(RowIdentity::SurrogateOrTemplate) => match template_identity(conn, table, values)? {
             Some(derived) => derived,
-            // A hand-entered row: surrogate, so a random uuid is the right answer (AD-2).
-            None => return Ok(Some(identity::uuid_for(conn, table, row_id)?)),
+            // A hand-entered row: adopted like any other record, from its creation facts (AD-2).
+            None => return adopt::legacy_identity(conn, table, row_id, None, None),
         },
         Some(RowIdentity::Natural) => match natural_identity(conn, table, values)? {
             Some(derived) => derived,
@@ -703,6 +708,28 @@ fn identity_for(
     }
 
     Ok(Some(mapping.uuid))
+}
+
+/// The identity of a row that is already there, adopted if it has none yet; `None` when the row is
+/// gone or cannot be named yet.
+///
+/// What `adopt` calls to name a parent, so a child's creation facts can include its parent's
+/// identity whichever kind of identity the parent has.
+pub(crate) fn existing_identity(
+    conn: &Connection,
+    table: &str,
+    row_id: i64,
+) -> Result<Option<RowUuid>, AppError> {
+    let Some(rule) = registry::table(table) else {
+        return Ok(None);
+    };
+
+    let values = parent_values(conn, rule.table, row_id)?;
+    if values.is_empty() {
+        return Ok(None);
+    }
+
+    identity_for(conn, rule.table, row_id, &values)
 }
 
 /// The derived identity of each of AD-2's four natural-key tables, computed from the row itself.
@@ -739,6 +766,63 @@ fn natural_identity(
     Ok(derived)
 }
 
+/// The identity of a row that ALREADY EXISTED before the write that is naming it, from the values it
+/// had before that write (see [`adopt::Observed`]): the one every computer derives from its
+/// template when it was generated from one, otherwise the one derived from its creation facts.
+///
+/// What capture's first touch of a record that predates sync must produce, so that naming it by an
+/// edit and naming it by reconcile or the settle pass cannot disagree about which record it is.
+/// `None` only when there is no such record (not in the table, nothing observed).
+pub(crate) fn identity_of_existing(
+    conn: &Connection,
+    table: &str,
+    row_id: i64,
+    observed: Option<&adopt::Observed>,
+) -> Result<Option<RowUuid>, AppError> {
+    if let Some(found) = sync_identity::lookup(conn, table, row_id)? {
+        return Ok(Some(found));
+    }
+    let Some(rule) = registry::table(table) else {
+        return Ok(None);
+    };
+
+    if can_derive_from_template(rule.table) {
+        let live = parent_values(conn, rule.table, row_id)?;
+        let values: Vec<(&'static str, Value)> = registry::columns_of(rule.table)
+            .filter(|column| !matches!(column.merge, MergeKind::Excluded))
+            .filter_map(|column| {
+                observed
+                    .and_then(|before| before.get(column.column))
+                    .cloned()
+                    .or_else(|| {
+                        live.iter()
+                            .find(|(name, _)| *name == column.column)
+                            .map(|(_, value)| value.clone())
+                    })
+                    .map(|value| (column.column, value))
+            })
+            .collect();
+
+        if let Some(derived) = template_identity(conn, rule.table, &values)? {
+            let mapping = identity::ensure_derived(conn, rule.table, row_id, &derived)?;
+            if mapping.row_id == row_id {
+                return Ok(Some(mapping.uuid));
+            }
+            // Another local row holds the identity this one derives to; this one is a record in its
+            // own right and is named by its own facts instead.
+            warn!("a {} row derives an identity that already belongs to another local row", rule.table);
+        }
+    }
+
+    adopt::legacy_identity(conn, rule.table, row_id, observed, None)
+}
+
+/// Whether a row of this table can carry an identity derived from the recurring template it came
+/// from. Only income entries keep that reference; an expense keeps none (see below).
+pub(crate) fn can_derive_from_template(table: &str) -> bool {
+    table == "income_entries"
+}
+
 /// The template-derived identity of a row that EVERY computer generates on its own (AD-2), when the
 /// row still says which template and which period it came from.
 ///
@@ -753,7 +837,7 @@ fn template_identity(
     table: &str,
     values: &[(&'static str, Value)],
 ) -> Result<Option<RowUuid>, AppError> {
-    if table != "income_entries" {
+    if !can_derive_from_template(table) {
         return Ok(None);
     }
 
@@ -801,7 +885,7 @@ fn parent_uuid(
 }
 
 /// AD-5's per-ROW exclusion inside `config`.
-fn row_is_local_only(table: &str, values: &[(&'static str, Value)]) -> bool {
+pub(crate) fn row_is_local_only(table: &str, values: &[(&'static str, Value)]) -> bool {
     table == "config"
         && text_of(values, "key").is_some_and(|key| registry::config_key_is_local_only(&key))
 }
@@ -811,7 +895,7 @@ fn row_is_local_only(table: &str, values: &[(&'static str, Value)]) -> bool {
 /// `BEGIN IMMEDIATE` for the same reason `ActiveDataset::write` uses it: the body reads and then
 /// writes, and a deferred transaction would take its read snapshot first and fail with
 /// `SQLITE_BUSY_SNAPSHOT` against the UI connection instead of waiting on the busy timeout.
-fn in_transaction<T>(
+pub(crate) fn in_transaction<T>(
     conn: &Connection,
     body: impl FnOnce(&Connection) -> Result<T, AppError>,
 ) -> Result<T, AppError> {

@@ -101,4 +101,5 @@ export const queryKeys = {
   syncStatus: ["sync-status"] as const,
   syncDiagnostics: ["sync-diagnostics"] as const,
   recentlyDeleted: ["recently-deleted"] as const,
+  syncDuplicates: ["sync-duplicates"] as const,
 };

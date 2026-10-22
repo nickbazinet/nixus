@@ -251,6 +251,41 @@ pub fn restore_deleted(
     Ok(outcome)
 }
 
+/// Records that exist twice because two computers each saved their own copy (nothing is changed).
+///
+/// Reads only this computer's own dataset, so it costs no request and works offline. A profile that
+/// is not synced answers `sync_available: false`: it records no identities, so it has nothing to
+/// compare.
+#[tauri::command(rename_all = "snake_case")]
+pub fn sync_duplicates(
+    state: State<crate::db::DbState>,
+) -> Result<crate::sync::dedupe::DuplicatesView, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    crate::sync::dedupe::preview(&active)
+}
+
+/// Removes the second copy of every record two computers each saved (see `sync::dedupe`).
+///
+/// A dated copy of the dataset is saved first and nothing is removed without it. The removal is an
+/// ordinary captured delete, so it reaches the other computers as any delete does.
+#[tauri::command(rename_all = "snake_case")]
+pub fn sync_remove_duplicates(
+    app: AppHandle,
+    state: State<crate::db::DbState>,
+) -> Result<crate::sync::dedupe::DuplicatesView, AppError> {
+    let root = crate::datasets::global_root(&app)?;
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let id = active.id.as_deref().ok_or(AppError::NotConfigured)?;
+    let backup_dir = crate::datasets::dataset_backup_dir(&root, id);
+
+    crate::sync::dedupe::remove(&active, &backup_dir)
+}
+
 /// Answers the "the cloud copy changed on another computer" prompt. `action` is
 /// `"load_remote"` (keeps the current file as a dated backup) or `"keep_local"`.
 #[tauri::command(rename_all = "snake_case")]

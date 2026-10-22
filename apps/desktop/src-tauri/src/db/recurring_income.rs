@@ -216,7 +216,7 @@ fn bind_generated_entry_identity(
         return Ok(());
     }
 
-    let template = identity::uuid_for(conn, "recurring_income_templates", template_id)?;
+    let template = identity::existing_uuid_for(conn, "recurring_income_templates", template_id)?;
     let derived = identity::recurring_income(&template, period);
 
     let mapping = identity::ensure_derived(conn, "income_entries", entry_id, &derived)?;

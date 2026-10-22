@@ -597,7 +597,7 @@ fn bind_merchant_hint_identities(conn: &Connection, merchant: &str) -> Result<()
         .collect::<Result<Vec<_>, _>>()?;
 
     for (hint_id, category_id) in rows {
-        let category = identity::uuid_for(conn, "budget_categories", category_id)?;
+        let category = identity::existing_uuid_for(conn, "budget_categories", category_id)?;
         identity::ensure_derived(
             conn,
             "merchant_category_hints",

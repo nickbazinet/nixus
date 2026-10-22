@@ -235,7 +235,7 @@ fn bind_generated_expense_identity(
         return Ok(());
     }
 
-    let template = identity::uuid_for(conn, "recurring_expense_templates", template_id)?;
+    let template = identity::existing_uuid_for(conn, "recurring_expense_templates", template_id)?;
     let period = format!("{year:04}-{month:02}");
     let derived = identity::recurring_expense(&template, &period);
 

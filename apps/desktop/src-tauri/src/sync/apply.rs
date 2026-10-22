@@ -675,6 +675,15 @@ fn create_row(
         }
     }
 
+    // An audit row's `entity_id` is a machine-local integer that does not travel (it is not a
+    // foreign key, so AD-2's translation cannot reach it), and the schema makes it NOT NULL. Left
+    // out, no audit row could ever be created from another computer — every one parked for a row
+    // that was never coming. It is rebuilt here from `entity_uuid`, the same fact in uuid space.
+    if table == "audit_log" && !columns.iter().any(|(name, _)| *name == "entity_id") {
+        let entity_id = audit_entity_id(conn, &columns)?;
+        columns.push(("entity_id", Value::Integer(entity_id)));
+    }
+
     in_savepoint(conn, INSERT_SAVEPOINT, |conn| {
         let row_id = apply_db::insert_row(conn, table, &columns)?;
 
@@ -692,6 +701,35 @@ fn create_row(
 
         Ok(())
     })
+}
+
+/// The local id of the row an audit entry describes, or 0.
+///
+/// 0 is the audit convention for "no single entity" (`import`, `budget_template`, the AI chat
+/// actions), and it is also the honest answer for an entity this computer does not hold — one that
+/// was deleted before the entry arrived, or that has not arrived yet. The entry still belongs to the
+/// shared action log; it just cannot be filed under a row that is not here.
+fn audit_entity_id(
+    conn: &Connection,
+    columns: &[(&'static str, Value)],
+) -> Result<i64, AppError> {
+    let entity_type = columns.iter().find_map(|(name, value)| match value {
+        Value::Text(text) if *name == "entity_type" => Some(text.as_str()),
+        _ => None,
+    });
+    let entity_uuid = columns.iter().find_map(|(name, value)| match value {
+        Value::Blob(bytes) if *name == "entity_uuid" => <[u8; 16]>::try_from(bytes.as_slice()).ok(),
+        _ => None,
+    });
+
+    let (Some(entity_type), Some(entity_uuid)) = (entity_type, entity_uuid) else {
+        return Ok(0);
+    };
+    let Some(table) = crate::db::audit::entity_table(entity_type) else {
+        return Ok(0);
+    };
+
+    Ok(sync_identity::row_id_for(conn, table, &entity_uuid)?.unwrap_or(0))
 }
 
 enum ParentReference {

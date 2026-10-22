@@ -53,6 +53,7 @@ use tracing::{info, warn};
 use super::apply;
 use super::reconcile;
 use super::retention;
+use super::settle;
 use super::segment::{self, Applier, Head, PollReport, PullCursor, SegmentBatch, SegmentError};
 use super::snapshot::{self, LatestSnapshot, SnapshotError, UploadOutcome};
 use super::store::{ETag, ObjectStore, StoreError};
@@ -700,6 +701,14 @@ pub(crate) struct SyncActor<H: SyncHost> {
     /// travelled. A joined computer that finds one republishes, which is what stops a new computer
     /// from ever having to bootstrap off it.
     latest_carries_identities: bool,
+    /// Whether every record in THIS FILE that predates sync has been given its identity.
+    ///
+    /// The precondition of the first remote apply and of the first snapshot built from the file:
+    /// a message that names an identity this computer has not bound to its own copy of the record
+    /// creates a second row for it (see `settle`). It is a fact about the file and not about the
+    /// session, so every swap of the file — a restore, a replace, a re-bootstrap — puts it back to
+    /// `false`, and a pass over a dataset that is already settled adopts nothing.
+    settled: bool,
 }
 
 impl<H: SyncHost> SyncActor<H> {
@@ -782,6 +791,7 @@ impl<H: SyncHost> SyncActor<H> {
             last_auto_join: Some(started),
             auto_join_quiet: false,
             latest_carries_identities: true,
+            settled: false,
         };
 
         (actor, status_rx, events_rx)
@@ -1357,6 +1367,10 @@ impl<H: SyncHost> SyncActor<H> {
         known_latest: Option<&ETag>,
         lost_cas: LostCas,
     ) -> Result<UploadStep, SyncFault> {
+        // A snapshot is built from the file as it is, so the file has to be settled first: whoever
+        // restores it then starts with every record under the identity the tail will name.
+        self.settle_identities().await?;
+
         // Blobs FIRST, and the snapshot only if they all succeeded: a snapshot names its
         // pictures by `image_sha256`, so publishing it before their objects exist would give
         // every other computer a hash it cannot resolve (AD-10). A blob fault returns here,
@@ -1426,6 +1440,9 @@ impl<H: SyncHost> SyncActor<H> {
     fn reopen_applier(&mut self) {
         self.applier = self.host.applier();
         self.pull = PullCursor::default();
+        // The file that is there now is a different file: it may hold records of its own that
+        // were never given an identity (a snapshot published before this build existed).
+        self.settled = false;
     }
 
     /// Drops this computer's unsent log after an EXPLICIT choice to take the cloud copy (CAP-5).
@@ -1550,6 +1567,36 @@ impl<H: SyncHost> SyncActor<H> {
                 crate::commands::projects::get_project_image_inner(conn, project_id)
             })?
             .ok_or(SyncFault::ImageMissing)
+    }
+
+    /// Gives every record that predates sync its identity, once per file, before anything is
+    /// applied to it or published from it.
+    ///
+    /// The identity is DERIVED from the record (`adopt`), so this decides nothing a peer could
+    /// decide differently — it only has to happen first. Run as bounded chunks with a yield
+    /// between them: each chunk is its own short transaction, so a user writing while a large
+    /// dataset settles waits for one chunk and never for the pass.
+    async fn settle_identities(&mut self) -> Result<(), SyncFault> {
+        if self.settled {
+            return Ok(());
+        }
+
+        let mut cursor = settle::Cursor::default();
+        let mut adopted = 0usize;
+        while !cursor.done() {
+            let report = self
+                .host
+                .with_dataset(|conn| settle::step(conn, &mut cursor))?;
+            adopted += report.adopted;
+            tokio::task::yield_now().await;
+        }
+
+        if adopted > 0 {
+            info!("Gave {adopted} record(s) that predate sync their identity");
+        }
+        self.settled = true;
+
+        Ok(())
     }
 
     /// This install's id, read once from the dataset's own `sync_state` row (AD-4).
@@ -1702,6 +1749,10 @@ impl<H: SyncHost> SyncActor<H> {
         }
 
         let install = self.install()?;
+
+        // BEFORE reconcile, the ship and above all the poll: whatever arrives has to find this
+        // computer's own copy of every record already under the identity it will be named by.
+        self.settle_identities().await?;
 
         // BEFORE the ship, so whatever reconcile had to emit leaves in this same cycle (AD-3).
         self.reconcile_chunk(&install);
@@ -2205,6 +2256,7 @@ impl<H: SyncHost> SyncActor<H> {
         }
 
         self.enabled = false;
+        self.settled = false;
         self.pending = None;
         self.last_change = None;
         self.known_latest = None;

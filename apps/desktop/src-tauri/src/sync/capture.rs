@@ -20,7 +20,7 @@
 //! A local-only profile gets no `Capture` at all (inherited AD-12): no hook, no clock, no install
 //! id, and `ActiveDataset::write` is a plain transaction.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rusqlite::hooks::{Action, PreUpdateCase, PreUpdateNewValueAccessor, PreUpdateOldValueAccessor};
@@ -35,9 +35,11 @@ use crate::db::sync_identity::{self, RowUuid};
 use crate::error::AppError;
 use crate::models::DatasetKind;
 
+use super::adopt;
 use super::apply;
 use super::clock::{self, Clock};
 use super::identity;
+use super::reconcile;
 use super::registry::{self, MergeKind, RowIdentity, TableClass};
 
 /// Domain separation for the field digest, so a `content_hash` can never be confused with any
@@ -448,9 +450,75 @@ pub(crate) struct Mark {
     had_fault: bool,
 }
 
-/// Rows of one table keyed by their local id, so a 1,000-child import looks its shared parent up
-/// once instead of a thousand times.
-type IdentityMemo = HashMap<(&'static str, i64), RowUuid>;
+/// What one flush knows about the rows it is naming, so a 1,000-child import looks its shared parent
+/// up once instead of a thousand times — and, more importantly, so it can tell a row THIS WRITE
+/// created from a row that was already there.
+///
+/// That distinction is the whole of AD-2's amendment. A row this write inserted is new to every
+/// computer, so it gets a random identity. A row that was already there and has none is a record
+/// that predates sync, and a random identity for it would be a second identity for a record other
+/// computers hold too; it is adopted (`adopt`) as it was BEFORE this write, because the hook runs
+/// after the statement and the other computers have never seen the edited state.
+struct IdentityMemo {
+    named: HashMap<(&'static str, i64), RowUuid>,
+    /// Rows this write inserted.
+    inserted: HashSet<(&'static str, i64)>,
+    /// Pre-existing rows this write changed, as they were before it (column name -> value). The
+    /// first change to a row wins: the earliest `old` is the state the rest of the world knows.
+    before: HashMap<(&'static str, i64), adopt::Observed>,
+}
+
+impl IdentityMemo {
+    fn of(changes: &[BufferedChange], shapes: &Shapes) -> Self {
+        let mut memo = Self {
+            named: HashMap::new(),
+            inserted: HashSet::new(),
+            before: HashMap::new(),
+        };
+
+        for change in changes {
+            let Some(row_id) = change.row_id else {
+                continue;
+            };
+            let key = (change.table, row_id);
+
+            match &change.op {
+                ChangeOp::Insert(_) => {
+                    memo.inserted.insert(key);
+                }
+                ChangeOp::Update { old, .. } | ChangeOp::Delete(old) => {
+                    if memo.inserted.contains(&key) || memo.before.contains_key(&key) {
+                        continue;
+                    }
+                    if let Some(shape) = shapes.get(change.table) {
+                        let values = shape
+                            .columns
+                            .iter()
+                            .zip(old.iter())
+                            .map(|(column, value)| (column.name.clone(), value.clone()))
+                            .collect();
+                        memo.before.insert(key, values);
+                    }
+                }
+                ChangeOp::Balance(_) => {}
+            }
+        }
+
+        memo
+    }
+
+    fn get(&self, key: &(&'static str, i64)) -> Option<&RowUuid> {
+        self.named.get(key)
+    }
+
+    fn insert(&mut self, key: (&'static str, i64), uuid: RowUuid) {
+        self.named.insert(key, uuid);
+    }
+
+    fn remove(&mut self, key: &(&'static str, i64)) {
+        self.named.remove(key);
+    }
+}
 
 /// One buffered change with every database read already done, so the writing pass needs none.
 enum Resolved {
@@ -700,7 +768,7 @@ impl Capture {
 
         let shapes = self.shapes();
         let changes = collapse_replacements(changes);
-        let mut memo = IdentityMemo::new();
+        let mut memo = IdentityMemo::of(&changes, &shapes);
 
         let mut resolved = Vec::with_capacity(changes.len());
         for change in &changes {
@@ -1228,7 +1296,8 @@ fn counter_delta(
     Ok(after.wrapping_sub(*before))
 }
 
-/// The row's identity, minted now when the row is surrogate and has never been seen.
+/// The row's identity, minted now when the row is surrogate and has never been seen: random for a
+/// row this write inserted, derived (`adopt`) for one that was already there.
 ///
 /// A `Natural` row is an error rather than a mint: its uuid is DERIVED from its natural key (AD-2)
 /// and only its insert site knows that key, so minting a random one here would split one logical
@@ -1246,7 +1315,23 @@ fn identity_of(
 
     let minted = match shape.identity {
         RowIdentity::Surrogate | RowIdentity::SurrogateOrTemplate => {
-            identity::uuid_for(conn, shape.table, row_id)?
+            if memo.inserted.contains(&(shape.table, row_id)) {
+                identity::uuid_for(conn, shape.table, row_id)?
+            } else {
+                // Already there and never named: a record that predates sync. Fail-closed like the
+                // `Natural` arm below — a write whose rows could not be named is rolled back, not
+                // named at random. The one row with no record behind it (not in the table, nothing
+                // observed) is named at random, as it always was: nobody else can hold it.
+                match reconcile::identity_of_existing(
+                    conn,
+                    shape.table,
+                    row_id,
+                    memo.before.get(&(shape.table, row_id)),
+                )? {
+                    Some(adopted) => adopted,
+                    None => identity::uuid_for(conn, shape.table, row_id)?,
+                }
+            }
         }
         RowIdentity::Natural => {
             return Err(AppError::Database {

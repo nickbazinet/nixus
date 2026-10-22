@@ -7,6 +7,7 @@
 //! the dead-code gate applies here like anywhere else. What remains unreached is marked
 //! item by item, each naming the Milestone-2 story that is its first caller.
 
+pub mod adopt;
 pub mod apply;
 pub mod auth;
 pub mod balance;
@@ -15,6 +16,7 @@ pub mod bootstrap;
 pub mod capture;
 pub mod clock;
 pub mod config;
+pub mod dedupe;
 pub mod gate;
 pub mod host;
 pub mod identity;
@@ -28,6 +30,7 @@ pub mod retention;
 pub mod restore;
 pub mod s3;
 pub mod segment;
+pub mod settle;
 pub mod snapshot;
 pub mod state;
 pub mod store;
@@ -46,6 +49,8 @@ mod tests_capture;
 mod tests_capture_latency;
 #[cfg(test)]
 mod tests_balance_emitters;
+#[cfg(test)]
+mod tests_audit_replication;
 #[cfg(test)]
 mod tests_auto;
 #[cfg(test)]
@@ -70,6 +75,8 @@ mod tests_port_boundary;
 mod tests_reconcile;
 #[cfg(test)]
 mod tests_retention;
+#[cfg(test)]
+mod tests_legacy_rows;
 #[cfg(test)]
 mod tests_lifecycle;
 #[cfg(test)]
