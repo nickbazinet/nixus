@@ -1154,6 +1154,50 @@ impl<H: SyncHost> SyncActor<H> {
         Ok(())
     }
 
+    /// Announces a backup this computer imported, so the account takes it as the newest state.
+    ///
+    /// An import is the user's latest word on their data, exactly as "delete everything" is, and it
+    /// travels the same way: it moves the account's epoch PAST whatever snapshot is published, which
+    /// retires that snapshot before anything can restore it. Without this an import after a wipe
+    /// met the post-wipe (empty) pointer, was asked CAP-5's question, and either choice lost it.
+    ///
+    /// Unlike a wipe it must not "adopt" a higher cloud epoch and stop: that would leave the
+    /// post-wipe snapshot current and the imported file in front of CAP-5 again. So it registers
+    /// from the cloud's own epoch, which always writes `cloud + 1`.
+    ///
+    /// Staged (`ImportStage`): once registered, a retry after an offline publish does not bump the
+    /// epoch again, because that would make every other computer wipe itself a second time.
+    async fn register_pending_import(
+        &mut self,
+        session: &HostSession<H>,
+    ) -> Result<(), SyncFault> {
+        let Some(stage) = self
+            .host
+            .with_dataset(crate::db::sync_wipe::import_pending)?
+        else {
+            return Ok(());
+        };
+
+        let cloud = wipe::read_now(&session.store).await?;
+        if stage == crate::db::sync_wipe::ImportStage::Registered && self.local_epoch()? >= cloud {
+            return Ok(());
+        }
+
+        let adopted = wipe::register(&session.store, cloud, self.host.now_ms()).await?;
+        self.host.with_dataset(|conn| {
+            crate::db::sync_wipe::set_local_epoch(conn, adopted)?;
+            crate::db::sync_wipe::set_import_pending(
+                conn,
+                crate::db::sync_wipe::ImportStage::Registered,
+            )
+        })?;
+        self.wipe.forget();
+
+        info!("An imported backup is registered as the newest state (epoch {adopted})");
+
+        Ok(())
+    }
+
     /// Story wipe-epoch's trigger, run before anything else reads or writes the account.
     ///
     /// The comparison is asymmetric, and the asymmetry is the data-safety argument. A dataset that
@@ -1421,6 +1465,7 @@ impl<H: SyncHost> SyncActor<H> {
         // account is registered first, and only then is the account's epoch compared against this
         // dataset's — so an offline wipe can never be followed by a restore of what it erased.
         self.register_pending_wipe(&session).await?;
+        self.register_pending_import(&session).await?;
         let stance = self.settle_wipe_epoch(&session).await?;
 
         let outcome = self.join_at(&session, choice, stance).await?;
@@ -1430,6 +1475,8 @@ impl<H: SyncHost> SyncActor<H> {
         // as ahead and wipe what was just received.
         if matches!(outcome, SyncEnableOutcome::Enabled { .. }) {
             self.adopt_epoch(stance.epoch_for_reads(self.local_epoch()?))?;
+            self.host
+                .with_dataset(crate::db::sync_wipe::clear_import_pending)?;
         }
 
         Ok(outcome)
@@ -1452,6 +1499,22 @@ impl<H: SyncHost> SyncActor<H> {
 
         let local = self.host.local_data()?;
         let plan = bootstrap::assess(&session.store, &session.pin, &local, cutoff).await?;
+
+        // An imported backup IS the newest state, and `register_pending_import` has just made every
+        // snapshot older than it stale. The one snapshot that can still read as current is a
+        // post-wipe one another computer published in the meantime, and that holds nothing the user
+        // chose over their backup, so the import replaces it rather than asking about it.
+        let import_owed = self
+            .host
+            .with_dataset(crate::db::sync_wipe::import_pending)?
+            .is_some();
+        if import_owed {
+            if let BootstrapPlan::ChoiceRequired { etag, .. } = &plan {
+                return self
+                    .publish_snapshot(session, Some(etag), LostCas::Adopt)
+                    .await;
+            }
+        }
 
         // An unjoined dataset whose epoch is BEHIND the account's may only ADOPT the account's
         // state — a restore, or CAP-5's answered question. It must never publish: the rows it

@@ -202,6 +202,13 @@ fn restore_into_active_dataset(
     // (inherited AD-12), and an imported file brings no sync state of its own that could sync.
     if let Some(capture) = &active.capture {
         crate::sync::state::remint_install_on(conn)?;
+        // The import is the user's newest word on their data. Written AFTER the raw copy (which
+        // brought back the backup's own config) so the next sync publishes it over the account
+        // instead of asking CAP-5's question or letting an earlier delete-everything win.
+        crate::db::sync_wipe::set_import_pending(
+            conn,
+            crate::db::sync_wipe::ImportStage::Unregistered,
+        )?;
         capture.attach(conn)?;
     }
 

@@ -30,6 +30,34 @@ pub const WIPE_EPOCH_KEY: &str = "sync_wipe_epoch";
 /// first one produced.
 pub const WIPE_PENDING_KEY: &str = "sync_wipe_pending";
 
+/// A backup was imported over this dataset and the account has not yet been told it is now the
+/// newest state. Local-only like the other two, and it survives the import for the same reason
+/// the import writes it AFTER the raw file copy: the copy brings back the backup's config.
+///
+/// The value is the stage (`ImportStage`), because the event has two halves that can be separated
+/// by an offline spell: the epoch bump that retires every older snapshot, and the publish of the
+/// imported data over the retired pointer. Remembering which half is done is what stops a retry
+/// from bumping the epoch a second time and making every other computer wipe itself twice.
+pub const IMPORT_PENDING_KEY: &str = "sync_import_pending";
+
+/// How far an imported backup's announcement to the account has got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportStage {
+    /// The account's epoch has not been moved past its current snapshot yet.
+    Unregistered,
+    /// The epoch is registered and this dataset runs at it; only the publish is owed.
+    Registered,
+}
+
+impl ImportStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unregistered => "unregistered",
+            Self::Registered => "registered",
+        }
+    }
+}
+
 /// The epoch this dataset runs at. An absent key is 0 — an account that has never been wiped.
 ///
 /// A value that is not a decimal number is an ERROR and never 0: reading a damaged epoch as "never
@@ -78,6 +106,27 @@ pub fn set_pending_wipe(conn: &Connection, install_id: &str) -> Result<(), AppEr
 /// Clears it, once the event has actually been registered. Idempotent.
 pub fn clear_pending_wipe(conn: &Connection) -> Result<(), AppError> {
     config::delete(conn, WIPE_PENDING_KEY).map_err(AppError::from)
+}
+
+/// The stage of an imported backup's announcement, or `None` when no import is owed to the account.
+///
+/// An unrecognised value reads as `Unregistered`: the safe direction, since it re-asserts the
+/// import rather than silently dropping it and letting the cloud's older snapshot win.
+pub fn import_pending(conn: &Connection) -> Result<Option<ImportStage>, AppError> {
+    Ok(config::get(conn, IMPORT_PENDING_KEY).map(|raw| match raw.as_str() {
+        "registered" => ImportStage::Registered,
+        _ => ImportStage::Unregistered,
+    }))
+}
+
+/// Records that an import happened here and owes the account its event.
+pub fn set_import_pending(conn: &Connection, stage: ImportStage) -> Result<(), AppError> {
+    config::set(conn, IMPORT_PENDING_KEY, stage.as_str())
+}
+
+/// Clears it, once the imported data is the account's published state. Idempotent.
+pub fn clear_import_pending(conn: &Connection) -> Result<(), AppError> {
+    config::delete(conn, IMPORT_PENDING_KEY).map_err(AppError::from)
 }
 
 #[cfg(test)]

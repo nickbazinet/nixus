@@ -22,6 +22,7 @@ pub(crate) const LOCAL_ONLY_KEYS: &[&str] = &[
     "aws_region",
     crate::db::sync_wipe::WIPE_EPOCH_KEY,
     crate::db::sync_wipe::WIPE_PENDING_KEY,
+    crate::db::sync_wipe::IMPORT_PENDING_KEY,
 ];
 
 pub fn get(conn: &Connection, key: &str) -> Option<String> {

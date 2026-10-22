@@ -839,10 +839,11 @@ mod tests {
         assert!(!config_key_is_local_only("onboarding_completed"));
         assert!(config_key_is_local_only(crate::db::sync_wipe::WIPE_EPOCH_KEY));
         assert!(config_key_is_local_only(crate::db::sync_wipe::WIPE_PENDING_KEY));
+        assert!(config_key_is_local_only(crate::db::sync_wipe::IMPORT_PENDING_KEY));
         assert_eq!(
             crate::db::config::LOCAL_ONLY_KEYS.len(),
-            5,
-            "AD-5's three credential-state keys plus story wipe-epoch's two; a key added without \
+            6,
+            "AD-5's three credential-state keys plus story wipe-epoch's three; a key added without \
              a reason recorded here is a key that may be travelling by accident"
         );
     }

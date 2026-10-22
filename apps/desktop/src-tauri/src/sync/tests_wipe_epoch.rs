@@ -570,6 +570,95 @@ async fn an_imported_backup_is_never_self_wiped() {
     assert_eq!(local_epoch(&c), 0, "being asked must not adopt the epoch");
 }
 
+/// What `commands::backup::restore_into_active_dataset` leaves behind on a cloud-linked file: a
+/// row of its own, the account pin, a re-minted install id, and the import marker.
+fn imported_file(probe: &ComputerProbe, row: &str) {
+    probe
+        .captured(|tx| fixtures::insert_budget_group(tx, row, 0))
+        .expect("the imported row");
+    probe.read(|conn| {
+        sync_state::set_pin(conn, "identity-1", "owner-sub-1").expect("the import is pinned");
+        sync_state::mark_joined(conn).expect("the backup was taken from a joined computer");
+        crate::sync::state::remint_install_on(conn).expect("the import path re-mints");
+        sync_wipe::set_import_pending(conn, sync_wipe::ImportStage::Unregistered)
+            .expect("the import marker stores");
+    });
+}
+
+/// (j) The reported bug: delete everything, import a backup, and the next login must NOT lose it.
+/// The import is the newest state — it is published over the account, the account's epoch moves
+/// past the post-wipe snapshot, and every other computer takes the backup instead of the wipe.
+#[tokio::test(start_paused = true)]
+async fn an_imported_backup_replaces_the_account_instead_of_being_asked_about() {
+    let cloud = Arc::new(FakeObjectStore::default());
+    let (_a_actor, a, _b_actor, b) = two_joined(&cloud).await;
+
+    delete_everything(&a);
+    let mut first = relaunch(&a, NOW_MS + 100_000);
+    first.enable(None).await.expect("A registers");
+    let mut second = relaunch(&b, NOW_MS + 120_000);
+    settle(&mut first, &mut second).await;
+    assert_eq!(cloud_epoch(&cloud), 1);
+    assert_eq!(groups(&b), 0, "B must have followed the wipe");
+
+    let (mut imported, c) = computer("C", Arc::clone(&cloud), NOW_MS + 200_000);
+    imported_file(&c, "From-my-backup");
+
+    let outcome = imported.enable(None).await.expect("the imported file joins");
+
+    assert!(
+        matches!(outcome, SyncEnableOutcome::Enabled { .. }),
+        "an import must publish, not ask: {outcome:?}"
+    );
+    assert_eq!(names(&c), vec!["From-my-backup".to_string()], "the import was lost");
+    assert_eq!(cloud_epoch(&cloud), 2, "the import must retire the post-wipe snapshot");
+    assert_eq!(local_epoch(&c), 2);
+    assert_eq!(cloud_pointer(&cloud).expect("a pointer").wipe_epoch, 2);
+    assert_eq!(
+        c.read(|conn| sync_wipe::import_pending(conn).expect("the marker reads")),
+        None,
+        "a published import owes the account nothing"
+    );
+
+    // The other computers follow the import exactly as they followed the wipe.
+    let mut second = relaunch(&b, NOW_MS + 300_000);
+    settle(&mut imported, &mut second).await;
+    assert_eq!(
+        names(&b),
+        vec!["From-my-backup".to_string()],
+        "B must end up with the backup, not with the empty post-wipe state"
+    );
+}
+
+/// (k) An import whose epoch is registered but whose publish never landed (offline) is retried
+/// WITHOUT a second bump, which would make every other computer wipe itself twice — and it still
+/// replaces whatever post-wipe pointer another computer published in the meantime.
+#[tokio::test(start_paused = true)]
+async fn a_retried_import_publish_does_not_move_the_epoch_again() {
+    let cloud = Arc::new(FakeObjectStore::default());
+    let (_a_actor, a, _b_actor, _b) = two_joined(&cloud).await;
+
+    delete_everything(&a);
+    let mut first = relaunch(&a, NOW_MS + 100_000);
+    first.enable(None).await.expect("A registers and publishes its empty snapshot");
+    assert_eq!(cloud_epoch(&cloud), 1);
+
+    let (mut imported, c) = computer("C", Arc::clone(&cloud), NOW_MS + 200_000);
+    imported_file(&c, "From-my-backup");
+    // The first attempt got as far as adopting the account's epoch and stopped there.
+    c.read(|conn| {
+        sync_wipe::set_local_epoch(conn, 1).expect("the epoch stores");
+        sync_wipe::set_import_pending(conn, sync_wipe::ImportStage::Registered)
+            .expect("the stage stores");
+    });
+
+    let outcome = imported.enable(None).await.expect("the retry joins");
+
+    assert!(matches!(outcome, SyncEnableOutcome::Enabled { .. }), "{outcome:?}");
+    assert_eq!(cloud_epoch(&cloud), 1, "the retry bumped the epoch a second time");
+    assert_eq!(names(&c), vec!["From-my-backup".to_string()]);
+}
+
 /// B1: a computer whose machine FINGERPRINT drifted — renamed, or launched without the host
 /// environment variable the fingerprint is built from — is relinked by `ensure_install_on` on
 /// every dataset open. That must stay a RESUME: it is the same computer, it holds the account's

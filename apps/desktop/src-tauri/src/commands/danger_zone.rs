@@ -58,6 +58,9 @@ pub async fn delete_all_data(app: AppHandle, state: State<'_, DbState>) -> Resul
 
         let deleted = active.write_uncaptured(|conn| {
             let deleted = danger_zone_db::wipe_all(conn)?;
+            // `config` survives the wipe, and an owed import must not: it would publish an empty
+            // dataset over the account as "the backup".
+            sync_wipe::clear_import_pending(conn)?;
             if let Some(install) = &joined_install {
                 sync_wipe::set_pending_wipe(conn, install)?;
             }
