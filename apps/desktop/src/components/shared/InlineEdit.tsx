@@ -109,6 +109,8 @@ export function InlineEditText({
 interface InlineEditMoneyProps {
   value: number; // cents
   onSave: (cents: number) => void;
+  /** Accept 0 as a valid amount (e.g. a paid-off balance). Off by default: expenses, income and budgets must stay positive. */
+  allowZero?: boolean;
   className?: string;
   "data-testid"?: string;
 }
@@ -116,6 +118,7 @@ interface InlineEditMoneyProps {
 export function InlineEditMoney({
   value,
   onSave,
+  allowZero = false,
   className,
   "data-testid": testId,
 }: InlineEditMoneyProps) {
@@ -132,7 +135,7 @@ export function InlineEditMoney({
   }, [value, editing]);
 
   const handleSave = () => {
-    if (draft > 0 && draft !== value) {
+    if ((allowZero ? draft >= 0 : draft > 0) && draft !== value) {
       onSave(draft);
       toast.success(t("shell.changeSaved"));
     }

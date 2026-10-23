@@ -23,6 +23,9 @@ const ANNUAL_RATES: Record<string, number> = {
   chequing: 0,
   savings: 0,
   credit_card: 0,
+  mortgage: 0,
+  personal_loan: 0,
+  student_loan: 0,
   business: 0,
   other: 0,
 };

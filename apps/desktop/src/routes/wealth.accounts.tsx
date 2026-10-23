@@ -3,8 +3,6 @@ import { useTranslation } from "react-i18next";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Plus, Landmark } from "lucide-react";
 import {
-  Alert,
-  AlertDescription,
   Button,
   Card,
   CardContent,
@@ -37,7 +35,6 @@ import {
   hasMixedCurrencies,
   isLiabilityAccountType,
   netAccountPositionCents,
-  owedBalanceCents,
   partitionAccounts,
   sumBalanceCents,
   sumLiabilityOwedCents,
@@ -53,21 +50,32 @@ export const Route = createFileRoute("/wealth/accounts")({
 // never faked against content the app already knows.
 const FALLBACK_SKELETON_ROWS = 3;
 
+interface CurrencyPosition {
+  currency: string;
+  assets: number;
+  debt: number;
+  net: number;
+}
+
 /**
- * CAD and USD coexist unconverted — there is no FX anywhere in this product — so a mixed-currency
- * position is reported per currency instead of being added up into a number that means nothing.
+ * CAD and USD coexist unconverted — there is no FX anywhere in this product — so every figure is
+ * computed per currency instead of being added up into a number that means nothing.
  */
-function netPositionByCurrency(accounts: Account[]): [string, number][] {
-  const totals = new Map<string, number>();
+function positionsByCurrency(accounts: Account[]): CurrencyPosition[] {
+  const byCurrency = new Map<string, Account[]>();
   for (const account of accounts) {
-    const signed = isLiabilityAccountType(account.account_type)
-      ? -owedBalanceCents(account.balance_cents)
-      : account.balance_cents;
-    totals.set(account.currency, (totals.get(account.currency) ?? 0) + signed);
+    const list = byCurrency.get(account.currency) ?? [];
+    list.push(account);
+    byCurrency.set(account.currency, list);
   }
-  return [...totals.entries()].sort((first, second) =>
-    first[0].localeCompare(second[0])
-  );
+  return [...byCurrency.entries()]
+    .sort((first, second) => first[0].localeCompare(second[0]))
+    .map(([currency, list]) => {
+      const { assetAccounts, liabilityAccounts } = partitionAccounts(list);
+      const assets = sumBalanceCents(assetAccounts);
+      const debt = sumLiabilityOwedCents(liabilityAccounts);
+      return { currency, assets, debt, net: assets - debt };
+    });
 }
 
 function AccountTypeGroup({
@@ -125,27 +133,14 @@ function AccountsPage() {
     [accounts]
   );
 
-  const { assetAccounts, liabilityAccounts } = useMemo(
-    () =>
-      accounts
-        ? partitionAccounts(accounts)
-        : { assetAccounts: [], liabilityAccounts: [] },
+  const liabilityAccounts = useMemo(
+    () => (accounts ? partitionAccounts(accounts).liabilityAccounts : []),
     [accounts]
   );
 
   const grandTotal = useMemo(
     () => (accounts ? netAccountPositionCents(accounts) : 0),
     [accounts]
-  );
-
-  const assetsTotal = useMemo(
-    () => sumBalanceCents(assetAccounts),
-    [assetAccounts]
-  );
-
-  const debtTotal = useMemo(
-    () => sumLiabilityOwedCents(liabilityAccounts),
-    [liabilityAccounts]
   );
 
   const breakdown = useMemo(() => {
@@ -156,9 +151,9 @@ function AccountsPage() {
   }, [accounts, t]);
 
   const showMixedCurrencyNote = accounts ? hasMixedCurrencies(accounts) : false;
-  const perCurrency = useMemo(
-    () => (accounts && showMixedCurrencyNote ? netPositionByCurrency(accounts) : []),
-    [accounts, showMixedCurrencyNote]
+  const positions = useMemo(
+    () => (accounts ? positionsByCurrency(accounts) : []),
+    [accounts]
   );
 
   const openAddForm = () => {
@@ -221,64 +216,66 @@ function AccountsPage() {
 
       {!isLoading && accounts && accounts.length > 0 && (
         <div className="flex flex-col gap-section-gap">
-          <div className="grid grid-cols-1 gap-grid-gap min-[1100px]:grid-cols-3">
+          <div className="flex flex-col gap-grid-gap">
             {showMixedCurrencyNote ? (
               // No single hero figure exists here: adding CAD to USD would invent an exchange rate.
-              perCurrency.map(([currency, cents]) => (
-                <SubStat
-                  key={currency}
-                  label={t("accounts.positionInCurrency", { currency })}
+              positions.map((position) => (
+                <div
+                  key={position.currency}
+                  className="grid grid-cols-1 gap-grid-gap min-[1100px]:grid-cols-2"
+                  data-testid="accounts-currency-position"
+                >
+                  <SubStat
+                    label={t("accounts.haveInCurrency", { currency: position.currency })}
+                    value={formatMoney({
+                      cents: position.assets,
+                      currency: position.currency,
+                      locale: i18n.language,
+                    })}
+                    data-testid="accounts-total"
+                    {...maskProps}
+                  />
+                  {liabilityAccounts.length > 0 && (
+                    <SubStat
+                      label={t("accounts.oweInCurrency", { currency: position.currency })}
+                      value={formatMoney({
+                        cents: position.debt,
+                        currency: position.currency,
+                        locale: i18n.language,
+                        sign: "never",
+                      })}
+                      data-testid="accounts-debt-total"
+                      {...maskProps}
+                    />
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="grid grid-cols-1 gap-grid-gap min-[1100px]:grid-cols-2">
+                <Stat
+                  label={t("accounts.totalLabel")}
                   value={formatMoney({
-                    cents,
-                    currency,
+                    cents: positions[0]?.assets ?? 0,
                     locale: i18n.language,
-                    showCurrencyCode: true,
                   })}
                   data-testid="accounts-total"
                   {...maskProps}
                 />
-              ))
-            ) : (
-              <Stat
-                label={t("accounts.totalLabel")}
-                value={formatMoney({
-                  cents: grandTotal,
-                  locale: i18n.language,
-                })}
-                data-testid="accounts-total"
-                {...maskProps}
-              />
-            )}
-            {liabilityAccounts.length > 0 && (
-              <>
-                <SubStat
-                  label={t("accounts.assetsTotalLabel")}
-                  value={formatMoney({
-                    cents: assetsTotal,
-                    locale: i18n.language,
-                  })}
-                  data-testid="accounts-assets-total"
-                  {...maskProps}
-                />
-                <SubStat
-                  label={t("accounts.debtTotalLabel")}
-                  value={formatMoney({
-                    cents: debtTotal,
-                    locale: i18n.language,
-                    sign: "never",
-                  })}
-                  data-testid="accounts-debt-total"
-                  {...maskProps}
-                />
-              </>
+                {liabilityAccounts.length > 0 && (
+                  <SubStat
+                    label={t("accounts.debtTotalLabel")}
+                    value={formatMoney({
+                      cents: positions[0]?.debt ?? 0,
+                      locale: i18n.language,
+                      sign: "never",
+                    })}
+                    data-testid="accounts-debt-total"
+                    {...maskProps}
+                  />
+                )}
+              </div>
             )}
           </div>
-
-          {showMixedCurrencyNote && (
-            <p className="text-caption text-ink-dim" data-testid="accounts-mixed-currency">
-              {t("accounts.mixedCurrencyNote")}
-            </p>
-          )}
 
           {netWorth.data && !showMixedCurrencyNote && grandTotal > 0 && (
             <p className="text-caption text-ink-dim" data-testid="accounts-net-worth-context">
@@ -298,12 +295,6 @@ function AccountsPage() {
               </Link>
             </p>
           )}
-
-          {/* Stated where the editing actually happens: balances are typed in, and nothing in the
-           * app moves them, so a linked expense never silently double-counts against one. */}
-          <Alert variant="info">
-            <AlertDescription>{t("accounts.manualBalanceNote")}</AlertDescription>
-          </Alert>
 
           {breakdown.length > 0 && (
             <div data-testid="accounts-breakdown">

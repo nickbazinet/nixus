@@ -467,6 +467,22 @@ test.describe("Accounts Page", () => {
     );
   });
 
+  test("a balance can be set back to zero", async ({ page }) => {
+    await createAccount(page, "Main Chequing", "TD Bank");
+    await page.getByTestId("account-balance").click();
+    let input = page.getByTestId("account-balance-input").locator("input");
+    await input.fill("1500.00");
+    await input.press("Enter");
+    await expect(page.getByTestId("account-balance")).toContainText("$1,500.00");
+
+    await page.getByTestId("account-balance").click();
+    input = page.getByTestId("account-balance-input").locator("input");
+    await input.press("ControlOrMeta+a");
+    await input.pressSequentially("0");
+    await input.press("Enter");
+    await expect(page.getByTestId("account-balance")).toContainText("$0.00");
+  });
+
   test("pressing Escape reverts the balance without saving", async ({
     page,
   }) => {
@@ -593,15 +609,15 @@ test.describe("Accounts Page", () => {
     await createAccount(page, "Visa", "TD Bank", "Credit Card");
 
     await expect(page.getByTestId("accounts-liability-section")).toBeVisible();
-    await expect(page.getByTestId("accounts-assets-total")).toBeVisible();
+    await expect(page.getByTestId("accounts-total")).toBeVisible();
     await expect(page.getByTestId("accounts-debt-total")).toBeVisible();
   });
 
-  test("mixed currency accounts show note", async ({ page }) => {
+  test("mixed currency accounts show one position per currency", async ({ page }) => {
     await createAccount(page, "CAD Account", "TD Bank", "Chequing", "CAD");
     await createAccount(page, "USD Account", "Chase", "Chequing", "USD");
 
-    await expect(page.getByTestId("accounts-mixed-currency")).toBeVisible();
+    await expect(page.getByTestId("accounts-currency-position")).toHaveCount(2);
   });
 });
 

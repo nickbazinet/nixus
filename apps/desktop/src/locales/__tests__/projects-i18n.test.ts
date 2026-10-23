@@ -146,7 +146,6 @@ const REQUIRED_FOREIGN_KEYS = [
   "common.delete",
   "validation.amountPositive",
   "validation.dateRequired",
-  "netWorth.breakdown.orderNote",
   "netWorth.breakdown.tableCaption",
   "netWorth.breakdown.colType",
   "netWorth.breakdown.colAmount",

@@ -229,6 +229,7 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
           <InlineEditMoney
             value={displayCents}
             onSave={handleBalanceSave}
+            allowZero
             data-testid="account-balance"
           />
         </TableCell>

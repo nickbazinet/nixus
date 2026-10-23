@@ -7,6 +7,9 @@ import {
   Home,
   BarChart3,
   Bitcoin,
+  Landmark,
+  HandCoins,
+  GraduationCap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Account, NetWorthBreakdownCategory } from "@/lib/types";
@@ -15,6 +18,9 @@ export const ACCOUNT_TYPE_ORDER = [
   "chequing",
   "savings",
   "credit_card",
+  "mortgage",
+  "personal_loan",
+  "student_loan",
   "tfsa",
   "rrsp",
   "fhsa",
@@ -22,12 +28,20 @@ export const ACCOUNT_TYPE_ORDER = [
   "crypto",
 ] as const;
 
-export const LIABILITY_ACCOUNT_TYPES = ["credit_card"] as const;
+export const LIABILITY_ACCOUNT_TYPES = [
+  "credit_card",
+  "mortgage",
+  "personal_loan",
+  "student_loan",
+] as const;
 
 export const ACCOUNT_TYPE_KEYS: Record<string, string> = {
   chequing: "accounts.typeChequing",
   savings: "accounts.typeSavings",
   credit_card: "accounts.typeCreditCard",
+  mortgage: "accounts.typeMortgage",
+  personal_loan: "accounts.typePersonalLoan",
+  student_loan: "accounts.typeStudentLoan",
   tfsa: "accounts.typeTFSA",
   rrsp: "accounts.typeRRSP",
   fhsa: "accounts.typeFHSA",
@@ -39,6 +53,9 @@ const ACCOUNT_TYPE_COLORS: Record<string, string> = {
   chequing: "#0D9488",
   savings: "#0D9488",
   credit_card: "#EF4444",
+  mortgage: "#DC2626",
+  personal_loan: "#F87171",
+  student_loan: "#B91C1C",
   tfsa: "#0EA5E9",
   rrsp: "#9333EA",
   fhsa: "#7C3AED",
@@ -50,6 +67,9 @@ export const ACCOUNT_TYPE_ICONS: Record<string, LucideIcon> = {
   chequing: Wallet,
   savings: PiggyBank,
   credit_card: CreditCard,
+  mortgage: Landmark,
+  personal_loan: HandCoins,
+  student_loan: GraduationCap,
   tfsa: TrendingUp,
   rrsp: LineChart,
   fhsa: Home,

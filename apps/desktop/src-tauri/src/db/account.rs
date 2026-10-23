@@ -8,6 +8,9 @@ const VALID_ACCOUNT_TYPES: &[&str] = &[
     "chequing",
     "savings",
     "credit_card",
+    "mortgage",
+    "personal_loan",
+    "student_loan",
     "tfsa",
     "rrsp",
     "fhsa",
@@ -18,7 +21,12 @@ const VALID_ACCOUNT_TYPES: &[&str] = &[
 const VALID_CURRENCIES: &[&str] = &["CAD", "USD"];
 
 /// Account types treated as liabilities (owed balances reduce net worth).
-pub const LIABILITY_ACCOUNT_TYPES: &[&str] = &["credit_card"];
+pub const LIABILITY_ACCOUNT_TYPES: &[&str] = &[
+    "credit_card",
+    "mortgage",
+    "personal_loan",
+    "student_loan",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CashFlowKind {

@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
   Money,
@@ -121,7 +120,6 @@ export function NetWorthBreakdownBar({
     <Card data-testid="breakdown-bar-card">
       <CardHeader>
         <CardTitle>{t(titleKey)}</CardTitle>
-        <CardDescription>{t("netWorth.breakdown.orderNote")}</CardDescription>
       </CardHeader>
       <CardContent>
         {/* Presentational: the bar carries proportion, the table below carries every label, figure
