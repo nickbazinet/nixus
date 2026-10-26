@@ -39,7 +39,7 @@ export function SectionIntro({
 }: SectionIntroProps) {
   const text = (
     <div className={align === "center" ? "mx-auto max-w-[44rem]" : undefined}>
-      <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
+      <p className="mb-3 text-xs font-semibold tracking-wider text-brand-ink uppercase">
         {eyebrow}
       </p>
       {/* Never through `cn()`: tailwind-merge reads the unregistered

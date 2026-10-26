@@ -18,7 +18,8 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "border-brand bg-brand text-brand-on hover:bg-brand-ink",
+        default:
+          "border-transparent bg-logo-gradient text-brand-on hover:brightness-110 disabled:bg-none aria-disabled:bg-none",
         outline:
           "border-line-strong bg-card text-ink hover:bg-hover aria-expanded:bg-hover",
         secondary: "bg-track text-ink hover:bg-hover",

@@ -49,7 +49,7 @@ export function StageShowcase() {
                 <li key={stage.id}>
                   <a
                     href={`#stage-${stage.id}`}
-                    className="mkt-tap flex items-baseline gap-4 border-b border-border py-3 text-sm outline-none transition-colors hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+                    className="mkt-tap flex items-baseline gap-4 border-b border-border py-3 text-sm outline-none transition-colors hover:text-brand-ink focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     <span className="text-xs font-semibold text-ink-faint tabular-nums">
                       {String(index + 1).padStart(2, "0")}
@@ -94,7 +94,7 @@ export function StageShowcase() {
                 >
                   <div className="flex items-center gap-3">
                     <IconChip icon={Icon} stop={rampStop(index)} />
-                    <p className="text-xs font-semibold tracking-wider text-primary uppercase">
+                    <p className="text-xs font-semibold tracking-wider text-brand-ink uppercase">
                       <span className="text-ink-faint">{ordinal}</span>{" "}
                       {t(`stages.${stage.id}.stage`)}
                     </p>

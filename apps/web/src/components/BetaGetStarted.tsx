@@ -41,7 +41,7 @@ export function BetaGetStarted({ faqHomeHref }: BetaGetStartedProps) {
               {id === "install" ? (
                 <a
                   href={faqHomeHref}
-                  className="mkt-tap mt-2 inline-flex items-center text-primary underline-offset-4 hover:underline"
+                  className="mkt-tap mt-2 inline-flex items-center text-brand-ink underline-offset-4 hover:underline"
                 >
                   {t("betaPage.getStarted.installHelpLink")}
                   <ArrowRight aria-hidden="true" className="ml-1 size-4" />

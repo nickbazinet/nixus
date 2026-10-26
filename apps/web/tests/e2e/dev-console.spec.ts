@@ -53,7 +53,7 @@ test("serves a fully styled document with every stylesheet applied", async ({
   });
 
   expect(styling.sheets).toBeGreaterThan(0);
-  expect(styling.fontFamily).toMatch(/Inter/);
+  expect(styling.fontFamily).toMatch(/Nunito/);
   expect(styling.headerIsSticky).toBe("sticky");
   expect(styling.logoWidth).not.toBeNull();
   expect(styling.logoWidth ?? 0).toBeLessThanOrEqual(48);

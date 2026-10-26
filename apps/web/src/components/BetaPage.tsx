@@ -51,7 +51,7 @@ export function BetaPage() {
             <a
               href={programMailto}
               data-testid="beta-hero-cta"
-              className="mkt-tap-cta inline-flex max-w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40"
+              className="mkt-tap-cta inline-flex max-w-full items-center justify-center rounded-md bg-logo-gradient px-4 py-2 text-center text-sm font-medium text-primary-foreground outline-none transition-colors hover:brightness-110 focus-visible:ring-3 focus-visible:ring-primary/40"
             >
               {t("betaPage.feedback.cta")}
             </a>
@@ -115,7 +115,7 @@ export function BetaPage() {
               <a
                 href={programMailto}
                 data-testid="beta-feedback-cta"
-                className="mkt-tap-cta inline-flex w-full items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground outline-none transition-colors hover:bg-primary/90 focus-visible:ring-3 focus-visible:ring-primary/40 sm:w-auto"
+                className="mkt-tap-cta inline-flex w-full items-center justify-center rounded-md bg-logo-gradient px-4 py-2 text-sm font-medium text-primary-foreground outline-none transition-colors hover:brightness-110 focus-visible:ring-3 focus-visible:ring-primary/40 sm:w-auto"
               >
                 {t("betaPage.feedback.cta")}
               </a>
@@ -154,7 +154,7 @@ export function BetaPage() {
           </div>
           <a
             href={faqHomeHref}
-            className="mkt-tap mt-6 inline-flex items-center text-sm font-medium text-primary underline-offset-4 hover:underline"
+            className="mkt-tap mt-6 inline-flex items-center text-sm font-medium text-brand-ink underline-offset-4 hover:underline"
           >
             {t("betaPage.faq.moreLink")}
             <ArrowRight aria-hidden="true" className="ml-1 size-4" />

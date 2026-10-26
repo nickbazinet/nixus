@@ -44,7 +44,7 @@ export function BetaSection() {
           className="mkt-card mkt-panel mkt-tint-brand mkt-rule-gradient grid grid-cols-1 gap-8 border p-6 pt-8 sm:p-8 sm:pt-10 lg:grid-cols-2 lg:gap-12 lg:p-10 lg:pt-12"
         >
           <div>
-            <p className="mb-3 text-xs font-semibold tracking-wider text-primary uppercase">
+            <p className="mb-3 text-xs font-semibold tracking-wider text-brand-ink uppercase">
               {t("beta.eyebrow")}
             </p>
             <h2 id="beta-heading" className="text-display-l text-foreground">
@@ -64,7 +64,7 @@ export function BetaSection() {
               <a
                 href={fullGuideHref}
                 data-testid="beta-full-guide-link"
-                className="mkt-tap inline-flex items-center gap-1 text-sm font-medium whitespace-nowrap text-primary underline-offset-4 hover:underline sm:justify-start"
+                className="mkt-tap inline-flex items-center gap-1 text-sm font-medium whitespace-nowrap text-brand-ink underline-offset-4 hover:underline sm:justify-start"
               >
                 {t("beta.fullGuideLink")}
                 <ArrowRight aria-hidden="true" className="size-4" />

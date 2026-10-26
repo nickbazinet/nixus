@@ -89,7 +89,7 @@ export function SiteFooter() {
               className="mkt-tap inline-flex items-end rounded-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             >
               <NixusLogo className="size-8 shrink-0" />
-              <span className="-ml-0.5 mb-px bg-gradient-to-r from-[#A78BFA] to-[#F472B6] bg-clip-text text-lg leading-none font-semibold whitespace-nowrap text-transparent">
+              <span className="-ml-0.5 mb-px bg-gradient-to-r from-[#9978ED] to-[#DE50A4] bg-clip-text text-lg leading-none font-semibold whitespace-nowrap text-transparent">
                 ixus
               </span>
             </a>

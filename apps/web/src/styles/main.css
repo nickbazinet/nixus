@@ -1,6 +1,12 @@
 @import "tailwindcss";
 @import "@nixus/shared/styles/tokens.css";
 
+/* Bundled locally (no Google Fonts CDN): Poppins for titles, Nunito for body. */
+@import "@fontsource/poppins/500.css";
+@import "@fontsource/poppins/600.css";
+@import "@fontsource/poppins/700.css";
+@import "@fontsource-variable/nunito/index.css";
+
 /* Scan the workspace-linked @nixus/shared package so Tailwind generates
  * the utilities used inside its shadcn primitives (Button, DropdownMenu,
  * etc.). pnpm symlinks ./node_modules/@nixus/shared, but Tailwind v4
@@ -30,8 +36,8 @@
  *     than a system-wide repaint. `apps/desktop` never imports this file.
  *
  * Scope discipline, from DESIGN.md: colour only. No radius, no font, no type
- * scale, no status/chart/forced-colors change. `--brand-on` stays `#FFFFFF`
- * (still 5.7:1 against the warmer indigo) and the status, rail, track, and chart
+ * scale, no status/chart/forced-colors change. `--brand-on` is the shared dark ink
+ * (4.9:1 against the brand blue) and the status, rail, track, and chart
  * families deliberately keep their shared values — a marketing page renders none
  * of them, and forking a token nothing paints is how two sources of truth start.
  */
@@ -53,10 +59,10 @@
 
   /* Brand and action. Nothing else — the warm palette does not license
    * `--brand` as a decorative accent any more than the cool one did. */
-  --brand: #5B54D6;
-  --brand-ink: #4A43BE;
-  --brand-soft: #EFEDFB;
-  --focus-ring: #5B54D6;
+  --brand: #5E78ED;
+  --brand-ink: #3A4FB8;
+  --brand-soft: #EDF0FD;
+  --focus-ring: #5E78ED;
 }
 
 /* Marketing-site-specific extensions — the `{marketing-web}` token family in
@@ -80,9 +86,6 @@
  * intent visible at the call site.
  */
 @theme {
-  /* Display family: Inter, same as body. A `--font-*` entry so `font-display` exists. */
-  --font-display: var(--font-sans);
-
   --text-display-xl: clamp(2.25rem, 1.5rem + 3.75vw, 3.5rem);
   --text-display-xl--line-height: 1.06;
   --text-display-xl--letter-spacing: -0.015em;
@@ -115,12 +118,12 @@
  * `font-weight` companions but NOT `font-family`, so the family is attached to
  * the two display utilities here instead of at every call site. That choice is
  * deliberate: `EditorialHeading` and `Hero` reach for a type role by name, and a
- * role that resolved its size but not its face would silently render Inter at
+ * role that resolved its size but not its face would silently render the body face at
  * display size — the exact drift the spine's "reach for a type role" rule exists
  * to stop. Unlayered so it beats the layered utility regardless of sort order,
  * the same mechanism `.mkt-tap` below relies on.
  *
- * Reverting to an all-Inter site is one line: point `--font-display` at
+ * Reverting is one line: point `--font-display` at
  * `var(--font-sans)`. */
 .text-display-xl,
 .text-display-l,
@@ -648,7 +651,7 @@ html[data-pre-alpha-dismissed="1"] [data-pre-alpha-banner] {
  * The same recipe cannot simply be re-run at a lower alpha. A wash on paper
  * SUBTRACTS luminance and lands as a pastel; a glow on near-black ADDS it, and
  * luminance is exactly the budget text contrast is drawn from. The logo's own
- * stops are pastels (`#818CF8` is L≈0.30), so at any alpha strong enough to read
+ * stops are pastels (`#5E78ED` is L≈0.30), so at any alpha strong enough to read
  * as colour they push the backdrop past what `--brand` eyebrow text (4.5:1)
  * can tolerate — measured: 4.47:1 at 25%, a fail. Deeper, more saturated hues
  * from the same three families (indigo, violet, magenta) give the same visible
@@ -666,7 +669,7 @@ html[data-pre-alpha-dismissed="1"] [data-pre-alpha-banner] {
 }
 
 .dark {
-  --mkt-glow-1: #4f46e5;
+  --mkt-glow-1: #3f58d6;
   --mkt-glow-2: #7c3aed;
   /* Magenta, not the pink-600 it started as. A low-alpha hot pink over near-black
    * lands as wine/maroon because red dominates and lightness is low; adding blue

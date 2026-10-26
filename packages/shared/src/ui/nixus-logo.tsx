@@ -34,15 +34,15 @@ export function NixusLogo({ className }: { className?: string }) {
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#818CF8" />
-          <stop offset="50%" stopColor="#A78BFA" />
-          <stop offset="100%" stopColor="#F472B6" />
+          <stop offset="0%" stopColor="#5E78ED" />
+          <stop offset="50%" stopColor="#9978ED" />
+          <stop offset="100%" stopColor="#DE50A4" />
         </linearGradient>
       </defs>
       {/* Left pillar */}
-      <rect x="3" y="3" width="7" height="26" rx="2" fill="#818CF8" />
+      <rect x="3" y="3" width="7" height="26" rx="2" fill="#5E78ED" />
       {/* Right pillar */}
-      <rect x="22" y="3" width="7" height="26" rx="2" fill="#F472B6" />
+      <rect x="22" y="3" width="7" height="26" rx="2" fill="#DE50A4" />
       {/* Diagonal bar */}
       <polygon points="3,29 10,29 29,3 22,3" fill={`url(#${gradientId})`} />
     </svg>

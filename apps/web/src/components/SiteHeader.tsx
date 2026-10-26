@@ -96,7 +96,7 @@ export function SiteHeader() {
           {/* "ixus" wordmark continues from the logo's "N". Gradient
               + bg-clip-text mirrors apps/desktop/src/components/shared/AppSidebar.tsx
               so the brand identity stays visually identical across surfaces. */}
-          <span className="text-lg font-semibold whitespace-nowrap bg-gradient-to-r from-[#A78BFA] to-[#F472B6] bg-clip-text text-transparent leading-none -ml-0.5 mb-px sm:text-xl">
+          <span className="text-lg font-semibold whitespace-nowrap bg-gradient-to-r from-[#9978ED] to-[#DE50A4] bg-clip-text text-transparent leading-none -ml-0.5 mb-px sm:text-xl">
             ixus
           </span>
         </a>
@@ -125,7 +125,7 @@ export function SiteHeader() {
             className={cn(
               "mkt-tap inline-flex items-center justify-center rounded-md px-2.5 py-1.5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
               onBetaPage
-                ? "text-primary"
+                ? "text-brand-ink"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
@@ -145,7 +145,7 @@ export function SiteHeader() {
         aria-hidden="true"
         data-testid="header-rule"
         className={cn(
-          "pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-[#818CF8] via-[#A78BFA] to-[#F472B6] motion-safe:transition-opacity motion-safe:duration-200",
+          "pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-[#5E78ED] via-[#9978ED] to-[#DE50A4] motion-safe:transition-opacity motion-safe:duration-200",
           scrolled ? "opacity-100" : "opacity-40",
         )}
       />

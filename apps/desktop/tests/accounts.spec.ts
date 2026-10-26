@@ -357,7 +357,7 @@ test.describe("Accounts Page", () => {
     // Column alignment comes from tabular figures, not from a code font: a monospace family on a
     // financial figure is banned outright.
     expect(fontVariantNumeric).toContain("tabular-nums");
-    expect(fontFamily.toLowerCase()).toContain("inter");
+    expect(fontFamily.toLowerCase()).toContain("nunito");
     expect(fontFamily.toLowerCase()).not.toContain("mono");
   });
 

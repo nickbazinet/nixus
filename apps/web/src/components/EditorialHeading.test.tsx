@@ -275,7 +275,7 @@ describe("<EditorialHeading /> type-role retention", () => {
     const eyebrow = screen.getByText(FIXTURE.eyebrow);
     expect(eyebrow).toHaveClass("text-xs");
     expect(eyebrow).toHaveClass("font-semibold");
-    expect(eyebrow).toHaveClass("text-primary");
+    expect(eyebrow).toHaveClass("text-brand-ink");
   });
 
   it("keeps the rule's hairline background alongside its box metrics", () => {

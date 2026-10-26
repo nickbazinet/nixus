@@ -129,8 +129,8 @@ const SPINE_LIGHT = {
   ink: '#0F172A',
   'ink-dim': '#576578',
   line: '#E2E8F0',
-  brand: '#4F46E5',
-  'brand-on': '#FFFFFF',
+  brand: '#5E78ED',
+  'brand-on': '#0B1020',
   good: '#047857',
   caution: '#A16207',
   over: '#BE123C',
@@ -201,7 +201,7 @@ test('body text uses Inter and no monospace family is loaded for money', async (
     loaded: [...document.fonts].map((f) => f.family),
   }));
 
-  expect(fonts.body).toContain('Inter');
+  expect(fonts.body).toContain('Nunito');
   expect(fonts.loaded.join(' ')).not.toContain('JetBrains');
 });
 
@@ -226,7 +226,7 @@ test('no element renders a monospace font on a money figure', async ({ page }) =
         .filter((el) => /mono/i.test(getComputedStyle(el).fontFamily))
         .map(describe),
       notInter: slots
-        .filter((el) => !getComputedStyle(el).fontFamily.includes('Inter'))
+        .filter((el) => !getComputedStyle(el).fontFamily.includes('Nunito'))
         .map(describe),
       // Tabular figures are what buy the column alignment a monospace family used to be used for,
       // so "not monospace" is only half the rule.

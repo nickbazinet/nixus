@@ -74,7 +74,7 @@ export function EditorialHeading({
       data-align={align}
       className={cn(isCentered ? "text-center" : "text-left", className)}
     >
-      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
+      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-brand-ink">
         {eyebrow}
       </p>
       <Heading id={id} className={HEADING_CLASS[level]}>

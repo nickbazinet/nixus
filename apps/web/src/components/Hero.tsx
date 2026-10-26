@@ -140,7 +140,7 @@ export function Hero({ eyebrow }: HeroProps) {
           {eyebrowText ? (
             <p
               data-testid="hero-eyebrow"
-              className="mb-4 text-sm font-medium uppercase tracking-wider text-primary md:mb-6"
+              className="mb-4 text-sm font-medium uppercase tracking-wider text-brand-ink md:mb-6"
             >
               {eyebrowText}
             </p>

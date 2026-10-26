@@ -33,7 +33,7 @@ const PUBLIC_DIR = resolve(__dirname, "../public");
  *
  * Mirrors the geometry of `packages/shared/src/ui/nixus-logo.tsx` (the
  * shared brand component consumed by `apps/desktop` and `apps/web`'s site
- * header): two pillars — indigo (#818CF8) on the left, pink (#F472B6) on
+ * header): two pillars — indigo (#5E78ED) on the left, pink (#DE50A4) on
  * the right — joined by a diagonal that carries the indigo→violet→pink
  * brand gradient. Background is transparent so the mark sits flush on
  * whatever surface hosts it (browser tab strip, OS home screen, etc.).
@@ -45,13 +45,13 @@ const PUBLIC_DIR = resolve(__dirname, "../public");
 const SOURCE_SVG = `<svg width="64" height="64" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="nixus-mark-gradient" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#818CF8"/>
-      <stop offset="50%" stop-color="#A78BFA"/>
-      <stop offset="100%" stop-color="#F472B6"/>
+      <stop offset="0%" stop-color="#5E78ED"/>
+      <stop offset="50%" stop-color="#9978ED"/>
+      <stop offset="100%" stop-color="#DE50A4"/>
     </linearGradient>
   </defs>
-  <rect x="3" y="3" width="7" height="26" rx="2" fill="#818CF8"/>
-  <rect x="22" y="3" width="7" height="26" rx="2" fill="#F472B6"/>
+  <rect x="3" y="3" width="7" height="26" rx="2" fill="#5E78ED"/>
+  <rect x="22" y="3" width="7" height="26" rx="2" fill="#DE50A4"/>
   <polygon points="3,29 10,29 29,3 22,3" fill="url(#nixus-mark-gradient)"/>
 </svg>`;
 

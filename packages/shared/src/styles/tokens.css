@@ -76,15 +76,15 @@
   /* Rail — its own inks, because the rail expands to 192px and renders
    * real text labels, so it needs 4.5:1 rather than icon-level 3:1. */
   --rail-ink: #647188;
-  --rail-on: #EEF0FE;
-  --rail-on-ink: #4338CA;
+  --rail-on: #EDF0FD;
+  --rail-on-ink: #3A4FB8;
 
   /* Brand and action. Nothing else. */
-  --brand: #4F46E5;
-  --brand-ink: #4338CA;
-  --brand-on: #FFFFFF;
-  --brand-soft: #EEF0FE;
-  --focus-ring: #4F46E5;
+  --brand: #5E78ED;
+  --brand-ink: #3A4FB8;
+  --brand-on: #0B1020;
+  --brand-soft: #EDF0FD;
+  --focus-ring: #5E78ED;
 
   /* Status — a separate family, and never the sole signal. */
   --good: #047857;
@@ -150,14 +150,14 @@
   --line-strong: #374357;
 
   --rail-ink: #7C8899;
-  --rail-on: #1E2547;
-  --rail-on-ink: #A5B4FC;
+  --rail-on: #1C2547;
+  --rail-on-ink: #B4C0FA;
 
-  --brand: #818CF8;
-  --brand-ink: #A5B4FC;
-  --brand-on: #1E1B4B;
-  --brand-soft: #1E2547;
-  --focus-ring: #A5B4FC;
+  --brand: #5E78ED;
+  --brand-ink: #B4C0FA;
+  --brand-on: #0B1020;
+  --brand-soft: #1C2547;
+  --focus-ring: #8EA2F5;
 
   --good: #34D399;
   --good-bg: #0F3328;
@@ -190,12 +190,14 @@
 
 /* ---------------------------------------------------------------------------
  * Identity — mode-independent. The gradient belongs on the rail mark, the
- * installer, and marketing. NEVER on a surface, card, button, or chart.
+ * installer, marketing, and the primary (default) button fill, which carries
+ * the dark `--brand-on` label (4.9-5.7:1 across all three stops). NEVER on a
+ * surface, card, or chart.
  * ------------------------------------------------------------------------- */
 :root {
-  --logo-stop-1: #818CF8;
-  --logo-stop-2: #A78BFA;
-  --logo-stop-3: #F472B6;
+  --logo-stop-1: #5E78ED;
+  --logo-stop-2: #9978ED;
+  --logo-stop-3: #DE50A4;
   --logo-gradient: linear-gradient(
     135deg,
     var(--logo-stop-1),
@@ -208,7 +210,7 @@
  * Scales that do not vary by mode.
  * ------------------------------------------------------------------------- */
 @theme {
-  /* Type. Inter throughout; no monospace for money, ever.
+  /* Type. Poppins for titles/headers, Nunito for sub-titles/body text; no monospace for money, ever.
    * 10px and 11px are banned. 12px (`text-micro`) is uppercase badge text
    * only, max ~20 characters — never column heads, axis ticks, or prose.
    * 13px (`text-caption`) is the floor for anything a user reads. */
@@ -225,17 +227,17 @@
   --text-h1: 20px;
   --text-h1--line-height: 1.25;
   --text-h1--letter-spacing: -0.02em;
-  --text-h1--font-weight: 650;
+  --text-h1--font-weight: 600;
 
   --text-h2: 16px;
   --text-h2--line-height: 1.3;
   --text-h2--letter-spacing: -0.015em;
-  --text-h2--font-weight: 650;
+  --text-h2--font-weight: 600;
 
   --text-h3: 14px;
   --text-h3--line-height: 1.35;
   --text-h3--letter-spacing: -0.012em;
-  --text-h3--font-weight: 650;
+  --text-h3--font-weight: 600;
 
   --text-body: 14px;
   --text-body--line-height: 1.5;
@@ -251,7 +253,7 @@
   --text-column-head: 13px;
   --text-column-head--line-height: 1.35;
   --text-column-head--letter-spacing: 0.01em;
-  --text-column-head--font-weight: 650;
+  --text-column-head--font-weight: 600;
 
   --text-caption: 13px;
   --text-caption--line-height: 1.45;
@@ -260,7 +262,7 @@
   --text-micro: 12px;
   --text-micro--line-height: 1.35;
   --text-micro--letter-spacing: 0.045em;
-  --text-micro--font-weight: 650;
+  --text-micro--font-weight: 600;
 
   /* Shapes. Crisp, not soft — a financial statement is squarer than a
    * consumer app. sm inputs/checkboxes, md buttons/badges, lg cards,
@@ -290,7 +292,8 @@
   /* Fonts are vendored locally by the consuming app. Never @import Google
    * Fonts in a local-first product. --font-mono is the system stack and is
    * for paths and identifiers, never for money. */
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Nunito Variable", "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "Poppins", "Nunito Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -435,6 +438,20 @@
  * Utilities
  * ------------------------------------------------------------------------- */
 
+/* Poppins for titles/headers/main; everything else inherits Nunito from
+ * `font-sans`. Tailwind's `--text-*` namespace cannot carry a font-family, so
+ * the heading roles are attached here, unlayered so they beat the utilities. */
+h1,
+h2,
+h3,
+.text-display,
+.text-stat,
+.text-h1,
+.text-h2,
+.text-h3 {
+  font-family: var(--font-display);
+}
+
 /* Money is not a size — it is a numeric treatment, applied at whatever type
  * role the context calls for. Tabular figures buy the column alignment that
  * a monospace family was previously used for, at no cost in register. */
@@ -452,7 +469,7 @@
   outline-offset: var(--spacing-focus-offset-w);
 }
 
-/* The identity gradient. Rail mark, installer, marketing. Nothing else. */
+/* The identity gradient. Rail mark, installer, marketing, primary button. */
 @utility bg-logo-gradient {
   background-image: var(--logo-gradient);
 }

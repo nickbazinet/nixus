@@ -60,7 +60,7 @@ export function TourPlayer({ src, poster }: TourPlayerProps) {
           onClick={start}
           className="group absolute inset-0 flex items-center justify-center outline-none focus-visible:ring-3 focus-visible:ring-ring/60 focus-visible:ring-inset"
         >
-          <span className="inline-flex size-16 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg ring-4 ring-white/80 motion-safe:transition-transform motion-safe:duration-200 group-hover:motion-safe:scale-105 sm:size-20">
+          <span className="inline-flex size-16 items-center justify-center rounded-full bg-logo-gradient text-primary-foreground shadow-lg ring-4 ring-white/80 motion-safe:transition-transform motion-safe:duration-200 group-hover:motion-safe:scale-105 sm:size-20">
             <Play aria-hidden="true" className="ml-1 size-6 fill-current sm:size-7" />
           </span>
         </button>

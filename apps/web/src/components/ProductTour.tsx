@@ -75,7 +75,7 @@ export function ProductTour() {
                   aria-hidden="true"
                   className="inline-flex size-12 items-center justify-center rounded-full border border-line-strong bg-card"
                 >
-                  <Play className="size-5 text-primary" />
+                  <Play className="size-5 text-brand-ink" />
                 </span>
                 <p className="text-base font-medium text-foreground">
                   {t("tour.placeholder.label")}

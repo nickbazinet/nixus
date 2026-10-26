@@ -47,7 +47,7 @@ export function FAQ() {
     >
       <div className="mkt-page-x mx-auto max-w-[720px]">
         <div className="mkt-section-lead text-center">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-primary">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-brand-ink">
             {t("faq.eyebrow")}
           </p>
           <h2 id="faq-heading" className="text-display-l text-foreground">
@@ -105,7 +105,7 @@ export function FAQ() {
                       <a
                         key={link.href}
                         href={link.href}
-                        className="mkt-tap inline-flex items-center text-primary underline-offset-4 hover:underline"
+                        className="mkt-tap inline-flex items-center text-brand-ink underline-offset-4 hover:underline"
                         target={link.external ? "_blank" : undefined}
                         rel={link.external ? "noreferrer" : undefined}
                       >
@@ -124,7 +124,7 @@ export function FAQ() {
           {t("faq.stillHaveQuestions")}{" "}
           <a
             href={contactMailto()}
-            className="text-primary underline-offset-4 hover:underline"
+            className="text-brand-ink underline-offset-4 hover:underline"
           >
             {CONTACT_EMAIL}
           </a>

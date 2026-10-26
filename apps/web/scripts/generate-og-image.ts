@@ -35,24 +35,24 @@ const svg = `<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg" v
       <stop offset="1" stop-color="#FFFFFF"/>
     </linearGradient>
     <linearGradient id="nixus-grad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#818CF8"/>
-      <stop offset="50%" stop-color="#A78BFA"/>
-      <stop offset="100%" stop-color="#F472B6"/>
+      <stop offset="0%" stop-color="#5E78ED"/>
+      <stop offset="50%" stop-color="#9978ED"/>
+      <stop offset="100%" stop-color="#DE50A4"/>
     </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
   <!-- Canonical Nixus N-mark (mirrors packages/shared/src/ui/nixus-logo.tsx) scaled 80x80 at (120, 170). Source viewBox is 0 0 32 32; scale 2.5x. -->
   <g transform="translate(120 170) scale(2.5)">
-    <rect x="3" y="3" width="7" height="26" rx="2" fill="#818CF8"/>
-    <rect x="22" y="3" width="7" height="26" rx="2" fill="#F472B6"/>
+    <rect x="3" y="3" width="7" height="26" rx="2" fill="#5E78ED"/>
+    <rect x="22" y="3" width="7" height="26" rx="2" fill="#DE50A4"/>
     <polygon points="3,29 10,29 29,3 22,3" fill="url(#nixus-grad)"/>
   </g>
-  <text x="240" y="232" font-family="Inter, system-ui, sans-serif" font-size="64" font-weight="700" fill="#0F172A">Nixus</text>
-  <text x="120" y="370" font-family="Inter, system-ui, sans-serif" font-size="56" font-weight="700" fill="#0F172A" letter-spacing="-1.5">Personal finance, automated.</text>
-  <text x="120" y="450" font-family="Inter, system-ui, sans-serif" font-size="26" font-weight="400" fill="#475569">Drop in a credit card statement. Watch the AI categorize it.</text>
-  <text x="120" y="495" font-family="Inter, system-ui, sans-serif" font-size="26" font-weight="400" fill="#475569">Budget · Accounts · Assets · Net worth — in one place.</text>
+  <text x="240" y="232" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="64" font-weight="700" fill="#0F172A">Nixus</text>
+  <text x="120" y="370" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="56" font-weight="700" fill="#0F172A" letter-spacing="-1.5">Personal finance, automated.</text>
+  <text x="120" y="450" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="26" font-weight="400" fill="#475569">Drop in a credit card statement. Watch the AI categorize it.</text>
+  <text x="120" y="495" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="26" font-weight="400" fill="#475569">Budget · Accounts · Assets · Net worth — in one place.</text>
   <rect x="120" y="555" width="60" height="4" rx="2" fill="url(#nixus-grad)"/>
-  <text x="200" y="566" font-family="Inter, system-ui, sans-serif" font-size="20" font-weight="500" fill="#64748B">nixusapp.com</text>
+  <text x="200" y="566" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="20" font-weight="500" fill="#64748B">nixusapp.com</text>
 </svg>`;
 
 const resvg = new Resvg(svg, {

@@ -76,7 +76,7 @@ describe("SiteHeader", () => {
    * edit. These two tests exist to keep it that way and to pin the single
    * deliberate literal. */
   describe("Warm Editorial chrome palette", () => {
-    /* The wordmark gradient is NOT a palette decision. `#A78BFA` and `#F472B6`
+    /* The wordmark gradient is NOT a palette decision. `#9978ED` and `#DE50A4`
      * are `--logo-stop-2` and `--logo-stop-3`, declared in `:root` with no dark
      * override because brand identity is mode-independent, and DESIGN.md keeps
      * `{components.logo-gradient}` outside the palette entirely. Repainting it
@@ -86,8 +86,8 @@ describe("SiteHeader", () => {
       renderWithProviders(<SiteHeader />);
       expect(screen.getByText("ixus")).toHaveClass(
         "bg-gradient-to-r",
-        "from-[#A78BFA]",
-        "to-[#F472B6]",
+        "from-[#9978ED]",
+        "to-[#DE50A4]",
         "bg-clip-text",
         "text-transparent",
       );
