@@ -37,7 +37,7 @@ const CAUTION = {
  * `:root` with no dark override because identity is mode-independent, which is
  * why the wordmark is not a palette decision this task may touch.
  */
-const LOGO_GRADIENT_STOPS = ["rgb(167, 139, 250)", "rgb(244, 114, 182)"] as const;
+const LOGO_GRADIENT_STOPS = ["rgb(153, 120, 237)", "rgb(222, 80, 164)"] as const;
 
 const DISMISS_KEY = "nixus.preAlphaDismissed";
 

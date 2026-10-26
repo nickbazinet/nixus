@@ -23,16 +23,16 @@ const WARM = {
   card: "rgb(255, 255, 255)",
   chrome: "rgb(245, 242, 236)",
   ink: "rgb(28, 25, 23)",
-  inkDim: "rgb(107, 99, 90)",
+  inkDim: "rgb(101, 93, 84)",
   inkFaint: "rgb(113, 104, 95)",
   line: "rgb(232, 227, 218)",
   lineStrong: "rgb(216, 209, 197)",
   hover: "rgb(251, 249, 246)",
-  brand: "rgb(91, 84, 214)",
-  brandInk: "rgb(74, 67, 190)",
-  brandSoft: "rgb(239, 237, 251)",
-  brandOn: "rgb(255, 255, 255)",
-  focusRing: "rgb(91, 84, 214)",
+  brand: "rgb(94, 120, 237)",
+  brandInk: "rgb(58, 79, 184)",
+  brandSoft: "rgb(237, 240, 253)",
+  brandOn: "rgb(11, 16, 32)",
+  focusRing: "rgb(94, 120, 237)",
 } as const;
 
 /** The shared Quiet Ledger dark values, which this task must leave untouched. */
@@ -50,13 +50,13 @@ const BAND = {
   /** `--mkt-band-tint` -> DESIGN.md's warm `{colors.track}`. */
   tint: "rgb(239, 234, 225)",
   /** `--mkt-band-deep` -> `--brand-soft`, spent once on the closing band. */
-  deep: "rgb(239, 237, 251)",
+  deep: "rgb(237, 240, 253)",
 } as const;
 
 const BAND_DARK = {
   paper: "rgb(8, 13, 24)",
   tint: "rgb(17, 26, 43)",
-  deep: "rgb(30, 37, 71)",
+  deep: "rgb(28, 37, 71)",
 } as const;
 
 /** The one warm elevation DESIGN.md permits, on `ProductFrame` imagery only. */
@@ -290,9 +290,11 @@ test.describe("Warm Editorial light palette", () => {
 
     expect(painted).toEqual({
       slot: "button",
-      backgroundColor: primary ? WARM.brand : WARM.card,
+      // The primary fill is the identity gradient (a background-image), so its
+      // background-color and border resolve to transparent.
+      backgroundColor: primary ? "rgba(0, 0, 0, 0)" : WARM.card,
       color: primary ? WARM.brandOn : WARM.ink,
-      borderColor: primary ? WARM.brand : WARM.lineStrong,
+      borderColor: primary ? "rgba(0, 0, 0, 0)" : WARM.lineStrong,
     });
   });
 
