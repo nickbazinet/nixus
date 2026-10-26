@@ -113,6 +113,23 @@ pub fn create_budget_category(
     conn: &Connection,
     input: &CreateBudgetCategory,
 ) -> Result<BudgetCategory, AppError> {
+    insert_budget_category(conn, input, false)
+}
+
+/// Same as [`create_budget_category`] but accepts a zero target. Only the quick-add path in the
+/// expense panel uses it: a category created mid-expense has no budget yet.
+pub fn create_budget_category_allowing_zero_target(
+    conn: &Connection,
+    input: &CreateBudgetCategory,
+) -> Result<BudgetCategory, AppError> {
+    insert_budget_category(conn, input, true)
+}
+
+fn insert_budget_category(
+    conn: &Connection,
+    input: &CreateBudgetCategory,
+    allow_zero_target: bool,
+) -> Result<BudgetCategory, AppError> {
     let name = input.name.trim();
     if name.is_empty() {
         return Err(AppError::Validation {
@@ -121,7 +138,8 @@ pub fn create_budget_category(
         });
     }
 
-    if input.target_cents <= 0 {
+    let min_target = if allow_zero_target { 0 } else { 1 };
+    if input.target_cents < min_target {
         return Err(AppError::Validation {
             message: "Target must be greater than 0".to_string(),
             field: Some("target_cents".to_string()),

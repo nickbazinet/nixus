@@ -75,6 +75,26 @@ export function useCreateBudgetCategory() {
   });
 }
 
+/** Creates a category with a zero target. Reserved for the expense panel's "Add new category". */
+export function useCreateBudgetCategoryQuick() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { group_id: number; name: string }) =>
+      invoke<BudgetCategory>("create_budget_category_quick", {
+        group_id: input.group_id,
+        name: input.name,
+      }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.budgetCategories(variables.group_id),
+      });
+      queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+      invalidateTrendsQueries(queryClient);
+    },
+  });
+}
+
 export function useReorderBudgetCategories() {
   const queryClient = useQueryClient();
 

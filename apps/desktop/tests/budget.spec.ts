@@ -1225,7 +1225,8 @@ test.describe("Add transactions menu", () => {
   }
 
   async function openBudget(page: Page, recurring?: RecurringFixture) {
-    await setupTauriMock(page, { ...NO_INCOME_HISTORY, recurring });
+    // Seeded with one group: Add transactions stays disabled until a group exists.
+    await setupTauriMock(page, { ...NO_INCOME_HISTORY, seedTargetCents: 10000, recurring });
     await page.goto("/spending/budget");
     await expect(page.getByTestId("budget-summary-strip")).toBeVisible();
   }

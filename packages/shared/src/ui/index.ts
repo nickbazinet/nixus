@@ -78,6 +78,7 @@ export {
   SelectGroup,
   SelectGroupLabel,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "./select";

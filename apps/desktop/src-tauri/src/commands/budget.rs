@@ -42,6 +42,23 @@ pub fn get_budget_groups_for_month(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn create_budget_category_quick(
+    state: State<DbState>,
+    group_id: i64,
+    name: String,
+) -> Result<BudgetCategory, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let input = CreateBudgetCategory {
+        group_id,
+        name,
+        target_cents: 0,
+    };
+    active.write(|tx| budget_db::create_budget_category_allowing_zero_target(tx, &input))
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn create_budget_category(
     state: State<DbState>,
     group_id: i64,

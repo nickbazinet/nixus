@@ -5,6 +5,7 @@ import { SlideOver } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ExpenseList } from "@/components/expenses/ExpenseList";
 import { AddExpenseForm } from "@/components/expenses/AddExpenseForm";
+import { useBudgetGroups } from "@/hooks/useBudget";
 import { useExpensesByMonth } from "@/hooks/useExpenses";
 import { usePeriod } from "@/hooks/usePeriod";
 
@@ -20,6 +21,8 @@ function TransactionsPage() {
   const { t } = useTranslation();
   const { year, month, label } = usePeriod();
   const { data: expenses = [] } = useExpensesByMonth(year, month);
+  const { data: groups = [] } = useBudgetGroups();
+  const hasGroups = groups.length > 0;
   const [showExpenseForm, setShowExpenseForm] = useState(false);
 
   return (
@@ -29,10 +32,16 @@ function TransactionsPage() {
         subtitle={t("transactions.subtitle", { period: label })}
       />
 
+      {!hasGroups && (
+        <p className="mb-3 text-label text-ink-dim" data-testid="add-transactions-hint">
+          {t("budget.createGroupFirst")}
+        </p>
+      )}
+
       <ExpenseList
         expenses={expenses}
         showCategory
-        onAddExpense={() => setShowExpenseForm(true)}
+        onAddExpense={hasGroups ? () => setShowExpenseForm(true) : undefined}
       />
 
       <SlideOver

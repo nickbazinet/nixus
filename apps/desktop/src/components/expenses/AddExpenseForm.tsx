@@ -10,22 +10,28 @@ import {
   SelectGroup,
   SelectGroupLabel,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@nixus/shared";
 import { format } from "date-fns";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import { useAllBudgetCategories, useCreateExpense } from "@/hooks/useExpenses";
-import { useBudgetGroups } from "@/hooks/useBudget";
+import { useBudgetGroups, useCreateBudgetCategoryQuick } from "@/hooks/useBudget";
 
 interface AddExpenseFormProps {
   defaultCategoryId?: number;
   onClose: () => void;
 }
 
+const NEW_CATEGORY_VALUE = "__new__";
+
 interface ExpenseFormData {
+  new_category_name: string;
+  new_category_group_id: string;
   merchant: string;
   amount_cents: number;
   budget_category_id: string;
@@ -38,11 +44,13 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
   const { data: categories = [] } = useAllBudgetCategories();
   const { data: groups = [] } = useBudgetGroups();
   const createExpense = useCreateExpense();
+  const createCategory = useCreateBudgetCategoryQuick();
 
   const {
     register,
     handleSubmit,
     control,
+    watch,
     formState: { errors },
   } = useForm<ExpenseFormData>({
     defaultValues: {
@@ -50,6 +58,8 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
       amount_cents: 0,
       budget_category_id: defaultCategoryId ? String(defaultCategoryId) : "",
       account_id: "",
+      new_category_name: "",
+      new_category_group_id: "",
       date: format(new Date(), "yyyy-MM-dd"),
     },
     // Each field reports its own problem as the user leaves it. On submit-only validation, five
@@ -57,12 +67,27 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
     mode: "onBlur",
   });
 
-  const onSubmit = (data: ExpenseFormData) => {
+  const isNewCategory = watch("budget_category_id") === NEW_CATEGORY_VALUE;
+
+  const onSubmit = async (data: ExpenseFormData) => {
+    let categoryId = Number(data.budget_category_id);
+    if (data.budget_category_id === NEW_CATEGORY_VALUE) {
+      try {
+        const created = await createCategory.mutateAsync({
+          group_id: Number(data.new_category_group_id),
+          name: data.new_category_name,
+        });
+        categoryId = created.id;
+      } catch {
+        toast.error(t("budget.categoryAddFailed"));
+        return;
+      }
+    }
     createExpense.mutate(
       {
         merchant: data.merchant,
         amount_cents: data.amount_cents,
-        budget_category_id: Number(data.budget_category_id),
+        budget_category_id: categoryId,
         date: data.date,
         account_id: data.account_id ? Number(data.account_id) : null,
       },
@@ -142,7 +167,10 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
           control={control}
           rules={{ required: t("expenses.categoryRequired") }}
           render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange} items={categories.map((cat) => ({ value: String(cat.id), label: cat.name }))}>
+            <Select value={field.value} onValueChange={field.onChange} items={[
+              ...categories.map((cat) => ({ value: String(cat.id), label: cat.name })),
+              { value: NEW_CATEGORY_VALUE, label: t("expenses.addNewCategory") },
+            ]}>
               <SelectTrigger
                 id="expense-category"
                 aria-required="true"
@@ -170,6 +198,17 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
                     </SelectGroup>
                   );
                 })}
+                <SelectSeparator />
+                <SelectItem
+                  value={NEW_CATEGORY_VALUE}
+                  className="font-medium text-brand-ink"
+                  data-testid="add-new-category-option"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <Plus className="size-4" aria-hidden="true" />
+                    {t("expenses.addNewCategory")}
+                  </span>
+                </SelectItem>
               </SelectContent>
             </Select>
           )}
@@ -180,6 +219,67 @@ export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormPro
           </p>
         )}
       </div>
+
+      {isNewCategory && (
+        <div
+          className="space-y-3 rounded-md border border-line p-3"
+          data-testid="new-category-fields"
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="expense-new-category-name" required>
+              {t("budget.categoryName")}
+            </Label>
+            <Input
+              id="expense-new-category-name"
+              placeholder={t("budget.categoryNamePlaceholder")}
+              aria-required="true"
+              aria-invalid={!!errors.new_category_name}
+              {...register("new_category_name", {
+                validate: (v) => v.trim() !== "" || t("budget.nameRequired"),
+              })}
+            />
+            {errors.new_category_name && (
+              <p className="text-caption text-over">{errors.new_category_name.message}</p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="expense-new-category-group" required>
+              {t("expenses.newCategoryGroup")}
+            </Label>
+            <Controller
+              name="new_category_group_id"
+              control={control}
+              rules={{ validate: (v) => v !== "" || t("expenses.newCategoryGroupRequired") }}
+              render={({ field }) => (
+                <Select
+                  value={field.value}
+                  onValueChange={field.onChange}
+                  items={groups.map((g) => ({ value: String(g.id), label: g.name }))}
+                >
+                  <SelectTrigger
+                    id="expense-new-category-group"
+                    aria-required="true"
+                    aria-invalid={!!errors.new_category_group_id}
+                  >
+                    <SelectValue placeholder={t("expenses.selectGroup")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {groups.map((g) => (
+                      <SelectItem key={g.id} value={String(g.id)}>
+                        {g.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {errors.new_category_group_id && (
+              <p className="text-caption text-over">{errors.new_category_group_id.message}</p>
+            )}
+          </div>
+          <p className="text-caption text-ink-dim">{t("expenses.newCategoryHint")}</p>
+        </div>
+      )}
 
       <Controller
         name="account_id"

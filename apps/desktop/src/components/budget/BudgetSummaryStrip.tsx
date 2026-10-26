@@ -31,6 +31,7 @@ interface BudgetSummaryStripProps {
   remainingCents: number;
   averageMonthlyIncomeCents: number;
   incomeMonthCount: number;
+  hasGroups: boolean;
   onAddExpense: () => void;
   onApplyRecurring: () => void;
   applyRecurringPending: boolean;
@@ -42,6 +43,7 @@ export function BudgetSummaryStrip({
   remainingCents,
   averageMonthlyIncomeCents,
   incomeMonthCount,
+  hasGroups,
   onAddExpense,
   onApplyRecurring,
   applyRecurringPending,
@@ -103,7 +105,13 @@ export function BudgetSummaryStrip({
             )}
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<Button size="sm" data-testid="add-transactions-trigger" />}
+                render={
+                  <Button
+                    size="sm"
+                    data-testid="add-transactions-trigger"
+                    disabled={!hasGroups}
+                  />
+                }
               >
                 <Plus data-icon="inline-start" aria-hidden="true" />
                 {t("budget.addTransactions")}
@@ -151,6 +159,11 @@ export function BudgetSummaryStrip({
             </DropdownMenu>
           </div>
         </div>
+        {!hasGroups && (
+          <p className="text-caption text-ink-dim" data-testid="add-transactions-hint">
+            {t("budget.createGroupFirst")}
+          </p>
+        )}
         {totalTargetCents > 0 && (
           <Meter
             value={totalSpentCents}

@@ -170,6 +170,21 @@ async function setupTauriMock(page: Page) {
             return Promise.resolve(category);
           }
 
+          case "create_budget_category_quick": {
+            const quickName = args.name as string;
+            const quickGroupId = args.group_id as number;
+            const quick: MockCategory = {
+              id: state.nextCategoryId++,
+              group_id: quickGroupId,
+              name: quickName.trim(),
+              target_cents: 0,
+              sort_order: categories.filter((c) => c.group_id === quickGroupId).length,
+              created_at: new Date().toISOString(),
+            };
+            categories.push(quick);
+            return Promise.resolve(quick);
+          }
+
           case "update_budget_group": {
             const updateGroupId = args.id as number;
             const newGroupName = (args.name as string)?.trim();
@@ -454,6 +469,29 @@ test.describe("Expense Tracking", () => {
 
     // Form should close
     await expect(page.getByTestId("add-expense-form")).not.toBeVisible();
+  });
+
+  test("Add new category creates a zero-budget category in the chosen group and files the expense under it", async ({ page }) => {
+    await openAddExpenseForm(page);
+    const form = page.getByTestId("add-expense-form");
+
+    await form.getByLabel("Merchant").fill("Vet");
+    await form.getByLabel("Amount").fill("80");
+    await form.getByLabel("Category").click();
+    await page.getByTestId("add-new-category-option").click();
+
+    // Name and group are both required before saving
+    await page.getByRole("button", { name: "Save Expense" }).click();
+    await expect(form.getByText("Name is required")).toBeVisible();
+    await expect(form.getByText("Choose a group for the new category")).toBeVisible();
+
+    await form.getByLabel("Category Name").fill("Pets");
+    await form.getByLabel("Group").click();
+    await page.getByRole("option", { name: "Essentials" }).click();
+    await page.getByRole("button", { name: "Save Expense" }).click();
+
+    await expect(page.getByText('"Vet" saved')).toBeVisible();
+    await expect(page.getByText("Pets").first()).toBeVisible();
   });
 
   test("budget category spent amount updates after adding an expense", async ({ page }) => {
@@ -872,5 +910,27 @@ test.describe("Expense Tracking", () => {
 
     await gotoAccounts(page);
     await expect(accountRow.getByTestId("account-balance")).toContainText("$1,000.00");
+  });
+});
+
+test.describe("Expense Tracking without budget groups", () => {
+  test("Add transactions is disabled with a hint until a group exists", async ({ page }) => {
+    await setupTauriMock(page);
+    await page.addInitScript(() => {
+      const w = window as typeof window & {
+        __EXPENSE_MOCK_STATE__?: { groups: unknown[]; categories: unknown[] };
+      };
+      // Runs after the mock's own init script, so the seeded state exists by now.
+      if (w.__EXPENSE_MOCK_STATE__) {
+        w.__EXPENSE_MOCK_STATE__.groups.length = 0;
+        w.__EXPENSE_MOCK_STATE__.categories.length = 0;
+      }
+    });
+    await page.goto("/spending/budget");
+
+    await expect(page.getByTestId("add-transactions-trigger")).toBeDisabled();
+    await expect(page.getByTestId("add-transactions-hint")).toContainText(
+      "Create a budget group"
+    );
   });
 });

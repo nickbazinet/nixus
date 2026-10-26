@@ -103,12 +103,24 @@ function SelectGroupLabel({
   )
 }
 
+function SelectSeparator({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div
+      role="separator"
+      data-slot="select-separator"
+      className={cn("-mx-1 my-1 h-px bg-line", className)}
+      {...props}
+    />
+  )
+}
+
 export {
   Select,
   SelectContent,
   SelectGroup,
   SelectGroupLabel,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 }
