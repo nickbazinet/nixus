@@ -127,6 +127,47 @@ export interface PassiveAsset {
   value_cents: number;
   created_at: string;
   updated_at: string;
+  /** Present exactly when `asset_type` is `"stock"`. */
+  stock: StockHolding | null;
+}
+
+export interface StockHolding {
+  passive_asset_id: number;
+  symbol: string;
+  exchange: string;
+  currency: string | null;
+  /** 1e-6 shares, so a fractional holding stays an integer across IPC. */
+  quantity_micros: number;
+  last_price_cents: number | null;
+  last_price_at: string | null;
+  /** 1e-6 of base currency per unit of `currency`. */
+  fx_rate_to_base_micros: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateStockAssetInput {
+  symbol: string;
+  name: string;
+  exchange: string;
+  quantity_micros: number;
+}
+
+export interface UpdateStockQuantityInput {
+  id: number;
+  quantity_micros: number;
+}
+
+export interface StockSearchResult {
+  symbol: string;
+  name: string;
+  exchange: string;
+}
+
+export interface StockRefreshResult {
+  asset_id: number;
+  symbol: string;
+  ok: boolean;
 }
 
 export interface CreateAssetInput {

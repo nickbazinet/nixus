@@ -742,6 +742,8 @@ fn natural_identity(
         "config" => text_of(values, "key").map(|key| identity::config_key(&key)),
         "project_images" => parent_uuid(conn, values, "project_id", "projects")?
             .map(|project| identity::project_image(&project)),
+        "stock_holdings" => parent_uuid(conn, values, "passive_asset_id", "passive_assets")?
+            .map(|asset| identity::stock_holding(&asset)),
         "maintenance_tasks" => {
             match (
                 parent_uuid(conn, values, "vehicle_id", "vehicles")?,

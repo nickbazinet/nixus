@@ -163,6 +163,10 @@ impl Computer {
         sync_identity::row_id_for(self.conn(), table, uuid).expect("the mapping reads")
     }
 
+    fn with_conn<T>(&self, read: impl FnOnce(&Connection) -> Result<T, AppError>) -> T {
+        read(self.conn()).expect("the read succeeds")
+    }
+
     fn group_name(&self, id: i64) -> Option<String> {
         fixtures::budget_group_name(self.conn(), id).expect("the name reads")
     }
@@ -669,4 +673,56 @@ fn a_natural_key_row_that_predates_capture_gets_the_identity_its_key_derives() {
         .is_some(),
         "which is what lets the other computer recognise it as the same hint"
     );
+}
+
+/// The same trap as the merchant-hint test above, for the schema's newest natural-key table: a
+/// `stock_holdings` row written with the hook bypassed has no mapping, and minting a random uuid
+/// for it would give two computers two holdings for one position. Reconcile has the whole row in
+/// front of it, so it derives the identity the insert site would have bound.
+#[test]
+fn a_stock_holding_that_predates_capture_gets_the_identity_its_parent_derives() {
+    let mut one = Computer::open();
+    let two = Computer::open();
+
+    // Written with the hook bypassed entirely: `bind_holding_identity` short-circuits when nothing
+    // is capturing, so neither the asset nor its holding carries an identity at this point.
+    let asset = one.unwrapped(|conn| {
+        crate::db::stock::insert_stock_asset(
+            conn,
+            &crate::models::CreateStockAssetInput {
+                symbol: "SHOP.TO".to_string(),
+                name: "Shopify".to_string(),
+                exchange: "TOR".to_string(),
+                quantity_micros: 2_500_000,
+            },
+        )
+        .map(|created| created.id)
+    });
+    assert!(
+        sync_identity::lookup(one.conn(), "stock_holdings", asset)
+            .expect("the mapping reads")
+            .is_none(),
+        "the fixture must actually start with no mapping or this proves nothing"
+    );
+
+    one.reconcile();
+
+    let asset_uuid = one.uuid_of("passive_assets", asset);
+    assert_eq!(
+        one.uuid_of("stock_holdings", asset),
+        identity::stock_holding(&asset_uuid),
+        "the identity is the one the insert site would have derived from its asset"
+    );
+
+    two.receive_all(&one.drain());
+    let arrived = two
+        .row_id_of("stock_holdings", &identity::stock_holding(&asset_uuid))
+        .expect("the other computer recognises the holding");
+    let (symbol, quantity_micros) = two
+        .with_conn(|conn| {
+            let holding = crate::db::stock::get_holding(conn, arrived)?
+                .expect("the holding materialized");
+            Ok((holding.symbol, holding.quantity_micros))
+        });
+    assert_eq!((symbol.as_str(), quantity_micros), ("SHOP.TO", 2_500_000));
 }

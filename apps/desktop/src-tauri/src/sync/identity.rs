@@ -117,6 +117,13 @@ pub fn project_image(project: &RowUuid) -> RowUuid {
     derive("project_images", &[project])
 }
 
+/// `stock_holdings` takes its owning asset's uuid, for the same reason as `project_images`: the
+/// table's primary key IS `passive_asset_id`, so the holding has no identity of its own beyond
+/// "the holding behind that asset".
+pub fn stock_holding(asset: &RowUuid) -> RowUuid {
+    derive("stock_holdings", &[asset])
+}
+
 /// `config` is keyed by the setting's name, which is already machine-independent — so unlike every
 /// other derived identity there is no referenced row to express it through.
 pub fn config_key(key: &str) -> RowUuid {
@@ -209,6 +216,7 @@ mod tests {
     const VEHICLE: RowUuid = [0x22; 16];
     const PROJECT: RowUuid = [0x33; 16];
     const TEMPLATE: RowUuid = [0x44; 16];
+    const ASSET: RowUuid = [0x77; 16];
 
     #[test]
     fn the_namespace_is_the_frozen_derivation_of_the_nixus_url() {
@@ -240,6 +248,10 @@ mod tests {
         );
         assert_eq!(hex(&project_image(&PROJECT)), "cee1badd1b2d5f389951f98409f56132");
         assert_eq!(hex(&config_key("theme")), "63fff85987455b5897512b5f954c5778");
+        assert_eq!(
+            hex(&stock_holding(&ASSET)),
+            "94f1ee4c4cb45224b9f3389e20d22f5b"
+        );
         assert_eq!(
             hex(&recurring_expense(&TEMPLATE, "2026-10")),
             "597c1e7a05555786975b9d87a565a4d4"
@@ -301,6 +313,7 @@ mod tests {
             merchant_category_hint("Metro", &CATEGORY),
             maintenance_task(&VEHICLE, "oil_change"),
             project_image(&PROJECT),
+            stock_holding(&ASSET),
             config_key("theme"),
             recurring_expense(&TEMPLATE, "2026-10"),
             recurring_income(&TEMPLATE, "2026-10"),
@@ -308,6 +321,13 @@ mod tests {
             let uuid = Uuid::from_bytes(derived);
             assert_eq!(uuid.get_version_num(), 5, "{uuid} must be a derived uuid");
         }
+    }
+
+    /// Two sibling one-to-one child tables take their parent's uuid as key material, so the table
+    /// name in [`derive`] is the only thing keeping them apart.
+    #[test]
+    fn a_holding_and_an_image_of_the_same_parent_uuid_derive_two_identities() {
+        assert_ne!(stock_holding(&ASSET), project_image(&ASSET));
     }
 
     /// The length prefix earning its place: `("ab", "c")` and `("a", "bc")` would hash the same

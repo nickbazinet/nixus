@@ -48,6 +48,7 @@ pub const WIPE_TABLES: &[&str] = &[
     "expenses",
     "budget_categories",
     "budget_groups",
+    "stock_holdings",
     "passive_assets",
     "net_worth_snapshots",
     "project_contributions",
@@ -118,8 +119,17 @@ mod tests {
             INSERT INTO recurring_expense_templates
                 (merchant, amount_cents, budget_category_id, day_of_month)
                 VALUES ('Rent', 100000, 1, 1);
-            INSERT INTO passive_assets (name, asset_type, value_cents)
-                VALUES ('House', 'real_estate', 50000000);
+            INSERT INTO passive_assets (id, name, asset_type, value_cents)
+                VALUES (1, 'House', 'real_estate', 50000000);
+            -- A second asset, because `stock_holdings` needs a parent that is a stock and the plain
+            -- asset above is what proves a hand-valued asset is wiped too.
+            INSERT INTO passive_assets (id, name, asset_type, value_cents)
+                VALUES (2, 'Shopify', 'stock', 30863);
+            INSERT INTO stock_holdings
+                (passive_asset_id, symbol, exchange, currency, quantity_micros,
+                 last_price_cents, last_price_at, fx_rate_to_base_micros)
+                VALUES (2, 'SHOP.TO', 'TOR', 'CAD', 2500000, 12345,
+                        '2026-10-27 12:00:00', 1000000);
             INSERT INTO net_worth_snapshots (total_cents, snapshot_date, breakdown_json)
                 VALUES (123, '2026-08-01', '{}');
             INSERT INTO income_sources (id, name, income_type) VALUES (1, 'Job', 'employment');
@@ -205,8 +215,17 @@ mod tests {
             );
         }
 
+        // One row per table EXCEPT `passive_assets`, which carries a plain asset and a stock so
+        // both shapes are proven wiped. The count is derived from the seed rather than from the
+        // table count, so adding a seed row can never silently weaken the assertion.
+        let seeded: u64 = WIPE_TABLES
+            .iter()
+            .map(|table| count(&conn, table) as u64)
+            .sum();
+        assert_eq!(seeded, WIPE_TABLES.len() as u64 + 1, "the seed shape changed");
+
         let deleted = wipe_all(&conn).expect("wipe succeeds");
-        assert_eq!(deleted, WIPE_TABLES.len() as u64);
+        assert_eq!(deleted, seeded);
 
         for table in WIPE_TABLES {
             assert_eq!(count(&conn, table), 0, "{} should be empty", table);

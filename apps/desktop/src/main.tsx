@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@nixus/shared";
 import { DatasetSwitchListener } from "@/components/shared/DatasetSwitchListener";
+import { StockPricesListener } from "@/components/shared/StockPricesListener";
 import { routeTree } from "./routeTree.gen";
 import "./index.css";
 
@@ -23,6 +24,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
         <DatasetSwitchListener />
+        <StockPricesListener />
         <RouterProvider router={router} />
         <Toaster />
       </QueryClientProvider>

@@ -15,12 +15,21 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  Money,
   TableCell,
   TableRow,
 } from "@nixus/shared";
 import { InlineEditMoney } from "@/components/shared/InlineEdit";
 import { useUpdateAssetValue, useDeleteAsset } from "@/hooks/useAssets";
-import { ASSET_TYPE_ICONS, ASSET_TYPE_KEYS } from "@/lib/assetUtils";
+import {
+  ASSET_TYPE_ICONS,
+  ASSET_TYPE_KEYS,
+  priceAgeHours,
+  relativeQuoteAge,
+  STOCK_STALE_AFTER_HOURS,
+} from "@/lib/assetUtils";
+import { StockRowDetail } from "@/components/assets/StockRowDetail";
+import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import type { PassiveAsset } from "@/lib/types";
 
 interface AssetRowProps {
@@ -50,15 +59,26 @@ function relativeAge(days: number, locale: string): string {
 
 export function AssetRow({ asset, onEdit }: AssetRowProps) {
   const { t, i18n } = useTranslation();
+  const maskProps = useMaskProps();
+  const holding = asset.stock;
   const typeLabel = ASSET_TYPE_KEYS[asset.asset_type]
     ? t(ASSET_TYPE_KEYS[asset.asset_type])
     : asset.asset_type;
   const TypeIcon = ASSET_TYPE_ICONS[asset.asset_type] ?? ASSET_TYPE_ICONS.other;
 
+  const hours = holding ? priceAgeHours(holding.last_price_at) : null;
   const days = ageInDays(asset.updated_at);
-  const isStale = days !== null && days >= STALE_AFTER_DAYS;
-  const updatedLabel =
-    days === null
+  const isStale = holding
+    ? hours === null || hours >= STOCK_STALE_AFTER_HOURS
+    : days !== null && days >= STALE_AFTER_DAYS;
+
+  const stockAgeLabel =
+    holding && hours !== null
+      ? t("assets.stockAsOf", { age: relativeQuoteAge(hours, i18n.language) })
+      : null;
+  const updatedLabel = holding
+    ? (stockAgeLabel ?? t("assets.stockPriceUnavailable"))
+    : days === null
       ? null
       : t("assets.updatedAge", { age: relativeAge(days, i18n.language) });
 
@@ -103,7 +123,11 @@ export function AssetRow({ asset, onEdit }: AssetRowProps) {
             />
             <div className="min-w-0">
               <span className="text-label text-ink">{asset.name}</span>
-              <p className="text-caption text-ink-dim">{typeLabel}</p>
+              {holding ? (
+                <StockRowDetail holding={holding} />
+              ) : (
+                <p className="text-caption text-ink-dim">{typeLabel}</p>
+              )}
             </div>
           </div>
         </TableCell>
@@ -118,18 +142,31 @@ export function AssetRow({ asset, onEdit }: AssetRowProps) {
                 aria-hidden="true"
                 className="size-[7px] shrink-0 rounded-full border-[1.5px] border-caution bg-transparent"
               />
-              <Badge variant="caution">{updatedLabel}</Badge>
+              <Badge variant="caution" data-testid="asset-stale-badge">
+                {updatedLabel}
+              </Badge>
             </span>
           ) : (
             <span className="text-caption">{updatedLabel}</span>
           )}
         </TableCell>
         <TableCell numeric>
-          <InlineEditMoney
-            value={asset.value_cents}
-            onSave={handleValueSave}
-            data-testid="asset-value"
-          />
+          {/* A stock's value is derived from quantity x price x FX, so it is read-only here:
+            * an inline edit would be silently overwritten by the next refresh. */}
+          {holding ? (
+            <Money
+              cents={asset.value_cents}
+              locale={i18n.language}
+              data-testid="stock-asset-value"
+              {...maskProps}
+            />
+          ) : (
+            <InlineEditMoney
+              value={asset.value_cents}
+              onSave={handleValueSave}
+              data-testid="asset-value"
+            />
+          )}
         </TableCell>
         <TableCell numeric>
           {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive

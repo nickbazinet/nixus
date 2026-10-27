@@ -16,6 +16,7 @@ export const queryKeys = {
     ["expenses", year, month] as const,
   accounts: ["accounts"] as const,
   assets: ["assets"] as const,
+  stockSearch: (query: string) => ["stock-search", query] as const,
   budgetSummary: (year: number, month: number) =>
     ["budget-summary", year, month] as const,
   topBudgetCategories: (year: number, month: number) =>

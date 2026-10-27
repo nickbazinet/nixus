@@ -14,6 +14,7 @@ mod maintenance;
 mod models;
 mod profile_store;
 mod projects;
+mod stock;
 mod sync;
 mod tfsa;
 
@@ -196,6 +197,10 @@ pub fn run() {
             let catalog_data_dir = app_data_dir.clone();
             maintenance::catalog::spawn_background_catalog_refresh(catalog_data_dir);
 
+            // Cloned before the recurring task takes ownership of the handle below, so the price
+            // refresh can be spawned after it in source order without borrowing a moved value.
+            let stock_refresh_handle = app_handle.clone();
+
             tauri::async_runtime::spawn(async move {
                 let state = app_handle.state::<DbState>();
                 let (expense_result, income_result) = match state.0.lock() {
@@ -252,6 +257,8 @@ pub fn run() {
                     }
                 }
             });
+
+            commands::stock::spawn_startup_refresh(stock_refresh_handle);
 
             // Placed after the tracing subscriber is initialized above, so deep-link
             // log lines actually reach the log file.
@@ -332,6 +339,10 @@ pub fn run() {
             commands::asset::update_asset_value,
             commands::asset::update_asset,
             commands::asset::delete_asset,
+            commands::stock::search_stocks,
+            commands::stock::create_stock_asset,
+            commands::stock::update_stock_quantity,
+            commands::stock::refresh_stock_prices,
             commands::dashboard::get_budget_summary,
             commands::dashboard::get_top_budget_categories,
             commands::dashboard::get_spending_breakdown,

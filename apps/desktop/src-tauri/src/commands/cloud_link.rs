@@ -154,10 +154,11 @@ mod tests {
     /// path this guard protects: it never touches a profile file or `credentials.rs`,
     /// obtains its only credential from `commands/auth.rs`, and sends nothing but a
     /// prompt the user explicitly invoked an AI feature to send.
-    const NETWORKED_MODULES: [&str; 3] = [
+    const NETWORKED_MODULES: [&str; 4] = [
         "ai/hosted_bedrock.rs",
         "commands/auth.rs",
         "maintenance/catalog.rs",
+        "stock/yahoo.rs",
     ];
 
     /// The modules the Login and Migrate branches are built out of — this one

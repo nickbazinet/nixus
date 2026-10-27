@@ -32,6 +32,7 @@ pub mod recurring_income;
 pub mod retirement;
 pub mod snapshot_strip;
 pub mod spending_trends;
+pub mod stock;
 pub mod sync_apply;
 pub mod sync_blobs;
 pub mod sync_capture;
@@ -50,7 +51,11 @@ pub(crate) mod sim_tables;
 #[cfg(test)]
 pub(crate) mod test_dataset;
 #[cfg(test)]
+mod tests_asset;
+#[cfg(test)]
 mod tests_migration_030;
+#[cfg(test)]
+mod tests_stock;
 #[cfg(test)]
 mod tests_sync_restore;
 
@@ -374,6 +379,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (
         35,
         include_str!("../../migrations/035_sync_join_marker.sql"),
+    ),
+    (
+        36,
+        include_str!("../../migrations/036_stock_holdings.sql"),
     ),
 ];
 

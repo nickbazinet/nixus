@@ -15,13 +15,14 @@ use tempfile::TempDir;
 use crate::db::sync_capture::{self, StoredMessage};
 use crate::db::{
     audit as audit_db, chat as chat_db, config as config_db, maintenance as maintenance_db,
-    projects as projects_db, sync_identity, test_dataset, ActiveDataset, WriteTx,
+    projects as projects_db, stock as stock_db, sync_identity, test_dataset, ActiveDataset,
+    WriteTx,
 };
 use crate::error::AppError;
 use crate::models::{
-    AddMaintenanceTaskInput, CreateProjectContributionInput, CreateProjectInput, CreateVehicleInput,
-    DatasetKind, LogMaintenanceServiceInput, UpdateProjectInput, UpdateServiceLogInput,
-    UpdateVehicleInput,
+    AddMaintenanceTaskInput, CreateProjectContributionInput, CreateProjectInput,
+    CreateStockAssetInput, CreateVehicleInput, DatasetKind, LogMaintenanceServiceInput,
+    UpdateProjectInput, UpdateServiceLogInput, UpdateVehicleInput,
 };
 
 use super::capture::Capture;
@@ -858,4 +859,64 @@ fn a_failed_item_inside_a_captured_batch_rolls_back_its_rows_and_its_messages() 
         vec![kept_uuid.to_vec()],
         "only the item that survived may be described in the log"
     );
+}
+
+/// AD-2: `stock_holdings` is `Natural`, so an insert site that forgot to bind the derived identity
+/// would fail the WHOLE write on a synced profile — this is the test that says the binding is there.
+/// AD-5: a price refresh has to be captured on BOTH tables, or a second computer shows a value its
+/// own holding row cannot explain.
+#[test]
+fn a_stock_holding_and_the_price_refresh_that_revalues_it_are_both_captured() {
+    let replica = Replica::open();
+
+    let asset = replica
+        .write(|tx| {
+            stock_db::insert_stock_asset(
+                tx,
+                &CreateStockAssetInput {
+                    symbol: "SHOP.TO".to_string(),
+                    name: "Shopify".to_string(),
+                    exchange: "TOR".to_string(),
+                    quantity_micros: 2_500_000,
+                },
+            )
+        })
+        .expect("the holding is created");
+
+    assert_eq!(replica.kinds_for("stock_holdings"), vec!["field"]);
+
+    let asset_uuid = sync_identity::lookup(replica.conn(), "passive_assets", asset.id)
+        .expect("the asset identity reads")
+        .expect("the asset has an identity");
+    let holding_uuid = sync_identity::lookup(replica.conn(), "stock_holdings", asset.id)
+        .expect("the holding identity reads")
+        .expect("the holding has an identity");
+    assert_eq!(holding_uuid, identity::stock_holding(&asset_uuid));
+
+    let columns: BTreeSet<String> = replica
+        .messages()
+        .into_iter()
+        .filter(|message| message.table_name == "stock_holdings")
+        .filter_map(|message| message.payload)
+        .flat_map(|payload| {
+            super::capture::payload::decode_row(&payload)
+                .expect("the row payload decodes")
+                .into_iter()
+                .map(|(name, _)| name)
+        })
+        .collect();
+    for travelling in ["symbol", "exchange", "quantity_micros", "created_at"] {
+        assert!(
+            columns.contains(travelling),
+            "{travelling} is what a replica rebuilds the holding from"
+        );
+    }
+
+    replica.clear_log();
+    replica
+        .write(|tx| stock_db::apply_price(tx, asset.id, &stock_db::PriceWrite { last_price_cents: 12_345, currency: "CAD", fx_rate_to_base_micros: stock_db::UNIT_FX_MICROS }))
+        .expect("the price applies");
+
+    assert_eq!(replica.kinds_for("stock_holdings"), vec!["field"]);
+    assert_eq!(replica.kinds_for("passive_assets"), vec!["field"]);
 }

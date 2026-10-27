@@ -25,6 +25,9 @@ pub enum AppError {
         recoverable: bool,
     },
     File { message: String },
+    /// A market-data provider failure. Distinct from `Unavailable`, whose serialized message is
+    /// worded for the AI surfaces ("AI service unreachable") and would be a lie on a price refresh.
+    MarketData { message: String },
     NotConfigured,
     InvalidCredentials,
     Unavailable,
@@ -44,6 +47,7 @@ impl fmt::Display for AppError {
                 write!(f, "Sync error ({}): {}", code, message)
             }
             AppError::File { message } => write!(f, "File error: {}", message),
+            AppError::MarketData { message } => write!(f, "Market data error: {}", message),
             AppError::NotConfigured => write!(f, "AI provider not configured"),
             AppError::InvalidCredentials => write!(f, "AI credentials are invalid"),
             AppError::Unavailable => write!(f, "AI service unreachable"),
@@ -94,6 +98,12 @@ impl Serialize for AppError {
             AppError::File { message } => {
                 let mut map = serializer.serialize_map(Some(2))?;
                 map.serialize_entry("type", "file")?;
+                map.serialize_entry("message", message)?;
+                map.end()
+            }
+            AppError::MarketData { message } => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("type", "market_data")?;
                 map.serialize_entry("message", message)?;
                 map.end()
             }
@@ -255,6 +265,33 @@ mod tests {
         assert!(json.contains(r#""type":"sync""#));
         assert!(json.contains(r#""code":"account_mismatch""#));
         assert!(json.contains(r#""recoverable":false"#));
+    }
+
+    #[test]
+    fn market_data_error_serializes_with_its_own_type_rather_than_the_ai_worded_unavailable() {
+        let json = serde_json::to_string(&AppError::MarketData {
+            message: "Price provider unreachable".to_string(),
+        })
+        .unwrap();
+
+        assert_eq!(
+            json,
+            r#"{"type":"market_data","message":"Price provider unreachable"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&AppError::Unavailable).unwrap(),
+            r#"{"type":"unavailable","message":"AI service unreachable"}"#,
+            "the AI wording is why market_data had to be its own variant"
+        );
+    }
+
+    #[test]
+    fn market_data_displays_with_a_market_data_prefix() {
+        let error = AppError::MarketData {
+            message: "HTTP 429".to_string(),
+        };
+
+        assert_eq!(error.to_string(), "Market data error: HTTP 429");
     }
 
     #[test]

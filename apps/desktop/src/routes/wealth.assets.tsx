@@ -24,6 +24,7 @@ import { AssetRow } from "@/components/assets/AssetRow";
 import { AddAssetForm } from "@/components/assets/AddAssetForm";
 import { EditAssetForm } from "@/components/assets/EditAssetForm";
 import { NetWorthBreakdownBar } from "@/components/net-worth/NetWorthBreakdownBar";
+import { RefreshStockPricesButton } from "@/components/assets/RefreshStockPricesButton";
 import { useAssets } from "@/hooks/useAssets";
 import { useCurrentNetWorth } from "@/hooks/useNetWorth";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
@@ -31,6 +32,7 @@ import {
   ASSET_TYPE_KEYS,
   buildAssetBreakdown,
   groupAssetsByType,
+  STOCK_ASSET_TYPE,
 } from "@/lib/assetUtils";
 import type { PassiveAsset } from "@/lib/types";
 
@@ -50,6 +52,10 @@ function AssetsPage() {
   const [editingAsset, setEditingAsset] = useState<PassiveAsset | null>(null);
   const { data: assets, isLoading } = useAssets();
   const netWorth = useCurrentNetWorth();
+  const hasStock = useMemo(
+    () => (assets ?? []).some((asset) => asset.asset_type === STOCK_ASSET_TYPE),
+    [assets]
+  );
 
   const groupedAssets = useMemo(
     () => (assets ? groupAssetsByType(assets) : []),
@@ -85,6 +91,7 @@ function AssetsPage() {
         subtitle={t("assets.subtitle")}
         actions={
           <>
+            {hasStock && <RefreshStockPricesButton />}
             <Button
               size="sm"
               variant="outline"

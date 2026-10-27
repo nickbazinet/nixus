@@ -340,6 +340,11 @@ fn twin_key(
             parent_of("projects", "project_id", &values)?
                 .map(|project| identity::project_image(&project).to_vec())
         }
+        "stock_holdings" => {
+            let values = apply_db::read_columns(conn, table, row_id, &["passive_asset_id"])?;
+            parent_of("passive_assets", "passive_asset_id", &values)?
+                .map(|asset| identity::stock_holding(&asset).to_vec())
+        }
         _ => None,
     })
 }
@@ -599,6 +604,77 @@ mod tests {
 
     fn table_of(name: &str) -> &'static str {
         registry::table(name).expect("a registry table").table
+    }
+
+    /// `stock_holdings` has no creation facts — its identity IS its parent's (AD-2) — so its twin
+    /// key has to be the derived one. Two copies of the same position under two asset rows must
+    /// compare as DIFFERENT until the assets themselves are paired, and as the SAME once `remap`
+    /// says the second asset is the first; otherwise the holding of a deduplicated asset would
+    /// survive as an orphaned twin.
+    #[test]
+    fn a_stock_holdings_twin_key_is_its_assets_derived_identity() {
+        let (_dir, conn) = dataset();
+        assert!(
+            !adopt::has_creation_facts("stock_holdings"),
+            "a natural-key table must not also have creation facts"
+        );
+
+        let mut assets = Vec::new();
+        for _ in 0..2 {
+            let asset = crate::db::stock::insert_stock_asset(
+                &conn,
+                &crate::models::CreateStockAssetInput {
+                    symbol: "SHOP.TO".to_string(),
+                    name: "Shopify".to_string(),
+                    exchange: "TOR".to_string(),
+                    quantity_micros: 2_500_000,
+                },
+            )
+            .expect("a holding inserts")
+            .id;
+            // Each copy under its own random asset identity, which is the pre-adoption state the
+            // pairing exists to clean up.
+            made_by(&conn, FIRST_COMPUTER, "passive_assets", asset, 1_000);
+            assets.push(asset);
+        }
+
+        let empty = Remap::new();
+        let first = twin_key(&conn, "stock_holdings", assets[0], &empty)
+            .expect("the key computes")
+            .expect("a holding with a named asset has a key");
+        let second = twin_key(&conn, "stock_holdings", assets[1], &empty)
+            .expect("the key computes")
+            .expect("a holding with a named asset has a key");
+
+        let first_asset = identity::uuid_for(&conn, "passive_assets", assets[0]).expect("uuid");
+        let second_asset = identity::uuid_for(&conn, "passive_assets", assets[1]).expect("uuid");
+        assert_eq!(
+            first,
+            identity::stock_holding(&first_asset).to_vec(),
+            "the key is exactly the derived identity"
+        );
+        assert_ne!(
+            first, second,
+            "two unpaired assets are two positions, not one"
+        );
+
+        // Once the second asset is remapped onto the first, both holdings are the same holding.
+        let mut remap = Remap::new();
+        remap.insert(("passive_assets", second_asset), first_asset);
+        assert_eq!(
+            twin_key(&conn, "stock_holdings", assets[1], &remap)
+                .expect("the key computes")
+                .expect("a key"),
+            first,
+            "the holding must follow its asset through the pairing"
+        );
+
+        // A row that is gone has no key at all, rather than a key built from a missing parent.
+        crate::db::asset::delete_asset(&conn, assets[0]).expect("the asset deletes");
+        assert_eq!(
+            twin_key(&conn, "stock_holdings", assets[0], &empty).expect("the key computes"),
+            None
+        );
     }
 
     #[test]

@@ -173,6 +173,8 @@ pub const TABLES: &[TableRule] = &[
     rule("projects", Synced, Some(Surrogate)),
     rule("recurring_expense_templates", Synced, Some(Surrogate)),
     rule("recurring_income_templates", Synced, Some(Surrogate)),
+    // Its primary key IS `passive_asset_id`, so it takes its owning asset's uuid (AD-2).
+    rule("stock_holdings", Synced, Some(Natural)),
     rule("vehicles", Synced, Some(Surrogate)),
     // AD-5 names the local-only set exactly: `schema_version` and every `sync_*` table. The two
     // SQLite-internal tables are here because the coverage test reads `sqlite_master` and a table
@@ -354,6 +356,19 @@ pub const COLUMNS: &[ColumnRule] = &[
     column("recurring_income_templates", "is_active", Lww),
     column("recurring_income_templates", "created_at", Immutable),
     column("recurring_income_templates", "updated_at", Lww),
+    column("stock_holdings", "passive_asset_id", LocalId),
+    column("stock_holdings", "symbol", Lww),
+    column("stock_holdings", "exchange", Lww),
+    column("stock_holdings", "currency", Lww),
+    column("stock_holdings", "quantity_micros", Lww),
+    // The cached quote and the rate it was converted at. Plain Lww values, not counters: the later
+    // refresh is simply the better answer, and two computers refreshing concurrently must converge
+    // on one price rather than add two.
+    column("stock_holdings", "last_price_cents", Lww),
+    column("stock_holdings", "last_price_at", Lww),
+    column("stock_holdings", "fx_rate_to_base_micros", Lww),
+    column("stock_holdings", "created_at", Immutable),
+    column("stock_holdings", "updated_at", Lww),
     column("vehicles", "id", LocalId),
     column("vehicles", "nickname", Lww),
     column("vehicles", "make", Lww),
@@ -401,6 +416,7 @@ pub const EDGES: &[EdgeRule] = &[
     ),
     edge("recurring_income_templates", "account_id", "accounts", FkPolicy::SetNull),
     edge("recurring_income_templates", "source_id", "income_sources", FkPolicy::Cascade),
+    edge("stock_holdings", "passive_asset_id", "passive_assets", FkPolicy::Cascade),
 ];
 
 const fn rule(
@@ -630,7 +646,8 @@ mod tests {
                 "config",
                 "maintenance_tasks",
                 "merchant_category_hints",
-                "project_images"
+                "project_images",
+                "stock_holdings"
             ]
         );
 
@@ -706,7 +723,7 @@ mod tests {
     fn every_foreign_key_edge_is_classified_and_matches_what_sqlite_will_do() {
         let (_dir, conn) = dataset();
         let live = live_edges(&conn);
-        assert_eq!(live.len(), 17, "the live schema's edge count changed");
+        assert_eq!(live.len(), 18, "the live schema's edge count changed");
 
         for ((child_table, child_column), (parent_table, on_delete)) in &live {
             let declared = EDGES

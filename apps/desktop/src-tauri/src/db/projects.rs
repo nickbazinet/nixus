@@ -3362,7 +3362,7 @@ mod tests {
         // This pins the last `MIGRATIONS` entry, which is what forces a new migration to be
         // exercised here instead of shipping unnoticed.
         assert_eq!(
-            version, 35,
+            version, 36,
             "the newest applied version must be the last MIGRATIONS entry"
         );
 

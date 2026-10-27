@@ -2,6 +2,19 @@ import { test, expect, type Page } from "@playwright/test";
 
 async function setupTauriMock(page: Page) {
   await page.addInitScript(() => {
+    interface MockHolding {
+      passive_asset_id: number;
+      symbol: string;
+      exchange: string;
+      currency: string | null;
+      quantity_micros: number;
+      last_price_cents: number | null;
+      last_price_at: string | null;
+      fx_rate_to_base_micros: number | null;
+      created_at: string;
+      updated_at: string;
+    }
+
     interface MockAsset {
       id: number;
       name: string;
@@ -9,10 +22,42 @@ async function setupTauriMock(page: Page) {
       value_cents: number;
       created_at: string;
       updated_at: string;
+      stock: MockHolding | null;
     }
 
     const assets: MockAsset[] = [];
     let nextAssetId = 1;
+
+    // The fixture Yahoo: SHOP.TO prices in CAD, OFFLN.TO never prices, so the offline and
+    // partial-failure rows of the matrix are both reachable from the UI.
+    const PRICES: Record<string, number> = { "SHOP.TO": 12345, "BNS.TO": 7000 };
+
+    // Real IPC SERIALIZES every response, so the frontend can never hold a reference into the
+    // backend's own store. Handing out the live objects instead lets an in-place mutation reach
+    // React's already-rendered data, which TanStack then structurally shares as "unchanged" —
+    // a staleness bug that exists only in a mock that forgets to copy.
+    const snapshot = (asset: MockAsset): MockAsset => ({
+      ...asset,
+      stock: asset.stock ? { ...asset.stock } : null,
+    });
+
+    const reprice = (asset: MockAsset): boolean => {
+      const holding = asset.stock;
+      if (!holding) return false;
+      const price = PRICES[holding.symbol];
+      if (price === undefined) return false;
+      holding.last_price_cents = price;
+      holding.currency = "CAD";
+      holding.fx_rate_to_base_micros = 1000000;
+      holding.last_price_at = new Date()
+        .toISOString()
+        .replace("T", " ")
+        .slice(0, 19);
+      asset.value_cents = Math.round(
+        (holding.quantity_micros * price) / 1000000
+      );
+      return true;
+    };
 
     // unlisten() reaches into the event plugin's own internals object on cleanup.
     (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ =
@@ -34,7 +79,9 @@ async function setupTauriMock(page: Page) {
 
           case "get_assets":
             return Promise.resolve(
-              [...assets].sort((a, b) => a.name.localeCompare(b.name))
+              [...assets]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map(snapshot)
             );
 
           case "create_asset": {
@@ -50,6 +97,15 @@ async function setupTauriMock(page: Page) {
               });
             }
 
+            if (assetType === "stock") {
+              return Promise.reject({
+                type: "validation",
+                message:
+                  "A stock asset is managed through its holding, not this field",
+                field: "asset_type",
+              });
+            }
+
             const asset: MockAsset = {
               id: nextAssetId++,
               name,
@@ -57,10 +113,104 @@ async function setupTauriMock(page: Page) {
               value_cents: valueCents,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
+              stock: null,
             };
             assets.push(asset);
-            return Promise.resolve(asset);
+            return Promise.resolve(snapshot(asset));
           }
+
+          case "search_stocks": {
+            const query = ((args.query as string) ?? "").trim();
+            if (query.length < 2) return Promise.resolve([]);
+            return Promise.resolve(
+              [
+                { symbol: "SHOP.TO", name: "Shopify Inc.", exchange: "Toronto" },
+                { symbol: "BNS.TO", name: "Bank of Nova Scotia", exchange: "Toronto" },
+                { symbol: "OFFLN.TO", name: "Offline Holdings", exchange: "Toronto" },
+              ].filter(
+                (hit) =>
+                  hit.symbol.toLowerCase().includes(query.toLowerCase()) ||
+                  hit.name.toLowerCase().includes(query.toLowerCase())
+              )
+            );
+          }
+
+          case "create_stock_asset": {
+            const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+            const symbol = args.symbol as string;
+            const quantityMicros = args.quantity_micros as number;
+            if (!symbol) {
+              return Promise.reject({
+                type: "validation",
+                message: "A stock symbol is required",
+                field: "symbol",
+              });
+            }
+            if (quantityMicros <= 0) {
+              return Promise.reject({
+                type: "validation",
+                message: "Quantity must be greater than zero",
+                field: "quantity_micros",
+              });
+            }
+
+            const id = nextAssetId++;
+            const asset: MockAsset = {
+              id,
+              name: (args.name as string) || symbol,
+              asset_type: "stock",
+              value_cents: 0,
+              created_at: now,
+              updated_at: now,
+              stock: {
+                passive_asset_id: id,
+                symbol,
+                exchange: args.exchange as string,
+                currency: null,
+                quantity_micros: quantityMicros,
+                last_price_cents: null,
+                last_price_at: null,
+                fx_rate_to_base_micros: null,
+                created_at: now,
+                updated_at: now,
+              },
+            };
+            assets.push(asset);
+            reprice(asset);
+            return Promise.resolve(snapshot(asset));
+          }
+
+          case "update_stock_quantity": {
+            const target = assets.find((a) => a.id === (args.id as number));
+            if (!target?.stock)
+              return Promise.reject({
+                type: "validation",
+                message: "This asset is not a stock holding",
+                field: "id",
+              });
+            target.stock.quantity_micros = args.quantity_micros as number;
+            const price = target.stock.last_price_cents;
+            target.value_cents =
+              price === null
+                ? 0
+                : Math.round((target.stock.quantity_micros * price) / 1000000);
+            return Promise.resolve(snapshot(target));
+          }
+
+          case "refresh_stock_prices":
+            return Promise.resolve(
+              assets.flatMap((asset) =>
+                asset.stock
+                  ? [
+                      {
+                        asset_id: asset.id,
+                        symbol: asset.stock.symbol,
+                        ok: reprice(asset),
+                      },
+                    ]
+                  : []
+              )
+            );
 
           case "update_asset_value": {
             const valId = args.id as number;
@@ -73,7 +223,7 @@ async function setupTauriMock(page: Page) {
               });
             acc.value_cents = newValue;
             acc.updated_at = new Date().toISOString();
-            return Promise.resolve({ ...acc });
+            return Promise.resolve(snapshot(acc));
           }
 
           case "update_asset": {
@@ -98,7 +248,7 @@ async function setupTauriMock(page: Page) {
             assetToUpdate.name = updName;
             assetToUpdate.asset_type = updType;
             assetToUpdate.updated_at = new Date().toISOString();
-            return Promise.resolve({ ...assetToUpdate });
+            return Promise.resolve(snapshot(assetToUpdate));
           }
 
           case "delete_asset": {
@@ -164,9 +314,9 @@ async function createAsset(
 ) {
   await page.getByTestId("add-asset-button").click();
   const form = page.getByTestId("add-asset-form");
-  await form.getByLabel("Name").fill(name);
   await form.getByLabel("Type").click();
-  await page.getByRole("option", { name: typeLabel }).click();
+  await page.getByRole("option", { name: typeLabel, exact: true }).click();
+  await form.getByLabel("Name").fill(name);
   await form.getByLabel("What it's worth").fill(value);
   await page.getByRole("button", { name: "Save asset" }).click();
   await expect(page.getByTestId("asset-slide-over")).not.toBeVisible();
@@ -175,6 +325,26 @@ async function createAsset(
 
 async function openRowMenu(page: Page) {
   await page.getByTestId("asset-row-menu").click();
+}
+
+async function createStockAsset(page: Page, symbol: string, quantity: string) {
+  await page.getByTestId("add-asset-button").click();
+  const form = page.getByTestId("add-asset-form");
+  await form.getByLabel("Type").click();
+  await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+  await page.getByTestId("stock-symbol-trigger").click();
+  await page.getByTestId("stock-symbol-search").fill(symbol);
+  await page
+    .getByTestId("stock-symbol-option")
+    .filter({ hasText: symbol })
+    .first()
+    .click();
+  await expect(page.getByTestId("stock-symbol-trigger")).toContainText(symbol);
+
+  await form.getByLabel("How many shares").fill(quantity);
+  await page.getByRole("button", { name: "Save asset" }).click();
+  await expect(page.getByTestId("asset-slide-over")).not.toBeVisible();
 }
 
 test.describe("Assets Page", () => {
@@ -403,5 +573,287 @@ test.describe("Assets Page", () => {
     // Inline value edit should still work
     await page.getByTestId("asset-value").click();
     await expect(page.getByTestId("asset-value-input")).toBeVisible();
+  });
+});
+
+test.describe("Stock assets", () => {
+  test.beforeEach(async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/wealth/assets");
+  });
+
+  test("the stock branch of the form replaces the value field with a symbol search and a quantity", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+
+    // A plain asset is still priced by hand.
+    await expect(form.getByLabel("What it's worth")).toBeVisible();
+    await expect(page.getByTestId("stock-symbol-trigger")).toHaveCount(0);
+
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+    await expect(page.getByTestId("stock-symbol-trigger")).toBeVisible();
+    await expect(form.getByLabel("How many shares")).toBeVisible();
+    // Manual price entry is not offered for a stock: the value is derived.
+    await expect(form.getByLabel("What it's worth")).toHaveCount(0);
+    await expect(page.getByTestId("stock-value-note")).toBeVisible();
+  });
+
+  test("a symbol search needs two characters before it offers anything", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+    await page.getByTestId("stock-symbol-trigger").click();
+    await expect(page.getByTestId("stock-symbol-message")).toContainText(
+      "Type at least two characters"
+    );
+    await expect(page.getByTestId("stock-symbol-option")).toHaveCount(0);
+
+    await page.getByTestId("stock-symbol-search").fill("SHOP");
+    await expect(
+      page.getByTestId("stock-symbol-option").filter({ hasText: "SHOP.TO" })
+    ).toBeVisible();
+  });
+
+  test("saving a stock without a symbol or a quantity reports both", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+    await page.getByRole("button", { name: "Save asset" }).click();
+
+    await expect(page.getByTestId("stock-quantity-error")).toContainText(
+      "Enter how many shares you hold"
+    );
+    await expect(page.getByTestId("asset-slide-over")).toBeVisible();
+
+    await form.getByLabel("How many shares").fill("2.5");
+    await page.getByRole("button", { name: "Save asset" }).click();
+    await expect(page.getByTestId("stock-symbol-error")).toContainText(
+      "Pick a stock first"
+    );
+  });
+
+  test("adding a stock shows its symbol, shares, price and derived value", async ({
+    page,
+  }) => {
+    await createStockAsset(page, "SHOP.TO", "2.5");
+
+    const row = page.getByTestId("asset-row");
+    await expect(row).toContainText("Shopify Inc.");
+    await expect(page.getByTestId("stock-row-detail")).toContainText("SHOP.TO");
+    await expect(page.getByTestId("stock-row-detail")).toContainText("2.5 shares");
+    await expect(page.getByTestId("stock-row-price")).toContainText("$123.45");
+    // 2.5 shares x $123.45 = $308.63, derived by the backend and never typed in.
+    await expect(page.getByTestId("stock-asset-value")).toContainText("$308.63");
+    await expect(page.getByTestId("assets-total")).toContainText("$308.63");
+  });
+
+  test("a stock's value is not inline-editable, unlike a plain asset's", async ({
+    page,
+  }) => {
+    await createStockAsset(page, "SHOP.TO", "2.5");
+
+    await expect(page.getByTestId("stock-asset-value")).toBeVisible();
+    await expect(page.getByTestId("asset-value")).toHaveCount(0);
+  });
+
+  test("a stock that never prices shows Price unavailable and a zero value", async ({
+    page,
+  }) => {
+    await createStockAsset(page, "OFFLN.TO", "4");
+
+    await expect(page.getByTestId("asset-stale-badge")).toContainText(
+      "Price unavailable"
+    );
+    await expect(page.getByTestId("stock-asset-value")).toContainText("$0.00");
+  });
+
+  test("the edit form locks a stock's type and edits its quantity instead", async ({
+    page,
+  }) => {
+    await createStockAsset(page, "SHOP.TO", "2.5");
+
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
+
+    const editForm = page
+      .getByTestId("edit-asset-slide-over")
+      .getByTestId("edit-asset-form");
+    await expect(editForm.getByTestId("edit-asset-type-locked")).toBeDisabled();
+    await expect(editForm.getByTestId("edit-asset-type-locked")).toHaveValue(
+      "Stock"
+    );
+
+    const quantity = editForm.getByLabel("How many shares");
+    await expect(quantity).toHaveValue("2.5");
+    await quantity.fill("5");
+    await editForm.getByRole("button", { name: "Save" }).click();
+
+    await expect(page.getByText("Changes saved successfully").last()).toBeVisible();
+    await expect(page.getByTestId("stock-row-detail")).toContainText("5 shares");
+    // 5 x $123.45 = $617.25 — recomputed from the cached price, with no network call.
+    await expect(page.getByTestId("stock-asset-value")).toContainText("$617.25");
+  });
+
+  test("the Refresh button only appears once a stock exists, and reports a per-symbol failure", async ({
+    page,
+  }) => {
+    await expect(page.getByTestId("refresh-stock-prices-button")).toHaveCount(0);
+
+    await createStockAsset(page, "SHOP.TO", "2.5");
+    await expect(page.getByTestId("refresh-stock-prices-button")).toBeVisible();
+
+    await page.getByTestId("refresh-stock-prices-button").click();
+    await expect(page.getByText("Prices updated").last()).toBeVisible();
+
+    await createStockAsset(page, "OFFLN.TO", "1");
+    await page.getByTestId("refresh-stock-prices-button").click();
+    await expect(
+      page.getByText(/Could not update OFFLN\.TO/).last()
+    ).toBeVisible();
+    // The holding that DID price keeps its value on screen. Scoped to its own row, because the
+    // list is sorted by name and "Offline Holdings" sorts first.
+    await expect(
+      page
+        .getByTestId("asset-row")
+        .filter({ hasText: "SHOP.TO" })
+        .getByTestId("stock-asset-value")
+    ).toContainText("$308.63");
+  });
+});
+
+test.describe("Asset form edge cases", () => {
+  test.beforeEach(async ({ page }) => {
+    await setupTauriMock(page);
+    await page.goto("/wealth/assets");
+  });
+
+  // The stock branch's quantity and symbol are required, but only WHILE the type is stock. A
+  // leftover validation on a hidden field would block the plain-asset path with no visible error.
+  test("switching away from Stock still saves a plain asset", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+    await expect(page.getByTestId("stock-symbol-trigger")).toBeVisible();
+
+    // Leave the stock fields entirely untouched and switch back.
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Vehicle", exact: true }).click();
+    await expect(page.getByTestId("stock-symbol-trigger")).toHaveCount(0);
+
+    await form.getByLabel("Name").fill("Old Car");
+    await form.getByLabel("What it's worth").fill("15000");
+    await page.getByRole("button", { name: "Save asset" }).click();
+
+    await expect(page.getByTestId("asset-slide-over")).not.toBeVisible();
+    const row = page.getByTestId("asset-row");
+    await expect(row).toContainText("Old Car");
+    await expect(row).toContainText("Vehicle");
+    await expect(page.getByTestId("asset-value")).toContainText("$15,000.00");
+  });
+
+  // The popover lives inside the form element, so an unguarded Enter submits a half-filled asset.
+  test("Enter in the symbol search does not submit the form", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+    await page.getByTestId("stock-symbol-trigger").click();
+    const search = page.getByTestId("stock-symbol-search");
+    await search.fill("SHOP");
+    await search.press("Enter");
+
+    await expect(page.getByTestId("asset-slide-over")).toBeVisible();
+    await expect(page.getByTestId("asset-row")).toHaveCount(0);
+  });
+
+  test("a comma decimal separator is accepted as a share count", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+    await page.getByTestId("stock-symbol-trigger").click();
+    await page.getByTestId("stock-symbol-search").fill("SHOP.TO");
+    await page.getByTestId("stock-symbol-option").first().click();
+    await form.getByLabel("How many shares").fill("2,5");
+    await page.getByRole("button", { name: "Save asset" }).click();
+
+    await expect(page.getByTestId("asset-slide-over")).not.toBeVisible();
+    await expect(page.getByTestId("stock-row-detail")).toContainText("2.5 shares");
+    await expect(page.getByTestId("stock-asset-value")).toContainText("$308.63");
+  });
+
+  test("a type-only edit moves a plain asset into its new type group", async ({
+    page,
+  }) => {
+    await createAsset(page, "Workshop", "Real estate", "80000");
+    await expect(page.getByTestId("asset-row")).toContainText("Real estate");
+
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
+    const editForm = page
+      .getByTestId("edit-asset-slide-over")
+      .getByTestId("edit-asset-form");
+
+    await editForm.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Business", exact: true }).click();
+    await editForm.getByRole("button", { name: "Save" }).click();
+
+    await expect(page.getByText("Changes saved successfully").last()).toBeVisible();
+    await expect(page.getByTestId("asset-row")).toContainText("Business");
+    await expect(page.getByTestId("asset-type-group")).toContainText("Business");
+  });
+
+  // `stock` is never offered for a hand-valued asset: the backend refuses it either way.
+  test("the edit form does not offer Stock as a type for a plain asset", async ({
+    page,
+  }) => {
+    await createAsset(page, "Workshop", "Real estate", "80000");
+
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
+    const editForm = page
+      .getByTestId("edit-asset-slide-over")
+      .getByTestId("edit-asset-form");
+
+    await editForm.getByLabel("Type").click();
+    await expect(
+      page.getByRole("option", { name: "Business", exact: true })
+    ).toBeVisible();
+    await expect(
+      page.getByRole("option", { name: "Stock", exact: true })
+    ).toHaveCount(0);
+  });
+
+  test("a freshly priced stock shows an As of time and carries no stale badge", async ({
+    page,
+  }) => {
+    await createStockAsset(page, "SHOP.TO", "2.5");
+
+    const row = page.getByTestId("asset-row");
+    await expect(row).toContainText(/As of/);
+    await expect(page.getByTestId("asset-stale-badge")).toHaveCount(0);
+    await expect(row).not.toContainText("Price unavailable");
   });
 });

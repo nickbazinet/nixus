@@ -116,20 +116,7 @@ pub fn delete_asset(
 }
 
 fn get_asset_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
-    conn.query_row(
-        "SELECT id, name, asset_type, value_cents, created_at, updated_at FROM passive_assets WHERE id = ?1",
-        rusqlite::params![id],
-        |row| {
-            Ok(PassiveAsset {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                asset_type: row.get(2)?,
-                value_cents: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-            })
-        },
-    )
-    .ok()
-    .and_then(|a| serde_json::to_string(&a).ok())
+    asset_db::get_asset_by_id(conn, id)
+        .ok()
+        .and_then(|asset| serde_json::to_string(&asset).ok())
 }

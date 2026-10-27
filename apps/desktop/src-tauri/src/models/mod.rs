@@ -177,6 +177,55 @@ pub struct PassiveAsset {
     pub value_cents: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Present exactly when `asset_type` is `"stock"`. `value_cents` above stays the single
+    /// base-currency number net worth, projections and the AI read, so nothing downstream has to
+    /// learn about this field.
+    pub stock: Option<StockHolding>,
+}
+
+/// The market side of a `stock` asset: what is held, and the last price it was valued at.
+///
+/// `quantity_micros` is 1e-6 shares and `fx_rate_to_base_micros` is 1e-6 of base currency per unit
+/// of `currency` — scaled integers, because a REAL column is how a share count silently stops
+/// round-tripping. `currency`, `last_price_cents`, `last_price_at` and `fx_rate_to_base_micros` are
+/// all NULL together until the first successful quote.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockHolding {
+    pub passive_asset_id: i64,
+    pub symbol: String,
+    pub exchange: String,
+    pub currency: Option<String>,
+    pub quantity_micros: i64,
+    pub last_price_cents: Option<i64>,
+    pub last_price_at: Option<String>,
+    pub fx_rate_to_base_micros: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateStockAssetInput {
+    pub symbol: String,
+    pub name: String,
+    pub exchange: String,
+    pub quantity_micros: i64,
+}
+
+/// One hit from the provider's symbol search. No currency: Yahoo's search endpoint does not report
+/// one, and inventing a default here is what would make a USD holding silently value as CAD.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockSearchResult {
+    pub symbol: String,
+    pub name: String,
+    pub exchange: String,
+}
+
+/// Per-symbol outcome of one refresh pass, so a partial failure is reportable rather than fatal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockRefreshResult {
+    pub asset_id: i64,
+    pub symbol: String,
+    pub ok: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
