@@ -30,7 +30,11 @@ async function setupTauriMock(page: Page) {
 
     // The fixture Yahoo: SHOP.TO prices in CAD, OFFLN.TO never prices, so the offline and
     // partial-failure rows of the matrix are both reachable from the UI.
-    const PRICES: Record<string, number> = { "SHOP.TO": 12345, "BNS.TO": 7000 };
+    // VOO quotes in USD and converts at 1.4 CAD, so the row's price and its CAD value differ.
+    const PRICES: Record<string, number> = { "SHOP.TO": 12345, "BNS.TO": 7000, VOO: 70720 };
+    const QUOTE_FX: Record<string, { currency: string; fxMicros: number }> = {
+      VOO: { currency: "USD", fxMicros: 1400000 },
+    };
 
     // Real IPC SERIALIZES every response, so the frontend can never hold a reference into the
     // backend's own store. Handing out the live objects instead lets an in-place mutation reach
@@ -46,15 +50,16 @@ async function setupTauriMock(page: Page) {
       if (!holding) return false;
       const price = PRICES[holding.symbol];
       if (price === undefined) return false;
+      const quote = QUOTE_FX[holding.symbol] ?? { currency: "CAD", fxMicros: 1000000 };
       holding.last_price_cents = price;
-      holding.currency = "CAD";
-      holding.fx_rate_to_base_micros = 1000000;
+      holding.currency = quote.currency;
+      holding.fx_rate_to_base_micros = quote.fxMicros;
       holding.last_price_at = new Date()
         .toISOString()
         .replace("T", " ")
         .slice(0, 19);
       asset.value_cents = Math.round(
-        (holding.quantity_micros * price) / 1000000
+        (holding.quantity_micros * price * quote.fxMicros) / 1000000 / 1000000
       );
       return true;
     };
@@ -127,6 +132,10 @@ async function setupTauriMock(page: Page) {
                 { symbol: "SHOP.TO", name: "Shopify Inc.", exchange: "Toronto" },
                 { symbol: "BNS.TO", name: "Bank of Nova Scotia", exchange: "Toronto" },
                 { symbol: "OFFLN.TO", name: "Offline Holdings", exchange: "Toronto" },
+                { symbol: "RY.TO", name: "Royal Bank of Canada", exchange: "Toronto" },
+                { symbol: "ENB.TO", name: "Enbridge Inc.", exchange: "Toronto" },
+                { symbol: "CNR.TO", name: "Canadian National Railway", exchange: "Toronto" },
+                { symbol: "VOO", name: "Vanguard S&P 500 ETF", exchange: "NYSEArca" },
               ].filter(
                 (hit) =>
                   hit.symbol.toLowerCase().includes(query.toLowerCase()) ||
@@ -622,6 +631,38 @@ test.describe("Stock assets", () => {
     ).toBeVisible();
   });
 
+  test("a long result list scrolls instead of stacking its rows on top of each other", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+    await page.getByTestId("stock-symbol-trigger").click();
+    await page.getByTestId("stock-symbol-search").fill(".TO");
+
+    const options = page.getByTestId("stock-symbol-option");
+    await expect(options).toHaveCount(6);
+
+    const boxes = await options.evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const rect = node.getBoundingClientRect();
+        return {
+          top: rect.top,
+          bottom: rect.bottom,
+          height: rect.height,
+          contentHeight: node.scrollHeight,
+        };
+      })
+    );
+    for (const box of boxes) {
+      expect(box.height).toBeGreaterThanOrEqual(box.contentHeight - 1);
+    }
+    for (let i = 1; i < boxes.length; i++) {
+      expect(boxes[i].top).toBeGreaterThanOrEqual(boxes[i - 1].bottom - 0.5);
+    }
+  });
+
   test("saving a stock without a symbol or a quantity reports both", async ({
     page,
   }) => {
@@ -657,6 +698,22 @@ test.describe("Stock assets", () => {
     // 2.5 shares x $123.45 = $308.63, derived by the backend and never typed in.
     await expect(page.getByTestId("stock-asset-value")).toContainText("$308.63");
     await expect(page.getByTestId("assets-total")).toContainText("$308.63");
+  });
+
+  test("a USD stock names its quote currency so it is not read as CAD", async ({
+    page,
+  }) => {
+    await createStockAsset(page, "VOO", "250");
+
+    // US$707.20 x 250 x 1.4 CAD/USD = $247,520.00: the "US$" is what explains the difference.
+    await expect(page.getByTestId("stock-row-price")).toHaveText("US$707.20");
+    await expect(page.getByTestId("stock-asset-value")).toContainText("$247,520.00");
+  });
+
+  test("a stock quoted in CAD keeps the plain $ of every other amount", async ({ page }) => {
+    await createStockAsset(page, "SHOP.TO", "2.5");
+
+    await expect(page.getByTestId("stock-row-price")).toHaveText("$123.45");
   });
 
   test("a stock's value is not inline-editable, unlike a plain asset's", async ({

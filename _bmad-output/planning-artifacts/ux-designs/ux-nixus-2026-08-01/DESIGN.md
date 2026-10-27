@@ -2,7 +2,7 @@
 name: Nixus
 description: Visual identity for Nixus — a local-first desktop app that removes the upkeep from tracking your money. Direction A "Quiet Ledger". Tailwind v4 + @base-ui/react via @nkbaz/shared/ui; this DESIGN.md defines the token layer that was previously absent, plus the brand-layer deltas on top of it.
 status: final
-updated: 2026-08-27
+updated: 2026-10-26
 sources:
   - _bmad-output/planning-artifacts/product-brief-Nixus-2026-03-14.md
   - _bmad-output/planning-artifacts/prd.md
@@ -26,13 +26,13 @@ colors:
   hover: '#FBF9F6'
   ink-disabled: '#9C938A'
   rail-ink: '#71685F'
-  rail-on: '#E7E2F7'
-  rail-on-ink: '#5D56C5'
-  focus-ring: '#5B54D6'
-  brand: '#5B54D6'
-  brand-ink: '#4A43BE'
-  brand-on: '#FFFFFF'
-  brand-soft: '#EFEDFB'
+  rail-on: '#EDF0FD'
+  rail-on-ink: '#3A4FB8'
+  focus-ring: '#5E78ED'
+  brand: '#5E78ED'
+  brand-ink: '#3A4FB8'
+  brand-on: '#0B1020'
+  brand-soft: '#EDF0FD'
   good: '#15803D'
   good-bg: '#E8F3EA'
   good-ink: '#14672F'
@@ -69,13 +69,13 @@ colors:
   hover-dark: '#282419'
   ink-disabled-dark: '#6F685E'
   rail-ink-dark: '#8E8271'
-  rail-on-dark: '#2E2A44'
-  rail-on-ink-dark: '#928AEF'
-  focus-ring-dark: '#BDB8F5'
-  brand-dark: '#A5A0F0'
-  brand-ink-dark: '#BDB8F5'
-  brand-on-dark: '#1E1B36'
-  brand-soft-dark: '#2A2640'
+  rail-on-dark: '#1C2547'
+  rail-on-ink-dark: '#B4C0FA'
+  focus-ring-dark: '#8EA2F5'
+  brand-dark: '#5E78ED'
+  brand-ink-dark: '#B4C0FA'
+  brand-on-dark: '#0B1020'
+  brand-soft-dark: '#1C2547'
   good-dark: '#4ADE80'
   good-bg-dark: '#1B2E20'
   good-ink-dark: '#6EE79A'
@@ -97,71 +97,71 @@ colors:
   chart-7-dark: '#B7AA50'
   chart-8-dark: '#968373'
   # ---- Identity (mode-independent) ----
-  logo-stop-1: '#818CF8'
-  logo-stop-2: '#A78BFA'
-  logo-stop-3: '#F472B6'
+  logo-stop-1: '#5E78ED'
+  logo-stop-2: '#9978ED'
+  logo-stop-3: '#DE50A4'
 typography:
   display:
-    fontFamily: 'Inter'
+    fontFamily: 'Poppins'
     fontSize: 34px
     fontWeight: '600'
     lineHeight: '1.05'
     letterSpacing: -0.03em
   stat:
-    fontFamily: 'Inter'
+    fontFamily: 'Poppins'
     fontSize: 26px
     fontWeight: '600'
     lineHeight: '1.1'
     letterSpacing: -0.025em
   h1:
-    fontFamily: 'Inter'
+    fontFamily: 'Poppins'
     fontSize: 20px
-    fontWeight: '650'
+    fontWeight: '600'
     lineHeight: '1.25'
     letterSpacing: -0.02em
   h2:
-    fontFamily: 'Inter'
+    fontFamily: 'Poppins'
     fontSize: 16px
-    fontWeight: '650'
+    fontWeight: '600'
     lineHeight: '1.3'
     letterSpacing: -0.015em
   h3:
-    fontFamily: 'Inter'
+    fontFamily: 'Poppins'
     fontSize: 14px
-    fontWeight: '650'
+    fontWeight: '600'
     lineHeight: '1.35'
     letterSpacing: -0.012em
   body:
-    fontFamily: 'Inter'
+    fontFamily: 'Nunito'
     fontSize: 14px
     fontWeight: '400'
     lineHeight: '1.5'
   label:
-    fontFamily: 'Inter'
+    fontFamily: 'Nunito'
     fontSize: 13.5px
     fontWeight: '550'
     lineHeight: '1.4'
   caption:
-    fontFamily: 'Inter'
+    fontFamily: 'Nunito'
     fontSize: 13px
     fontWeight: '400'
     lineHeight: '1.45'
   column-head:
-    fontFamily: 'Inter'
+    fontFamily: 'Nunito'
     fontSize: 13px
-    fontWeight: '650'
+    fontWeight: '600'
     lineHeight: '1.35'
     letterSpacing: 0.01em
     note: 'Table column heads. Sentence case, NOT uppercase — these are scanned rapidly and uppercase costs letter-shape discrimination for the 40s-50s primary user.'
   micro:
-    fontFamily: 'Inter'
+    fontFamily: 'Nunito'
     fontSize: 12px
-    fontWeight: '650'
+    fontWeight: '600'
     lineHeight: '1.35'
     letterSpacing: 0.045em
     note: 'Uppercase. Badge text and short section eyebrows ONLY, max ~20 chars. Never column heads, never axis ticks, never prose.'
   money:
-    fontFamily: 'Inter'
+    fontFamily: 'Nunito'
     fontWeight: '600'
     note: 'Not a size — a numeric treatment. font-variant-numeric tabular-nums + font-feature-settings "tnum" 1, applied at whatever role size the context calls for.'
 rounded:
@@ -202,7 +202,7 @@ marketing-web:
   tap-min: 44px
   header-h: '56px / 64px from 640px / 80px from 1024px'
 marketing-colors:
-  note: 'apps/web light mode only, under Warm Editorial. Scoped to marketing routes; never consumed by apps/desktop, which keeps the Quiet Ledger {colors} block above unchanged in both modes. Radii reuse {rounded.*} as-is; type roles reuse {typography.*} Inter roles as-is — no new radius or font scale is introduced.'
+  note: 'apps/web light mode only, under Warm Editorial. Scoped to marketing routes; never consumed by apps/desktop, which keeps the Quiet Ledger {colors} block above unchanged in both modes. Radii reuse {rounded.*} as-is; type roles reuse {typography.*} Poppins/Nunito roles as-is — no new radius or font scale is introduced.'
   page: '#FAF8F5'
   card: '#FFFFFF'
   chrome: '#F5F2EC'
@@ -212,10 +212,48 @@ marketing-colors:
   line: '#E8E3DA'
   line-strong: '#D8D1C5'
   hover: '#FBF9F6'
-  brand: '#5B54D6'
-  brand-ink: '#4A43BE'
-  brand-soft: '#EFEDFB'
-  focus-ring: '#5B54D6'
+  brand: '#5E78ED'
+  brand-ink: '#3A4FB8'
+  brand-soft: '#EDF0FD'
+  focus-ring: '#5E78ED'
+marketing-type:
+  note: 'apps/web only. Authoritative values in apps/web/src/styles/main.css. Display headings use Poppins, the same face as the app's titles; Nunito carries every word a visitor reads (body, lead, label, caption, nav, buttons, money). Self-hosted via @fontsource/poppins and @fontsource-variable/nunito; never a CDN font.'
+  font-display: '"Poppins", "Nunito Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  display-xl:
+    fontSize: 'clamp(2.25rem, 1.5rem + 3.75vw, 3.5rem)'
+    fontWeight: '500'
+    lineHeight: '1.06'
+    letterSpacing: -0.015em
+  display-l:
+    fontSize: 'clamp(1.875rem, 1.25rem + 3.125vw, 3rem)'
+    fontWeight: '500'
+    lineHeight: '1.12'
+    letterSpacing: -0.012em
+  display-m:
+    fontSize: 'clamp(1.5rem, 1.0714rem + 2.1429vw, 2.125rem)'
+    fontWeight: '500'
+    lineHeight: '1.18'
+    letterSpacing: -0.01em
+    note: 'Showcase-row rank. The 34px ceiling is {typography.display} own size, so no new number enters the system.'
+marketing-bands:
+  note: 'apps/web only. Named section surfaces, so a long landing page carries a deliberate scroll rhythm instead of improvised background utilities. Dark dereferences the spine; light overrides tint only.'
+  band-paper: '{marketing-colors.page}'
+  band-tint: '#EFEAE1'
+  band-deep: '{marketing-colors.brand-soft}'
+marketing-glow:
+  note: 'apps/web dark mode only. Authoritative values in apps/web/src/styles/main.css. Deeper and more saturated than the logo stops, NOT the same colours dimmed — see "Dark-mode glows" below. Light mode keeps the logo stops themselves.'
+  glow-1: '#3F58D6'
+  glow-2: '#7C3AED'
+  glow-3: '#C42AB0'
+  scrim: 'glow-1 at 16% over {colors.bg-dark}, via color-mix'
+  wash-alpha: '26% on section bands; hero uses its own measured stops'
+marketing-surfaces:
+  note: 'apps/web only, via local classes. These DIVERGE from {rounded.*} and the shadow: none rule, deliberately — see "Marketing register diverges from the product register" below. The shared primitives and the desktop app are untouched.'
+  radius-card: 12px
+  radius-panel: 16px
+  shadow-card: '0 1px 2px rgba(58,44,24,.04), 0 4px 12px -6px rgba(58,44,24,.10)'
+  shadow-card-dark: '0 1px 2px rgba(0,0,0,.30), 0 4px 14px -6px rgba(0,0,0,.45)'
+  container: '1280px, widening to 1440px from 1536px'
 components:
   card:
     background: '{colors.card}'
@@ -228,7 +266,7 @@ components:
     color: '{colors.ink}'
     numeric: 'tabular'
   button-primary:
-    background: '{colors.brand}'
+    background: '{components.logo-gradient}'
     foreground: '{colors.brand-on}'
     radius: '{rounded.md}'
     typography: '{typography.label}'
@@ -367,7 +405,7 @@ The register is a **well-set financial statement**, not a developer dashboard. W
 
 Two things this identity deliberately corrects.
 
-**First, the app now looks like its own logo.** The Nixus mark is a gradient — `{colors.logo-stop-1}` periwinkle through `{colors.logo-stop-2}` violet to `{colors.logo-stop-3}` pink. The shipped app used flat indigo-600 on slate and never touched that warmth anywhere. `{colors.brand}` is the logo's periwinkle darkened just enough to pass AA on paper, and the chart ramp walks the logo's own gradient. Adopting the identity you already own is simultaneously the conservative choice and the corrective one.
+**First, the app now looks like its own logo.** The Nixus mark is a gradient — `{colors.logo-stop-1}` periwinkle through `{colors.logo-stop-2}` violet to `{colors.logo-stop-3}` pink. The shipped app used flat indigo-600 on slate and never touched that warmth anywhere. `{colors.brand}` is the logo's first stop (`#5E78ED`) used as-is. At 3.9:1 on white it cannot carry a white label, so `{colors.brand-on}` is a near-black ink (`#0B1020`, 4.9:1) in both modes, and text-sized brand colour on paper uses `{colors.brand-ink}`. The primary button fills with the full logo gradient (see `{components.logo-gradient}`), and the chart ramp walks the logo's own gradient. Adopting the identity you already own is simultaneously the conservative choice and the corrective one.
 
 **Second, "teal" is retired.** Three artifacts disagreed on the accent — the prior UX spec said teal, `tokens.css` said indigo, the logo said periwinkle-to-pink. That disagreement is the root cause of roughly 150 raw Tailwind palette classes in the codebase: with no authoritative answer, contributors reached for literal colors. **The logo is the source of truth.** There is now exactly one answer.
 
@@ -431,11 +469,11 @@ Windows is a first-class platform and `forced-colors: active` is **not** optiona
 
 Requirements: system-color-mapped borders on cards, badges, and chart segments; explicit `forced-color-adjust` opt-outs only where a fill is semantically load-bearing; and **verification in a real Windows HCM session, not Chromium's emulation.** HCM users skew older and low-vision, which is the primary persona.
 
-Avoid: gradients on surfaces, any raw Tailwind palette class, more than eight chart steps, color as the only carrier of meaning.
+Avoid: gradients on surfaces and cards (the primary button fill is the one exception), any raw Tailwind palette class, more than eight chart steps, color as the only carrier of meaning.
 
 ## Typography
 
-**Inter throughout. No monospace for money, ever.**
+**Poppins for titles and headers, Nunito for sub-titles, body and everything else. No monospace for money, ever.** Poppins carries `{typography.display}`, `{typography.stat}` and `{typography.h1}`–`{typography.h3}` (and `h1`–`h3` elements) at weights 500–700 (heading roles use 600, since Poppins has no 650); Nunito (variable) carries `{typography.body}`, `{typography.label}`, `{typography.caption}`, `{typography.column-head}`, `{typography.micro}` and `{typography.money}`. Both are bundled locally from `@fontsource`.
 
 The shipped app set every dollar figure in JetBrains Mono — 62 usages across 39 files — to buy column alignment. `{typography.money}` buys the same alignment with tabular figures and costs nothing in register. A code font on a mortgage payment is the strongest single mis-signal the product sends to someone who is nervous about money.
 
@@ -486,19 +524,59 @@ Four rules bind the tier, and they are stated here so the marketing components h
 
 **Scope: `apps/web` marketing routes, light mode only.** This is a bounded, marketing-only palette and exception set layered on top of everything above — it does not touch the desktop app, does not touch web dark mode, and does not touch any status, chart, focus-ring color rule, or forced-colors requirement stated elsewhere in this spine. Where this section is silent, the rules above still govern.
 
-**Exact values** (frontmatter `{marketing-colors}`): light page `{marketing-colors.page}` `#FAF8F5`, card `{marketing-colors.card}` `#FFFFFF`, chrome/band `{marketing-colors.chrome}` `#F5F2EC`, ink `{marketing-colors.ink}` `#1C1917`, dim ink `{marketing-colors.ink-dim}` `#6B635A`, faint ink `{marketing-colors.ink-faint}` `#71685F`, line `{marketing-colors.line}` `#E8E3DA`, line-strong `{marketing-colors.line-strong}` `#D8D1C5`, hover `{marketing-colors.hover}` `#FBF9F6`, brand `{marketing-colors.brand}` `#5B54D6`, brand ink `{marketing-colors.brand-ink}` `#4A43BE`, brand soft `{marketing-colors.brand-soft}` `#EFEDFB`, focus ring `{marketing-colors.focus-ring}` `#5B54D6`.
+**Exact values** (frontmatter `{marketing-colors}`): light page `{marketing-colors.page}` `#FAF8F5`, card `{marketing-colors.card}` `#FFFFFF`, chrome/band `{marketing-colors.chrome}` `#F5F2EC`, ink `{marketing-colors.ink}` `#1C1917`, dim ink `{marketing-colors.ink-dim}` `#6B635A`, faint ink `{marketing-colors.ink-faint}` `#71685F`, line `{marketing-colors.line}` `#E8E3DA`, line-strong `{marketing-colors.line-strong}` `#D8D1C5`, hover `{marketing-colors.hover}` `#FBF9F6`, brand `{marketing-colors.brand}` `#5E78ED`, brand ink `{marketing-colors.brand-ink}` `#3A4FB8`, brand soft `{marketing-colors.brand-soft}` `#EDF0FD`, focus ring `{marketing-colors.focus-ring}` `#5E78ED`.
 
-**Radii and type are inherited unchanged.** Marketing surfaces reuse `{rounded.sm}`/`{rounded.md}`/`{rounded.lg}`/`{rounded.xl}`/`{rounded.full}` exactly as defined in Shapes, and Inter throughout with the existing `{typography.*}` roles (including tabular `{typography.money}`) — this section adds no radius scale and no font.
+**Radii and type are inherited unchanged.** Marketing surfaces reuse `{rounded.sm}`/`{rounded.md}`/`{rounded.lg}`/`{rounded.xl}`/`{rounded.full}` exactly as defined in Shapes, and Poppins/Nunito throughout with the existing `{typography.*}` roles (including tabular `{typography.money}`) — this section adds no radius scale and no font.
 
 **Three bounded exceptions to the rules above, marketing-only:**
 
 1. **Asymmetry.** Asymmetric composition is permitted **only** inside marketing hero and showcase compositions (for example the homepage AI-demo hero and beta-page product showcases). It is not permitted in ordinary card grids, forms, or list layouts, on marketing or elsewhere — those keep the Layout & Spacing rules above.
-2. **Ambient logo light.** The logo gradient may render as a **low-alpha ambient light** behind a marketing hero visual, in light mode only. It may **never** fill a card, button, or any other component surface — `{components.logo-gradient}`'s existing rule ("never on a surface, card, button, or chart") is unchanged; this is a narrowly scoped hero-background addition to where the gradient is *permitted to glow from behind*, not a relaxation of where it may render as a fill.
+2. **Ambient logo light.** The logo gradient may render as a **low-alpha ambient light** behind a marketing hero visual, in light mode only. It may **never** fill a card or any other component surface (the primary button fill is the one component exception, per `{components.logo-gradient}`); this is a narrowly scoped hero-background addition to where the gradient is *permitted to glow from behind*, not a relaxation of where it may render as a fill.
 3. **Product-imagery shadow.** A single warm shadow is permitted, and only inside `ProductFrame` / AI-demo imagery on marketing pages, with the exact recipe `0 1px 2px rgba(58,44,24,.05), 0 14px 30px -16px rgba(58,44,24,.18)`. This recipe is fixed inside the component; **no call site may override it.** The `shadow: none` rule for ordinary cards (see Elevation & Depth) is unchanged everywhere else, including on marketing pages outside `ProductFrame`/AI-demo imagery.
 
 **Everything else stays load-bearing on marketing routes too:** desktop app tokens and behavior, web dark mode, status-color family, chart-color rules, `{components.focus-ring}` treatment, and `forced-colors: active` handling are all unaffected by this section and are not to be weakened by it.
 
+### Three further marketing-only exceptions (2026-10-20)
+
+Added when the homepage was rebuilt around the four-stage ladder. Same scope discipline as the three above: `apps/web` marketing routes only, authoritative values in `apps/web/src/styles/main.css`, nothing here reaches the desktop app.
+
+**4. Poppins for display headings.** `{marketing-type.font-display}` — Poppins, the same face the app uses for titles — carries `{marketing-type.display-xl}`, `{marketing-type.display-l}` and `{marketing-type.display-m}`. Nunito still sets every word a visitor *reads* — body, lead, label, caption, nav, buttons, and `{typography.money}`.
+
+It is **self-hosted** from `@fontsource/poppins` and `@fontsource-variable/nunito`, because the existing Do/Don't ("Bundle woff2 fonts locally") is not relaxed by this — a local-first product whose landing page fetches a typeface from a CDN is arguing against itself. The display roles carry `font-variant-numeric: lining-nums`.
+
+**5. `{marketing-type.display-m}`, a third display rank.** The stage showcase rows and the section intro above them were both set in `display-l`, which told a reader they were peers. The ceiling is **34px — `{typography.display}`'s own value** — so this adds a *role*, not a number: the "arbitrary sizes are banned" rule is intact.
+
+**6. Named section bands.** `{marketing-bands}` gives the page three surfaces — `band-paper`, `band-tint`, `band-deep` — which alternate strictly so no two adjacent sections share a tone. Before this, four sections improvised with `bg-accent/40`, `bg-accent/30`, `bg-background` and `dark:bg-background` in three different combinations, so distant bands differed while adjacent ones matched, and dark mode resolved every band back to the page colour and had no rhythm at all.
+
+`band-tint` is a **literal in light mode**, and it is the one value in this spine that does not dereference another token. It began as `{marketing-colors.chrome}`, measured a 2% luminance step off the page, and rendered as one continuous scroll with hairlines in it. `#EFEAE1` is not a new hue: it is `{colors.track}` from this document's own warm-direction frontmatter, which the shipped `tokens.css` never adopted because the dark palette went cool — so the value was already sanctioned and simply had no variable to live in. `{marketing-colors.chrome}` keeps its own job on header and chrome surfaces.
+
+`band-deep` is `{marketing-colors.brand-soft}` and appears **exactly once**, on the closing CTA band. That is a tint on the band which *contains* the primary action, not a decorative use of brand: `{colors.brand}` itself still only ever fills the button inside it, so "brand means brand and action" is unchanged. One brand-filled button per page beat also holds — the founding-user CTA is `{components.button-ghost}` emphasis for exactly this reason.
+
+### Marketing register diverges from the product register (2026-10-20)
+
+The three exceptions above stay inside the spine's rules. `{marketing-surfaces}` does not, and the divergence is the decision rather than an oversight.
+
+**The reasoning.** This spine is a *product* spine. "Crisp, not soft — large radii read 'consumer app'; a financial statement is squarer" and `shadow: none` are both correct for a dense working surface someone stares at for an hour with real money on it, and both are stated with that register in mind. The marketing site has the opposite job: it is the entry point for every prospective user, it contains no numbers to protect, and its first task is making a nervous spreadsheet-keeper feel this is approachable. A 7px radius with no elevation across eleven bands reads as technical, which is the correct signal inside the app and the wrong one on the way in.
+
+Measured against the two references the brand is being judged by — Monarch and Quicken Simplifi — both run 12-20px radii and soft card elevation on every marketing surface. Matching the app's 7px was what made the feature cards read as a spec sheet.
+
+**What diverges, and how far.** `{marketing-surfaces.radius-card}` 12px and `{marketing-surfaces.radius-panel}` 16px supersede `{rounded.lg}`/`{rounded.xl}` **on marketing content surfaces only**, and `{marketing-surfaces.shadow-card}` supersedes `shadow: none` on the same set. They are applied through local `.mkt-card` / `.mkt-panel` classes, never by editing `{rounded.*}` or a shared primitive, so `apps/desktop` and `@nixus/shared` keep the crisp, flat register exactly as specified above. Dark mode carries a black-cast shadow instead of the warm one, because a warm shadow is invisible on a near-black page.
+
+`{marketing-surfaces.container}` widens past 1536px. A fixed 1280px column inside full-bleed bands leaves large empty colour fields either side of it on a wide monitor, which is what the bands were being read as.
+
+**What does NOT diverge, and will not.** Contrast verification in both modes, the status-colour family and its text-label rule, the chart ramp rules, `{components.focus-ring}`'s ring-plus-offset, `forced-colors: active` handling, the 44px touch floor, Nunito for everything a visitor reads, and the logo gradient's confinement (marketing and the primary button fill). Those are accessibility and identity guarantees, not register preferences — a marketing page has no licence to relax any of them, and every one is covered by a test.
+
 **Supersession, narrowly scoped.** This section supersedes only the visual-tokens/shadows/gradient/landing-aesthetic prohibition at `docs/superpowers/specs/2026-09-02-founding-users-page-design.md:53` ("Do not introduce new visual tokens, shadows, decorative gradients, or a separate landing-page aesthetic") — and only to the extent that the three bounded exceptions above now exist as marketing-site contract. It does **not** change that document's Founding Users copy, CTA, flow, or any other requirement in it; the Founding Users page continues to use the established warm-paper background, card tonal separation, hairline borders, crisp radii, and brand action color exactly as that spec states elsewhere.
+
+### Band washes, in both modes (2026-10-20)
+
+Every marketing band except the closing one carries a corner glow in one of the identity's three hue families, rotating down the page so adjacent bands never repeat. This extends exception 2 (the ambient logo light behind the hero) from one hero visual to the section atmosphere, with the same scope rule: it is decoration BEHIND a surface, never a fill ON one, and it never touches a card, button, or chart.
+
+**Dark-mode glows.** `{marketing-glow}` are deeper and more saturated than the logo stops rather than the same colours at lower opacity, and the reason is arithmetic rather than taste. A wash on paper subtracts luminance and lands as a pastel. A glow on near-black adds it, and luminance is precisely the budget text contrast is drawn from. The logo stops are pastels (`#818CF8` is L≈0.30), so at any alpha strong enough to read as colour they push the backdrop past what `{colors.brand-dark}` eyebrow text can tolerate against its 4.5:1 floor — measured at 4.47:1 at 25%, a fail. Indigo, violet and magenta from the same three families give the same visible colour for roughly a third of the luminance, so they run at 26% and still clear it. `{marketing-glow.glow-3}` is magenta rather than pink-600 because a low-alpha hot pink over near-black reads as wine: red dominates and lightness is low, so blue has to be added back to keep it on the violet-to-pink journey.
+
+**The dark hero is a scrim plus aurora, not a gradient on a photograph.** The photograph is the dark hero's surface and it was costing legibility before any wash existed: a lit skyline window sat directly behind the subhead at **1.00:1** against its ink. An indigo-navy scrim, strongest on the prose side and gone by the demo, pushes the photo back behind the text and lets it emerge on the right, and the glows ride on top in hues that echo the photo's own neon. Below the desktop tier the prose spans the full width and the photo is behind all of it, so the left-to-right scrim becomes a flat veil.
+
+**It is enforced, not trusted.** `tests/e2e/contrast.spec.ts` renders each text node with its glyphs made transparent, then compares every remaining backdrop pixel against the element's declared colour and fails on the least contrast anywhere. That is deliberately not "lightest vs darkest pixel", which flatters a gradient because text sits on the worst spot of its backdrop, not the best. Under `forced-colors: active` every wash is removed.
 
 ## Elevation & Depth
 
@@ -540,7 +618,7 @@ Structure inherited from `@base-ui/react` via `@nkbaz/shared/ui`. This spine spe
 - **`{components.rail-item-active}`** — the rail's active module: `{colors.rail-on}` tint, `{colors.rail-on-ink}` label, 3px `{colors.brand}` right marker.
 - **`{components.destination-active}`** — a 2px brand underline. Four destinations, never more.
 - **`{components.action-card}`** — a 3px brand left border, used **once** per surface, on the next-action card. Its scarcity is what makes it read as *do this*.
-- **`{components.logo-gradient}`** — the identity. Permitted on the rail mark, the launch surface's `<h1>` wordmark (see below), the installer, and marketing. **Never** on a surface, card, button, or chart.
+- **`{components.logo-gradient}`** — the identity. Permitted on the rail mark, the launch surface's `<h1>` wordmark (see below), the installer, marketing, and the **primary button fill** (`{components.button-primary}`), which carries the dark `{colors.brand-on}` label — 4.9:1 on the blue stop, 5.7:1 on violet, 5.2:1 on pink. Hover brightens the fill rather than switching to `{colors.brand-ink}`, which would fail against the dark label; disabled drops the gradient. **Never** on a surface, card, or chart, and never behind text lighter than `{colors.brand-on}`.
 
 ### Launch surface
 
@@ -561,7 +639,7 @@ The profile picker is the first thing every launch paints, and it is the one sur
 | Do | Don't |
 |---|---|
 | Use `{colors.brand}` for brand and action only | Use it for "good," "on track," or as chart color 1 |
-| Set money in `{typography.money}` — Inter, tabular | Set money in a monospace font |
+| Set money in `{typography.money}` — Nunito, tabular | Set money in a monospace font |
 | Pair every status color with a text label | Rely on hue alone to carry meaning |
 | Reach for `{colors.premium-ink}` for the entitlement | Reuse `{colors.caution}` because both are gold |
 | Keep the entitlement on the account trigger and inside its menu | Repeat a durable account fact across unrelated surfaces |
@@ -575,7 +653,7 @@ The profile picker is the first thing every launch paints, and it is the one sur
 | Label chart segments directly above 5 | Ship a legend the user must cross-reference |
 | Put charts on `{colors.card}` | Put charts directly on `{colors.bg}` |
 | One `{typography.display}` figure per surface | Two huge numbers competing on one screen |
-| Keep the gradient on the logo | Put the gradient on a surface or a button |
+| Keep the gradient on the logo and the primary button fill | Put the gradient on a surface, card, secondary button or chart |
 | Attach entitlement styling to the account it describes | Put account status beside the Nixus wordmark |
 | Paint the launch `<h1>`'s brand as the mark plus "ixus" | Draw a second free-standing mark above a heading that already contains one |
 | Let the launch composition stack when two columns stop holding | Ship a decorative column that clips or forces a sideways scroll |
@@ -587,6 +665,16 @@ The profile picker is the first thing every launch paints, and it is the one sur
 | Handle `forced-colors` for Windows | Ship hairline-only elevation to HCM users untested |
 | Design at 1024 × 680 first | Assume 1280 and let the minimum window break |
 | Reach for a `{marketing-web}` token on the marketing site | Hand-roll `py-16 md:py-24` or `text-display-l md:text-display-xl` per section |
+| Keep `{marketing-type.font-display}` (Poppins) to titles and display roles | Set body, lead, label or money in Poppins |
+| Give a showcase row `{marketing-type.display-m}` | Render a row heading at its section heading's size |
+| Reach for a `{marketing-bands}` surface | Improvise `bg-accent/40` per section, or let two adjacent bands match |
+| Spend `{marketing-bands.band-deep}` once, on the closing band | Tint a second band with brand because the page felt flat |
+| Use `{marketing-surfaces}` radii and elevation on marketing cards | Edit `{rounded.*}` or a shared primitive to get them |
+| Fill an intro's empty half with a fact the section already owned | Put a background image behind a band to cover the space |
+| Keep imagery to the hero, product frames, and the closing band | Set 14px body copy over a photograph anywhere |
+| Run dark glows at 26% from `{marketing-glow}` | Dim the logo stops to get a dark-mode glow |
+| Measure contrast on rendered pixels, worst spot of the backdrop | Trust a token ratio, or compare the lightest and darkest pixel |
+| Put a scrim between a photograph and the prose it sits behind | Rely on the photo being dark where the text happens to land |
 | Give every marketing control `{marketing-web.tap-min}` below 1024px | Ship a 28px phone trigger, or widen a desktop trigger to 44px |
 | Keep phone sticky chrome to brand, Beta and the toggles | Put the full send-to-computer block in a 56px header bar |
 | Bundle woff2 fonts locally | `@import` Google Fonts in a local-first app |

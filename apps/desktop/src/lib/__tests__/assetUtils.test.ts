@@ -134,15 +134,17 @@ describe("relativeQuoteAge", () => {
 });
 
 describe("formatQuotePrice", () => {
-  it("formats in the holding's own currency, not the locale default", () => {
-    expect(formatQuotePrice(20_000, "USD", "en-US")).toBe("$200.00");
-    expect(formatQuotePrice(20_000, "CAD", "en-US")).toBe("CA$200.00");
-    expect(formatQuotePrice(7_250, "GBP", "en-US")).toBe("£72.50");
+  it("formats in the holding's own currency, as the CAD totals beside it read", () => {
+    // "$" must keep meaning CAD, as it does for every amount on the page, so USD is "US$".
+    expect(formatQuotePrice(70_720, "USD", "en")).toBe("US$707.20");
+    expect(formatQuotePrice(20_000, "CAD", "en")).toBe("$200.00");
+    expect(formatQuotePrice(7_250, "GBP", "en")).toBe("£72.50");
+    expect(formatQuotePrice(70_720, "USD", "fr")).toBe("707,20\u00a0$\u00a0US");
   });
 
   it("falls back to a plain number when the currency is unknown or absent", () => {
-    expect(formatQuotePrice(20_000, null, "en-US")).toBe("200.00");
-    expect(formatQuotePrice(20_000, "NOTACURRENCY", "en-US")).toBe(
+    expect(formatQuotePrice(20_000, null, "en")).toBe("200.00");
+    expect(formatQuotePrice(20_000, "NOTACURRENCY", "en")).toBe(
       "200.00 NOTACURRENCY"
     );
   });

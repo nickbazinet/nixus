@@ -124,7 +124,9 @@ export function StockSymbolCombobox({
                   key={`${result.symbol}-${result.exchange}`}
                   type="button"
                   className={cn(
-                    "min-h-target-min w-full rounded-md px-2 py-1.5 text-left hover:bg-hover",
+                    // shrink-0: inside the height-capped flex column, items would otherwise
+                    // shrink below their two-line height and overlap instead of scrolling.
+                    "min-h-target-min w-full shrink-0 rounded-md px-2 py-1.5 text-left hover:bg-hover",
                     focusRing
                   )}
                   data-testid="stock-symbol-option"
@@ -134,7 +136,7 @@ export function StockSymbolCombobox({
                     setOpen(false);
                   }}
                 >
-                  <span className="text-label text-ink">{result.symbol}</span>
+                  <span className="block text-label text-ink">{result.symbol}</span>
                   <span className="block text-caption text-ink-dim">
                     {result.name}
                     {result.exchange ? ` · ${result.exchange}` : ""}

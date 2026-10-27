@@ -1,6 +1,7 @@
 import { Home, Car, Briefcase, Package, LineChart } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { NetWorthBreakdownCategory, PassiveAsset } from "@/lib/types";
+import { currencyLocale } from "@/lib/formatCurrency";
 
 export const STOCK_ASSET_TYPE = "stock";
 
@@ -133,8 +134,11 @@ export function relativeQuoteAge(hours: number, locale: string): string {
 export function formatQuotePrice(
   priceCents: number,
   currency: string | null,
-  locale: string
+  language: string
 ): string {
+  // The regional locale, as for every other amount: under a bare "en" a USD quote renders as "$",
+  // indistinguishable from the CAD totals beside it.
+  const locale = currencyLocale(language);
   if (!currency) {
     return new Intl.NumberFormat(locale, {
       minimumFractionDigits: 2,
@@ -153,6 +157,7 @@ export function formatQuotePrice(
     return `${(priceCents / 100).toFixed(2)} ${currency}`;
   }
 }
+
 
 export function groupAssetsByType(assets: PassiveAsset[]) {
   const groups = new Map<string, PassiveAsset[]>();
