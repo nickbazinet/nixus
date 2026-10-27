@@ -118,6 +118,9 @@ pub fn create_budget_category(
 
 /// Same as [`create_budget_category`] but accepts a zero target. Only the quick-add path in the
 /// expense panel uses it: a category created mid-expense has no budget yet.
+///
+/// CAPTURE-SANCTIONED (AD-3): its one caller, `commands::budget`, reaches it through
+/// `ActiveDataset::write`.
 pub fn create_budget_category_allowing_zero_target(
     conn: &Connection,
     input: &CreateBudgetCategory,
@@ -125,6 +128,8 @@ pub fn create_budget_category_allowing_zero_target(
     insert_budget_category(conn, input, true)
 }
 
+/// CAPTURE-SANCTIONED (AD-3): private, reached only through the two `create_budget_category*`
+/// wrappers above, both of which are only called through `ActiveDataset::write`.
 fn insert_budget_category(
     conn: &Connection,
     input: &CreateBudgetCategory,
