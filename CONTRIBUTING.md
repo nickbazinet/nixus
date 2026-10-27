@@ -232,10 +232,16 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-The **Desktop CI** workflow (`.github/workflows/desktop-ci.yml`) runs exactly these three
-commands plus the frontend typecheck, unit tests and build on both `macos-latest` and
-`windows-latest` for every PR touching `apps/desktop/` or `packages/shared/`. Windows has no
-other pre-merge coverage, so a red Windows leg is a real failure, not flakiness.
+The **Desktop CI** workflow (`.github/workflows/desktop-ci.yml`) runs these commands on
+`macos-latest` and `windows-latest` (`cargo build` on macOS only: it is the one
+platform-independent check of the build without dev-dependency features), and the frontend
+typecheck, unit tests and build once on Linux. What runs depends on what changed, as decided by
+`scripts/desktop-ci-changes.sh` (run it with two commits to see what CI would do): a
+frontend-only change skips Rust, a Rust-only change skips the frontend checks, a pure version
+bump runs nothing, and the release latency gate, the cross-arch macOS build and the convergence
+simulator on Windows run only when the sync engine, the database layer or the dependencies
+changed. Windows has no other pre-merge coverage, so a red Windows leg is a real failure, not
+flakiness.
 
 ### Multi-device sync tests
 

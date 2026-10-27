@@ -10,6 +10,12 @@
 # build time by bindgen, which links libclang. macOS gets it from the Xcode command
 # line tools; Windows needs LIBCLANG_PATH pointed at an LLVM install.
 #
+# What runs is decided per change by scripts/desktop-ci-changes.sh (the `changes` job):
+# a frontend-only change never builds Rust, a Rust-only change never runs the frontend
+# checks, a pure version bump runs nothing, and the expensive sync-only gates run only
+# when the sync engine, the database layer or the dependency set moved. Manual dispatch
+# and any change to this workflow or that script run everything.
+#
 # This workflow builds and tests only. It never publishes, signs, uploads release
 # artifacts, or touches AWS.
 
@@ -25,6 +31,7 @@ on:
       - "package.json"
       - "rust-toolchain.toml"
       - ".github/workflows/desktop-ci.yml"
+      - "scripts/desktop-ci-changes.sh"
   push:
     branches: [master]
     paths:
@@ -35,6 +42,7 @@ on:
       - "package.json"
       - "rust-toolchain.toml"
       - ".github/workflows/desktop-ci.yml"
+      - "scripts/desktop-ci-changes.sh"
   workflow_dispatch:
 
 concurrency:
@@ -52,16 +60,36 @@ defaults:
     shell: bash
 
 jobs:
-  verify:
-    name: Verify (${{ matrix.platform }})
-    runs-on: ${{ matrix.platform }}
-    timeout-minutes: 60
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      frontend: ${{ steps.classify.outputs.frontend }}
+      rust: ${{ steps.classify.outputs.rust }}
+      sync: ${{ steps.classify.outputs.sync }}
+      deps: ${{ steps.classify.outputs.deps }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, windows-latest]
+      # An empty base (manual dispatch) makes the script run everything.
+      - name: Classify the change
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || '' }}
+        run: scripts/desktop-ci-changes.sh "$BASE_SHA" "$GITHUB_SHA"
 
+  # Typecheck, unit tests and build of the frontend are platform-independent (Node + jsdom),
+  # so they run once, on Linux, in parallel with the Rust legs instead of ahead of them.
+  frontend:
+    name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,6 +104,52 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck shared package
+        run: pnpm --filter @nixus/shared typecheck
+
+      - name: Typecheck desktop frontend
+        run: pnpm --filter @nixus/desktop exec tsc --noEmit
+
+      - name: Desktop frontend unit tests
+        run: pnpm --filter @nixus/desktop test
+
+      - name: Build desktop frontend
+        run: pnpm desktop:build
+
+  verify:
+    name: Verify (${{ matrix.platform }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest]
+
+    env:
+      # No debug info in CI: it is most of what the linker writes (PDBs on Windows) and most of
+      # the Rust cache's size, and nothing here reads it — a failing test reports its panic
+      # location without it. The release profile is unaffected.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      SYNC_CHANGED: ${{ needs.changes.outputs.sync }}
+
+    steps:
+      # Real-time scanning of every file rustc, the linker and the SQLite-heavy tests write is
+      # the largest single cost on the Windows runner. Best-effort: the runner is ephemeral.
+      - name: Disable Defender real-time scanning (Windows)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.94.1
@@ -99,11 +173,14 @@ jobs:
             *) echo "rustc is '$active' but rust-toolchain.toml pins '$pinned'." >&2; exit 1 ;;
           esac
 
+      # Only master writes the cache (that is the one every PR restores from); saving it costs
+      # minutes on Windows, which a PR run would spend for a cache nobody else reads.
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
           key: ${{ matrix.platform }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       # The runner images ship LLVM, but the path is not exported and bindgen does
       # not search for it on Windows. Installing is the fallback, not the norm.
@@ -142,32 +219,36 @@ jobs:
           echo "No libclang.dylib found under $developer" >&2
           exit 1
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Typecheck shared package
-        run: pnpm --filter @nixus/shared typecheck
-
-      - name: Typecheck desktop frontend
-        run: pnpm --filter @nixus/desktop exec tsc --noEmit
-
-      - name: Desktop frontend unit tests
-        run: pnpm --filter @nixus/desktop test
-
-      - name: Build desktop frontend
-        run: pnpm desktop:build
-
+      # No frontend build is needed here: without the `custom-protocol` feature (only the Tauri
+      # CLI's `tauri build` sets it) tauri-codegen serves `devUrl` and embeds no assets, so the
+      # crate compiles and tests without `apps/desktop/dist`.
+      #
+      # `cargo build` is the only step that compiles the crate WITHOUT the dev-dependency
+      # features (`tokio/test-util`, the AWS SDKs' `test-util`); `cargo test` and Clippy both
+      # unify them in. That is a separate dependency graph — nine minutes cold on Windows — for
+      # a property that is platform-independent, so macOS proves it for both.
       - name: Build Rust backend
+        if: runner.os == 'macOS'
         working-directory: apps/desktop/src-tauri
         run: cargo build
 
+      # The three suites given their own named steps below are skipped here so that each runs
+      # once. On Windows the convergence simulator (`sync::sim`, minutes per test there, and
+      # platform-independent logic over its own simulator tables) runs only when the sync
+      # engine, the database layer or the dependencies changed; macOS runs it on every change.
       - name: Rust tests
         working-directory: apps/desktop/src-tauri
-        run: cargo test
+        run: |
+          skip=(--skip sync_e2e --skip sync_m2_e2e --skip sync::tests_write_site_budget)
+          if [ "$RUNNER_OS" = "Windows" ] && [ "$SYNC_CHANGED" != "true" ]; then
+            echo "No sync/db/dependency change: skipping sync::sim on Windows (macOS runs it)."
+            skip+=(--skip sync::sim::)
+          fi
+          cargo test -- "${skip[@]}"
 
-      # Already covered by `cargo test` above; run again by name so the Milestone-1
-      # new-computer proof prints its PASS lines with the measured numbers into this log,
-      # on macOS and on Windows. Re-runnable verbatim by hand.
+      # Skipped by `cargo test` above and run here by name so the Milestone-1 new-computer
+      # proof prints its PASS lines with the measured numbers into this log, on macOS and on
+      # Windows. Re-runnable verbatim by hand.
       - name: Multi-device sync end-to-end proof
         working-directory: apps/desktop/src-tauri
         run: cargo test sync_e2e -- --nocapture
@@ -179,11 +260,12 @@ jobs:
         working-directory: apps/desktop/src-tauri
         run: cargo test sync_m2_e2e -- --nocapture
 
-      # AD-3/AD-19's write-site ratchet, as its OWN step. It is already covered by `cargo test`
-      # above, but a growth in the uncaptured-write budget is a specific, reviewable regression —
-      # "someone added a write that bypasses capture" — and a red step named after it says that,
-      # where one failure line inside a 1,700-test run does not. Cheap by construction: the test
-      # binary is already built by the step above, and the test is a text scan of `src/`.
+      # AD-3/AD-19's write-site ratchet, as its OWN step (and skipped by `cargo test` above). A
+      # growth in the uncaptured-write budget is a specific, reviewable regression — "someone
+      # added a write that bypasses capture" — and a red step named after it says that, where
+      # one failure line inside a 1,700-test run does not. It runs on every Rust change: a write
+      # site anywhere in the crate can break it. Cheap by construction: the test binary is
+      # already built, and the test is a text scan of `src/`.
       - name: Write-site ratchet (AD-3)
         working-directory: apps/desktop/src-tauri
         run: cargo test sync::tests_write_site_budget -- --nocapture
@@ -201,17 +283,22 @@ jobs:
       # macOS only, deliberately: on the Windows runner a release test build is a from-scratch
       # compile of every dependency in a second profile (well over ten minutes on a cold cache) for
       # a number the ratio guard already defends there. Windows keeps the relative guard.
+      #
+      # Only when what it measures can have moved — the capture path in sync/, the database
+      # layer, the dependency set — since a second full release-profile compile is its whole cost.
       - name: Capture latency gate (release)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.SYNC_CHANGED == 'true'
         working-directory: apps/desktop/src-tauri
         run: cargo test --release --lib sync::tests_capture_latency -- --test-threads=1 --nocapture
 
       # The Release workflow builds `universal-apple-darwin`, which compiles the
       # crate once per architecture. Only the host arch is covered above, so this
       # proves bindgen also generates the SQLite bindings when cross-compiling —
-      # the half of the release build no other gate can reach.
+      # the half of the release build no other gate can reach. The crate has no
+      # arch-specific code, so only a dependency or build-configuration change can
+      # break it.
       - name: Build the second macOS architecture
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && needs.changes.outputs.deps == 'true'
         working-directory: apps/desktop/src-tauri
         run: |
           rustup target add x86_64-apple-darwin
