@@ -162,6 +162,7 @@ jobs:
               "GitHubRepo=nixus" \
               "GitHubEnvironment=production" \
               "ApplicationStackName=nixus-bedrock-api" \
+              "ApprovedBedrockModelId=us.anthropic.claude-sonnet-4-6" \
               "CreateOidcProvider=${{ inputs.create_oidc_provider }}" \
               "ExistingOidcProviderArn=${{ inputs.existing_oidc_provider_arn }}"
         env:
