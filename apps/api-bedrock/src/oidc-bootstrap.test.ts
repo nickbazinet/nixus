@@ -368,6 +368,70 @@ describe("the artifact bucket is private, encrypted, versioned, and retained", (
   });
 });
 
+/*
+ * The deploy workflow resolves the supplied inference-profile secret through Bedrock
+ * before deploying, so that a stale, foreign-account, deleted, or unreadable ARN fails
+ * closed on a stale ARN rather than on authorization. That read needs a grant, and the
+ * grant is the whole exposure: a profile wildcard would let the check pass for any
+ * profile in the account, and any invoke action would hand the deploy role the ability
+ * to spend Bedrock tokens.
+ */
+describe("the deploy role may read exactly one inference profile and nothing else", () => {
+  const bedrockActions = actionsOf("GitHubDeployRole").filter((action) =>
+    action.startsWith("bedrock:")
+  );
+
+  it("grants only the single read action", () => {
+    expect(bedrockActions).toEqual(["bedrock:GetInferenceProfile"]);
+  });
+
+  it("grants no invoke, list, or write action anywhere in either role", () => {
+    for (const role of ["GitHubDeployRole", "CloudFormationExecutionRole"]) {
+      for (const forbidden of [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:Converse",
+        "bedrock:ConverseStream",
+        "bedrock:CountTokens",
+        "bedrock:ListInferenceProfiles",
+        "bedrock:CreateInferenceProfile",
+        "bedrock:DeleteInferenceProfile",
+        "bedrock:PutModelInvocationLoggingConfiguration",
+      ]) {
+        expect(actionsOf(role), `${role} must not hold ${forbidden}`).not.toContain(
+          forbidden
+        );
+      }
+    }
+  });
+
+  /* The ARN is built from a pinned parameter rather than a wildcard, so the one profile
+   * the pipeline is allowed to resolve is the one the approval covers. */
+  it("scopes the read to the one approved profile ARN in us-east-1", () => {
+    const statement = statementsOf("GitHubDeployRole").find(
+      (entry) => entry.Sid === "ResolveTheOneApprovedInferenceProfile"
+    );
+
+    expect(statement, "the profile-read statement is missing").toBeDefined();
+    expect(statement.Effect).toBe("Allow");
+    expect(statement.Resource).toHaveLength(1);
+
+    const arn = String(statement.Resource[0].value);
+    expect(arn).toContain("bedrock:us-east-1:${AWS::AccountId}:inference-profile/");
+    expect(arn).toContain("${ApprovedBedrockModelId}");
+    expect(arn).not.toContain("inference-profile/*");
+  });
+
+  it("pins the approved model to the single approved US 5.5 profile", () => {
+    const parameter = BOOTSTRAP.Parameters.ApprovedBedrockModelId;
+
+    expect(parameter.Default).toBe("us.anthropic.claude-sonnet-5-5");
+    expect(parameter.AllowedValues).toEqual(["us.anthropic.claude-sonnet-5-5"]);
+    expect(parameter.AllowedValues).toContain(parameter.Default);
+  });
+
+});
+
 describe("create-or-adopt keeps a second run from failing on the provider", () => {
   it("offers exactly the two boolean choices", () => {
     expect(BOOTSTRAP.Parameters.CreateOidcProvider.AllowedValues).toEqual([

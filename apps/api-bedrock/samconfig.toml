@@ -33,6 +33,22 @@ tags = "app=nixus service=hosted-ai managed-by=sam"
 # docs/runbooks/hosted-ai-rollout.md. Committing them here would either leak
 # account topology or silently deploy against the wrong user pool.
 #
-# The Bedrock model and region are NOT in that category and are deliberately not
-# overridable at deploy time: the template pins each to a single AllowedValues entry,
-# because the AD-8 CountTokens/ConverseStream evidence covers exactly one pair.
+# The Bedrock model identity is NOT in that category and is deliberately not a free
+# deploy-time choice. Two parameters are each pinned to a single `AllowedValues` entry,
+# and they name two DIFFERENT identities:
+#   - `BedrockModelId` is the `us.anthropic.claude-sonnet-5-5` US inference profile,
+#     which is what the Lambda invokes, and
+#   - `BedrockFoundationModelArnPattern` is the DESTINATION foundation model that
+#     profile fans out to (`foundation-model/anthropic.claude-sonnet-5-5`), which is the
+#     second half of the IAM streaming grant - not the profile.
+# Both are pinned because the capability evidence covers exactly that pair. There is no
+# region input at all - the profile, the API, the Lambda, and the table are all
+# `us-east-1` and the runtime client inherits it.
+#
+# Quota is one unit per request, so no `CountTokens` call exists to need a bare
+# foundation model, which is what makes a cross-region profile the deliberate choice here.
+#
+# The one account-specific exception is `BedrockInferenceProfileArn`: a profile ARN
+# carries an account id, so it stays a deploy-time secret. The workflow resolves that
+# exact ARN through Bedrock before deploying and compares the deployed value back to it,
+# because CloudFormation would otherwise preserve a superseded one on UPDATE.

@@ -274,6 +274,43 @@ describe("verify job runs every prescribed check", () => {
     expect(stepNames(VERIFY)).toContain("Setup AWS SAM CLI");
     expect(step(VERIFY, "actions/setup-node").with["node-version"]).toBe(22);
   });
+
+  /* The bootstrap stack holds the IAM grants that bound this entire pipeline, and its
+   * contract tests live in this package - so a change to it that widens a permission is
+   * only caught if a change to it runs this workflow at all. It is also plain
+   * CloudFormation, which `sam validate` never sees. */
+  it("runs on every bootstrap pull request and lints the bootstrap template", () => {
+    const triggers = WORKFLOW.on ?? WORKFLOW[true as never];
+
+    expect(triggers.pull_request.paths).toContain("infra/bootstrap/**");
+
+    const commands = runCommands(VERIFY);
+    expect(commands).toContain("cfn-lint infra/bootstrap/github-oidc-deploy.yaml");
+  });
+
+  /*
+   * Deliberately ASYMMETRIC with the pull_request filter, and the asymmetry is the
+   * control: the bootstrap stack grants the deploy role the permission the application's
+   * pre-deploy validation needs, and it is re-deployed by hand. If merging a bootstrap
+   * permission change also triggered the deploy job, the application would deploy
+   * against a role that does not yet hold the grant - failing closed on authorization,
+   * which reads as a broken check rather than a missing re-deploy. Bootstrap changes are
+   * therefore verified on the PR and deployed by the operator first.
+   */
+  it("never lets a bootstrap merge trigger the application deploy", () => {
+    const triggers = WORKFLOW.on ?? WORKFLOW[true as never];
+
+    expect(triggers.push.paths).not.toContain("infra/bootstrap/**");
+    expect(triggers.push.paths).not.toContain("infra/**");
+    for (const path of triggers.push.paths as string[]) {
+      expect(path, `${path} must not reach into infra/`).not.toMatch(/^infra\b/);
+    }
+
+    // The application paths still deploy, so the asymmetry removes one trigger rather
+    // than disabling deployment.
+    expect(triggers.push.paths).toContain("apps/api-bedrock/**");
+    expect(triggers.push.paths).toContain("packages/shared/**");
+  });
 });
 
 describe("deploy job proves deployed guarantees", () => {
@@ -405,11 +442,16 @@ describe("deploy job proves deployed guarantees", () => {
    * assertion end up disagreeing. One job-level definition makes that impossible. */
   it("pins the approved model once, at job level, as the assertion source", () => {
     const perStepCopies = (DEPLOY.steps as { env?: Record<string, unknown> }[]).filter(
-      (entry) => entry.env?.APPROVED_BEDROCK_MODEL_ID !== undefined
+      (entry) =>
+        entry.env?.APPROVED_BEDROCK_MODEL_ID !== undefined ||
+        entry.env?.APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN !== undefined
     );
     expect(perStepCopies).toEqual([]);
 
-    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe("us.anthropic.claude-sonnet-4-6");
+    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe("us.anthropic.claude-sonnet-5-5");
+    expect(DEPLOY.env.APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN).toBe(
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*"
+    );
     expect(DEPLOY.env).not.toHaveProperty("APPROVED_BEDROCK_REGION");
   });
 
@@ -457,9 +499,145 @@ describe("deploy job proves deployed guarantees", () => {
     );
     expect(commands).toContain('"BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}"');
 
-    // No committed ARN, and no override for a region parameter that no longer exists.
-    expect(WORKFLOW_DIRECTIVES).not.toContain("arn:aws:bedrock");
+    // An account-bearing ARN is never committed. The destination pattern IS committed,
+    // deliberately: it carries no account id, and leaving it to the template default is
+    // exactly the preserved-parameter hazard the explicit override below closes.
+    expect(WORKFLOW_DIRECTIVES).not.toMatch(/arn:aws[a-z-]*:bedrock:[a-z0-9-]+:\d{12}:/);
     expect(commands).not.toContain("BedrockRegion=");
+  });
+
+  /* Changing only the model id would leave the IAM grant on the superseded model:
+   * CloudFormation preserves a parameter the deploy omits, so the destination pattern
+   * has to be overridden explicitly and then read back from the deployed stack. */
+  it("migrates every model-bearing parameter and verifies them after the deploy", () => {
+    const commands = runCommands(DEPLOY);
+
+    expect(commands).toContain(
+      '"BedrockFoundationModelArnPattern=${APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN}"'
+    );
+    expect(commands).toContain('"BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}"');
+    expect(commands).toContain(
+      '"BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}"'
+    );
+
+    expect(stepIndex(DEPLOY, "Deploy stack")).toBeLessThan(
+      stepIndex(DEPLOY, "Assert the deployed IAM grant")
+    );
+  });
+
+  /*
+   * Both guards are scripts, not inline blocks, and their BEHAVIOUR is proved by
+   * executing them in deploy-scripts.test.ts. What is still this file's job is the
+   * wiring: that the workflow actually delegates to those scripts, passes the secret in
+   * from the environment, and orders them correctly. A substring assertion over an
+   * inline block could never have shown a nonzero exit, which is the only thing a guard
+   * is for.
+   */
+  it("delegates both model guards to the executable, separately tested scripts", () => {
+    const validate = step(DEPLOY, "Validate the supplied inference profile");
+    const assertion = step(DEPLOY, "Assert the deployed IAM grant");
+
+    expect(validate.run.trim()).toBe(
+      "bash apps/api-bedrock/scripts/validate-inference-profile.sh"
+    );
+    expect(assertion.run.trim()).toBe(
+      "bash apps/api-bedrock/scripts/assert-deployed-model-grant.sh"
+    );
+
+    for (const relativePath of [
+      "apps/api-bedrock/scripts/validate-inference-profile.sh",
+      "apps/api-bedrock/scripts/assert-deployed-model-grant.sh",
+    ]) {
+      expect(
+        existsSync(fileURLToPath(new URL(relativePath, REPO_ROOT))),
+        `${relativePath} must exist`
+      ).toBe(true);
+      // Fail-closed is the script's own contract, asserted here so a rewrite that drops
+      // it is caught even if every behaviour case still happens to pass.
+      expect(readRepoFile(relativePath)).toContain("set -euo pipefail");
+    }
+  });
+
+  /* The ARN reaches the script only through the environment, from the protected
+   * production environment's secret — never interpolated into the shell body, where it
+   * would be baked into the run-log command text. */
+  it("sources the profile ARN from the environment secret in both guards", () => {
+    for (const fragment of [
+      "Validate the supplied inference profile",
+      "Assert the deployed IAM grant",
+    ]) {
+      const entry = step(DEPLOY, fragment);
+      expect(entry.env.BEDROCK_INFERENCE_PROFILE_ARN, fragment).toBe(
+        "${{ secrets.BEDROCK_INFERENCE_PROFILE_ARN }}"
+      );
+      expect(entry.run, fragment).not.toContain("secrets.");
+      expect(entry.run, fragment).not.toContain("BEDROCK_INFERENCE_PROFILE_ARN");
+    }
+  });
+
+  /* The validation is the first AWS call in the job. Placed before the OIDC step it
+   * would fail on absent credentials, which looks like a broken check rather than the
+   * stale ARN it exists to catch. */
+  it("validates the profile after OIDC credentials and before the deploy", () => {
+    const credentials = stepIndex(DEPLOY, "aws-actions/configure-aws-credentials");
+    const validate = stepIndex(DEPLOY, "Validate the supplied inference profile");
+
+    expect(credentials).toBeLessThan(validate);
+    expect(validate).toBeLessThan(stepIndex(DEPLOY, "Deploy stack"));
+  });
+
+  /*
+   * GitHub masks only the strings registered as secrets, and a run log, a step summary,
+   * and a job output are three separate places an account-bearing ARN can escape to.
+   * None of the guards may write it to any of them.
+   */
+  it("leaks the profile ARN to no log line, step summary, or job output", () => {
+    const sources = [
+      WORKFLOW_DIRECTIVES,
+      readRepoFile("apps/api-bedrock/scripts/validate-inference-profile.sh"),
+      readRepoFile("apps/api-bedrock/scripts/assert-deployed-model-grant.sh"),
+    ];
+
+    for (const source of sources) {
+      for (const leak of [
+        /echo[^\n]*\$\{?BEDROCK_INFERENCE_PROFILE_ARN/,
+        /printf[^\n]*\$\{?BEDROCK_INFERENCE_PROFILE_ARN/,
+        /echo[^\n]*\$\{?PROFILE_ARN/,
+        /printf[^\n]*\$\{?PROFILE_ARN/,
+        /echo[^\n]*\$\{?deployed_profile/,
+        /printf[^\n]*\$\{?deployed_profile/,
+        /echo[^\n]*\$\{?resolved_arn/,
+        /echo[^\n]*\$\{?profile\}/,
+        /GITHUB_STEP_SUMMARY/,
+        /GITHUB_OUTPUT/,
+        /GITHUB_ENV/,
+      ]) {
+        expect(source, `possible ARN leak: ${leak}`).not.toMatch(leak);
+      }
+    }
+  });
+
+  /* The redaction is explicit because the CLI writes the ARN it failed on to stderr,
+   * and a captured copy of that is an account-bearing file on the runner. */
+  it("redacts and removes the captured CLI stderr rather than trusting masking", () => {
+    const script = readRepoFile(
+      "apps/api-bedrock/scripts/validate-inference-profile.sh"
+    );
+
+    expect(script).toContain("<redacted-profile-arn>");
+    expect(script).toContain("<redacted-account>");
+    expect(script).toContain("mktemp -d");
+    expect(script).toContain("trap cleanup EXIT");
+    // A fixed /tmp path is readable by, and collides with, every other run on the host.
+    expect(script).not.toContain("/tmp/get-inference-profile.err");
+  });
+
+  /* Word splitting on an unquoted expansion is bad enough; pathname expansion on one
+   * would let a destination ARN turn into a list of filenames. */
+  it("disables pathname expansion in the glob-matching guard", () => {
+    expect(
+      readRepoFile("apps/api-bedrock/scripts/validate-inference-profile.sh")
+    ).toMatch(/^set -f$/m);
   });
 
   /* The reserved-concurrency apparatus stays gone (2026-08-26 waiver), and no

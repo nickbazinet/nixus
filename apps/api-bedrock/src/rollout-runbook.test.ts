@@ -70,11 +70,32 @@ describe("the quota design and model identity are recorded exactly", () => {
   });
 
   it("names the approved profile and region, and probes the deployed identity", () => {
-    expect(RUNBOOK).toContain("us.anthropic.claude-sonnet-4-6");
+    expect(RUNBOOK).toContain("us.anthropic.claude-sonnet-5-5");
     expect(RUNBOOK).toContain("--region us-east-1");
     expect(RUNBOOK).toContain("BedrockModelIdEcho");
     expect(RUNBOOK).toMatch(/never a remembered one/i);
     expect(RUNBOOK).toMatch(/do \*\*not\*\* change the model or move Bedrock out of `us-east-1`/i);
+  });
+
+  /* The unprefixed foundation model has no direct in-region on-demand endpoint, so an
+   * operator who "simplifies" the probe by dropping the `us.` prefix gets a model-shaped
+   * error about a request it never made. */
+  it("states that the unprefixed foundation model is a destination, not an endpoint", () => {
+    expect(RUNBOOK).toMatch(/no direct in-region on-demand endpoint/i);
+    expect(RUNBOOK).toMatch(
+      /do \*\*not\*\* invoke the unprefixed foundation model; it is a destination/i
+    );
+  });
+
+  /* A probe against an unresolved stack output reaches Bedrock with an empty model id and
+   * comes back complaining about the request shape, which reads as a Bedrock problem
+   * rather than as a stack that never deployed the output. */
+  it("fails fast before probing rather than probing an unresolved model", () => {
+    const section = sectionOf("### 0.1", "### 0.2");
+
+    expect(section).toContain("set -euo pipefail");
+    expect(section).toMatch(/BedrockModelIdEcho unresolved/);
+    expect(section).toContain('test "$MODEL" = "us.anthropic.claude-sonnet-5-5"');
   });
 
   /* Profiles were once disqualified precisely because they lack CountTokens. Explaining
@@ -114,27 +135,151 @@ describe("the quota design and model identity are recorded exactly", () => {
     expect(row).toMatch(/one reservation per stream call/i);
   });
 
-  /* The capability evidence was gathered against the direct model; the deployed identity
-   * is now that model's profile. Carrying the evidence forward unqualified would claim a
-   * check nobody ran against what production actually calls. */
-  it("qualifies the carried-over capability evidence as owed a re-run", () => {
-    expect(RUNBOOK).toMatch(/### 0\.2 Re-confirm the capability evidence through the profile/);
-    expect(RUNBOOK).toMatch(/What changed is the invocation identity/i);
+  /* The capability evidence on record was gathered against 4.6. 5.5 is a different
+   * model with its own per-account access, capacity, and ceiling behaviour, so carrying
+   * the evidence forward unqualified would claim a check nobody ran. The dates stay
+   * because they are what makes the evidence a record rather than a tick. */
+  it("keeps the 4.6 evidence with its dates and marks every 5.5 gate unpassed", () => {
+    expect(RUNBOOK).toMatch(/### 0\.3 The 5\.5 capability evidence that is owed/);
+    expect(RUNBOOK).toMatch(/None of that evidence transfers to 5\.5/i);
 
-    for (const gate of ["1c", "1d", "1e"] as const) {
+    for (const gate of ["1a", "1c", "1d", "1e"] as const) {
       const row = gateRow(gate);
-      expect(row, `gate ${gate}`).toMatch(/PASSED for the direct model/);
-      expect(row, `gate ${gate}`).toMatch(/re-confirm/i);
+      expect(row, `gate ${gate}`).toMatch(/PASSED for `anthropic\.claude-sonnet-4-6`/);
+      expect(row, `gate ${gate}`).toMatch(/RE-RUN REQUIRED/);
+      // The original evidence date survives; a re-dated row is a rewritten record.
+      expect(row, `gate ${gate}`).toContain("2026-08-26");
     }
 
     const streamGate = gateRow("1a");
-    expect(streamGate).toMatch(/re-run against `us\.anthropic\.claude-sonnet-4-6`/i);
+    expect(streamGate).toMatch(/RE-RUN REQUIRED against `us\.anthropic\.claude-sonnet-5-5`/i);
     // A gate marked passed with an empty cell is indistinguishable from one someone
     // ticked, so the observed reply has to be in the evidence column itself.
     expect(evidenceOf(streamGate)).toContain("OK.");
     expect(evidenceOf(streamGate).length).toBeGreaterThan(20);
     expect(gateRow("1h")).toMatch(/RE-RUN REQUIRED/);
     expect(gateRow("1f")).toMatch(/DEFERRED FOR REAL TRAFFIC/);
+  });
+
+  /* A BYO user never reaches this stack: their own AWS account needs 5.5 model access,
+   * and the desktop adapter invokes the profile with their credentials. Hosted evidence
+   * proves nothing for them, so release readiness has to show this gate unpassed. */
+  it("carries an unpassed BYO 5.5 invocation and model-access gate", () => {
+    const row = gateRow("1i");
+
+    expect(row).toMatch(/BYO Bedrock verified on 5\.5/i);
+    expect(row).toMatch(/statement import/i);
+    expect(row).toMatch(/model access/i);
+    expect(row).toMatch(/NOT RUN/);
+    // Unpassed means no date, not a date with a caveat.
+    expect(row.split("|").map((cell) => cell.trim()).at(-2)).toBe("");
+    expect(RUNBOOK).toMatch(/A hosted-only verification leaves every BYO user\s+unverified/i);
+  });
+
+  /* Without the bootstrap grant the application deploy's pre-deploy validation fails on
+   * authorization rather than on a stale ARN, which reads as a broken check. Its
+   * position in the sequence is the gate, so "pre-deploy" has to be on the row. */
+  it("gates and orders the bootstrap read grant ahead of the application deploy", () => {
+    const row = gateRow("1j");
+
+    expect(row).toMatch(/bedrock:GetInferenceProfile/);
+    expect(row).toMatch(/PRE-DEPLOY/);
+    expect(row).toMatch(/before\*\* the application deploy/i);
+    expect(row).toMatch(/NOT RUN/);
+
+    expect(RUNBOOK).toMatch(/#### Bootstrap before application/);
+    expect(RUNBOOK).toMatch(/Ordering is load-bearing/i);
+    expect(RUNBOOK).toMatch(/fails closed on\s+\*\*authorization\*\*/i);
+    expect(RUNBOOK).toContain("infra/bootstrap/**");
+    expect(RUNBOOK).toMatch(/no invoke,\s*\n?list, or write action/i);
+  });
+
+  /* "DEFERRED" without instructions is indistinguishable from "nobody knows how". The
+   * row has to point at a command, and it must not carry 4.6's figures forward as if
+   * they described the new model's account quotas. */
+  it("points the throughput-quota gate at real instructions and marks 5.5 unconfirmed", () => {
+    const row = gateRow("1f");
+
+    expect(row).toMatch(/§0\.4/);
+    expect(row).toMatch(/DEFERRED FOR REAL TRAFFIC/);
+    expect(row).toMatch(/not yet confirmed/i);
+
+    const section = sectionOf("### 0.4", "## 1.");
+    expect(section).toContain("aws service-quotas list-service-quotas");
+    expect(section).toContain("--service-code bedrock");
+    expect(section).toContain("--region us-east-1");
+    expect(section).toMatch(/ThrottlingException/);
+    expect(section).toMatch(/a new model starts\s*\n?with its own/i);
+    expect(section).toMatch(/deferred for real traffic\*\*, not waived/i);
+
+    // The concurrency-quota apparatus the user waived must not reappear here.
+    expect(section).not.toContain("request-service-quota-increase");
+    expect(section).not.toContain("L-B99A9384");
+  });
+
+  /* The ARN is the one account-bearing input and the one a well-formed-but-wrong value
+   * can sail through, so obtaining it, validating it, and setting it must all fail
+   * closed rather than leave a stale secret in place. */
+  it("gives fail-fast commands to obtain, validate, and set the profile secret", () => {
+    const section = sectionOf("### 0.2", "### 0.3");
+
+    expect(section).toContain("set -euo pipefail");
+    expect(section).toContain("aws bedrock get-inference-profile");
+    expect(section).toContain("BEDROCK_INFERENCE_PROFILE_ARN");
+
+    // Account-bearing, so it is set through the UI and never echoed.
+    expect(section).toMatch(/Do not echo/i);
+    expect(section).toMatch(/preserves a parameter an UPDATE\s+omits/i);
+  });
+
+  /* The manual block and the CI script must check the SAME things, or "it passed by
+   * hand" stops predicting "the deploy will pass" — and the gap is exactly where a
+   * well-formed-but-wrong ARN survives. */
+  it("checks every field the deploy script checks, including the ARN echo-back", () => {
+    const section = sectionOf("### 0.2", "### 0.3");
+
+    for (const check of [
+      ".inferenceProfileArn",
+      ".inferenceProfileId",
+      ".status",
+      "ACTIVE",
+      ".type",
+      "SYSTEM_DEFINED",
+      "foundation-model/anthropic",
+    ]) {
+      expect(section, `missing validation of ${check}`).toContain(check);
+    }
+
+    // The resolved ARN must be compared back to the supplied one, not merely read.
+    expect(section).toContain('= "$PROFILE_ARN"');
+    expect(section).toMatch(/the resolved ARN is not the ARN supplied/i);
+
+    // A non-empty destination list, and every entry carrying a modelArn.
+    expect(section).toContain("(.models // []) | length");
+    expect(section).toMatch(/-ge 1/);
+    expect(section).toMatch(/declares no destination models/i);
+    expect(section).toContain('(.modelArn // "") != ""');
+    expect(section).toMatch(/carries no modelArn/i);
+
+    // It points at the script it mirrors, so the two cannot drift silently.
+    expect(section).toContain("scripts/validate-inference-profile.sh");
+  });
+
+  /* A hardcoded role name passes against whatever role happens to carry that name,
+   * including one from an abandoned bootstrap stack. */
+  it("derives the deploy role from the bootstrap stack and checks the exact grant", () => {
+    const section = sectionOf("#### Bootstrap before application", "#### Verifying");
+
+    expect(section).toContain("BOOTSTRAP_STACK:?");
+    expect(section).toContain("OutputKey=='DeployRoleArn'");
+    expect(section).not.toContain('ROLE="nixus-bedrock-api-github-deploy"');
+
+    // Exactly one action, exactly one resource, no wildcard, exact profile suffix.
+    expect(section).toContain('["bedrock:GetInferenceProfile"]');
+    expect(section).toContain("| flatten | length) == 1");
+    expect(section).toMatch(/inference-profile\/us\\\\\.anthropic\\\\\.claude-sonnet-5-5\$/);
+    expect(section).toContain('test("\\\\*") | not');
+    expect(section).toMatch(/not exactly one read action/i);
   });
 
   /* GLOBAL is enabled for the beta, so a failed re-confirmation is an incident to stop,
@@ -367,6 +512,50 @@ describe("the rolled-back attempt's artefacts are accounted for", () => {
 });
 
 describe("runbook cross-references resolve", () => {
+  /*
+   * Every block here is copy-pasted into a terminal by definition. Without `set -e` an
+   * unresolved lookup becomes an empty variable and the NEXT command runs anyway — which
+   * is how a quota item gets written to `USER#` or a probe gets sent with an empty model
+   * id, reported as a Bedrock problem rather than as a stack that never deployed.
+   *
+   * The exceptions are enumerated rather than pattern-matched, because "no guard needed"
+   * is a judgement about one specific block and must be re-made when a block changes.
+   */
+  it("makes every multi-step command block fail fast", () => {
+    const blocks = [...RUNBOOK.matchAll(/```bash\n([\s\S]*?)```/g)].map(
+      (match) => match[1]!
+    );
+    expect(blocks.length).toBeGreaterThan(15);
+
+    const singleCommandBlocks = [
+      "git rm",
+      "aws bedrock delete-model-invocation-logging-configuration",
+      "cd apps/api-bedrock",
+      "pipx run cfn-lint",
+      "aws lambda get-account-settings",
+      "bash apps/api-bedrock/scripts/smoke-test.sh",
+    ];
+
+    const unguarded = blocks
+      .filter(
+        (block) =>
+          !/^\s*set -[eu]/m.test(block) && !singleCommandBlocks.some((head) => block.includes(head))
+      )
+      .map((block) => block.trim().split("\n")[0]);
+
+    expect(unguarded).toEqual([]);
+  });
+
+  /* A variable carried over from an earlier block is the one a reader is most likely not
+   * to have set, and an unset table name silently targets nothing. */
+  it("requires carried-over variables rather than defaulting them", () => {
+    const section = sectionOf("### 3.2", "---");
+
+    expect(section).toContain('"${TABLE:?');
+    expect(section).toContain('"${SUB:?');
+    expect(RUNBOOK).toContain('"${TABLE:?set TABLE to the deployed quota table name');
+  });
+
   it("has no dangling section reference", () => {
     const headings = new Set(
       [...RUNBOOK.matchAll(/^#{2,3} (\d+(?:\.\d+)?)/gm)].map((match) => match[1])

@@ -70,6 +70,17 @@ Parameters:
       permission below is scoped to this name, so neither role can touch another
       stack in the account.
     AllowedPattern: '^[A-Za-z][A-Za-z0-9-]*$'
+  ApprovedBedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-5-5
+    Description: >-
+      The single approved cross-region inference profile. Pinned here so the deploy
+      role's read grant names ONE profile ARN: the workflow resolves the supplied
+      profile secret before deploying, and a grant on `inference-profile/*` would let
+      that check pass for any profile in the account, which is the whole thing it exists
+      to rule out.
+    AllowedValues:
+      - us.anthropic.claude-sonnet-5-5
 
 Conditions:
   ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, 'true']
@@ -289,6 +300,18 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis'
                   - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/*'
+              # The pre-deploy step resolves the supplied inference-profile secret
+              # through Bedrock, so that a stale, foreign-account, deleted, or
+              # unreadable ARN fails the deploy instead of silently becoming the IAM
+              # resource the Lambda streams against. One read action, one profile ARN:
+              # no invoke, no list, no write, and nothing the deploy role could use to
+              # spend Bedrock tokens.
+              - Sid: ResolveTheOneApprovedInferenceProfile
+                Effect: Allow
+                Action:
+                  - bedrock:GetInferenceProfile
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1:${AWS::AccountId}:inference-profile/${ApprovedBedrockModelId}'
 
   # ---------------------------------------------------------------------------
   # Role 2 of 2 - assumed by CloudFormation, never by GitHub. This is the only

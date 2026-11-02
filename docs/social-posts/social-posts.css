@@ -1,0 +1,54 @@
+:root { --paper:#FAF8F5; --card:#FFFFFF; --ink:#1C1917; --muted:#6B635A; --line:#E8E3DA; --brand:#5B54D6; --brand-soft:#EFEDFB; --success:#28745A; --warning:#B35B23; }
+* { box-sizing:border-box; }
+html, body { margin:0; min-width:1080px; min-height:1350px; background:var(--paper); color:var(--ink); font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+.post { position:relative; width:1080px; height:1350px; overflow:hidden; padding:72px; display:flex; flex-direction:column; background:radial-gradient(circle at 91% 5%, rgba(91,84,214,.11), transparent 25%), var(--paper); }
+.post::after { content:""; position:absolute; width:480px; height:480px; right:-260px; bottom:-260px; border:1px solid rgba(91,84,214,.18); border-radius:50%; box-shadow:0 0 0 60px rgba(91,84,214,.035),0 0 0 120px rgba(91,84,214,.025); }
+.header { display:flex; align-items:center; justify-content:space-between; }
+.logo { width:126px; height:auto; }
+.label { color:var(--brand); font-size:18px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
+.rule { width:48px; height:3px; background:var(--ink); }
+h1 { max-width:850px; margin:22px 0; font-size:76px; line-height:.99; letter-spacing:-.04em; }
+.lead { max-width:760px; margin:0; color:var(--muted); font-size:28px; line-height:1.35; letter-spacing:-.02em; }
+.visual { position:relative; z-index:1; margin-top:auto; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:24px; box-shadow:0 1px 2px rgba(58,44,24,.05),0 18px 40px -20px rgba(58,44,24,.2); }
+.app { padding:30px; }
+.app-top { display:flex; align-items:center; justify-content:space-between; padding-bottom:22px; border-bottom:1px solid var(--line); color:var(--muted); font-size:18px; font-weight:700; }
+.eyebrow { color:var(--muted); font-size:16px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+.metric { margin-top:10px; font-size:56px; font-weight:750; line-height:1; letter-spacing:-.05em; }
+.rows { display:grid; gap:14px; margin-top:26px; }
+.row { display:flex; align-items:center; justify-content:space-between; padding:16px 0; border-bottom:1px solid var(--line); font-size:22px; }
+.row:last-child { border-bottom:0; }
+.pill { padding:8px 12px; border-radius:999px; background:var(--brand-soft); color:var(--brand); font-size:16px; font-weight:800; }
+.cta { margin:28px 0 0; color:var(--brand); font-size:20px; font-weight:800; }
+.split { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.app > .split { margin-top:24px; }
+.insight { padding:28px; min-height:220px; }
+.insight strong { display:block; margin-top:14px; font-size:40px; line-height:1.02; letter-spacing:-.04em; }
+.insight p { margin:12px 0 0; color:var(--muted); font-size:19px; line-height:1.35; }
+.violet { background:var(--brand); border-color:var(--brand); color:#fff; }
+.violet .eyebrow,.violet p { color:#E5E2FF; }
+.app .insight { min-height:0; padding:0; }
+.app .insight.card { min-height:0; padding:28px; }
+.chat { padding:26px; }
+.bubble { width:fit-content; max-width:78%; margin:14px 0; padding:16px 20px; border-radius:18px; font-size:23px; line-height:1.3; }
+.bubble.user { margin-left:auto; background:var(--brand); color:white; border-bottom-right-radius:4px; }
+.bubble.ai { background:#F5F2EC; border-bottom-left-radius:4px; }
+.garage { padding:30px; }
+.garage-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:24px; }
+.garage-grid .insight { min-height:180px; padding:24px; background:#F5F2EC; border-radius:18px; }
+.statement { padding:26px; }
+.statement-grid { display:grid; grid-template-columns:1.2fr .8fr; gap:18px; }
+.statement-list { padding:8px 0; }
+.statement-list .row { font-size:18px; }
+.stat-result { padding:24px; background:var(--brand-soft); border-radius:18px; }
+.stat-result .row { border-color:rgba(91,84,214,.16); }
+.stat-result .pill { display:inline-block; margin-top:16px; background:var(--card); }
+.dashboard { padding:30px; }
+.dashboard-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:24px; }
+.dashboard-grid .insight { min-height:190px; padding:24px; background:#F5F2EC; border-radius:18px; }
+.transaction-amount { display:grid; grid-template-columns:110px 150px; justify-content:end; gap:12px; text-align:right; }
+.transaction-amount small { color:var(--muted); font-size:16px; }
+.founding { padding:40px; background:#1C1917; border-color:#1C1917; color:#fff; }
+.founding > p:not(.cta) { max-width:650px; color:#D7D0C7; font-size:25px; line-height:1.35; }
+.founding .eyebrow { color:#C9C1B6; }
+.founding .cta { color:#C4BFFF; }

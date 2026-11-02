@@ -20,8 +20,18 @@ on:
     paths:
       - "apps/api-bedrock/**"
       - "packages/shared/**"
+      - "infra/bootstrap/**"
       - ".github/workflows/api-bedrock-ci.yml"
       - "pnpm-lock.yaml"
+  # Deliberately NOT symmetric with pull_request: `infra/bootstrap/**` is absent here.
+  # The bootstrap stack grants the deploy role the permission the application deploy's
+  # pre-deploy validation needs, and that stack is re-deployed by hand. If merging a
+  # bootstrap permission change also triggered this workflow's deploy job, the
+  # application would deploy against a role that does not yet hold the grant - failing
+  # closed on authorization, which reads as a broken check rather than a missing
+  # re-deploy. Bootstrap changes are therefore verified on the pull request and deployed
+  # by the operator first (see docs/runbooks/hosted-ai-rollout.md), then the application
+  # is deployed by a dispatch or a later application-side push.
   push:
     branches: [master, main]
     paths:
@@ -102,6 +112,12 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-east-1
 
+      # The bootstrap stack is plain CloudFormation, so `sam validate` never sees it.
+      # Without this it is the one deployable template in the repository whose syntax is
+      # checked by nothing, while holding the IAM grants that bound the whole pipeline.
+      - name: Lint the bootstrap template
+        run: pipx run cfn-lint infra/bootstrap/github-oidc-deploy.yaml
+
   deploy:
     name: Deploy (nixus-bedrock-api)
     needs: verify
@@ -132,7 +148,13 @@ jobs:
     # One source of truth for the values both the deploy overrides and the post-deploy
     # assertions use, so an assertion can never prove a value nobody deployed.
     env:
-      APPROVED_BEDROCK_MODEL_ID: us.anthropic.claude-sonnet-4-6
+      APPROVED_BEDROCK_MODEL_ID: us.anthropic.claude-sonnet-5-5
+      # The destination half of the streaming grant. CloudFormation preserves a prior
+      # parameter value on UPDATE, so this is passed explicitly and asserted afterwards:
+      # a stack left on the superseded pattern would keep authorizing the old model
+      # while every other surface reported the new one. It carries no account id, which
+      # is why it is a literal here and not a secret.
+      APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN: 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*'
 
     steps:
       - name: Checkout
@@ -195,6 +217,19 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-east-1
 
+      # Extracted to a script so it is executable under test: the behaviour that matters
+      # here is which inputs it REFUSES, and a substring assertion over an inline YAML
+      # block cannot prove a nonzero exit. See src/deploy-scripts.test.ts, which drives
+      # it against stubbed `aws` fixtures for every rejection path.
+      #
+      # Ordered after the OIDC credential step on purpose: it is the first step that
+      # calls AWS, and it must fail on a stale ARN rather than on missing credentials.
+      - name: Validate the supplied inference profile resolves to the approved model
+        run: bash apps/api-bedrock/scripts/validate-inference-profile.sh
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          BEDROCK_INFERENCE_PROFILE_ARN: ${{ secrets.BEDROCK_INFERENCE_PROFILE_ARN }}
+
       - name: Deploy stack
         working-directory: apps/api-bedrock
         run: |
@@ -229,6 +264,7 @@ jobs:
               "AlertEmail=${ALERT_EMAIL}" \
               "BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}" \
               "BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}" \
+              "BedrockFoundationModelArnPattern=${APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN}" \
               "DeploymentRevision=${GITHUB_SHA}"
         env:
           AWS_DEFAULT_REGION: us-east-1
@@ -336,6 +372,16 @@ jobs:
           fi
         env:
           AWS_DEFAULT_REGION: us-east-1
+
+      # Extracted for the same reason as the pre-deploy validation: the behaviour worth
+      # proving is the nonzero exit on each parameter mismatch, which only an executable
+      # test can show. See src/deploy-scripts.test.ts.
+      - name: Assert the deployed IAM grant identifies the same approved model
+        run: bash apps/api-bedrock/scripts/assert-deployed-model-grant.sh
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          STACK_NAME: nixus-bedrock-api
+          BEDROCK_INFERENCE_PROFILE_ARN: ${{ secrets.BEDROCK_INFERENCE_PROFILE_ARN }}
 
       # The retained table must survive every stack change (AD-15). This asserts
       # the deployed reality rather than trusting the template's DeletionPolicy.

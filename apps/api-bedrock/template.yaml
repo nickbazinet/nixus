@@ -42,7 +42,7 @@ Parameters:
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
   BedrockModelId:
     Type: String
-    Default: us.anthropic.claude-sonnet-4-6
+    Default: us.anthropic.claude-sonnet-5-5
     Description: >-
       Cross-region inference profile ID passed to ConverseStream. Model selection is
       server-owned; clients cannot influence it.
@@ -56,21 +56,39 @@ Parameters:
       No BedrockRegion parameter: the profile is a us-east-1 profile and the Lambda runs
       in us-east-1, so the runtime client inherits the correct region.
     AllowedValues:
-      - us.anthropic.claude-sonnet-4-6
+      - us.anthropic.claude-sonnet-5-5
   BedrockInferenceProfileArn:
     Type: String
     Description: >-
-      ARN of the approved us.anthropic.claude-sonnet-4-6 cross-region inference profile.
+      ARN of the approved us.anthropic.claude-sonnet-5-5 cross-region inference profile.
       Account-specific, so it is passed at deploy time and never committed.
-    AllowedPattern: '^arn:aws[a-zA-Z-]*:bedrock:[a-z0-9-]+:\d{12}:(inference-profile|application-inference-profile)/.+$'
+
+      The pattern pins the region, the resource type, and the profile id, so the only
+      shape it accepts is the one system-defined profile this service is evidenced
+      against. A profile ARN from another region would route this us-east-1 Lambda
+      through a profile nothing was evidenced against, and an
+      application-inference-profile carries an operator-chosen id that can name any
+      destination set at all - so neither is accepted.
+
+      The workflow additionally resolves this EXACT ARN through Bedrock before deploying,
+      because a well-formed ARN proves nothing about what it names.
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:bedrock:us-east-1:\d{12}:inference-profile/us\.anthropic\.claude-sonnet-5-5$'
   BedrockFoundationModelArnPattern:
     Type: String
-    Default: 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*'
+    Default: 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*'
     Description: >-
       Destination foundation-model ARN pattern the inference profile routes to. Streaming
       through a profile is authorized against BOTH the profile ARN and the models it fans
       out to, and that fan-out is per region - which is the one place AWS IAM requires a
       region wildcard on the resource (never on an action).
+
+      Enumerated to one value, like BedrockModelId, because CloudFormation preserves a
+      previous parameter value on UPDATE: a stack carrying the old destination pattern
+      would keep granting streaming on the superseded model even after the template
+      default moved. A single AllowedValues entry makes that preserved value
+      undeployable rather than merely unintended.
+    AllowedValues:
+      - 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*'
   DeploymentRevision:
     Type: String
     AllowedPattern: '^[0-9a-f]{40}$'

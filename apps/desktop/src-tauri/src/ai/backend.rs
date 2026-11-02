@@ -22,7 +22,7 @@ use crate::error::AppError;
 /// The one provider port every AI surface crosses (AD-9). Hosted Bedrock and the
 /// existing BYO Bedrock/OpenAI clients are interchangeable adapters behind it; no
 /// surface talks to a concrete client directly any more.
-const BEDROCK_MODEL_ID: &str = "us.anthropic.claude-sonnet-4-6";
+const BEDROCK_MODEL_ID: &str = "us.anthropic.claude-sonnet-5-5";
 const OPENAI_MODEL_ID: &str = "gpt-4o";
 
 /// Closed operation set, mirroring `CloudAiOperation` in the shared contract.
@@ -639,6 +639,21 @@ mod tests {
         "hosted_unavailable",
         "unsupported_encoding",
     ];
+
+    /// The BYO Bedrock adapter owns its model identity independently of the hosted
+    /// stack: a user on BYO never reaches `apps/api-bedrock`, so a hosted-only upgrade
+    /// would leave this path on the superseded model with nothing failing anywhere.
+    ///
+    /// Pinned positively, to the exact US cross-region profile. The `us.` prefix is
+    /// asserted structurally rather than by naming the unprefixed foundation model,
+    /// which has no direct in-region on-demand endpoint and would therefore fail at
+    /// call time rather than at build time.
+    #[test]
+    fn byo_bedrock_invokes_the_approved_us_sonnet_profile() {
+        assert_eq!(BEDROCK_MODEL_ID, "us.anthropic.claude-sonnet-5-5");
+        assert!(BEDROCK_MODEL_ID.starts_with("us."));
+        assert!(!BEDROCK_MODEL_ID.starts_with("anthropic."));
+    }
 
     #[test]
     fn validation_size_and_encoding_failures_never_fall_back() {

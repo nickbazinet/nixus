@@ -423,10 +423,10 @@ describe("AD-4 compute topology", () => {
 describe("Bedrock identity is the approved cross-region inference profile", () => {
   const role = singleResourceOfType("AWS::IAM::Role");
 
-  it("defaults to the approved Sonnet 4.6 profile and enumerates only that value", () => {
-    expect(PARAMETERS.BedrockModelId!.Default).toBe("us.anthropic.claude-sonnet-4-6");
+  it("defaults to the approved Sonnet 5.5 profile and enumerates only that value", () => {
+    expect(PARAMETERS.BedrockModelId!.Default).toBe("us.anthropic.claude-sonnet-5-5");
     expect(PARAMETERS.BedrockModelId!.AllowedValues).toEqual([
-      "us.anthropic.claude-sonnet-4-6",
+      "us.anthropic.claude-sonnet-5-5",
     ]);
     expect(PARAMETERS.BedrockModelId!.AllowedValues).toContain(
       PARAMETERS.BedrockModelId!.Default
@@ -437,15 +437,45 @@ describe("Bedrock identity is the approved cross-region inference profile", () =
     const models = PARAMETERS.BedrockModelId!.AllowedValues as string[];
 
     for (const rejected of [
+      "anthropic.claude-sonnet-5-5",
+      "us.anthropic.claude-sonnet-4-6",
       "anthropic.claude-sonnet-4-6",
       "anthropic.claude-3-7-sonnet-20250219-v1:0",
-      "eu.anthropic.claude-sonnet-4-6",
+      "eu.anthropic.claude-sonnet-5-5",
       "amazon.nova-pro-v1:0",
       "",
     ]) {
       expect(models, `${rejected} must not be selectable`).not.toContain(rejected);
     }
     expect(models).toHaveLength(1);
+  });
+
+  /* The profile ARN is the one account-specific model input, so it stays a secret. Its
+   * pattern still pins the region: a well-formed profile ARN from another region would
+   * otherwise route this us-east-1 Lambda through a profile nothing was evidenced
+   * against, and the pattern is the only guard that runs before the workflow's own
+   * Bedrock resolution. */
+  it("pins the supplied profile ARN to a us-east-1 Bedrock inference profile", () => {
+    const pattern = PARAMETERS.BedrockInferenceProfileArn!.AllowedPattern as string;
+
+    expect(pattern).toContain("bedrock:us-east-1:");
+    expect(PARAMETERS.BedrockInferenceProfileArn!.Default).toBeUndefined();
+
+    const matcher = new RegExp(pattern);
+    expect(
+      matcher.test(
+        "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-5-5"
+      )
+    ).toBe(true);
+    // Another region, and a foundation-model ARN, must both be refused outright.
+    expect(
+      matcher.test(
+        "arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-sonnet-5-5"
+      )
+    ).toBe(false);
+    expect(
+      matcher.test("arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5")
+    ).toBe(false);
   });
 
   /* The region is no longer a stack input at all: adding one back would create a value
@@ -480,7 +510,23 @@ describe("Bedrock identity is the approved cross-region inference profile", () =
       ref("BedrockFoundationModelArnPattern"),
     ]);
     expect(PARAMETERS.BedrockFoundationModelArnPattern!.Default).toContain(
-      "foundation-model/anthropic.claude-sonnet-4-6"
+      "foundation-model/anthropic.claude-sonnet-5-5"
+    );
+  });
+
+  /* CloudFormation preserves a parameter value the deploy omits, so a template default
+   * alone cannot migrate an existing stack's IAM grant. Enumerating one value makes a
+   * preserved destination pattern for the superseded model undeployable rather than
+   * merely unintended. */
+  it("enumerates one destination pattern, so a superseded grant cannot survive", () => {
+    const pattern = PARAMETERS.BedrockFoundationModelArnPattern!;
+
+    expect(pattern.AllowedValues).toEqual([
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*",
+    ]);
+    expect(pattern.AllowedValues).toContain(pattern.Default);
+    expect(pattern.AllowedValues as string[]).not.toContain(
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
     );
   });
 

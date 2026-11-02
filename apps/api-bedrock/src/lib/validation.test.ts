@@ -99,7 +99,7 @@ describe("closed top-level schema", () => {
 
   it("rejects a client-supplied model id as an unknown field", () => {
     const failure = expectFailure(
-      chatBody({ model_id: "us.anthropic.claude-sonnet-4-6" })
+      chatBody({ model_id: "us.anthropic.claude-sonnet-5-5" })
     );
     expect(failure.status).toBe(400);
     expect(failure.message).toContain("model_id");
