@@ -7,7 +7,7 @@ paradigm: 'Server-brokered AI gateway with ports-and-adapters provider routing'
 scope: 'Premium Cognito users access Bedrock through a quota-enforcing Nixus cloud gateway'
 status: final
 created: '2026-08-25'
-updated: '2026-10-28'
+updated: '2026-11-02'
 binds:
   - AD-1
   - AD-2
@@ -130,7 +130,7 @@ companions:
 | Runtime | Node.js 22.x, ARM64, AWS Lambda (retained deliberately for entitlements-architecture alignment; supported through Apr 2027; Node 24 available but not adopted) |
 | API | API Gateway Regional REST API, `AWS_PROXY`, `ResponseTransferMode=STREAM`, custom domain only (no default execute-api in prod) |
 | Auth | Cognito user-pool authorizer, scope `nixus-api/ai.invoke` detected from the access-token `scope` claim |
-| Model | `us.anthropic.claude-sonnet-5-5` (US geo cross-region inference profile), `us-east-1`, on the hosted and BYO paths alike — a profile is legal because no `CountTokens` call exists; the unprefixed foundation model is a destination, never an endpoint; see [Amendments](#amendments) |
+| Model | `us.anthropic.claude-sonnet-4-6` (US geo cross-region inference profile), `us-east-1`, on the hosted and BYO paths alike — a profile is legal because no `CountTokens` call exists; the unprefixed foundation model is a destination, never an endpoint; see [Amendments](#amendments) |
 | Data | DynamoDB, on-demand (`PAY_PER_REQUEST`), PITR enabled, `Retain` deletion/replace policy |
 | IaC | AWS SAM, stack `nixus-bedrock-api`, one production stack, no staging |
 | Test | Vitest |
@@ -211,7 +211,7 @@ sequenceDiagram
 - Hosted-AI status is Rust-internal (`ai/hosted_state.rs`) — no Tauri command, no frontend hook, no TanStack Query key for it. `HostedAiState` carries `subject_sub`; it is cleared on sign-out, session expiry, sign-in as a different `sub`, or an auth-callback subject change, and is invalidated before use on any mismatch — no cross-user process cache. `403`, `429`, and `503` from `/v1/ai/invoke` all invalidate the cache immediately; a `503`/`hosted_unavailable` response may additionally be cached briefly (max 60 seconds) to avoid hammering a disabled or globally exhausted gateway, but the server's per-user and `GLOBAL` state remains authoritative — the 60-second cache is a client-side rate-limiting courtesy, never a substitute for a fresh check.
 - Wire JSON is snake_case at the public API boundary; the Lambda validates/translates it into AWS SDK Converse-shaped types internally — the SDK's own payload naming is never part of the public contract.
 - Structured CloudWatch JSON logs, no request/response bodies, 14-day retention, explicit log group (CloudFormation-created; not `logs:*`).
-- IAM (exact actions, no broad prose): the Lambda role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit log group; `dynamodb:GetItem` + `dynamodb:TransactWriteItems` + `dynamodb:ConditionCheckItem` + `dynamodb:UpdateItem` scoped to the one table; `bedrock:InvokeModelWithResponseStream` — and **only** that Bedrock action — scoped to the approved `us.anthropic.claude-sonnet-5-5` inference-profile ARN plus its destination foundation-model ARN pattern (amended 2026-08-27 and 2026-10-28; `bedrock:CountTokens` is deliberately not granted, because no code calls it). The deploy role's only Bedrock permission is read-only `bedrock:GetInferenceProfile` on that same single profile ARN. No static credentials, no SSM/Secrets Manager. DynamoDB IAM cannot isolate by sort key — the code boundary (and its tests) enforces that the Lambda never mutates a `CONFIG` item outside a transaction condition check; only the deploy/admin role edits config directly.
+- IAM (exact actions, no broad prose): the Lambda role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit log group; `dynamodb:GetItem` + `dynamodb:TransactWriteItems` + `dynamodb:ConditionCheckItem` + `dynamodb:UpdateItem` scoped to the one table; `bedrock:InvokeModelWithResponseStream` — and **only** that Bedrock action — scoped to the approved `us.anthropic.claude-sonnet-4-6` inference-profile ARN plus its destination foundation-model ARN pattern (amended 2026-08-27, 2026-10-28, and 2026-11-02; `bedrock:CountTokens` is deliberately not granted, because no code calls it). The deploy role's only Bedrock permission is read-only `bedrock:GetInferenceProfile` on that same single profile ARN. No static credentials, no SSM/Secrets Manager. DynamoDB IAM cannot isolate by sort key — the code boundary (and its tests) enforces that the Lambda never mutates a `CONFIG` item outside a transaction condition check; only the deploy/admin role edits config directly.
 
 ## Deferred
 
@@ -225,7 +225,38 @@ sequenceDiagram
 
 ## Amendments
 
-### 2026-10-28 — Claude Sonnet 5.5 on both the hosted and BYO paths
+### 2026-11-02 — rolled back to `us.anthropic.claude-sonnet-4-6` (Sonnet 5.5 has zero account quota)
+
+**User-approved. Supersedes the 2026-10-28 amendment on model identity only; its deploy-integrity
+requirements stand in full.**
+
+The model is **`us.anthropic.claude-sonnet-4-6`** again, on the hosted stack and in the
+desktop BYO adapter alike. The 2026-10-28 switch to Sonnet 5.5 was reverted because this
+AWS account holds **0 TPM / 0 RPM** for that model: Bedrock refuses every call with
+`AccessDeniedException … anthropic.claude-sonnet-5-5 is not available for this account`.
+Sonnet 4.6 was re-confirmed live the same day — `ACTIVE`, `SYSTEM_DEFINED` profile
+`us.anthropic.claude-sonnet-4-6`, fanning out to `us-east-1`, `us-east-2`, `us-west-2`.
+**Re-adopting Sonnet 5.5 requires an approved Bedrock throughput quota increase for it in
+this account first; it is not a code change.**
+
+The unprefixed `anthropic.claude-sonnet-4-6` has no direct in-region on-demand endpoint
+and may never be invoked; it is legal only as the destination in the IAM pattern
+`arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*`.
+
+Every deploy-integrity invariant from 2026-10-28 is kept and now names 4.6: three
+model-bearing parameters passed explicitly with `BedrockFoundationModelArnPattern`
+enumerated to one value, the exact supplied profile ARN resolved through
+`bedrock:GetInferenceProfile` before deploying, the deployed parameters read back, the
+deploy role's single read-only grant on one profile ARN from
+`infra/bootstrap/github-oidc-deploy.yaml` deployed before the application stack, and
+`cfn-lint` over that bootstrap template.
+
+The 2026-08-26 capability evidence applies again: gates **1a**, **1c**, **1d**, **1e**
+stand as recorded for `anthropic.claude-sonnet-4-6`, owed only the profile
+re-confirmation. Unpassed: **1f** throughput quotas, **1h** deployed assertion across all
+three parameters, **1i** BYO on 4.6, **1j** bootstrap read grant, pre-deploy.
+
+### 2026-10-28 — Claude Sonnet 5.5 on both the hosted and BYO paths (superseded 2026-11-02; retained as history)
 
 **User-approved. Supersedes the 2026-08-27 amendment on model identity only; everything
 else in it stands.**
@@ -334,4 +365,4 @@ an inference profile is a further amendment, not an implementation detail.
 
 ## Status
 
-`final` — reviewer gate passed and fixes applied; amended 2026-08-26, 2026-08-27, and 2026-10-28 (see Amendments).
+`final` — reviewer gate passed and fixes applied; amended 2026-08-26, 2026-08-27, 2026-10-28, and 2026-11-02 (see Amendments).

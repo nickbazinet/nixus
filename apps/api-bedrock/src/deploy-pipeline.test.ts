@@ -448,9 +448,9 @@ describe("deploy job proves deployed guarantees", () => {
     );
     expect(perStepCopies).toEqual([]);
 
-    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe("us.anthropic.claude-sonnet-5-5");
+    expect(DEPLOY.env.APPROVED_BEDROCK_MODEL_ID).toBe("us.anthropic.claude-sonnet-4-6");
     expect(DEPLOY.env.APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN).toBe(
-      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*"
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
     );
     expect(DEPLOY.env).not.toHaveProperty("APPROVED_BEDROCK_REGION");
   });

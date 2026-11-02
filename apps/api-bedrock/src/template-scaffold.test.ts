@@ -423,10 +423,10 @@ describe("AD-4 compute topology", () => {
 describe("Bedrock identity is the approved cross-region inference profile", () => {
   const role = singleResourceOfType("AWS::IAM::Role");
 
-  it("defaults to the approved Sonnet 5.5 profile and enumerates only that value", () => {
-    expect(PARAMETERS.BedrockModelId!.Default).toBe("us.anthropic.claude-sonnet-5-5");
+  it("defaults to the approved Sonnet 4.6 profile and enumerates only that value", () => {
+    expect(PARAMETERS.BedrockModelId!.Default).toBe("us.anthropic.claude-sonnet-4-6");
     expect(PARAMETERS.BedrockModelId!.AllowedValues).toEqual([
-      "us.anthropic.claude-sonnet-5-5",
+      "us.anthropic.claude-sonnet-4-6",
     ]);
     expect(PARAMETERS.BedrockModelId!.AllowedValues).toContain(
       PARAMETERS.BedrockModelId!.Default
@@ -437,11 +437,11 @@ describe("Bedrock identity is the approved cross-region inference profile", () =
     const models = PARAMETERS.BedrockModelId!.AllowedValues as string[];
 
     for (const rejected of [
-      "anthropic.claude-sonnet-5-5",
-      "us.anthropic.claude-sonnet-4-6",
       "anthropic.claude-sonnet-4-6",
+      "us.anthropic.claude-sonnet-5-5",
+      "anthropic.claude-sonnet-5-5",
       "anthropic.claude-3-7-sonnet-20250219-v1:0",
-      "eu.anthropic.claude-sonnet-5-5",
+      "eu.anthropic.claude-sonnet-4-6",
       "amazon.nova-pro-v1:0",
       "",
     ]) {
@@ -464,17 +464,17 @@ describe("Bedrock identity is the approved cross-region inference profile", () =
     const matcher = new RegExp(pattern);
     expect(
       matcher.test(
-        "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-5-5"
+        "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6"
       )
     ).toBe(true);
     // Another region, and a foundation-model ARN, must both be refused outright.
     expect(
       matcher.test(
-        "arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-sonnet-5-5"
+        "arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-sonnet-4-6"
       )
     ).toBe(false);
     expect(
-      matcher.test("arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5")
+      matcher.test("arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6")
     ).toBe(false);
   });
 
@@ -510,7 +510,7 @@ describe("Bedrock identity is the approved cross-region inference profile", () =
       ref("BedrockFoundationModelArnPattern"),
     ]);
     expect(PARAMETERS.BedrockFoundationModelArnPattern!.Default).toContain(
-      "foundation-model/anthropic.claude-sonnet-5-5"
+      "foundation-model/anthropic.claude-sonnet-4-6"
     );
   });
 
@@ -522,11 +522,11 @@ describe("Bedrock identity is the approved cross-region inference profile", () =
     const pattern = PARAMETERS.BedrockFoundationModelArnPattern!;
 
     expect(pattern.AllowedValues).toEqual([
-      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*",
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*",
     ]);
     expect(pattern.AllowedValues).toContain(pattern.Default);
     expect(pattern.AllowedValues as string[]).not.toContain(
-      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*"
     );
   });
 

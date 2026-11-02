@@ -36,10 +36,10 @@ tags = "app=nixus service=hosted-ai managed-by=sam"
 # The Bedrock model identity is NOT in that category and is deliberately not a free
 # deploy-time choice. Two parameters are each pinned to a single `AllowedValues` entry,
 # and they name two DIFFERENT identities:
-#   - `BedrockModelId` is the `us.anthropic.claude-sonnet-5-5` US inference profile,
+#   - `BedrockModelId` is the `us.anthropic.claude-sonnet-4-6` US inference profile,
 #     which is what the Lambda invokes, and
 #   - `BedrockFoundationModelArnPattern` is the DESTINATION foundation model that
-#     profile fans out to (`foundation-model/anthropic.claude-sonnet-5-5`), which is the
+#     profile fans out to (`foundation-model/anthropic.claude-sonnet-4-6`), which is the
 #     second half of the IAM streaming grant - not the profile.
 # Both are pinned because the capability evidence covers exactly that pair. There is no
 # region input at all - the profile, the API, the Lambda, and the table are all

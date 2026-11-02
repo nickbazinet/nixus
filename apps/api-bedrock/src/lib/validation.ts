@@ -416,7 +416,7 @@ function validateStatementImportShape(
 
 /**
  * Anthropic's Messages API - which the selected foundation model
- * `anthropic.claude-sonnet-5-5`, reached through its US inference profile, implements -
+ * `anthropic.claude-sonnet-4-6`, reached through its US inference profile, implements -
  * operates on alternating user/assistant turns beginning with `user`. Bedrock rejects a
  * history that opens with the assistant or repeats a role.
  *

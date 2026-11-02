@@ -148,13 +148,13 @@ jobs:
     # One source of truth for the values both the deploy overrides and the post-deploy
     # assertions use, so an assertion can never prove a value nobody deployed.
     env:
-      APPROVED_BEDROCK_MODEL_ID: us.anthropic.claude-sonnet-5-5
+      APPROVED_BEDROCK_MODEL_ID: us.anthropic.claude-sonnet-4-6
       # The destination half of the streaming grant. CloudFormation preserves a prior
       # parameter value on UPDATE, so this is passed explicitly and asserted afterwards:
       # a stack left on the superseded pattern would keep authorizing the old model
       # while every other surface reported the new one. It carries no account id, which
       # is why it is a literal here and not a secret.
-      APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN: 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*'
+      APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN: 'arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*'
 
     steps:
       - name: Checkout

@@ -422,11 +422,11 @@ describe("the deploy role may read exactly one inference profile and nothing els
     expect(arn).not.toContain("inference-profile/*");
   });
 
-  it("pins the approved model to the single approved US 5.5 profile", () => {
+  it("pins the approved model to the single approved US 4.6 profile", () => {
     const parameter = BOOTSTRAP.Parameters.ApprovedBedrockModelId;
 
-    expect(parameter.Default).toBe("us.anthropic.claude-sonnet-5-5");
-    expect(parameter.AllowedValues).toEqual(["us.anthropic.claude-sonnet-5-5"]);
+    expect(parameter.Default).toBe("us.anthropic.claude-sonnet-4-6");
+    expect(parameter.AllowedValues).toEqual(["us.anthropic.claude-sonnet-4-6"]);
     expect(parameter.AllowedValues).toContain(parameter.Default);
   });
 

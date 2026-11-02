@@ -22,7 +22,7 @@ use crate::error::AppError;
 /// The one provider port every AI surface crosses (AD-9). Hosted Bedrock and the
 /// existing BYO Bedrock/OpenAI clients are interchangeable adapters behind it; no
 /// surface talks to a concrete client directly any more.
-const BEDROCK_MODEL_ID: &str = "us.anthropic.claude-sonnet-5-5";
+const BEDROCK_MODEL_ID: &str = "us.anthropic.claude-sonnet-4-6";
 const OPENAI_MODEL_ID: &str = "gpt-4o";
 
 /// Closed operation set, mirroring `CloudAiOperation` in the shared contract.
@@ -650,7 +650,7 @@ mod tests {
     /// call time rather than at build time.
     #[test]
     fn byo_bedrock_invokes_the_approved_us_sonnet_profile() {
-        assert_eq!(BEDROCK_MODEL_ID, "us.anthropic.claude-sonnet-5-5");
+        assert_eq!(BEDROCK_MODEL_ID, "us.anthropic.claude-sonnet-4-6");
         assert!(BEDROCK_MODEL_ID.starts_with("us."));
         assert!(!BEDROCK_MODEL_ID.starts_with("anthropic."));
     }

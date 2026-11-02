@@ -19,11 +19,11 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = new URL("../../../", import.meta.url);
 const REPO_ROOT_PATH = fileURLToPath(REPO_ROOT);
 
-const APPROVED_MODEL_ID = "us.anthropic.claude-sonnet-5-5";
-const APPROVED_FOUNDATION_MODEL = "anthropic.claude-sonnet-5-5";
+const APPROVED_MODEL_ID = "us.anthropic.claude-sonnet-4-6";
+const APPROVED_FOUNDATION_MODEL = "anthropic.claude-sonnet-4-6";
 const APPROVED_DESTINATION_PATTERN =
-  "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*";
-const SUPERSEDED_MODEL_FRAGMENT = "claude-sonnet-4-6";
+  "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*";
+const SUPERSEDED_MODEL_FRAGMENT = "claude-sonnet-5-5";
 
 function read(relativePath: string): string {
   return readFileSync(fileURLToPath(new URL(relativePath, REPO_ROOT)), "utf8");
@@ -57,7 +57,7 @@ const OPERATOR_AUTHORITIES = [
   "_bmad-output/planning-artifacts/architecture/architecture-nixus-2026-08-25/ARCHITECTURE-SPINE.md",
 ] as const;
 
-describe("every live authority names the one approved US Sonnet 5.5 profile", () => {
+describe("every live authority names the one approved US Sonnet 4.6 profile", () => {
   it("pins the profile id in all nine identity authorities", () => {
     for (const path of [...MACHINE_AUTHORITIES, ...OPERATOR_AUTHORITIES]) {
       expect(read(path), `${path} must name ${APPROVED_MODEL_ID}`).toContain(
@@ -78,7 +78,7 @@ describe("every live authority names the one approved US Sonnet 5.5 profile", ()
     expect(template).toContain("bedrock:us-east-1:");
   });
 
-  it("pins the workflow's approved model and destination pattern to 5.5", () => {
+  it("pins the workflow's approved model and destination pattern to 4.6", () => {
     const workflow = read(".github/workflows/api-bedrock-ci.yml");
 
     expect(workflow).toContain(`APPROVED_BEDROCK_MODEL_ID: ${APPROVED_MODEL_ID}`);
@@ -87,7 +87,7 @@ describe("every live authority names the one approved US Sonnet 5.5 profile", ()
     );
   });
 
-  it("pins the bootstrap read grant's approved model to 5.5", () => {
+  it("pins the bootstrap read grant's approved model to 4.6", () => {
     const bootstrap = read("infra/bootstrap/github-oidc-deploy.yaml");
 
     expect(bootstrap).toContain(`Default: ${APPROVED_MODEL_ID}`);
@@ -107,11 +107,11 @@ describe("every live authority names the one approved US Sonnet 5.5 profile", ()
 
   /* Both architecture authorities are current-state documents an agent reads before
    * changing anything; one left on the old identity is a future regression's source. */
-  it("pins both architecture authorities and project context to 5.5", () => {
+  it("pins both architecture authorities and project context to 4.6", () => {
     for (const path of OPERATOR_AUTHORITIES) {
       const text = read(path);
       expect(text, `${path}`).toContain(APPROVED_MODEL_ID);
-      expect(text, `${path} must state the 5.5 IAM destination`).toContain(
+      expect(text, `${path} must state the 4.6 IAM destination`).toContain(
         `foundation-model/${APPROVED_FOUNDATION_MODEL}`
       );
     }
@@ -197,8 +197,9 @@ describe("the bare foundation model is never bound as an invocation identity", (
  * developer's working tree instead of on the commit.
  *
  * The architecture documents, historical specs, review snapshots, memlogs, and story
- * agent metadata are deliberately OUTSIDE the roots, because their 4.6 references are
- * dated records this change is forbidden to rewrite.
+ * agent metadata are deliberately OUTSIDE the roots, because their 5.5 references are
+ * dated records this change is forbidden to rewrite — the 2026-10-28 amendment that
+ * adopted 5.5 is history even though 2026-11-02 rolled it back.
  */
 const SCAN_ROOTS = ["apps", "packages", "infra", ".github", "docs"] as const;
 
@@ -232,13 +233,13 @@ function gitLsFiles(args: readonly string[]): string[] {
  */
 const EXEMPTIONS: Readonly<Record<string, string>> = {
   "docs/runbooks/hosted-ai-rollout.md":
-    "retains the dated 4.6 capability and deployment evidence the new gates are owed against",
+    "records that 5.5 was adopted on 2026-10-28 and rolled back on 2026-11-02 for zero account quota, which is the precondition an operator must clear before re-adopting it",
   "apps/api-bedrock/src/rollout-runbook.test.ts":
-    "asserts that retained 4.6 evidence is still present and still marked as owed a re-run",
+    "asserts that the dated 5.5 rollback record and its quota-increase precondition are still in the runbook",
   "apps/api-bedrock/src/template-scaffold.test.ts":
-    "asserts the 4.6 model id and destination pattern are unselectable",
+    "asserts the 5.5 model id and destination pattern are unselectable",
   "apps/api-bedrock/src/deploy-scripts.test.ts":
-    "drives the deploy guards with a superseded 4.6 profile id and destination pattern to prove both are rejected",
+    "drives the deploy guards with a superseded 5.5 profile id and destination pattern to prove both are rejected",
   "apps/api-bedrock/src/model-identity.test.ts":
     "declares the fragment this scan searches for",
 };

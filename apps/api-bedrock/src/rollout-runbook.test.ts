@@ -70,7 +70,7 @@ describe("the quota design and model identity are recorded exactly", () => {
   });
 
   it("names the approved profile and region, and probes the deployed identity", () => {
-    expect(RUNBOOK).toContain("us.anthropic.claude-sonnet-5-5");
+    expect(RUNBOOK).toContain("us.anthropic.claude-sonnet-4-6");
     expect(RUNBOOK).toContain("--region us-east-1");
     expect(RUNBOOK).toContain("BedrockModelIdEcho");
     expect(RUNBOOK).toMatch(/never a remembered one/i);
@@ -95,7 +95,7 @@ describe("the quota design and model identity are recorded exactly", () => {
 
     expect(section).toContain("set -euo pipefail");
     expect(section).toMatch(/BedrockModelIdEcho unresolved/);
-    expect(section).toContain('test "$MODEL" = "us.anthropic.claude-sonnet-5-5"');
+    expect(section).toContain('test "$MODEL" = "us.anthropic.claude-sonnet-4-6"');
   });
 
   /* Profiles were once disqualified precisely because they lack CountTokens. Explaining
@@ -135,24 +135,27 @@ describe("the quota design and model identity are recorded exactly", () => {
     expect(row).toMatch(/one reservation per stream call/i);
   });
 
-  /* The capability evidence on record was gathered against 4.6. 5.5 is a different
-   * model with its own per-account access, capacity, and ceiling behaviour, so carrying
-   * the evidence forward unqualified would claim a check nobody ran. The dates stay
-   * because they are what makes the evidence a record rather than a tick. */
-  it("keeps the 4.6 evidence with its dates and marks every 5.5 gate unpassed", () => {
-    expect(RUNBOOK).toMatch(/### 0\.3 The 5\.5 capability evidence that is owed/);
-    expect(RUNBOOK).toMatch(/None of that evidence transfers to 5\.5/i);
+  /* The capability evidence on record was gathered against the direct model
+   * `anthropic.claude-sonnet-4-6`, which is the destination this profile routes to - so
+   * it is evidence about the same model, owed only a re-confirmation through the profile.
+   * The dates stay because they are what makes the evidence a record rather than a tick,
+   * and a row re-dated by the 2026-11-02 rollback would be a rewritten record. */
+  it("keeps the dated 4.6 evidence and marks the profile re-confirmation owed", () => {
+    expect(RUNBOOK).toMatch(
+      /### 0\.3 Re-confirm the capability evidence through the profile/
+    );
+    expect(RUNBOOK).toMatch(/What changed is the invocation identity/i);
 
     for (const gate of ["1a", "1c", "1d", "1e"] as const) {
       const row = gateRow(gate);
       expect(row, `gate ${gate}`).toMatch(/PASSED for `anthropic\.claude-sonnet-4-6`/);
-      expect(row, `gate ${gate}`).toMatch(/RE-RUN REQUIRED/);
+      expect(row, `gate ${gate}`).toMatch(/re-confirm through the profile|RE-RUN REQUIRED/i);
       // The original evidence date survives; a re-dated row is a rewritten record.
       expect(row, `gate ${gate}`).toContain("2026-08-26");
     }
 
     const streamGate = gateRow("1a");
-    expect(streamGate).toMatch(/RE-RUN REQUIRED against `us\.anthropic\.claude-sonnet-5-5`/i);
+    expect(streamGate).toMatch(/RE-RUN REQUIRED against `us\.anthropic\.claude-sonnet-4-6`/i);
     // A gate marked passed with an empty cell is indistinguishable from one someone
     // ticked, so the observed reply has to be in the evidence column itself.
     expect(evidenceOf(streamGate)).toContain("OK.");
@@ -161,13 +164,36 @@ describe("the quota design and model identity are recorded exactly", () => {
     expect(gateRow("1f")).toMatch(/DEFERRED FOR REAL TRAFFIC/);
   });
 
-  /* A BYO user never reaches this stack: their own AWS account needs 5.5 model access,
+  /*
+   * Sonnet 5.5 was adopted on 2026-10-28 and withdrawn on 2026-11-02 because this account
+   * holds zero Bedrock throughput for it — every call came back `AccessDeniedException`,
+   * which no code change can fix. Without that record the next reader sees a model that
+   * is newer than the deployed one and nothing explaining why it is not in use, so the
+   * cheapest next step looks like "switch the id back" rather than "get the quota first".
+   * Hence both halves are asserted: that it was tried and reverted, and that the
+   * precondition for retrying is a quota increase.
+   */
+  it("records the 5.5 rollback and names the quota increase as its precondition", () => {
+    expect(RUNBOOK).toMatch(/\*\*Rolled back — 2026-11-02\.\*\*/);
+    expect(RUNBOOK).toContain("us.anthropic.claude-sonnet-5-5");
+    expect(RUNBOOK).toMatch(/0 TPM and 0 RPM/);
+    expect(RUNBOOK).toContain("AccessDeniedException");
+    expect(RUNBOOK).toMatch(
+      /Re-adopting Sonnet 5\.5 requires an approved Bedrock throughput quota increase/i
+    );
+
+    // The rollback must not read as a retreat from the deploy hardening it arrived with.
+    expect(RUNBOOK).toContain("BedrockFoundationModelArnPattern");
+    expect(gateRow("1j")).toMatch(/PRE-DEPLOY/);
+  });
+
+  /* A BYO user never reaches this stack: their own AWS account needs 4.6 model access,
    * and the desktop adapter invokes the profile with their credentials. Hosted evidence
    * proves nothing for them, so release readiness has to show this gate unpassed. */
-  it("carries an unpassed BYO 5.5 invocation and model-access gate", () => {
+  it("carries an unpassed BYO 4.6 invocation and model-access gate", () => {
     const row = gateRow("1i");
 
-    expect(row).toMatch(/BYO Bedrock verified on 5\.5/i);
+    expect(row).toMatch(/BYO Bedrock verified on 4\.6/i);
     expect(row).toMatch(/statement import/i);
     expect(row).toMatch(/model access/i);
     expect(row).toMatch(/NOT RUN/);
@@ -195,9 +221,10 @@ describe("the quota design and model identity are recorded exactly", () => {
   });
 
   /* "DEFERRED" without instructions is indistinguishable from "nobody knows how". The
-   * row has to point at a command, and it must not carry 4.6's figures forward as if
-   * they described the new model's account quotas. */
-  it("points the throughput-quota gate at real instructions and marks 5.5 unconfirmed", () => {
+   * row has to point at a command, and it must not read as confirmed: a zero account
+   * quota is precisely what made Sonnet 5.5 undeployable, and that is the one failure a
+   * reader of this row needs to be able to anticipate. */
+  it("points the throughput-quota gate at real instructions and marks it unconfirmed", () => {
     const row = gateRow("1f");
 
     expect(row).toMatch(/§0\.4/);
@@ -277,7 +304,7 @@ describe("the quota design and model identity are recorded exactly", () => {
     // Exactly one action, exactly one resource, no wildcard, exact profile suffix.
     expect(section).toContain('["bedrock:GetInferenceProfile"]');
     expect(section).toContain("| flatten | length) == 1");
-    expect(section).toMatch(/inference-profile\/us\\\\\.anthropic\\\\\.claude-sonnet-5-5\$/);
+    expect(section).toMatch(/inference-profile\/us\\\\\.anthropic\\\\\.claude-sonnet-4-6\$/);
     expect(section).toContain('test("\\\\*") | not');
     expect(section).toMatch(/not exactly one read action/i);
   });

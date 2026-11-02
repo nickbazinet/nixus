@@ -25,13 +25,13 @@ const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const VALIDATE_SCRIPT = "apps/api-bedrock/scripts/validate-inference-profile.sh";
 const ASSERT_SCRIPT = "apps/api-bedrock/scripts/assert-deployed-model-grant.sh";
 
-const APPROVED_MODEL_ID = "us.anthropic.claude-sonnet-5-5";
+const APPROVED_MODEL_ID = "us.anthropic.claude-sonnet-4-6";
 const APPROVED_PATTERN =
-  "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*";
+  "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*";
 const ACCOUNT = "123456789012";
 const VALID_ARN = `arn:aws:bedrock:us-east-1:${ACCOUNT}:inference-profile/${APPROVED_MODEL_ID}`;
 const DESTINATION =
-  "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-5-5";
+  "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6";
 
 /** A healthy `get-inference-profile` response for the approved profile. */
 function approvedProfile(overrides: Record<string, unknown> = {}): string {
@@ -258,7 +258,7 @@ describe("validate-inference-profile.sh accepts only the approved profile", () =
 
   it("exits nonzero when the ARN does not end in exactly the approved profile id", () => {
     for (const tail of [
-      "us.anthropic.claude-sonnet-4-6",
+      "us.anthropic.claude-sonnet-5-5",
       `${APPROVED_MODEL_ID}-preview`,
       "us.anthropic.claude-opus-5",
     ]) {
@@ -301,7 +301,7 @@ describe("validate-inference-profile.sh accepts only the approved profile", () =
     });
 
     expect(outcome.status).not.toBe(0);
-    expect(outcome.stderr).toContain("expected 'us.anthropic.claude-sonnet-5-5'");
+    expect(outcome.stderr).toContain("expected 'us.anthropic.claude-sonnet-4-6'");
   });
 
   it("exits nonzero for a non-ACTIVE status", () => {
@@ -365,7 +365,7 @@ describe("validate-inference-profile.sh accepts only the approved profile", () =
           { modelArn: DESTINATION },
           {
             modelArn:
-              "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-6",
+              "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-5-5",
           },
         ],
       }),
@@ -438,7 +438,7 @@ describe("assert-deployed-model-grant.sh compares deployed parameters to the inp
     const outcome = runScript(ASSERT_SCRIPT, {
       parametersJson: deployedParameters(
         VALID_ARN,
-        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*"
       ),
     });
 
@@ -470,7 +470,7 @@ describe("assert-deployed-model-grant.sh compares deployed parameters to the inp
       deployedParameters(VALID_ARN, APPROVED_PATTERN),
       deployedParameters(
         `arn:aws:bedrock:us-east-1:${ACCOUNT}:inference-profile/${APPROVED_MODEL_ID}`,
-        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*"
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*"
       ),
     ]) {
       const outcome = runScript(ASSERT_SCRIPT, { parametersJson });

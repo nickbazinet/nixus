@@ -11,7 +11,21 @@ PDF, image, and output-ceiling probes. Set it to `false` for an immediate stop.
 
 ## 0. Model and quota design — what is verified, and what is not
 
-**STATUS: quota is per request. NO TOKEN-COUNTING CALL EXISTS ANYWHERE. NO CONCURRENCY DEPENDENCY REMAINS (§2.1). The model is now `us.anthropic.claude-sonnet-5-5` on BOTH the hosted path and the desktop BYO adapter, and NO capability or deployment evidence exists for it yet — every 5.5 gate below is unpassed. The streaming, multimodal, and output-ceiling evidence on record was gathered on `anthropic.claude-sonnet-4-6` and is retained, with its original dates, as evidence for the superseded model only.**
+**STATUS: quota is per request. NO TOKEN-COUNTING CALL EXISTS ANYWHERE. NO CONCURRENCY DEPENDENCY REMAINS (§2.1). The model is `us.anthropic.claude-sonnet-4-6` on BOTH the hosted path and the desktop BYO adapter. Streaming, multimodal, and the output ceiling were verified on `anthropic.claude-sonnet-4-6`; §0.3 is the re-confirmation owed through that model's `us.` profile.**
+
+> **Rolled back — 2026-11-02.** `us.anthropic.claude-sonnet-5-5` was adopted on
+> 2026-10-28 and reverted the same way it arrived. This AWS account has **0 TPM and 0 RPM
+> quota** for Sonnet 5.5: Bedrock answers every call with
+> `AccessDeniedException … anthropic.claude-sonnet-5-5 is not available for this account`,
+> so no amount of code was ever going to make it stream. Sonnet 4.6 was re-confirmed live
+> on the same date — a `converse` returned OK through
+> `arn:aws:bedrock:us-east-1:<account>:inference-profile/us.anthropic.claude-sonnet-4-6`,
+> `ACTIVE`, `SYSTEM_DEFINED`, fanning out to `us-east-1`, `us-east-2`, and `us-west-2`.
+> **Re-adopting Sonnet 5.5 requires an approved Bedrock throughput quota increase for that
+> model in this account first (§0.4); it is not a code change.** Everything the 5.5 attempt
+> added to the deploy path — the explicit `BedrockFoundationModelArnPattern`, the
+> pre-deploy profile validation, the post-deploy grant assertion, the bootstrap read grant
+> (gate 1j), and the `cfn-lint` of the bootstrap template — is kept and now names 4.6.
 
 ### 0.1 Quota is per request, and streaming is the only Bedrock call
 
@@ -30,14 +44,14 @@ upstream call. Output stays token-bounded because only the model can enforce tha
 `inferenceConfig.maxTokens`.
 
 Because no CountTokens call exists, the model is a **cross-region inference profile**
-again: `us.anthropic.claude-sonnet-5-5` in `us-east-1`. Profiles do not support
+again: `us.anthropic.claude-sonnet-4-6` in `us-east-1`. Profiles do not support
 `CountTokens`, which is what once forced a bare foundation model; nothing asks them to now.
 API, Lambda, table, and Bedrock all sit in `us-east-1`, and the Lambda inherits its region
 — there is no Bedrock region parameter or environment variable to set.
 
-The unprefixed `anthropic.claude-sonnet-5-5` is the foundation-model identity, not an
+The unprefixed `anthropic.claude-sonnet-4-6` is the foundation-model identity, not an
 invocation identity: it has no direct in-region on-demand endpoint. It appears only as the
-destination in the IAM pattern `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*`.
+destination in the IAM pattern `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-4-6*`.
 
 Probe against the value the stack actually deployed, never a remembered one. The lookup
 fails fast rather than probing an empty model id, which Bedrock would reject with a
@@ -49,8 +63,8 @@ set -euo pipefail
 MODEL="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
   --query "Stacks[0].Outputs[?OutputKey=='BedrockModelIdEcho'].OutputValue" --output text)"
 test -n "$MODEL" && test "$MODEL" != "None" || { echo "BedrockModelIdEcho unresolved" >&2; exit 1; }
-test "$MODEL" = "us.anthropic.claude-sonnet-5-5" \
-  || { echo "deployed model is ${MODEL}, expected us.anthropic.claude-sonnet-5-5" >&2; exit 1; }
+test "$MODEL" = "us.anthropic.claude-sonnet-4-6" \
+  || { echo "deployed model is ${MODEL}, expected us.anthropic.claude-sonnet-4-6" >&2; exit 1; }
 
 aws bedrock-runtime converse-stream \
   --region us-east-1 --model-id "$MODEL" \
@@ -74,7 +88,7 @@ processing:
 ### 0.2 Obtain, validate, and set the profile secret
 
 `BEDROCK_INFERENCE_PROFILE_ARN` is the account-specific half of the model identity and it
-must be updated to the 5.5 profile **before** the application deploy. Every command below
+must name the 4.6 profile **before** the application deploy. Every command below
 fails closed, because the failure this sequence exists to prevent is a well-formed ARN that
 names something else — a profile in another account, a deleted one, or one still routing to
 the superseded model. The deploy would accept such a value silently and make it the IAM
@@ -85,7 +99,7 @@ set -euo pipefail
 
 PROFILE_ARN="$(aws bedrock get-inference-profile \
   --region us-east-1 \
-  --inference-profile-identifier us.anthropic.claude-sonnet-5-5 \
+  --inference-profile-identifier us.anthropic.claude-sonnet-4-6 \
   --query 'inferenceProfileArn' --output text)"
 test -n "$PROFILE_ARN" && test "$PROFILE_ARN" != "None" \
   || { echo "the approved profile is not readable in this account" >&2; exit 1; }
@@ -108,7 +122,7 @@ PROFILE="$(aws bedrock get-inference-profile --region us-east-1 \
 # differs means the identifier was treated as a name, not as the account's own resource.
 test "$(jq -r '.inferenceProfileArn' <<<"$PROFILE")" = "$PROFILE_ARN" \
   || { echo "the resolved ARN is not the ARN supplied" >&2; exit 1; }
-test "$(jq -r '.inferenceProfileId' <<<"$PROFILE")" = "us.anthropic.claude-sonnet-5-5" \
+test "$(jq -r '.inferenceProfileId' <<<"$PROFILE")" = "us.anthropic.claude-sonnet-4-6" \
   || { echo "the ARN does not name the approved profile" >&2; exit 1; }
 test "$(jq -r '.status' <<<"$PROFILE")" = "ACTIVE" \
   || { echo "the profile is not ACTIVE" >&2; exit 1; }
@@ -121,7 +135,7 @@ test "$(jq -r '(.models // []) | length' <<<"$PROFILE")" -ge 1 \
   || { echo "the profile declares no destination models" >&2; exit 1; }
 jq -e 'all((.models // [])[]; (.modelArn // "") != "")' <<<"$PROFILE" >/dev/null \
   || { echo "a destination model carries no modelArn" >&2; exit 1; }
-jq -e 'all((.models // [])[].modelArn; test("foundation-model/anthropic\\.claude-sonnet-5-5"))' \
+jq -e 'all((.models // [])[].modelArn; test("foundation-model/anthropic\\.claude-sonnet-4-6"))' \
   <<<"$PROFILE" >/dev/null \
   || { echo "a destination model is outside the approved pattern" >&2; exit 1; }
 
@@ -137,23 +151,24 @@ actually landed. Updating the secret is a prerequisite of the deploy, not a subs
 that assertion: the workflow reads the deployed parameter back and compares it to this
 value, because CloudFormation preserves a parameter an UPDATE omits.
 
-### 0.3 The 5.5 capability evidence that is owed
+### 0.3 Re-confirm the capability evidence through the profile
 
-Streaming, multimodal PDF + image, and the 8192 output ceiling were verified against
-`anthropic.claude-sonnet-4-6` and, through its `us.` profile, against the previous
-deployed identity. **None of that evidence transfers to 5.5:** it is a different model,
-with its own per-account model access, its own regional capacity, and its own behaviour at
-the ceilings. Run each check below against the 5.5 profile and record it on the matching
-gate; until then the gates are unpassed and the retained 4.6 rows are evidence for a model
-production no longer calls.
+Streaming, multimodal PDF + image, and the 8192 output ceiling were all verified against
+`anthropic.claude-sonnet-4-6` — the foundation model this profile routes to — so the
+capability evidence is about the same model. **What changed is the invocation identity:**
+requests name `us.anthropic.claude-sonnet-4-6`, and a profile carries its own model access
+and its own regional capacity. Re-run these through the profile after the deploy and record
+them against gates 1c–1e; until then they are evidence for the direct model, not for what
+production calls. The 2026-08-26 dates stay: they are what makes the rows a record rather
+than a tick.
 
-| Check | Why it must be re-run for 5.5 | How to check | Gate |
+| Check | Why the identity change matters | How to check | Gate |
 |---|---|---|---|
-| Streaming | A new model's streaming support and capacity are its own | `converse-stream` per §0.1 with `$MODEL` | 1a |
-| Profile model access and lifecycle | Access is granted per profile *and* per destination model; either can be missing for a newly released model | Bedrock → Model access in `us-east-1`, plus `aws bedrock get-foundation-model --model-identifier anthropic.claude-sonnet-5-5` | 1c |
-| Multimodal PDF + image | Statement import sends `document`/`image` blocks | `converse` once with a small real PDF and once with a PNG, using `$MODEL` | 1d |
+| Streaming | A profile's streaming support and capacity are its own, not the direct model's | `converse-stream` per §0.1 with `$MODEL` | 1a |
+| Profile model access and lifecycle | Access is granted per profile *and* per destination model; either can be missing | Bedrock → Model access in `us-east-1`, plus `aws bedrock get-foundation-model --model-identifier anthropic.claude-sonnet-4-6` | 1c |
+| Multimodal PDF + image | Statement import sends `document`/`image` blocks; profile routing must accept them the same way | `converse` once with a small real PDF and once with a PNG, using `$MODEL` | 1d |
 | Output ceiling | The largest operation asks for 8192 output tokens and must not be rejected | `converse` with `maxTokens` at 8192 | 1e |
-| BYO Bedrock on 5.5 | A BYO user never reaches this stack: their own account needs 5.5 model access, and `ai/backend.rs` now invokes the same profile. Hosted evidence proves nothing for them | From a release desktop build with BYO Bedrock credentials configured and hosted AI unavailable, run one chat turn and one statement import | 1i |
+| BYO Bedrock on 4.6 | A BYO user never reaches this stack: their own account needs 4.6 model access, and `ai/backend.rs` invokes the same profile with *their* credentials. Hosted evidence proves nothing for them | From a release desktop build with BYO Bedrock credentials configured and hosted AI unavailable, run one chat turn and one statement import | 1i |
 
 `GLOBAL` is already enabled for the first premium beta account (gate 11). These checks are
 therefore **post-change verification on live configuration**, not a gate holding traffic
@@ -164,9 +179,11 @@ leaving a broken model in service.
 
 `charged_count` caps how many requests Nixus will pay for; it says nothing about how many
 AWS will *accept*. Those are per-model, per-region account quotas, and a new model starts
-with its own — so the 4.6 figures are not evidence for 5.5. Exhausting them surfaces as
-`ThrottlingException`, which the service classifies `503 hosted_unavailable` and the
-desktop treats as an outage with BYO fallback.
+with its own — which is exactly what sank the 2026-11-02 Sonnet 5.5 rollback: this account
+holds **0 TPM / 0 RPM** for that model, so Bedrock refused every call with
+`AccessDeniedException` before any throughput was ever used. Exhausting a quota the account
+*does* hold surfaces instead as `ThrottlingException`, which the service classifies
+`503 hosted_unavailable` and the desktop treats as an outage with BYO fallback.
 
 Read the current values rather than assuming them:
 
@@ -174,7 +191,7 @@ Read the current values rather than assuming them:
 set -euo pipefail
 
 aws service-quotas list-service-quotas --service-code bedrock --region us-east-1 \
-  --query "Quotas[?contains(QuotaName, 'Claude Sonnet 5.5')].[QuotaName,Value]" \
+  --query "Quotas[?contains(QuotaName, 'Claude Sonnet 4.6')].[QuotaName,Value]" \
   --output table
 ```
 
@@ -185,7 +202,9 @@ on-demand requests-per-minute and tokens-per-minute figures against gate 1f.
 This is **deferred for real traffic**, not waived: at beta volume the 10 RPS stage
 throttle and the monthly request caps bind first. It becomes a blocker only when real
 usage approaches the account figures. Raising a quota is a separate AWS request and is
-not part of this change.
+not part of this change — and it is the **precondition** for ever re-adopting Sonnet 5.5:
+run this query against that model's name first, and do not change a single identity
+authority until the figures come back non-zero.
 
 
 ## 1. One-time, out-of-band AWS setup
@@ -279,7 +298,7 @@ Two roles rather than one is the point: a single role able to both assume from G
    | `HOSTED_ZONE_ID` | secret | Route53 zone for `nixusapp.com` |
    | `ALERT_EMAIL` | secret | Alarm + budget subscriber |
    | `API_DOMAIN_NAME` | variable | `api.nixusapp.com` |
-   | `BEDROCK_INFERENCE_PROFILE_ARN` | secret | ARN of the approved `us.anthropic.claude-sonnet-5-5` profile — obtain and validate it per §0.2 |
+   | `BEDROCK_INFERENCE_PROFILE_ARN` | secret | ARN of the approved `us.anthropic.claude-sonnet-4-6` profile — obtain and validate it per §0.2 |
 
    `BEDROCK_INFERENCE_PROFILE_ARN` is the **only** Bedrock input, and it exists because a
    profile ARN carries an account id. The model id and the destination foundation-model
@@ -350,7 +369,7 @@ So, on any change under `infra/bootstrap/`:
    jq -e '.[0] | ([.Resource] | flatten | length) == 1' <<<"$STATEMENT" >/dev/null \
      || { echo "the grant is not scoped to exactly one resource" >&2; exit 1; }
    jq -e '.[0] | ([.Resource] | flatten | .[0])
-            | test("inference-profile/us\\.anthropic\\.claude-sonnet-5-5$") and (test("\\*") | not)' \
+            | test("inference-profile/us\\.anthropic\\.claude-sonnet-4-6$") and (test("\\*") | not)' \
      <<<"$STATEMENT" >/dev/null \
      || { echo "the grant does not name exactly the approved profile ARN" >&2; exit 1; }
 
@@ -775,8 +794,8 @@ Then confirm the negative paths:
 
 Then, with **BYO Bedrock credentials configured and hosted AI unavailable**, run one chat
 turn and one statement import from the same build (gate 1i). This is a separate path, not
-a repeat: a BYO user never reaches this stack, `ai/backend.rs` invokes the 5.5 profile with
-*their* AWS credentials, and 5.5 model access in their own account is a prerequisite
+a repeat: a BYO user never reaches this stack, `ai/backend.rs` invokes the 4.6 profile with
+*their* AWS credentials, and 4.6 model access in their own account is a prerequisite
 nothing on the hosted side can prove. A hosted-only verification leaves every BYO user
 unverified.
 
@@ -786,23 +805,25 @@ unverified.
 
 `GLOBAL.enabled = true` is forbidden until every row below has recorded evidence.
 
-The core first-customer gates are complete **for the superseded 4.6 model**. The 5.5
-switch re-opens gates 1a, 1c, 1d, 1e, and 1h, and adds 1i (BYO on 5.5) and 1j (the
-bootstrap read grant) — none of which has evidence yet. Remaining operational checks
-below are follow-up hardening, not blockers for this beta account.
+The core first-customer gates are complete for the direct model. Gates 1a, 1c, 1d, 1e,
+and 1h are owed a re-confirmation through the `us.` profile, and 1i (BYO on 4.6) and 1j
+(the bootstrap read grant) have no evidence yet. The 2026-11-02 Sonnet 5.5 rollback
+changed none of that: 4.6 is the identity those dated rows were recorded against, so they
+stand as they did. Remaining operational checks below are follow-up hardening, not
+blockers for this beta account.
 
 | # | Gate | Reference | Evidence | Date |
 |---|---|---|---|---|
 | 1 | Quota is per request: no `CountTokens` call, no token preflight, no `bedrock:CountTokens` grant | §0.1, AD-8 | **BY DESIGN** — enforced by service tests (`no CountTokens command/IAM/action`, one reservation per stream call) | 2026-08-26 |
-| 1a | `ConverseStream` succeeds on the deployed model | §0.1, AD-7 | **PASSED for `anthropic.claude-sonnet-4-6`** — streamed `OK.`; **RE-RUN REQUIRED against `us.anthropic.claude-sonnet-5-5`** | 2026-08-26 |
+| 1a | `ConverseStream` succeeds on the deployed model | §0.1, AD-7 | **PASSED for `anthropic.claude-sonnet-4-6`** — streamed `OK.`; **RE-RUN REQUIRED against `us.anthropic.claude-sonnet-4-6`** | 2026-08-26 |
 | 1b | ~~Lambda concurrent-executions quota raised~~ — **WAIVED** by the user on 2026-08-26: the function carries no reservation and uses the account's shared 50. Request `87ed4948ee0d48d59c3637f58a2ed33bo8DRLke8` may stay `CASE_OPENED` but is no longer a rollout dependency. | §2.1 | **NOT A DEPENDENCY** | 2026-08-26 |
-| 1c | Profile model access and lifecycle confirmed | §0.3 | **PASSED for `anthropic.claude-sonnet-4-6`** — `ACTIVE`, streaming supported; **RE-RUN REQUIRED for the 5.5 profile** | 2026-08-26 |
-| 1d | Multimodal compatibility confirmed: one real PDF and one image | §0.3, CAP-2 | **PASSED for `anthropic.claude-sonnet-4-6`** — `PDF_OK`, `IMAGE_OK`; **RE-RUN REQUIRED for the 5.5 profile** | 2026-08-26 |
-| 1e | Output ceiling accepted at 8192 | §0.3, AD-8 | **PASSED for `anthropic.claude-sonnet-4-6`** — `LIMIT_OK`; **RE-RUN REQUIRED for the 5.5 profile** | 2026-08-26 |
-| 1f | `us-east-1` per-model Bedrock RPM/TPM quotas read and recorded for 5.5 | §0.4 | **DEFERRED FOR REAL TRAFFIC** — the recorded figures were 4.6's; 5.5 has its own per-model quotas and they are **not yet confirmed** | |
+| 1c | Profile model access and lifecycle confirmed | §0.3 | **PASSED for `anthropic.claude-sonnet-4-6`** — `ACTIVE`, streaming supported; re-confirm through the profile | 2026-08-26 |
+| 1d | Multimodal compatibility confirmed: one real PDF and one image | §0.3, CAP-2 | **PASSED for `anthropic.claude-sonnet-4-6`** — `PDF_OK`, `IMAGE_OK`; re-confirm through the profile | 2026-08-26 |
+| 1e | Output ceiling accepted at 8192 | §0.3, AD-8 | **PASSED for `anthropic.claude-sonnet-4-6`** — `LIMIT_OK`; re-confirm through the profile | 2026-08-26 |
+| 1f | `us-east-1` per-model Bedrock RPM/TPM quotas read and recorded for `anthropic.claude-sonnet-4-6` | §0.4 | **DEFERRED FOR REAL TRAFFIC** — the on-demand RPM/TPM figures for the deployed model are **not yet confirmed** against Service Quotas; a zero figure is what made Sonnet 5.5 undeployable on 2026-11-02 | |
 | 1g | Deployed function reports **no** `ReservedConcurrentExecutions` | §2.2 | **PASSED** — GitHub run `32997823488` | 2026-08-26 |
-| 1h | Deployed model assertion passes on all three model-bearing parameters (stack output, Lambda env, and the deployed profile ARN / destination pattern against the validated secret), and no orphaned `BEDROCK_REGION` survives | §0.2, §2.2, AD-8 | **RE-RUN REQUIRED** — the recorded pass predates both the 5.5 switch and the parameter assertions | |
-| 1i | BYO Bedrock verified on 5.5 from a release desktop build, with hosted AI unavailable: one chat turn and one statement import, and the user's own account confirmed to hold 5.5 model access | §0.3, CAP-1/CAP-2 | **NOT RUN** — no 5.5 BYO evidence exists; `ai/backend.rs` now invokes the 5.5 profile | |
+| 1h | Deployed model assertion passes on all three model-bearing parameters (stack output, Lambda env, and the deployed profile ARN / destination pattern against the validated secret), and no orphaned `BEDROCK_REGION` survives | §0.2, §2.2, AD-8 | **RE-RUN REQUIRED** — the recorded pass was against the direct model in `eu-west-2` and predates the parameter assertions | |
+| 1i | BYO Bedrock verified on 4.6 from a release desktop build, with hosted AI unavailable: one chat turn and one statement import, and the user's own account confirmed to hold 4.6 model access | §0.3, CAP-1/CAP-2 | **NOT RUN** — no BYO evidence exists for the profile `ai/backend.rs` invokes | |
 | 1j | **PRE-DEPLOY.** Bootstrap stack re-deployed with the single-ARN `bedrock:GetInferenceProfile` grant and verified exactly one action / one non-wildcard resource, with the role name derived from the stack output. Must pass **before** the application deploy | §1.2 bootstrap-before-application | **NOT RUN** — without it the pre-deploy profile validation fails closed on authorization, not on a stale ARN | |
 | 2 | Cognito `nixus-api/ai.invoke` scope added to pool + app client | §1.1, AD-3 | | |
 | 3 | Bootstrap stack deployed: OIDC provider, deploy role, CloudFormation execution role, artifact bucket. `sub` verified against `TrustedSubject` | §1.2, AD-12 | | |
@@ -820,7 +841,7 @@ below are follow-up hardening, not blockers for this beta account.
 | 11a | Orphaned retained table from the rolled-back first attempt identified, confirmed empty, and removed by hand | §2.4 | | |
 | 11b | Premium `USER#<sub>/CONFIG` written conditionally and verified: `premium=true`, `monthly_request_limit=200`, and the attribute set carries no email, name, or content | §3.2, AD-6/AD-11 | | |
 | 12 | Deployed smoke test passes | §4, AD-2/AD-3 | | |
-| 13 | All four surfaces verified hosted on one release build, BYO cleared, against the deployed 5.5 profile | §4, CAP-1/CAP-2 | | |
+| 13 | All four surfaces verified hosted on one release build, BYO cleared, against the deployed 4.6 profile | §4, CAP-1/CAP-2 | | |
 | 14 | Quota-exhaustion and global-disable fallback verified | §4, CAP-5 | | |
 | 15 | CloudWatch logs verified free of prompts, responses, and file paths | §4, AD-11 | | |
 
@@ -830,12 +851,12 @@ so gate 7 requires confirmed, not merely created.
 
 ### Flip the switch
 
-The first-customer switch was enabled after gates 1–1e, 1g, and 1h passed **against the
-superseded 4.6 model**. The switch stays on through the 5.5 change by the same explicit
-user decision, so gates 1a, 1c, 1d, 1e, 1h, 1i, and 1j are now **post-change verification
-on live configuration** (§0.3) rather than a hold on traffic — a failure there is an
-incident to stop with the kill switch, not a gate to wait on. For later rollout, complete
-the remaining operational evidence before broadening access:
+The first-customer switch was enabled after gates 1–1e, 1g, and 1h passed against the
+direct model. The switch stays on by the same explicit user decision, so gates 1a, 1c, 1d,
+1e, 1h, 1i, and 1j are **post-change verification on live configuration** (§0.3) rather
+than a hold on traffic — a failure there is an incident to stop with the kill switch, not a
+gate to wait on. For later rollout, complete the remaining operational evidence before
+broadening access:
 
 ```bash
 set -euo pipefail

@@ -23,7 +23,7 @@ import {
  * that the service makes no Runtime CountTokens call - the one capability profiles do
  * not carry. Streaming is all this adapter does.
  */
-const MODEL_ID = "us.anthropic.claude-sonnet-5-5";
+const MODEL_ID = "us.anthropic.claude-sonnet-4-6";
 
 async function collect(
   events: Record<string, unknown>[]
@@ -299,8 +299,8 @@ describe("model selection is server-owned", () => {
   it("accepts a cross-region inference profile id without special-casing it", () => {
     const previous = process.env.BEDROCK_MODEL_ID;
     try {
-      process.env.BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-5-5";
-      expect(modelId()).toBe("us.anthropic.claude-sonnet-5-5");
+      process.env.BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-4-6";
+      expect(modelId()).toBe("us.anthropic.claude-sonnet-4-6");
     } finally {
       if (previous === undefined) delete process.env.BEDROCK_MODEL_ID;
       else process.env.BEDROCK_MODEL_ID = previous;
