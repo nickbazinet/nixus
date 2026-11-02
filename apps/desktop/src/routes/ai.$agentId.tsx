@@ -204,6 +204,7 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
             content={msg.content}
             isStreaming={streaming && msg.role === "assistant" && i === messages.length - 1}
             actionHandled={msg.actionHandled}
+            actionOutcome={msg.actionOutcome}
             onConfirm={(payload) => confirmAction(i, payload)}
             onCancel={(payload) => cancelAction(i, payload)}
           />

@@ -363,6 +363,71 @@ pub async fn premium_entitlement() -> bool {
     }
 }
 
+/// Whether the signed-in account may use a hosted-ONLY surface right now (Home, PRD FR-11).
+///
+/// Richer than `premium_entitlement` by exactly one distinction the Home surface must message on
+/// its own — premium but out of this period's quota — and still carries no figure: the limit, the
+/// charged count and the period never leave this crate (AD-9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostedEligibility {
+    Eligible,
+    SignedOut,
+    ReauthenticationRequired,
+    NotPremium,
+    QuotaExhausted,
+    /// A transient hosted problem (status unreadable, recent `503`): FR-7, not FR-11.
+    Unavailable,
+}
+
+/// The same arithmetic routing uses (`has_remaining_quota`), split so "not premium" and "premium
+/// but exhausted" can be told apart.
+pub fn classify_status(status: &HostedAiStatus) -> HostedEligibility {
+    if !status.premium {
+        HostedEligibility::NotPremium
+    } else if !status.has_remaining_quota() {
+        HostedEligibility::QuotaExhausted
+    } else {
+        HostedEligibility::Eligible
+    }
+}
+
+pub async fn eligibility() -> HostedEligibility {
+    eligibility_with(false).await
+}
+
+/// Reads through the shared status cache, so the answer cannot disagree with the one the
+/// invocation is then routed against. Spends the closed table's single refresh on a `401`.
+async fn eligibility_with(refreshed: bool) -> HostedEligibility {
+    let Some(base) = base_url() else {
+        return HostedEligibility::Unavailable;
+    };
+
+    let auth_result = if refreshed {
+        auth::refresh_hosted_ai_token().await
+    } else {
+        auth::hosted_ai_token().await
+    };
+    let (access_token, subject_sub) = match resolve_hosted_auth(auth_result) {
+        Ok(credentials) => credentials,
+        Err(HostedOutcome::Skipped) => return HostedEligibility::SignedOut,
+        Err(_) => return HostedEligibility::ReauthenticationRequired,
+    };
+
+    if hosted_state::is_unavailable(&subject_sub) {
+        return HostedEligibility::Unavailable;
+    }
+    if let Some(cached) = hosted_state::get_fresh(&subject_sub) {
+        return classify_status(&cached);
+    }
+
+    match fetch_status(&base, &access_token, &subject_sub).await {
+        StatusRead::Ready(status) => classify_status(&status),
+        StatusRead::Unauthorized if !refreshed => Box::pin(eligibility_with(true)).await,
+        StatusRead::Unauthorized => HostedEligibility::ReauthenticationRequired,
+        StatusRead::Failed => HostedEligibility::Unavailable,
+    }
+}
+
 /// Exactly one retry, and only after a forced refresh. A second `401` carrying a token
 /// minted seconds earlier is not a staleness problem, so retrying again would spend
 /// another refresh and another round-trip on the same answer.
@@ -1035,6 +1100,23 @@ mod tests {
             base_url_with(Some("http://127.0.0.1:3000")).as_deref(),
             Some("http://127.0.0.1:3000")
         );
+    }
+
+    /// FR-11: premium-with-quota is the only eligible state, and exhaustion is told apart from a
+    /// missing entitlement so the Home surface can name the right reason.
+    #[test]
+    fn eligibility_separates_not_premium_from_an_exhausted_period() {
+        let status = |premium, limit, charged| HostedAiStatus {
+            premium,
+            monthly_request_limit: limit,
+            charged_count: charged,
+            period: "2026-11".to_string(),
+        };
+
+        assert_eq!(classify_status(&status(true, 200, 3)), HostedEligibility::Eligible);
+        assert_eq!(classify_status(&status(true, 200, 200)), HostedEligibility::QuotaExhausted);
+        assert_eq!(classify_status(&status(false, 200, 0)), HostedEligibility::NotPremium);
+        assert_eq!(classify_status(&status(false, 0, 0)), HostedEligibility::NotPremium);
     }
 
     #[test]

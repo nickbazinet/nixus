@@ -99,7 +99,9 @@ function RootLayout() {
   // The picker runs before the user has chosen which dataset the shell would even be showing, so
   // every shell affordance is omitted rather than rendered disabled.
   const isPicker = pathname === PICKER_PATH;
-  const isFullBleed = isAiChat || isPicker;
+  // Home lays out its own dashboard column and docked composer panel, each scrolling on its own.
+  const isHome = pathname === "/home" || pathname.startsWith("/home/");
+  const isFullBleed = isAiChat || isPicker || isHome;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

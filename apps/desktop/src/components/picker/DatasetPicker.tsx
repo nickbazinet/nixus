@@ -121,17 +121,17 @@ export function DatasetPicker({ defaultLocalOpen }: DatasetPickerProps) {
     return isOpenProfile(entry) ? "refused-active" : "allowed";
   };
 
-  // Navigating to `/` rather than reloading is what makes the picker's own gate the thing that
-  // decides: the root's beforeLoad re-asks `check_picker_gate` (now latched) and `/`'s asks
-  // `check_onboarding_status` against the dataset just opened, so the dashboard-vs-wizard choice
-  // stays where it already lives.
+  // Navigating to `/home` (the landing surface) rather than reloading is what makes the picker's own
+  // gate the thing that decides: the root's beforeLoad re-asks `check_picker_gate` (now latched) and
+  // `/home`'s asks `check_onboarding_status` against the dataset just opened, so the Home-vs-wizard
+  // choice stays where it already lives.
   const selectEntry = async (datasetId: string) => {
     try {
       await selectDataset.mutateAsync(datasetId);
       // Awaited inside the try as well: `navigate` returns a promise that rejects if the target
       // route's own loaders fail, and outside it that becomes an unhandled rejection with the row
       // still spinning. The user is left on the picker either way, so one toast covers both.
-      await navigate({ to: "/" });
+      await navigate({ to: "/home" });
     } catch {
       // Mandatory: select_dataset can fail on an unknown id or a failed open/migrate. Without this
       // the rejection is an unhandled promise and the row just looks dead. The user stays here.

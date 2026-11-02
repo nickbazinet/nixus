@@ -6,7 +6,7 @@ use crate::error::AppError;
 
 /// `entity_type` as the audit call sites spell it, mapped to the table its `entity_id` is a row of.
 ///
-/// `audit_log.entity_id` is one column pointing at eleven different tables, which is why the schema
+/// `audit_log.entity_id` is one column pointing at twelve different tables, which is why the schema
 /// cannot make it a foreign key and why AD-2's generic translation cannot reach it. This list is
 /// the translation, and an entity type that is absent from it describes something that is not one
 /// row of one table — `import`, `budget_template` and every AI chat action pass `entity_id` 0 — so
@@ -14,6 +14,7 @@ use crate::error::AppError;
 const AUDITED_TABLES: &[(&str, &str)] = &[
     ("account", "accounts"),
     ("expense", "expenses"),
+    ("home_widget", "home_widgets"),
     ("income_entry", "income_entries"),
     ("income_source", "income_sources"),
     ("maintenance_service_log", "maintenance_service_logs"),

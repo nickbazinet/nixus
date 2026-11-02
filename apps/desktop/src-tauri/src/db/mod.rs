@@ -21,6 +21,7 @@ pub mod danger_zone;
 pub mod dashboard;
 pub mod expense;
 pub mod financial_health;
+pub mod home_surface;
 pub mod income;
 pub mod maintenance;
 pub mod net_worth;
@@ -50,6 +51,8 @@ pub(crate) mod capture_fixtures;
 pub(crate) mod sim_tables;
 #[cfg(test)]
 pub(crate) mod test_dataset;
+#[cfg(test)]
+pub(crate) mod tests_home_surface_fixtures;
 #[cfg(test)]
 mod tests_asset;
 #[cfg(test)]
@@ -383,6 +386,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (
         36,
         include_str!("../../migrations/036_stock_holdings.sql"),
+    ),
+    (
+        37,
+        include_str!("../../migrations/037_home_widgets.sql"),
     ),
 ];
 

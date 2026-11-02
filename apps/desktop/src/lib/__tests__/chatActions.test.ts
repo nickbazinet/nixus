@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CHAT_ACTION_TYPES,
+  inferChatActionOutcomes,
   chatActionInvalidationKeys,
   hasValidChatActionParams,
   isChatActionType,
@@ -60,7 +61,7 @@ describe("chat action source of truth", () => {
    * the others still pass anything is what stops a later edit from quietly broadening the gate
    * and killing cards that were working. */
   it("leaves the unguarded action types accepting any params", () => {
-    const guarded = ["create_budget_category", "batch_actions"];
+    const guarded = ["create_budget_category", "batch_actions", "propose_home_surface_change"];
     for (const type of CHAT_ACTION_TYPES) {
       if (guarded.includes(type)) continue;
       expect(hasValidChatActionParams(type, {}), type).toBe(true);
@@ -99,6 +100,37 @@ describe("chat action source of truth", () => {
     for (const params of refused) {
       expect(
         hasValidChatActionParams("create_budget_category", params),
+        JSON.stringify(params)
+      ).toBe(false);
+    }
+  });
+
+  /* FR-4: a Home Surface change is a confirmed action like any other, and confirming one must
+   * refresh the Home Surface query or the new widget stays invisible until a manual reload. */
+  it("mirrors the Home Surface action and refreshes the Home Surface after it", () => {
+    expect(CHAT_ACTION_TYPES).toContain("propose_home_surface_change");
+    expect(chatActionInvalidationKeys("propose_home_surface_change")).toEqual([["home-surface"]]);
+  });
+
+  it("accepts only Home Surface params the confirm path can act on", () => {
+    const widget = { component: "Metric", title: "x", dataBinding: { source: "asset_values" } };
+    for (const params of [
+      { op: "add", widget },
+      { op: "modify", widget_id: "w_1", widget },
+      { op: "remove", widget_id: "w_1", title: "x" },
+    ]) {
+      expect(hasValidChatActionParams("propose_home_surface_change", params), params.op).toBe(true);
+    }
+    for (const params of [
+      {},
+      { op: "add" },
+      { op: "add", widget: [] },
+      { op: "modify", widget },
+      { op: "remove", widget_id: " " },
+      { op: "drop", widget_id: "w_1" },
+    ]) {
+      expect(
+        hasValidChatActionParams("propose_home_surface_change", params),
         JSON.stringify(params)
       ).toBe(false);
     }
@@ -150,5 +182,29 @@ describe("chat action source of truth", () => {
         JSON.stringify(params)
       ).toBe(false);
     }
+  });
+
+  /* A reloaded conversation must not resurrect settled cards as live ones: only the newest message
+   * can still be waiting for a decision. */
+  it("settles every reloaded card except the newest, using the server line that follows it", () => {
+    const isCard = (content: string) => content.startsWith("CARD");
+    const outcomes = inferChatActionOutcomes(
+      [
+        { role: "user", content: "add it" },
+        { role: "assistant", content: "CARD a" },
+        { role: "assistant", content: "Done. $45.00 expense added for Costco." },
+        { role: "assistant", content: "CARD b" },
+        { role: "assistant", content: "The user cancelled that action and nothing was changed." },
+        { role: "assistant", content: "CARD c" },
+        { role: "user", content: "never mind, something else" },
+        { role: "assistant", content: "CARD d" },
+      ],
+      isCard
+    );
+    expect([...outcomes.entries()]).toEqual([
+      [1, "confirmed"],
+      [3, "cancelled"],
+      [5, "closed"],
+    ]);
   });
 });

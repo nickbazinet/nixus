@@ -172,6 +172,12 @@ const FACTS_V1: &[Facts] = &[
         columns: &["merchant", "amount_cents", "date", "source", "created_at"],
         parents: &[],
     },
+    // Position and spec are what the user keeps re-asking the Composer to change, so they are state.
+    Facts {
+        table: "home_widgets",
+        columns: &["widget_key", "created_at"],
+        parents: &[],
+    },
     Facts {
         table: "income_entries",
         columns: &["amount_cents", "date", "month", "created_at"],

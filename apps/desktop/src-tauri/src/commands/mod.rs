@@ -13,6 +13,7 @@ pub mod dashboard;
 pub mod datasets;
 pub mod expense;
 pub mod financial_health;
+pub mod home;
 pub mod import;
 pub mod income;
 pub mod maintenance;

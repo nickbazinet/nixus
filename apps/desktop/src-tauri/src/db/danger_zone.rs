@@ -37,6 +37,7 @@ pub const WIPE_TABLES: &[&str] = &[
     "sync_quarantine",
     "chat_messages",
     "chat_conversations",
+    "home_widgets",
     "maintenance_service_logs",
     "maintenance_tasks",
     "vehicles",
@@ -140,6 +141,8 @@ mod tests {
             INSERT INTO chat_conversations (id, title) VALUES (1, 'Chat');
             INSERT INTO chat_messages (conversation_id, role, content)
                 VALUES (1, 'user', 'hello');
+            INSERT INTO home_widgets (widget_key, position, spec_json)
+                VALUES ('w_000000000001', 1, '{\"component\":\"Metric\"}');
             INSERT INTO vehicles (id, nickname) VALUES (1, 'Civic');
             INSERT INTO maintenance_tasks (id, vehicle_id, task_type_key)
                 VALUES (1, 1, 'oil_change');

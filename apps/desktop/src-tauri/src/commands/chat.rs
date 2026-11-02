@@ -8,6 +8,7 @@ use crate::ai::attachment as chat_attachment;
 use crate::ai::chat as chat_ai;
 use crate::ai::backend::{AiAttachment, AiTurn};
 use crate::ai::{clone_provider, AiState};
+use crate::commands::home;
 use crate::db::account as account_db;
 use crate::db::asset as asset_db;
 use crate::db::audit as audit_db;
@@ -263,8 +264,21 @@ pub async fn send_chat_message(
         clone_provider(&ai.provider)
     };
 
+    // The Home composer's conversations carry hosted-only, premium-only proposals; letting the
+    // general (BYO-capable) chat write into one would let it mint a card that confirms as one.
+    if agent_id == home::HOME_AGENT_ID {
+        return Err(home_conversation_refused());
+    }
+
     // Create or use existing conversation
     let conv_id = if let Some(id) = conversation_id {
+        let active = db_state.0.lock().map_err(|e| AppError::Database {
+            message: e.to_string(),
+        })?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+        if chat_db::conversation_agent(conn, id)?.as_deref() == Some(home::HOME_AGENT_ID) {
+            return Err(home_conversation_refused());
+        }
         id
     } else {
         let active = db_state.0.lock().map_err(|e| AppError::Database {
@@ -743,13 +757,16 @@ pub struct ActionResult {
 
 /// The confirmed actions the model may propose. Closed so an unrecognized `action_type` is a
 /// validation failure rather than a silently ignored write.
-const ACTION_TYPES: [&str; 6] = [
+const ACTION_TYPES: [&str; 7] = [
     "create_expense",
     "create_budget_category",
     "batch_actions",
     "update_balance",
     "create_account",
     "update_asset_value",
+    // Proposed only by the Home composer's own generation turn (`commands/home.rs`), never by the
+    // general chat prompt, and confirmed through its own branch in `execute_chat_action`.
+    "propose_home_surface_change",
 ];
 
 /// Recorded verbatim when a confirmed action fails, and when the user cancels one.
@@ -762,6 +779,13 @@ const ACTION_FAILED_TEXT: &str = "That action did not complete and nothing was c
 
 const ACTION_CANCELLED_TEXT: &str =
     "The user cancelled that action and nothing was changed. Do not propose the same action again unless they ask for it.";
+
+fn home_conversation_refused() -> AppError {
+    AppError::Validation {
+        message: "That conversation belongs to the Home composer".to_string(),
+        field: Some("conversation_id".to_string()),
+    }
+}
 
 fn unknown_action(action_type: &str) -> AppError {
     AppError::Validation {
@@ -804,6 +828,14 @@ fn run_single_action(
         "batch_actions" => Err(AppError::Validation {
             message: "a batch cannot contain another batch".to_string(),
             field: Some("actions".to_string()),
+        }),
+        // Unreachable from a card: `execute_chat_action` routes a Home change to its own path, which
+        // re-validates it and audits it as one widget row. Refused here so a batch cannot carry one
+        // past that path.
+        home::HOME_SURFACE_ACTION => Err(AppError::Validation {
+            message: "Home dashboard changes are confirmed one at a time from the Home composer"
+                .to_string(),
+            field: Some("action_type".to_string()),
         }),
         "update_balance" => {
             let account_id = params["account_id"].as_i64().ok_or_else(|| AppError::Validation {
@@ -933,6 +965,29 @@ pub fn execute_chat_action(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+
+    if action_type == home::HOME_SURFACE_ACTION {
+        return match home::confirm_change(&active, &params, conversation_id) {
+            Ok(message) => Ok(ActionResult {
+                success: true,
+                message,
+            }),
+            Err(error) => {
+                let _ = active.write(|tx| {
+                    chat_db::insert_message(
+                        tx,
+                        conversation_id,
+                        "assistant",
+                        ACTION_FAILED_TEXT,
+                        "chat",
+                    )
+                });
+                info!("Chat action failed: {}", action_type);
+                Err(error)
+            }
+        };
+    }
+
     let result_msg = match active.write(|tx| run_chat_action(tx, &action_type, &params)) {
         Ok(message) => message,
         Err(error) => {

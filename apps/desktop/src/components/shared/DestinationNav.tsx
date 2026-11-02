@@ -123,6 +123,11 @@ export function DestinationNav() {
     return null;
   }
 
+  // Home is its own rail module with no sub-surfaces; the same fallthrough rule applies.
+  if (pathname === "/home" || pathname.startsWith("/home/")) {
+    return null;
+  }
+
   if (pathname.startsWith("/ai")) {
     return (
       <SegmentedNav aria-label={t("nav.aiNav")} className="shrink-0">

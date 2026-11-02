@@ -498,6 +498,13 @@ async function launchAndCreateSecondProfile(page: Page) {
   await expect(rows.nth(1)).toHaveText(CREATED_LABEL);
 }
 
+/**
+ * Where a profile that needs no onboarding lands after selection: Home. These specs read the
+ * profile's Finance figures, so the helper continues to the Finance dashboard by a client-side rail
+ * click — a reload would drop the QueryClient whose cache sweep is under test.
+ */
+const ENTRY_VIEW = /localhost:1420\/home$/;
+
 /** Clicks a row on the picker that is already on screen. */
 async function selectProfileRow(page: Page, label: string, landing: RegExp) {
   await expect(page.getByTestId("dataset-picker")).toBeVisible();
@@ -508,6 +515,10 @@ async function selectProfileRow(page: Page, label: string, landing: RegExp) {
   await row.click();
 
   await expect(page).toHaveURL(landing);
+  if (landing === ENTRY_VIEW) {
+    await page.getByRole("link", { name: "Finance", exact: true }).click();
+    await expect(page).toHaveURL(/localhost:1420\/$/);
+  }
 }
 
 /**
@@ -622,7 +633,7 @@ async function switchProfileAndExpectCacheCleared(
   await expectFinanceIsolated(page, outgoing);
 
   await callMockControl(page, "armBudgetGate");
-  await switchProfile(page, incoming.label, /localhost:1420\/$/);
+  await switchProfile(page, incoming.label, ENTRY_VIEW);
 
   await expect(page.locator(`[aria-valuetext="${outgoing.budgetMeterValue}"]`)).toHaveCount(0);
   // Nothing at all in the hero slot, not merely different figures: the incoming read is still in
@@ -756,7 +767,7 @@ test.describe("isolation across repeated switching", () => {
     await launchAndCreateSecondProfile(page);
 
     // ---- launch selection: Default ----------------------------------------------------------
-    await selectProfileRow(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
+    await selectProfileRow(page, DEFAULT_PROFILE.label, ENTRY_VIEW);
     await expectFinanceIsolated(page, DEFAULT_PROFILE);
     await expectCarIsolated(page, DEFAULT_PROFILE, CREATED_PROFILE);
     await expectAiIsolated(page, DEFAULT_PROFILE);
@@ -829,7 +840,7 @@ test.describe("isolation across repeated switching", () => {
     await expect(page.getByTestId("onboarding-wizard")).toBeVisible();
 
     // Default is onboarded and stays onboarded: the wizard is not a state the app fell into.
-    await switchProfile(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
+    await switchProfile(page, DEFAULT_PROFILE.label, ENTRY_VIEW);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("onboarding-wizard")).toHaveCount(0);
 
@@ -838,7 +849,7 @@ test.describe("isolation across repeated switching", () => {
     await switchProfile(page, CREATED_PROFILE.label, /\/onboarding$/);
     await expect(page.getByTestId("onboarding-wizard")).toBeVisible();
 
-    await switchProfile(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
+    await switchProfile(page, DEFAULT_PROFILE.label, ENTRY_VIEW);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
 
     expect(await readSelections(page)).toEqual([
@@ -867,14 +878,14 @@ test.describe("isolation across repeated switching", () => {
 
     const banner = page.getByTestId("setup-incomplete-banner");
 
-    await selectProfileRow(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
+    await selectProfileRow(page, DEFAULT_PROFILE.label, ENTRY_VIEW);
     await expect(banner).toBeVisible();
     await page.getByTestId("setup-incomplete-dismiss").click();
     await expect(banner).toHaveCount(0);
     expect(await readStorage(page, [FINANCE_DISMISSED_KEY])).toEqual(["true"]);
 
     // The created profile has dismissed nothing, so it must still be told to finish setting up.
-    await switchProfile(page, CREATED_PROFILE.label, /localhost:1420\/$/);
+    await switchProfile(page, CREATED_PROFILE.label, ENTRY_VIEW);
     await expect(banner).toBeVisible();
     expect(await readStorage(page, [FINANCE_DISMISSED_KEY])).toEqual([null]);
 
@@ -883,7 +894,7 @@ test.describe("isolation across repeated switching", () => {
 
     // And back: Default's dismissal was its own, so the created profile's dismissal cannot have
     // carried into it either.
-    await switchProfile(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
+    await switchProfile(page, DEFAULT_PROFILE.label, ENTRY_VIEW);
     await expect(banner).toBeVisible();
     expect(await readStorage(page, [FINANCE_DISMISSED_KEY])).toEqual([null]);
   });
@@ -908,7 +919,7 @@ test.describe("the account picture is never read for an account-less profile", (
     });
 
     await launchAndCreateSecondProfile(page);
-    await selectProfileRow(page, DEFAULT_PROFILE.label, /localhost:1420\/$/);
+    await selectProfileRow(page, DEFAULT_PROFILE.label, ENTRY_VIEW);
     await expectFinanceIsolated(page, DEFAULT_PROFILE);
 
     // Both profiles here are local, so the always-mounted account trigger has no account to read
@@ -916,7 +927,7 @@ test.describe("the account picture is never read for an account-less profile", (
     await expect(page.getByTestId("profile-menu-avatar")).toHaveCount(0);
     expect(await readInvokedCommands(page)).not.toContain("get_user_avatar");
 
-    await switchProfile(page, CREATED_PROFILE.label, /localhost:1420\/$/);
+    await switchProfile(page, CREATED_PROFILE.label, ENTRY_VIEW);
     await expectFinanceIsolated(page, CREATED_PROFILE);
 
     await expect(page.getByTestId("profile-menu-avatar")).toHaveCount(0);

@@ -193,6 +193,20 @@ export function usePremiumEntitlementState(): PremiumEntitlementState {
 }
 
 /**
+ * The signed-in account's first name, for a greeting. Gated exactly like the entitlement read: a
+ * local profile never opens the OS secure store just to say hello.
+ */
+export function useSignedInFirstName(): string | null {
+  const profile = useActiveProfile();
+  const isEligibleProfile =
+    profile.data?.kind === "cloud-linked" && profile.data.is_signed_in;
+  const session = useQuery(authSessionQueryOptions(isEligibleProfile));
+  if (session.data?.status !== "LoggedIn") return null;
+  const first = session.data.name?.trim().split(/\s+/)[0];
+  return first ? first : null;
+}
+
+/**
  * The bare fail-closed boolean, for surfaces that only paint a premium indicator and have no
  * "not premium" consequence to get wrong. Readers that gate an action or render setup UI must use
  * `usePremiumEntitlementState` instead, so they can hold off while the answer is still in flight.

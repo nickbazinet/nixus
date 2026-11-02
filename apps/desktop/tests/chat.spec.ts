@@ -623,15 +623,33 @@ test.describe("AI Chat Page — Story 7.2", () => {
     await expect(page.getByTestId("chat-message-area")).not.toContainText("Error:");
   });
 
-  test("after cancel, buttons on the card are disabled [AC5]", async ({ page }) => {
+  test("after cancel, the card collapses to a one-line record with no buttons [AC5]", async ({ page }) => {
     await page.getByTestId("chat-input").fill("Add expense");
     await page.getByTestId("chat-input").press("Enter");
 
     await expect(page.getByTestId("action-cancel-button")).toBeVisible({ timeout: 5000 });
     await page.getByTestId("action-cancel-button").click();
 
-    await expect(page.getByTestId("action-confirm-button")).toBeDisabled();
-    await expect(page.getByTestId("action-cancel-button")).toBeDisabled();
+    const collapsed = page.getByTestId("action-confirmation-collapsed");
+    await expect(collapsed).toHaveAttribute("data-outcome", "cancelled");
+    await expect(collapsed).toContainText("Add Expense");
+    await expect(collapsed).toContainText("Cancelled");
+    await expect(page.getByTestId("action-confirmation-card")).toHaveCount(0);
+    await expect(page.getByTestId("action-confirm-button")).toHaveCount(0);
+    await expect(page.getByTestId("action-cancel-button")).toHaveCount(0);
+  });
+
+  test("after confirm, the card collapses to a one-line record", async ({ page }) => {
+    await page.getByTestId("chat-input").fill("Add expense");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("action-confirm-button")).toBeVisible({ timeout: 5000 });
+    await page.getByTestId("action-confirm-button").click();
+
+    const collapsed = page.getByTestId("action-confirmation-collapsed");
+    await expect(collapsed).toHaveAttribute("data-outcome", "confirmed");
+    await expect(collapsed).toContainText("Done");
+    await expect(page.getByTestId("action-confirmation-card")).toHaveCount(0);
   });
 });
 

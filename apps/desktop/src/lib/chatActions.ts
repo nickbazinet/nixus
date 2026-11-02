@@ -14,6 +14,7 @@ export const CHAT_ACTION_TYPES = [
   "update_balance",
   "create_account",
   "update_asset_value",
+  "propose_home_surface_change",
 ] as const;
 
 export type ChatActionType = (typeof CHAT_ACTION_TYPES)[number];
@@ -68,6 +69,7 @@ const CHAT_ACTION_INVALIDATION: Record<ChatActionType, readonly (readonly string
   update_balance: [["accounts"], ["dashboard"], ["net-worth-current"]],
   create_account: [["accounts"], ["dashboard"]],
   update_asset_value: [["assets"], ["net-worth-current"]],
+  propose_home_surface_change: [["home-surface"]],
 };
 
 export function isChatActionType(value: unknown): value is ChatActionType {
@@ -115,16 +117,39 @@ function hasValidBatchActionsParams(params: Record<string, unknown>): boolean {
 }
 
 /**
- * Param guards by action type. Partial on purpose: only the category and batch action types are
- * checked, since those are the types whose malformed legacy cards reached the user. A type with
- * no entry is accepted on its type alone, exactly as before — do not fill these in without a
- * reason to.
+ * Param guards by action type. Partial on purpose: the category and batch action types are checked
+ * because their malformed legacy cards reached the user, and the Home Surface change because its
+ * card's Confirm depends entirely on its op/widget shape. A type with no entry is accepted on its
+ * type alone, exactly as before — do not fill these in without a reason to.
  */
+function isRecordValue(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether `propose_home_surface_change` params have the shape the confirm path accepts. Shape only:
+ * the backend re-runs full Surface Validation on confirm, so this exists to avoid drawing a card
+ * whose Confirm cannot succeed, not to decide what is valid.
+ */
+function hasValidHomeSurfaceParams(params: Record<string, unknown>): boolean {
+  switch (params.op) {
+    case "add":
+      return isRecordValue(params.widget);
+    case "modify":
+      return isNonBlankString(params.widget_id) && isRecordValue(params.widget);
+    case "remove":
+      return isNonBlankString(params.widget_id);
+    default:
+      return false;
+  }
+}
+
 const CHAT_ACTION_PARAM_GUARDS: Partial<
   Record<ChatActionType, (params: Record<string, unknown>) => boolean>
 > = {
   create_budget_category: hasValidCategoryParams,
   batch_actions: hasValidBatchActionsParams,
+  propose_home_surface_change: hasValidHomeSurfaceParams,
 };
 
 export function hasValidChatActionParams(
@@ -132,4 +157,42 @@ export function hasValidChatActionParams(
   params: Record<string, unknown>
 ): boolean {
   return CHAT_ACTION_PARAM_GUARDS[actionType]?.(params) ?? true;
+}
+
+/**
+ * What became of a confirmation card. A settled card collapses to one line in every chat surface,
+ * so the transcript reads as a record of what happened rather than a column of dead buttons.
+ */
+export type ChatActionOutcome = "confirmed" | "cancelled" | "closed";
+
+/* The fixed server-written lines that follow a card, from `commands/chat.rs`. Matched by prefix
+ * because they are server-owned constants, never model or user text. */
+const CONFIRMED_PREFIX = "Done.";
+const CANCELLED_PREFIX = "The user cancelled that action";
+
+/**
+ * Outcomes for the cards in a reloaded conversation, by message index. A card that is no longer
+ * the newest message was answered — confirmed, cancelled, or passed over — so it is settled either
+ * way; only the newest card can still be live. Cards are recognised by `isCard`, which the caller
+ * supplies so this module stays free of the bubble's parser.
+ */
+export function inferChatActionOutcomes(
+  messages: readonly { role: string; content: string }[],
+  isCard: (content: string) => boolean
+): Map<number, ChatActionOutcome> {
+  const outcomes = new Map<number, ChatActionOutcome>();
+  messages.forEach((message, index) => {
+    if (message.role !== "assistant" || index === messages.length - 1) return;
+    if (!isCard(message.content)) return;
+    const next = messages[index + 1]?.content ?? "";
+    outcomes.set(
+      index,
+      next.startsWith(CONFIRMED_PREFIX)
+        ? "confirmed"
+        : next.startsWith(CANCELLED_PREFIX)
+          ? "cancelled"
+          : "closed"
+    );
+  });
+  return outcomes;
 }

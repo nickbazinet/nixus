@@ -1774,6 +1774,8 @@ test.describe("continuing a persisted Nixus Cloud session", () => {
     // than by the URL alone: `routes/index.tsx` builds this valuetext straight from the summary, and
     // the mock answers with these figures for the cloud dataset only, so an activation that opened
     // Default — or none at all — reads $0.00 here.
+    await expect(page).toHaveURL(/localhost:1420\/home$/);
+    await page.getByRole("link", { name: "Finance", exact: true }).click();
     await expect(page).toHaveURL(/localhost:1420\/$/);
     await expect(page.getByTestId("budget-overall-progress")).toHaveAttribute(
       "aria-valuetext",
@@ -1984,7 +1986,7 @@ test.describe("continuing a persisted Nixus Cloud session", () => {
     await expect(cloud).toBeDisabled();
     await expect(cloud).toHaveAttribute("aria-disabled", "true");
 
-    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    await expect(page).toHaveURL(/localhost:1420\/home$/, { timeout: 20_000 });
     expect(await callsTo(page, "continue_cloud_session")).toHaveLength(1);
   });
 
@@ -2174,8 +2176,10 @@ test.describe("choosing a profile", () => {
 
     await page.getByTestId("picker-dataset-row").nth(1).click();
 
-    // Client-side navigation, never a reload: `/` resolving to the dashboard is what proves the
-    // root gate re-asked and got `needs_picker: false` from the latch.
+    // Client-side navigation, never a reload: landing on Home (`/home`, the entry view) is what
+    // proves the root gate re-asked and got `needs_picker: false` from the latch.
+    await expect(page).toHaveURL(/localhost:1420\/home$/);
+    await page.getByRole("link", { name: "Finance", exact: true }).click();
     await expect(page).toHaveURL(/localhost:1420\/$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
     await expect(page.getByTestId("dataset-picker")).toHaveCount(0);
@@ -2283,7 +2287,7 @@ test.describe("choosing a profile", () => {
     await expect(rows.nth(0)).toHaveAttribute("aria-disabled", "true");
     await expect(rows.nth(1)).toHaveAttribute("aria-disabled", "true");
 
-    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    await expect(page).toHaveURL(/localhost:1420\/home$/, { timeout: 20_000 });
     expect(await callsTo(page, "select_dataset")).toHaveLength(1);
   });
 
@@ -2305,6 +2309,8 @@ test.describe("choosing a profile", () => {
     await expect(rows).toHaveCount(2);
     await rows.nth(1).click();
 
+    await expect(page).toHaveURL(/localhost:1420\/home$/);
+    await page.getByRole("link", { name: "Finance", exact: true }).click();
     await expect(page).toHaveURL(/localhost:1420\/$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
 
@@ -2603,7 +2609,7 @@ test.describe("creating a local profile", () => {
     await expect(create).toBeDisabled();
     await expect(create).toHaveAttribute("aria-disabled", "true");
 
-    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    await expect(page).toHaveURL(/localhost:1420\/home$/, { timeout: 20_000 });
     expect(await readIpcCommands(page)).not.toContain("create_dataset");
   });
 
@@ -2924,7 +2930,7 @@ test.describe("renaming a local profile", () => {
     await expect(menu).toBeDisabled();
     await expect(menu).toHaveAttribute("aria-disabled", "true");
 
-    await expect(page).toHaveURL(/localhost:1420\/$/, { timeout: 20_000 });
+    await expect(page).toHaveURL(/localhost:1420\/home$/, { timeout: 20_000 });
     const commands = await readIpcCommands(page);
     expect(commands).not.toContain("rename_dataset");
     expect(commands).not.toContain("delete_dataset");
@@ -3384,6 +3390,8 @@ test.describe("selecting a profile opens that profile's own data", () => {
     await expect(rows.nth(0)).toHaveText("Default");
     await rows.nth(0).click();
 
+    await expect(page).toHaveURL(/localhost:1420\/home$/);
+    await page.getByRole("link", { name: "Finance", exact: true }).click();
     await expect(page).toHaveURL(/localhost:1420\/$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
 
@@ -3421,6 +3429,8 @@ test.describe("selecting a profile opens that profile's own data", () => {
     await expect(rows.nth(1)).toHaveText("Work");
     await rows.nth(1).click();
 
+    await expect(page).toHaveURL(/localhost:1420\/home$/);
+    await page.getByRole("link", { name: "Finance", exact: true }).click();
     await expect(page).toHaveURL(/localhost:1420\/$/);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Today");
 

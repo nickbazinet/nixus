@@ -1277,6 +1277,63 @@ pub struct Dataset {
     pub created_at: String,
 }
 
+/// One persisted Home Surface widget (PRD FR-8). `spec_json` is the Surface-Validated description:
+/// catalog names and data-source bindings, never a resolved value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredHomeWidget {
+    pub id: i64,
+    pub widget_key: String,
+    pub position: i64,
+    pub spec_json: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A data source resolved against live data at render time. Every value is in cents.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HomeDataset {
+    /// `month`, `category`, `account`, `asset` or `expense`: what one row is.
+    pub dimension: String,
+    /// Text columns between the label and the figures (`date`, `category`), aligned with every
+    /// row's `details`. Empty for every aggregate source.
+    #[serde(default)]
+    pub detail_columns: Vec<String>,
+    /// Series keys, aligned with every row's `values`.
+    pub series: Vec<String>,
+    pub rows: Vec<HomeDatasetRow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HomeDatasetRow {
+    /// `YYYY-MM` for a month, `__other__` for a folded remainder, otherwise a stable row id.
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub details: Vec<String>,
+    pub values: Vec<i64>,
+}
+
+/// One node of a widget's tree as the renderer receives it, with its binding already resolved.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeRenderNode {
+    pub component: String,
+    pub title: Option<String>,
+    pub columns: Option<i64>,
+    pub source: Option<String>,
+    pub data: Option<HomeDataset>,
+    /// The persisted node names a component or source this build does not know (§8 #3).
+    pub unsupported: bool,
+    pub children: Vec<HomeRenderNode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomeWidget {
+    pub id: String,
+    pub position: i64,
+    pub title: String,
+    pub root: HomeRenderNode,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -158,6 +158,9 @@ pub const TABLES: &[TableRule] = &[
     // A hand-entered expense is surrogate; one generated from a recurring template at startup is
     // derived from `(template uuid, period)` so two computers produce one row (AD-2).
     rule("expenses", Synced, Some(SurrogateOrTemplate)),
+    // The AI-generated Home Surface rides sync like any other user-visible record, with no
+    // merge semantics of its own (PRD §6.2 assumption, open question §8 #1).
+    rule("home_widgets", Synced, Some(Surrogate)),
     rule("income_entries", Synced, Some(SurrogateOrTemplate)),
     rule("income_sources", Synced, Some(Surrogate)),
     rule("maintenance_service_logs", Synced, Some(Surrogate)),
@@ -258,6 +261,16 @@ pub const COLUMNS: &[ColumnRule] = &[
     column("expenses", "source", Immutable),
     column("expenses", "created_at", Immutable),
     column("expenses", "account_id", LocalId),
+    column("home_widgets", "id", LocalId),
+    // The key the Composer and the model name a widget by; minted once and never re-pointed, which
+    // is what lets a modify keep the widget's identity.
+    column("home_widgets", "widget_key", Immutable),
+    column("home_widgets", "position", Lww),
+    // Last-write-wins as a whole document, like `net_worth_snapshots.breakdown_json`: a modify is a
+    // full re-emit of the widget (FR-6), so there is no field-level merge to preserve.
+    column("home_widgets", "spec_json", Lww),
+    column("home_widgets", "created_at", Immutable),
+    column("home_widgets", "updated_at", Lww),
     column("income_entries", "id", LocalId),
     column("income_entries", "source_id", LocalId),
     column("income_entries", "amount_cents", Lww),

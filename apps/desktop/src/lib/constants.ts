@@ -79,6 +79,8 @@ export const queryKeys = {
     session: ["auth", "session"] as const,
   },
   cloudAiPremium: ["cloud-ai-premium"] as const,
+  homeSurface: ["home-surface"] as const,
+  homeComposerAccess: ["home-composer-access"] as const,
   profile: ["profile"] as const,
   userAvatar: ["user-avatar"] as const,
   countries: ["countries"] as const,

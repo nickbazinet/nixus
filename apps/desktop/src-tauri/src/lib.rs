@@ -9,6 +9,7 @@ mod db;
 mod entitlements;
 mod error;
 mod financial_health;
+mod home_surface;
 mod json_store;
 mod maintenance;
 mod models;
@@ -361,6 +362,9 @@ pub fn run() {
             commands::chat::execute_chat_action,
             commands::chat::record_chat_action_cancelled,
             commands::chat::list_conversations,
+            commands::home::get_home_surface,
+            commands::home::get_home_composer_access,
+            commands::home::send_home_composer_message,
             commands::onboarding::check_onboarding_status,
             commands::onboarding::complete_onboarding,
             commands::income::create_income_source,

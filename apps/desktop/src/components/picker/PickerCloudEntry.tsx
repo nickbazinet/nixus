@@ -134,7 +134,7 @@ export function PickerCloudEntry({ disabled }: PickerCloudEntryProps) {
       // Awaited inside the try: `navigate` rejects if the target route's loaders fail, and outside it
       // that becomes an unhandled rejection with the button still spinning. The user is left on the
       // picker either way, so one toast covers both.
-      await navigate({ to: "/" });
+      await navigate({ to: "/home" });
     } catch (error) {
       toast.error(
         parseAppError(error).type === "auth"

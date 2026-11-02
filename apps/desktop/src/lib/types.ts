@@ -1151,3 +1151,58 @@ export interface DuplicatesView {
   total: number;
   tables: { table: string; records: number }[];
 }
+
+/** One row of a Home data source, resolved locally at render time. Every value is in cents. */
+export interface HomeDatasetRow {
+  /** `YYYY-MM` for a month, `__other__` for a folded remainder, otherwise a stable row id. */
+  key: string;
+  label: string;
+  /** Text cells aligned with the dataset's `detail_columns`; empty for aggregate sources. */
+  details: string[];
+  values: number[];
+}
+
+export interface HomeDataset {
+  dimension: "month" | "category" | "account" | "asset" | "expense";
+  /** Text columns shown between the label and the figures, e.g. `date` and `category`. */
+  detail_columns: string[];
+  /** Series keys, aligned with every row's `values`. */
+  series: string[];
+  rows: HomeDatasetRow[];
+}
+
+/** A widget node with its data binding already resolved by `get_home_surface`. */
+export interface HomeRenderNode {
+  component: string;
+  title: string | null;
+  columns: number | null;
+  source: string | null;
+  data: HomeDataset | null;
+  /** Names a component or data source this build does not know. */
+  unsupported: boolean;
+  children: HomeRenderNode[];
+}
+
+export interface HomeWidget {
+  id: string;
+  position: number;
+  title: string;
+  root: HomeRenderNode;
+}
+
+/** Which Composer Home draws. `unavailable` is transient (FR-7); the others lock it (FR-11). */
+export type HomeComposerAccess =
+  | "available"
+  | "local_profile"
+  | "signed_out"
+  | "not_premium"
+  | "quota_exhausted"
+  | "reauthentication_required"
+  | "unavailable";
+
+export interface HomeComposerReply {
+  conversation_id: number;
+  outcome: "proposal" | "message" | "ambiguous" | "no_match" | "failed";
+  content: string;
+  candidates: string[];
+}

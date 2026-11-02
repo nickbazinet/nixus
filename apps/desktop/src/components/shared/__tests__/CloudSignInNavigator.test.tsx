@@ -88,7 +88,7 @@ describe("CloudSignInNavigator", () => {
     // `/`, never a concrete surface: the root gate and `/`'s onboarding check are what decide
     // between an empty dashboard and the wizard, per the new profile's own state.
     expect(navigateMock).toHaveBeenCalledTimes(1);
-    expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+    expect(navigateMock).toHaveBeenCalledWith({ to: "/home" });
   });
 
   it("reports a sign-in whose profile could not be prepared", async () => {

@@ -2,6 +2,7 @@ pub mod attachment;
 pub mod backend;
 pub mod cc_parser;
 pub mod chat;
+pub mod home_surface;
 pub mod hosted_bedrock;
 #[cfg(test)]
 mod hosted_e2e;

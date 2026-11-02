@@ -5,11 +5,14 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button, Card, CardContent } from "@nixus/shared";
 import { cn } from "@/lib/utils";
+import { Ban, CircleCheck, CircleDashed } from "lucide-react";
 import {
   hasValidChatActionParams,
   isChatActionType,
+  type ChatActionOutcome,
   type ChatActionType,
 } from "@/lib/chatActions";
+import { describeHomeChange } from "@/lib/homeSurface";
 
 // remark-gfm defaults singleTilde to true, which renders "~$430" (approximately
 // $430) as struck-through — the assistant appears to cross out dollar figures.
@@ -32,6 +35,8 @@ interface ChatMessageBubbleProps {
   content: string;
   isStreaming?: boolean;
   actionHandled?: boolean;
+  /** Once set, the card is settled and collapses to a one-line record of what happened. */
+  actionOutcome?: ChatActionOutcome;
   onConfirm?: (payload: ActionPayload) => void;
   onCancel?: (payload: ActionPayload) => void;
 }
@@ -115,6 +120,7 @@ export function ChatMessageBubble({
   content,
   isStreaming,
   actionHandled,
+  actionOutcome,
   onConfirm,
   onCancel,
 }: ChatMessageBubbleProps) {
@@ -127,6 +133,20 @@ export function ChatMessageBubble({
     () => (!isUser && !isToolSearching && !hasToolCall ? parseActionFromContent(content) : null),
     [content, isUser, isToolSearching, hasToolCall]
   );
+
+  // A Home Surface card is worded from its validated params in the UI language, so the label always
+  // names exactly the widget that will change.
+  const card = useMemo(() => {
+    if (!actionPayload) return null;
+    if (actionPayload.action_type === "propose_home_surface_change") {
+      return describeHomeChange(actionPayload.params, t);
+    }
+    return {
+      ...actionPayload.display,
+      confirmLabel: t("chat.confirmAdd"),
+      hint: t("chat.confirmCardHint"),
+    };
+  }, [actionPayload, t]);
 
   const announcement = useSentenceAnnouncement(
     content,
@@ -181,12 +201,24 @@ export function ChatMessageBubble({
             />
             <span>{t("chat.searching")}</span>
           </div>
-        ) : actionPayload ? (
+        ) : actionPayload && card && actionOutcome ? (
+          <p
+            className="flex items-start gap-2 text-caption"
+            data-testid="action-confirmation-collapsed"
+            data-outcome={actionOutcome}
+          >
+            <OutcomeIcon outcome={actionOutcome} />
+            <span className="min-w-0 text-ink">
+              {card.label}{" "}
+              <span className="text-ink-dim">· {t(`chat.actionOutcome.${actionOutcome}`)}</span>
+            </span>
+          </p>
+        ) : actionPayload && card ? (
           <Card data-testid="action-confirmation-card">
             <CardContent>
-              <h4 className="text-h3 text-ink">{actionPayload.display.label}</h4>
+              <h4 className="text-h3 text-ink">{card.label}</h4>
               <dl className="mt-2 space-y-1">
-                {actionPayload.display.details.map((detail, i) => (
+                {card.details.map((detail, i) => (
                   <div key={i} className="flex justify-between gap-3 text-caption">
                     <dt className="text-ink-dim">{detail.field}</dt>
                     <dd className="money text-ink">{detail.value}</dd>
@@ -195,7 +227,7 @@ export function ChatMessageBubble({
               </dl>
               {/* The model never writes on its own: it proposes, this card waits, the user
                 * approves. The hint says so rather than leaving it to be inferred. */}
-              <p className="mt-2 text-caption text-ink-dim">{t("chat.confirmCardHint")}</p>
+              <p className="mt-2 text-caption text-ink-dim">{card.hint}</p>
               <div className="mt-3 flex gap-2">
                 <Button
                   size="sm"
@@ -204,7 +236,7 @@ export function ChatMessageBubble({
                   aria-disabled={actionHandled || undefined}
                   data-testid="action-confirm-button"
                 >
-                  {t("chat.confirmAdd")}
+                  {card.confirmLabel}
                 </Button>
                 <Button
                   size="sm"
@@ -232,6 +264,16 @@ export function ChatMessageBubble({
       </div>
     </div>
   );
+}
+
+function OutcomeIcon({ outcome }: { outcome: ChatActionOutcome }) {
+  if (outcome === "confirmed") {
+    return <CircleCheck className="mt-px size-4 shrink-0 text-good" aria-hidden="true" />;
+  }
+  if (outcome === "cancelled") {
+    return <Ban className="mt-px size-4 shrink-0 text-ink-dim" aria-hidden="true" />;
+  }
+  return <CircleDashed className="mt-px size-4 shrink-0 text-ink-dim" aria-hidden="true" />;
 }
 
 const markdownComponents: Components = {

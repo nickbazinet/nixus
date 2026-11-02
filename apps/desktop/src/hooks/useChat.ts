@@ -2,9 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
-import type { ActionPayload } from "@/components/chat/ChatMessageBubble";
+import { parseActionFromContent, type ActionPayload } from "@/components/chat/ChatMessageBubble";
 import { queryKeys } from "@/lib/constants";
-import { chatActionInvalidationKeys } from "@/lib/chatActions";
+import {
+  chatActionInvalidationKeys,
+  inferChatActionOutcomes,
+  type ChatActionOutcome,
+} from "@/lib/chatActions";
 import {
   chatAttachmentMessageKey,
   isHostedAiError,
@@ -25,6 +29,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   actionHandled?: boolean;
+  actionOutcome?: ChatActionOutcome;
 }
 
 /**
@@ -73,8 +78,17 @@ export function useChat(options?: UseChatOptions) {
           conversation_id: options.initialConversationId,
         });
         if (!cancelled) {
+          const outcomes = inferChatActionOutcomes(
+            history,
+            (content) => parseActionFromContent(content) !== null
+          );
           setMessages(
-            history.map((m) => ({ role: m.role, content: m.content }))
+            history.map((m, index) => {
+              const actionOutcome = outcomes.get(index);
+              return actionOutcome
+                ? { role: m.role, content: m.content, actionHandled: true, actionOutcome }
+                : { role: m.role, content: m.content };
+            })
           );
         }
       } finally {
@@ -258,7 +272,11 @@ export function useChat(options?: UseChatOptions) {
 
         setMessages((prev) => {
           const updated = [...prev];
-          updated[msgIndex] = { ...updated[msgIndex], actionHandled: true };
+          updated[msgIndex] = {
+            ...updated[msgIndex],
+            actionHandled: true,
+            actionOutcome: "confirmed",
+          };
           return [...updated, { role: "assistant" as const, content: result.message }];
         });
 
@@ -285,7 +303,11 @@ export function useChat(options?: UseChatOptions) {
     async (msgIndex: number, payload: ActionPayload) => {
       setMessages((prev) => {
         const updated = [...prev];
-        updated[msgIndex] = { ...updated[msgIndex], actionHandled: true };
+        updated[msgIndex] = {
+          ...updated[msgIndex],
+          actionHandled: true,
+          actionOutcome: "cancelled",
+        };
         return [...updated, { role: "assistant" as const, content: "Action cancelled." }];
       });
 

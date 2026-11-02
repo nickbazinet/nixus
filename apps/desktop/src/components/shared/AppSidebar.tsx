@@ -14,6 +14,7 @@ import {
   Globe,
   Settings,
   Bot,
+  House,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -107,7 +108,9 @@ export function AppSidebar() {
   const isAiSection = pathname.startsWith("/ai");
   const isCarSection = pathname.startsWith("/car");
   const isSettingsSection = pathname.startsWith("/settings");
-  const isFinanceSection = !isAiSection && !isCarSection && !isSettingsSection;
+  const isHomeSection = pathname === "/home" || pathname.startsWith("/home/");
+  const isFinanceSection =
+    !isAiSection && !isCarSection && !isSettingsSection && !isHomeSection;
 
   const cycleTheme = () => {
     const idx = themeOrder.indexOf(theme as (typeof themeOrder)[number]);
@@ -148,6 +151,18 @@ export function AppSidebar() {
       {/* Module nav */}
       <nav aria-label={t("sidebar.moduleNav")} className="mt-2 flex-1 px-2">
         <ul className="space-y-1">
+          <li>
+            <Link
+              to="/home"
+              className={railItemClass(expanded, isHomeSection)}
+              aria-label={t("sidebar.home")}
+              data-testid="rail-home"
+            >
+              <House className="size-5 shrink-0" />
+              <span className={railLabelClass(expanded)}>{t("sidebar.home")}</span>
+              {isHomeSection && <ActiveMarker />}
+            </Link>
+          </li>
           <li>
             <Link
               to="/"

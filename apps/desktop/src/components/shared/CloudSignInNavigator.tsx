@@ -40,11 +40,11 @@ export function CloudSignInNavigator() {
     const unlisteners: UnlistenFn[] = [];
 
     const setup = async () => {
-      // `/` rather than a concrete surface: the root's beforeLoad re-asks the picker gate and `/`'s
+      // `/home`, the landing surface: the root's beforeLoad re-asks the picker gate and `/home`'s
       // asks the newly active profile's own onboarding state, so the destination is that profile's
-      // own entry view — an empty dashboard or the wizard, per its own state.
+      // own entry view — Home or the wizard, per its own state.
       const landed = await listen("auth:callback-received", () => {
-        void navigate({ to: "/" });
+        void navigate({ to: "/home" });
       });
 
       const failed = await listen<string>("auth:cloud-link-failed", (event) => {

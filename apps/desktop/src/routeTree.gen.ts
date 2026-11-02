@@ -15,6 +15,7 @@ import { Route as PickerRouteImport } from './routes/picker'
 import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as MaintenanceRouteImport } from './routes/maintenance'
 import { Route as ImportRouteImport } from './routes/import'
+import { Route as HomeRouteImport } from './routes/home'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as CarRouteImport } from './routes/car'
 import { Route as AiRouteImport } from './routes/ai'
@@ -70,6 +71,11 @@ const MaintenanceRoute = MaintenanceRouteImport.update({
 const ImportRoute = ImportRouteImport.update({
   id: '/import',
   path: '/import',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HomeRoute = HomeRouteImport.update({
+  id: '/home',
+  path: '/home',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ChatRoute = ChatRouteImport.update({
@@ -209,6 +215,7 @@ export interface FileRoutesByFullPath {
   '/ai': typeof AiRouteWithChildren
   '/car': typeof CarRouteWithChildren
   '/chat': typeof ChatRoute
+  '/home': typeof HomeRoute
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
@@ -241,6 +248,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/chat': typeof ChatRoute
+  '/home': typeof HomeRoute
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
@@ -275,6 +283,7 @@ export interface FileRoutesById {
   '/ai': typeof AiRouteWithChildren
   '/car': typeof CarRouteWithChildren
   '/chat': typeof ChatRoute
+  '/home': typeof HomeRoute
   '/import': typeof ImportRoute
   '/maintenance': typeof MaintenanceRoute
   '/onboarding': typeof OnboardingRoute
@@ -311,6 +320,7 @@ export interface FileRouteTypes {
     | '/ai'
     | '/car'
     | '/chat'
+    | '/home'
     | '/import'
     | '/maintenance'
     | '/onboarding'
@@ -343,6 +353,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/chat'
+    | '/home'
     | '/import'
     | '/maintenance'
     | '/onboarding'
@@ -376,6 +387,7 @@ export interface FileRouteTypes {
     | '/ai'
     | '/car'
     | '/chat'
+    | '/home'
     | '/import'
     | '/maintenance'
     | '/onboarding'
@@ -411,6 +423,7 @@ export interface RootRouteChildren {
   AiRoute: typeof AiRouteWithChildren
   CarRoute: typeof CarRouteWithChildren
   ChatRoute: typeof ChatRoute
+  HomeRoute: typeof HomeRoute
   ImportRoute: typeof ImportRoute
   MaintenanceRoute: typeof MaintenanceRoute
   OnboardingRoute: typeof OnboardingRoute
@@ -477,6 +490,13 @@ declare module '@tanstack/react-router' {
       path: '/import'
       fullPath: '/import'
       preLoaderRoute: typeof ImportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/home': {
+      id: '/home'
+      path: '/home'
+      fullPath: '/home'
+      preLoaderRoute: typeof HomeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/chat': {
@@ -707,6 +727,7 @@ const rootRouteChildren: RootRouteChildren = {
   AiRoute: AiRouteWithChildren,
   CarRoute: CarRouteWithChildren,
   ChatRoute: ChatRoute,
+  HomeRoute: HomeRoute,
   ImportRoute: ImportRoute,
   MaintenanceRoute: MaintenanceRoute,
   OnboardingRoute: OnboardingRoute,

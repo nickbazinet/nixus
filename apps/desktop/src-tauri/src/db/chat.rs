@@ -157,6 +157,18 @@ pub fn get_conversation_messages_for_display(
     Ok(messages)
 }
 
+/// The agent a conversation belongs to, or `None` when there is no such conversation.
+pub fn conversation_agent(conn: &Connection, conversation_id: i64) -> Result<Option<String>, AppError> {
+    use rusqlite::OptionalExtension;
+    Ok(conn
+        .query_row(
+            "SELECT agent_id FROM chat_conversations WHERE id = ?1",
+            params![conversation_id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 pub fn conversation_exists(conn: &Connection, conversation_id: i64) -> Result<bool, AppError> {
     let result = conn.query_row(
         "SELECT 1 FROM chat_conversations WHERE id = ?1",

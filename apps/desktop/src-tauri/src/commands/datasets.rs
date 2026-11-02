@@ -156,7 +156,7 @@ fn swap_active(
 ///
 /// Split out of `select_dataset_now` so the unknown-id branch is unit-testable
 /// without a running Tauri app, mirroring `datasets::resolve_active_dir`.
-fn find_registered(entries: Vec<Dataset>, dataset_id: &str) -> Result<Dataset, AppError> {
+pub(crate) fn find_registered(entries: Vec<Dataset>, dataset_id: &str) -> Result<Dataset, AppError> {
     entries
         .into_iter()
         .find(|entry| entry.id == dataset_id)
@@ -409,7 +409,7 @@ pub struct ActiveProfile {
 /// (NFR7), so it reads `false` regardless of any machine-wide session. For a
 /// cloud-linked one, a resolver error means "no session", which reads as
 /// signed-out rather than as a failure the user has to act on.
-fn is_signed_in(entry: &Dataset, current_subject: Option<&str>) -> bool {
+pub(crate) fn is_signed_in(entry: &Dataset, current_subject: Option<&str>) -> bool {
     entry.kind == DatasetKind::CloudLinked
         && entry.cognito_sub.is_some()
         && entry.cognito_sub.as_deref() == current_subject
