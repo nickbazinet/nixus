@@ -72,7 +72,7 @@ Parameters:
     AllowedPattern: '^[A-Za-z][A-Za-z0-9-]*$'
   ApprovedBedrockModelId:
     Type: String
-    Default: us.anthropic.claude-sonnet-5-5
+    Default: us.anthropic.claude-sonnet-4-6
     Description: >-
       The single approved cross-region inference profile. Pinned here so the deploy
       role's read grant names ONE profile ARN: the workflow resolves the supplied
@@ -80,7 +80,7 @@ Parameters:
       that check pass for any profile in the account, which is the whole thing it exists
       to rule out.
     AllowedValues:
-      - us.anthropic.claude-sonnet-5-5
+      - us.anthropic.claude-sonnet-4-6
 
 Conditions:
   ShouldCreateOidcProvider: !Equals [!Ref CreateOidcProvider, 'true']
