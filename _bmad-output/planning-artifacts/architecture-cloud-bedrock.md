@@ -3,7 +3,7 @@ workflowType: 'architecture'
 lastStep: 8
 status: 'complete'
 completedAt: '2026-08-25'
-amendedAt: '2026-08-27'
+amendedAt: '2026-10-28'
 inputDocuments:
   - architecture-entitlements-licensing.md
   - architecture-login.md
@@ -21,6 +21,12 @@ companionSpine: 'architecture/architecture-nixus-2026-08-25/ARCHITECTURE-SPINE.m
 # Architecture Decision Document — Nixus Cloud Bedrock
 
 _Companion to [ARCHITECTURE-SPINE.md](architecture/architecture-nixus-2026-08-25/ARCHITECTURE-SPINE.md). The spine carries the terse, enforceable invariants; this document carries the reasoning, the full contract, and the implementation sequence._
+
+> **Amendment — 2026-10-28 (user-approved; supersedes the 2026-08-27 amendment on model identity only): Claude Sonnet 5.5.**
+> The model is **`us.anthropic.claude-sonnet-5-5`**, the US geo inference profile supported from `us-east-1`, on the hosted stack *and* in the desktop BYO adapter (`ai/backend.rs`), which carries its own constant. The unprefixed `anthropic.claude-sonnet-5-5` is a destination only — it has no direct in-region on-demand endpoint and may never be invoked; it appears solely in the IAM pattern `arn:aws:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5*`.
+> **Deployment integrity:** three parameters carry the identity — `BedrockModelId`, `BedrockInferenceProfileArn`, `BedrockFoundationModelArnPattern`. CloudFormation preserves a parameter an UPDATE omits, so all three are passed explicitly, the exact supplied profile ARN is resolved through `bedrock:GetInferenceProfile` before deploying, and the deployed values are read back. Changing only the model id would leave the IAM grant on the superseded model. The deploy role gains that one read action, scoped to one profile ARN, from `infra/bootstrap/github-oidc-deploy.yaml` — deployed **before** the application stack.
+> **Unchanged:** `us-east-1`, US geo routing, request-count quotas, byte/media and output ceilings, streaming as the only Bedrock action with no `CountTokens` grant, the closed fallback table, AD-11 logging limits, absent reserved concurrency, credentials, and disclosure.
+> **Evidence owed:** no 5.5 evidence exists. Unpassed gates **1a**, **1c**, **1d**, **1e**, **1f**, **1h**, **1i** (BYO on 5.5), **1j** (bootstrap grant, pre-deploy). The 4.6 evidence is retained with its original dates for the superseded model only — `docs/runbooks/hosted-ai-rollout.md`.
 
 > **Amendment — 2026-08-27 (user-approved, supersedes the 2026-08-26 amendment below): request-based quota, no CountTokens, Sonnet 4.6 profile in `us-east-1`.**
 > The monthly entitlement is a **request count**: one `charged_count` unit per actual `ConverseStream` invocation. Input/output token figures come from the stream's own metadata and are **observability counters only** — they never gate, never bill, and are never estimated locally.
@@ -175,7 +181,7 @@ sam init --runtime nodejs22.x --architecture arm64 --name nixus-bedrock-api --ap
 - **Authorization:** the API Gateway Cognito authorizer validates the access token and injects the verified `sub` into the Lambda's request context. The Lambda derives the acting user exclusively from that context — a `user_id` field in the request body, if ever present, is never trusted.
 - **Transport security:** TLS 1.2 minimum policy on the custom domain; no additional application-layer encryption is needed for a Bearer-token-authenticated internal API.
 - **No static credentials at runtime:** the Lambda's execution role is the only AWS identity involved in calling Bedrock or DynamoDB. No SSM Parameter Store, no Secrets Manager.
-- **IAM scoping (exact actions):** the execution role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit, CloudFormation-created log group (never `logs:*`); `dynamodb:GetItem` + `dynamodb:TransactWriteItems` scoped to the one table; `bedrock:CountTokens` + `bedrock:InvokeModelWithResponseStream` scoped to the single direct foundation-model ARN, derived in-template from `BedrockModelId` + `BedrockRegion` so the grant cannot drift from the identity actually invoked (2026-08-26 amendment; no region wildcard, since a direct model does not fan out the way the cross-region profile did). DynamoDB IAM policy cannot isolate access by sort key, so the code boundary — and its tests — enforce that the Lambda only ever mutates `CONFIG` items through a transaction condition check, never a direct write; only the separate deploy/admin role edits `CONFIG` directly.
+- **IAM scoping (exact actions):** the execution role grants `logs:CreateLogStream` + `logs:PutLogEvents` scoped to the one explicit, CloudFormation-created log group (never `logs:*`); `dynamodb:GetItem` + `dynamodb:TransactWriteItems` scoped to the one table; `bedrock:InvokeModelWithResponseStream` — and only that Bedrock action — scoped to the approved `us.anthropic.claude-sonnet-5-5` inference-profile ARN plus its destination foundation-model ARN pattern, which is the one place a region wildcard on a resource is required because a profile fans out per region (amended 2026-08-27 and 2026-10-28; `bedrock:CountTokens` is deliberately not granted, because no code calls it). DynamoDB IAM policy cannot isolate access by sort key, so the code boundary — and its tests — enforce that the Lambda only ever mutates `CONFIG` items through a transaction condition check, never a direct write; only the separate deploy/admin role edits `CONFIG` directly, and its sole Bedrock permission is read-only `bedrock:GetInferenceProfile` on that one profile ARN.
 - **Non-premium abuse controls:** layered, not single — the Cognito authorizer at the edge, stage throttle (10 RPS / burst 20), reserved concurrency (10), the `GLOBAL` hard cap (AD-14), and the AWS Budget alert. A WAF is deferred unless observed abuse justifies its cost.
 
 ### API & Communication Patterns
@@ -289,7 +295,7 @@ Bedrock-only surfaces (statement_import's multimodal path) require BYO Bedrock s
 
 The adopted decision is Terms/Privacy-only disclosure — **no in-app consent gate, toggle, or modal is built.** This section states what must be true in those legal documents before hosted AI can ship to production; it does not add any new UI.
 
-- Terms of Service and/or Privacy Policy must clearly state: (1) financial prompts and statement content are transmitted through Nixus's own infrastructure to AWS Bedrock for processing; (2) that processing happens directly in `eu-west-2` (United Kingdom) and AWS's own abuse-detection policies may apply to that content, and Nixus's non-retention guarantee (AD-11) covers only Nixus-controlled systems, not AWS's (2026-08-26 amendment — the earlier US cross-region wording must not be restored); (3) hosted use is subject to a request quota with BYO fallback behavior as described above.
+- Terms of Service and/or Privacy Policy must clearly state: (1) financial prompts and statement content are transmitted through Nixus's own infrastructure to AWS Bedrock for processing; (2) that processing is **US cross-region** through the `us.` inference profile, so a request may be handled in any US region AWS routes it to, and AWS's own abuse-detection policies may apply to that content, and Nixus's non-retention guarantee (AD-11) covers only Nixus-controlled systems, not AWS's (restored by the 2026-08-27 amendment, superseding the 2026-08-26 `eu-west-2` wording); (3) hosted use is subject to a request quota with BYO fallback behavior as described above.
 - The root `README.md` currently states that data never leaves the user's machine — this is a known, identified rollout-copy target that must be corrected as part of AD-13, not merely a generic "locate at implementation time" item. Any marketing-site copy making the same claim remains a locate-and-audit requirement, since its exact file(s) are not independently confirmed here.
 - This is a legal/product capability, not an architectural one — no file in `apps/api-bedrock` or the desktop `ai/` module depends on it, but production deployment (AD-13, AD-15) is explicitly gated on it.
 
@@ -410,7 +416,7 @@ nixus/
 
 **API Boundaries:**
 - External inbound: desktop → API Gateway `GET /v1/ai/status` / `POST /v1/ai/invoke`, Cognito-authorizer-gated — the only public entry points.
-- Lambda → Bedrock: outbound-only, `CountTokens` + `InvokeModelWithResponseStream` (`ConverseStream`), IAM-scoped to one direct foundation-model ARN in `eu-west-2`.
+- Lambda → Bedrock: outbound-only, `InvokeModelWithResponseStream` (`ConverseStream`) and nothing else, IAM-scoped to the approved `us.anthropic.claude-sonnet-5-5` inference-profile ARN plus its destination foundation-model ARN pattern, invoked from `us-east-1`.
 - Lambda → DynamoDB: outbound-only, scoped to the one table; config mutation only via transaction condition checks, never a direct Lambda write.
 - Desktop internal: `AiBackend` is the only boundary any of the four AI surfaces cross to reach either hosted or BYO providers.
 
@@ -438,8 +444,8 @@ nixus/
 ### Integration Points
 
 **Internal Communication:** unchanged Tauri IPC inside the desktop; the new hosted call path is an HTTP/NDJSON client inside `hosted_bedrock.rs`, not a new IPC command.
-**External Integrations:** Cognito (auth, unchanged provider, one new scope), Amazon Bedrock (`anthropic.claude-sonnet-4-6` direct in `eu-west-2`, `CountTokens` + `ConverseStream`), DynamoDB, API Gateway.
-**Data Flow:** desktop obtains a Cognito access token via `commands/auth.rs` → `HostedBedrockAdapter` POSTs to `/v1/ai/invoke` with the Bearer token → API Gateway authorizer verifies + injects `sub` → Lambda validates the request schema, reads `USER#CONFIG`/`GLOBAL#CONFIG` and classifies eligibility, calls `CountTokens` (only if eligible), reserves both usage items in one transaction, calls `ConverseStream` → on `messageStart` the Lambda commits (API GW prelude + `meta`), then relays `delta`/`end` frames → the adapter surfaces the stream to the calling AI surface and invalidates `HostedAiState` on any `403`/`429`/`503`.
+**External Integrations:** Cognito (auth, unchanged provider, one new scope), Amazon Bedrock (`us.anthropic.claude-sonnet-5-5` US cross-region inference profile, invoked from `us-east-1`, `ConverseStream` only — no `CountTokens`), DynamoDB, API Gateway.
+**Data Flow:** desktop obtains a Cognito access token via `commands/auth.rs` → `HostedBedrockAdapter` POSTs to `/v1/ai/invoke` with the Bearer token → API Gateway authorizer verifies + injects `sub` → Lambda applies the transport guard, validates the request schema and byte/media ceilings, reads `USER#CONFIG`/`GLOBAL#CONFIG` and classifies eligibility, reserves both usage items in one transaction, calls `ConverseStream` → on `messageStart` the Lambda commits (API GW prelude + `meta`), then relays `delta`/`end` frames → the adapter surfaces the stream to the calling AI surface and invalidates `HostedAiState` on any `403`/`429`/`503`.
 
 ## Cost
 
