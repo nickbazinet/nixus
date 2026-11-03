@@ -28,6 +28,12 @@ const CATEGORIES_WIDGET = {
   dataBinding: { source: "expenses_by_category", params: { months: 1, limit: 8 } },
 };
 
+const CASH_FLOW_WIDGET = {
+  component: "SankeyChart",
+  title: "Where My Money Goes",
+  dataBinding: { source: "average_monthly_cash_flow", params: { months: 3, limit: 8 } },
+};
+
 function proposal(params: Record<string, unknown>, label: string) {
   return (
     "```action\n" +
@@ -97,6 +103,20 @@ async function setupHomeMock(page: Page, options: HomeMockOptions = {}) {
           detail_columns: [],
           series: ["balance"],
           rows: [{ key: "account:1", label: "Chequing", values: [320_000] }],
+        },
+        // Links, not standalone values: the two node keys and their labels ride in `details`, and
+        // the hub's label is left empty for the renderer to name in the user's language.
+        average_monthly_cash_flow: {
+          dimension: "flow",
+          detail_columns: ["flow_from", "flow_to", "flow_from_label", "flow_to_label"],
+          series: ["amount"],
+          rows: [
+            { key: "in:1>__income__", label: "Salary → Income", details: ["in:1", "__income__", "Salary", ""], values: [500_000] },
+            { key: "__income__>cat:1", label: "Income → Rent", details: ["__income__", "cat:1", "", "Rent"], values: [210_000] },
+            { key: "__income__>cat:2", label: "Income → Groceries", details: ["__income__", "cat:2", "", "Groceries"], values: [61_000] },
+            { key: "__income__>__other__", label: "Income → Other", details: ["__income__", "__other__", "", ""], values: [29_000] },
+            { key: "__income__>__unspent__", label: "Income → Unspent", details: ["__income__", "__unspent__", "", ""], values: [200_000] },
+          ],
         },
       };
 
@@ -407,6 +427,66 @@ test.describe("Home dashboard — premium composer loop (FR-4..FR-9)", () => {
     await removal.getByTestId("action-confirm-button").click();
     await expect(page.getByTestId("home-widget")).toHaveCount(1);
     await expect(page.getByTestId("home-widget")).toContainText("Top Spending Categories This Month");
+  });
+
+  /* The asked-for scenario: a Sankey of an average month. Its rows are links rather than values,
+   * so this proves the whole flow path — catalog name, flow dataset, graph renderer, node naming. */
+  test("a Sankey of where the money goes renders its flow, nodes and table equivalent", async ({ page }) => {
+    await queueReply(page, {
+      outcome: "proposal",
+      content: proposal({ op: "add", widget: CASH_FLOW_WIDGET }, "Add widget"),
+    });
+    await ask(page, "Are you able to add a Sankey diagram to where my money go in average each month");
+
+    const card = page.getByTestId("action-confirmation-card");
+    await expect(card).toContainText("Add “Where My Money Goes” to Home");
+    await expect(card).toContainText("Flow diagram");
+    await expect(card).toContainText("Where the money goes in an average month");
+    await card.getByTestId("action-confirm-button").click();
+
+    const widget = page.getByTestId("home-widget");
+    await expect(widget).toHaveCount(1);
+    const chart = widget.getByTestId("home-chart-SankeyChart");
+    await expect(chart).toBeVisible();
+
+    // One band per link, and six distinct ends across them: the hub is one shared node, not one
+    // per band. Each node draws exactly one name, so the names count the nodes.
+    await expect(chart.locator("svg path.recharts-sankey-link")).toHaveCount(5);
+    await expect(chart.locator("svg text")).toHaveCount(6);
+
+    // The user's own records keep their names; the app's own nodes are named in the UI's language.
+    for (const name of ["Salary", "Rent", "Groceries", "Income", "Unspent", "Other"]) {
+      await expect(chart.locator("svg text").filter({ hasText: new RegExp(`^${name}$`) })).toHaveCount(1);
+    }
+
+    // A band is a bezier stroked at its own width, so no stroke or no width means no visible
+    // ribbon however many <path>s exist.
+    const band = chart.locator("svg path.recharts-sankey-link").first();
+    await expect(band).not.toHaveAttribute("stroke", "none");
+    expect(Number(await band.getAttribute("stroke-width"))).toBeGreaterThan(0);
+
+    // A name never crosses a ribbon: a node money only leaves is named to its left, a node money
+    // only reaches to its right, and a node with bands on both sides above.
+    const anchorOf = (name: string) =>
+      chart
+        .locator("svg text")
+        .filter({ hasText: new RegExp(`^${name}$`) })
+        .getAttribute("text-anchor");
+    expect(await anchorOf("Salary")).toBe("end");
+    expect(await anchorOf("Rent")).toBe("start");
+    expect(await anchorOf("Income")).toBe("middle");
+
+    // FR: the plot is hidden from assistive tech, so the figures live in the table equivalent.
+    await expect(chart).toHaveAttribute("aria-hidden", "true");
+    const table = widget.getByRole("table");
+    await expect(table).toContainText("Salary → Income");
+    await expect(table).toContainText("Income → Unspent");
+    await expect(table.getByRole("row").filter({ hasText: "Income → Rent" })).toContainText("$2,100.00");
+
+    // UJ-2: it comes back after a reload with no AI call.
+    await page.reload();
+    await expect(page.getByTestId("home-chart-SankeyChart")).toBeVisible();
+    expect(await callsTo(page, "send_home_composer_message")).toHaveLength(0);
   });
 
   test("an ambiguous removal asks by title and proposes nothing", async ({ page }) => {

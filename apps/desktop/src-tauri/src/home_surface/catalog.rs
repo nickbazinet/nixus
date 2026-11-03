@@ -22,6 +22,10 @@ pub enum SourceShape {
     /// One row per individual record (an expense), newest first. Only a Table can show it: a chart
     /// of arbitrary line items has no axis that means anything.
     Transactions,
+    /// One row per flow between two named nodes, rather than per thing. A row carries the node it
+    /// leaves and the node it reaches in its `details`, so the rows together are a graph. Only a
+    /// SankeyChart can show it: every other component reads a row as a standalone value.
+    Flow,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +39,7 @@ pub struct CatalogComponent {
 }
 
 use ComponentKind::{Display, Layout};
-use SourceShape::{Categorical, TimeSeries, Transactions};
+use SourceShape::{Categorical, Flow, TimeSeries, Transactions};
 
 pub const COMPONENTS: &[CatalogComponent] = &[
     CatalogComponent {
@@ -73,6 +77,12 @@ pub const COMPONENTS: &[CatalogComponent] = &[
         kind: Display,
         description: "Rows and columns of the source's figures. Use when exact values matter more than shape. The only component that can show a transaction-list source.",
         requires: None,
+    },
+    CatalogComponent {
+        name: "SankeyChart",
+        kind: Display,
+        description: "A flow diagram: money leaves the nodes on the left and fans out through bands whose thickness is the amount. Use for \"where does my money go\". Only for flow sources.",
+        requires: Some(Flow),
     },
     CatalogComponent {
         name: "Card",
@@ -245,6 +255,22 @@ pub const DATA_SOURCES: &[DataSource] = &[
         shape: Categorical,
         params: &[],
     },
+    DataSource {
+        name: "average_monthly_cash_flow",
+        description: "Where the money goes in an average month over a window: each income source flows into one income node, which fans out into each budget category and into whatever was left unspent. Every figure is the monthly average over the window. Use for \"where does my money go\" or a cash-flow Sankey.",
+        shape: Flow,
+        params: &[
+            months(36, 3),
+            MONTHS_AGO,
+            int(
+                "limit",
+                "How many budget categories get their own band before the rest are folded into 'Other'",
+                1,
+                20,
+                8,
+            ),
+        ],
+    },
 ];
 
 pub fn data_source(name: &str) -> Option<&'static DataSource> {
@@ -261,10 +287,10 @@ impl DataSource {
 mod tests {
     use super::*;
 
-    /// FR-1 / FR-2: the catalog is exactly these ten names, spelled exactly so, because Surface
+    /// FR-1 / FR-2: the catalog is exactly these eleven names, spelled exactly so, because Surface
     /// Validation matches `component` by exact name.
     #[test]
-    fn the_catalog_is_the_six_display_components_and_four_layout_primitives() {
+    fn the_catalog_is_the_seven_display_components_and_four_layout_primitives() {
         let display: Vec<&str> = COMPONENTS
             .iter()
             .filter(|c| c.kind == Display)
@@ -284,7 +310,8 @@ mod tests {
                 "BarChart",
                 "AreaChart",
                 "PieChart",
-                "Table"
+                "Table",
+                "SankeyChart"
             ]
         );
         assert_eq!(layout, vec!["Card", "Row", "Column", "Grid"]);
@@ -311,6 +338,7 @@ mod tests {
                 "recent_expenses",
                 "account_balances",
                 "asset_values",
+                "average_monthly_cash_flow",
             ]
         );
         for source in DATA_SOURCES {

@@ -253,6 +253,20 @@ fn validate_binding(
     ))
 }
 
+/// The shapes whose rows mean nothing read one at a time, and the one component that can read each:
+/// a line item needs a ledger, and a flow needs the two nodes it runs between.
+fn exclusive_component(shape: catalog::SourceShape) -> Option<(&'static str, &'static str)> {
+    match shape {
+        catalog::SourceShape::Transactions => {
+            Some(("lists individual transactions", "Table"))
+        }
+        catalog::SourceShape::Flow => {
+            Some(("describes flows between nodes", "SankeyChart"))
+        }
+        catalog::SourceShape::TimeSeries | catalog::SourceShape::Categorical => None,
+    }
+}
+
 struct Walk {
     errors: Errors,
     displays: usize,
@@ -319,16 +333,19 @@ fn validate_node(
                             catalog::SourceShape::TimeSeries => "monthly (time series)",
                             catalog::SourceShape::Categorical => "categorical",
                             catalog::SourceShape::Transactions => "transaction-list",
+                            catalog::SourceShape::Flow => "flow",
                         }
                     ));
                 }
             }
-            if shape == catalog::SourceShape::Transactions && component.name != "Table" {
-                walk.errors.push(format!(
-                    "{path}: {} lists individual transactions and can only be shown in a Table, not a {}",
-                    binding["source"].as_str().unwrap_or(""),
-                    component.name
-                ));
+            if let Some((reads_as, only)) = exclusive_component(shape) {
+                if component.name != only {
+                    walk.errors.push(format!(
+                        "{path}: {} {reads_as} and can only be shown in a {only}, not a {}",
+                        binding["source"].as_str().unwrap_or(""),
+                        component.name
+                    ));
+                }
             }
             node.insert("dataBinding".to_string(), binding);
         }

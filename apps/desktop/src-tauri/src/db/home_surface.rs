@@ -302,11 +302,10 @@ fn dataset(dimension: &str, series: &[&str], rows: Vec<HomeDatasetRow>) -> HomeD
     }
 }
 
-fn expenses_by_category(
+fn ranked_category_spend(
     conn: &Connection,
     window: &Window,
-    limit: usize,
-) -> Result<HomeDataset, AppError> {
+) -> Result<Vec<(i64, String, i64)>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT bc.id, bc.name, SUM(e.amount_cents) AS spent
          FROM expenses e
@@ -325,6 +324,15 @@ fn expenses_by_category(
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    Ok(ranked)
+}
+
+fn expenses_by_category(
+    conn: &Connection,
+    window: &Window,
+    limit: usize,
+) -> Result<HomeDataset, AppError> {
+    let ranked = ranked_category_spend(conn, window)?;
 
     let mut rows: Vec<HomeDatasetRow> = ranked
         .iter()
@@ -347,6 +355,147 @@ fn expenses_by_category(
         });
     }
     Ok(dataset("category", &["spent"], rows))
+}
+
+/// The node every income source pays into and every category is paid out of.
+pub const INCOME_NODE_KEY: &str = "__income__";
+/// What the income node still held after every category was paid.
+pub const UNSPENT_NODE_KEY: &str = "__unspent__";
+/// A flow row's `details`, in order: the two node keys, then the two labels.
+const FLOW_COLUMNS: &[&str] = &["flow_from", "flow_to", "flow_from_label", "flow_to_label"];
+
+/// One end of a flow. App-named nodes carry an empty label and are named by the renderer in the
+/// user's language; a node that is one of the user's own records carries that record's name.
+struct FlowNode {
+    key: String,
+    label: String,
+}
+
+impl FlowNode {
+    fn app(key: &str) -> Self {
+        FlowNode {
+            key: key.to_string(),
+            label: String::new(),
+        }
+    }
+
+    fn user(key: String, label: String) -> Self {
+        FlowNode { key, label }
+    }
+
+    /// Only reached for the row label, which the renderer recomposes from the two labels anyway.
+    fn fallback(&self) -> &str {
+        match (self.label.is_empty(), self.key.as_str()) {
+            (false, _) => &self.label,
+            (true, INCOME_NODE_KEY) => "Income",
+            (true, UNSPENT_NODE_KEY) => "Unspent",
+            (true, OTHER_ROW_KEY) => "Other",
+            (true, key) => key,
+        }
+    }
+}
+
+fn flow_row(from: &FlowNode, to: &FlowNode, cents: i64) -> HomeDatasetRow {
+    HomeDatasetRow {
+        key: format!("{}>{}", from.key, to.key),
+        label: format!("{} \u{2192} {}", from.fallback(), to.fallback()),
+        details: vec![
+            from.key.clone(),
+            to.key.clone(),
+            from.label.clone(),
+            to.label.clone(),
+        ],
+        values: vec![cents],
+    }
+}
+
+fn income_by_source(
+    conn: &Connection,
+    window: &Window,
+) -> Result<Vec<(i64, String, i64)>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT s.id, s.name, SUM(e.amount_cents) AS earned
+         FROM income_entries e
+         JOIN income_sources s ON e.source_id = s.id
+         WHERE e.date >= ?1 AND e.date < ?2
+         GROUP BY s.id
+         HAVING earned > 0
+         ORDER BY earned DESC, s.name",
+    )?;
+    let earned = stmt
+        .query_map(params![window.since, window.until], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(earned)
+}
+
+/// Where an average month's money goes: each income source into the income node, the income node
+/// out to each category and to whatever was left. Every band is a window total divided by the
+/// window's length, so a 3-month window reads as one typical month rather than three stacked.
+///
+/// A band that averages under a cent is dropped rather than drawn as a zero-width ribbon, but its
+/// total still counts toward the remainder, so the bands never add up to more than came in.
+fn average_monthly_cash_flow(
+    conn: &Connection,
+    window: &Window,
+    limit: usize,
+) -> Result<HomeDataset, AppError> {
+    let span = window.months.len().max(1) as i64;
+    let income = FlowNode::app(INCOME_NODE_KEY);
+    let mut rows = Vec::new();
+    let mut earned_total = 0;
+
+    for (id, name, earned) in income_by_source(conn, window)? {
+        earned_total += earned;
+        if earned / span > 0 {
+            rows.push(flow_row(
+                &FlowNode::user(format!("in:{id}"), name),
+                &income,
+                earned / span,
+            ));
+        }
+    }
+
+    let ranked = ranked_category_spend(conn, window)?;
+    let mut spent_total = 0;
+    for (id, name, spent) in ranked.iter().take(limit) {
+        spent_total += spent;
+        if spent / span > 0 {
+            rows.push(flow_row(
+                &income,
+                &FlowNode::user(format!("cat:{id}"), name.clone()),
+                spent / span,
+            ));
+        }
+    }
+
+    let rest: i64 = ranked.iter().skip(limit).map(|(_, _, spent)| spent).sum();
+    spent_total += rest;
+    if rest / span > 0 {
+        rows.push(flow_row(&income, &FlowNode::app(OTHER_ROW_KEY), rest / span));
+    }
+
+    // Only ever drawn when the window genuinely took in more than it paid out; overspending leaves
+    // the outbound bands wider than the inbound ones, which is the honest picture of that month.
+    if (earned_total - spent_total) / span > 0 {
+        rows.push(flow_row(
+            &income,
+            &FlowNode::app(UNSPENT_NODE_KEY),
+            (earned_total - spent_total) / span,
+        ));
+    }
+
+    Ok(HomeDataset {
+        dimension: "flow".to_string(),
+        detail_columns: FLOW_COLUMNS.iter().map(|c| c.to_string()).collect(),
+        series: vec!["amount".to_string()],
+        rows,
+    })
 }
 
 fn net_worth_history(conn: &Connection, window: &Window) -> Result<HomeDataset, AppError> {
@@ -502,6 +651,11 @@ pub fn resolve_binding(
         )?,
         "account_balances" => account_balances(conn)?,
         "asset_values" => asset_values(conn)?,
+        "average_monthly_cash_flow" => average_monthly_cash_flow(
+            conn,
+            &window_of(params, spec, now),
+            param(params, spec, "limit") as usize,
+        )?,
         _ => return Ok(None),
     };
 

@@ -36,6 +36,7 @@ fn every_display_component_with_a_valid_binding_passes() {
         ("PieChart", "expenses_by_category"),
         ("Table", "budget_vs_actual_by_category"),
         ("BarChart", "asset_values"),
+        ("SankeyChart", "average_monthly_cash_flow"),
     ] {
         let widget = json!({
             "component": component,
@@ -350,6 +351,46 @@ fn recent_expenses_is_table_only_and_bounded() {
         "dataBinding": { "source": "recent_expenses", "params": { "limit": 500 } }
     });
     assert!(errors_of(validate_widget(&too_many)).contains("between 1 and 50"));
+}
+
+/// A flow source is a graph, so it is SankeyChart-only, and a SankeyChart can read nothing else.
+#[test]
+fn a_cash_flow_source_is_sankey_only_and_a_sankey_takes_nothing_else() {
+    let sankey = json!({
+        "component": "SankeyChart",
+        "title": "Where My Money Goes",
+        "dataBinding": { "source": "average_monthly_cash_flow", "params": { "months": 3 } }
+    });
+    let canonical = validate_widget(&sankey).expect("a sankey of the cash flow is valid");
+    assert_eq!(canonical["dataBinding"]["params"]["months"], 3);
+    assert_eq!(
+        canonical["dataBinding"]["params"]["limit"], 8,
+        "the fold-into-Other default is made explicit"
+    );
+
+    for component in ["BarChart", "Metric", "PieChart", "LineChart", "Table"] {
+        let other = json!({
+            "component": component,
+            "title": "x",
+            "dataBinding": { "source": "average_monthly_cash_flow" }
+        });
+        assert!(
+            errors_of(validate_widget(&other)).contains("can only be shown in a SankeyChart"),
+            "{component}"
+        );
+    }
+
+    for source in ["expenses_by_category", "net_worth_history", "recent_expenses"] {
+        let wrong_shape = json!({
+            "component": "SankeyChart",
+            "title": "x",
+            "dataBinding": { "source": source }
+        });
+        assert!(
+            errors_of(validate_widget(&wrong_shape)).contains("it needs a flow source"),
+            "{source}"
+        );
+    }
 }
 
 #[test]

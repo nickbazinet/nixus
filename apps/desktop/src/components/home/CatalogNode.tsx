@@ -25,6 +25,7 @@ import {
   type SeriesChartProps,
 } from "@/components/charts/SeriesCharts";
 import { PieShareChart } from "@/components/charts/PieShareChart";
+import { SankeyFlowChart } from "@/components/charts/SankeyFlowChart";
 import { formatMonthKey, insightsLocale } from "@/components/spending-trends/insights-chart";
 import type { HomeDataset, HomeRenderNode } from "@/lib/types";
 
@@ -170,6 +171,10 @@ function DisplayNode({ node, label }: { node: HomeRenderNode; label: string }) {
     return <MetricView data={data} label={node.title ?? t(`home.series.${data.series[0]}`)} />;
   }
   if (node.component === "Table") return <TableView data={data} />;
+  // A flow dataset's rows are links, not values, so this chart takes the dataset itself.
+  if (node.component === "SankeyChart") {
+    return <SankeyFlowChart data={data} caption={label} data-testid="home-chart-SankeyChart" />;
+  }
 
   const Chart = CHARTS[node.component];
   if (!Chart) return null;

@@ -13,6 +13,7 @@ export const HOME_COMPONENTS = [
   "AreaChart",
   "PieChart",
   "Table",
+  "SankeyChart",
   "Card",
   "Row",
   "Column",
@@ -28,6 +29,7 @@ export const HOME_SOURCES = [
   "recent_expenses",
   "account_balances",
   "asset_values",
+  "average_monthly_cash_flow",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

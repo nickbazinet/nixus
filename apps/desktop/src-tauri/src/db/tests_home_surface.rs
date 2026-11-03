@@ -376,6 +376,70 @@ fn recent_expenses_lists_individual_expenses_newest_first() {
     assert_eq!(all.rows.len(), 4, "the default of 10 covers the whole seed");
 }
 
+/// The Sankey's source: one typical month of the window, as a graph of income into categories.
+#[test]
+fn the_cash_flow_averages_the_window_into_one_graph_of_links() {
+    let (_dir, conn) = dataset();
+    let profile = seed_known_profile(&conn);
+
+    let flow = resolve_one(&conn, "average_monthly_cash_flow", json!({ "months": 3 }));
+    assert_eq!(flow.dimension, "flow");
+    assert_eq!(
+        flow.detail_columns,
+        vec!["flow_from", "flow_to", "flow_from_label", "flow_to_label"]
+    );
+    assert_eq!(flow.series, vec!["amount"]);
+
+    // Every band is the 3-month total over 3, so the diagram reads as one typical month.
+    let links: Vec<(&str, &str, i64)> = flow
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row.details[0].as_str(),
+                row.details[1].as_str(),
+                row.values[0],
+            )
+        })
+        .collect();
+    let groceries = format!("cat:{}", profile.groceries_category_id);
+    assert_eq!(
+        links,
+        vec![
+            ("in:1", INCOME_NODE_KEY, 739_163 / 3),
+            (INCOME_NODE_KEY, groceries.as_str(), (873_419 + 618_253) / 3),
+            (
+                INCOME_NODE_KEY,
+                format!("cat:{}", profile.groceries_category_id + 1).as_str(),
+                (259_377 + 147_389) / 3
+            ),
+        ]
+    );
+
+    // The seed spends more than it earns, so there is nothing left to draw as unspent.
+    assert!(flow.rows.iter().all(|row| row.key != format!(
+        "{INCOME_NODE_KEY}>{UNSPENT_NODE_KEY}"
+    )));
+
+    // An income source is the user's own record, so its label travels; the hub is named by the
+    // renderer and travels empty.
+    assert_eq!(flow.rows[0].details[2], "Gossamer Consulting");
+    assert_eq!(flow.rows[0].details[3], "");
+    assert_eq!(flow.rows[1].details[3], "Quixotic Groceries");
+
+    let folded = resolve_one(
+        &conn,
+        "average_monthly_cash_flow",
+        json!({ "months": 3, "limit": 1 }),
+    );
+    let rest = folded
+        .rows
+        .iter()
+        .find(|row| row.details[1] == OTHER_ROW_KEY)
+        .expect("the categories past the limit are folded, not dropped");
+    assert_eq!(rest.values, vec![(259_377 + 147_389) / 3]);
+}
+
 /// The reported scenario: "Spending by Category – Last Month" shows last month, not this one.
 #[test]
 fn a_window_can_end_in_any_past_month() {

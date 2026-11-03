@@ -1163,7 +1163,7 @@ export interface HomeDatasetRow {
 }
 
 export interface HomeDataset {
-  dimension: "month" | "category" | "account" | "asset" | "expense";
+  dimension: "month" | "category" | "account" | "asset" | "expense" | "flow";
   /** Text columns shown between the label and the figures, e.g. `date` and `category`. */
   detail_columns: string[];
   /** Series keys, aligned with every row's `values`. */

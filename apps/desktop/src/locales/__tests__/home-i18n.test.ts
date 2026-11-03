@@ -28,8 +28,11 @@ describe("home i18n", () => {
     for (const series of ["spent", "net_worth", "actual", "budget", "income", "balance", "value"]) {
       expect(en[`home.series.${series}`], series).toBeTruthy();
     }
-    for (const dimension of ["month", "category", "account", "asset"]) {
+    for (const dimension of ["month", "category", "account", "asset", "flow"]) {
       expect(en[`home.dimension.${dimension}`], dimension).toBeTruthy();
+    }
+    for (const node of ["income", "unspent"]) {
+      expect(en[`home.flow.${node}`], node).toBeTruthy();
     }
     for (const op of ["add", "modify", "remove"]) {
       for (const kind of ["label", "confirm", "done"]) {

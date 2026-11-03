@@ -106,6 +106,7 @@ fn catalog_section() -> String {
             SourceShape::TimeSeries => "monthly",
             SourceShape::Categorical => "categorical",
             SourceShape::Transactions => "transaction list, Table only",
+            SourceShape::Flow => "flow, SankeyChart only",
         };
         lines.push(format!(
             "- {} ({shape}): {}",
@@ -159,7 +160,7 @@ Rules:
 - To narrow spending to one budget category, put the user's words for it in params.category; the app matches it to their categories.
 - Layout primitives never have a dataBinding; display components always have one.
 - At most {max_displays} display components per widget, and layouts nested at most {max_depth} deep.
-- LineChart and AreaChart need a monthly source; PieChart needs a categorical source; a transaction-list source can only be shown in a Table.
+- LineChart and AreaChart need a monthly source; PieChart needs a categorical source; a transaction-list source can only be shown in a Table; a flow source can only be shown in a SankeyChart, and a SankeyChart can show nothing else.
 - The Home dashboard holds at most {max_widgets} widgets. Propose exactly one change per reply.
 - Only the finance data sources below exist. Car, maintenance or any other data cannot be shown; say so with op "message".
 - To remove a widget, copy the user's description of it into "target"; the app decides which widget matches.
