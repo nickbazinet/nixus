@@ -30,7 +30,15 @@ type GlanceRoute = "/wealth/net-worth" | "/spending/budget" | "/spending/income"
  * One module tile: what it is, its one number, one line of context, and where it opens. The whole
  * card is the link (DESIGN.md, interactive card), so each tile is a single target.
  */
+const GLANCE_ACCENT = {
+  indigo: "border-l-[3px] border-l-chart-1",
+  purple: "border-l-[3px] border-l-chart-3",
+  pink: "border-l-[3px] border-l-chart-4",
+  cyan: "border-l-[3px] border-l-chart-5",
+} as const;
+
 function GlanceTile({
+  accent,
   icon: Icon,
   label,
   to,
@@ -39,6 +47,7 @@ function GlanceTile({
   children,
   testId,
 }: {
+  accent: keyof typeof GLANCE_ACCENT;
   icon: LucideIcon;
   label: string;
   to: GlanceRoute;
@@ -52,7 +61,7 @@ function GlanceTile({
       size="sm"
       interactive
       render={<Link to={to} />}
-      className="group px-card-pad"
+      className={`group px-card-pad ${GLANCE_ACCENT[accent]}`}
       data-testid={testId}
     >
       <div className="flex items-center gap-2 text-caption text-ink-dim">
@@ -118,6 +127,7 @@ export function AtAGlance() {
   return (
     <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2 @5xl:grid-cols-4" data-testid="home-glance">
       <GlanceTile
+        accent="indigo"
         icon={Landmark}
         label={t("home.glance.netWorth")}
         to="/wealth/net-worth"
@@ -139,6 +149,7 @@ export function AtAGlance() {
       </GlanceTile>
 
       <GlanceTile
+        accent="purple"
         icon={Wallet}
         label={t("home.glance.spending")}
         to="/spending/budget"
@@ -166,6 +177,7 @@ export function AtAGlance() {
       </GlanceTile>
 
       <GlanceTile
+        accent="pink"
         icon={Gauge}
         label={t("home.glance.cashFlow")}
         to="/spending/income"
@@ -180,6 +192,7 @@ export function AtAGlance() {
       </GlanceTile>
 
       <GlanceTile
+        accent="cyan"
         icon={Car}
         label={t("home.glance.car")}
         to="/car"

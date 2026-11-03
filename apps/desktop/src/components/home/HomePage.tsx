@@ -66,7 +66,7 @@ function Section({
   );
 }
 
-/** What fills "Built with AI" before anything is built: the shape of what is possible, not a void. */
+/** What fills "Your personalized insights" before anything is built: the shape of what is possible, not a void. */
 function WidgetInvitation({ canAsk, onAsk }: { canAsk: boolean; onAsk: (text: string) => void }) {
   const { t } = useTranslation();
   return (

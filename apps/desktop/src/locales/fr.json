@@ -1788,7 +1788,7 @@
   "home.glance.carOnTrack": "Tout est à jour",
   "home.glance.carVehicles_one": "{{count}} véhicule",
   "home.glance.carVehicles_other": "{{count}} véhicules",
-  "home.widgets.title": "Créé avec l’IA",
+  "home.widgets.title": "Vos aperçus personnalisés",
   "home.widgets.count": "{{count}} widgets sur {{max}}",
   "chat.actionOutcome.confirmed": "Fait",
   "chat.actionOutcome.cancelled": "Annulé",

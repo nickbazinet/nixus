@@ -1788,7 +1788,7 @@
   "home.glance.carOnTrack": "All on track",
   "home.glance.carVehicles_one": "{{count}} vehicle",
   "home.glance.carVehicles_other": "{{count}} vehicles",
-  "home.widgets.title": "Built with AI",
+  "home.widgets.title": "Your personalized insights",
   "home.widgets.count": "{{count}} of {{max}} widgets",
   "chat.actionOutcome.confirmed": "Done",
   "chat.actionOutcome.cancelled": "Cancelled",
