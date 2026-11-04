@@ -59,6 +59,174 @@ pub fn get_home_surface(state: State<DbState>) -> Result<Vec<HomeWidget>, AppErr
     home_db::resolve_surface(conn)
 }
 
+/// The widest `span` the grid offers: a full-width widget. `1` is the half-width default.
+const FULL_WIDTH_SPAN: i64 = 2;
+
+/// The last offset into the renderer's 8-step chart ramp.
+const MAX_ACCENT: i64 = 7;
+
+/// The user's own presentation choices — reorder, width, rename, accent — are PLAIN LOCAL EDITS.
+/// They read no `AiState`, call no model and pass no eligibility gate, because nothing here is
+/// generated: the four commands below work on a local profile, offline, with no premium. They also
+/// return `()` rather than the surface, since `resolve_surface` re-queries every data source and
+/// that is far too much work for a colour tap; the frontend invalidates its query instead.
+fn presentation_write(
+    active: &ActiveDataset,
+    widget_id: &str,
+    update: &home_db::PresentationUpdate,
+) -> Result<(), AppError> {
+    let change = active.write(|tx| home_db::set_presentation(tx, widget_id, update))?;
+    audit_db::record(
+        active,
+        "home_widget",
+        change.widget_id,
+        "update",
+        Some(&change.old_json),
+        Some(&change.new_json),
+    );
+
+    Ok(())
+}
+
+fn reorder_presentation(active: &ActiveDataset, widget_ids: &[String]) -> Result<(), AppError> {
+    let changes = active.write(|tx| home_db::reorder_widgets(tx, widget_ids))?;
+    for change in &changes {
+        audit_db::record(
+            active,
+            "home_widget",
+            change.widget_id,
+            "update",
+            Some(&change.old_json),
+            Some(&change.new_json),
+        );
+    }
+
+    Ok(())
+}
+
+/// Blank after trimming is how a user hands the title back to the AI, so it clears the override
+/// rather than being refused as empty.
+fn rename_presentation(
+    active: &ActiveDataset,
+    widget_id: &str,
+    title: Option<&str>,
+) -> Result<(), AppError> {
+    let trimmed = title.map(str::trim).unwrap_or_default();
+    if trimmed.chars().count() > validate::MAX_TITLE_CHARS {
+        return Err(AppError::Validation {
+            message: format!(
+                "A widget title is at most {} characters",
+                validate::MAX_TITLE_CHARS
+            ),
+            field: Some("title".to_string()),
+        });
+    }
+
+    let update =
+        home_db::PresentationUpdate::Title((!trimmed.is_empty()).then(|| trimmed.to_string()));
+    presentation_write(active, widget_id, &update)
+}
+
+fn span_presentation(active: &ActiveDataset, widget_id: &str, span: i64) -> Result<(), AppError> {
+    if !(1..=FULL_WIDTH_SPAN).contains(&span) {
+        return Err(AppError::Validation {
+            message: "A widget is either half or full width".to_string(),
+            field: Some("span".to_string()),
+        });
+    }
+
+    presentation_write(active, widget_id, &home_db::PresentationUpdate::Span(span))
+}
+
+fn accent_presentation(
+    active: &ActiveDataset,
+    widget_id: &str,
+    accent: Option<i64>,
+) -> Result<(), AppError> {
+    if accent.is_some_and(|offset| !(0..=MAX_ACCENT).contains(&offset)) {
+        return Err(AppError::Validation {
+            message: format!("A widget accent is an offset from 0 to {MAX_ACCENT}"),
+            field: Some("accent".to_string()),
+        });
+    }
+
+    presentation_write(
+        active,
+        widget_id,
+        &home_db::PresentationUpdate::Accent(accent),
+    )
+}
+
+/// Removing a widget by hand takes the same `Remove` path the Composer's confirmed removal takes,
+/// so there is one delete in the codebase rather than two that can drift. The `title` a
+/// Composer-built change carries is only ever used to word its confirmation card, and this one has
+/// no card to word: the UI asks before calling, and `apply_change` reads the real title back off
+/// the stored spec for the audit row.
+fn remove_widget(active: &ActiveDataset, widget_id: &str) -> Result<(), AppError> {
+    let change = SurfaceChange::Remove {
+        widget_id: widget_id.to_string(),
+        title: String::new(),
+    };
+    let applied = active.write(|tx| home_db::apply_change(tx, &change))?;
+    audit_db::record(
+        active,
+        "home_widget",
+        applied.entity_id,
+        applied.action,
+        applied.old_value.as_deref(),
+        applied.new_value.as_deref(),
+    );
+
+    Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn reorder_home_widgets(
+    state: State<DbState>,
+    widget_ids: Vec<String>,
+) -> Result<(), AppError> {
+    let active = lock(&state)?;
+    reorder_presentation(&active, &widget_ids)
+}
+
+/// Deleting one's own widget is not an AI action and needs no confirmation card: it is gated by a
+/// dialog in the UI, and the removed spec stays recoverable from the audit row.
+#[tauri::command(rename_all = "snake_case")]
+pub fn delete_home_widget(state: State<DbState>, widget_id: String) -> Result<(), AppError> {
+    let active = lock(&state)?;
+    remove_widget(&active, &widget_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn rename_home_widget(
+    state: State<DbState>,
+    widget_id: String,
+    title: Option<String>,
+) -> Result<(), AppError> {
+    let active = lock(&state)?;
+    rename_presentation(&active, &widget_id, title.as_deref())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn set_home_widget_span(
+    state: State<DbState>,
+    widget_id: String,
+    span: i64,
+) -> Result<(), AppError> {
+    let active = lock(&state)?;
+    span_presentation(&active, &widget_id, span)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn set_home_widget_accent(
+    state: State<DbState>,
+    widget_id: String,
+    accent: Option<i64>,
+) -> Result<(), AppError> {
+    let active = lock(&state)?;
+    accent_presentation(&active, &widget_id, accent)
+}
+
 /// Who may use the Composer right now. The hosted account session is account-wide — it outlives a
 /// switch to a local profile — so eligibility is decided per PROFILE first: the composer belongs to
 /// the Nixus Cloud profile signed in as its own account, never to a local profile that merely shares

@@ -501,3 +501,156 @@ fn spending_and_transactions_can_be_narrowed_to_one_category_in_the_users_words(
     let nothing = resolve_one(&conn, "recent_expenses", json!({ "category": "car insurance" }));
     assert!(nothing.rows.is_empty());
 }
+
+fn keys_of(conn: &Connection) -> Vec<String> {
+    list_widgets(conn)
+        .unwrap()
+        .into_iter()
+        .map(|widget| widget.widget_key)
+        .collect()
+}
+
+/// The load-bearing guarantee of the presentation layer: the Modify branch UPDATEs `spec_json`
+/// alone, so the user's own choices survive an AI modify without that branch knowing they exist.
+#[test]
+fn an_ai_modify_preserves_the_users_presentation_choices() {
+    let (_dir, conn) = dataset();
+    add(
+        &conn,
+        widget("Trend", "LineChart", "net_worth_history", json!({})),
+    );
+    let key = keys_of(&conn).remove(0);
+
+    for update in [
+        PresentationUpdate::Title(Some("My money".to_string())),
+        PresentationUpdate::Span(2),
+        PresentationUpdate::Accent(Some(5)),
+    ] {
+        set_presentation(&conn, &key, &update).expect("a presentation write");
+    }
+
+    apply_change(
+        &conn,
+        &SurfaceChange::Modify {
+            widget_id: key.clone(),
+            widget: widget(
+                "Trend",
+                "BarChart",
+                "net_worth_history",
+                json!({ "months": 6 }),
+            ),
+        },
+    )
+    .expect("modify applies");
+
+    let after = list_widgets(&conn).unwrap().remove(0);
+    assert!(
+        after.spec_json.contains("BarChart"),
+        "the AI-owned half did change"
+    );
+    assert_eq!(after.title_override.as_deref(), Some("My money"));
+    assert_eq!(after.span, 2);
+    assert_eq!(after.accent, Some(5));
+
+    let resolved = resolve_surface(&conn).unwrap().remove(0);
+    assert_eq!(resolved.title, "My money");
+    assert_eq!(resolved.title_override.as_deref(), Some("My money"));
+    assert_eq!((resolved.span, resolved.accent), (2, Some(5)));
+}
+
+#[test]
+fn the_effective_title_is_the_override_and_falls_back_when_it_is_absent_or_blank() {
+    let (_dir, conn) = dataset();
+    add(
+        &conn,
+        widget("Spec Title", "Metric", "account_balances", json!({})),
+    );
+    let key = keys_of(&conn).remove(0);
+
+    let title = |conn: &Connection| resolve_surface(conn).unwrap().remove(0).title;
+    assert_eq!(title(&conn), "Spec Title");
+
+    set_presentation(
+        &conn,
+        &key,
+        &PresentationUpdate::Title(Some("Renamed".to_string())),
+    )
+    .expect("a rename");
+    assert_eq!(title(&conn), "Renamed");
+
+    // A row synced from a build that stored whitespace must not render a nameless card.
+    conn.execute(
+        "UPDATE home_widgets SET title_override = '   ' WHERE widget_key = ?1",
+        params![key],
+    )
+    .unwrap();
+    assert_eq!(title(&conn), "Spec Title");
+
+    set_presentation(&conn, &key, &PresentationUpdate::Title(None)).expect("the override clears");
+    assert_eq!(title(&conn), "Spec Title");
+    assert!(resolve_surface(&conn).unwrap()[0].title_override.is_none());
+}
+
+#[test]
+fn reordering_refuses_anything_that_is_not_a_permutation_and_writes_nothing() {
+    let (_dir, conn) = dataset();
+    add(&conn, widget("A", "Metric", "account_balances", json!({})));
+    add(&conn, widget("B", "Table", "asset_values", json!({})));
+    let before = list_widgets(&conn).unwrap();
+    let keys = keys_of(&conn);
+
+    for submitted in [
+        Vec::new(),
+        vec![keys[0].clone()],
+        vec![keys[0].clone(), keys[0].clone()],
+        vec![keys[0].clone(), "w_notawidget".to_string()],
+        vec![keys[0].clone(), keys[1].clone(), keys[0].clone()],
+    ] {
+        match reorder_widgets(&conn, &submitted) {
+            Err(AppError::Validation { field, .. }) => {
+                assert_eq!(field.as_deref(), Some("widget_ids"))
+            }
+            other => panic!("expected a refusal for {submitted:?}, got {other:?}"),
+        }
+    }
+
+    let after = list_widgets(&conn).unwrap();
+    for (old, new) in before.iter().zip(&after) {
+        assert_eq!(old.position, new.position);
+        assert_eq!(old.updated_at, new.updated_at);
+    }
+}
+
+#[test]
+fn a_valid_permutation_changes_the_order_widgets_come_back_in() {
+    let (_dir, conn) = dataset();
+    add(&conn, widget("A", "Metric", "account_balances", json!({})));
+    add(&conn, widget("B", "Table", "asset_values", json!({})));
+    add(
+        &conn,
+        widget("C", "PieChart", "expenses_by_category", json!({})),
+    );
+    let keys = keys_of(&conn);
+
+    // An add starts positions at 1, so submitting the current order already rewrites all three.
+    // Normalising first is what leaves an untouched middle row to assert on below.
+    reorder_widgets(&conn, &keys).expect("the current order applies");
+
+    let swapped = vec![keys[2].clone(), keys[1].clone(), keys[0].clone()];
+    let changes = reorder_widgets(&conn, &swapped).expect("a permutation applies");
+
+    assert_eq!(keys_of(&conn), swapped);
+    assert_eq!(
+        resolve_surface(&conn)
+            .unwrap()
+            .iter()
+            .map(|w| w.title.clone())
+            .collect::<Vec<_>>(),
+        vec!["C", "B", "A"]
+    );
+    assert_eq!(
+        changes.len(),
+        2,
+        "only the rows whose slot moved are reported"
+    );
+}

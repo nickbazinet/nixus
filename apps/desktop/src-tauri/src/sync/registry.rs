@@ -271,6 +271,12 @@ pub const COLUMNS: &[ColumnRule] = &[
     column("home_widgets", "spec_json", Lww),
     column("home_widgets", "created_at", Immutable),
     column("home_widgets", "updated_at", Lww),
+    // The user's own presentation choices, distinct from the AI-owned `spec_json`: a rename, a
+    // width and a palette offset. Separate columns so the later of two computers' tweaks wins per
+    // choice, instead of one re-emitted widget document overwriting all three.
+    column("home_widgets", "title_override", Lww),
+    column("home_widgets", "span", Lww),
+    column("home_widgets", "accent", Lww),
     column("income_entries", "id", LocalId),
     column("income_entries", "source_id", LocalId),
     column("income_entries", "amount_cents", Lww),

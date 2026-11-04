@@ -35,7 +35,7 @@ export function PieShareChart(props: SeriesChartProps) {
       key: row.key,
       label: row.label,
       cents: row.values[0] ?? 0,
-      fill: rampColor(rank),
+      fill: rampColor(rank, props.accent),
     }));
   const total = slices.reduce((sum, slice) => sum + slice.cents, 0);
 

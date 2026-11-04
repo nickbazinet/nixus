@@ -32,10 +32,20 @@ export const CHART_RAMP_LENGTH = CHART_RAMP.length;
  */
 export const SEGMENT_DIVIDER = "var(--card)";
 
-/** Rank-ordered fill. Ranks past the eighth reuse the last step — the ramp never grows past eight. */
-export function rampColor(rank: number): string {
+/**
+ * Rank-ordered fill. Ranks past the eighth reuse the last step — the ramp never grows past eight.
+ *
+ * `offset` rotates which step rank 0 lands on, so a Home widget can be given its own accent. A
+ * UNIFORM rotation is safe because it moves every rank by the same amount: the ramp alternates
+ * luminance step to step, so rank-adjacent fills stay an odd/even pair at any offset and the
+ * adjacency guarantee above still holds. A per-rank offset would not — it could collapse two
+ * neighbours onto the same parity.
+ */
+export function rampColor(rank: number, offset = 0): string {
   const index = Math.min(Math.max(rank, 0), CHART_RAMP_LENGTH - 1);
-  return CHART_RAMP[index];
+  // `%` keeps the sign of its left operand, so a negative offset needs the second modulo.
+  const rotation = ((Math.trunc(offset) % CHART_RAMP_LENGTH) + CHART_RAMP_LENGTH) % CHART_RAMP_LENGTH;
+  return CHART_RAMP[(index + rotation) % CHART_RAMP_LENGTH];
 }
 
 const LOCALE_TAGS: Record<string, string> = { en: "en-CA", fr: "fr-CA" };

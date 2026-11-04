@@ -154,7 +154,15 @@ const CHARTS: Record<string, (props: SeriesChartProps) => React.ReactNode> = {
   PieChart: PieShareChart,
 };
 
-function DisplayNode({ node, label }: { node: HomeRenderNode; label: string }) {
+function DisplayNode({
+  node,
+  label,
+  accent,
+}: {
+  node: HomeRenderNode;
+  label: string;
+  accent?: number;
+}) {
   const { t, i18n } = useTranslation();
   const data = node.data;
   if (!data) return null;
@@ -173,7 +181,14 @@ function DisplayNode({ node, label }: { node: HomeRenderNode; label: string }) {
   if (node.component === "Table") return <TableView data={data} />;
   // A flow dataset's rows are links, not values, so this chart takes the dataset itself.
   if (node.component === "SankeyChart") {
-    return <SankeyFlowChart data={data} caption={label} data-testid="home-chart-SankeyChart" />;
+    return (
+      <SankeyFlowChart
+        data={data}
+        caption={label}
+        accent={accent}
+        data-testid="home-chart-SankeyChart"
+      />
+    );
   }
 
   const Chart = CHARTS[node.component];
@@ -184,6 +199,7 @@ function DisplayNode({ node, label }: { node: HomeRenderNode; label: string }) {
       series={seriesOf(data, t)}
       dimensionLabel={t(`home.dimension.${data.dimension}`)}
       caption={label}
+      accent={accent}
       data-testid={`home-chart-${node.component}`}
     />
   );
@@ -193,10 +209,13 @@ export function CatalogNode({
   node,
   fallbackLabel,
   showTitle = true,
+  accent,
 }: {
   node: HomeRenderNode;
   fallbackLabel: string;
   showTitle?: boolean;
+  /** The owning widget's accent offset. Applies to the whole subtree. */
+  accent?: number;
 }) {
   const { t } = useTranslation();
   const label = node.title ?? fallbackLabel;
@@ -214,7 +233,7 @@ export function CatalogNode({
     <h3 className="text-label text-ink">{node.title}</h3>
   ) : null;
   const children = node.children.map((child, index) => (
-    <CatalogNode key={index} node={child} fallbackLabel={label} />
+    <CatalogNode key={index} node={child} fallbackLabel={label} accent={accent} />
   ));
 
   switch (node.component) {
@@ -259,7 +278,7 @@ export function CatalogNode({
       return (
         <div className="flex flex-col gap-2" data-testid={`home-node-${node.component}`}>
           {node.component !== "Metric" ? heading : null}
-          <DisplayNode node={node} label={label} />
+          <DisplayNode node={node} label={label} accent={accent} />
         </div>
       );
   }

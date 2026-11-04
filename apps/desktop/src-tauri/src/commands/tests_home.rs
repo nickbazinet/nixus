@@ -53,6 +53,26 @@ fn widgets(active: &ActiveDataset) -> Vec<crate::models::StoredHomeWidget> {
     home_db::list_widgets(active.conn.as_ref().unwrap()).unwrap()
 }
 
+fn seed_widgets(active: &ActiveDataset, count: usize) -> Vec<String> {
+    for _ in 0..count {
+        active
+            .write(|tx| {
+                home_db::apply_change(
+                    tx,
+                    &SurfaceChange::Add {
+                        widget: validate::validate_widget(&net_worth_widget("LineChart")).unwrap(),
+                    },
+                )
+            })
+            .expect("the widget seeds");
+    }
+
+    widgets(active)
+        .into_iter()
+        .map(|widget| widget.widget_key)
+        .collect()
+}
+
 /// FR-4/FR-6/FR-9 end to end on the confirm side: each confirmed change persists, writes exactly
 /// one `home_widget` audit row with its prior and new state, and tells the conversation.
 #[test]
@@ -260,4 +280,132 @@ fn a_send_from_a_local_profile_is_refused_as_premium_required() {
         authorize_access(ComposerAccess::Hosted(HostedEligibility::Eligible)).unwrap(),
         HostedEligibility::Eligible
     );
+}
+
+/// A presentation edit is a plain local write — no AI, no eligibility gate, no Home conversation —
+/// so the only thing that can refuse it is a value outside its own range, named by field.
+#[test]
+fn presentation_edits_refuse_out_of_range_values_and_write_nothing() {
+    let (_dir, active) = dataset();
+    let key = seed_widgets(&active, 1).remove(0);
+
+    for span in [0_i64, 3, -1] {
+        match span_presentation(&active, &key, span) {
+            Err(AppError::Validation { field, .. }) => assert_eq!(field.as_deref(), Some("span")),
+            other => panic!("expected a span refusal for {span}, got {other:?}"),
+        }
+    }
+    for accent in [-1_i64, 8] {
+        match accent_presentation(&active, &key, Some(accent)) {
+            Err(AppError::Validation { field, .. }) => assert_eq!(field.as_deref(), Some("accent")),
+            other => panic!("expected an accent refusal for {accent}, got {other:?}"),
+        }
+    }
+    let too_long = "x".repeat(validate::MAX_TITLE_CHARS + 1);
+    match rename_presentation(&active, &key, Some(&too_long)) {
+        Err(AppError::Validation { field, .. }) => assert_eq!(field.as_deref(), Some("title")),
+        other => panic!("expected a title refusal, got {other:?}"),
+    }
+
+    let stored = widgets(&active).remove(0);
+    assert_eq!(stored.span, 1);
+    assert!(stored.accent.is_none() && stored.title_override.is_none());
+    assert!(audit_rows(&active).is_empty(), "a refusal is never audited");
+}
+
+/// The accepted edges, plus the blank rename that hands the title back to the AI rather than
+/// storing an empty string.
+#[test]
+fn presentation_edits_persist_and_a_blank_rename_clears_the_override() {
+    let (_dir, active) = dataset();
+    let key = seed_widgets(&active, 1).remove(0);
+
+    span_presentation(&active, &key, 2).expect("full width");
+    accent_presentation(&active, &key, Some(0)).expect("the first palette offset");
+    accent_presentation(&active, &key, Some(7)).expect("the last palette offset");
+    rename_presentation(&active, &key, Some("  Spending  ")).expect("a rename");
+
+    let stored = widgets(&active).remove(0);
+    assert_eq!(stored.span, 2);
+    assert_eq!(stored.accent, Some(7));
+    assert_eq!(stored.title_override.as_deref(), Some("Spending"));
+
+    let longest = "x".repeat(validate::MAX_TITLE_CHARS);
+    rename_presentation(&active, &key, Some(&longest)).expect("the title ceiling itself fits");
+    accent_presentation(&active, &key, None).expect("back to the default palette");
+    rename_presentation(&active, &key, Some("  ")).expect("blank clears rather than refuses");
+
+    let cleared = widgets(&active).remove(0);
+    assert!(cleared.accent.is_none() && cleared.title_override.is_none());
+
+    rename_presentation(&active, &key, None).expect("None clears too");
+    assert!(widgets(&active)[0].title_override.is_none());
+
+    let audit = audit_rows(&active);
+    assert_eq!(audit.len(), 8, "one audit row per accepted edit");
+    assert!(audit
+        .iter()
+        .all(|row| row.0 == "home_widget" && row.2 == "update"));
+}
+
+#[test]
+fn a_manual_reorder_persists_and_audits_only_the_widgets_that_moved() {
+    let (_dir, active) = dataset();
+    let keys = seed_widgets(&active, 3);
+
+    reorder_presentation(&active, &keys).expect("the current order normalises the positions");
+    let normalised = audit_rows(&active).len();
+
+    let swapped = vec![keys[2].clone(), keys[1].clone(), keys[0].clone()];
+    reorder_presentation(&active, &swapped).expect("a permutation applies");
+
+    assert_eq!(
+        widgets(&active)
+            .into_iter()
+            .map(|widget| widget.widget_key)
+            .collect::<Vec<_>>(),
+        swapped
+    );
+    assert_eq!(audit_rows(&active).len() - normalised, 2);
+    assert!(reorder_presentation(&active, &keys[..1]).is_err());
+}
+
+/// A manual delete needs no conversation, no card and no AI gate — and it leaves the OTHER widgets
+/// and their presentation choices alone, which is the part a shared `DELETE` could get wrong.
+#[test]
+fn a_manual_delete_removes_only_its_own_widget() {
+    let (_dir, active) = dataset();
+    let keys = seed_widgets(&active, 3);
+    accent_presentation(&active, &keys[2], Some(4)).expect("a presentation choice to preserve");
+    let before = audit_rows(&active).len();
+
+    remove_widget(&active, &keys[1]).expect("the user's own widget is theirs to remove");
+
+    let remaining = widgets(&active);
+    assert_eq!(
+        remaining
+            .iter()
+            .map(|widget| widget.widget_key.clone())
+            .collect::<Vec<_>>(),
+        vec![keys[0].clone(), keys[2].clone()]
+    );
+    assert_eq!(remaining[1].accent, Some(4));
+
+    let audit = audit_rows(&active);
+    assert_eq!(audit.len() - before, 1);
+    assert_eq!(audit.last().expect("the delete row").2, "delete");
+}
+
+/// A widget a second computer already removed is refused rather than silently succeeding, so the
+/// dialog cannot report a delete that never happened.
+#[test]
+fn deleting_an_absent_widget_is_refused() {
+    let (_dir, active) = dataset();
+    let keys = seed_widgets(&active, 1);
+
+    assert!(remove_widget(&active, "w_gone").is_err());
+    assert_eq!(widgets(&active).len(), 1);
+
+    remove_widget(&active, &keys[0]).expect("the real one still removes");
+    assert!(remove_widget(&active, &keys[0]).is_err(), "and only once");
 }

@@ -53,10 +53,19 @@ async function setupHomeMock(page: Page, options: HomeMockOptions = {}) {
       const w = window as unknown as Record<string, unknown>;
       const STORE_KEY = "__home_mock_widgets__";
 
-      // Persisted in localStorage so a reload stands for closing and reopening the app.
-      const load = (): { id: string; spec: Record<string, unknown> }[] =>
+      interface HomeMockWidget {
+        id: string;
+        spec: Record<string, unknown>;
+        title_override?: string | null;
+        span?: number;
+        accent?: number | null;
+      }
+
+      // Persisted in localStorage so a reload stands for closing and reopening the app. The three
+      // customization fields are stored beside the AI's spec, as the backend holds them.
+      const load = (): HomeMockWidget[] =>
         JSON.parse(localStorage.getItem(STORE_KEY) ?? "[]");
-      const save = (widgets: { id: string; spec: Record<string, unknown> }[]) =>
+      const save = (widgets: HomeMockWidget[]) =>
         localStorage.setItem(STORE_KEY, JSON.stringify(widgets));
 
       const DATA: Record<string, unknown> = {
@@ -214,10 +223,55 @@ async function setupHomeMock(page: Page, options: HomeMockOptions = {}) {
                 load().map((widget, index) => ({
                   id: widget.id,
                   position: index + 1,
-                  title: widget.spec.title,
+                  title: widget.title_override ?? widget.spec.title,
+                  title_override: widget.title_override ?? null,
+                  span: widget.span ?? 1,
+                  accent: widget.accent ?? null,
                   root: render(widget.spec),
                 }))
               );
+            // The four manual customization writes. All return void, as the real commands do, so
+            // the UI only sees the result through the surface re-read that follows.
+            case "reorder_home_widgets": {
+              const widgets = load();
+              const byId = new Map(widgets.map((widget) => [widget.id, widget]));
+              const reordered = (args.widget_ids as string[])
+                .map((id) => byId.get(id))
+                .filter((widget): widget is HomeMockWidget => widget !== undefined);
+              // The real command refuses anything that is not a full permutation and writes
+              // nothing, so a partial list must not be allowed to drop widgets here either.
+              if (reordered.length === widgets.length) save(reordered);
+              return Promise.resolve(null);
+            }
+            case "rename_home_widget": {
+              const widgets = load();
+              const target = widgets.find((widget) => widget.id === args.widget_id);
+              if (target) {
+                const title = args.title as string | null;
+                target.title_override =
+                  title === null || title.trim() === "" ? null : title.trim();
+                save(widgets);
+              }
+              return Promise.resolve(null);
+            }
+            case "set_home_widget_span": {
+              const widgets = load();
+              const target = widgets.find((widget) => widget.id === args.widget_id);
+              if (target) {
+                target.span = args.span as number;
+                save(widgets);
+              }
+              return Promise.resolve(null);
+            }
+            case "set_home_widget_accent": {
+              const widgets = load();
+              const target = widgets.find((widget) => widget.id === args.widget_id);
+              if (target) {
+                target.accent = args.accent as number | null;
+                save(widgets);
+              }
+              return Promise.resolve(null);
+            }
             case "send_home_composer_message": {
               const next = replies.shift();
               if (next === undefined) {
@@ -726,7 +780,8 @@ test.describe("Home dashboard — pre-built sections", () => {
     await setupHomeMock(page, { overview: true });
     await page.goto("/home");
     await expect(page.getByTestId("home-glance-net-worth")).toContainText("$44,100.00");
-    await expect(page.getByTestId("home-glance-net-worth")).toContainText("+$3,100.00");
+    // The tile shows the balance and its sparkline only — the change line was deliberately dropped.
+    await expect(page.getByTestId("home-glance-net-worth")).not.toContainText("$3,100.00");
     await expect(page.getByTestId("home-glance-spending")).toContainText("$96.00 over budget");
     await expect(page.getByTestId("home-glance-cash-flow")).toContainText("$4,104.00");
     await expect(page.getByTestId("home-glance-car")).toContainText("1 task due");

@@ -85,6 +85,7 @@ function FlowNodeShape({
   height,
   index,
   payload,
+  accent,
 }: {
   x: number;
   y: number;
@@ -92,6 +93,7 @@ function FlowNodeShape({
   height: number;
   index: number;
   payload: { name: string; sourceLinks: number[]; targetLinks: number[] };
+  accent?: number;
 }) {
   // Named from the node's own side rather than the link's: recharts fills `targetLinks` with the
   // links running TO this node's targets, so those are its outgoing bands, and `sourceLinks` with
@@ -107,7 +109,7 @@ function FlowNodeShape({
         y={y}
         width={width}
         height={height}
-        fill={isHub ? "var(--ink-dim)" : rampColor(index)}
+        fill={isHub ? "var(--ink-dim)" : rampColor(index, accent)}
         stroke={SEGMENT_DIVIDER}
         strokeWidth={1}
         radius={2}
@@ -144,10 +146,13 @@ function FlowNodeShape({
 export function SankeyFlowChart({
   data,
   caption,
+  accent,
   "data-testid": testId,
 }: {
   data: HomeDataset;
   caption: string;
+  /** Rotates the rank-ordered ramp. Undefined keeps the default palette. */
+  accent?: number;
   "data-testid"?: string;
 }) {
   const { t, i18n } = useTranslation();
@@ -180,7 +185,7 @@ export function SankeyFlowChart({
             nodePadding={18}
             iterations={64}
             margin={{ top: 20, right: 140, bottom: 8, left: 140 }}
-            node={(props) => <FlowNodeShape {...props} />}
+            node={(props) => <FlowNodeShape {...props} accent={accent} />}
             // A ribbon is a bezier STROKED at the band's width, so its colour is the stroke and
             // its width is recharts' own `linkWidth`; setting a fill here would draw a lens
             // instead of a band.

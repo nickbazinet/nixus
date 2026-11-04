@@ -1279,6 +1279,9 @@ pub struct Dataset {
 
 /// One persisted Home Surface widget (PRD FR-8). `spec_json` is the Surface-Validated description:
 /// catalog names and data-source bindings, never a resolved value.
+///
+/// `title_override`, `span` and `accent` are the user's own presentation choices and live outside
+/// `spec_json` on purpose: an AI modify rewrites the spec alone, so it cannot undo them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredHomeWidget {
     pub id: i64,
@@ -1287,6 +1290,12 @@ pub struct StoredHomeWidget {
     pub spec_json: String,
     pub created_at: String,
     pub updated_at: String,
+    /// `None` means the AI's title from `spec_json` is shown.
+    pub title_override: Option<String>,
+    /// Grid columns the widget occupies: 1 for half width, 2 for full width.
+    pub span: i64,
+    /// `None` means the default rank-ordered chart palette; otherwise a 0..=7 palette offset.
+    pub accent: Option<i64>,
 }
 
 /// A data source resolved against live data at render time. Every value is in cents.
@@ -1330,7 +1339,16 @@ pub struct HomeRenderNode {
 pub struct HomeWidget {
     pub id: String,
     pub position: i64,
+    /// The EFFECTIVE title: `title_override` when it is set and not blank, otherwise the title the
+    /// AI wrote into the spec. The renderer draws this one and never has to pick between the two.
     pub title: String,
+    /// Non-null only when the user renamed the widget, so the UI can offer to undo the rename
+    /// without having to compare `title` against the spec.
+    pub title_override: Option<String>,
+    /// Grid columns the widget occupies: 1 for half width, 2 for full width.
+    pub span: i64,
+    /// `None` means the default rank-ordered chart palette; otherwise a 0..=7 palette offset.
+    pub accent: Option<i64>,
     pub root: HomeRenderNode,
 }
 

@@ -115,8 +115,6 @@ export function AtAGlance() {
   const vehicles = useMaintenance();
 
   const history = snapshots.data ?? [];
-  const change =
-    history.length >= 2 ? history[history.length - 1].total_cents - history[0].total_cents : null;
 
   const spent = budget.data?.total_spent_cents ?? 0;
   const target = budget.data?.total_target_cents ?? 0;
@@ -136,15 +134,10 @@ export function AtAGlance() {
         testId="home-glance-net-worth"
       >
         <Figure cents={netWorth.data?.total_cents ?? 0} />
-        {change === null ? (
+        {history.length < 2 ? (
           <span className="text-caption text-ink-dim">{t("home.glance.netWorthNoTrend")}</span>
         ) : (
-          <>
-            <span className="text-caption text-ink-dim">
-              {t("home.glance.netWorthChange", { change: money(change, "always") })}
-            </span>
-            <NetWorthSparkline snapshots={history} />
-          </>
+          <NetWorthSparkline snapshots={history} />
         )}
       </GlanceTile>
 

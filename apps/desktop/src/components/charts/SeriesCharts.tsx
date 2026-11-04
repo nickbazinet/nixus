@@ -45,6 +45,8 @@ export interface SeriesChartProps {
   /** Header of the label column in the screen-reader table. */
   dimensionLabel: string;
   caption: string;
+  /** Rotates the rank-ordered ramp. Undefined keeps the default palette. */
+  accent?: number;
   "data-testid"?: string;
 }
 
@@ -160,10 +162,10 @@ export function LineSeriesChart(props: SeriesChartProps) {
               key={s.key}
               type="linear"
               dataKey={s.key}
-              stroke={rampColor(index)}
+              stroke={rampColor(index, props.accent)}
               strokeWidth={2}
-              dot={{ r: 3, fill: rampColor(index), stroke: "var(--card)", strokeWidth: 1 }}
-              activeDot={{ r: 5, fill: rampColor(index), stroke: "var(--card)", strokeWidth: 2 }}
+              dot={{ r: 3, fill: rampColor(index, props.accent), stroke: "var(--card)", strokeWidth: 1 }}
+              activeDot={{ r: 5, fill: rampColor(index, props.accent), stroke: "var(--card)", strokeWidth: 2 }}
               isAnimationActive={false}
             />
           ))}
@@ -186,7 +188,7 @@ export function BarSeriesChart(props: SeriesChartProps) {
             <Bar
               key={s.key}
               dataKey={s.key}
-              fill={rampColor(index)}
+              fill={rampColor(index, props.accent)}
               radius={[4, 4, 2, 2]}
               maxBarSize={64}
               isAnimationActive={false}
@@ -207,8 +209,8 @@ export function AreaSeriesChart(props: SeriesChartProps) {
           <defs>
             {props.series.map((s, index) => (
               <linearGradient key={s.key} id={`${gradientPrefix}-${index}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={rampColor(index)} stopOpacity={0.32} />
-                <stop offset="95%" stopColor={rampColor(index)} stopOpacity={0} />
+                <stop offset="5%" stopColor={rampColor(index, props.accent)} stopOpacity={0.32} />
+                <stop offset="95%" stopColor={rampColor(index, props.accent)} stopOpacity={0} />
               </linearGradient>
             ))}
           </defs>
@@ -219,7 +221,7 @@ export function AreaSeriesChart(props: SeriesChartProps) {
               key={s.key}
               type="linear"
               dataKey={s.key}
-              stroke={rampColor(index)}
+              stroke={rampColor(index, props.accent)}
               strokeWidth={2}
               fill={`url(#${gradientPrefix}-${index})`}
               isAnimationActive={false}

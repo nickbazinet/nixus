@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import { queryKeys } from "@/lib/constants";
@@ -24,6 +24,85 @@ export function useHomeComposerAccess() {
     queryFn: () => invoke<HomeComposerAccess>("get_home_composer_access"),
     staleTime: 60_000,
     retry: false,
+  });
+}
+
+/**
+ * The manual customization writes. They sit beside the AI Composer, not inside it: no model
+ * call, no proposal, no confirm card — the user's own edit lands immediately.
+ *
+ * Each returns `void` rather than the new surface, because resolving a widget re-queries every
+ * data source it binds. Invalidating `homeSurface` is therefore the only way the result is seen.
+ */
+export function useReorderHomeWidgets() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { widget_ids: string[] }) =>
+      invoke<void>("reorder_home_widgets", { widget_ids: input.widget_ids }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.homeSurface });
+    },
+  });
+}
+
+/** The backend's own ceiling. Bounded here too so the input cannot compose a doomed request. */
+export const HOME_WIDGET_TITLE_MAX_LENGTH = 80;
+
+export function useRenameHomeWidget() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { widget_id: string; title: string | null }) =>
+      invoke<void>("rename_home_widget", {
+        widget_id: input.widget_id,
+        title: input.title,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.homeSurface });
+    },
+  });
+}
+
+export function useSetHomeWidgetSpan() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { widget_id: string; span: number }) =>
+      invoke<void>("set_home_widget_span", {
+        widget_id: input.widget_id,
+        span: input.span,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.homeSurface });
+    },
+  });
+}
+
+export function useSetHomeWidgetAccent() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { widget_id: string; accent: number | null }) =>
+      invoke<void>("set_home_widget_accent", {
+        widget_id: input.widget_id,
+        accent: input.accent,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.homeSurface });
+    },
+  });
+}
+
+export function useDeleteHomeWidget() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: { widget_id: string }) =>
+      invoke<void>("delete_home_widget", { widget_id: input.widget_id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.homeSurface });
+    },
   });
 }
 

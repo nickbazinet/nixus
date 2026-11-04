@@ -4,7 +4,7 @@
 //! after the model has finished choosing the widget's shape. Nothing in this module is reachable
 //! from the generation prompt.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{Map, Value};
@@ -20,8 +20,8 @@ use crate::models::{HomeDataset, HomeDatasetRow, HomeRenderNode, HomeWidget, Sto
 /// The row key the renderer translates as "Other" for a folded remainder.
 pub const OTHER_ROW_KEY: &str = "__other__";
 
-const WIDGET_SELECT: &str =
-    "SELECT id, widget_key, position, spec_json, created_at, updated_at FROM home_widgets";
+const WIDGET_SELECT: &str = "SELECT id, widget_key, position, spec_json, created_at, updated_at, \
+     title_override, span, accent FROM home_widgets";
 
 fn row_to_widget(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredHomeWidget> {
     Ok(StoredHomeWidget {
@@ -31,6 +31,9 @@ fn row_to_widget(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredHomeWidget> 
         spec_json: row.get(3)?,
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
+        title_override: row.get(6)?,
+        span: row.get(7)?,
+        accent: row.get(8)?,
     })
 }
 
@@ -154,6 +157,144 @@ fn title_of(spec: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string()
+}
+
+/// The title the user sees. A stored override is already trimmed and non-blank, but a row synced
+/// from another build need not be, so a blank one falls back rather than rendering a nameless card.
+fn effective_title(title_override: Option<&str>, spec: &Value) -> String {
+    title_override
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| title_of(spec))
+}
+
+// Db-layer internal: it never crosses the IPC boundary, so it carries no serde derives.
+#[derive(Debug)]
+pub struct PresentationChange {
+    pub widget_id: i64,
+    pub old_json: String,
+    pub new_json: String,
+}
+
+/// One presentation column at a time, so a tweak writes only the choice the user actually made. A
+/// single "update everything" input would make a colour tap overwrite a rename a second computer
+/// sent while the dialog was open.
+#[derive(Debug)]
+pub enum PresentationUpdate {
+    Title(Option<String>),
+    Span(i64),
+    Accent(Option<i64>),
+}
+
+fn presentation_change(
+    conn: &Connection,
+    before: &StoredHomeWidget,
+) -> Result<PresentationChange, AppError> {
+    let after = get_widget(conn, before.id)?;
+    Ok(PresentationChange {
+        widget_id: before.id,
+        old_json: serde_json::to_string(before).unwrap_or_default(),
+        new_json: serde_json::to_string(&after).unwrap_or_default(),
+    })
+}
+
+fn invalid_widget_ids(message: &str) -> AppError {
+    AppError::Validation {
+        message: message.to_string(),
+        field: Some("widget_ids".to_string()),
+    }
+}
+
+// The submitted list must be a permutation of the whole surface, and the rewrite is one
+// transaction: a partially applied order would leave two widgets claiming the same slot, which the
+// renderer breaks by rowid and the user reads as a reorder that half happened. Every check runs
+// before the transaction opens, so a rejection writes nothing.
+//
+// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
+pub fn reorder_widgets(
+    conn: &Connection,
+    widget_keys: &[String],
+) -> Result<Vec<PresentationChange>, AppError> {
+    if widget_keys.is_empty() {
+        return Err(invalid_widget_ids("At least one widget is required"));
+    }
+
+    let current = list_widgets(conn)?;
+
+    if widget_keys.len() != current.len() {
+        return Err(invalid_widget_ids(
+            "The submitted order must contain every widget exactly once",
+        ));
+    }
+
+    let mut seen = HashSet::with_capacity(widget_keys.len());
+    let mut ordered = Vec::with_capacity(widget_keys.len());
+    for (index, key) in widget_keys.iter().enumerate() {
+        if !seen.insert(key.as_str()) {
+            return Err(invalid_widget_ids(&format!(
+                "Widget {key} appears more than once in the submitted order"
+            )));
+        }
+        let previous = current
+            .iter()
+            .find(|widget| widget.widget_key == *key)
+            .ok_or_else(|| {
+                invalid_widget_ids(&format!("Widget {key} is no longer on the Home Surface"))
+            })?;
+        let position = i64::try_from(index).map_err(|_| {
+            invalid_widget_ids("The submitted order contains more widgets than supported")
+        })?;
+        ordered.push((previous, position));
+    }
+
+    let tx = super::grouped(conn)?;
+
+    let mut changes = Vec::new();
+    for (previous, position) in ordered {
+        tx.execute(
+            "UPDATE home_widgets SET position = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![position, previous.id],
+        )?;
+
+        if previous.position != position {
+            changes.push(presentation_change(&tx, previous)?);
+        }
+    }
+
+    tx.commit()?;
+
+    Ok(changes)
+}
+
+/// Writes one presentation choice. `spec_json` is never touched here, which is what makes a tweak
+/// and an AI modify independent of each other.
+///
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
+pub fn set_presentation(
+    conn: &Connection,
+    widget_key: &str,
+    change: &PresentationUpdate,
+) -> Result<PresentationChange, AppError> {
+    let before = find_widget(conn, widget_key)?;
+
+    match change {
+        PresentationUpdate::Title(title) => conn.execute(
+            "UPDATE home_widgets SET title_override = ?1, updated_at = datetime('now')
+             WHERE id = ?2",
+            params![title, before.id],
+        ),
+        PresentationUpdate::Span(span) => conn.execute(
+            "UPDATE home_widgets SET span = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![span, before.id],
+        ),
+        PresentationUpdate::Accent(accent) => conn.execute(
+            "UPDATE home_widgets SET accent = ?1, updated_at = datetime('now') WHERE id = ?2",
+            params![accent, before.id],
+        ),
+    }?;
+
+    presentation_change(conn, &before)
 }
 
 /// Calendar arithmetic on `(year, month)` pairs, so a window never depends on day-of-month.
@@ -763,10 +904,13 @@ pub fn resolve_surface(conn: &Connection) -> Result<Vec<HomeWidget>, AppError> {
         .map(|widget| {
             let spec: Value = serde_json::from_str(&widget.spec_json).unwrap_or(Value::Null);
             Ok(HomeWidget {
-                title: title_of(&spec),
+                title: effective_title(widget.title_override.as_deref(), &spec),
                 root: resolve_node(conn, &spec, now, &mut cache)?,
                 id: widget.widget_key,
                 position: widget.position,
+                title_override: widget.title_override,
+                span: widget.span,
+                accent: widget.accent,
             })
         })
         .collect()

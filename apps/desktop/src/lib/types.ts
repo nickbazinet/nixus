@@ -1184,9 +1184,23 @@ export interface HomeRenderNode {
 }
 
 export interface HomeWidget {
+  /** The stable `widget_key`. The identity every customization command is addressed to. */
   id: string;
   position: number;
+  /**
+   * The EFFECTIVE title: `title_override` when the user set one, otherwise the AI's spec title.
+   * Render this; never compose it from the two fields at the call site.
+   */
   title: string;
+  /** The user's rename, or `null` when the AI's title is still in force. */
+  title_override: string | null;
+  /** 1 = half width, 2 = full width. */
+  span: number;
+  /**
+   * A palette OFFSET into the rank-ordered chart ramp (0-7), not a colour. `null` means the
+   * default ramp. See `rampColor` for why rotating the whole ramp keeps adjacency readable.
+   */
+  accent: number | null;
   root: HomeRenderNode;
 }
 
