@@ -1,8 +1,11 @@
 //! Tauri commands for the AI-generated Home Surface (PRD §4).
 //!
-//! Generation is hosted-only and premium-only (§4.6): nothing here reads `AiState`, so a BYO
-//! provider configured in Settings cannot be reached from this module by construction. The
-//! eligibility gate runs before any write and before any AI call.
+//! Generation is eligible the same way every other AI surface is (FR-11, revised): a configured
+//! BYO provider unlocks it on any profile, premium or not, and hosted Bedrock still takes
+//! precedence over it when both are available (`ai/backend.rs::invoke`). The eligibility gate
+//! runs before any write and before any AI call.
+
+use std::sync::Mutex;
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -12,6 +15,7 @@ use tracing::info;
 use crate::ai::backend::{AiRole, AiTurn};
 use crate::ai::home_surface::{self as home_ai, GenerationInput, GenerationOutcome};
 use crate::ai::hosted_bedrock::{self, HostedEligibility};
+use crate::ai::{clone_provider, AiState};
 use crate::db::audit as audit_db;
 use crate::db::chat as chat_db;
 use crate::db::home_surface as home_db;
@@ -265,17 +269,23 @@ async fn composer_access(app: &AppHandle) -> Result<ComposerAccess, AppError> {
     Ok(ComposerAccess::Hosted(hosted_bedrock::eligibility().await))
 }
 
-fn authorize_access(access: ComposerAccess) -> Result<HostedEligibility, AppError> {
+fn authorize_access(access: ComposerAccess) -> Result<(), AppError> {
     match access {
         ComposerAccess::LocalProfile => Err(crate::ai::backend::hosted_error(
             "premium_required",
-            "The Home dashboard composer is available on your Nixus Cloud profile.",
+            "Building your Home dashboard with AI needs an AI provider — add one in Settings, or switch to a Nixus Cloud premium profile.",
         )),
-        ComposerAccess::Hosted(eligibility) => {
-            home_ai::authorize(eligibility)?;
-            Ok(eligibility)
-        }
+        ComposerAccess::Hosted(eligibility) => home_ai::authorize(eligibility),
     }
+}
+
+/// The same signal `get_ai_config` reports to the frontend: is there a usable BYO client right
+/// now. Read here so the Composer can unlock through it exactly like every other AI surface.
+fn byo_configured(ai_state: &Mutex<AiState>) -> Result<bool, AppError> {
+    let ai = ai_state.lock().map_err(|_| AppError::Database {
+        message: "AI state lock poisoned".to_string(),
+    })?;
+    Ok(ai.provider.is_some())
 }
 
 fn access_state(access: ComposerAccess) -> &'static str {
@@ -292,10 +302,22 @@ fn access_state(access: ComposerAccess) -> &'static str {
     }
 }
 
-/// Which Composer the Home page draws (FR-7 vs FR-11). A state name only — never a figure.
+/// Which Composer the Home page draws (FR-7 vs the revised FR-11). `available_byo` is told apart
+/// from `available` on purpose: the personalized-insights section stays premium-only (FR-11
+/// proper) and must not read a BYO-unlocked composer as a premium one.
 #[tauri::command(rename_all = "snake_case")]
-pub async fn get_home_composer_access(app: AppHandle) -> Result<String, AppError> {
-    Ok(access_state(composer_access(&app).await?).to_string())
+pub async fn get_home_composer_access(
+    app: AppHandle,
+    ai_state: State<'_, Mutex<AiState>>,
+) -> Result<String, AppError> {
+    let access = composer_access(&app).await?;
+    if matches!(access, ComposerAccess::Hosted(HostedEligibility::Eligible)) {
+        return Ok("available".to_string());
+    }
+    if byo_configured(&ai_state)? {
+        return Ok("available_byo".to_string());
+    }
+    Ok(access_state(access).to_string())
 }
 
 fn action_label(change: &SurfaceChange) -> String {
@@ -397,6 +419,7 @@ fn history_turns(
 pub async fn send_home_composer_message(
     app: AppHandle,
     db_state: State<'_, DbState>,
+    ai_state: State<'_, Mutex<AiState>>,
     message: String,
     conversation_id: Option<i64>,
     locale: String,
@@ -409,9 +432,20 @@ pub async fn send_home_composer_message(
         });
     }
 
-    // FR-11: refused before anything is written and before any AI call — on a local profile too,
-    // even when this machine holds a premium account's session.
-    let eligibility = authorize_access(composer_access(&app).await?)?;
+    // Cloned out from under the guard because a held MutexGuard cannot cross an await point
+    // (mirrors every other AI surface's command, e.g. `commands::spending_trends`).
+    let byo = {
+        let ai = ai_state.lock().map_err(|_| AppError::Database {
+            message: "AI state lock poisoned".to_string(),
+        })?;
+        clone_provider(&ai.provider)
+    };
+    // Refused before anything is written and before any AI call — on a local profile too, even
+    // when this machine holds a premium account's session — unless a configured BYO provider
+    // makes the composer available regardless of profile or premium state.
+    if byo.is_none() {
+        authorize_access(composer_access(&app).await?)?;
+    }
 
     let (conv_id, history, current, categories) = {
         let active = lock(&db_state)?;
@@ -442,7 +476,7 @@ pub async fn send_home_composer_message(
 
     let locale = if locale == "fr" { "fr" } else { "en" }.to_string();
     let generated = home_ai::generate(
-        eligibility,
+        byo.as_ref(),
         GenerationInput {
             request,
             history,

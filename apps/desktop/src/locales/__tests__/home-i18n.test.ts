@@ -42,9 +42,9 @@ describe("home i18n", () => {
   });
 
   /* FR-7 and FR-11 must read differently: a transient outage is not "you need premium". */
-  it("keeps the transient-unavailable copy distinct from the premium lock", () => {
-    expect(en["home.unavailable.title"]).not.toEqual(en["home.locked.premiumTitle"]);
-    expect(en["home.locked.premiumTitle"]).toContain("premium");
+  it("keeps the transient-unavailable copy distinct from the locked setup prompt", () => {
+    expect(en["home.unavailable.title"]).not.toEqual(en["home.locked.setupTitle"]);
+    expect(en["home.locked.premiumBody"]).toContain("premium");
     expect(en["home.unavailable.title"]).not.toContain("premium");
   });
 });

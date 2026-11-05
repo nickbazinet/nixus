@@ -15,6 +15,7 @@ use tracing::info;
 
 use crate::ai::backend::{self, AiOperation, AiRequest, AiRole, AiTurn};
 use crate::ai::hosted_bedrock::HostedEligibility;
+use crate::ai::AiProvider;
 use crate::error::AppError;
 use crate::home_surface::catalog::{self, ComponentKind, ParamKind, SourceShape};
 use crate::home_surface::validate::{self, Proposal, SurfaceChange, WidgetSummary};
@@ -54,8 +55,9 @@ pub struct GenerationInput {
     pub categories: Vec<(i64, String)>,
 }
 
-/// FR-11's gate, run before any AI call. Every non-eligible state is a typed hosted error the
-/// Composer can name; none of them is a reason to try another provider.
+/// The hosted-reason gate: called by `commands::home` only when the user has configured no BYO
+/// provider at all, to name why the composer is locked. A configured BYO key skips this entirely
+/// (same precedence every other AI surface uses) and reaches `generate` below regardless of it.
 pub fn authorize(eligibility: HostedEligibility) -> Result<(), AppError> {
     let (code, message) = match eligibility {
         HostedEligibility::Eligible => return Ok(()),
@@ -107,6 +109,7 @@ fn catalog_section() -> String {
             SourceShape::Categorical => "categorical",
             SourceShape::Transactions => "transaction list, Table only",
             SourceShape::Flow => "flow, SankeyChart only",
+            SourceShape::Scalar => "scalar, Date only",
         };
         lines.push(format!(
             "- {} ({shape}): {}",
@@ -160,7 +163,7 @@ Rules:
 - To narrow spending to one budget category, put the user's words for it in params.category; the app matches it to their categories.
 - Layout primitives never have a dataBinding; display components always have one.
 - At most {max_displays} display components per widget, and layouts nested at most {max_depth} deep.
-- LineChart and AreaChart need a monthly source; PieChart needs a categorical source; a transaction-list source can only be shown in a Table; a flow source can only be shown in a SankeyChart, and a SankeyChart can show nothing else.
+- LineChart and AreaChart need a monthly source; PieChart needs a categorical source; a transaction-list source can only be shown in a Table; a flow source can only be shown in a SankeyChart, and a SankeyChart can show nothing else; a scalar source can only be shown in a Date, and a Date can show nothing else.
 - The Home dashboard holds at most {max_widgets} widgets. Propose exactly one change per reply.
 - Only the finance data sources below exist. Car, maintenance or any other data cannot be shown; say so with op "message".
 - To remove a widget, copy the user's description of it into "target"; the app decides which widget matches.
@@ -344,11 +347,11 @@ where
     Ok(GenerationOutcome::Failed)
 }
 
-/// Gate, then at most two attempts inside one time budget. A hosted error ends the request at once
-/// and is returned as itself, so the Composer can tell a transient outage (FR-7) from a lock
-/// (FR-11); exhausting the attempts or the budget is the plain "couldn't build that" (FR-5).
+/// At most two attempts inside one time budget. The eligibility gate runs one level up, in
+/// `commands::home`, before this is ever called — so this is the retry loop alone: a hosted error
+/// ends the request at once and is returned as itself (FR-7), and exhausting the attempts or the
+/// budget is the plain "couldn't build that" (FR-5).
 pub async fn generate_within<F, Fut>(
-    eligibility: HostedEligibility,
     input: GenerationInput,
     budget: Duration,
     mut invoke: F,
@@ -357,8 +360,6 @@ where
     F: FnMut(AiRequest) -> Fut,
     Fut: Future<Output = Result<String, AppError>>,
 {
-    authorize(eligibility)?;
-
     let spent = AtomicUsize::new(0);
     let outcome =
         match tokio::time::timeout(budget, attempt_loop(&input, &mut invoke, &spent)).await {
@@ -376,12 +377,14 @@ where
     Ok(Generated { outcome, attempts })
 }
 
+/// Routes through the shared port like every other AI surface: hosted Bedrock first, BYO as the
+/// fallback `commands::home` already confirmed is viable.
 pub async fn generate(
-    eligibility: HostedEligibility,
+    byo: Option<&AiProvider>,
     input: GenerationInput,
 ) -> Result<Generated, AppError> {
-    generate_within(eligibility, input, GENERATION_BUDGET, |request| async move {
-        backend::invoke_hosted_only(request, &backend::ignore_deltas()).await
+    generate_within(input, GENERATION_BUDGET, |request| async move {
+        backend::invoke(byo, request, &backend::ignore_deltas()).await
     })
     .await
 }

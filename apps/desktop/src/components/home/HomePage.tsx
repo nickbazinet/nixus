@@ -52,6 +52,7 @@ import {
 import { useHomeWidgetReorder } from "@/hooks/useHomeWidgetReorder";
 import { useHomeAttention, useHomeRecommendations } from "@/hooks/useHomeOverview";
 import { HOME_STARTER_KEYS } from "@/components/home/starters";
+import { homeInsightsAllowed } from "@/lib/homeSurface";
 import { CHART_RAMP } from "@/components/spending-trends/insights-chart";
 import { cn } from "@/lib/utils";
 import type { HomeWidget } from "@/lib/types";
@@ -502,7 +503,8 @@ export function HomePage() {
   const { orderedWidgets, drag, setCardRef, beginPointerDrag, moveBy } =
     useHomeWidgetReorder(surface.data);
   const accessState = access.isLoading ? undefined : (access.data ?? "unavailable");
-  const canAsk = accessState === "available";
+  const canAsk = accessState === "available" || accessState === "available_byo";
+  const showInsights = homeInsightsAllowed(accessState);
   const attention = useHomeAttention();
   const recommendations = useHomeRecommendations({
     canBuild: canAsk,
@@ -527,7 +529,12 @@ export function HomePage() {
       >
         <div className="mx-auto w-full max-w-[1280px] px-page-x py-page-y">
           <HomeGreeting attentionCount={attention.items.length} loading={attention.isLoading} />
-          <AskHero access={accessState} busy={composer.busy} onAsk={ask} />
+          <AskHero
+            access={accessState}
+            busy={composer.busy}
+            onAsk={ask}
+            onRetry={() => void access.refetch()}
+          />
           <QuickActions />
 
           <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-5">
@@ -547,62 +554,64 @@ export function HomePage() {
             <AtAGlance />
           </Section>
 
-          <Section
-            title={t("home.widgets.title")}
-            testId="home-widgets"
-            aside={
-              <div className="flex items-center gap-3">
-                {widgets.length > 0 && (
-                  <span className="text-caption text-ink-dim">
-                    {t("home.widgets.count", { count: widgets.length, max: MAX_WIDGETS })}
-                  </span>
-                )}
-                <Button
-                  ref={toggleRef}
-                  size="sm"
-                  variant="outline"
-                  aria-pressed={open}
-                  aria-controls={HOME_COMPOSER_PANEL_ID}
-                  onClick={() => setOpen(!open)}
-                  className="aria-pressed:border-brand aria-pressed:bg-brand-soft aria-pressed:text-brand-ink"
-                  data-testid="home-composer-toggle"
-                >
-                  <Sparkles aria-hidden="true" />
-                  {t("home.panel.toggle")}
-                </Button>
-              </div>
-            }
-          >
-            {surface.isLoading ? (
-              <Skeleton rows={6} data-testid="home-surface-loading" />
-            ) : surface.isError ? (
-              <Alert variant="caution" data-testid="home-surface-error">
-                <AlertTitle>{t("home.surface.loadFailed")}</AlertTitle>
-              </Alert>
-            ) : widgets.length === 0 ? (
-              <WidgetInvitation canAsk={canAsk} onAsk={ask} />
-            ) : (
-              <div className="grid grid-cols-1 gap-4 @3xl:grid-cols-2" data-testid="home-surface">
-                {orderedWidgets.map((widget, index) => (
-                  <WidgetCard
-                    key={widget.id}
-                    widget={widget}
-                    index={index}
-                    count={orderedWidgets.length}
-                    cardRef={setCardRef(index)}
-                    onDragHandlePointerDown={beginPointerDrag(index)}
-                    onMove={(delta) => moveBy(index, delta)}
-                    isDragSource={drag?.from === index}
-                    isDragOver={drag !== null && drag.over === index && drag.from !== index}
-                  />
-                ))}
-              </div>
-            )}
-          </Section>
+          {showInsights && (
+            <Section
+              title={t("home.widgets.title")}
+              testId="home-widgets"
+              aside={
+                <div className="flex items-center gap-3">
+                  {widgets.length > 0 && (
+                    <span className="text-caption text-ink-dim">
+                      {t("home.widgets.count", { count: widgets.length, max: MAX_WIDGETS })}
+                    </span>
+                  )}
+                  <Button
+                    ref={toggleRef}
+                    size="sm"
+                    variant="outline"
+                    aria-pressed={open}
+                    aria-controls={HOME_COMPOSER_PANEL_ID}
+                    onClick={() => setOpen(!open)}
+                    className="aria-pressed:border-brand aria-pressed:bg-brand-soft aria-pressed:text-brand-ink"
+                    data-testid="home-composer-toggle"
+                  >
+                    <Sparkles aria-hidden="true" />
+                    {t("home.panel.toggle")}
+                  </Button>
+                </div>
+              }
+            >
+              {surface.isLoading ? (
+                <Skeleton rows={6} data-testid="home-surface-loading" />
+              ) : surface.isError ? (
+                <Alert variant="caution" data-testid="home-surface-error">
+                  <AlertTitle>{t("home.surface.loadFailed")}</AlertTitle>
+                </Alert>
+              ) : widgets.length === 0 ? (
+                <WidgetInvitation canAsk={canAsk} onAsk={ask} />
+              ) : (
+                <div className="grid grid-cols-1 gap-4 @3xl:grid-cols-2" data-testid="home-surface">
+                  {orderedWidgets.map((widget, index) => (
+                    <WidgetCard
+                      key={widget.id}
+                      widget={widget}
+                      index={index}
+                      count={orderedWidgets.length}
+                      cardRef={setCardRef(index)}
+                      onDragHandlePointerDown={beginPointerDrag(index)}
+                      onMove={(delta) => moveBy(index, delta)}
+                      isDragSource={drag?.from === index}
+                      isDragOver={drag !== null && drag.over === index && drag.from !== index}
+                    />
+                  ))}
+                </div>
+              )}
+            </Section>
+          )}
         </div>
       </div>
 
-      {open && <HomeComposerPanel composer={composer} onClose={() => setOpen(false)} />}
+      {open && showInsights && <HomeComposerPanel composer={composer} onClose={() => setOpen(false)} />}
     </div>
   );
 }

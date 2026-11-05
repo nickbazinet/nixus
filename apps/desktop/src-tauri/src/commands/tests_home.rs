@@ -3,6 +3,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use super::*;
+use crate::ai::AiProvider;
 use crate::db::test_dataset::migrated_dataset;
 
 fn dataset() -> (TempDir, ActiveDataset) {
@@ -276,10 +277,25 @@ fn a_send_from_a_local_profile_is_refused_as_premium_required() {
         Err(AppError::HostedAi { code, .. }) => assert_eq!(code, "premium_required"),
         other => panic!("expected a premium lock, got {other:?}"),
     }
-    assert_eq!(
-        authorize_access(ComposerAccess::Hosted(HostedEligibility::Eligible)).unwrap(),
-        HostedEligibility::Eligible
-    );
+    assert!(authorize_access(ComposerAccess::Hosted(HostedEligibility::Eligible)).is_ok());
+}
+
+fn byo_client() -> AiProvider {
+    AiProvider::OpenAI(async_openai::Client::with_config(
+        async_openai::config::OpenAIConfig::new().with_api_key("sk-valid-looking-key"),
+    ))
+}
+
+/// The revised FR-11: a configured BYO provider reads as `true` regardless of what else is in
+/// `AiState`, and as `false` once cleared — the exact signal `get_ai_config` reports to the
+/// frontend, read here so a local or non-premium profile can unlock the composer through it.
+#[test]
+fn byo_configured_reads_the_provider_slot_directly() {
+    let configured = Mutex::new(AiState { provider: Some(byo_client()) });
+    assert!(byo_configured(&configured).unwrap());
+
+    let cleared = Mutex::new(AiState { provider: None });
+    assert!(!byo_configured(&cleared).unwrap());
 }
 
 /// A presentation edit is a plain local write — no AI, no eligibility gate, no Home conversation —

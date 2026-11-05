@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Lock, Send, X } from "lucide-react";
+import { Send, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle, Button, Input, Label, Skeleton } from "@nixus/shared";
 import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
 import { HOME_STARTER_KEYS } from "@/components/home/starters";
+import { HOME_ACCESS_LOCKED, HomeAccessNotice } from "@/components/home/HomeAccessNotice";
 import { useHomeComposerAccess, type useHomeComposer } from "@/hooks/useHome";
 import {
   hostedAiIsRetryable,
@@ -14,16 +15,6 @@ import {
 import type { HomeComposerAccess } from "@/lib/types";
 
 export const HOME_COMPOSER_PANEL_ID = "home-composer-panel";
-
-
-/** FR-11 states: the Composer is locked, with a reason that is not "try again". */
-const LOCKED: Partial<Record<HomeComposerAccess, { title: string; body: string }>> = {
-  local_profile: { title: "home.locked.localTitle", body: "home.locked.localBody" },
-  signed_out: { title: "home.locked.premiumTitle", body: "home.locked.signedOutBody" },
-  not_premium: { title: "home.locked.premiumTitle", body: "home.locked.premiumBody" },
-  quota_exhausted: { title: "home.locked.quotaTitle", body: "home.locked.quotaBody" },
-  reauthentication_required: { title: "home.locked.reauthTitle", body: "home.locked.reauthBody" },
-};
 
 function ComposerError({ error, onDismiss }: { error: ParsedAppError; onDismiss: () => void }) {
   const { t } = useTranslation();
@@ -44,33 +35,12 @@ function ComposerError({ error, onDismiss }: { error: ParsedAppError; onDismiss:
 }
 
 function AccessNotice({ state, onRetry }: { state: HomeComposerAccess; onRetry: () => void }) {
-  const { t } = useTranslation();
-  const locked = LOCKED[state];
-  if (locked) {
-    return (
-      <Alert
-        variant="info"
-        icon={<Lock className="size-4" />}
-        data-testid="home-composer-locked"
-        data-state={state}
-      >
-        <AlertTitle>{t(locked.title)}</AlertTitle>
-        <AlertDescription>{t(locked.body)}</AlertDescription>
-      </Alert>
-    );
-  }
-
-  // FR-7: a premium user hitting a transient hosted problem. The dashboard beside it still renders.
   return (
-    <Alert variant="caution" data-testid="home-composer-unavailable">
-      <AlertTitle>{t("home.unavailable.title")}</AlertTitle>
-      <AlertDescription>
-        {t("home.unavailable.body")}{" "}
-        <button type="button" className="underline" onClick={onRetry}>
-          {t("home.unavailable.retry")}
-        </button>
-      </AlertDescription>
-    </Alert>
+    <HomeAccessNotice
+      state={state}
+      onRetry={onRetry}
+      data-testid={HOME_ACCESS_LOCKED[state] ? "home-composer-locked" : "home-composer-unavailable"}
+    />
   );
 }
 
@@ -95,7 +65,7 @@ export function HomeComposerPanel({
   const state: HomeComposerAccess | undefined = access.isLoading
     ? undefined
     : (access.data ?? "unavailable");
-  const canAsk = state === "available";
+  const canAsk = state === "available" || state === "available_byo";
 
   useEffect(() => {
     if (canAsk) inputRef.current?.focus();

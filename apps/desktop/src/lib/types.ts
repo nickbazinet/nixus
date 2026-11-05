@@ -1204,9 +1204,13 @@ export interface HomeWidget {
   root: HomeRenderNode;
 }
 
-/** Which Composer Home draws. `unavailable` is transient (FR-7); the others lock it (FR-11). */
+/** Which Composer Home draws. `unavailable` is transient (FR-7); the others lock it (FR-11),
+ * except `available_byo`: a configured BYO provider unlocks the composer and the Home Surface
+ * section on any profile, exactly like hosted `available` — named separately only so it is
+ * never mistaken elsewhere for the premium entitlement a BYO key does not grant. */
 export type HomeComposerAccess =
   | "available"
+  | "available_byo"
   | "local_profile"
   | "signed_out"
   | "not_premium"

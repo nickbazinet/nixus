@@ -292,45 +292,6 @@ pub async fn invoke(
     settle(byo, &request, on_delta, outcome, true).await
 }
 
-/// The entry point for a hosted-ONLY surface: the Home dashboard (PRD §4.6, FR-11).
-///
-/// Never consults `fallback_for` and takes no BYO provider at all, so no outcome can reach one —
-/// the table every other surface shares is left exactly as it is. The caller has already passed
-/// the eligibility gate; `Skipped` here is that gate's answer changing mid-request.
-pub async fn invoke_hosted_only(
-    request: AiRequest,
-    on_delta: DeltaSink<'_>,
-) -> Result<String, AppError> {
-    check_attachment(&request)?;
-    let outcome = hosted_bedrock::try_invoke(&request, on_delta).await;
-    let outcome = match outcome {
-        HostedOutcome::PreOutput { ref code, .. } if code == "unauthorized" => {
-            hosted_bedrock::retry_after_refresh(&request, on_delta).await
-        }
-        other => other,
-    };
-    settle_hosted_only(request.operation, outcome)
-}
-
-pub(crate) fn settle_hosted_only(
-    operation: AiOperation,
-    outcome: HostedOutcome,
-) -> Result<String, AppError> {
-    match outcome {
-        HostedOutcome::Completed { text } => {
-            log_selection(operation, "hosted");
-            Ok(text)
-        }
-        HostedOutcome::PreOutput { code, message } | HostedOutcome::Committed { code, message } => {
-            Err(hosted_error(&code, &message))
-        }
-        HostedOutcome::Skipped => Err(hosted_error(
-            "premium_required",
-            "This feature requires Nixus Cloud premium.",
-        )),
-    }
-}
-
 async fn settle(
     byo: Option<&AiProvider>,
     request: &AiRequest,
@@ -883,43 +844,6 @@ mod tests {
                 other => panic!("expected HostedAi, got {other:?}"),
             }
         }
-    }
-
-    /// FR-11: the hosted-only port has no BYO branch — every pre-output code that would fall back
-    /// elsewhere is surfaced as its own hosted error, and a skipped hosted call is "premium
-    /// required", never "not configured" (which is what would send a user to BYO settings).
-    #[test]
-    fn the_hosted_only_port_never_falls_back() {
-        for code in ALL_CODES {
-            for outcome in [
-                HostedOutcome::PreOutput { code: code.to_string(), message: "m".to_string() },
-                HostedOutcome::Committed { code: code.to_string(), message: "m".to_string() },
-            ] {
-                match settle_hosted_only(AiOperation::Chat, outcome) {
-                    Err(AppError::HostedAi { code: surfaced, .. }) => assert_eq!(surfaced, code),
-                    other => panic!("{code} must surface as hosted, got {other:?}"),
-                }
-            }
-        }
-
-        match settle_hosted_only(AiOperation::Chat, HostedOutcome::Skipped) {
-            Err(AppError::HostedAi { code, .. }) => assert_eq!(code, "premium_required"),
-            other => panic!("expected premium_required, got {other:?}"),
-        }
-
-        assert_eq!(
-            settle_hosted_only(AiOperation::Chat, HostedOutcome::Completed { text: "ok".to_string() })
-                .unwrap(),
-            "ok"
-        );
-    }
-
-    /// The deviation is confined to the new entry point: the shared table still sends
-    /// `premium_required` to BYO for chat, project advice and trends insight.
-    #[test]
-    fn the_shared_fallback_table_is_unchanged_by_the_hosted_only_surface() {
-        assert_eq!(fallback_for("premium_required"), FallbackDecision::FallBackToByo);
-        assert_eq!(route_pre_output("premium_required", true), PreOutputRoute::Byo);
     }
 
     #[test]
@@ -1718,32 +1642,14 @@ mod boundary_guards {
         }
     }
 
-    /// FR-11: the Home surface reaches a provider only through the hosted-only entry point, and
-    /// its command never even reads the BYO provider a user may have configured.
+    /// The Home surface no longer figure-gates behind a hosted-only port (BYO is now a valid path,
+    /// same as every other surface — see `commands/home.rs`'s module doc), but the account figures
+    /// its eligibility check reads still must never cross IPC (AD-9).
     #[test]
-    fn the_home_surface_is_hosted_only_end_to_end() {
-        let generation = production_source("ai/home_surface.rs");
-        assert!(generation.contains("backend::invoke_hosted_only"));
-        assert!(!generation.contains("backend::invoke("));
-        assert!(!generation.contains("AiProvider"));
-        assert!(!generation.contains("fallback_for"));
-
+    fn the_home_surface_never_leaks_hosted_figures_across_ipc() {
         let command = production_source("commands/home.rs");
-        for forbidden in ["AiState", "clone_provider", "AiProvider", "backend::invoke("] {
-            assert!(!command.contains(forbidden), "commands/home.rs must not touch {forbidden}");
-        }
         for figure in ["monthly_request_limit", "charged_count", "HostedAiStatus", "hosted_state"] {
             assert!(!command.contains(figure), "{figure} must never cross IPC (AD-9)");
-        }
-
-        let port = production_source("ai/backend.rs");
-        let body = port
-            .split("pub async fn invoke_hosted_only(")
-            .nth(1)
-            .and_then(|rest| rest.split("\n}\n").next())
-            .expect("the hosted-only entry point exists");
-        for forbidden in ["fallback_for", "route_pre_output", "invoke_byo", "settle("] {
-            assert!(!body.contains(forbidden), "invoke_hosted_only must not reach {forbidden}");
         }
     }
 

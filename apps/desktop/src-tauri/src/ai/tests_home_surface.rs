@@ -73,7 +73,6 @@ async fn an_eligible_request_with_a_valid_reply_becomes_a_proposal() {
     let script = Scripted::new(vec![Ok(NET_WORTH_REPLY)]);
 
     let generated = generate_within(
-        HostedEligibility::Eligible,
         input("show me my net worth growth month over month", vec![]),
         GENERATION_BUDGET,
         script.invoker(),
@@ -91,9 +90,10 @@ async fn an_eligible_request_with_a_valid_reply_becomes_a_proposal() {
     }
 }
 
-/// FR-11: every non-premium state is refused before any AI call is attempted.
-#[tokio::test]
-async fn an_ineligible_account_is_refused_before_any_ai_call() {
+/// The gate itself (now run one level up, in `commands::home`, before `generate` is ever called):
+/// every non-eligible reason still names its own typed code, unchanged by the move.
+#[test]
+fn authorize_names_each_non_eligible_reason_with_its_own_code() {
     for (eligibility, code) in [
         (HostedEligibility::SignedOut, "premium_required"),
         (HostedEligibility::NotPremium, "premium_required"),
@@ -104,67 +104,13 @@ async fn an_ineligible_account_is_refused_before_any_ai_call() {
         ),
         (HostedEligibility::Unavailable, "hosted_unavailable"),
     ] {
-        let script = Scripted::new(vec![Ok(NET_WORTH_REPLY)]);
-        let error = generate_within(
-            eligibility,
-            input("net worth", vec![]),
-            GENERATION_BUDGET,
-            script.invoker(),
-        )
-        .await
-        .expect_err("refused");
-        assert_eq!(hosted_code(error), code, "{eligibility:?}");
         assert_eq!(
-            script.calls(),
-            0,
-            "{eligibility:?} must not reach any provider"
+            hosted_code(authorize(eligibility).expect_err("refused")),
+            code,
+            "{eligibility:?}"
         );
     }
-}
-
-/// FR-11: a configured BYO provider has zero effect. The generation API takes no provider at all —
-/// the only way to a model is the hosted-only port (`backend::boundary_guards` proves the command
-/// never reads `AiState`) — so a non-premium account with working OpenAI credentials still gets the
-/// locked state and never a generation.
-#[tokio::test]
-async fn a_non_premium_account_with_a_byo_provider_still_gets_the_locked_state() {
-    let byo = crate::ai::AiProvider::OpenAI(async_openai::Client::with_config(
-        async_openai::config::OpenAIConfig::new().with_api_key("sk-valid-looking-key"),
-    ));
-    // The same provider WOULD serve another surface on this exact outcome: that is the fallback
-    // Home must not inherit.
-    assert!(backend::byo_supports(AiOperation::TrendsInsight, &byo));
-    assert_eq!(
-        backend::route_pre_output("premium_required", true),
-        backend::PreOutputRoute::Byo
-    );
-
-    let script = Scripted::new(vec![Ok(NET_WORTH_REPLY)]);
-    let error = generate_within(
-        HostedEligibility::NotPremium,
-        input("show me my net worth", vec![]),
-        GENERATION_BUDGET,
-        script.invoker(),
-    )
-    .await
-    .expect_err("locked");
-
-    assert_eq!(hosted_code(error), "premium_required");
-    assert_eq!(script.calls(), 0);
-
-    // And the hosted-only port itself turns a "premium required" outcome into that same lock rather
-    // than a BYO attempt, whatever the user configured.
-    let settled = backend::settle_hosted_only(
-        AiOperation::Chat,
-        crate::ai::hosted_bedrock::HostedOutcome::PreOutput {
-            code: "premium_required".to_string(),
-            message: "m".to_string(),
-        },
-    );
-    assert_eq!(
-        hosted_code(settled.expect_err("no fallback")),
-        "premium_required"
-    );
+    assert!(authorize(HostedEligibility::Eligible).is_ok());
 }
 
 /// FR-5: the validation error goes back to the model for exactly one corrective attempt.
@@ -174,7 +120,6 @@ async fn an_invalid_first_reply_gets_one_corrective_turn_with_the_specific_error
     let script = Scripted::new(vec![Ok(invalid), Ok(NET_WORTH_REPLY)]);
 
     let generated = generate_within(
-        HostedEligibility::Eligible,
         input("net worth trend", vec![]),
         GENERATION_BUDGET,
         script.invoker(),
@@ -207,7 +152,6 @@ async fn two_invalid_replies_end_in_a_failure_without_a_third_attempt() {
     ]);
 
     let generated = generate_within(
-        HostedEligibility::Eligible,
         input("anything", vec![]),
         GENERATION_BUDGET,
         script.invoker(),
@@ -229,7 +173,6 @@ async fn a_transient_hosted_failure_is_returned_as_a_recoverable_hosted_error() 
     ))]);
 
     let error = generate_within(
-        HostedEligibility::Eligible,
         input("net worth", vec![]),
         GENERATION_BUDGET,
         script.invoker(),
@@ -254,7 +197,6 @@ async fn a_transient_hosted_failure_is_returned_as_a_recoverable_hosted_error() 
 async fn exceeding_the_time_budget_is_a_plain_failure() {
     let calls = AtomicUsize::new(0);
     let generated = generate_within(
-        HostedEligibility::Eligible,
         input("net worth", vec![]),
         Duration::from_millis(50),
         |_request| {
@@ -288,7 +230,6 @@ async fn a_removal_the_app_cannot_pin_down_asks_instead_of_proposing() {
     let script = Scripted::new(vec![Ok(r#"{"op":"remove","target":"the spending one"}"#)]);
 
     let generated = generate_within(
-        HostedEligibility::Eligible,
         input("remove the spending one", current),
         GENERATION_BUDGET,
         script.invoker(),
@@ -347,7 +288,6 @@ async fn no_seeded_financial_value_appears_in_any_outbound_generation_request() 
     ]);
 
     generate_within(
-        HostedEligibility::Eligible,
         generation,
         GENERATION_BUDGET,
         script.invoker(),
@@ -460,7 +400,6 @@ async fn a_category_filter_naming_no_category_gets_one_corrective_turn() {
     let script = Scripted::new(vec![Ok(unknown), Ok(known)]);
 
     let generated = generate_within(
-        HostedEligibility::Eligible,
         input("car insurance by month", vec![]),
         GENERATION_BUDGET,
         script.invoker(),

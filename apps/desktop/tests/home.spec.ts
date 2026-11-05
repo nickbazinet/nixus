@@ -617,36 +617,46 @@ test.describe("Home dashboard — premium gating (FR-11)", () => {
     await seedWidgets(page, [{ id: "w_1", spec: NET_WORTH_WIDGET }]);
   });
 
-  test("a non-premium account with a configured BYO provider gets the locked composer", async ({ page }) => {
+  test("a non-premium account with a configured BYO provider sees no personalized-insights section", async ({ page }) => {
     await setupHomeMock(page, { access: "not_premium", byoConfigured: true });
     await page.goto("/home");
-    await openComposer(page);
 
-    const locked = page.getByTestId("home-composer-locked");
-    await expect(locked).toContainText("Requires Nixus Cloud premium");
-    await expect(page.getByTestId("home-composer-input")).toBeDisabled();
-    // Already-built widgets still render with live data.
-    await expect(page.getByTestId("home-widget")).toHaveCount(1);
-    await expect(page.getByTestId("home-chart-LineChart")).toBeVisible();
+    // Premium-gated outright: not teased, not shown locked — simply absent, even though a widget
+    // already exists in storage.
+    await expect(page.getByTestId("home-widgets")).toHaveCount(0);
+    await expect(page.getByTestId("home-widget")).toHaveCount(0);
+    await expect(page.getByTestId("home-composer-toggle")).toHaveCount(0);
     expect(await callsTo(page, "send_home_composer_message")).toHaveLength(0);
   });
 
-  test("a local profile gets the locked composer even beside a premium account session", async ({ page }) => {
+  test("a local profile sees no personalized-insights section, even beside a premium account session", async ({ page }) => {
     await setupHomeMock(page, { access: "local_profile", overview: true });
     await page.goto("/home");
 
     await expect(page.getByTestId("home-ask-input")).toBeDisabled();
-    await expect(page.getByTestId("home-ask-hint")).toContainText("Nixus Cloud profile");
-    // No example asks to click, and no "build your first widget" nudge.
-    await expect(page.getByTestId("home-widgets").getByRole("button", { name: /net worth growth/ })).toHaveCount(0);
+    await expect(page.getByTestId("home-ask-hint")).toContainText("local profile");
+    // The whole section is gone, not just its contents.
+    await expect(page.getByTestId("home-widgets")).toHaveCount(0);
     await expect(page.getByTestId("home-recommended-title")).not.toHaveText("Build your first AI widget");
-
-    await openComposer(page);
-    const locked = page.getByTestId("home-composer-locked");
-    await expect(locked).toHaveAttribute("data-state", "local_profile");
-    await expect(locked).toContainText("Available on your Nixus Cloud profile");
-    await expect(page.getByTestId("home-composer-input")).toBeDisabled();
     expect(await callsTo(page, "send_home_composer_message")).toHaveLength(0);
+  });
+
+  /* The revised FR-11: a configured BYO key unlocks the Home Surface section — built widgets and
+   * the composer that builds them — on a non-premium profile, exactly like hosted premium does. */
+  test("a BYO-unlocked composer builds widgets in the Home Surface section", async ({ page }) => {
+    await setupHomeMock(page, { access: "available_byo", byoConfigured: true, overview: true });
+    await page.goto("/home");
+
+    await expect(page.getByTestId("home-ask-input")).toBeEnabled();
+    await expect(page.getByTestId("home-ask-hint")).toHaveCount(0);
+    await expect(page.getByTestId("home-widgets")).toBeVisible();
+
+    await queueReply(page, {
+      outcome: "proposal",
+      content: proposal({ op: "add", widget: NET_WORTH_WIDGET }, "Add widget: Net Worth"),
+    });
+    await ask(page, "show me my net worth");
+    await expect(page.getByTestId("action-confirmation-card")).toContainText("Net Worth, Month over Month");
   });
 
   test("an exhausted period locks with its own reason", async ({ page }) => {
@@ -659,7 +669,7 @@ test.describe("Home dashboard — premium gating (FR-11)", () => {
     await expect(locked).not.toContainText("Requires Nixus Cloud premium");
   });
 
-  test("a premium-required refusal during a turn locks the composer", async ({ page }) => {
+  test("a premium-required refusal during a turn removes the section entirely", async ({ page }) => {
     await setupHomeMock(page);
     await page.goto("/home");
     await openComposer(page);
@@ -669,8 +679,9 @@ test.describe("Home dashboard — premium gating (FR-11)", () => {
       error: { type: "hosted_ai", code: "premium_required", message: "no", recoverable: true },
     });
     await ask(page, "net worth");
-    await expect(page.getByTestId("home-composer-locked")).toBeVisible();
-    await expect(page.getByTestId("home-widget")).toHaveCount(1);
+    // The whole section disappears, panel included, rather than locking in place.
+    await expect(page.getByTestId("home-widgets")).toHaveCount(0);
+    await expect(page.getByTestId("home-composer-panel")).toHaveCount(0);
   });
 });
 

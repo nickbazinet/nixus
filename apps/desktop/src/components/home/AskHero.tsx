@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Lock, Send, Sparkles } from "lucide-react";
+import { Send, Sparkles } from "lucide-react";
 import { Button, Card, CardContent, Input, Label } from "@nixus/shared";
 import { HOME_STARTER_KEYS } from "@/components/home/starters";
+import { HomeAccessNotice } from "@/components/home/HomeAccessNotice";
 import { useTypewriterPlaceholder } from "@/hooks/useTypewriterPlaceholder";
 import type { HomeComposerAccess } from "@/lib/types";
 
@@ -16,22 +17,23 @@ export function AskHero({
   access,
   busy,
   onAsk,
+  onRetry,
 }: {
   access: HomeComposerAccess | undefined;
   busy: boolean;
   onAsk: (text: string) => void;
+  onRetry: () => void;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState("");
   const [focused, setFocused] = useState(false);
-  const canAsk = access === "available";
+  const canAsk = access === "available" || access === "available_byo";
   // The example asks write themselves into the empty field, after the generic invitation.
   const phrases = useMemo(
     () => [t("home.hero.placeholder"), ...HOME_STARTER_KEYS.map((key) => t(key))],
     [t]
   );
   const placeholder = useTypewriterPlaceholder(phrases, canAsk && !focused && draft === "");
-  const locked = access !== undefined && access !== "available" && access !== "unavailable";
 
   const submit = (text: string) => {
     if (!canAsk || busy || text.trim() === "") return;
@@ -82,20 +84,18 @@ export function AskHero({
             </Button>
           </form>
 
-          {!canAsk && (
-            <p
-              className="flex items-center gap-2 text-caption text-ink-dim"
-              data-testid="home-ask-hint"
-            >
-              {locked && <Lock className="size-3.5 shrink-0" aria-hidden="true" />}
-              {access === undefined
-                ? t("common.loading")
-                : access === "local_profile"
-                  ? t("home.hero.localProfile")
-                  : locked
-                  ? t("home.hero.locked")
-                  : t("home.unavailable.body")}
+          {access === undefined ? (
+            <p className="text-caption text-ink-dim" data-testid="home-ask-hint">
+              {t("common.loading")}
             </p>
+          ) : (
+            !canAsk && (
+              <HomeAccessNotice
+                state={access}
+                onRetry={onRetry}
+                data-testid="home-ask-hint"
+              />
+            )
           )}
         </CardContent>
       </Card>

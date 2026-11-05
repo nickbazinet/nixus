@@ -1,9 +1,29 @@
 import type { TFunction } from "i18next";
+import type { HomeComposerAccess } from "./types";
 
 /** The Home Surface change ops a confirmation card can carry. */
 export type HomeChangeOp = "add" | "modify" | "remove";
 
 const OPS: readonly HomeChangeOp[] = ["add", "modify", "remove"];
+
+const CONFIRMED_NOT_PREMIUM: ReadonlySet<HomeComposerAccess> = new Set([
+  "local_profile",
+  "signed_out",
+  "not_premium",
+]);
+
+/**
+ * Whether the Home Surface section (built widgets, and the composer that builds them) may render
+ * at all. `available` and the revised `available_byo` both unlock it — hosted premium and a
+ * configured BYO key are equally valid ways in, same as every other AI surface. A confirmed
+ * non-premium, non-BYO account (including a local profile) gets no section, not a locked one.
+ * `quota_exhausted`, `reauthentication_required` and `unavailable` still render — each only
+ * happens once the account is already premium, or because the check itself could not run.
+ */
+export function homeInsightsAllowed(access: HomeComposerAccess | undefined): boolean {
+  return access !== undefined && !CONFIRMED_NOT_PREMIUM.has(access);
+}
+
 
 /** The catalog, mirrored for labels only — the backend's `home_surface::catalog` is the authority. */
 export const HOME_COMPONENTS = [
@@ -14,6 +34,7 @@ export const HOME_COMPONENTS = [
   "PieChart",
   "Table",
   "SankeyChart",
+  "Date",
   "Card",
   "Row",
   "Column",
@@ -30,6 +51,8 @@ export const HOME_SOURCES = [
   "account_balances",
   "asset_values",
   "average_monthly_cash_flow",
+  "current_date",
+  "recurring_expenses",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import i18n from "i18next";
 import en from "@/locales/en.json";
-import { describeBindingScope, describeHomeChange } from "@/lib/homeSurface";
+import { describeBindingScope, describeHomeChange, homeInsightsAllowed } from "@/lib/homeSurface";
 
 await i18n.init({ lng: "en", resources: { en: { translation: en } }, keySeparator: false, nsSeparator: false });
 const t = i18n.t.bind(i18n);
@@ -33,5 +33,25 @@ describe("Home change card wording", () => {
       t
     );
     expect(card.details).toEqual([{ field: "Pie chart", value: "Spending by category · last month" }]);
+  });
+});
+
+describe("homeInsightsAllowed", () => {
+  /* The Home Surface section gates on the same access string the composer does: a BYO key renders
+   * it exactly like premium does, and only a confirmed non-premium, non-BYO account gets nothing. */
+  it("renders for a BYO-unlocked composer exactly like a premium one", () => {
+    for (const confirmedNotPremium of ["local_profile", "signed_out", "not_premium"] as const) {
+      expect(homeInsightsAllowed(confirmedNotPremium)).toBe(false);
+    }
+    for (const stillRenders of [
+      "available",
+      "available_byo",
+      "quota_exhausted",
+      "reauthentication_required",
+      "unavailable",
+    ] as const) {
+      expect(homeInsightsAllowed(stillRenders)).toBe(true);
+    }
+    expect(homeInsightsAllowed(undefined)).toBe(false);
   });
 });
