@@ -746,6 +746,41 @@ fn asset_values(conn: &Connection) -> Result<HomeDataset, AppError> {
     Ok(dataset("asset", &["value"], rows))
 }
 
+/// A single row holding today's date as an ISO string in its `label`, with no series: there is
+/// nothing to sum or chart about a date, only to show.
+fn current_date(conn: &Connection) -> Result<HomeDataset, AppError> {
+    let today: String = conn.query_row("SELECT strftime('%Y-%m-%d', 'now')", [], |row| row.get(0))?;
+    Ok(HomeDataset {
+        dimension: "date".to_string(),
+        detail_columns: Vec::new(),
+        series: Vec::new(),
+        rows: vec![HomeDatasetRow {
+            key: "today".to_string(),
+            label: today,
+            details: Vec::new(),
+            values: Vec::new(),
+        }],
+    })
+}
+
+fn recurring_expenses(conn: &Connection) -> Result<HomeDataset, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, merchant, amount_cents FROM recurring_expense_templates
+         WHERE is_active = 1 ORDER BY amount_cents DESC, merchant",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(HomeDatasetRow {
+                details: Vec::new(),
+                key: format!("recurring:{}", row.get::<_, i64>(0)?),
+                label: row.get(1)?,
+                values: vec![row.get(2)?],
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(dataset("recurring", &["amount"], rows))
+}
+
 /// Resolves one whitelisted source. `None` for a source this build does not know.
 pub fn resolve_binding(
     conn: &Connection,
@@ -797,6 +832,8 @@ pub fn resolve_binding(
             &window_of(params, spec, now),
             param(params, spec, "limit") as usize,
         )?,
+        "current_date" => current_date(conn)?,
+        "recurring_expenses" => recurring_expenses(conn)?,
         _ => return Ok(None),
     };
 

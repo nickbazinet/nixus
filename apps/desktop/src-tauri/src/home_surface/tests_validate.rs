@@ -393,6 +393,41 @@ fn a_cash_flow_source_is_sankey_only_and_a_sankey_takes_nothing_else() {
     }
 }
 
+/// A scalar source is a fact, not a figure, so it is Date-only, and a Date can read nothing else.
+#[test]
+fn a_scalar_source_is_date_only_and_a_date_takes_nothing_else() {
+    let date = json!({
+        "component": "Date",
+        "title": "Today",
+        "dataBinding": { "source": "current_date" }
+    });
+    validate_widget(&date).expect("a date of today is valid");
+
+    for component in ["BarChart", "Metric", "PieChart", "LineChart", "Table"] {
+        let other = json!({
+            "component": component,
+            "title": "x",
+            "dataBinding": { "source": "current_date" }
+        });
+        assert!(
+            errors_of(validate_widget(&other)).contains("can only be shown in a Date"),
+            "{component}"
+        );
+    }
+
+    for source in ["expenses_by_category", "net_worth_history", "recurring_expenses"] {
+        let wrong_shape = json!({
+            "component": "Date",
+            "title": "x",
+            "dataBinding": { "source": source }
+        });
+        assert!(
+            errors_of(validate_widget(&wrong_shape)).contains("it needs a scalar source"),
+            "{source}"
+        );
+    }
+}
+
 #[test]
 fn any_window_and_a_category_in_words_are_accepted_but_never_a_figure() {
     let widget = |params: Value| {

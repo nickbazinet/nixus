@@ -115,6 +115,23 @@ pub(crate) fn seed_known_profile(conn: &Connection) -> KnownProfile {
     .expect("income entry");
     needles.extend(cents_spellings(739_163));
 
+    conn.execute(
+        "INSERT INTO recurring_expense_templates (merchant, amount_cents, budget_category_id, day_of_month, is_active)
+         VALUES ('Umbraline Streaming', 219_958, ?1, 5, 1)",
+        params![categories[0]],
+    )
+    .expect("recurring template");
+    needles.push("Umbraline Streaming".to_string());
+    needles.extend(cents_spellings(219_958));
+    conn.execute(
+        "INSERT INTO recurring_expense_templates (merchant, amount_cents, budget_category_id, day_of_month, is_active)
+         VALUES ('Fennel Gym', 94_112, ?1, 1, 0)",
+        params![categories[0]],
+    )
+    .expect("inactive recurring template");
+    needles.push("Fennel Gym".to_string());
+    needles.extend(cents_spellings(94_112));
+
     KnownProfile {
         needles,
         groceries_category_id: categories[0],

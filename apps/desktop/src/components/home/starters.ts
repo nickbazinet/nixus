@@ -5,4 +5,5 @@ export const HOME_STARTER_KEYS = [
   "home.starter.budget",
   "home.starter.recentExpenses",
   "home.starter.cashFlow",
+  "home.starter.recurring",
 ] as const;

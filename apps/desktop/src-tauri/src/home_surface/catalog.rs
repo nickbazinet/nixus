@@ -26,6 +26,9 @@ pub enum SourceShape {
     /// leaves and the node it reaches in its `details`, so the rows together are a graph. Only a
     /// SankeyChart can show it: every other component reads a row as a standalone value.
     Flow,
+    /// One row holding a single fact, not a figure — there is nothing to sum, chart or rank. Only
+    /// a Date can show it: every other component reads a row as a number.
+    Scalar,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +42,7 @@ pub struct CatalogComponent {
 }
 
 use ComponentKind::{Display, Layout};
-use SourceShape::{Categorical, Flow, TimeSeries, Transactions};
+use SourceShape::{Categorical, Flow, Scalar, TimeSeries, Transactions};
 
 pub const COMPONENTS: &[CatalogComponent] = &[
     CatalogComponent {
@@ -83,6 +86,12 @@ pub const COMPONENTS: &[CatalogComponent] = &[
         kind: Display,
         description: "A flow diagram: money leaves the nodes on the left and fans out through bands whose thickness is the amount. Use for \"where does my money go\". Only for flow sources.",
         requires: Some(Flow),
+    },
+    CatalogComponent {
+        name: "Date",
+        kind: Display,
+        description: "A single fact, not a figure. Only for scalar sources.",
+        requires: Some(Scalar),
     },
     CatalogComponent {
         name: "Card",
@@ -271,6 +280,18 @@ pub const DATA_SOURCES: &[DataSource] = &[
             ),
         ],
     },
+    DataSource {
+        name: "current_date",
+        description: "Today's date, read when the Home dashboard is opened. For the Date component.",
+        shape: Scalar,
+        params: &[],
+    },
+    DataSource {
+        name: "recurring_expenses",
+        description: "Every active recurring expense template and its monthly amount, largest first.",
+        shape: Categorical,
+        params: &[],
+    },
 ];
 
 pub fn data_source(name: &str) -> Option<&'static DataSource> {
@@ -311,7 +332,8 @@ mod tests {
                 "AreaChart",
                 "PieChart",
                 "Table",
-                "SankeyChart"
+                "SankeyChart",
+                "Date"
             ]
         );
         assert_eq!(layout, vec!["Card", "Row", "Column", "Grid"]);
@@ -322,8 +344,9 @@ mod tests {
         );
     }
 
-    /// FR-3's seven finance sources plus `recent_expenses` (added after the PRD, by request), and
-    /// nothing from another module.
+    /// FR-3's seven finance sources plus `recent_expenses` (added after the PRD, by request), plus
+    /// `current_date` and `recurring_expenses` (added after the PRD, by request), and nothing from
+    /// another module.
     #[test]
     fn the_whitelist_is_the_finance_sources() {
         let names: Vec<&str> = DATA_SOURCES.iter().map(|s| s.name).collect();
@@ -339,6 +362,8 @@ mod tests {
                 "account_balances",
                 "asset_values",
                 "average_monthly_cash_flow",
+                "current_date",
+                "recurring_expenses",
             ]
         );
         for source in DATA_SOURCES {

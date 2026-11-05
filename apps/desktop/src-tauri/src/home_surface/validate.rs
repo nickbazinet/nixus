@@ -263,6 +263,7 @@ fn exclusive_component(shape: catalog::SourceShape) -> Option<(&'static str, &'s
         catalog::SourceShape::Flow => {
             Some(("describes flows between nodes", "SankeyChart"))
         }
+        catalog::SourceShape::Scalar => Some(("is a single fact, not a figure", "Date")),
         catalog::SourceShape::TimeSeries | catalog::SourceShape::Categorical => None,
     }
 }
@@ -334,6 +335,7 @@ fn validate_node(
                             catalog::SourceShape::Categorical => "categorical",
                             catalog::SourceShape::Transactions => "transaction-list",
                             catalog::SourceShape::Flow => "flow",
+                            catalog::SourceShape::Scalar => "scalar",
                         }
                     ));
                 }

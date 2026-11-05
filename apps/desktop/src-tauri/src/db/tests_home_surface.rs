@@ -252,6 +252,34 @@ fn each_whitelisted_source_resolves_against_live_data() {
 
     let assets = resolve_one(&conn, "asset_values", json!({}));
     assert_eq!(assets.rows[0].values, vec![61_928_374]);
+
+    let today = resolve_one(&conn, "current_date", json!({}));
+    assert_eq!(today.rows.len(), 1);
+    assert!(today.rows[0].values.is_empty(), "a date is not a figure");
+    assert!(
+        regex_matches_iso_date(&today.rows[0].label),
+        "{}",
+        today.rows[0].label
+    );
+
+    let recurring = resolve_one(&conn, "recurring_expenses", json!({}));
+    assert_eq!(
+        recurring.rows.len(),
+        1,
+        "only the active template, largest first"
+    );
+    assert_eq!(recurring.rows[0].label, "Umbraline Streaming");
+    assert_eq!(recurring.rows[0].values, vec![219_958]);
+}
+
+fn regex_matches_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[4] == b'-'
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[7] == b'-'
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
 }
 
 /// §8 #3 is open; until it is decided, a node this build cannot render is kept and flagged rather

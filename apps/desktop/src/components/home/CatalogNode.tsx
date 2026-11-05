@@ -86,6 +86,19 @@ function MetricView({ data, label }: { data: HomeDataset; label: string }) {
   );
 }
 
+function DateView({ data, label }: { data: HomeDataset; label: string }) {
+  const { i18n } = useTranslation();
+  const locale = insightsLocale(i18n.language);
+  const iso = data.rows[0]?.label ?? "";
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  const value = match
+    ? new Intl.DateTimeFormat(locale, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(
+        new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+      )
+    : iso;
+  return <SubStat label={label} value={value} data-testid="home-date" />;
+}
+
 function formatDetail(column: string, value: string, locale: string): string {
   if (column !== "date") return value;
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
@@ -177,6 +190,9 @@ function DisplayNode({
 
   if (node.component === "Metric") {
     return <MetricView data={data} label={node.title ?? t(`home.series.${data.series[0]}`)} />;
+  }
+  if (node.component === "Date") {
+    return <DateView data={data} label={node.title ?? t("home.component.Date")} />;
   }
   if (node.component === "Table") return <TableView data={data} />;
   // A flow dataset's rows are links, not values, so this chart takes the dataset itself.
@@ -277,7 +293,7 @@ export function CatalogNode({
     default:
       return (
         <div className="flex flex-col gap-2" data-testid={`home-node-${node.component}`}>
-          {node.component !== "Metric" ? heading : null}
+          {node.component !== "Metric" && node.component !== "Date" ? heading : null}
           <DisplayNode node={node} label={label} accent={accent} />
         </div>
       );
