@@ -35,6 +35,8 @@ export function AskHero({
   );
   const placeholder = useTypewriterPlaceholder(phrases, canAsk && !focused && draft === "");
 
+  /* No agent picker, by design: one prompt, and the backend works out which agent the ask
+   * belongs to. The user should never have to know the roster exists. */
   const submit = (text: string) => {
     if (!canAsk || busy || text.trim() === "") return;
     onAsk(text);

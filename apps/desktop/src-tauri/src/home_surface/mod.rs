@@ -5,4 +5,5 @@
 
 pub mod catalog;
 pub mod matcher;
+pub mod router;
 pub mod validate;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Send, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle, Button, Input, Label, Skeleton } from "@nixus/shared";
@@ -6,6 +7,7 @@ import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
 import { HOME_STARTER_KEYS } from "@/components/home/starters";
 import { HOME_ACCESS_LOCKED, HomeAccessNotice } from "@/components/home/HomeAccessNotice";
 import { useHomeComposerAccess, type useHomeComposer } from "@/hooks/useHome";
+import { useAgents } from "@/lib/agents";
 import {
   hostedAiIsRetryable,
   hostedAiMessageKey,
@@ -41,6 +43,42 @@ function AccessNotice({ state, onRetry }: { state: HomeComposerAccess; onRetry: 
       onRetry={onRetry}
       data-testid={HOME_ACCESS_LOCKED[state] ? "home-composer-locked" : "home-composer-unavailable"}
     />
+  );
+}
+
+/**
+ * The one affordance a routed answer needs: a way to keep going in the agent that answered.
+ *
+ * Deliberately NOT a redirect, and deliberately not labelled — the home bar's value is an answer
+ * without leaving the dashboard, and which agent produced it is the router's business, not
+ * something the user should have to read or correct. The link carries the existing conversation so
+ * the thread survives the move.
+ */
+function ContinueInAgent({
+  agentId,
+  conversationId,
+}: {
+  agentId: string;
+  conversationId: number | null;
+}) {
+  const { t } = useTranslation();
+  const { agents } = useAgents();
+
+  if (conversationId === null) return null;
+
+  const agent = agents.find((candidate) => candidate.id === agentId);
+  const name = agent ? t(agent.nameKey) : agentId;
+
+  return (
+    <Link
+      to="/ai/$agentId"
+      params={{ agentId }}
+      search={{ conversation: conversationId }}
+      className="pl-1 text-caption text-brand-ink underline"
+      data-testid="home-continue-in-agent"
+    >
+      {t("home.route.continueIn", { name })}
+    </Link>
   );
 }
 
@@ -145,16 +183,23 @@ export function HomeComposerPanel({
         )}
 
         {composer.messages.map((message, index) => (
-          <ChatMessageBubble
-            key={index}
-            role={message.role}
-            content={message.display ?? message.content}
-            isStreaming={message.pending}
-            actionHandled={message.actionHandled}
-            actionOutcome={message.actionOutcome}
-            onConfirm={(payload) => void composer.confirm(index, payload)}
-            onCancel={(payload) => void composer.cancel(index, payload)}
-          />
+          <div key={index} className="space-y-1">
+            <ChatMessageBubble
+              role={message.role}
+              content={message.display ?? message.content}
+              isStreaming={message.pending}
+              actionHandled={message.actionHandled}
+              actionOutcome={message.actionOutcome}
+              onConfirm={(payload) => void composer.confirm(index, payload)}
+              onCancel={(payload) => void composer.cancel(index, payload)}
+            />
+            {message.answeredBy !== undefined && (
+              <ContinueInAgent
+                agentId={message.answeredBy}
+                conversationId={composer.chatConversationId}
+              />
+            )}
+          </div>
         ))}
       </div>
 

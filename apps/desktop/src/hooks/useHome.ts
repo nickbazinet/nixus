@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
@@ -6,6 +6,12 @@ import { queryKeys } from "@/lib/constants";
 import { chatActionInvalidationKeys, type ChatActionOutcome } from "@/lib/chatActions";
 import { isHostedAiError, parseAppError, type ParsedAppError } from "@/lib/appError";
 import { homeChangeOp, homeChangeTitle } from "@/lib/homeSurface";
+import {
+  HOME_COMPOSER_AGENT_ID,
+  isSurfaceAgent,
+  parseAgentMention,
+} from "@/lib/homeRouting";
+import { useAiStream } from "@/hooks/useAiStream";
 import type { ActionPayload } from "@/components/chat/ChatMessageBubble";
 import type { HomeComposerAccess, HomeComposerReply, HomeWidget } from "@/lib/types";
 
@@ -115,6 +121,16 @@ export interface HomeComposerMessage {
   pending?: boolean;
   actionHandled?: boolean;
   actionOutcome?: ChatActionOutcome;
+  /**
+   * The chat agent that answered, which is what the "continue in" link needs. Absent on composer
+   * turns, which are the panel's own voice, and on the app's own written turns.
+   */
+  answeredBy?: string;
+}
+
+interface HomeRouteDecision {
+  agent_id: string;
+  kind: string;
 }
 
 /** The hosted codes after which the Composer is locked rather than merely failing this once. */
@@ -124,9 +140,23 @@ export function useHomeComposer() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [messages, setMessages] = useState<HomeComposerMessage[]>([]);
-  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [surfaceConversationId, setSurfaceConversationId] = useState<number | null>(null);
+  const [chatConversationId, setChatConversationId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [chatStreaming, setChatStreaming] = useState(false);
   const [error, setError] = useState<ParsedAppError | null>(null);
+  const streamBufferRef = useRef("");
+
+  /* Enabled for as long as the panel is mounted rather than only mid-turn: `listen()` is async, so
+   * subscribing at send time would drop the opening chunks of the very turn it was meant to catch.
+   * R3 is still satisfied — `/` and `/ai/$agentId` are different routes, and `FloatingChatBar`,
+   * the one app-wide consumer, now only listens while it is open. */
+  useAiStream({
+    enabled: true,
+    setMessages,
+    setStreaming: setChatStreaming,
+    bufferRef: streamBufferRef,
+  });
 
   const displayFor = useCallback(
     (reply: HomeComposerReply): string | undefined => {
@@ -147,10 +177,62 @@ export function useHomeComposer() {
     [t]
   );
 
+  /* Two conversation ids in one panel, deliberately. `confirm_change` calls
+   * `require_home_conversation`, and the threat model is exactly "a general agent mints a card
+   * that confirms as a surface change" — keeping the ids apart is the honest price of leaving that
+   * invariant literally untouched. The transcript stays one visual thread. */
+  const sendToSurface = useCallback(
+    async (message: string) => {
+      const reply = await invoke<HomeComposerReply>("send_home_composer_message", {
+        message,
+        conversation_id: surfaceConversationId,
+        locale: i18n.language.startsWith("fr") ? "fr" : "en",
+      });
+      setSurfaceConversationId(reply.conversation_id);
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        { role: "assistant", content: reply.content, display: displayFor(reply) },
+      ]);
+    },
+    [displayFor, i18n.language, surfaceConversationId]
+  );
+
+  const sendToChat = useCallback(
+    async (message: string, agentId: string) => {
+      streamBufferRef.current = "";
+      // The placeholder loses `pending` and gains the attribution: the stream fills its `content`
+      // in place, and a spinner that never clears is worse than a bubble that fills in.
+      setMessages((prev) => [
+        ...prev.slice(0, -1),
+        { role: "assistant", content: "", answeredBy: agentId },
+      ]);
+      setChatStreaming(true);
+      try {
+        const result = await invoke<{ conversation_id: number }>("send_chat_message", {
+          message,
+          conversation_id: chatConversationId,
+          agent_id: agentId,
+          attachment_path: null,
+        });
+        setChatConversationId(result.conversation_id);
+      } catch (error) {
+        setChatStreaming(false);
+        throw error;
+      }
+    },
+    [chatConversationId]
+  );
+
+  /**
+   * One ask, routed. `forcedAgentId` is Tier 0 (the picker or a `@mention`) and bypasses the
+   * detector; otherwise `route_home_message` decides — **no LLM call, no quota consumed**.
+   */
   const send = useCallback(
-    async (text: string) => {
-      const message = text.trim();
-      if (message === "" || busy) return;
+    async (text: string, forcedAgentId?: string) => {
+      const mention = forcedAgentId === undefined ? parseAgentMention(text) : null;
+      const message = (mention?.message ?? text).trim();
+      const forced = forcedAgentId ?? mention?.agentId;
+      if (message === "" || busy || chatStreaming) return;
 
       setBusy(true);
       setError(null);
@@ -161,16 +243,23 @@ export function useHomeComposer() {
       ]);
 
       try {
-        const reply = await invoke<HomeComposerReply>("send_home_composer_message", {
-          message,
-          conversation_id: conversationId,
-          locale: i18n.language.startsWith("fr") ? "fr" : "en",
-        });
-        setConversationId(reply.conversation_id);
-        setMessages((prev) => [
-          ...prev.slice(0, -1),
-          { role: "assistant", content: reply.content, display: displayFor(reply) },
-        ]);
+        let agentId = forced;
+        if (agentId === undefined) {
+          const decision = await invoke<HomeRouteDecision | null>("route_home_message", {
+            message,
+          });
+          /* An unusable decision falls back to the composer, which is exactly today's behaviour
+           * and the documented rollback state: if routing is broken the user still gets the
+           * dashboard builder rather than a send against an undefined agent. */
+          agentId =
+            typeof decision?.agent_id === "string" ? decision.agent_id : HOME_COMPOSER_AGENT_ID;
+        }
+
+        if (isSurfaceAgent(agentId)) {
+          await sendToSurface(message);
+        } else {
+          await sendToChat(message, agentId);
+        }
       } catch (err: unknown) {
         const parsed = parseAppError(err);
         setMessages((prev) => prev.filter((entry) => !entry.pending));
@@ -182,7 +271,7 @@ export function useHomeComposer() {
         setBusy(false);
       }
     },
-    [busy, conversationId, displayFor, i18n.language, queryClient]
+    [busy, chatStreaming, queryClient, sendToChat, sendToSurface]
   );
 
   const markHandled = (index: number, actionOutcome: ChatActionOutcome) =>
@@ -200,7 +289,7 @@ export function useHomeComposer() {
         const result = await invoke<{ message: string }>("execute_chat_action", {
           action_type: payload.action_type,
           params: payload.params,
-          conversation_id: conversationId ?? 0,
+          conversation_id: surfaceConversationId ?? 0,
         });
         markHandled(index, "confirmed");
         setMessages((prev) => [
@@ -221,7 +310,7 @@ export function useHomeComposer() {
         ]);
       }
     },
-    [conversationId, queryClient, t]
+    [surfaceConversationId, queryClient, t]
   );
 
   /* Marked handled before the await, as chat does, so the user's decision holds even if recording
@@ -235,15 +324,24 @@ export function useHomeComposer() {
       ]);
       try {
         await invoke("record_chat_action_cancelled", {
-          conversation_id: conversationId ?? 0,
+          conversation_id: surfaceConversationId ?? 0,
           action_type: payload.action_type,
         });
       } catch (err: unknown) {
         setError(parseAppError(err));
       }
     },
-    [conversationId, t]
+    [surfaceConversationId, t]
   );
 
-  return { messages, busy, error, clearError: () => setError(null), send, confirm, cancel };
+  return {
+    messages,
+    busy: busy || chatStreaming,
+    error,
+    clearError: () => setError(null),
+    send,
+    confirm,
+    cancel,
+    chatConversationId,
+  };
 }

@@ -23,6 +23,8 @@ use crate::commands::datasets::{find_registered, is_signed_in};
 use crate::datasets;
 use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
+use crate::ai::agents::AgentKind;
+use crate::home_surface::router;
 use crate::home_surface::validate::{self, SurfaceChange};
 use crate::models::{DatasetKind, HomeWidget};
 
@@ -54,6 +56,34 @@ fn lock<'a>(
     state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })
+}
+
+/// Which agent a Home bar message belongs to, and therefore which send command the panel calls.
+#[derive(Debug, Serialize)]
+pub struct HomeRouteDecision {
+    pub agent_id: String,
+    /// `"chat"` or `"surface"` — the `AgentKind` wire name, so the frontend switches on the same
+    /// vocabulary `list_agents` already gave it.
+    pub kind: String,
+}
+
+/// Routes one Home bar message. **No LLM call, no quota consumption** — a deterministic detector
+/// plus a default, costing one microsecond-scale IPC round trip.
+///
+/// AD-11: takes the whole message and must never log it. `home_surface::router` carries the guard
+/// test for that, and this function deliberately adds no logging of its own.
+#[tauri::command(rename_all = "snake_case")]
+pub fn route_home_message(message: String) -> HomeRouteDecision {
+    match router::classify(&message) {
+        router::HomeRoute::Surface => HomeRouteDecision {
+            agent_id: HOME_AGENT_ID.to_string(),
+            kind: AgentKind::Surface.wire_name().to_string(),
+        },
+        router::HomeRoute::Chat(agent_id) => HomeRouteDecision {
+            agent_id: agent_id.to_string(),
+            kind: AgentKind::Chat.wire_name().to_string(),
+        },
+    }
 }
 
 #[tauri::command(rename_all = "snake_case")]

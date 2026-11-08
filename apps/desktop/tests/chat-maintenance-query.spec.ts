@@ -37,6 +37,39 @@ async function setupTauriMock(page: Page) {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
         switch (cmd) {
+          // The real registry answer: the maintenance tools belong to the car agent, so this
+          // page only exists if the backend reports that agent.
+          case "list_agents":
+            return Promise.resolve([
+              {
+                id: "budget-helper",
+                name_key: "agents.budgetHelper.name",
+                description_key: "agents.budgetHelper.description",
+                kind: "chat",
+                ready_key: "agents.budgetHelper.ready",
+                scope_key: "agents.budgetHelper.scope",
+                starter_keys: [
+                  "agents.budgetHelper.starterTracking",
+                  "agents.budgetHelper.starterVsLastMonth",
+                  "agents.budgetHelper.starterWhereItGoes",
+                ],
+                routable: false,
+              },
+              {
+                id: "car-maintenance",
+                name_key: "agents.carMaintenance.name",
+                description_key: "agents.carMaintenance.description",
+                kind: "chat",
+                ready_key: "agents.carMaintenance.ready",
+                scope_key: "agents.carMaintenance.scope",
+                starter_keys: [
+                  "agents.carMaintenance.starterDue",
+                  "agents.carMaintenance.starterHistory",
+                  "agents.carMaintenance.starterOdometer",
+                ],
+                routable: false,
+              },
+            ]);
           case "check_picker_gate":
             return Promise.resolve({ needs_picker: false });
 
@@ -195,10 +228,50 @@ async function setupTauriMock(page: Page) {
   });
 }
 
+/* Moved off /ai/budget-helper deliberately: the maintenance tools now belong to the Car
+ * Maintenance agent's allowlist and the backend refuses them for Budget Helper, so exercising
+ * them there would be testing a flow the app no longer permits. */
 test.describe("AI Chat Maintenance Query Tools", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page);
-    await page.goto("/ai/budget-helper");
+    await page.goto("/ai/car-maintenance");
+  });
+
+  test("the car agent's own name and description come from the registry", async ({ page }) => {
+    await expect(page.locator("h1")).toHaveText("Car Maintenance");
+    await expect(page.getByText("Ask me what's due on your vehicles.")).toBeVisible();
+  });
+
+  /* The reported bug: this surface greeted the user with Budget Helper's copy and three budget
+   * starters. Every word of the empty state is the agent's own, and none of it is the other
+   * agent's. */
+  test("the empty state is the car agent's own copy, not the budget agent's", async ({ page }) => {
+    const area = page.getByTestId("chat-message-area");
+
+    await expect(
+      area.getByText("Ask what's due, what's overdue, or what you last had done.")
+    ).toBeVisible();
+    await expect(area.getByText(/vehicles in your garage/)).toBeVisible();
+
+    const starters = page.getByTestId("chat-starter-prompt");
+    await expect(starters).toHaveText([
+      "What's due on my vehicles?",
+      "When was my last oil change?",
+      "Is anything overdue right now?",
+    ]);
+
+    // Not one word of the budget agent's empty state leaks in.
+    await expect(area.getByText(/your budget, your spending/)).toHaveCount(0);
+    await expect(area.getByText(/net worth/)).toHaveCount(0);
+    await expect(area.getByText(/How am I tracking/)).toHaveCount(0);
+  });
+
+  test("a starter button sends the car agent's own question", async ({ page }) => {
+    await page.getByTestId("chat-starter-prompt").first().click();
+
+    await expect(page.getByTestId("chat-message-user")).toContainText(
+      "What's due on my vehicles?"
+    );
   });
 
   test("query_maintenance_status tool_call shows searching indicator then final answer", async ({

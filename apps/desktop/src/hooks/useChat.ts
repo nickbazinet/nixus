@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
 import { parseActionFromContent, type ActionPayload } from "@/components/chat/ChatMessageBubble";
+import { useAiStream } from "@/hooks/useAiStream";
 import { queryKeys } from "@/lib/constants";
 import {
   chatActionInvalidationKeys,
@@ -41,14 +41,11 @@ export interface ChatAttachment {
   readonly name: string;
 }
 
-interface ChatResponseChunk {
-  chunk: string;
-  done: boolean;
-}
-
 interface UseChatOptions {
   initialConversationId?: number;
   agentId?: string;
+  /** Whether this consumer currently owns the streamed turn. See `useAiStream`. */
+  enabled?: boolean;
 }
 
 export function useChat(options?: UseChatOptions) {
@@ -102,66 +99,15 @@ export function useChat(options?: UseChatOptions) {
     };
   }, [options?.initialConversationId]);
 
-  useEffect(() => {
-    let cleaned = false;
-
-    const setup = async () => {
-      const chunkUn = await listen<ChatResponseChunk>(
-        "chat:response-chunk",
-        (event) => {
-          if (event.payload.done) {
-            setStreaming(false);
-          } else {
-            streamBufferRef.current += event.payload.chunk;
-            setMessages((prev) => {
-              const updated = [...prev];
-              const lastMsg = updated[updated.length - 1];
-              if (lastMsg && lastMsg.role === "assistant") {
-                updated[updated.length - 1] = {
-                  ...lastMsg,
-                  content: streamBufferRef.current,
-                };
-              }
-              return updated;
-            });
-          }
-        }
-      );
-
-      const toolUn = await listen<string>(
-        "chat:tool-executing",
-        () => {
-          streamBufferRef.current = "";
-          setStreaming(true);
-          setMessages((prev) => {
-            const updated = [...prev];
-            const lastMsg = updated[updated.length - 1];
-            if (lastMsg && lastMsg.role === "assistant") {
-              updated[updated.length - 1] = {
-                ...lastMsg,
-                content: "tool-searching",
-              };
-            }
-            return updated;
-          });
-        }
-      );
-
-      if (cleaned) {
-        chunkUn();
-        toolUn();
-      } else {
-        unlistenFns.push(chunkUn, toolUn);
-      }
-    };
-
-    const unlistenFns: UnlistenFn[] = [];
-    setup();
-    return () => {
-      cleaned = true;
-      for (const fn of unlistenFns) fn();
-    };
-  }, []);
+  /* R3: the stream events are app-global. `FloatingChatBar` is mounted app-wide and a chat route
+   * can be mounted at the same time, so each consumer says when it owns the turn rather than every
+   * mounted `useChat` listening at once. */
+  useAiStream({
+    enabled: options?.enabled ?? true,
+    setMessages,
+    setStreaming,
+    bufferRef: streamBufferRef,
+  });
 
   const sendMessage = useCallback(
     async (text: string, attachment?: ChatAttachment) => {

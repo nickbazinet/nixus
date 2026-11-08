@@ -425,3 +425,42 @@ fn deleting_an_absent_widget_is_refused() {
     remove_widget(&active, &keys[0]).expect("the real one still removes");
     assert!(remove_widget(&active, &keys[0]).is_err(), "and only once");
 }
+
+/// The decision the Home bar acts on. Both ids must agree with the registry, because the frontend
+/// switches on `kind` to pick which send command to call — a mismatch would send a dashboard ask
+/// down the chat path.
+#[test]
+fn every_route_decision_names_an_agent_whose_registry_kind_matches() {
+    for message in [
+        "add a net worth widget",
+        "what's my net worth",
+        "",
+        "Un tableau de mes 10 dernières dépenses",
+    ] {
+        let decision = crate::commands::home::route_home_message(message.to_string());
+        let spec = crate::ai::agents::spec(&decision.agent_id).expect("a routed agent exists");
+
+        assert_eq!(decision.kind, spec.kind.wire_name(), "message: {message}");
+    }
+}
+
+#[test]
+fn a_dashboard_ask_routes_to_the_surface_and_a_question_to_a_chat_agent() {
+    let dashboard = crate::commands::home::route_home_message("add a spending chart".to_string());
+    assert_eq!(dashboard.agent_id, crate::commands::home::HOME_AGENT_ID);
+    assert_eq!(dashboard.kind, "surface");
+
+    let question = crate::commands::home::route_home_message("what is my net worth".to_string());
+    assert_eq!(question.agent_id, crate::ai::agents::DEFAULT_CHAT_AGENT_ID);
+    assert_eq!(question.kind, "chat");
+}
+
+/// Rollback lever: neutralizing Step 4 means making every message route to the surface, which
+/// restores today's behaviour without touching either send command. This pins that the surface
+/// branch is reachable and names the composer, so that lever stays a one-line change.
+#[test]
+fn the_surface_branch_names_the_composer_conversation_owner() {
+    let decision = crate::commands::home::route_home_message("add a widget".to_string());
+
+    assert_eq!(decision.agent_id, "home-composer");
+}

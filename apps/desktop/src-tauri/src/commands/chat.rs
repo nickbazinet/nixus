@@ -4,8 +4,10 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, State};
 use tracing::{error, info};
 
+use crate::ai::agents::{self, AgentKind};
 use crate::ai::attachment as chat_attachment;
 use crate::ai::chat as chat_ai;
+use crate::ai::context;
 use crate::ai::backend::{AiAttachment, AiTurn};
 use crate::ai::{clone_provider, AiState};
 use crate::commands::home;
@@ -14,9 +16,7 @@ use crate::db::asset as asset_db;
 use crate::db::audit as audit_db;
 use crate::db::budget as budget_db;
 use crate::db::chat as chat_db;
-use crate::db::dashboard as dashboard_db;
 use crate::db::expense as expense_db;
-use crate::db::income as income_db;
 use crate::db::maintenance as maintenance_db;
 use crate::db::{DbState, WriteTx};
 use crate::error::AppError;
@@ -99,139 +99,25 @@ fn build_history_turns(
         .collect())
 }
 
-fn build_context(db_state: &State<DbState>) -> Result<String, AppError> {
+/// Assembles one agent's static context.
+///
+/// Keeps the lock here rather than pushing it into `ai::context`: the providers take a plain
+/// `&Connection`, which is what makes each one testable against a bare fixture database.
+fn build_context(db_state: &State<DbState>, agent_id: &str) -> Result<String, AppError> {
+    let providers = agents::spec(agent_id)?.context;
+
     let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let now = chrono::Local::now();
-    let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
-    let month = now.format("%m").to_string().parse::<i32>().unwrap_or(3);
+    let clock = context::ProviderClock {
+        year: now.format("%Y").to_string().parse::<i32>().unwrap_or(2026),
+        month: now.format("%m").to_string().parse::<u32>().unwrap_or(1),
+    };
 
-    let mut ctx = String::new();
-
-    // Budget summary
-    if let Ok(summary) = dashboard_db::get_budget_summary(conn, year, month) {
-        ctx.push_str(&format!(
-            "Budget Summary ({}-{:02}):\n  Total budget: {} cents\n  Total spent: {} cents\n  Remaining: {} cents\n\n",
-            year, month, summary.total_target_cents, summary.total_spent_cents, summary.remaining_cents
-        ));
-    }
-
-    // Listed before the categories so the model sees the groups a new category may be filed
-    // under. `create_budget_category` requires an existing group name and never creates one,
-    // so an invented name is a refused card.
-    let groups = budget_db::get_budget_groups(conn).unwrap_or_default();
-    if groups.is_empty() {
-        ctx.push_str("Budget Groups: none yet.\n\n");
-    } else {
-        ctx.push_str("Budget Groups (the only valid group_name values):\n");
-        for group in &groups {
-            ctx.push_str(&format!("  - {}\n", group.name));
-        }
-        ctx.push('\n');
-    }
-
-    // Budget categories with spending
-    if let Ok(categories) = budget_db::get_budget_status(conn, year, month) {
-        ctx.push_str("Budget Categories:\n");
-        for cat in &categories {
-            let group_name = groups
-                .iter()
-                .find(|group| group.id == cat.group_id)
-                .map(|group| group.name.as_str())
-                .unwrap_or("unknown");
-            ctx.push_str(&format!(
-                "  - {} (group: {}): target {} cents, spent {} cents\n",
-                cat.name, group_name, cat.target_cents, cat.spent_cents
-            ));
-        }
-        ctx.push('\n');
-    }
-
-    // Accounts
-    if let Ok(accounts) = account_db::get_all_accounts(conn) {
-        ctx.push_str("Accounts:\n");
-        for acc in &accounts {
-            ctx.push_str(&format!(
-                "  - {} ({}, {}): {} cents\n",
-                acc.name, acc.institution, acc.account_type, acc.balance_cents
-            ));
-        }
-        ctx.push('\n');
-    }
-
-    // Assets
-    if let Ok(assets) = asset_db::get_all_assets(conn) {
-        ctx.push_str("Assets:\n");
-        for asset in &assets {
-            ctx.push_str(&format!(
-                "  - {} ({}): {} cents\n",
-                asset.name, asset.asset_type, asset.value_cents
-            ));
-        }
-        ctx.push('\n');
-    }
-
-    // Income this month
-    let current_year = now.format("%Y").to_string().parse::<i32>().unwrap_or(2026);
-    let current_month_num = now.format("%m").to_string().parse::<u32>().unwrap_or(1);
-    let month_entries = income_db::get_income_entries_by_month(conn, current_year, current_month_num)
-        .unwrap_or_default();
-
-    if month_entries.is_empty() {
-        ctx.push_str("No income recorded for the current month.\n\n");
-    } else {
-        ctx.push_str("Income this month:\n");
-        for entry in &month_entries {
-            ctx.push_str(&format!(
-                "  - {} ({}): ${:.2}\n",
-                entry.source_name,
-                entry.income_type,
-                entry.amount_cents as f64 / 100.0
-            ));
-        }
-        if let Ok(total) = income_db::get_income_total(conn, current_year, current_month_num) {
-            ctx.push_str(&format!(
-                "Total income: ${:.2}\n",
-                total.total_cents as f64 / 100.0
-            ));
-        }
-        ctx.push('\n');
-    }
-
-    if let Ok(vehicles) = maintenance_db::get_all_vehicles(conn) {
-        if vehicles.is_empty() {
-            ctx.push_str("Maintenance Tracking: No vehicles registered.\n\n");
-        } else {
-            let alert_count = maintenance_db::get_maintenance_alert_summary(conn)
-                .map(|s| s.total_alerts)
-                .unwrap_or(0);
-
-            ctx.push_str("Maintenance Tracking:\n");
-            ctx.push_str(&format!("  Vehicles: {}\n", vehicles.len()));
-            if alert_count > 0 {
-                ctx.push_str(&format!(
-                    "  Alerts: {} tasks need attention\n",
-                    alert_count
-                ));
-            } else {
-                ctx.push_str("  Alerts: 0 tasks need attention\n");
-            }
-            ctx.push('\n');
-
-            for vehicle in &vehicles {
-                ctx.push_str(&format!(
-                    "  - {} (id={}, odometer={} km)\n",
-                    vehicle.nickname, vehicle.id, vehicle.odometer_km
-                ));
-            }
-            ctx.push('\n');
-        }
-    }
-
-    Ok(ctx)
+    Ok(context::assemble(providers, conn, &clock))
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -301,9 +187,10 @@ pub async fn send_chat_message(
     info!("Chat message received, conversation: {}", conv_id);
 
     // Build context and system prompt
-    let context = build_context(&db_state)?;
+    let spec = agents::spec(&agent_id)?;
+    let context = build_context(&db_state, &agent_id)?;
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let system_prompt = chat_ai::build_system_prompt(&agent_id, &today, &context);
+    let system_prompt = chat_ai::build_system_prompt(&agent_id, &today, &context)?;
 
     // Load conversation history (includes user message just inserted above)
     let history = build_history_turns(&db_state, conv_id)?;
@@ -326,11 +213,12 @@ pub async fn send_chat_message(
         e
     })?;
 
-    // Check for tool call
-    let final_response = if let Some(tool_call) = chat_ai::parse_tool_call(&first_response) {
-        info!("Tool call detected: {}", tool_call.tool);
-
-        // Save tool-call assistant message
+    // Check for tool call. The allowlist decision is made inside `parse_model_block`, so this
+    // site never sees a tool the agent is not entitled to run.
+    let final_response = if let Some(block) = chat_ai::parse_model_block(&first_response, spec.tools)
+    {
+        // Save tool-call assistant message. Before executing, deliberately: the history has to
+        // show what the model asked for even when running it then fails.
         {
             let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
@@ -340,11 +228,19 @@ pub async fn send_chat_message(
             })?;
         }
 
-        // Emit tool-executing event
-        let _ = app.emit("chat:tool-executing", &tool_call.tool);
-
-        // Execute the tool
-        let tool_result = execute_tool_call(&db_state, &tool_call)?;
+        let tool_result = match block {
+            chat_ai::ModelBlock::Tool(tool_call) => {
+                info!("Tool call detected: {}", tool_call.tool);
+                let _ = app.emit("chat:tool-executing", &tool_call.tool);
+                execute_tool_call(&db_state, &tool_call)?
+            }
+            // The tool NAME only. Its params are model-authored text derived from user data and
+            // must not reach a log (AD-11).
+            chat_ai::ModelBlock::ToolNotAllowed(tool) => {
+                info!("Tool call refused, not in this agent's allowlist: {}", tool);
+                chat_ai::tool_not_allowed_result(&tool)
+            }
+        };
 
         // Save tool-result user message
         {
@@ -749,6 +645,39 @@ pub fn list_conversations(
     chat_db::list_conversations_by_agent(conn, &agent_id)
 }
 
+/// `routing_description` is deliberately absent: it is prompt material, not UI material.
+#[derive(Serialize)]
+pub struct AgentInfo {
+    pub id: String,
+    pub name_key: String,
+    pub description_key: String,
+    pub kind: String,
+    pub ready_key: String,
+    pub scope_key: String,
+    pub starter_keys: Vec<String>,
+    pub routable: bool,
+}
+
+/// Chat agents only. A `Surface` agent is an internal destination, not a user-pickable one, and
+/// must never show up on the `/ai` landing page.
+#[tauri::command(rename_all = "snake_case")]
+pub fn list_agents() -> Vec<AgentInfo> {
+    agents::all()
+        .iter()
+        .filter(|spec| spec.kind == AgentKind::Chat)
+        .map(|spec| AgentInfo {
+            id: spec.id.to_string(),
+            name_key: spec.name_key.to_string(),
+            description_key: spec.description_key.to_string(),
+            kind: spec.kind.wire_name().to_string(),
+            ready_key: spec.ready_key.to_string(),
+            scope_key: spec.scope_key.to_string(),
+            starter_keys: spec.starter_keys.iter().map(|key| key.to_string()).collect(),
+            routable: spec.routable,
+        })
+        .collect()
+}
+
 #[derive(Serialize)]
 pub struct ActionResult {
     pub success: bool,
@@ -792,6 +721,46 @@ fn unknown_action(action_type: &str) -> AppError {
         message: format!("Unknown action type: {}", action_type),
         field: None,
     }
+}
+
+/// A real action type that this conversation's agent is not entitled to run.
+///
+/// Distinct from [`unknown_action`] on purpose: the action exists and another agent may well be
+/// allowed to run it, so reporting it as unknown would be a lie to whoever reads the error.
+fn action_not_allowed(action_type: &str) -> AppError {
+    AppError::Validation {
+        message: format!(
+            "Action {} is not available to this conversation's agent",
+            action_type
+        ),
+        field: Some("action_type".to_string()),
+    }
+}
+
+/// Whether the agent that owns `conversation_id` is entitled to run `action_type`.
+///
+/// Enforcement, not prompt scoping: statement-import text (merchant names, notes) flows into every
+/// agent's context as untrusted data, so "the prompt never mentioned this action" bounds nothing.
+/// The agent is read from the conversation row rather than taken as a parameter — the webview does
+/// not get to nominate which agent's permissions apply.
+///
+/// Split from the command because `State<DbState>` cannot be constructed in a unit test, and a
+/// permission rule that is not unit-tested is a permission rule nobody checked.
+fn conversation_allows_action(
+    conn: &rusqlite::Connection,
+    conversation_id: i64,
+    action_type: &str,
+) -> Result<bool, AppError> {
+    // An action card cannot exist before its conversation row does, so a missing row is a bug
+    // rather than a flow — and a refusal recorded against it would fail anyway.
+    let agent_id = chat_db::conversation_agent(conn, conversation_id)?.ok_or_else(|| {
+        AppError::Validation {
+            message: "Conversation not found".to_string(),
+            field: Some("conversation_id".to_string()),
+        }
+    })?;
+
+    Ok(agents::spec(&agent_id)?.actions.contains(&action_type))
 }
 
 /// Runs one confirmed action, returning the message the user sees on success.
@@ -965,6 +934,21 @@ pub fn execute_chat_action(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+
+    let allowed = {
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+        conversation_allows_action(conn, conversation_id, &action_type)?
+    };
+    if !allowed {
+        let _ = active.write(|tx| {
+            chat_db::insert_message(tx, conversation_id, "assistant", ACTION_FAILED_TEXT, "chat")
+        });
+        info!(
+            "Chat action refused, not in this agent's allowlist: {}",
+            action_type
+        );
+        return Err(action_not_allowed(&action_type));
+    }
 
     if action_type == home::HOME_SURFACE_ACTION {
         return match home::confirm_change(&active, &params, conversation_id) {
@@ -2048,5 +2032,120 @@ mod tests {
 
         assert_eq!(roles(&turns), vec![ConversationRole::User]);
         assert_eq!(turns[0].1, "vacation expenses?");
+    }
+
+    fn conversations_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        crate::db::run_migrations(&conn).expect("migrate");
+        conn
+    }
+
+    #[test]
+    fn an_agent_may_run_the_actions_on_its_own_allowlist() {
+        let conn = conversations_db();
+        let conv = chat_db::create_conversation(&conn, Some("t"), "budget-helper").expect("create");
+
+        for action in agents::spec("budget-helper").expect("spec").actions {
+            assert!(
+                conversation_allows_action(&conn, conv.id, action).expect("authorize"),
+                "{action} should be allowed"
+            );
+        }
+    }
+
+    /// The threat the home guard names: a general, BYO-capable agent minting a card that confirms
+    /// as a dashboard change. The allowlist makes that refusal a consequence of the general rule.
+    #[test]
+    fn a_general_agent_cannot_confirm_a_home_surface_change() {
+        let conn = conversations_db();
+        let conv = chat_db::create_conversation(&conn, Some("t"), "budget-helper").expect("create");
+
+        assert!(
+            !conversation_allows_action(&conn, conv.id, home::HOME_SURFACE_ACTION)
+                .expect("authorize")
+        );
+    }
+
+    #[test]
+    fn the_home_surface_owns_its_action_and_no_financial_writes() {
+        let conn = conversations_db();
+        let conv = chat_db::create_conversation(&conn, Some("t"), home::HOME_AGENT_ID)
+            .expect("create");
+
+        assert!(
+            conversation_allows_action(&conn, conv.id, home::HOME_SURFACE_ACTION)
+                .expect("authorize")
+        );
+        assert!(!conversation_allows_action(&conn, conv.id, "create_expense").expect("authorize"));
+        assert!(!conversation_allows_action(&conn, conv.id, "batch_actions").expect("authorize"));
+    }
+
+    #[test]
+    fn an_action_against_a_conversation_that_does_not_exist_is_refused() {
+        let conn = conversations_db();
+
+        let error = conversation_allows_action(&conn, 4242, "create_expense")
+            .expect_err("a missing conversation is a refusal");
+
+        assert_eq!(validation_field(&error), Some("conversation_id"));
+    }
+
+    #[test]
+    fn an_action_against_a_conversation_naming_an_unknown_agent_is_refused() {
+        let conn = conversations_db();
+        let conv = chat_db::create_conversation(&conn, Some("t"), "retired-agent").expect("create");
+
+        let error = conversation_allows_action(&conn, conv.id, "create_expense")
+            .expect_err("an unknown agent is a refusal");
+
+        assert_eq!(validation_field(&error), Some("agent_id"));
+    }
+
+    #[test]
+    fn a_refused_action_names_the_action_rather_than_calling_it_unknown() {
+        let error = action_not_allowed("create_expense");
+
+        assert_eq!(validation_field(&error), Some("action_type"));
+        assert!(validation_message(&error).contains("create_expense"));
+        assert!(!validation_message(&error).contains("Unknown"));
+    }
+
+    #[test]
+    fn every_action_the_registry_grants_is_one_the_dispatcher_recognises() {
+        for agent in agents::all() {
+            for action in agent.actions {
+                assert!(
+                    ACTION_TYPES.contains(action),
+                    "{} grants {action}, which no dispatcher branch handles",
+                    agent.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn list_agents_publishes_the_chat_agents_and_withholds_the_surfaces() {
+        let listed = super::list_agents();
+
+        assert!(listed.iter().any(|agent| agent.id == "budget-helper"));
+        assert!(
+            !listed.iter().any(|agent| agent.id == "home-composer"),
+            "home-composer is an internal surface and must never be user-pickable"
+        );
+        for agent in &listed {
+            assert_eq!(agent.kind, "chat");
+        }
+    }
+
+    #[test]
+    fn a_surface_agent_has_no_chat_prompt_to_build() {
+        match chat_ai::build_system_prompt("home-composer", "2026-11-07", "") {
+            Err(AppError::Validation { message, field }) => {
+                assert_eq!(message, "agent 'home-composer' is not a chat agent");
+                assert_eq!(field.as_deref(), Some("agent_id"));
+            }
+            Err(other) => panic!("expected a validation error, got {other:?}"),
+            Ok(_) => panic!("home-composer must not yield a chat prompt"),
+        }
     }
 }

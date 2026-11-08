@@ -22,6 +22,125 @@ test.describe('AI Section Navigation', () => {
     ).toBeVisible();
   });
 
+  test('the agent grid is driven by list_agents, not a hardcoded frontend list', async ({ page }) => {
+    // Nothing about `registry-probe` exists in the frontend — no icon entry, no locale keys — so
+    // its card can only have come from the backend registry over IPC.
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+        transformCallback: () => 1,
+        unregisterCallback: () => {},
+        convertFileSrc: (path: string) => path,
+        invoke: (cmd: string) => {
+          if (cmd.startsWith('plugin:')) return Promise.resolve(null);
+          if (cmd === 'check_picker_gate') return Promise.resolve({ needs_picker: false });
+          if (cmd === 'check_onboarding_status') return Promise.resolve({ needs_onboarding: false });
+          if (cmd === 'list_agents') {
+            return Promise.resolve([
+              {
+                id: 'budget-helper',
+                name_key: 'agents.budgetHelper.name',
+                description_key: 'agents.budgetHelper.description',
+                kind: 'chat',
+                routable: false,
+              },
+              {
+                id: 'registry-probe',
+                name_key: 'Registry Probe',
+                description_key: 'Served by list_agents',
+                kind: 'chat',
+                routable: false,
+              },
+            ]);
+          }
+          return Promise.resolve(null);
+        },
+      };
+      (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+        unregisterListener: () => {},
+      };
+    });
+    await page.goto('/ai');
+
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Registry Probe', exact: true })
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Budget Helper', exact: true })
+    ).toBeVisible();
+  });
+
+  test('both chat agents are listed and each has its own route', async ({ page }) => {
+    await page.addInitScript((agents) => {
+      (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+        transformCallback: () => 1,
+        unregisterCallback: () => {},
+        convertFileSrc: (path: string) => path,
+        invoke: (cmd: string) => {
+          if (cmd.startsWith('plugin:')) return Promise.resolve(null);
+          if (cmd === 'check_picker_gate') return Promise.resolve({ needs_picker: false });
+          if (cmd === 'check_onboarding_status') return Promise.resolve({ needs_onboarding: false });
+          if (cmd === 'list_agents') return Promise.resolve(agents);
+          return Promise.resolve(null);
+        },
+      };
+      (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+        unregisterListener: () => {},
+      };
+    }, [
+              {
+                id: "budget-helper",
+                name_key: "agents.budgetHelper.name",
+                description_key: "agents.budgetHelper.description",
+                kind: "chat",
+                ready_key: "agents.budgetHelper.ready",
+                scope_key: "agents.budgetHelper.scope",
+                starter_keys: [
+                  "agents.budgetHelper.starterTracking",
+                  "agents.budgetHelper.starterVsLastMonth",
+                  "agents.budgetHelper.starterWhereItGoes",
+                ],
+                routable: false,
+              },
+              {
+                id: "car-maintenance",
+                name_key: "agents.carMaintenance.name",
+                description_key: "agents.carMaintenance.description",
+                kind: "chat",
+                ready_key: "agents.carMaintenance.ready",
+                scope_key: "agents.carMaintenance.scope",
+                starter_keys: [
+                  "agents.carMaintenance.starterDue",
+                  "agents.carMaintenance.starterHistory",
+                  "agents.carMaintenance.starterOdometer",
+                ],
+                routable: false,
+              },
+            ]);
+    await page.goto('/ai');
+
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Budget Helper', exact: true })
+    ).toBeVisible();
+    await expect(
+      page.getByRole('heading', { level: 2, name: 'Car Maintenance', exact: true })
+    ).toBeVisible();
+
+    // The route itself is asserted in chat-maintenance-query.spec.ts, which carries the full
+    // chat-page mock this spec deliberately does not.
+    await page
+      .locator('a[data-slot="card"]')
+      .filter({ hasText: 'Car Maintenance' })
+      .click();
+    await expect(page).toHaveURL(/\/ai\/car-maintenance/);
+  });
+
+  /* `home-composer` is a backend surface, not a pickable agent. It must never reach this page. */
+  test('the dashboard composer is not listed as an agent', async ({ page }) => {
+    await page.goto('/ai');
+
+    await expect(page.getByRole('heading', { level: 2, name: /composer/i })).toHaveCount(0);
+  });
+
   test('clicking agent card navigates to agent route', async ({ page }) => {
     await page.goto('/ai');
     // The whole card is one link with one accessible name, so clicking the card IS clicking the

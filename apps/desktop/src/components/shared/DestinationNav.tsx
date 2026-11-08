@@ -10,7 +10,7 @@ import {
   PERIOD_AWARE_DESTINATIONS,
   isDestinationActive,
 } from "@/lib/navigation";
-import { AGENTS } from "@/lib/agents";
+import { useAgents } from "@/lib/agents";
 
 const carNavItems = [
   { to: "/car", labelKey: "nav.carDashboard", icon: LayoutDashboard },
@@ -92,6 +92,7 @@ function FinanceNav() {
 export function DestinationNav() {
   const { t } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const { agents } = useAgents();
 
   // Car and AI each sit inside a single rail module with a handful of sub-surfaces, which is the
   // segmented sub-nav case. Finance is the only module with destinations.
@@ -131,7 +132,7 @@ export function DestinationNav() {
   if (pathname.startsWith("/ai")) {
     return (
       <SegmentedNav aria-label={t("nav.aiNav")} className="shrink-0">
-        {AGENTS.map((agent) => (
+        {agents.map((agent) => (
           <SegmentedNavItem
             key={agent.id}
             className="gap-2"

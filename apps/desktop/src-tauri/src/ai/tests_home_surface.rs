@@ -324,7 +324,8 @@ fn the_catalog_lives_only_in_the_dedicated_generation_prompt() {
         assert!(home.contains(source.name), "{}", source.name);
     }
 
-    let chat = crate::ai::chat::build_system_prompt("budget-helper", "2026-11-02", "");
+    let chat = crate::ai::chat::build_system_prompt("budget-helper", "2026-11-02", "")
+        .expect("budget-helper is a chat agent");
     for source in catalog::DATA_SOURCES {
         assert!(
             !chat.contains(source.name),

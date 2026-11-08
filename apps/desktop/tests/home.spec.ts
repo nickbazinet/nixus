@@ -272,6 +272,11 @@ async function setupHomeMock(page: Page, options: HomeMockOptions = {}) {
               }
               return Promise.resolve(null);
             }
+            // Tier 1 routing. These tests drive the dashboard composer, so the detector's
+            // surface verdict is what they stand on.
+            case "route_home_message":
+              return Promise.resolve({ agent_id: "home-composer", kind: "surface" });
+
             case "send_home_composer_message": {
               const next = replies.shift();
               if (next === undefined) {
@@ -831,7 +836,7 @@ test.describe("Home dashboard — pre-built sections", () => {
     await page.goto("/home");
     const input = page.getByTestId("home-ask-input");
     await input.focus();
-    await expect(input).toHaveAttribute("placeholder", "Ask Nixus to build a view of your finances…");
+    await expect(input).toHaveAttribute("placeholder", "Ask Nixus about your money, your car, or to build a view…");
   });
 
   test("reduced motion shows the invitation without animating", async ({ page }) => {
@@ -839,9 +844,9 @@ test.describe("Home dashboard — pre-built sections", () => {
     await setupHomeMock(page);
     await page.goto("/home");
     const input = page.getByTestId("home-ask-input");
-    await expect(input).toHaveAttribute("placeholder", "Ask Nixus to build a view of your finances…");
+    await expect(input).toHaveAttribute("placeholder", "Ask Nixus about your money, your car, or to build a view…");
     await page.waitForTimeout(800);
-    await expect(input).toHaveAttribute("placeholder", "Ask Nixus to build a view of your finances…");
+    await expect(input).toHaveAttribute("placeholder", "Ask Nixus about your money, your car, or to build a view…");
   });
 
   test("a non-premium hero says why and the rest of Home stays live", async ({ page }) => {

@@ -8,7 +8,7 @@ import { Button, Card, Input, Label, focusRing } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { useChat } from "@/hooks/useChat";
-import { getLastUsedAgentId, AGENTS } from "@/lib/agents";
+import { getLastUsedAgentId, useAgents } from "@/lib/agents";
 
 interface FloatingChatBarProps {
   open: boolean;
@@ -21,20 +21,26 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
   const previousFocusRef = useRef<Element | null>(null);
   const [input, setInput] = useState("");
 
+  const { agents } = useAgents();
+
   // Re-read localStorage each time the bar opens so agent name stays in sync
   const lastUsedAgentId = useMemo(() => getLastUsedAgentId(), [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  const agentName = useMemo(() => {
-    const agent = AGENTS.find((a) => a.id === lastUsedAgentId) ?? AGENTS[0];
-    return t(agent.nameKey);
-  }, [lastUsedAgentId, t]);
+  /* Resolved against the fetched list, and it is the resolved id — not the stored one — that
+   * drives the chat: `build_system_prompt` now rejects an unknown agent id, so a stale
+   * localStorage value must not reach `send_chat_message`. */
+  const agent = agents.find((a) => a.id === lastUsedAgentId) ?? agents[0];
+  const agentName = t(agent.nameKey);
 
   const dateLocale = i18n.language.startsWith("fr") ? frLocale : undefined;
   const today = useMemo(() => new Date(), []);
   const freshnessDate = format(today, "PPP", { locale: dateLocale });
   const previousMonth = format(subMonths(today, 1), "LLLL", { locale: dateLocale });
 
+  /* Mounted app-wide but only live while open: without this it would keep listening to the
+   * app-global stream events behind a chat route that owns the turn (R3). */
   const { messages, streaming, sendMessage, confirmAction, cancelAction } = useChat({
-    agentId: lastUsedAgentId,
+    agentId: agent.id,
+    enabled: open,
   });
 
   // Capture previous focus and auto-focus input
@@ -78,11 +84,7 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
   const lastAiMsg = [...messages].reverse().find((m) => m.role === "assistant");
   const hasHistory = lastUserMsg !== undefined || lastAiMsg !== undefined;
 
-  const starterPrompts = [
-    t("chat.starterTracking"),
-    t("chat.starterVsLastMonth", { month: previousMonth }),
-    t("chat.starterWhereItGoes"),
-  ];
+  const starterPrompts = agent.starterKeys.map((key) => t(key, { month: previousMonth }));
 
   return (
     <div
@@ -177,7 +179,7 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
                 </button>
               ))}
             </div>
-            <p className="mt-3 text-caption text-ink-faint">{t("chat.dataScope")}</p>
+            <p className="mt-3 text-caption text-ink-faint">{t(agent.scopeKey)}</p>
           </div>
         )}
 

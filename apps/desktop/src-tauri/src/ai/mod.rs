@@ -1,7 +1,9 @@
+pub mod agents;
 pub mod attachment;
 pub mod backend;
 pub mod cc_parser;
 pub mod chat;
+pub mod context;
 pub mod home_surface;
 pub mod hosted_bedrock;
 #[cfg(test)]

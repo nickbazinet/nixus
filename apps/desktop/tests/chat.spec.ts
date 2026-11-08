@@ -44,6 +44,12 @@ function mockApi(page: Page) {
             unknown
           >[]
       ),
+    executedActionConversationIds: () =>
+      page.evaluate(
+        () =>
+          (window as unknown as MockWindow)
+            .__MOCK_EXECUTED_ACTION_CONVERSATION_IDS__ as number[]
+      ),
     setPickedFile: (path: string | null) =>
       page.evaluate(
         (p) =>
@@ -110,6 +116,8 @@ async function setupTauriMock(page: Page) {
     w.__MOCK_EXECUTED_ACTIONS__ = executedActions;
     const executedActionParams: Record<string, unknown>[] = [];
     w.__MOCK_EXECUTED_ACTION_PARAMS__ = executedActionParams;
+    const executedActionConversationIds: number[] = [];
+    w.__MOCK_EXECUTED_ACTION_CONVERSATION_IDS__ = executedActionConversationIds;
     const cancelledActions: { conversation_id: number; action_type: string }[] = [];
     w.__MOCK_CANCELLED_ACTIONS__ = cancelledActions;
 
@@ -255,6 +263,7 @@ async function setupTauriMock(page: Page) {
           case "execute_chat_action":
             executedActions.push(args.action_type as string);
             executedActionParams.push(args.params as Record<string, unknown>);
+            executedActionConversationIds.push(args.conversation_id as number);
             if (args.action_type === "create_budget_category") {
               return Promise.resolve({ success: true, message: "Done. House added to Needs." });
             }
@@ -548,6 +557,27 @@ test.describe("AI Chat Page — Story 7.2", () => {
     expect(forwarded).not.toHaveProperty("budget_category_id");
   });
 
+  /* The backend now reads the conversation's agent to decide whether a confirmed action is
+   * permitted, and refuses a conversation it cannot find — so a confirm that forwards the `?? 0`
+   * placeholder instead of a real id would be rejected outright. This pins the very first confirm
+   * of a brand-new conversation, which is the only moment the id could still be unset. */
+  test("confirming an action immediately after the first message forwards a real conversation id", async ({
+    page,
+  }) => {
+    const mock = mockApi(page);
+
+    await page.getByTestId("chat-input").fill("Add expense");
+    await page.getByTestId("chat-input").press("Enter");
+
+    await expect(page.getByTestId("action-confirm-button")).toBeVisible({ timeout: 5000 });
+    await page.getByTestId("action-confirm-button").click();
+    await expect(page.getByTestId("chat-message-assistant").last()).toContainText(
+      "expense added for Costco"
+    );
+
+    expect(await mock.executedActionConversationIds()).toEqual([1]);
+  });
+
   test("clicking Cancel shows 'Action cancelled' message [AC5]", async ({ page }) => {
     const mock = mockApi(page);
 
@@ -659,6 +689,13 @@ test.describe("Floating Chat Bar — Story 7.3", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/");
+    /* Cmd+K is handled by a `document` listener the shell attaches in an effect, so pressing it
+     * before the shell has committed silently drops the keypress and every assertion below then
+     * waits on an overlay that was never asked to open. Waiting for a rendered shell affordance is
+     * what makes this block deterministic. */
+    await expect(
+      page.locator('nav[aria-label="Module navigation"]').getByRole("link", { name: "Home" })
+    ).toBeVisible();
   });
 
   test("pressing Cmd+K opens the floating chat bar overlay [AC1]", async ({ page }) => {

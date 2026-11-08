@@ -2,7 +2,9 @@ use aws_sdk_bedrockruntime::types::ConversationRole;
 use tauri::{AppHandle, Emitter};
 use tracing::info;
 
+use crate::ai::agents::{self, AgentSpec};
 use crate::ai::backend::{self, AiAttachment, AiOperation, AiRequest, AiRole, AiTurn};
+use crate::ai::context;
 use crate::ai::AiProvider;
 use crate::error::AppError;
 
@@ -18,15 +20,385 @@ pub struct ToolCallRequest {
     pub params: serde_json::Value,
 }
 
-// Single-arm match is the extension point for additional agent prompts.
-#[allow(clippy::match_single_binding)]
-pub fn build_system_prompt(agent_id: &str, today: &str, context: &str) -> String {
-    match agent_id {
-        _ => build_budget_helper_prompt(today, context),
+/// Resolves an agent's system prompt through the registry.
+///
+/// Both failure modes are errors rather than fallbacks, which is the point: the previous
+/// catch-all handed any unrecognized id the budget-helper prompt — and therefore budget context —
+/// under a conversation row labelled something else.
+pub fn build_system_prompt(
+    agent_id: &str,
+    today: &str,
+    context: &str,
+) -> Result<String, AppError> {
+    let spec = agents::spec(agent_id)?;
+
+    match spec.prompt {
+        Some(render) => Ok(render(spec, today, context)),
+        None => Err(AppError::Validation {
+            message: format!("agent '{}' is not a chat agent", spec.id),
+            field: Some("agent_id".to_string()),
+        }),
     }
 }
 
-fn build_budget_helper_prompt(today: &str, context: &str) -> String {
+/// Per-tool documentation. Only the fragments for the tools in an agent's allowlist are rendered,
+/// so an agent never reads about a tool its dispatch site would refuse anyway.
+fn tool_fragment(tool: &str) -> &'static str {
+    match tool {
+        "query_expenses" => {
+            r#"- **query_expenses**: Search expense records. All params are optional.
+  - `date_from` (string, YYYY-MM-DD): Start date (inclusive)
+  - `date_to` (string, YYYY-MM-DD): End date (inclusive)
+  - `merchant` (string): Partial match on merchant name
+  - `category_name` (string): Partial match on the budget category name. Case-insensitive for ASCII letters only — accented or non-Latin characters must match the stored case exactly
+  - `limit` (integer): Max results, default 50, max 100
+  - `sort` (string): "date_asc" or "date_desc" (default)
+
+Categories are referenced by name only; there is no category ID parameter. When the user names a category ("expenses for Groceries"), pass that name as `category_name` — do not ask the user for a category ID. Matching is partial, so a name fragment works, and every category sharing that name is included. Use a tool when you need expense details not available in the current context. For relative periods ("the past 3 months", "last month"), compute absolute `date_from` and `date_to` values from today's date and pass those; there is no relative-period parameter. A `query_expenses` result lists the filters, limit and sort that were actually applied — trust those over anything from earlier in the conversation, and if it reports that the limit was reached, say the list may be incomplete. After receiving tool results, answer the user's question using that data. When presenting multiple expenses, use a table format. Always convert cents to dollars for display.
+
+A fully populated `query_expenses` call looks like this:
+
+```tool_call
+{
+  "tool": "query_expenses",
+  "params": {
+    "date_from": "2026-01-01",
+    "date_to": "2026-01-31",
+    "merchant": "Costco",
+    "category_name": "Groceries",
+    "limit": 10,
+    "sort": "date_desc"
+  }
+}
+```
+
+"#
+        }
+        "query_maintenance_status" => {
+            r#"- **query_maintenance_status**: Get maintenance task status for vehicles. All params optional.
+  - `vehicle_id` (integer): Filter to one vehicle. Omit for all vehicles.
+  - `status_filter` (string): "upcoming", "due", "overdue", or "all" (default)
+
+"#
+        }
+        "query_maintenance_history" => {
+            r#"- **query_maintenance_history**: Get service log history for a vehicle.
+  - `vehicle_id` (integer, required): Vehicle to query
+  - `task_type_key` (string, optional): Filter to one task type (e.g. "engine_oil_filter")
+  - `limit` (integer): Max results, default 20, max 50
+
+"#
+        }
+        _ => "",
+    }
+}
+
+/// Guidance that only makes sense once a whole family of tools is present, rather than per tool.
+///
+/// Built rather than declared so the roster layout it instructs the model to match against is the
+/// one `ai::context` actually emits.
+fn maintenance_tool_guidance() -> String {
+    MAINTENANCE_TOOL_GUIDANCE_TEMPLATE.replace("{roster_shape}", context::VEHICLE_ROSTER_SHAPE)
+}
+
+const MAINTENANCE_TOOL_GUIDANCE_TEMPLATE: &str = r#"Use maintenance tools when the user asks about vehicle maintenance schedules, due dates, service history, or odometer-related upkeep. Custom service logs (not tied to a scheduled task) appear in history with their free-text service name. Never fabricate maintenance data — if no vehicles are registered, say so.
+
+### Working out which vehicle the user means
+
+Each vehicle in the data is listed as `{roster_shape}`. Resolve what the user typed against EVERY part of that line — nickname, year, make, model — case-insensitively and on partial words, then pass the resolved `vehicle_id`.
+
+People almost never type the full name. Expect and resolve:
+- **Shortened makes.** vw / volks → Volkswagen; chevy → Chevrolet; merc / benz → Mercedes-Benz; beemer / bimmer / bmw → BMW; subie → Subaru; caddy → Cadillac; vette → Corvette; toyo → Toyota; mitsu → Mitsubishi; hyundai/hyundai, kia, mazda, nissan, honda, ford as written.
+- **Trim levels and badges, which are NOT models.** GLI, GTI, GT, R-Line, Si, Type R, SE, LE, XLE, EX, LX, SV, SEL, Sport, Touring, Limited, Denali, TRD, AMG, M3, xDrive, Quattro, 4Matic. A Jetta GLI is a Jetta; an Accord Sport is an Accord.
+- **Just the year** ("the 2019"), just the make ("the Honda"), or a nickname that matches nothing else.
+
+A token you cannot place is far more likely to be a trim, a badge or a typo than a different vehicle. **Ignore it and match on what you can place — never conclude a vehicle is unregistered because of one unrecognised word.**
+
+Then act on what you found:
+- **Exactly one plausible vehicle** — use it and answer the question. Do NOT ask the user to confirm; naming it in your answer ("your 2019 Volkswagen Jetta") is confirmation enough.
+- **More than one plausible vehicle** — ask which, listing them.
+- **Genuinely none** — say so and list what is registered.
+
+"#;
+
+pub(crate) const MAINTENANCE_DATA_MODEL: &str = r#"Maintenance data model: each vehicle has a display label derived from year/make/model and a current odometer (km). New vehicles get 12 default maintenance task types with km and/or time intervals. Status is computed from km OR time thresholds (whichever is worse): ok, upcoming, due, overdue. Default task type keys: engine_oil_filter, transmission_fluid, brake_fluid, coolant, power_steering_fluid, brake_pads, brake_discs, engine_air_filter, cabin_air_filter, spark_plugs, shock_absorbers, battery_replacement. Older vehicles may still have tire_rotation or tire_replacement tasks. Map user phrases: "oil change" → engine_oil_filter; "brake pads" → brake_pads; "rotors" or "disc brakes" → brake_discs; "battery" → battery_replacement.
+
+"#;
+
+/// The tool half of a prompt, rendered from an agent's allowlist. Empty allowlist, no section —
+/// an agent with no tools must not be told the protocol for using them.
+pub(crate) fn render_tool_section(tools: &[&str]) -> String {
+    if tools.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from(
+        r#"## Tools
+
+You have access to tools to query detailed data. To use a tool, respond with ONLY a JSON block naming the tool and its params:
+
+```tool_call
+{
+  "tool": "<one of the tools below>",
+  "params": { }
+}
+```
+
+Available tools:
+"#,
+    );
+
+    for tool in tools {
+        out.push_str(tool_fragment(tool));
+    }
+
+    if tools
+        .iter()
+        .any(|tool| tool.starts_with("query_maintenance"))
+    {
+        out.push_str(&maintenance_tool_guidance());
+        out.push_str(MAINTENANCE_DATA_MODEL);
+    }
+
+    out
+}
+
+/// The one line naming an action's required params. Rendered only for allowed actions, so the
+/// list the model reads and the list `execute_chat_action` accepts cannot drift apart.
+fn action_requirement(action: &str) -> &'static str {
+    match action {
+        "create_expense" => {
+            "- For create_expense: params must include merchant, amount_cents, category_name, date\n"
+        }
+        "create_budget_category" => {
+            "- For create_budget_category: params must include category_name and group_name; target_cents is optional\n"
+        }
+        "batch_actions" => {
+            "- For batch_actions: params must include actions, an array of {action_type, params} objects — see \"Batching several actions into one card\" below\n"
+        }
+        "update_balance" => "- For update_balance: params must include account_id, balance_cents\n",
+        "create_account" => {
+            "- For create_account: params must include name, institution, account_type, currency\n"
+        }
+        "update_asset_value" => {
+            "- For update_asset_value: params must include asset_id, value_cents\n"
+        }
+        _ => "",
+    }
+}
+
+/// The long-form section some actions need beyond their one-line requirement.
+fn action_section(action: &str) -> &'static str {
+    match action {
+        "create_expense" => {
+            r#"For create_expense, `category_name` must be the exact full name of one category listed in the data — never a numeric ID and never a fragment. If two listed categories share that name, or none matches, ask the user which category to use.
+"#
+        }
+        "create_budget_category" => {
+            r#"### Creating a budget category
+
+`create_budget_category` adds ONE new category to an EXISTING budget group.
+
+- `category_name` (string, required): the new category's name.
+- `group_name` (string, required): must be one of the group names listed under "Budget Groups" in the data. There is no way to create a group, and a name that is not listed will be refused — if you cannot tell which group the user means, ASK instead of guessing.
+- `target_cents` (integer, optional): the monthly target. Omit it and the category is created with a $1.00 placeholder the user can edit later. If you do send it, it must be a whole number of cents greater than zero.
+
+The card the user approves is what `display.details` says, so it must name the group and state the target — including when you omit `target_cents` and the placeholder applies. This is the exact shape, with the target omitted:
+
+```action
+{
+  "action": true,
+  "action_type": "create_budget_category",
+  "display": {
+    "label": "Add Budget Category",
+    "details": [
+      { "field": "Category", "value": "House" },
+      { "field": "Group", "value": "Needs" },
+      { "field": "Target", "value": "$1.00 (placeholder)" }
+    ]
+  },
+  "params": {
+    "category_name": "House",
+    "group_name": "Needs"
+  }
+}
+```
+
+When the user DID name a target, send `target_cents` and show that figure instead of the placeholder text.
+
+Never send an id of any kind for either the category or the group. Ids in a payload are ignored, and names are the only reference.
+
+If the category already exists, confirming again changes nothing and reports that it already exists, so there is no harm in a repeat — but do not propose a card for a category you can already see in the data.
+
+"#
+        }
+        "batch_actions" => {
+            r#"### Batching several actions into one card
+
+When the user has already told you, in one message, every action they want run — a fixed named list of new categories, a batch of expenses (from a statement, a spreadsheet, or dictated one by one), several balance updates, whatever — use `batch_actions` instead of one card per item. One card, one confirm, every item executed together. This works for ANY action type, including a mix of different types in the same batch.
+
+- `actions` (array, required): one object per item, each shaped `{ "action_type": "...", "params": {...} }` — `action_type` must be one of the OTHER valid action types above (never `batch_actions` itself), and `params` must satisfy that type's own required fields exactly as if it were its own card.
+- `display.details` must list every item in the batch so the user can review all of them before confirming — one detail row per item, summarising what it will do.
+- Each item is executed independently: if one item fails (an unknown category, a bad account id), the rest still run, and the result message reports exactly which ones failed and why. This is why a failed item is safe to re-propose alone once the missing detail is known, without redoing the whole batch.
+
+```action
+{
+  "action": true,
+  "action_type": "batch_actions",
+  "display": {
+    "label": "Add 3 Budget Categories",
+    "details": [
+      { "field": "House Related", "value": "Housing — $1.00 (placeholder)" },
+      { "field": "Car", "value": "Transportation — $1.00 (placeholder)" },
+      { "field": "Other", "value": "Lifestyle — $1.00 (placeholder)" }
+    ]
+  },
+  "params": {
+    "actions": [
+      { "action_type": "create_budget_category", "params": { "category_name": "House Related", "group_name": "Housing" } },
+      { "action_type": "create_budget_category", "params": { "category_name": "Car", "group_name": "Transportation" } },
+      { "action_type": "create_budget_category", "params": { "category_name": "Other", "group_name": "Lifestyle" } }
+    ]
+  }
+}
+```
+
+"#
+        }
+        _ => "",
+    }
+}
+
+const CREATE_EXPENSE_EXAMPLE: &str = r#"```action
+{
+  "action": true,
+  "action_type": "create_expense",
+  "display": {
+    "label": "Add Expense",
+    "details": [
+      { "field": "Merchant", "value": "Costco" },
+      { "field": "Amount", "value": "$45.00" },
+      { "field": "Category", "value": "Groceries" },
+      { "field": "Date", "value": "2026-03-14" }
+    ]
+  },
+  "params": {
+    "merchant": "Costco",
+    "amount_cents": 4500,
+    "category_name": "Groceries",
+    "date": "2026-03-14"
+  }
+}
+```
+
+"#;
+
+const ONE_ACTION_PER_RESPONSE: &str = r#"### One action per response
+
+Emit AT MOST ONE ```action fence per response, and never list several top-level actions inside one fence — only the first is ever shown to the user, so the rest are silently lost."#;
+
+/// The batching half of the one-action rule. Separate because an agent without `batch_actions`
+/// must not be told to reach for it — the rule itself still applies to every agent.
+const ONE_ACTION_PER_RESPONSE_BATCHING: &str = r#" (`batch_actions`'s `actions` array is a single action with several items, not several top-level actions, and stays within this rule.)
+
+When the user has told you every item of a multi-write request up front (named a list, dictated several expenses, confirmed a breakdown you proposed), put them all in ONE `batch_actions` fence — do not propose them one card at a time and do not wait between them, no matter how many items there are or what type of action they are.
+
+Only fall back to proposing ONE action at a time when the user has NOT yet told you every item — e.g. they described the work but you still need to ask which categories, or confirm a breakdown, before you know the full list:
+1. Summarise in plain text what you understood and how many items it involves.
+2. Ask the user to confirm the breakdown, or to name which one to start with.
+3. Once they have confirmed the full list, propose it as one `batch_actions` card."#;
+
+const ACTION_OUTCOME_RULE: &str = r#"
+
+A result message tells you what actually happened. If a previous action reports that it did not complete, or that the user cancelled it, do NOT re-send the same card — ask for the missing or unclear detail first.
+
+"#;
+
+/// The write half of a prompt, rendered from an agent's allowlist.
+///
+/// A read-only agent gets no Actions section at all. That is the point of rendering it: prompt
+/// scoping is not enforcement, but an agent never told how to emit a card is far less likely to
+/// try, and the tokens saved are real.
+pub(crate) fn render_action_section(actions: &[&str]) -> String {
+    if actions.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from(
+        r#"## Actions
+
+When the user asks you to PERFORM AN ACTION (add expense, update balance, create account, update asset value), respond with ONLY a JSON block in this exact format:
+
+"#,
+    );
+
+    if actions.contains(&"create_expense") {
+        out.push_str(CREATE_EXPENSE_EXAMPLE);
+    }
+
+    let quoted: Vec<String> = actions.iter().map(|a| format!("\"{a}\"")).collect();
+    out.push_str(&format!("Valid action_types: {}\n", quoted.join(", ")));
+    for action in actions {
+        out.push_str(action_requirement(action));
+    }
+    out.push('\n');
+
+    if actions.contains(&"create_expense") {
+        out.push_str(action_section("create_expense"));
+    }
+    out.push_str("If you cannot determine a required field, ask the user for clarification instead of guessing.\n\n");
+
+    for action in actions {
+        if *action == "create_expense" {
+            continue;
+        }
+        out.push_str(action_section(action));
+    }
+
+    out.push_str(ONE_ACTION_PER_RESPONSE);
+    if actions.contains(&"batch_actions") {
+        out.push_str(ONE_ACTION_PER_RESPONSE_BATCHING);
+    }
+    out.push_str(ACTION_OUTCOME_RULE);
+    out
+}
+
+/// The maintenance agent's prompt.
+///
+/// The data-model paragraph and the user-phrase mapping are not authored here: they are the
+/// fragments `render_tool_section` already emits for the maintenance tools, so they live in one
+/// place and reach exactly the agents holding those tools.
+pub(crate) fn build_car_maintenance_prompt(
+    spec: &AgentSpec,
+    today: &str,
+    context: &str,
+) -> String {
+    format!(
+        r#"You are a vehicle maintenance assistant for a personal upkeep app. Answer the user's questions about their vehicles, service schedules and service history using the context provided below.
+
+Guidelines:
+- Today's date is {today}.
+- Distances are kilometres, and odometer readings are whole kilometres
+- When listing several tasks or past services, use a simple table format
+- Be concise and direct
+- If the data doesn't contain what the user asks about, say so honestly
+
+{tools}You cannot change anything: you have no write actions. If the user asks you to log a service, add a vehicle, or correct an odometer reading, tell them it is done from the Garage screen.
+
+Questions about budgets, expenses, accounts or net worth are handled by the Budget Helper agent. Point the user there rather than guessing.
+
+Respond with plain text as normal.
+
+Current Vehicle Data:
+{context}
+"#,
+        today = today,
+        tools = render_tool_section(spec.tools),
+        context = context
+    )
+}
+
+pub(crate) fn build_budget_helper_prompt(spec: &AgentSpec, today: &str, context: &str) -> String {
     format!(
         r#"You are a helpful financial assistant for a personal finance app. Answer the user's questions about their financial data using the context provided below.
 
@@ -38,170 +410,47 @@ Guidelines:
 - If the data doesn't contain what the user asks about, say so honestly
 - All amounts are in cents in the data; convert to dollars for display
 
-## Tools
+Vehicle maintenance is handled by the Car Maintenance agent. If the user asks about vehicle servicing, say so and point them to it; do not guess.
 
-You have access to tools to query detailed data. To use a tool, respond with ONLY a JSON block:
-
-```tool_call
-{{
-  "tool": "query_expenses",
-  "params": {{
-    "date_from": "2026-01-01",
-    "date_to": "2026-01-31",
-    "merchant": "Costco",
-    "category_name": "Groceries",
-    "limit": 10,
-    "sort": "date_desc"
-  }}
-}}
-```
-
-Available tools:
-- **query_expenses**: Search expense records. All params are optional.
-  - `date_from` (string, YYYY-MM-DD): Start date (inclusive)
-  - `date_to` (string, YYYY-MM-DD): End date (inclusive)
-  - `merchant` (string): Partial match on merchant name
-  - `category_name` (string): Partial match on the budget category name. Case-insensitive for ASCII letters only — accented or non-Latin characters must match the stored case exactly
-  - `limit` (integer): Max results, default 50, max 100
-  - `sort` (string): "date_asc" or "date_desc" (default)
-
-Categories are referenced by name only; there is no category ID parameter. When the user names a category ("expenses for Groceries"), pass that name as `category_name` — do not ask the user for a category ID. Matching is partial, so a name fragment works, and every category sharing that name is included. Use a tool when you need expense details not available in the current context. For relative periods ("the past 3 months", "last month"), compute absolute `date_from` and `date_to` values from today's date and pass those; there is no relative-period parameter. A `query_expenses` result lists the filters, limit and sort that were actually applied — trust those over anything from earlier in the conversation, and if it reports that the limit was reached, say the list may be incomplete. After receiving tool results, answer the user's question using that data. When presenting multiple expenses, use a table format. Always convert cents to dollars for display.
-
-- **query_maintenance_status**: Get maintenance task status for vehicles. All params optional.
-  - `vehicle_id` (integer): Filter to one vehicle. Omit for all vehicles.
-  - `status_filter` (string): "upcoming", "due", "overdue", or "all" (default)
-
-- **query_maintenance_history**: Get service log history for a vehicle.
-  - `vehicle_id` (integer, required): Vehicle to query
-  - `task_type_key` (string, optional): Filter to one task type (e.g. "engine_oil_filter")
-  - `limit` (integer): Max results, default 20, max 50
-
-Use maintenance tools when the user asks about vehicle maintenance schedules, due dates, service history, or odometer-related upkeep. Custom service logs (not tied to a scheduled task) appear in history with their free-text service name. Match vehicles by their display label (year, make, model — case-insensitive partial match) when the user says "Civic" etc., then pass the resolved `vehicle_id`. Never fabricate maintenance data — if no vehicles are registered, say so.
-
-Maintenance data model: each vehicle has a display label derived from year/make/model and a current odometer (km). New vehicles get 12 default maintenance task types with km and/or time intervals. Status is computed from km OR time thresholds (whichever is worse): ok, upcoming, due, overdue. Default task type keys: engine_oil_filter, transmission_fluid, brake_fluid, coolant, power_steering_fluid, brake_pads, brake_discs, engine_air_filter, cabin_air_filter, spark_plugs, shock_absorbers, battery_replacement. Older vehicles may still have tire_rotation or tire_replacement tasks. Map user phrases: "oil change" → engine_oil_filter; "brake pads" → brake_pads; "rotors" or "disc brakes" → brake_discs; "battery" → battery_replacement.
-
-## Actions
-
-When the user asks you to PERFORM AN ACTION (add expense, update balance, create account, update asset value), respond with ONLY a JSON block in this exact format:
-
-```action
-{{
-  "action": true,
-  "action_type": "create_expense",
-  "display": {{
-    "label": "Add Expense",
-    "details": [
-      {{ "field": "Merchant", "value": "Costco" }},
-      {{ "field": "Amount", "value": "$45.00" }},
-      {{ "field": "Category", "value": "Groceries" }},
-      {{ "field": "Date", "value": "2026-03-14" }}
-    ]
-  }},
-  "params": {{
-    "merchant": "Costco",
-    "amount_cents": 4500,
-    "category_name": "Groceries",
-    "date": "2026-03-14"
-  }}
-}}
-```
-
-Valid action_types: "create_expense", "create_budget_category", "batch_actions", "update_balance", "create_account", "update_asset_value"
-- For create_expense: params must include merchant, amount_cents, category_name, date
-- For create_budget_category: params must include category_name and group_name; target_cents is optional
-- For batch_actions: params must include actions, an array of {{action_type, params}} objects — see "Batching several actions into one card" below
-- For update_balance: params must include account_id, balance_cents
-- For create_account: params must include name, institution, account_type, currency
-- For update_asset_value: params must include asset_id, value_cents
-
-For create_expense, `category_name` must be the exact full name of one category listed in the data — never a numeric ID and never a fragment. If two listed categories share that name, or none matches, ask the user which category to use.
-If you cannot determine a required field, ask the user for clarification instead of guessing.
-
-### Creating a budget category
-
-`create_budget_category` adds ONE new category to an EXISTING budget group.
-
-- `category_name` (string, required): the new category's name.
-- `group_name` (string, required): must be one of the group names listed under "Budget Groups" in the data. There is no way to create a group, and a name that is not listed will be refused — if you cannot tell which group the user means, ASK instead of guessing.
-- `target_cents` (integer, optional): the monthly target. Omit it and the category is created with a $1.00 placeholder the user can edit later. If you do send it, it must be a whole number of cents greater than zero.
-
-The card the user approves is what `display.details` says, so it must name the group and state the target — including when you omit `target_cents` and the placeholder applies. This is the exact shape, with the target omitted:
-
-```action
-{{
-  "action": true,
-  "action_type": "create_budget_category",
-  "display": {{
-    "label": "Add Budget Category",
-    "details": [
-      {{ "field": "Category", "value": "House" }},
-      {{ "field": "Group", "value": "Needs" }},
-      {{ "field": "Target", "value": "$1.00 (placeholder)" }}
-    ]
-  }},
-  "params": {{
-    "category_name": "House",
-    "group_name": "Needs"
-  }}
-}}
-```
-
-When the user DID name a target, send `target_cents` and show that figure instead of the placeholder text.
-
-Never send an id of any kind for either the category or the group. Ids in a payload are ignored, and names are the only reference.
-
-If the category already exists, confirming again changes nothing and reports that it already exists, so there is no harm in a repeat — but do not propose a card for a category you can already see in the data.
-
-### Batching several actions into one card
-
-When the user has already told you, in one message, every action they want run — a fixed named list of new categories, a batch of expenses (from a statement, a spreadsheet, or dictated one by one), several balance updates, whatever — use `batch_actions` instead of one card per item. One card, one confirm, every item executed together. This works for ANY action type, including a mix of different types in the same batch.
-
-- `actions` (array, required): one object per item, each shaped `{{ "action_type": "...", "params": {{...}} }}` — `action_type` must be one of the OTHER valid action types above (never `batch_actions` itself), and `params` must satisfy that type's own required fields exactly as if it were its own card.
-- `display.details` must list every item in the batch so the user can review all of them before confirming — one detail row per item, summarising what it will do.
-- Each item is executed independently: if one item fails (an unknown category, a bad account id), the rest still run, and the result message reports exactly which ones failed and why. This is why a failed item is safe to re-propose alone once the missing detail is known, without redoing the whole batch.
-
-```action
-{{
-  "action": true,
-  "action_type": "batch_actions",
-  "display": {{
-    "label": "Add 3 Budget Categories",
-    "details": [
-      {{ "field": "House Related", "value": "Housing — $1.00 (placeholder)" }},
-      {{ "field": "Car", "value": "Transportation — $1.00 (placeholder)" }},
-      {{ "field": "Other", "value": "Lifestyle — $1.00 (placeholder)" }}
-    ]
-  }},
-  "params": {{
-    "actions": [
-      {{ "action_type": "create_budget_category", "params": {{ "category_name": "House Related", "group_name": "Housing" }} }},
-      {{ "action_type": "create_budget_category", "params": {{ "category_name": "Car", "group_name": "Transportation" }} }},
-      {{ "action_type": "create_budget_category", "params": {{ "category_name": "Other", "group_name": "Lifestyle" }} }}
-    ]
-  }}
-}}
-```
-
-### One action per response
-
-Emit AT MOST ONE ```action fence per response, and never list several top-level actions inside one fence — only the first is ever shown to the user, so the rest are silently lost. (`batch_actions`'s `actions` array is a single action with several items, not several top-level actions, and stays within this rule.)
-
-When the user has told you every item of a multi-write request up front (named a list, dictated several expenses, confirmed a breakdown you proposed), put them all in ONE `batch_actions` fence — do not propose them one card at a time and do not wait between them, no matter how many items there are or what type of action they are.
-
-Only fall back to proposing ONE action at a time when the user has NOT yet told you every item — e.g. they described the work but you still need to ask which categories, or confirm a breakdown, before you know the full list:
-1. Summarise in plain text what you understood and how many items it involves.
-2. Ask the user to confirm the breakdown, or to name which one to start with.
-3. Once they have confirmed the full list, propose it as one `batch_actions` card.
-
-A result message tells you what actually happened. If a previous action reports that it did not complete, or that the user cancelled it, do NOT re-send the same card — ask for the missing or unclear detail first.
-
-For data QUERIES (not actions), respond with plain text as normal.
+{tools}{actions}For data QUERIES (not actions), respond with plain text as normal.
 
 Current Financial Data:
-{}
+{context}
 "#,
-        context
+        today = today,
+        tools = render_tool_section(spec.tools),
+        actions = render_action_section(spec.actions),
+        context = context
     )
+}
+
+/// A fenced block the backend is expected to act on, already judged against the agent's
+/// allowlist.
+///
+/// The judging happens here rather than at the dispatch site so there is exactly ONE place that
+/// decides "this block is not allowed for this agent".
+pub enum ModelBlock {
+    Tool(ToolCallRequest),
+    /// A tool outside the agent's allowlist. Carried as a variant rather than an error because
+    /// the turn must still complete: the model is handed a tool result saying no, and explains
+    /// itself, which beats an error toast.
+    ToolNotAllowed(String),
+}
+
+/// The line a refused tool is answered with. Fed back through the same `tool_result` path a real
+/// result takes, which is what lets the turn finish normally.
+pub fn tool_not_allowed_result(tool: &str) -> String {
+    format!("Tool result: tool '{tool}' is not available to this agent.")
+}
+
+pub fn parse_model_block(response: &str, allowed_tools: &[&str]) -> Option<ModelBlock> {
+    let call = parse_tool_call(response)?;
+
+    if allowed_tools.contains(&call.tool.as_str()) {
+        Some(ModelBlock::Tool(call))
+    } else {
+        Some(ModelBlock::ToolNotAllowed(call.tool))
+    }
 }
 
 pub fn parse_tool_call(response: &str) -> Option<ToolCallRequest> {
@@ -515,8 +764,215 @@ mod tests {
         assert!(out.contains("query_expenses"));
     }
 
+    const EXPENSE_TOOL_CALL: &str = "```tool_call\n{\"tool\": \"query_expenses\", \"params\": {}}\n```";
+
+    #[test]
+    fn a_tool_on_the_allowlist_is_parsed_as_runnable() {
+        match parse_model_block(EXPENSE_TOOL_CALL, &["query_expenses"]) {
+            Some(ModelBlock::Tool(call)) => assert_eq!(call.tool, "query_expenses"),
+            _ => panic!("an allowed tool must parse as runnable"),
+        }
+    }
+
+    /// The load-bearing half of the allowlist: a model can emit any fence it likes, so removing a
+    /// tool from a prompt makes the call unlikely, not impossible.
+    #[test]
+    fn a_tool_outside_the_allowlist_is_refused_rather_than_run() {
+        match parse_model_block(EXPENSE_TOOL_CALL, &["query_maintenance_status"]) {
+            Some(ModelBlock::ToolNotAllowed(tool)) => assert_eq!(tool, "query_expenses"),
+            _ => panic!("a tool outside the allowlist must not parse as runnable"),
+        }
+    }
+
+    #[test]
+    fn an_agent_with_no_tools_can_run_none_of_them() {
+        assert!(matches!(
+            parse_model_block(EXPENSE_TOOL_CALL, &[]),
+            Some(ModelBlock::ToolNotAllowed(_))
+        ));
+    }
+
+    #[test]
+    fn a_plain_answer_carries_no_block_to_judge() {
+        assert!(parse_model_block("You spent $42 on groceries.", &["query_expenses"]).is_none());
+    }
+
+    #[test]
+    fn the_refusal_is_phrased_as_a_tool_result_so_the_turn_can_finish() {
+        let result = tool_not_allowed_result("query_expenses");
+
+        assert!(result.starts_with("Tool result:"));
+        assert!(result.contains("query_expenses"));
+        assert!(result.contains("not available to this agent"));
+    }
+
+    #[test]
+    fn a_prompt_advertises_only_the_tools_its_agent_may_run() {
+        let scoped = render_tool_section(&["query_maintenance_status"]);
+
+        assert!(scoped.contains("query_maintenance_status"));
+        assert!(!scoped.contains("query_expenses"));
+        assert!(!scoped.contains("query_maintenance_history"));
+    }
+
+    #[test]
+    fn a_prompt_advertises_only_the_actions_its_agent_may_run() {
+        let scoped = render_action_section(&["create_expense"]);
+
+        assert!(scoped.contains("create_expense"));
+        assert!(!scoped.contains("create_budget_category"));
+        assert!(!scoped.contains("batch_actions"));
+        assert!(!scoped.contains("update_asset_value"));
+    }
+
+    /// A read-only agent is never told the protocol for writing, and an agent with no tools is
+    /// never told the protocol for calling them.
+    #[test]
+    fn an_empty_allowlist_renders_no_section_at_all() {
+        assert_eq!(render_tool_section(&[]), "");
+        assert_eq!(render_action_section(&[]), "");
+    }
+
+    /// Guards the silent failure mode of a fragment table: a spec naming a tool or action with no
+    /// fragment would render an allowlist the model is never told about.
+    #[test]
+    fn every_tool_and_action_in_the_registry_has_prompt_text() {
+        // Surface agents render no chat prompt at all, so their allowlists have no prose to carry.
+        for agent in agents::all()
+            .iter()
+            .filter(|agent| agent.prompt.is_some())
+        {
+            for tool in agent.tools {
+                assert!(
+                    !tool_fragment(tool).is_empty(),
+                    "{} grants {tool} with no prompt fragment",
+                    agent.id
+                );
+            }
+            for action in agent.actions {
+                assert!(
+                    !action_requirement(action).is_empty(),
+                    "{} grants {action} with no prompt requirement line",
+                    agent.id
+                );
+            }
+        }
+    }
+
+    fn car_prompt() -> String {
+        build_system_prompt("car-maintenance", "2026-11-07", "Maintenance Tracking:\n")
+            .expect("car-maintenance is a chat agent")
+    }
+
+    #[test]
+    fn the_car_agent_advertises_exactly_its_two_maintenance_tools() {
+        let prompt = car_prompt();
+
+        assert!(prompt.contains("query_maintenance_status"));
+        assert!(prompt.contains("query_maintenance_history"));
+        assert!(!prompt.contains("query_expenses"));
+    }
+
+    /// Read-only in this step, so it must carry no action protocol at all — not one fence, not the
+    /// word `action_type`.
+    #[test]
+    fn the_car_agent_is_told_it_cannot_write() {
+        let prompt = car_prompt();
+
+        assert!(!prompt.contains("```action"));
+        assert!(!prompt.contains("action_type"));
+        assert!(prompt.contains("no write actions"));
+        assert!(prompt.contains("Garage screen"));
+    }
+
+    #[test]
+    fn the_car_agent_keeps_the_maintenance_data_model_and_phrase_mapping() {
+        let prompt = car_prompt();
+
+        assert!(prompt.contains("engine_oil_filter"));
+        assert!(prompt.contains("brake_discs"));
+        assert!(prompt.contains("\"oil change\" → engine_oil_filter"));
+    }
+
+    /// The reported failure: "how is the maintenance on my vw gli going?" against a registered
+    /// 2019 Volkswagen Jetta was answered with "I don't have a VW GLI registered". Two things were
+    /// wrong — the roster carried no make, and the prompt had no rule for trims or shortened makes.
+    #[test]
+    fn the_car_agent_is_taught_to_resolve_shortened_makes_and_trim_badges() {
+        let prompt = car_prompt();
+
+        assert!(prompt.contains("vw"));
+        assert!(prompt.contains("Volkswagen"));
+        assert!(prompt.contains("chevy"));
+        assert!(prompt.contains("GLI"));
+        assert!(prompt.contains("GTI"));
+        assert!(prompt.contains("A Jetta GLI is a Jetta"));
+    }
+
+    /// The behavioural half of the same bug: with one plausible vehicle the agent asked for
+    /// confirmation instead of answering.
+    #[test]
+    fn the_car_agent_answers_rather_than_confirming_when_one_vehicle_matches() {
+        let prompt = car_prompt();
+
+        assert!(prompt.contains("Exactly one plausible vehicle"));
+        assert!(prompt.contains("Do NOT ask the user to confirm"));
+        assert!(prompt.contains("never conclude a vehicle is unregistered"));
+    }
+
+    /// The resolution rules have to describe the roster line the context provider actually emits,
+    /// or the model is told to match against parts that are not there.
+    #[test]
+    fn the_resolution_rules_describe_the_roster_shape_the_context_really_renders() {
+        assert!(car_prompt().contains(context::VEHICLE_ROSTER_SHAPE));
+    }
+
+    /// R1: a deliberate, user-visible narrowing. Budget Helper losing the maintenance tools only
+    /// reads as routing rather than regression because it now says where to go instead.
+    #[test]
+    fn budget_helper_no_longer_carries_the_maintenance_tools_and_redirects_instead() {
+        let prompt = budget_prompt();
+
+        assert!(!prompt.contains("query_maintenance_status"));
+        assert!(!prompt.contains("query_maintenance_history"));
+        assert!(!prompt.contains("engine_oil_filter"));
+        assert!(prompt.contains("Vehicle maintenance is handled by the Car Maintenance agent"));
+        assert!(prompt.contains("do not guess"));
+    }
+
+    /// Each agent reads only the data it can act on: the registry decides this, so the assertion
+    /// is against the specs rather than against rendered prose.
+    #[test]
+    fn the_two_chat_agents_hold_disjoint_tools_and_different_context() {
+        let budget = agents::spec("budget-helper").expect("spec");
+        let car = agents::spec("car-maintenance").expect("spec");
+
+        assert!(budget.tools.iter().all(|tool| !car.tools.contains(tool)));
+        assert!(!car
+            .context
+            .contains(&crate::ai::context::ContextProviderId::BudgetCategories));
+        assert!(!budget
+            .context
+            .contains(&crate::ai::context::ContextProviderId::VehicleRoster));
+        assert!(car
+            .context
+            .contains(&crate::ai::context::ContextProviderId::VehicleRoster));
+        assert!(car.actions.is_empty());
+    }
+
+    #[test]
+    fn the_car_agent_refuses_an_expense_query_it_was_never_granted() {
+        let car = agents::spec("car-maintenance").expect("spec");
+
+        assert!(matches!(
+            parse_model_block(EXPENSE_TOOL_CALL, car.tools),
+            Some(ModelBlock::ToolNotAllowed(_))
+        ));
+    }
+
     fn budget_prompt() -> String {
         build_system_prompt("budget-helper", "2026-08-25", "Budget Groups:\n  - Needs\n")
+            .expect("budget-helper is a chat agent")
     }
 
     /* The prompt contract for the category card. The model was already emitting
@@ -732,7 +1188,8 @@ mod tests {
 
     #[test]
     fn budget_helper_prompt_advertises_no_category_id_parameter() {
-        let prompt = build_system_prompt("budget-helper", "2026-08-25", "Budget Categories:\n");
+        let prompt = build_system_prompt("budget-helper", "2026-08-25", "Budget Categories:\n")
+            .expect("budget-helper is a chat agent");
 
         assert!(!prompt.contains("category_id"));
         assert!(!prompt.contains("budget_category_id"));

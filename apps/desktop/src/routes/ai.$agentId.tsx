@@ -19,7 +19,7 @@ import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
 import { ConversationListPanel } from "@/components/chat/ConversationListPanel";
 import { useChat } from "@/hooks/useChat";
 import { useChatAttachment } from "@/hooks/useChatAttachment";
-import { AGENTS, setLastUsedAgentId } from "@/lib/agents";
+import { useAgents, setLastUsedAgentId } from "@/lib/agents";
 import { hostedAiMessageKey, hostedAiNeedsSignIn } from "@/lib/appError";
 
 export const Route = createFileRoute("/ai/$agentId")({
@@ -38,7 +38,8 @@ interface ChatPanelProps {
 
 function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps) {
   const { t, i18n } = useTranslation();
-  const agent = AGENTS.find((a) => a.id === agentId);
+  const { agents } = useAgents();
+  const agent = agents.find((a) => a.id === agentId);
   const {
     messages,
     streaming,
@@ -95,11 +96,11 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
   const messageAreaError = chatError !== null && chatError.type !== "attachment";
   const showStarters =
     messages.length === 0 && !messageAreaError && initialConversationId === undefined && agent;
-  const starterPrompts = [
-    t("chat.starterTracking"),
-    t("chat.starterVsLastMonth", { month: previousMonth }),
-    t("chat.starterWhereItGoes"),
-  ];
+  /* Registry-owned: a new agent ships its own empty-state copy as locale rows, never as a branch
+   * here. `month` is passed to every starter because only some of them interpolate it. */
+  const starterPrompts = (agent?.starterKeys ?? []).map((key) =>
+    t(key, { month: previousMonth })
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -174,8 +175,8 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
           <Card>
             <EmptyState
               icon={<agent.icon />}
-              title={t("chat.agentReady")}
-              description={t("chat.dataScope")}
+              title={t(agent.readyKey)}
+              description={t(agent.scopeKey)}
             >
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {starterPrompts.map((prompt) => (
@@ -235,18 +236,25 @@ function AgentChatPage() {
   const { agentId } = Route.useParams();
   const { conversation } = Route.useSearch();
   const navigate = useNavigate();
+  const { agents, fetching } = useAgents();
+  const agent = agents.find((a) => a.id === agentId);
 
-  // Update last-used agent so FloatingChatBar stays in sync
+  /* Only a known agent is remembered — the validation `getLastUsedAgentId` gave up when the agent
+   * list became async is re-homed here, the one place that holds the fetched list. */
   useEffect(() => {
-    setLastUsedAgentId(agentId);
-  }, [agentId]);
-
-  const agent = AGENTS.find((a) => a.id === agentId);
+    if (agent) setLastUsedAgentId(agent.id);
+  }, [agent]);
 
   const [activeConversationId, setActiveConversationId] = useState<number | null>(
     conversation ?? null
   );
   const [chatKey, setChatKey] = useState(0);
+
+  /* Pending is not the same as unknown: the seeded list resolves immediately, so 404-ing before
+   * the real one lands would reject every agent except the seed. */
+  if (!agent && fetching) {
+    return null;
+  }
 
   if (!agent) {
     return (

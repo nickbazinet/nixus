@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent } from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { AGENTS } from "@/lib/agents";
+import { useAgents } from "@/lib/agents";
 
 export const Route = createFileRoute("/ai/")({
   component: AiLandingPage,
@@ -10,12 +10,13 @@ export const Route = createFileRoute("/ai/")({
 
 function AiLandingPage() {
   const { t } = useTranslation();
+  const { agents } = useAgents();
 
   return (
     <div>
       <PageHeader title={t("nav.agents")} />
       <div className="grid grid-cols-1 gap-grid-gap sm:grid-cols-2 lg:grid-cols-3">
-        {AGENTS.map((agent) => (
+        {agents.map((agent) => (
           // The whole card is one focusable target with one accessible name — never a card with
           // competing inner click targets.
           <Card

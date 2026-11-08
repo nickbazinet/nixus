@@ -54,6 +54,7 @@ export const queryKeys = {
   recurringIncomeTemplates: ["recurring-income-templates"] as const,
   chatConversations: (agentId: string) =>
     ["chat-conversations", agentId] as const,
+  agents: ["agents"] as const,
   maintenance: ["maintenance"] as const,
   maintenanceVehicle: (vehicleId: number) =>
     ["maintenance", vehicleId] as const,
