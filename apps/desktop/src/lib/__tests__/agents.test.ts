@@ -30,17 +30,14 @@ describe("getLastUsedAgentId", () => {
     expect(getLastUsedAgentId()).toBe("budget-helper");
   });
 
-  it("returns stored value when it is a known agent ID", () => {
+  it("returns the stored value", () => {
     localStorage.setItem("nixus:last_used_agent_id", "budget-helper");
     expect(getLastUsedAgentId()).toBe("budget-helper");
   });
 
-  it("returns budget-helper and writes fallback when stored value is unknown", () => {
-    localStorage.setItem("nixus:last_used_agent_id", "unknown-agent");
-    expect(getLastUsedAgentId()).toBe("budget-helper");
-    expect(localStorage.getItem("nixus:last_used_agent_id")).toBe(
-      "budget-helper"
-    );
+  it("returns the stored value as-is; validation belongs to callers holding the fetched list", () => {
+    localStorage.setItem("nixus:last_used_agent_id", "car-maintenance");
+    expect(getLastUsedAgentId()).toBe("car-maintenance");
   });
 });
 
