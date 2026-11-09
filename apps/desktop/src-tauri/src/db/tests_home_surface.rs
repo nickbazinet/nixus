@@ -530,6 +530,32 @@ fn spending_and_transactions_can_be_narrowed_to_one_category_in_the_users_words(
     assert!(nothing.rows.is_empty());
 }
 
+#[test]
+fn net_worth_assets_can_be_filtered_by_type_and_totalled_per_type() {
+    let (_dir, conn) = dataset();
+    conn.execute_batch(
+        "INSERT INTO passive_assets (name, asset_type, value_cents) VALUES
+           ('Acme Corp', 'stock', 500000), ('Globex', 'stock', 300000),
+           ('Cottage', 'real_estate', 20000000), ('Civic', 'vehicle', 1500000);",
+    )
+    .unwrap();
+
+    let all = resolve_one(&conn, "asset_values", json!({}));
+    assert_eq!(all.rows.len(), 4);
+
+    let portfolio = resolve_one(&conn, "asset_values", json!({ "asset_type": "stock" }));
+    assert_eq!(
+        portfolio.rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+        vec!["Acme Corp", "Globex"]
+    );
+
+    let by_type = resolve_one(&conn, "asset_values_by_type", json!({}));
+    assert_eq!(
+        by_type.rows.iter().map(|r| (r.label.as_str(), r.values[0])).collect::<Vec<_>>(),
+        vec![("Real estate", 20_000_000), ("Vehicles", 1_500_000), ("Stocks", 800_000)]
+    );
+}
+
 fn keys_of(conn: &Connection) -> Vec<String> {
     list_widgets(conn)
         .unwrap()

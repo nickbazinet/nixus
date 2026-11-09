@@ -127,6 +127,7 @@ fn add_holding(state: &DbState, symbol: &str, quantity_micros: i64) -> i64 {
                 name: symbol.to_string(),
                 exchange: "NMS".to_string(),
                 quantity_micros,
+                account_id: None,
             },
         )
         .expect("a holding is created")
@@ -478,6 +479,7 @@ fn freshness_needs_a_price_a_currency_and_a_recent_stamp() {
                 .to_string(),
         ),
         fx_rate_to_base_micros: Some(1_000_000),
+        account_id: None,
         created_at: String::new(),
         updated_at: String::new(),
     };

@@ -21,6 +21,13 @@ struct QuantityAudit {
     value_cents: i64,
 }
 
+/// Wrapped rather than logged as a bare integer so the history distinguishes "linked to account 3"
+/// from every other single-number change recorded against a `passive_asset`.
+#[derive(serde::Serialize)]
+struct AccountLinkAudit {
+    account_id: Option<i64>,
+}
+
 fn locked(state: &DbState) -> Result<std::sync::MutexGuard<'_, crate::db::ActiveDataset>, AppError> {
     state.0.lock().map_err(|error| AppError::Database {
         message: error.to_string(),
@@ -53,12 +60,14 @@ pub async fn create_stock_asset(
     name: String,
     exchange: String,
     quantity_micros: i64,
+    account_id: Option<i64>,
 ) -> Result<PassiveAsset, AppError> {
     let input = CreateStockAssetInput {
         symbol,
         name,
         exchange,
         quantity_micros,
+        account_id,
     };
     // Validated before the insert so a bad input never reaches a transaction, and before the
     // provider so it never costs a request.
@@ -149,6 +158,43 @@ pub fn update_stock_quantity(
     if let Err(error) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {error}");
     }
+
+    Ok(asset)
+}
+
+/// Links the holding to an account, or unlinks it with a `None`.
+///
+/// No net-worth snapshot: the asset is already counted, and the link only decides which account row
+/// displays it. Recording one here would write a snapshot identical to the last.
+#[tauri::command(rename_all = "snake_case")]
+pub fn update_stock_account(
+    state: State<DbState>,
+    id: i64,
+    account_id: Option<i64>,
+) -> Result<PassiveAsset, AppError> {
+    let active = locked(state.inner())?;
+
+    let old_account_id = {
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+        stock_db::get_holding(conn, id)?.and_then(|holding| holding.account_id)
+    };
+
+    let asset = active.write(|tx| stock_db::update_account(tx, id, account_id))?;
+
+    let old_json = serde_json::to_string(&AccountLinkAudit {
+        account_id: old_account_id,
+    })
+    .unwrap_or_default();
+    let new_json = serde_json::to_string(&AccountLinkAudit { account_id }).unwrap_or_default();
+
+    audit_db::record(
+        &active,
+        "passive_asset",
+        id,
+        "account_link",
+        Some(&old_json),
+        Some(&new_json),
+    );
 
     Ok(asset)
 }

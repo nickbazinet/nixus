@@ -388,6 +388,8 @@ pub const COLUMNS: &[ColumnRule] = &[
     column("stock_holdings", "fx_rate_to_base_micros", Lww),
     column("stock_holdings", "created_at", Immutable),
     column("stock_holdings", "updated_at", Lww),
+    // A local integer like every other FK column; the uuid-space form of it is the edge below.
+    column("stock_holdings", "account_id", LocalId),
     column("vehicles", "id", LocalId),
     column("vehicles", "nickname", Lww),
     column("vehicles", "make", Lww),
@@ -435,6 +437,7 @@ pub const EDGES: &[EdgeRule] = &[
     ),
     edge("recurring_income_templates", "account_id", "accounts", FkPolicy::SetNull),
     edge("recurring_income_templates", "source_id", "income_sources", FkPolicy::Cascade),
+    edge("stock_holdings", "account_id", "accounts", FkPolicy::SetNull),
     edge("stock_holdings", "passive_asset_id", "passive_assets", FkPolicy::Cascade),
 ];
 
@@ -742,7 +745,7 @@ mod tests {
     fn every_foreign_key_edge_is_classified_and_matches_what_sqlite_will_do() {
         let (_dir, conn) = dataset();
         let live = live_edges(&conn);
-        assert_eq!(live.len(), 18, "the live schema's edge count changed");
+        assert_eq!(live.len(), 19, "the live schema's edge count changed");
 
         for ((child_table, child_column), (parent_table, on_delete)) in &live {
             let declared = EDGES

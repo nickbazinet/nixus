@@ -694,6 +694,7 @@ fn a_stock_holding_that_predates_capture_gets_the_identity_its_parent_derives() 
                 name: "Shopify".to_string(),
                 exchange: "TOR".to_string(),
                 quantity_micros: 2_500_000,
+                account_id: None,
             },
         )
         .map(|created| created.id)

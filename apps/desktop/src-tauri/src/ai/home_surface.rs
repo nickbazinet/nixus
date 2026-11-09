@@ -128,6 +128,12 @@ fn catalog_section() -> String {
                     "    params.{}: text, at most {max_chars} characters. {}",
                     param.name, param.description
                 ),
+                ParamKind::AssetType => format!(
+                    "    params.{}: one of {}. {}",
+                    param.name,
+                    catalog::ASSET_TYPES.join(", "),
+                    param.description
+                ),
             });
         }
     }
@@ -161,6 +167,7 @@ Rules:
 - Never put an amount, a date or any other data value in a widget. The only numbers allowed are the integer dataBinding params documented below. Never add a field that is not described here.
 - Any period can be shown: set months (the window length) and months_ago (how far back it ends). "Last month" is months 1, months_ago 1; "the last 3 months" is months 3, months_ago 0.
 - To narrow spending to one budget category, put the user's words for it in params.category; the app matches it to their categories.
+- Net-worth assets: "my portfolio", "investments", "holdings" or "stocks" mean assets of type stock (params.asset_type "stock"); "property" means real_estate. Use asset_values for one row per asset, asset_values_by_type to compare asset types, and either with a PieChart, BarChart, Table or Metric. There is no finer grouping than asset or asset type; if the user asks to group "by category", use the asset (per holding) or the asset type, whichever fits.
 - Layout primitives never have a dataBinding; display components always have one.
 - At most {max_displays} display components per widget, and layouts nested at most {max_depth} deep.
 - LineChart and AreaChart need a monthly source; PieChart needs a categorical source; a transaction-list source can only be shown in a Table; a flow source can only be shown in a SankeyChart, and a SankeyChart can show nothing else; a scalar source can only be shown in a Date, and a Date can show nothing else.

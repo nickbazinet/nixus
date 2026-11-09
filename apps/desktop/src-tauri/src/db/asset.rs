@@ -12,7 +12,8 @@ pub const STOCK_ASSET_TYPE: &str = "stock";
 /// both "what assets are there" and "which of them are priced holdings".
 const ASSET_SELECT: &str = "SELECT a.id, a.name, a.asset_type, a.value_cents, a.created_at, a.updated_at, \
      h.passive_asset_id, h.symbol, h.exchange, h.currency, h.quantity_micros, \
-     h.last_price_cents, h.last_price_at, h.fx_rate_to_base_micros, h.created_at, h.updated_at \
+     h.last_price_cents, h.last_price_at, h.fx_rate_to_base_micros, h.account_id, \
+     h.created_at, h.updated_at \
      FROM passive_assets a LEFT JOIN stock_holdings h ON h.passive_asset_id = a.id";
 
 pub(crate) fn row_to_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<PassiveAsset> {
@@ -27,8 +28,9 @@ pub(crate) fn row_to_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<PassiveA
             last_price_cents: row.get(11)?,
             last_price_at: row.get(12)?,
             fx_rate_to_base_micros: row.get(13)?,
-            created_at: row.get(14)?,
-            updated_at: row.get(15)?,
+            account_id: row.get(14)?,
+            created_at: row.get(15)?,
+            updated_at: row.get(16)?,
         }),
         None => None,
     };

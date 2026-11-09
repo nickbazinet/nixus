@@ -11,7 +11,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@nixus/shared";
-import { useUpdateAsset, useUpdateStockQuantity } from "@/hooks/useAssets";
+import { useUpdateAsset, useUpdateStockAccount, useUpdateStockQuantity } from "@/hooks/useAssets";
+import { isStockLinkableAccount } from "@/lib/accountUtils";
+import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import {
   ASSET_TYPE_KEYS,
   ASSET_TYPE_VALUES,
@@ -31,19 +33,24 @@ interface AssetFormData {
   name: string;
   asset_type: string;
   quantity: string;
+  account_id: string;
 }
 
 export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
   const { t } = useTranslation();
   const updateAsset = useUpdateAsset();
   const updateQuantity = useUpdateStockQuantity();
+  const updateStockAccount = useUpdateStockAccount();
   const holding = asset.stock;
   // `stock` is omitted for a plain asset: the backend refuses the change either way, so offering it
   // would be a choice whose only outcome is an error.
   const ASSET_TYPE_OPTIONS = ASSET_TYPE_VALUES.filter(
     (o) => o.value !== STOCK_ASSET_TYPE
   ).map((o) => ({ value: o.value, label: t(o.key) }));
-  const isSaving = updateAsset.isPending || updateQuantity.isPending;
+  const isSaving =
+    updateAsset.isPending ||
+    updateQuantity.isPending ||
+    updateStockAccount.isPending;
 
   const {
     register,
@@ -55,6 +62,7 @@ export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
       name: asset.name,
       asset_type: asset.asset_type,
       quantity: holding ? String(microsToQuantity(holding.quantity_micros)) : "",
+      account_id: holding?.account_id ? String(holding.account_id) : "",
     },
     mode: "onBlur",
   });
@@ -74,6 +82,14 @@ export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
           await updateQuantity.mutateAsync({
             id: asset.id,
             quantity_micros: quantityMicros,
+          });
+        }
+
+        const nextAccountId = data.account_id ? Number(data.account_id) : null;
+        if (nextAccountId !== (holding.account_id ?? null)) {
+          await updateStockAccount.mutateAsync({
+            id: asset.id,
+            account_id: nextAccountId,
           });
         }
       }
@@ -207,6 +223,23 @@ export function EditAssetForm({ asset, onClose }: EditAssetFormProps) {
             {t("assets.stockEditQuantityNote", { symbol: holding.symbol })}
           </p>
         </div>
+      )}
+
+      {holding && (
+        <Controller
+          name="account_id"
+          control={control}
+          render={({ field }) => (
+            <OptionalAccountSelect
+              id="edit-asset-stock-account"
+              value={field.value}
+              onChange={field.onChange}
+              labelKey="assets.stockAccount"
+              helpKey="assets.stockAccountNote"
+              filter={isStockLinkableAccount}
+            />
+          )}
+        />
       )}
 
       <div className="flex gap-2">

@@ -17,18 +17,35 @@ interface BlockedDeleteFixture {
   project_names: string[];
 }
 
+/** A stock asset as `get_assets` returns it, linked to an account by `stock.account_id`. */
+interface StockAssetFixture {
+  id: number;
+  name: string;
+  value_cents: number;
+  symbol: string;
+  quantity_micros: number;
+  last_price_cents: number;
+  account_id: number | null;
+}
+
 interface MockOptions {
   earmarks: EarmarkFixture[];
   blockedDeletes: BlockedDeleteFixture[];
+  stockAssets: StockAssetFixture[];
 }
 
 async function setupTauriMock(
   page: Page,
   earmarks: EarmarkFixture[] = [],
-  blockedDeletes: BlockedDeleteFixture[] = []
+  blockedDeletes: BlockedDeleteFixture[] = [],
+  stockAssets: StockAssetFixture[] = []
 ) {
   await page.addInitScript(
-    ({ earmarks: earmarkFixtures, blockedDeletes: blockedDeleteFixtures }: MockOptions) => {
+    ({
+      earmarks: earmarkFixtures,
+      blockedDeletes: blockedDeleteFixtures,
+      stockAssets: stockAssetFixtures,
+    }: MockOptions) => {
 
     interface MockAccount {
       id: number;
@@ -65,7 +82,29 @@ async function setupTauriMock(
             );
 
           case "get_assets":
-            return Promise.resolve([]);
+            return Promise.resolve(
+              stockAssetFixtures.map((fixture) => ({
+                id: fixture.id,
+                name: fixture.name,
+                asset_type: "stock",
+                value_cents: fixture.value_cents,
+                created_at: "2026-01-01 00:00:00",
+                updated_at: "2026-01-01 00:00:00",
+                stock: {
+                  passive_asset_id: fixture.id,
+                  symbol: fixture.symbol,
+                  exchange: "NMS",
+                  currency: "CAD",
+                  quantity_micros: fixture.quantity_micros,
+                  last_price_cents: fixture.last_price_cents,
+                  last_price_at: "2026-01-01 00:00:00",
+                  fx_rate_to_base_micros: 1000000,
+                  account_id: fixture.account_id,
+                  created_at: "2026-01-01 00:00:00",
+                  updated_at: "2026-01-01 00:00:00",
+                },
+              }))
+            );
 
           case "create_account": {
             const name = (args.name as string)?.trim();
@@ -232,7 +271,7 @@ async function setupTauriMock(
       },
       convertFileSrc: (path: string) => path,
     };
-  }, { earmarks, blockedDeletes });
+  }, { earmarks, blockedDeletes, stockAssets });
 }
 
 /** Helper: create an account via the UI form */
@@ -726,5 +765,80 @@ test.describe("Deleting an account that funds a project", () => {
 
     await expect(page.getByText("Successfully deleted")).toBeVisible();
     await expect(page.getByTestId("accounts-empty-state")).toBeVisible();
+  });
+});
+
+test.describe("Account stock holdings", () => {
+  test("adds a linked holding's market value to the account total and lists it as a sub-row", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, [], [], [
+      {
+        id: 7,
+        name: "Apple",
+        value_cents: 250000,
+        symbol: "AAPL",
+        quantity_micros: 10_000_000,
+        last_price_cents: 25000,
+        account_id: 1,
+      },
+    ]);
+    await page.goto("/wealth/accounts");
+    await createAccount(page, "Main TFSA", "Wealthsimple", "TFSA");
+
+    const row = page.getByTestId("account-row").filter({ hasText: "Main TFSA" });
+
+    // The typed cash balance is $0 here, so the whole total is the holding — which is exactly what
+    // proves the market value is ADDED rather than read out of the balance.
+    await expect(row.getByTestId("account-total")).toContainText("$2,500.00");
+    await expect(row.getByTestId("account-stock-summary")).toContainText("$2,500.00");
+    // The combined total is derived, so it must not offer the inline editor the cash balance has.
+    await expect(row.getByTestId("account-balance")).toHaveCount(0);
+
+    const toggle = row.getByTestId("account-earmark-toggle");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("account-stock-row")).toHaveCount(0);
+
+    await toggle.click();
+
+    // Cash leads, and stays editable: it is the only half of the total the user typed.
+    const cashRow = page.getByTestId("account-cash-row");
+    await expect(cashRow).toContainText("Cash");
+    await expect(cashRow.getByTestId("account-balance")).toContainText("$0.00");
+
+    const stockRows = page.getByTestId("account-stock-row");
+    await expect(stockRows).toHaveCount(1);
+    await expect(stockRows.nth(0)).toContainText("Apple");
+    await expect(stockRows.nth(0)).toContainText("AAPL");
+    await expect(stockRows.nth(0).getByTestId("account-stock-amount")).toContainText(
+      "$2,500.00"
+    );
+
+    // The group subtotal and the hero figure have to agree with the row, or the page contradicts
+    // itself about how much money the user has.
+    await expect(page.getByTestId("account-type-group")).toContainText("$2,500.00");
+    await expect(page.getByTestId("accounts-total")).toContainText("$2,500.00");
+  });
+
+  test("an unlinked holding changes no account row", async ({ page }) => {
+    await setupTauriMock(page, [], [], [
+      {
+        id: 7,
+        name: "Apple",
+        value_cents: 250000,
+        symbol: "AAPL",
+        quantity_micros: 10_000_000,
+        last_price_cents: 25000,
+        account_id: null,
+      },
+    ]);
+    await page.goto("/wealth/accounts");
+    await createAccount(page, "Main TFSA", "Wealthsimple", "TFSA");
+
+    const row = page.getByTestId("account-row").filter({ hasText: "Main TFSA" });
+    await expect(row.getByTestId("account-earmark-toggle")).toHaveCount(0);
+    await expect(row.getByTestId("account-stock-summary")).toHaveCount(0);
+    await expect(row.getByTestId("account-balance")).toContainText("$0.00");
+    await expect(page.getByTestId("accounts-total")).toContainText("$0.00");
   });
 });

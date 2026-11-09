@@ -628,6 +628,7 @@ mod tests {
                     name: "Shopify".to_string(),
                     exchange: "TOR".to_string(),
                     quantity_micros: 2_500_000,
+                    account_id: None,
                 },
             )
             .expect("a holding inserts")

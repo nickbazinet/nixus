@@ -244,6 +244,21 @@ fn validate_binding(
                     )),
                 }
             }
+            catalog::ParamKind::AssetType => {
+                let Some(raw) = given.get(spec.name) else {
+                    continue;
+                };
+                match raw.as_str().map(str::trim) {
+                    Some(kind) if catalog::ASSET_TYPES.contains(&kind) => {
+                        params.insert(spec.name.to_string(), Value::from(kind));
+                    }
+                    _ => errors.push(format!(
+                        "{path}.params.{} must be one of: {}, or omitted",
+                        spec.name,
+                        catalog::ASSET_TYPES.join(", ")
+                    )),
+                }
+            }
         }
     }
 

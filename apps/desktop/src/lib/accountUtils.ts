@@ -119,16 +119,19 @@ export function groupAccountsBySection(accounts: Account[]) {
 
 export function buildAccountBreakdown(
   accounts: Account[],
-  getTypeLabel: (accountType: string) => string
+  getTypeLabel: (accountType: string) => string,
+  stocksByAccount?: Map<number, { value_cents: number }[]>
 ): NetWorthBreakdownCategory[] {
   const assetAccounts = accounts.filter(
     (account) => !isLiabilityAccountType(account.account_type)
   );
   const totals = new Map<string, number>();
   for (const account of assetAccounts) {
+    const linked = stocksByAccount?.get(account.id) ?? [];
+    const linkedCents = linked.reduce((sum, asset) => sum + asset.value_cents, 0);
     totals.set(
       account.account_type,
-      (totals.get(account.account_type) ?? 0) + account.balance_cents
+      (totals.get(account.account_type) ?? 0) + account.balance_cents + linkedCents
     );
   }
 
@@ -188,4 +191,21 @@ export function netAccountPositionCents(accounts: Account[]): number {
 
 export function isLiabilityAccountType(accountType: string): boolean {
   return (LIABILITY_ACCOUNT_TYPES as readonly string[]).includes(accountType);
+}
+
+/** Mirrors `db::stock::BASE_CURRENCY`: the currency every asset value is expressed in. */
+export const BASE_CURRENCY = "CAD";
+
+/**
+ * Mirrors `db::stock::validated_account`, so the picker offers only what the backend accepts.
+ *
+ * An account row showing `cash + market value` as one figure can only do that when both are in
+ * the same currency, and only when the figure is something a holding adds to rather than an
+ * amount owed.
+ */
+export function isStockLinkableAccount(account: Account): boolean {
+  return (
+    !isLiabilityAccountType(account.account_type) &&
+    account.currency === BASE_CURRENCY
+  );
 }

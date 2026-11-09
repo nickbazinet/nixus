@@ -733,9 +733,11 @@ fn account_balances(conn: &Connection) -> Result<HomeDataset, AppError> {
     Ok(dataset("account", &["balance"], rows))
 }
 
-fn asset_values(conn: &Connection) -> Result<HomeDataset, AppError> {
+fn asset_values(conn: &Connection, params: &Map<String, Value>) -> Result<HomeDataset, AppError> {
+    let wanted = params.get("asset_type").and_then(Value::as_str);
     let rows = asset_db::get_all_assets(conn)?
         .into_iter()
+        .filter(|asset| wanted.is_none_or(|kind| asset.asset_type == kind))
         .map(|asset| HomeDatasetRow {
             details: Vec::new(),
             key: format!("asset:{}", asset.id),
@@ -744,6 +746,36 @@ fn asset_values(conn: &Connection) -> Result<HomeDataset, AppError> {
         })
         .collect();
     Ok(dataset("asset", &["value"], rows))
+}
+
+fn asset_type_label(asset_type: &str) -> &str {
+    match asset_type {
+        "stock" => "Stocks",
+        "real_estate" => "Real estate",
+        "vehicle" => "Vehicles",
+        "business" => "Business",
+        "other" => "Other",
+        unknown => unknown,
+    }
+}
+
+fn asset_values_by_type(conn: &Connection) -> Result<HomeDataset, AppError> {
+    let mut totals: BTreeMap<String, i64> = BTreeMap::new();
+    for asset in asset_db::get_all_assets(conn)? {
+        *totals.entry(asset.asset_type).or_default() += asset.value_cents;
+    }
+    let mut ranked: Vec<(String, i64)> = totals.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let rows = ranked
+        .into_iter()
+        .map(|(asset_type, total)| HomeDatasetRow {
+            details: Vec::new(),
+            key: format!("asset_type:{asset_type}"),
+            label: asset_type_label(&asset_type).to_string(),
+            values: vec![total],
+        })
+        .collect();
+    Ok(dataset("asset_type", &["value"], rows))
 }
 
 /// A single row holding today's date as an ISO string in its `label`, with no series: there is
@@ -826,7 +858,8 @@ pub fn resolve_binding(
             param(params, spec, "limit"),
         )?,
         "account_balances" => account_balances(conn)?,
-        "asset_values" => asset_values(conn)?,
+        "asset_values" => asset_values(conn, params)?,
+        "asset_values_by_type" => asset_values_by_type(conn)?,
         "average_monthly_cash_flow" => average_monthly_cash_flow(
             conn,
             &window_of(params, spec, now),

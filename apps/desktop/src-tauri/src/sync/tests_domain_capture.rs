@@ -878,6 +878,7 @@ fn a_stock_holding_and_the_price_refresh_that_revalues_it_are_both_captured() {
                     name: "Shopify".to_string(),
                     exchange: "TOR".to_string(),
                     quantity_micros: 2_500_000,
+                    account_id: None,
                 },
             )
         })

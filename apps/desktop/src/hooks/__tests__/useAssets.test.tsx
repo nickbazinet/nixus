@@ -13,6 +13,7 @@ import {
 import {
   useCreateStockAsset,
   useRefreshStockPrices,
+  useUpdateStockAccount,
   useUpdateStockQuantity,
 } from "@/hooks/useAssets";
 import { queryKeys } from "@/lib/constants";
@@ -31,11 +32,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 // clicking a UI, and @testing-library/react is not a dependency of @nixus/desktop.
 let createStockAsset: ReturnType<typeof useCreateStockAsset>;
 let updateStockQuantity: ReturnType<typeof useUpdateStockQuantity>;
+let updateStockAccount: ReturnType<typeof useUpdateStockAccount>;
 let refreshStockPrices: ReturnType<typeof useRefreshStockPrices>;
 
 function Harness() {
   createStockAsset = useCreateStockAsset();
   updateStockQuantity = useUpdateStockQuantity();
+  updateStockAccount = useUpdateStockAccount();
   refreshStockPrices = useRefreshStockPrices();
   return null;
 }
@@ -56,6 +59,7 @@ const stockAsset = {
     last_price_cents: 12_345,
     last_price_at: "2026-10-27 12:00:00",
     fx_rate_to_base_micros: 1_000_000,
+    account_id: null,
     created_at: "2026-10-27 12:00:00",
     updated_at: "2026-10-27 12:00:00",
   },
@@ -110,6 +114,7 @@ describe("useCreateStockAsset", () => {
         name: "Shopify",
         exchange: "TOR",
         quantity_micros: 2_500_000,
+        account_id: 3,
       });
     });
 
@@ -118,6 +123,7 @@ describe("useCreateStockAsset", () => {
       name: "Shopify",
       exchange: "TOR",
       quantity_micros: 2_500_000,
+      account_id: 3,
     });
   });
 
@@ -130,6 +136,7 @@ describe("useCreateStockAsset", () => {
         name: "Shopify",
         exchange: "TOR",
         quantity_micros: 2_500_000,
+        account_id: 3,
       });
     });
 
@@ -155,6 +162,42 @@ describe("useUpdateStockQuantity", () => {
     expect(invalidatedKeys()).toContain(
       JSON.stringify(queryKeys.netWorthCurrent)
     );
+  });
+});
+
+describe("useUpdateStockAccount", () => {
+  it("sends the id and the account, and unlinks with a null", async () => {
+    invokeMock.mockResolvedValue(stockAsset);
+
+    await act(async () => {
+      await updateStockAccount.mutateAsync({ id: 4, account_id: 3 });
+    });
+    expect(invokeMock).toHaveBeenCalledWith("update_stock_account", {
+      id: 4,
+      account_id: 3,
+    });
+
+    await act(async () => {
+      await updateStockAccount.mutateAsync({ id: 4, account_id: null });
+    });
+    expect(invokeMock).toHaveBeenLastCalledWith("update_stock_account", {
+      id: 4,
+      account_id: null,
+    });
+  });
+
+  // The link moves no money, so invalidating net worth would refetch two figures that cannot have
+  // changed — and the absence of that call is the only thing proving it.
+  it("invalidates the assets key without touching net worth", async () => {
+    invokeMock.mockResolvedValue(stockAsset);
+
+    await act(async () => {
+      await updateStockAccount.mutateAsync({ id: 4, account_id: 3 });
+    });
+
+    const keys = invalidatedKeys();
+    expect(keys).toContain(JSON.stringify(queryKeys.assets));
+    expect(keys).not.toContain(JSON.stringify(queryKeys.netWorthCurrent));
   });
 });
 

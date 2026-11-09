@@ -159,8 +159,34 @@ export function formatQuotePrice(
 }
 
 
-export function groupAssetsByType(assets: PassiveAsset[]) {
-  const groups = new Map<string, PassiveAsset[]>();
+export function sumAssetValueCents(assets: PassiveAsset[]): number {
+  return assets.reduce((sum, asset) => sum + asset.value_cents, 0);
+}
+
+/**
+ * Derived from the assets query the Accounts page already loads, rather than a per-account read
+ * like the project earmarks do: a page of account rows costs one query instead of one each.
+ */
+export function stockAssetsByAccount(
+  assets: PassiveAsset[]
+): Map<number, PassiveAsset[]> {
+  const byAccount = new Map<number, PassiveAsset[]>();
+  for (const asset of assets) {
+    const accountId = asset.stock?.account_id;
+    if (accountId === null || accountId === undefined) continue;
+    const list = byAccount.get(accountId) ?? [];
+    list.push(asset);
+    byAccount.set(accountId, list);
+  }
+
+  for (const list of byAccount.values()) {
+    list.sort((first, second) => second.value_cents - first.value_cents);
+  }
+
+  return byAccount;
+}
+
+export function groupAssetsByType(assets: PassiveAsset[]) {  const groups = new Map<string, PassiveAsset[]>();
   for (const asset of assets) {
     const list = groups.get(asset.asset_type) ?? [];
     list.push(asset);

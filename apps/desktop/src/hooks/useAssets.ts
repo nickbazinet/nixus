@@ -10,6 +10,7 @@ import type {
   StockSearchResult,
   UpdateAssetInput,
   UpdateAssetValueInput,
+  UpdateStockAccountInput,
   UpdateStockQuantityInput,
 } from "@/lib/types";
 
@@ -137,8 +138,28 @@ export function useCreateStockAsset() {
         name: input.name,
         exchange: input.exchange,
         quantity_micros: input.quantity_micros,
+        account_id: input.account_id,
       }),
     onSuccess: () => invalidateAssetsAndNetWorth(queryClient),
+  });
+}
+
+/**
+ * Moves which account row displays the holding. Net worth is deliberately not invalidated: the
+ * link changes no value, and the Accounts page reads the link out of the assets query.
+ */
+export function useUpdateStockAccount() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: UpdateStockAccountInput) =>
+      invoke<PassiveAsset>("update_stock_account", {
+        id: input.id,
+        account_id: input.account_id,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.assets });
+    },
   });
 }
 

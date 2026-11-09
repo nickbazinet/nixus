@@ -11,6 +11,7 @@ async function setupTauriMock(page: Page) {
       last_price_cents: number | null;
       last_price_at: string | null;
       fx_rate_to_base_micros: number | null;
+      account_id: number | null;
       created_at: string;
       updated_at: string;
     }
@@ -180,6 +181,7 @@ async function setupTauriMock(page: Page) {
                 last_price_cents: null,
                 last_price_at: null,
                 fx_rate_to_base_micros: null,
+                account_id: (args.account_id as number | null) ?? null,
                 created_at: now,
                 updated_at: now,
               },
@@ -302,6 +304,55 @@ async function setupTauriMock(page: Page) {
               recoverable: true,
               prompt: null,
             });
+          // Three accounts on purpose: only the CAD non-liability one may be offered as a
+          // holding's account, so this fixture is what proves the other two are filtered out.
+          case "get_accounts":
+            return Promise.resolve([
+              {
+                id: 1,
+                name: "Main TFSA",
+                institution: "Wealthsimple",
+                account_type: "tfsa",
+                currency: "CAD",
+                balance_cents: 0,
+                created_at: "2026-01-01 00:00:00",
+                updated_at: "2026-01-01 00:00:00",
+              },
+              {
+                id: 2,
+                name: "US Brokerage",
+                institution: "Schwab",
+                account_type: "non_registered",
+                currency: "USD",
+                balance_cents: 0,
+                created_at: "2026-01-01 00:00:00",
+                updated_at: "2026-01-01 00:00:00",
+              },
+              {
+                id: 3,
+                name: "Visa",
+                institution: "TD Bank",
+                account_type: "credit_card",
+                currency: "CAD",
+                balance_cents: 0,
+                created_at: "2026-01-01 00:00:00",
+                updated_at: "2026-01-01 00:00:00",
+              },
+            ]);
+
+          case "update_stock_account": {
+            const asset = assets.find((item) => item.id === args.id);
+            if (!asset || !asset.stock) {
+              return Promise.reject({
+                type: "validation",
+                message: "This asset is not a stock holding",
+                field: "id",
+              });
+            }
+            asset.stock.account_id = args.account_id as number | null;
+            return Promise.resolve(asset);
+          }
+
           // The account trigger is mounted on every screen, so this read must be answered even where
           // the surface under test has nothing to do with an account (see project-context.md, Testing).
           case "get_user_avatar":
@@ -723,6 +774,80 @@ test.describe("Stock assets", () => {
 
     await expect(page.getByTestId("stock-asset-value")).toBeVisible();
     await expect(page.getByTestId("asset-value")).toHaveCount(0);
+  });
+
+  test("the account picker offers only accounts a holding's value can be added to", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+    await form.getByLabel("Account holding it").click();
+
+    // A CAD non-liability account is the only shape whose balance a CAD-valued holding can join.
+    await expect(page.getByRole("option", { name: /Main TFSA/ })).toBeVisible();
+    await expect(page.getByRole("option", { name: /US Brokerage/ })).toHaveCount(0);
+    await expect(page.getByRole("option", { name: /Visa/ })).toHaveCount(0);
+  });
+
+  test("a holding created against an account keeps that link in the edit form", async ({
+    page,
+  }) => {
+    await page.getByTestId("add-asset-button").click();
+    const form = page.getByTestId("add-asset-form");
+    await form.getByLabel("Type").click();
+    await page.getByRole("option", { name: "Stock", exact: true }).click();
+
+    await page.getByTestId("stock-symbol-trigger").click();
+    await page.getByTestId("stock-symbol-search").fill("SHOP.TO");
+    await page
+      .getByTestId("stock-symbol-option")
+      .filter({ hasText: "SHOP.TO" })
+      .first()
+      .click();
+    await form.getByLabel("How many shares").fill("2.5");
+
+    await form.getByLabel("Account holding it").click();
+    await page.getByRole("option", { name: /Main TFSA/ }).click();
+    await page.getByRole("button", { name: "Save asset" }).click();
+    await expect(page.getByTestId("asset-slide-over")).not.toBeVisible();
+
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
+    const editForm = page
+      .getByTestId("edit-asset-slide-over")
+      .getByTestId("edit-asset-form");
+    await expect(editForm.getByLabel("Account holding it")).toContainText("Main TFSA");
+  });
+
+  test("a holding can be unlinked from its account again", async ({ page }) => {
+    await createStockAsset(page, "SHOP.TO", "2.5");
+
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
+    const editForm = page
+      .getByTestId("edit-asset-slide-over")
+      .getByTestId("edit-asset-form");
+
+    await editForm.getByLabel("Account holding it").click();
+    await page.getByRole("option", { name: /Main TFSA/ }).click();
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByTestId("edit-asset-slide-over")).not.toBeVisible();
+
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
+    await expect(editForm.getByLabel("Account holding it")).toContainText("Main TFSA");
+
+    await editForm.getByLabel("Account holding it").click();
+    await page.getByRole("option", { name: "None", exact: true }).click();
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByTestId("edit-asset-slide-over")).not.toBeVisible();
+
+    await openRowMenu(page);
+    await page.getByTestId("edit-asset-button").click();
+    await expect(editForm.getByLabel("Account holding it")).toContainText("None");
   });
 
   test("a stock that never prices shows Price unavailable and a zero value", async ({

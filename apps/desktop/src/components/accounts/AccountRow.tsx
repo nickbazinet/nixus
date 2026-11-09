@@ -21,6 +21,7 @@ import {
 } from "@nixus/shared";
 import { InlineEditMoney } from "@/components/shared/InlineEdit";
 import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
+import { StockRowDetail } from "@/components/assets/StockRowDetail";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import {
   useUpdateAccountBalance,
@@ -32,11 +33,14 @@ import {
   ACCOUNT_TYPE_KEYS,
   isLiabilityAccountType,
 } from "@/lib/accountUtils";
-import type { Account } from "@/lib/types";
+import { sumAssetValueCents } from "@/lib/assetUtils";
+import type { Account, PassiveAsset } from "@/lib/types";
 
 interface AccountRowProps {
   account: Account;
   onEdit: (account: Account) => void;
+  /** The stock holdings linked to this account, already sorted by value. */
+  stockAssets?: PassiveAsset[];
 }
 
 /** Past a month a typed-in balance is data too old to trust, so it carries the `stale` treatment. */
@@ -76,7 +80,7 @@ function readError(err: unknown): { type: string; message: string; field?: strin
   };
 }
 
-export function AccountRow({ account, onEdit }: AccountRowProps) {
+export function AccountRow({ account, onEdit, stockAssets = [] }: AccountRowProps) {
   const { t, i18n } = useTranslation();
   const maskProps = useMaskProps();
   const typeLabel = ACCOUNT_TYPE_KEYS[account.account_type]
@@ -115,6 +119,13 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
       }));
   }, [earmarkData]);
   const hasEarmarks = segments.length > 0;
+
+  // The holdings' market value sits BESIDE the typed balance rather than inside it: the balance is
+  // the account's cash, so the figure the row shows is the two added together. That is also why
+  // this total is read-only — only the cash half is a number the user typed.
+  const stockValueCents = sumAssetValueCents(stockAssets);
+  const hasStocks = stockAssets.length > 0;
+  const expandable = hasEarmarks || hasStocks;
 
   // A liability is entered and shown as a positive amount owed, but the stored sign is whatever the
   // backend already holds — so the user's edit is written back with the original sign preserved
@@ -162,7 +173,7 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
       <TableRow data-testid="account-row">
         <TableCell>
           <div className="flex items-start gap-2">
-            {hasEarmarks && (
+            {expandable && (
               <Button
                 variant="ghost"
                 size="icon-xs"
@@ -171,8 +182,8 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
                 aria-expanded={expanded}
                 aria-label={
                   expanded
-                    ? t("projects.collapseAccountBreakdown", { name: account.name })
-                    : t("projects.expandAccountBreakdown", { name: account.name })
+                    ? t("accounts.collapseBreakdown", { name: account.name })
+                    : t("accounts.expandBreakdown", { name: account.name })
                 }
                 data-testid="account-earmark-toggle"
               >
@@ -205,6 +216,19 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
                   {t("projects.accountEarmarkSetAsideSuffix")}
                 </p>
               )}
+              {hasStocks && (
+                <p
+                  className="text-caption text-ink-dim"
+                  data-testid="account-stock-summary"
+                >
+                  <Money
+                    cents={stockValueCents}
+                    locale={i18n.language}
+                    {...maskProps}
+                  />{" "}
+                  {t("accounts.stockValueSuffix", { count: stockAssets.length })}
+                </p>
+              )}
             </div>
           </div>
         </TableCell>
@@ -226,12 +250,24 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
           )}
         </TableCell>
         <TableCell numeric>
-          <InlineEditMoney
-            value={displayCents}
-            onSave={handleBalanceSave}
-            allowZero
-            data-testid="account-balance"
-          />
+          {hasStocks ? (
+            // Derived, so it is shown the way a stock asset's own value is: read-only. The cash
+            // half stays editable on the "Cash" sub-row below.
+            <span data-testid="account-total">
+              <Money
+                cents={displayCents + stockValueCents}
+                locale={i18n.language}
+                {...maskProps}
+              />
+            </span>
+          ) : (
+            <InlineEditMoney
+              value={displayCents}
+              onSave={handleBalanceSave}
+              allowZero
+              data-testid="account-balance"
+            />
+          )}
         </TableCell>
         <TableCell numeric>
           {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive
@@ -269,6 +305,25 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
           </DropdownMenu>
         </TableCell>
       </TableRow>
+
+      {expanded && hasStocks && (
+        <TableRow data-testid="account-cash-row">
+          <TableCell colSpan={2}>
+            <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
+              <span className="min-w-0 truncate">{t("accounts.cashLabel")}</span>
+            </div>
+          </TableCell>
+          <TableCell numeric>
+            <InlineEditMoney
+              value={displayCents}
+              onSave={handleBalanceSave}
+              allowZero
+              data-testid="account-balance"
+            />
+          </TableCell>
+          <TableCell />
+        </TableRow>
+      )}
 
       {expanded && hasEarmarks && (
         <TableRow data-testid="account-earmark-unallocated-row">
@@ -318,6 +373,23 @@ export function AccountRow({ account, onEdit }: AccountRowProps) {
             </TableCell>
             <TableCell numeric dim data-testid="account-earmark-amount">
               <Money cents={segment.earmarked_cents} locale={i18n.language} {...maskProps} />
+            </TableCell>
+            <TableCell />
+          </TableRow>
+        ))}
+
+      {expanded &&
+        stockAssets.map((asset) => (
+          <TableRow key={asset.id} data-testid="account-stock-row">
+            <TableCell colSpan={2}>
+              <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
+                <span aria-hidden="true">↳</span>
+                <span className="min-w-0 truncate">{asset.name}</span>
+                {asset.stock && <StockRowDetail holding={asset.stock} />}
+              </div>
+            </TableCell>
+            <TableCell numeric dim data-testid="account-stock-amount">
+              <Money cents={asset.value_cents} locale={i18n.language} {...maskProps} />
             </TableCell>
             <TableCell />
           </TableRow>

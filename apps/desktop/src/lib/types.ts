@@ -142,6 +142,8 @@ export interface StockHolding {
   last_price_at: string | null;
   /** 1e-6 of base currency per unit of `currency`. */
   fx_rate_to_base_micros: number | null;
+  /** The account whose row shows this holding's market value, or `null` when unlinked. */
+  account_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -151,11 +153,17 @@ export interface CreateStockAssetInput {
   name: string;
   exchange: string;
   quantity_micros: number;
+  account_id: number | null;
 }
 
 export interface UpdateStockQuantityInput {
   id: number;
   quantity_micros: number;
+}
+
+export interface UpdateStockAccountInput {
+  id: number;
+  account_id: number | null;
 }
 
 export interface StockSearchResult {

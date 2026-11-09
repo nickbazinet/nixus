@@ -1,5 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::db::account as account_db;
 use crate::db::asset::{self as asset_db, STOCK_ASSET_TYPE};
 use crate::error::AppError;
 use crate::models::{CreateStockAssetInput, PassiveAsset, StockHolding};
@@ -15,7 +16,7 @@ const BASE_CURRENCY: &str = "CAD";
 const MICROS: i128 = 1_000_000;
 
 const HOLDING_SELECT: &str = "SELECT passive_asset_id, symbol, exchange, currency, quantity_micros, \
-     last_price_cents, last_price_at, fx_rate_to_base_micros, created_at, updated_at \
+     last_price_cents, last_price_at, fx_rate_to_base_micros, account_id, created_at, updated_at \
      FROM stock_holdings";
 
 /// The largest `quantity_micros` accepted: 1e9 shares.
@@ -84,8 +85,9 @@ fn row_to_holding(row: &rusqlite::Row<'_>) -> rusqlite::Result<StockHolding> {
         last_price_cents: row.get(5)?,
         last_price_at: row.get(6)?,
         fx_rate_to_base_micros: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        account_id: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
@@ -119,6 +121,53 @@ pub fn validated_quantity(quantity_micros: i64) -> Result<i64, AppError> {
     Ok(quantity_micros)
 }
 
+/// Accepts only an account whose balance a holding's value can legitimately be added to.
+///
+/// Both refusals exist because the Accounts page shows `cash + market value` as ONE figure:
+/// `value_cents` is always in the base currency, so a foreign-currency account would make that sum
+/// an invented exchange rate — the one thing this product has no FX anywhere to do — and a
+/// liability's figure is an amount OWED, which a holding does not increase.
+pub fn validated_account(
+    conn: &Connection,
+    account_id: Option<i64>,
+) -> Result<Option<i64>, AppError> {
+    let Some(account_id) = account_id else {
+        return Ok(None);
+    };
+
+    let account: Option<(String, String)> = conn
+        .query_row(
+            "SELECT account_type, currency FROM accounts WHERE id = ?1",
+            params![account_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+
+    let Some((account_type, currency)) = account else {
+        return Err(AppError::Validation {
+            message: "That account no longer exists".to_string(),
+            field: Some("account_id".to_string()),
+        });
+    };
+
+    if account_db::is_liability_account_type(&account_type) {
+        return Err(AppError::Validation {
+            message: "A stock holding cannot be linked to a debt account".to_string(),
+            field: Some("account_id".to_string()),
+        });
+    }
+
+    let base = base_currency(conn)?;
+    if currency != base {
+        return Err(AppError::Validation {
+            message: format!("A stock holding can only be linked to a {base} account"),
+            field: Some("account_id".to_string()),
+        });
+    }
+
+    Ok(Some(account_id))
+}
+
 /// Creates the asset and its holding together, with `value_cents` 0 until a price arrives.
 ///
 /// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
@@ -128,6 +177,7 @@ pub fn insert_stock_asset(
 ) -> Result<PassiveAsset, AppError> {
     let symbol = normalized_symbol(&input.symbol)?;
     let quantity_micros = validated_quantity(input.quantity_micros)?;
+    let account_id = validated_account(conn, input.account_id)?;
     let name = input.name.trim();
     let name = if name.is_empty() { symbol.as_str() } else { name };
 
@@ -138,9 +188,15 @@ pub fn insert_stock_asset(
     let asset_id = conn.last_insert_rowid();
 
     conn.execute(
-        "INSERT INTO stock_holdings (passive_asset_id, symbol, exchange, quantity_micros) \
-         VALUES (?1, ?2, ?3, ?4)",
-        params![asset_id, symbol, input.exchange.trim(), quantity_micros],
+        "INSERT INTO stock_holdings (passive_asset_id, symbol, exchange, quantity_micros, account_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            asset_id,
+            symbol,
+            input.exchange.trim(),
+            quantity_micros,
+            account_id
+        ],
     )?;
 
     bind_holding_identity(conn, asset_id)?;
@@ -173,6 +229,33 @@ pub fn update_quantity(
     }
 
     revalue(conn, asset_id)
+}
+
+/// Links the holding to an account, or unlinks it when `account_id` is `None`.
+///
+/// Moves no money and triggers no revaluation: the link decides which account's row DISPLAYS this
+/// value, not what the value is.
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
+pub fn update_account(
+    conn: &Connection,
+    asset_id: i64,
+    account_id: Option<i64>,
+) -> Result<PassiveAsset, AppError> {
+    let account_id = validated_account(conn, account_id)?;
+
+    let rows = conn.execute(
+        "UPDATE stock_holdings SET account_id = ?1, updated_at = datetime('now') \
+         WHERE passive_asset_id = ?2",
+        params![account_id, asset_id],
+    )?;
+    if rows == 0 {
+        return Err(AppError::Validation {
+            message: "This asset is not a stock holding".to_string(),
+            field: Some("id".to_string()),
+        });
+    }
+
+    asset_db::get_asset_by_id(conn, asset_id)
 }
 
 /// One successful quote, as the three columns it sets. Grouped rather than passed as three

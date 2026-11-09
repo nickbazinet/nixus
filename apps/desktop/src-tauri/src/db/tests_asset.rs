@@ -55,6 +55,7 @@ fn update_asset_value_refuses_a_stock_and_still_accepts_a_plain_asset() {
             name: "Shopify".to_string(),
             exchange: "TOR".to_string(),
             quantity_micros: 2_500_000,
+            account_id: None,
         },
     )
     .expect("stock insert");
@@ -81,6 +82,7 @@ fn update_asset_refuses_a_type_change_in_either_direction() {
             name: "Apple".to_string(),
             exchange: "NMS".to_string(),
             quantity_micros: 1_000_000,
+            account_id: None,
         },
     )
     .expect("stock insert");
@@ -126,6 +128,7 @@ fn deleting_a_stock_asset_cascades_its_holding_away() {
             name: "Apple".to_string(),
             exchange: "NMS".to_string(),
             quantity_micros: 1_000_000,
+            account_id: None,
         },
     )
     .expect("stock insert");

@@ -19,7 +19,17 @@ fn create(symbol: &str, quantity_micros: i64) -> CreateStockAssetInput {
         name: format!("{symbol} Inc."),
         exchange: "NMS".to_string(),
         quantity_micros,
+        account_id: None,
     }
+}
+
+fn insert_account(conn: &Connection, id: i64, account_type: &str, currency: &str) {
+    conn.execute(
+        "INSERT INTO accounts (id, name, institution, account_type, currency, balance_cents) \
+         VALUES (?1, ?2, 'Bank', ?3, ?4, 100000)",
+        rusqlite::params![id, format!("Account {id}"), account_type, currency],
+    )
+    .expect("insert account");
 }
 
 #[test]
@@ -228,4 +238,117 @@ fn the_schema_refuses_a_non_positive_quantity_by_its_own_named_guard() {
         error.contains("stock_holdings_quantity_positive"),
         "the guard must be named in the failure: {error}"
     );
+}
+
+#[test]
+fn a_holding_can_be_created_already_linked_to_an_account() {
+    let (_dir, conn) = dataset();
+    insert_account(&conn, 1, "tfsa", "CAD");
+
+    let mut input = create("AAPL", 1_000_000);
+    input.account_id = Some(1);
+    let asset = insert_stock_asset(&conn, &input).expect("insert");
+
+    assert_eq!(asset.stock.expect("holding").account_id, Some(1));
+}
+
+#[test]
+fn a_holding_links_and_unlinks_without_touching_its_value() {
+    let (_dir, conn) = dataset();
+    insert_account(&conn, 1, "tfsa", "CAD");
+    let asset = insert_stock_asset(&conn, &create("AAPL", 1_000_000)).expect("insert");
+    apply_price(
+        &conn,
+        asset.id,
+        &PriceWrite {
+            last_price_cents: 20_000,
+            currency: "CAD",
+            fx_rate_to_base_micros: UNIT_FX_MICROS,
+        },
+    )
+    .expect("price");
+
+    let linked = update_account(&conn, asset.id, Some(1)).expect("link");
+    assert_eq!(linked.stock.expect("holding").account_id, Some(1));
+    assert_eq!(linked.value_cents, 20_000);
+
+    let unlinked = update_account(&conn, asset.id, None).expect("unlink");
+    assert_eq!(unlinked.stock.expect("holding").account_id, None);
+    assert_eq!(unlinked.value_cents, 20_000);
+}
+
+#[test]
+fn a_holding_cannot_be_linked_to_a_debt_account() {
+    let (_dir, conn) = dataset();
+    insert_account(&conn, 1, "credit_card", "CAD");
+    let asset = insert_stock_asset(&conn, &create("AAPL", 1_000_000)).expect("insert");
+
+    let error = update_account(&conn, asset.id, Some(1)).expect_err("a debt account is refused");
+
+    assert!(matches!(
+        error,
+        AppError::Validation { ref field, .. } if field.as_deref() == Some("account_id")
+    ));
+}
+
+/// The value is always in the base currency, so adding it to a USD balance would invent the FX rate
+/// this product has nowhere to produce.
+#[test]
+fn a_holding_cannot_be_linked_to_a_foreign_currency_account() {
+    let (_dir, conn) = dataset();
+    insert_account(&conn, 1, "non_registered", "USD");
+    let asset = insert_stock_asset(&conn, &create("AAPL", 1_000_000)).expect("insert");
+
+    let error = update_account(&conn, asset.id, Some(1)).expect_err("a USD account is refused");
+
+    assert!(matches!(
+        error,
+        AppError::Validation { ref field, .. } if field.as_deref() == Some("account_id")
+    ));
+}
+
+#[test]
+fn a_holding_cannot_be_linked_to_an_account_that_does_not_exist() {
+    let (_dir, conn) = dataset();
+    let asset = insert_stock_asset(&conn, &create("AAPL", 1_000_000)).expect("insert");
+
+    assert!(matches!(
+        update_account(&conn, asset.id, Some(404)),
+        Err(AppError::Validation { .. })
+    ));
+}
+
+#[test]
+fn deleting_the_account_unlinks_the_holding_rather_than_deleting_it() {
+    let (_dir, conn) = dataset();
+    insert_account(&conn, 1, "tfsa", "CAD");
+    let asset = insert_stock_asset(&conn, &create("AAPL", 1_000_000)).expect("insert");
+    update_account(&conn, asset.id, Some(1)).expect("link");
+
+    conn.execute("DELETE FROM accounts WHERE id = 1", [])
+        .expect("delete the account");
+
+    let holding = get_holding(&conn, asset.id)
+        .expect("read")
+        .expect("the holding survives its account");
+    assert_eq!(holding.account_id, None);
+}
+
+#[test]
+fn linking_a_plain_asset_is_refused_because_it_has_no_holding() {
+    let (_dir, conn) = dataset();
+    insert_account(&conn, 1, "tfsa", "CAD");
+    conn.execute(
+        "INSERT INTO passive_assets (name, asset_type, value_cents) VALUES ('House', 'real_estate', 1)",
+        [],
+    )
+    .expect("a plain asset");
+    let plain: i64 = conn
+        .query_row("SELECT id FROM passive_assets", [], |row| row.get(0))
+        .expect("id");
+
+    assert!(matches!(
+        update_account(&conn, plain, Some(1)),
+        Err(AppError::Validation { .. })
+    ));
 }

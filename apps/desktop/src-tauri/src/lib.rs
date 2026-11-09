@@ -343,6 +343,7 @@ pub fn run() {
             commands::stock::search_stocks,
             commands::stock::create_stock_asset,
             commands::stock::update_stock_quantity,
+            commands::stock::update_stock_account,
             commands::stock::refresh_stock_prices,
             commands::dashboard::get_budget_summary,
             commands::dashboard::get_top_budget_categories,

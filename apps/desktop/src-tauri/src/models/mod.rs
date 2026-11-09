@@ -199,6 +199,9 @@ pub struct StockHolding {
     pub last_price_cents: Option<i64>,
     pub last_price_at: Option<String>,
     pub fx_rate_to_base_micros: Option<i64>,
+    /// The account this holding sits in, or `None` when the user never linked one. The Accounts
+    /// page adds the asset's `value_cents` to that account's cash balance on the strength of it.
+    pub account_id: Option<i64>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -209,6 +212,7 @@ pub struct CreateStockAssetInput {
     pub name: String,
     pub exchange: String,
     pub quantity_micros: i64,
+    pub account_id: Option<i64>,
 }
 
 /// One hit from the provider's symbol search. No currency: Yahoo's search endpoint does not report

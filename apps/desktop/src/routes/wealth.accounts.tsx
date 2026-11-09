@@ -26,6 +26,7 @@ import { AddAccountForm } from "@/components/accounts/AddAccountForm";
 import { EditAccountForm } from "@/components/accounts/EditAccountForm";
 import { NetWorthBreakdownBar } from "@/components/net-worth/NetWorthBreakdownBar";
 import { useAccounts } from "@/hooks/useAccounts";
+import { useAssets } from "@/hooks/useAssets";
 import { useCurrentNetWorth } from "@/hooks/useNetWorth";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import {
@@ -39,7 +40,8 @@ import {
   sumBalanceCents,
   sumLiabilityOwedCents,
 } from "@/lib/accountUtils";
-import type { Account } from "@/lib/types";
+import { stockAssetsByAccount, sumAssetValueCents } from "@/lib/assetUtils";
+import type { Account, PassiveAsset } from "@/lib/types";
 
 export const Route = createFileRoute("/wealth/accounts")({
   component: AccountsPage,
@@ -60,8 +62,14 @@ interface CurrencyPosition {
 /**
  * CAD and USD coexist unconverted — there is no FX anywhere in this product — so every figure is
  * computed per currency instead of being added up into a number that means nothing.
+ *
+ * Linked holdings fold into the asset side because a holding can only be linked to a
+ * base-currency account, which is the rule that keeps this sum honest.
  */
-function positionsByCurrency(accounts: Account[]): CurrencyPosition[] {
+function positionsByCurrency(
+  accounts: Account[],
+  stocksByAccount: Map<number, PassiveAsset[]>
+): CurrencyPosition[] {
   const byCurrency = new Map<string, Account[]>();
   for (const account of accounts) {
     const list = byCurrency.get(account.currency) ?? [];
@@ -72,27 +80,43 @@ function positionsByCurrency(accounts: Account[]): CurrencyPosition[] {
     .sort((first, second) => first[0].localeCompare(second[0]))
     .map(([currency, list]) => {
       const { assetAccounts, liabilityAccounts } = partitionAccounts(list);
-      const assets = sumBalanceCents(assetAccounts);
+      const assets =
+        sumBalanceCents(assetAccounts) +
+        sumLinkedStockValueCents(assetAccounts, stocksByAccount);
       const debt = sumLiabilityOwedCents(liabilityAccounts);
       return { currency, assets, debt, net: assets - debt };
     });
+}
+
+function sumLinkedStockValueCents(
+  accounts: Account[],
+  stocksByAccount: Map<number, PassiveAsset[]>
+): number {
+  return accounts.reduce(
+    (sum, account) =>
+      sum + sumAssetValueCents(stocksByAccount.get(account.id) ?? []),
+    0
+  );
 }
 
 function AccountTypeGroup({
   type,
   groupAccounts,
   onEdit,
+  stocksByAccount,
 }: {
   type: string;
   groupAccounts: Account[];
   onEdit: (account: Account) => void;
+  stocksByAccount: Map<number, PassiveAsset[]>;
 }) {
   const { t, i18n } = useTranslation();
   const maskProps = useMaskProps();
   const isLiability = isLiabilityAccountType(type);
   const subtotal = isLiability
     ? sumLiabilityOwedCents(groupAccounts)
-    : sumBalanceCents(groupAccounts);
+    : sumBalanceCents(groupAccounts) +
+      sumLinkedStockValueCents(groupAccounts, stocksByAccount);
 
   return (
     <>
@@ -111,7 +135,12 @@ function AccountTypeGroup({
         <TableCell />
       </TableRow>
       {groupAccounts.map((account) => (
-        <AccountRow key={account.id} account={account} onEdit={onEdit} />
+        <AccountRow
+          key={account.id}
+          account={account}
+          onEdit={onEdit}
+          stockAssets={stocksByAccount.get(account.id)}
+        />
       ))}
     </>
   );
@@ -123,7 +152,14 @@ function AccountsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const { data: accounts, isLoading } = useAccounts();
+  const { data: assets } = useAssets();
   const netWorth = useCurrentNetWorth();
+
+  const stocksByAccount = useMemo(
+    () =>
+      assets ? stockAssetsByAccount(assets) : new Map<number, PassiveAsset[]>(),
+    [assets]
+  );
 
   const { assetGroups, liabilityGroups } = useMemo(
     () =>
@@ -139,21 +175,30 @@ function AccountsPage() {
   );
 
   const grandTotal = useMemo(
-    () => (accounts ? netAccountPositionCents(accounts) : 0),
-    [accounts]
+    () =>
+      accounts
+        ? netAccountPositionCents(accounts) +
+          sumLinkedStockValueCents(
+            partitionAccounts(accounts).assetAccounts,
+            stocksByAccount
+          )
+        : 0,
+    [accounts, stocksByAccount]
   );
 
   const breakdown = useMemo(() => {
     if (!accounts || accounts.length < 2) return [];
-    return buildAccountBreakdown(accounts, (type) =>
-      ACCOUNT_TYPE_KEYS[type] ? t(ACCOUNT_TYPE_KEYS[type]) : type
+    return buildAccountBreakdown(
+      accounts,
+      (type) => (ACCOUNT_TYPE_KEYS[type] ? t(ACCOUNT_TYPE_KEYS[type]) : type),
+      stocksByAccount
     );
-  }, [accounts, t]);
+  }, [accounts, t, stocksByAccount]);
 
   const showMixedCurrencyNote = accounts ? hasMixedCurrencies(accounts) : false;
   const positions = useMemo(
-    () => (accounts ? positionsByCurrency(accounts) : []),
-    [accounts]
+    () => (accounts ? positionsByCurrency(accounts, stocksByAccount) : []),
+    [accounts, stocksByAccount]
   );
 
   const openAddForm = () => {
@@ -325,6 +370,7 @@ function AccountsPage() {
                       type={type}
                       groupAccounts={groupAccounts}
                       onEdit={setEditingAccount}
+                      stocksByAccount={stocksByAccount}
                     />
                   ))}
                 {liabilityGroups.length > 0 && (
@@ -340,6 +386,7 @@ function AccountsPage() {
                     type={type}
                     groupAccounts={groupAccounts}
                     onEdit={setEditingAccount}
+                    stocksByAccount={stocksByAccount}
                   />
                 ))}
               </TableBody>

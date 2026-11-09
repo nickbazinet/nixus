@@ -13,8 +13,10 @@ import {
   SelectValue,
 } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
+import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import { StockAssetFields } from "@/components/assets/StockAssetFields";
 import { useCreateAsset, useCreateStockAsset } from "@/hooks/useAssets";
+import { isStockLinkableAccount } from "@/lib/accountUtils";
 import {
   ASSET_TYPE_VALUES,
   parseQuantityToMicros,
@@ -28,6 +30,7 @@ interface AssetFormData {
   asset_type: string;
   value_cents: number;
   quantity: string;
+  account_id: string;
 }
 
 interface AddAssetFormProps {
@@ -57,6 +60,7 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
       asset_type: "real_estate",
       value_cents: 0,
       quantity: "",
+      account_id: "",
     },
     // Validate on blur, not on submit: filling every field and only then learning what was wrong is
     // the pattern the required markers and this mode exist together to replace.
@@ -105,6 +109,7 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
         name: data.name.trim() || symbol.name,
         exchange: symbol.exchange,
         quantity_micros: quantityMicros,
+        account_id: data.account_id ? Number(data.account_id) : null,
       },
       mutationCallbacks
     );
@@ -148,30 +153,47 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
       </div>
 
       {isStock && (
-        <StockAssetFields
-          idPrefix="asset-stock"
-          symbol={{
-            selected: symbol,
-            missing: symbolMissing,
-            onSelect: (result) => {
-              setSymbol(result);
-              setSymbolMissing(false);
-            },
-          }}
-          quantity={register("quantity", {
-            validate: (value) => {
-              switch (quantityProblem(value)) {
-                case "empty":
-                  return t("assets.stockQuantityRequired");
-                case "too_large":
-                  return t("assets.stockQuantityTooLarge");
-                default:
-                  return true;
-              }
-            },
-          })}
-          quantityError={errors.quantity}
-        />
+        <>
+          <StockAssetFields
+            idPrefix="asset-stock"
+            symbol={{
+              selected: symbol,
+              missing: symbolMissing,
+              onSelect: (result) => {
+                setSymbol(result);
+                setSymbolMissing(false);
+              },
+            }}
+            quantity={register("quantity", {
+              validate: (value) => {
+                switch (quantityProblem(value)) {
+                  case "empty":
+                    return t("assets.stockQuantityRequired");
+                  case "too_large":
+                    return t("assets.stockQuantityTooLarge");
+                  default:
+                    return true;
+                }
+              },
+            })}
+            quantityError={errors.quantity}
+          />
+
+          <Controller
+            name="account_id"
+            control={control}
+            render={({ field }) => (
+              <OptionalAccountSelect
+                id="asset-stock-account"
+                value={field.value}
+                onChange={field.onChange}
+                labelKey="assets.stockAccount"
+                helpKey="assets.stockAccountNote"
+                filter={isStockLinkableAccount}
+              />
+            )}
+          />
+        </>
       )}
 
       <div className="space-y-1.5">

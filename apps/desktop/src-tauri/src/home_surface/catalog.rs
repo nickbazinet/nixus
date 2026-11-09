@@ -131,7 +131,12 @@ pub enum ParamKind {
     Integer { min: i64, max: i64, default: i64 },
     /// Optional: omitted means "no filter".
     CategoryName { max_chars: usize },
+    /// Optional: one of `ASSET_TYPES`; omitted means "every asset type".
+    AssetType,
 }
+
+/// The net-worth asset types, spelled as stored in `passive_assets.asset_type`.
+pub const ASSET_TYPES: &[&str] = &["stock", "real_estate", "vehicle", "business", "other"]; 
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParamSpec {
@@ -145,7 +150,7 @@ impl ParamSpec {
     pub fn integer(&self) -> Option<(i64, i64, i64)> {
         match self.kind {
             ParamKind::Integer { min, max, default } => Some((min, max, default)),
-            ParamKind::CategoryName { .. } => None,
+            ParamKind::CategoryName { .. } | ParamKind::AssetType => None,
         }
     }
 }
@@ -198,6 +203,12 @@ const CATEGORY: ParamSpec = ParamSpec {
     name: "category",
     description: "Optional. Only expenses in the budget category the user names, in the user's own words (e.g. \"groceries\"); omit for all categories",
     kind: ParamKind::CategoryName { max_chars: 60 },
+};
+
+const ASSET_TYPE: ParamSpec = ParamSpec {
+    name: "asset_type",
+    description: "Optional. Only assets of this type; omit for all types. One of: stock (the investment portfolio: stocks, shares, holdings, investments, securities), real_estate (property, house, home), vehicle (car, truck, boat), business (business equity), other",
+    kind: ParamKind::AssetType,
 };
 
 pub const DATA_SOURCES: &[DataSource] = &[
@@ -260,7 +271,13 @@ pub const DATA_SOURCES: &[DataSource] = &[
     },
     DataSource {
         name: "asset_values",
-        description: "The current value of each passive asset (real estate, vehicles, business equity, stocks).",
+        description: "The current value of each individual net-worth asset (one row per asset: real estate, vehicles, business equity, stocks, other), optionally only one asset type. For \"my portfolio\" use asset_type \"stock\".",
+        shape: Categorical,
+        params: &[ASSET_TYPE],
+    },
+    DataSource {
+        name: "asset_values_by_type",
+        description: "The total current value of the net-worth assets grouped by asset type (stock, real estate, vehicle, business, other), one row per type that has assets.",
         shape: Categorical,
         params: &[],
     },
@@ -361,6 +378,7 @@ mod tests {
                 "recent_expenses",
                 "account_balances",
                 "asset_values",
+                "asset_values_by_type",
                 "average_monthly_cash_flow",
                 "current_date",
                 "recurring_expenses",

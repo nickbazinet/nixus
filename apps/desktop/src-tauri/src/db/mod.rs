@@ -60,7 +60,11 @@ mod tests_migration_030;
 #[cfg(test)]
 mod tests_migration_038;
 #[cfg(test)]
+mod tests_migration_039;
+#[cfg(test)]
 mod tests_stock;
+#[cfg(test)]
+mod tests_stock_account;
 #[cfg(test)]
 mod tests_sync_restore;
 
@@ -396,6 +400,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (
         38,
         include_str!("../../migrations/038_home_widget_presentation.sql"),
+    ),
+    (
+        39,
+        include_str!("../../migrations/039_stock_holdings_account_id.sql"),
     ),
 ];
 

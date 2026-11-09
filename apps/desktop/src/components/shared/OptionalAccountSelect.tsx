@@ -10,6 +10,7 @@ import {
 import { Label } from "@nixus/shared";
 import { useAccounts } from "@/hooks/useAccounts";
 import { groupAccountsBySection } from "@/lib/accountUtils";
+import type { Account } from "@/lib/types";
 
 interface OptionalAccountSelectProps {
   id: string;
@@ -17,6 +18,8 @@ interface OptionalAccountSelectProps {
   onChange: (value: string) => void;
   labelKey: string;
   helpKey: string;
+  /** Narrows the offered accounts to those the caller's backend path will accept. */
+  filter?: (account: Account) => boolean;
 }
 
 export function OptionalAccountSelect({
@@ -25,18 +28,19 @@ export function OptionalAccountSelect({
   onChange,
   labelKey,
   helpKey,
+  filter,
 }: OptionalAccountSelectProps) {
   const { t } = useTranslation();
   const { data: accounts = [] } = useAccounts();
   const { assetGroups, liabilityGroups } = groupAccountsBySection(accounts);
 
-  const orderedAccounts = useMemo(
-    () => [
+  const orderedAccounts = useMemo(() => {
+    const ordered = [
       ...assetGroups.flatMap(([, groupAccounts]) => groupAccounts),
       ...liabilityGroups.flatMap(([, groupAccounts]) => groupAccounts),
-    ],
-    [assetGroups, liabilityGroups]
-  );
+    ];
+    return filter ? ordered.filter(filter) : ordered;
+  }, [assetGroups, liabilityGroups, filter]);
 
   const items = [
     { value: "", label: t("common.none") },
