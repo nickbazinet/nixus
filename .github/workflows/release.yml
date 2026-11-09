@@ -172,6 +172,12 @@ jobs:
             throw "Azure Artifact Signing probe did not produce a valid, timestamped signature."
           }
 
+      # target/ is restored from the cargo cache, so bundles from a previous release would
+      # otherwise sit next to this one and break the single-installer signature checks.
+      - name: Clear stale bundles from the restored cache
+        shell: bash
+        run: rm -rf apps/desktop/src-tauri/target/release/bundle apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle
+
       - uses: tauri-apps/tauri-action@v0.6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
