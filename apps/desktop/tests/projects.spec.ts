@@ -280,6 +280,18 @@ async function setupTauriMock(
         projects.reduce((max, project) => Math.max(max, project.id), 0) + 1;
       const contributions: MockContribution[] = [];
       let nextContributionId = 1;
+      // A project's budget line, the way `get_project_budget_links` reports it. The dated target is a
+      // fixed stand-in: the Rust tests own the arithmetic, this spec only proves what is rendered.
+      const DATED_MONTH_TARGET_CENTS = 20_000;
+      const budgetLinks: {
+        project_id: number;
+        category_id: number;
+        group_id: number;
+        month_target_cents: number;
+      }[] = [];
+      let nextBudgetCategoryId = 100;
+      const budgetCalls: Record<string, unknown>[] = [];
+      (window as unknown as Record<string, unknown>).__BUDGET_CALLS__ = budgetCalls;
       // The `config` key-value table, which is the ONLY thing a skip may write. Exposed so a spec
       // can assert the skip landed here and nowhere near `project_contributions`.
       const SKIPPED_MONTH_KEY = "projects_suggestion_skipped_month";
@@ -448,7 +460,58 @@ async function setupTauriMock(
                 message: "Project not found",
               });
             project.archived_at = new Date().toISOString();
+            const linkIndex = budgetLinks.findIndex((link) => link.project_id === project.id);
+            if (linkIndex >= 0) budgetLinks.splice(linkIndex, 1);
             return Promise.resolve({ ...project });
+          }
+
+          case "get_project_budget_links":
+            return Promise.resolve(
+              budgetLinks.map((link) => ({
+                ...link,
+                set_aside_cents: contributions
+                  .filter(
+                    (c) =>
+                      c.project_id === link.project_id &&
+                      c.date.startsWith(currentMonth())
+                  )
+                  .reduce((sum, c) => sum + c.amount_cents, 0),
+              }))
+            );
+
+          case "add_project_to_budget": {
+            budgetCalls.push({ cmd, ...args });
+            const project = projects.find(
+              (p) => p.id === (args.project_id as number) && p.archived_at === null
+            );
+            if (!project)
+              return Promise.reject(refusal("project_id"));
+            if (budgetLinks.some((link) => link.project_id === project.id))
+              return Promise.reject(refusal("project_id"));
+            const monthly = args.monthly_cents as number | null;
+            if (project.target_date === null && !(monthly !== null && monthly > 0))
+              return Promise.reject(refusal("monthly_cents"));
+            const link = {
+              project_id: project.id,
+              category_id: nextBudgetCategoryId++,
+              group_id: 50,
+              month_target_cents:
+                project.target_date === null
+                  ? (monthly as number)
+                  : DATED_MONTH_TARGET_CENTS,
+            };
+            budgetLinks.push(link);
+            return Promise.resolve({ ...link, set_aside_cents: 0 });
+          }
+
+          case "remove_project_from_budget": {
+            budgetCalls.push({ cmd, ...args });
+            const index = budgetLinks.findIndex(
+              (link) => link.project_id === (args.project_id as number)
+            );
+            if (index < 0) return Promise.reject(refusal("project_id"));
+            budgetLinks.splice(index, 1);
+            return Promise.resolve(null);
           }
 
           case "reorder_projects": {
@@ -1863,8 +1926,9 @@ test.describe("Project pace", () => {
     );
 
     const badge = page.getByTestId("project-status-badge");
-    await expect(badge).toContainText("On track");
-    await expect(badge).toContainText("$1,000.00/mo");
+    await expect(badge).toContainText(
+      "On track · $1,000.00/mo vs $1,000.00/mo needed"
+    );
     await expect(badge).not.toContainText("to go");
   });
 
@@ -1885,8 +1949,9 @@ test.describe("Project pace", () => {
     );
 
     const badge = page.getByTestId("project-status-badge");
-    await expect(badge).toContainText("Behind");
-    await expect(badge).toContainText("$1,000.00/mo");
+    // The verdict carries the average it was judged on, so "Behind" never sits beside only the
+    // required figure it is being compared against.
+    await expect(badge).toContainText("Behind · $800.00/mo vs $1,000.00/mo needed");
   });
 
   test("a project at half its required rate reads off track", async ({ page }) => {
@@ -1904,8 +1969,7 @@ test.describe("Project pace", () => {
     );
 
     const badge = page.getByTestId("project-status-badge");
-    await expect(badge).toContainText("Off track");
-    await expect(badge).toContainText("$1,000.00/mo");
+    await expect(badge).toContainText("Off track · $500.00/mo vs $1,000.00/mo needed");
   });
 
   test("a project with no deadline keeps the plain remaining badge and shows no rate", async ({
@@ -1934,9 +1998,9 @@ test.describe("Project pace", () => {
     await expect(page.getByTestId("project-pace-line")).toHaveCount(0);
   });
 
-  // A dated project the backend refused to judge (too new to average) must fall back to the plain
-  // badge rather than showing a rate the backend deliberately withheld.
-  test("a dated project the backend reports as neutral keeps the plain remaining badge", async ({
+  // A dated project too new to average gets the plan without a verdict: what it needs per month,
+  // never "behind" on a project the user just created.
+  test("a dated project too new to judge shows what it needs, not a verdict", async ({
     page,
   }) => {
     await openWith(
@@ -1945,16 +2009,66 @@ test.describe("Project pace", () => {
       [
         {
           project_id: 1,
-          required_monthly_cents: null,
+          required_monthly_cents: 100_000,
           actual_monthly_cents: null,
           status: "neutral",
         },
       ]
     );
 
-    await expect(page.getByTestId("project-status-badge")).toContainText(
-      "$6,000.00 to go"
+    const badge = page.getByTestId("project-status-badge");
+    await expect(badge).toHaveText("$1,000.00/mo needed");
+    await expect(badge).not.toContainText("Behind");
+
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-pace-line")).toContainText(
+      "$1,000.00/mo to reach $6,000.00 by Jun 1, 2027"
     );
+    await expect(page.getByTestId("project-pace-too-new")).toBeVisible();
+    await expect(page.getByTestId("project-pace-actual")).toHaveCount(0);
+    await expect(page.getByTestId("project-advice-button")).toHaveCount(0);
+  });
+
+  test("a judged project states its actual average under the plan", async ({ page }) => {
+    await openWith(
+      page,
+      [DATED_PROJECT],
+      [
+        {
+          project_id: 1,
+          required_monthly_cents: 100_000,
+          actual_monthly_cents: 80_000,
+          status: "caution",
+        },
+      ]
+    );
+
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-pace-actual")).toContainText(
+      "You've averaged $800.00/mo over the last 3 months"
+    );
+    await expect(page.getByTestId("project-pace-too-new")).toHaveCount(0);
+  });
+
+  test("at the minimum window the two-figure verdict badge causes no sideways scroll", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1024, height: 680 });
+    await openWith(
+      page,
+      [{ ...DATED_PROJECT, name: "A fairly long project name for the summer tires" }],
+      [
+        {
+          project_id: 1,
+          required_monthly_cents: 1_714_300,
+          actual_monthly_cents: 1_333_300,
+          status: "caution",
+        },
+      ]
+    );
+
+    await expect(page.getByTestId("project-status-badge")).toBeVisible();
+    expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
   });
 
   test("the expanded detail explains the math behind the required rate", async ({
@@ -2216,7 +2330,7 @@ test.describe("AI advisory when a project is off track", () => {
     await expect(page.getByTestId("project-advice-retry")).toBeVisible();
 
     await expect(page.getByTestId("project-status-badge")).toContainText(
-      "Off track · $1,000.00/mo"
+      "Off track · $500.00/mo vs $1,000.00/mo needed"
     );
     await expect(page.getByTestId("project-pace-line")).toContainText(
       "$1,000.00/mo to reach $6,000.00 by Jun 1, 2027"
@@ -2769,7 +2883,8 @@ test.describe("Project image editing from the row thumbnail", () => {
 
     const remove = page.getByRole("menuitem", { name: "Remove image" });
     await expect(remove).toBeVisible();
-    // Demoted BELOW the two pre-existing items rather than promoted above them.
+    // Demoted BELOW the everyday items rather than promoted above them, and kept beside the other
+    // destructive entry.
     const menuOrder = await page
       .getByRole("menu")
       .evaluate((menu) =>
@@ -2779,6 +2894,7 @@ test.describe("Project image editing from the row thumbnail", () => {
       );
     expect(menuOrder).toEqual([
       "edit-project-button",
+      "add-to-budget-button",
       "remove-project-image-button",
       "archive-project-button",
     ]);
@@ -3128,5 +3244,148 @@ test.describe("Project image editing from the row thumbnail", () => {
     });
 
     expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
+  });
+});
+
+// The budget half of a project: adding it to the monthly budget and taking it back out. What the
+// budget page then shows for the line is `budget.spec.ts`'s job.
+test.describe("Adding a project to the budget", () => {
+  const DATED: MockSeedProject = {
+    id: 1,
+    name: "GLI Summer Tire",
+    target_cents: 120_000,
+    target_date: "2027-05-01",
+  };
+  const UNDATED: MockSeedProject = {
+    id: 2,
+    name: "Rainy day",
+    target_cents: 500_000,
+    target_date: null,
+  };
+
+  async function openWith(
+    page: Page,
+    projects: MockSeedProject[],
+    seedConfirmed: { project_id: number; amount_cents: number }[] = []
+  ) {
+    await setupTauriMock(page, [], SURPLUS_CENTS, seedConfirmed, null, projects);
+    await page.goto("/wealth/projects");
+    await expect(page.getByTestId("project-row")).toHaveCount(projects.length);
+  }
+
+  async function budgetCalls(page: Page) {
+    return page.evaluate(
+      () =>
+        (window as unknown as Record<string, unknown>).__BUDGET_CALLS__ as Record<
+          string,
+          unknown
+        >[]
+    );
+  }
+
+  test("a dated project goes straight in and shows this month's figures", async ({ page }) => {
+    await openWith(page, [DATED]);
+    await page.getByTestId("project-expand-toggle").click();
+
+    await page.getByTestId("project-add-to-budget").click();
+
+    await expect(page.getByTestId("project-budget-amount-dialog")).toHaveCount(0);
+    const linked = page.getByTestId("project-budget-linked");
+    await expect(linked).toContainText("In your budget");
+    await expect(linked).toContainText("This month: $0.00 of $200.00 set aside");
+    await expect(page.getByTestId("project-view-in-budget")).toHaveAttribute(
+      "href",
+      "/spending/budget"
+    );
+    await expect(page.getByTestId("project-add-to-budget")).toHaveCount(0);
+
+    const calls = await budgetCalls(page);
+    expect(calls).toEqual([
+      {
+        cmd: "add_project_to_budget",
+        project_id: 1,
+        group_name: "Projects",
+        monthly_cents: null,
+      },
+    ]);
+  });
+
+  test("a contribution this month shows as set aside on the linked line", async ({ page }) => {
+    await openWith(page, [DATED]);
+    await page.getByTestId("project-expand-toggle").click();
+    await page.getByTestId("project-add-to-budget").click();
+    await expect(page.getByTestId("project-budget-linked")).toBeVisible();
+
+    await page.getByTestId("add-contribution-button").click();
+    const form = page.getByTestId("project-contribution-form");
+    await form.getByLabel("Money is sitting in").click();
+    await page.getByRole("option", { name: "Chequing — RBC" }).click();
+    await form.getByLabel("Amount").fill("75.00");
+    await form.getByRole("button", { name: "Log contribution" }).click();
+
+    await expect(page.getByTestId("project-budget-linked")).toContainText(
+      "This month: $75.00 of $200.00 set aside"
+    );
+  });
+
+  test("an undated project asks for a monthly amount and refuses zero", async ({ page }) => {
+    await openWith(page, [UNDATED]);
+    await page.getByTestId("project-expand-toggle").click();
+
+    await page.getByTestId("project-add-to-budget").click();
+    const dialog = page.getByTestId("project-budget-amount-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("How much per month?");
+
+    await dialog.getByTestId("confirm-project-budget-amount").click();
+    await expect(dialog.getByTestId("project-budget-amount-error")).toContainText(
+      "Amount must be greater than $0"
+    );
+    expect(await budgetCalls(page)).toEqual([]);
+
+    await dialog.getByLabel("Monthly amount").fill("150.00");
+    await dialog.getByTestId("confirm-project-budget-amount").click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId("project-budget-linked")).toContainText(
+      "This month: $0.00 of $150.00 set aside"
+    );
+    expect((await budgetCalls(page))[0]).toMatchObject({ monthly_cents: 15_000 });
+  });
+
+  test("removing a project from the budget confirms first and keeps the project", async ({
+    page,
+  }) => {
+    await openWith(page, [DATED]);
+    await page.getByTestId("project-row-menu").click();
+    await page.getByTestId("add-to-budget-button").click();
+
+    await page.getByTestId("project-row-menu").click();
+    await page.getByTestId("remove-from-budget-button").click();
+    const dialog = page.getByTestId("remove-from-budget-dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText("The project and its contributions are kept.");
+    await page.getByTestId("confirm-remove-from-budget").click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId("project-row")).toContainText("GLI Summer Tire");
+    await page.getByTestId("project-row-menu").click();
+    await expect(page.getByTestId("add-to-budget-button")).toBeVisible();
+    expect((await budgetCalls(page)).map((call) => call.cmd)).toEqual([
+      "add_project_to_budget",
+      "remove_project_from_budget",
+    ]);
+  });
+
+  test("a reached goal is not offered for the budget", async ({ page }) => {
+    await openWith(page, [DATED], [{ project_id: 1, amount_cents: 120_000 }]);
+
+    await page.getByTestId("project-expand-toggle").click();
+    await expect(page.getByTestId("project-detail")).toBeVisible();
+    await expect(page.getByTestId("project-add-to-budget")).toHaveCount(0);
+
+    await page.getByTestId("project-row-menu").click();
+    await expect(page.getByTestId("edit-project-button")).toBeVisible();
+    await expect(page.getByTestId("add-to-budget-button")).toHaveCount(0);
   });
 });

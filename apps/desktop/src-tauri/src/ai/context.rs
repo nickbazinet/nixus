@@ -125,10 +125,17 @@ fn budget_categories(conn: &Connection, clock: &ProviderClock) -> String {
             .find(|group| group.id == cat.group_id)
             .map(|group| group.name.as_str())
             .unwrap_or("unknown");
-        out.push_str(&format!(
-            "  - {} (group: {}): target {} cents, spent {} cents\n",
-            cat.name, group_name, cat.target_cents, cat.spent_cents
-        ));
+        if cat.project_id.is_some() {
+            out.push_str(&format!(
+                "  - {} (group: {}) (savings project, set aside {} of {} cents)\n",
+                cat.name, group_name, cat.spent_cents, cat.target_cents
+            ));
+        } else {
+            out.push_str(&format!(
+                "  - {} (group: {}): target {} cents, spent {} cents\n",
+                cat.name, group_name, cat.target_cents, cat.spent_cents
+            ));
+        }
     }
     note_truncation(&mut out, BUDGET_CATEGORIES_CAP, categories.len());
     out.push('\n');

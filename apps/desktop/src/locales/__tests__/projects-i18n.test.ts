@@ -96,8 +96,11 @@ const REQUIRED_KEYS = [
   "projects.paceBadgeGood",
   "projects.paceBadgeCaution",
   "projects.paceBadgeOver",
+  "projects.paceBadgeNeeded",
   "projects.paceLine",
   "projects.paceWeeklyLine",
+  "projects.paceActualLine",
+  "projects.paceTooNewLine",
   "projects.paceMathInfo",
   "projects.paceMathInfoAria",
   "projects.paceAdviceAction",
@@ -105,6 +108,20 @@ const REQUIRED_KEYS = [
   "projects.adviceError",
   "projects.adviceRetry",
   "projects.adviceSkeleton",
+  "projects.budgetGroupName",
+  "projects.addToBudget",
+  "projects.removeFromBudget",
+  "projects.viewInBudget",
+  "projects.inBudgetLine",
+  "projects.budgetMonthlyTitle",
+  "projects.budgetMonthlyDescription",
+  "projects.budgetMonthlyLabel",
+  "projects.addedToBudget",
+  "projects.addToBudgetFailed",
+  "projects.removeFromBudgetTitle",
+  "projects.removeFromBudgetDescription",
+  "projects.removedFromBudget",
+  "projects.removeFromBudgetFailed",
   "projects.image.addLabel",
   "projects.image.replaceLabel",
   "projects.image.removeAction",
@@ -137,6 +154,15 @@ const REQUIRED_FOREIGN_KEYS = [
   "common.cancel",
   "common.amountHidden",
   "budget.ofSeparator",
+  "budget.linkedSavingsProject",
+  "budget.linkedOpenProject",
+  "budget.linkedSetAsideLeft",
+  "budget.linkedFullySetAside",
+  "budget.linkedGoalReached",
+  "budget.linkedTargetCalculated",
+  "budget.linkedTargetCalculatedAria",
+  "budget.linkedMeterLabel",
+  "budget.linkedMeterValue",
   "toast.saveSuccess",
   "toast.saveFailed",
   "toast.deleteSuccess",
@@ -186,7 +212,7 @@ describe("projects i18n parity", () => {
   });
 
   it("keeps the interpolation placeholders identical across locales", () => {
-    for (const key of ["projects.savedOfTarget", "projects.meterLabel", "projects.remainingBadge", "projects.rowActions", "projects.percentComplete", "projects.expandProject", "projects.collapseProject", "projects.dashboardMeterValue", "projects.moveUp", "projects.moveDown", "projects.suggestionAmountLabel", "projects.suggestionRemainder", "projects.suggestionOverBy", "projects.suggestionMonthsToTarget", "projects.suggestionConfirmed", "projects.suggestionConfirmFailed", "projects.suggestionSkipped", "projects.suggestionCadenceNote", "projects.suggestionSettledConfirmedBody", "projects.suggestionSettledRemainder", "projects.suggestionSettledSkippedBody", "projects.suggestionSettledNext", "projects.paceBadgeGood", "projects.paceBadgeCaution", "projects.paceBadgeOver", "projects.paceLine", "projects.paceWeeklyLine", "projects.image.addLabel", "projects.image.replaceLabel", "projects.image.alt"]) {
+    for (const key of ["projects.savedOfTarget", "projects.meterLabel", "projects.remainingBadge", "projects.rowActions", "projects.percentComplete", "projects.expandProject", "projects.collapseProject", "projects.dashboardMeterValue", "projects.moveUp", "projects.moveDown", "projects.suggestionAmountLabel", "projects.suggestionRemainder", "projects.suggestionOverBy", "projects.suggestionMonthsToTarget", "projects.suggestionConfirmed", "projects.suggestionConfirmFailed", "projects.suggestionSkipped", "projects.suggestionCadenceNote", "projects.suggestionSettledConfirmedBody", "projects.suggestionSettledRemainder", "projects.suggestionSettledSkippedBody", "projects.suggestionSettledNext", "projects.paceBadgeGood", "projects.paceBadgeCaution", "projects.paceBadgeOver", "projects.paceBadgeNeeded", "projects.paceLine", "projects.paceWeeklyLine", "projects.paceActualLine", "projects.image.addLabel", "projects.image.replaceLabel", "projects.image.alt", "projects.inBudgetLine", "projects.addedToBudget", "projects.removeFromBudgetDescription", "projects.removedFromBudget", "budget.linkedOpenProject", "budget.linkedSetAsideLeft", "budget.linkedMeterLabel", "budget.linkedMeterValue"]) {
       const placeholders = (value: string) =>
         [...value.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]).sort();
       expect(placeholders(fr[key]), `Placeholder drift on ${key}`).toEqual(

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { queryKeys } from "@/lib/constants";
 import type {
   AccountEarmarkBreakdown,
@@ -7,6 +8,7 @@ import type {
   CreateProjectInput,
   Project,
   ProjectAllocationInput,
+  ProjectBudgetLink,
   ProjectContribution,
   ProjectImage,
   ProjectImageMeta,
@@ -18,10 +20,11 @@ import type {
   UpdateProjectInput,
 } from "@/lib/types";
 
-export function useProjects() {
+export function useProjects(enabled = true) {
   return useQuery({
     queryKey: queryKeys.projects,
     queryFn: () => invoke<Project[]>("get_projects"),
+    enabled,
   });
 }
 
@@ -80,6 +83,9 @@ export function useUpdateProject() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.projectAdvice(input.id),
       });
+      // A rename is carried to the project's budget line, and a new target or date moves its
+      // computed monthly target.
+      invalidateBudgetLineKeys(queryClient);
     },
   });
 }
@@ -115,6 +121,59 @@ export function useArchiveProject() {
       queryClient.invalidateQueries({
         queryKey: queryKeys.savingsProjectsSummary,
       });
+      // Archiving removes the project's budget line.
+      invalidateBudgetLineKeys(queryClient);
+    },
+  });
+}
+
+// Every budget surface that shows a project's budget line. Prefix keys, because a line's figures
+// differ per budget month and a mutation cannot know which months are cached.
+function invalidateBudgetLineKeys(
+  queryClient: ReturnType<typeof useQueryClient>
+) {
+  queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+  queryClient.invalidateQueries({ queryKey: ["budget-groups"] });
+  queryClient.invalidateQueries({ queryKey: ["budget-categories"] });
+  queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
+  queryClient.invalidateQueries({ queryKey: queryKeys.allBudgetCategories });
+  queryClient.invalidateQueries({ queryKey: queryKeys.projectBudgetLinks });
+}
+
+export function useProjectBudgetLinks() {
+  return useQuery({
+    queryKey: queryKeys.projectBudgetLinks,
+    queryFn: () => invoke<ProjectBudgetLink[]>("get_project_budget_links"),
+  });
+}
+
+// `group_name` is sent localized because Rust creates the "Projects" group the first time a project
+// is added, and the group name is user-visible data from then on.
+export function useAddProjectToBudget() {
+  const queryClient = useQueryClient();
+  const { t } = useTranslation();
+
+  return useMutation({
+    mutationFn: (input: { project_id: number; monthly_cents: number | null }) =>
+      invoke<ProjectBudgetLink>("add_project_to_budget", {
+        project_id: input.project_id,
+        group_name: t("projects.budgetGroupName"),
+        monthly_cents: input.monthly_cents,
+      }),
+    onSuccess: () => {
+      invalidateBudgetLineKeys(queryClient);
+    },
+  });
+}
+
+export function useRemoveProjectFromBudget() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: number) =>
+      invoke<void>("remove_project_from_budget", { project_id: projectId }),
+    onSuccess: () => {
+      invalidateBudgetLineKeys(queryClient);
     },
   });
 }
@@ -241,10 +300,11 @@ export function useFetchProjectImage() {
   });
 }
 
-export function useProjectSavedTotals() {
+export function useProjectSavedTotals(enabled = true) {
   return useQuery({
     queryKey: queryKeys.projectSavedTotals,
     queryFn: () => invoke<ProjectSavedTotal[]>("get_project_saved_totals"),
+    enabled,
   });
 }
 
@@ -333,6 +393,10 @@ function invalidateContributionKeys(
     queryKey: queryKeys.savingsProjectsSummary,
   });
   queryClient.invalidateQueries({ queryKey: queryKeys.projectPace });
+  // A budgeted project's line shows the month's contributions as "set aside".
+  queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+  queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
+  queryClient.invalidateQueries({ queryKey: queryKeys.projectBudgetLinks });
 
   for (const projectId of new Set(contributions.map((c) => c.project_id))) {
     queryClient.invalidateQueries({

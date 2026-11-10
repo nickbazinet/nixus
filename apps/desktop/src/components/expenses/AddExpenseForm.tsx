@@ -19,7 +19,7 @@ import { Plus } from "lucide-react";
 import { toast } from "sonner";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
-import { useAllBudgetCategories, useCreateExpense } from "@/hooks/useExpenses";
+import { useExpenseCategories, useCreateExpense } from "@/hooks/useExpenses";
 import { useBudgetGroups, useCreateBudgetCategoryQuick } from "@/hooks/useBudget";
 
 interface AddExpenseFormProps {
@@ -41,7 +41,7 @@ interface ExpenseFormData {
 
 export function AddExpenseForm({ defaultCategoryId, onClose }: AddExpenseFormProps) {
   const { t } = useTranslation();
-  const { data: categories = [] } = useAllBudgetCategories();
+  const { data: categories = [] } = useExpenseCategories();
   const { data: groups = [] } = useBudgetGroups();
   const createExpense = useCreateExpense();
   const createCategory = useCreateBudgetCategoryQuick();

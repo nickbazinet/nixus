@@ -9,6 +9,7 @@ import {
 } from "date-fns";
 import {
   InfoIcon,
+  PiggyBank,
   Plus,
   Sparkles,
   Trash2,
@@ -36,9 +37,11 @@ import {
 } from "@nixus/shared";
 import { ProjectContributionForm } from "@/components/projects/ProjectContributionForm";
 import { ProjectImageCard } from "@/components/projects/ProjectImageCard";
+import { useProjectBudgetActions } from "@/components/projects/useProjectBudgetActions";
 import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
 import {
   useDeleteProjectContribution,
+  useProjectBudgetLinks,
   useProjectContributions,
   useProjectPace,
 } from "@/hooks/useProjects";
@@ -85,10 +88,13 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
   const { data: contributions = [] } = useProjectContributions(project.id);
   const { data: accounts = [] } = useAccounts();
   const { data: paces = [] } = useProjectPace();
+  const { data: budgetLinks = [] } = useProjectBudgetLinks();
   const availability = useAiAvailability();
   const deleteContribution = useDeleteProjectContribution();
+  const budgetActions = useProjectBudgetActions(project);
 
   const remainingCents = Math.max(0, project.target_cents - savedCents);
+  const budgetLink = budgetLinks.find((link) => link.project_id === project.id);
   // Display-only division on integer cents; no percentage is ever stored or transmitted.
   const percentComplete =
     project.target_cents > 0
@@ -97,6 +103,7 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
 
   const pace = paces.find((entry) => entry.project_id === project.id);
   const requiredMonthlyCents = pace?.required_monthly_cents ?? null;
+  const actualMonthlyCents = pace?.actual_monthly_cents ?? null;
   const targetDate = project.target_date;
   // The line is only honest when Rust actually produced a rate against a real date: a `neutral`
   // project has no required pace, and inventing one from the remaining amount is exactly the
@@ -136,7 +143,7 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
     projectName: project.name,
     remainingCents,
     requiredMonthlyCents: requiredMonthlyCents ?? 0,
-    actualMonthlyCents: pace?.actual_monthly_cents ?? null,
+    actualMonthlyCents,
     monthsToTarget,
   });
 
@@ -230,8 +237,64 @@ export function ProjectDetail({ project, savedCents }: ProjectDetailProps) {
               })}
             </p>
           )}
+          {pace?.status === "neutral" ? (
+            <p
+              className="text-caption text-ink-faint"
+              data-testid="project-pace-too-new"
+            >
+              {t("projects.paceTooNewLine")}
+            </p>
+          ) : (
+            actualMonthlyCents !== null && (
+              <p
+                className="text-caption text-ink-dim"
+                data-testid="project-pace-actual"
+              >
+                {t("projects.paceActualLine", {
+                  amount: formatCurrency(actualMonthlyCents),
+                })}
+              </p>
+            )
+          )}
         </div>
       )}
+
+      {budgetLink ? (
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-1"
+          data-testid="project-budget-linked"
+        >
+          <p className="flex items-center gap-1.5 text-caption text-ink-dim">
+            <PiggyBank className="size-3.5" aria-hidden="true" />
+            {t("projects.inBudgetLine", {
+              setAside: formatCurrency(budgetLink.set_aside_cents),
+              target: formatCurrency(budgetLink.month_target_cents),
+            })}
+          </p>
+          <Button
+            size="sm"
+            variant="link"
+            render={<Link to="/spending/budget" />}
+            data-testid="project-view-in-budget"
+          >
+            {t("projects.viewInBudget")}
+          </Button>
+        </div>
+      ) : (
+        remainingCents > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={budgetActions.startAdd}
+            disabled={budgetActions.addPending}
+            data-testid="project-add-to-budget"
+          >
+            <PiggyBank aria-hidden="true" />
+            {t("projects.addToBudget")}
+          </Button>
+        )
+      )}
+      {budgetActions.dialogs}
 
       {canAskForAdvice && (
         <div className="space-y-2" data-testid="project-advice">

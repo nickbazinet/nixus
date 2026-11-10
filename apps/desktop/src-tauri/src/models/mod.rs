@@ -18,6 +18,7 @@ pub struct BudgetCategory {
     pub target_cents: i64,
     pub sort_order: i32,
     pub created_at: String,
+    pub project_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +33,8 @@ pub struct CreateBudgetCategory {
     pub target_cents: i64,
 }
 
+// For a category linked to a savings project, `target_cents` is the month's computed commitment and
+// `spent_cents` is the money set aside for the project that month — never expenses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetCategoryStatus {
     pub id: i64,
@@ -40,6 +43,7 @@ pub struct BudgetCategoryStatus {
     pub target_cents: i64,
     pub spent_cents: i64,
     pub is_deleted: bool,
+    pub project_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1182,6 +1186,15 @@ pub struct ProjectAllocationInput {
 
 // Saved totals are aggregated on read (`SUM(amount_cents)`), never stored on `projects`: a stored
 // column would drift the moment a contribution is deleted outside the path that maintains it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectBudgetLink {
+    pub project_id: i64,
+    pub category_id: i64,
+    pub group_id: i64,
+    pub month_target_cents: i64,
+    pub set_aside_cents: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectSavedTotal {
     pub project_id: i64,

@@ -335,6 +335,7 @@ mod tests {
             target_cents,
             spent_cents,
             is_deleted: false,
+            project_id: None,
         }
     }
 

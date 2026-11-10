@@ -296,7 +296,9 @@ pub fn build_budget_template_export_json(conn: &Connection) -> Result<String, Ap
     for group in &groups {
         let cats: Vec<TemplateCategoryDef> = categories
             .iter()
-            .filter(|c| c.group_id == group.id)
+            // A savings-project line belongs to this budget only; a template has no project to
+            // link it to.
+            .filter(|c| c.group_id == group.id && c.project_id.is_none())
             .map(|c| TemplateCategoryDef {
                 name: Cow::Owned(c.name.trim().to_string()),
                 // FR96: stripped by construction — `c.target_cents` is never read.
@@ -431,7 +433,8 @@ mod tests {
                 target_cents INTEGER NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                deleted_at TEXT
+                deleted_at TEXT,
+                project_id INTEGER
             );
             CREATE TABLE audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

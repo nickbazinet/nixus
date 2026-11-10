@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Archive, ImageOff, MoreHorizontal, Pencil } from "lucide-react";
+import {
+  Archive,
+  ImageOff,
+  MoreHorizontal,
+  Pencil,
+  PiggyBank,
+} from "lucide-react";
 import {
   Button,
   Dialog,
@@ -15,15 +21,19 @@ import {
   DropdownMenuTrigger,
 } from "@nixus/shared";
 import {
+  useProjectBudgetLinks,
   useProjectThumbnails,
   useRemoveProjectImage,
 } from "@/hooks/useProjects";
+import { useProjectBudgetActions } from "@/components/projects/useProjectBudgetActions";
 import { GENERIC_FAILURE_KEY } from "@/hooks/useProjectImagePicker";
 import { projectImageMessageKey } from "@/lib/appError";
 import type { Project } from "@/lib/types";
 
 interface ProjectRowMenuProps {
   project: Project;
+  /** A met goal has nothing left to budget, so it is not offered for adding. */
+  reached: boolean;
   onEdit: (project: Project) => void;
   onArchive: (project: Project) => void;
   onImageErrorKey: (key: string | null) => void;
@@ -42,16 +52,20 @@ interface ProjectRowMenuProps {
  */
 export function ProjectRowMenu({
   project,
+  reached,
   onEdit,
   onArchive,
   onImageErrorKey,
 }: ProjectRowMenuProps) {
   const { t } = useTranslation();
   const { data: thumbnails = [] } = useProjectThumbnails();
+  const { data: budgetLinks = [] } = useProjectBudgetLinks();
   const removeImage = useRemoveProjectImage();
+  const budgetActions = useProjectBudgetActions(project);
   const [confirmingImageRemove, setConfirmingImageRemove] = useState(false);
 
   const hasImage = thumbnails.some((entry) => entry.project_id === project.id);
+  const inBudget = budgetLinks.some((link) => link.project_id === project.id);
 
   const handleRemoveImage = () => {
     removeImage.mutate(project.id, {
@@ -91,6 +105,25 @@ export function ProjectRowMenu({
             <Pencil aria-hidden="true" />
             {t("projects.editProject")}
           </DropdownMenuItem>
+          {inBudget ? (
+            <DropdownMenuItem
+              onClick={budgetActions.startRemove}
+              data-testid="remove-from-budget-button"
+            >
+              <PiggyBank aria-hidden="true" />
+              {t("projects.removeFromBudget")}
+            </DropdownMenuItem>
+          ) : (
+            !reached && (
+              <DropdownMenuItem
+                onClick={budgetActions.startAdd}
+                data-testid="add-to-budget-button"
+              >
+                <PiggyBank aria-hidden="true" />
+                {t("projects.addToBudget")}
+              </DropdownMenuItem>
+            )
+          )}
           {hasImage && (
             <DropdownMenuItem
               variant="destructive"
@@ -111,6 +144,8 @@ export function ProjectRowMenu({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {budgetActions.dialogs}
 
       <Dialog
         open={confirmingImageRemove}

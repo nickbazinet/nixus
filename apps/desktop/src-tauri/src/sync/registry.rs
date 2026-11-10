@@ -234,6 +234,8 @@ pub const COLUMNS: &[ColumnRule] = &[
     // The soft delete is an ordinary nullable field, which is why it merges rather than tombstones:
     // a user can un-delete a category, and a tombstone cannot be taken back.
     column("budget_categories", "deleted_at", Lww),
+    // A local integer like every other FK column; the uuid-space form of it is the edge below.
+    column("budget_categories", "project_id", LocalId),
     column("budget_groups", "id", LocalId),
     column("budget_groups", "name", Lww),
     column("budget_groups", "sort_order", Lww),
@@ -409,6 +411,7 @@ pub const COLUMNS: &[ColumnRule] = &[
 /// Every foreign-key edge of the real schema, with AD-12's policy for it.
 pub const EDGES: &[EdgeRule] = &[
     edge("budget_categories", "group_id", "budget_groups", FkPolicy::NoAction),
+    edge("budget_categories", "project_id", "projects", FkPolicy::SetNull),
     edge("chat_messages", "conversation_id", "chat_conversations", FkPolicy::NoAction),
     edge("expenses", "account_id", "accounts", FkPolicy::SetNull),
     edge("expenses", "budget_category_id", "budget_categories", FkPolicy::NoAction),
@@ -749,7 +752,7 @@ mod tests {
     fn every_foreign_key_edge_is_classified_and_matches_what_sqlite_will_do() {
         let (_dir, conn) = dataset();
         let live = live_edges(&conn);
-        assert_eq!(live.len(), 19, "the live schema's edge count changed");
+        assert_eq!(live.len(), 20, "the live schema's edge count changed");
 
         for ((child_table, child_column), (parent_table, on_delete)) in &live {
             let declared = EDGES

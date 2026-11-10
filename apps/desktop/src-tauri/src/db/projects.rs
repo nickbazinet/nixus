@@ -10,6 +10,7 @@ use crate::models::{
     ProjectContribution, ProjectSavedTotal, SavingsProjectsSummary, UpdateProjectInput,
 };
 use crate::projects::allocation::AllocationProject;
+use crate::projects::budget_link::monthly_commitment_cents;
 use crate::projects::image::{
     sha256_hex as image_sha256_of, ProjectImageFormat, MAX_PROJECT_THUMBNAIL_BYTES,
 };
@@ -899,6 +900,20 @@ pub fn get_project_saved_cents(conn: &Connection, project_id: i64) -> Result<i64
     .map_err(AppError::from)
 }
 
+pub fn get_project_saved_before(
+    conn: &Connection,
+    project_id: i64,
+    before_date: &str,
+) -> Result<i64, AppError> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(amount_cents), 0) FROM project_contributions
+         WHERE project_id = ?1 AND date < ?2",
+        params![project_id, before_date],
+        |row| row.get(0),
+    )
+    .map_err(AppError::from)
+}
+
 pub fn get_project_saved_totals(conn: &Connection) -> Result<Vec<ProjectSavedTotal>, AppError> {
     // LEFT JOIN, not JOIN: a project with no contributions must still return a 0 row, which is
     // every project's state right after creation.
@@ -1138,6 +1153,111 @@ pub fn get_project_names_funded_by_account(
         .collect::<Result<Vec<String>, _>>()?;
 
     Ok(names)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedFigures {
+    pub project_id: i64,
+    pub group_id: i64,
+    pub is_deleted: bool,
+    pub month_target_cents: i64,
+    pub set_aside_cents: i64,
+}
+
+/// Every linked category (soft-deleted ones included, so a month that still renders a removed line
+/// can show its figures) keyed by category id. One statement, so the "saved before the month" and the
+/// "set aside in the month" sums come from the same snapshot.
+pub fn get_linked_category_figures(
+    conn: &Connection,
+    year: i32,
+    month: i32,
+) -> Result<std::collections::HashMap<i64, LinkedFigures>, AppError> {
+    let Some(month_start) = u32::try_from(month)
+        .ok()
+        .and_then(|month| NaiveDate::from_ymd_opt(year, month, 1))
+    else {
+        return Err(AppError::Validation {
+            message: format!("Invalid budget month {year}-{month}"),
+            field: Some("month".to_string()),
+        });
+    };
+    let month_start_str = month_start.format("%Y-%m-%d").to_string();
+    let month_str = month_start.format("%Y-%m").to_string();
+
+    let mut stmt = conn.prepare(
+        "SELECT bc.id, bc.project_id, bc.group_id, bc.deleted_at IS NOT NULL, bc.target_cents,
+                p.target_cents, p.target_date,
+                COALESCE(SUM(CASE WHEN pc.date < ?1 THEN pc.amount_cents ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN strftime('%Y-%m', pc.date) = ?2 THEN pc.amount_cents ELSE 0 END), 0)
+         FROM budget_categories bc
+         JOIN projects p ON p.id = bc.project_id
+         LEFT JOIN project_contributions pc ON pc.project_id = p.id
+         WHERE bc.project_id IS NOT NULL
+         GROUP BY bc.id",
+    )?;
+
+    let rows = stmt
+        .query_map(params![month_start_str, month_str], |row| {
+            let stored_target_cents: i64 = row.get(4)?;
+            let project_target_cents: i64 = row.get(5)?;
+            let target_date: Option<String> = row.get(6)?;
+            let saved_before_cents: i64 = row.get(7)?;
+            Ok((
+                row.get::<_, i64>(0)?,
+                LinkedFigures {
+                    project_id: row.get(1)?,
+                    group_id: row.get(2)?,
+                    is_deleted: row.get(3)?,
+                    month_target_cents: monthly_commitment_cents(
+                        project_target_cents,
+                        saved_before_cents,
+                        target_date.as_ref(),
+                        month_start,
+                        stored_target_cents,
+                    ),
+                    set_aside_cents: row.get(8)?,
+                },
+            ))
+        })?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+
+    Ok(rows)
+}
+
+/// The config key holding the "Projects" budget group's sync uuid. A uuid and never a local id, so
+/// the setting means the same group on every computer it syncs to.
+pub const PROJECTS_BUDGET_GROUP_CONFIG_KEY: &str = "projects_budget_group_uuid";
+
+pub fn resolve_projects_budget_group(conn: &Connection) -> Result<Option<i64>, AppError> {
+    let Some(stored) = config::get(conn, PROJECTS_BUDGET_GROUP_CONFIG_KEY) else {
+        return Ok(None);
+    };
+    let Ok(parsed) = uuid::Uuid::parse_str(stored.trim()) else {
+        return Ok(None);
+    };
+    let Some(group_id) =
+        crate::db::sync_identity::row_id_for(conn, "budget_groups", parsed.as_bytes())?
+    else {
+        return Ok(None);
+    };
+
+    let is_active: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM budget_groups WHERE id = ?1 AND deleted_at IS NULL)",
+        params![group_id],
+        |row| row.get(0),
+    )?;
+
+    Ok(is_active.then_some(group_id))
+}
+
+// CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
+pub fn remember_projects_budget_group(conn: &Connection, group_id: i64) -> Result<(), AppError> {
+    let uuid = identity::uuid_for(conn, "budget_groups", group_id)?;
+    config::set(
+        conn,
+        PROJECTS_BUDGET_GROUP_CONFIG_KEY,
+        &uuid::Uuid::from_bytes(uuid).to_string(),
+    )
 }
 
 // "Did the user already confirm a split this month?" — derived from the ledger, never from a stored
@@ -3362,7 +3482,7 @@ mod tests {
         // This pins the last `MIGRATIONS` entry, which is what forces a new migration to be
         // exercised here instead of shipping unnoticed.
         assert_eq!(
-            version, 40,
+            version, 41,
             "the newest applied version must be the last MIGRATIONS entry"
         );
 

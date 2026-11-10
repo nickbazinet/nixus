@@ -28,6 +28,21 @@ export function useAllBudgetCategories() {
   });
 }
 
+function onlyExpenseCategories(categories: BudgetCategory[]) {
+  return categories.filter((category) => category.project_id == null);
+}
+
+// The categories an expense may be filed under. A savings project's budget line is not one: the
+// backend refuses expenses against it, so no picker may offer it. Same cache entry as
+// `useAllBudgetCategories`, narrowed by `select`.
+export function useExpenseCategories() {
+  return useQuery({
+    queryKey: queryKeys.allBudgetCategories,
+    queryFn: () => invoke<BudgetCategory[]>("get_all_budget_categories"),
+    select: onlyExpenseCategories,
+  });
+}
+
 export function useCreateExpense() {
   const queryClient = useQueryClient();
 

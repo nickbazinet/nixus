@@ -17,7 +17,7 @@ import type { RecurrenceFrequency } from "@/lib/types";
 import { RecurrenceFields } from "@/components/shared/RecurrenceFields";
 import { todayIso } from "@/lib/recurrence";
 import { MoneyInput } from "@/components/shared/MoneyInput";
-import { useAllBudgetCategories } from "@/hooks/useExpenses";
+import { useExpenseCategories } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";
 import { useCreateRecurringTemplate } from "@/hooks/useRecurringExpenses";
 
@@ -36,7 +36,7 @@ interface RecurringTemplateFormData {
 
 export function AddRecurringTemplateForm({ onClose }: AddRecurringTemplateFormProps) {
   const { t } = useTranslation();
-  const { data: categories = [] } = useAllBudgetCategories();
+  const { data: categories = [] } = useExpenseCategories();
   const { data: groups = [] } = useBudgetGroups();
   const createTemplate = useCreateRecurringTemplate();
 

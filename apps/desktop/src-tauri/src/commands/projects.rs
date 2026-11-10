@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chrono::{Datelike, NaiveDate};
 use rusqlite::Connection;
 use tauri::State;
 
@@ -14,12 +15,13 @@ use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::models::{
     AccountEarmarkBreakdown, AccountHeadroom, BudgetCategoryStatus, CategoryCompareRow,
-    CreateProjectContributionInput, CreateProjectInput, Project, ProjectAdviceRequest,
-    ProjectAdviceResponse, ProjectAllocationInput, ProjectContribution, ProjectImage,
-    ProjectImageMeta, ProjectPace, ProjectSavedTotal, ProjectThumbnail, SavingsProjectsSummary,
-    SuggestedAllocationResponse, UpdateProjectInput,
+    CreateBudgetCategory, CreateBudgetGroup, CreateProjectContributionInput, CreateProjectInput,
+    Project, ProjectAdviceRequest, ProjectAdviceResponse, ProjectAllocationInput,
+    ProjectBudgetLink, ProjectContribution, ProjectImage, ProjectImageMeta, ProjectPace,
+    ProjectSavedTotal, ProjectThumbnail, SavingsProjectsSummary, SuggestedAllocationResponse,
+    UpdateProjectInput,
 };
-use crate::projects::{allocation, image, pace, settlement};
+use crate::projects::{allocation, budget_link, image, pace, settlement};
 
 // How many over-target categories the prompt may name. Two is the whole budget's worth of advice a
 // person can act on this month; a longer list reads as a lecture and invites the model to pad.
@@ -98,10 +100,6 @@ pub fn update_project(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-
-    let old_json = serde_json::to_string(&projects_db::get_project_by_id(conn, id)?).ok();
-
     let input = UpdateProjectInput {
         name,
         target_cents,
@@ -110,10 +108,29 @@ pub fn update_project(
         icon,
         color,
     };
-    let result = active.write(|tx| projects_db::update_project(tx, id, &input))?;
+
+    update_project_inner(&active, id, &input)
+}
+
+// The rename reaches the project's budget line in the same transaction, so the two can never show
+// different names.
+pub(crate) fn update_project_inner(
+    active: &ActiveDataset,
+    id: i64,
+    input: &UpdateProjectInput,
+) -> Result<Project, AppError> {
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    let old_json = serde_json::to_string(&projects_db::get_project_by_id(conn, id)?).ok();
+
+    let result = active.write(|tx| {
+        let project = projects_db::update_project(tx, id, input)?;
+        budget_db::rename_linked_categories(tx, id, &project.name)?;
+        Ok(project)
+    })?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "project", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(active, "project", id, "update", old_json.as_deref(), Some(&new_json));
 
     Ok(result)
 }
@@ -149,16 +166,230 @@ pub fn archive_project(state: State<DbState>, id: i64) -> Result<Project, AppErr
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
+
+    archive_project_inner(&active, id)
+}
+
+// An archived project stops being budgeted: its line is removed in the same transaction, the same
+// way the budget page removes one, so its history stays readable.
+pub(crate) fn archive_project_inner(active: &ActiveDataset, id: i64) -> Result<Project, AppError> {
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
     let old_json = serde_json::to_string(&projects_db::get_project_by_id(conn, id)?).ok();
 
-    let result = active.write(|tx| projects_db::archive_project(tx, id))?;
+    let (result, unlinked) = active.write(|tx| {
+        let project = projects_db::archive_project(tx, id)?;
+        let linked = budget_db::get_active_linked_category_ids(tx, id)?;
+        for category_id in &linked {
+            budget_db::delete_budget_category(tx, *category_id)?;
+        }
+        Ok((project, linked))
+    })?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "project", id, "archive", old_json.as_deref(), Some(&new_json));
+    audit_db::record(active, "project", id, "archive", old_json.as_deref(), Some(&new_json));
+    if !unlinked.is_empty() {
+        record_budget_unlink(active, id, &unlinked);
+    }
 
     Ok(result)
+}
+
+fn record_budget_unlink(active: &ActiveDataset, project_id: i64, category_ids: &[i64]) {
+    let old_json = serde_json::json!({ "category_ids": category_ids }).to_string();
+    audit_db::record(active, "project", project_id, "budget_unlink", Some(&old_json), None);
+}
+
+fn project_not_found() -> AppError {
+    AppError::Validation {
+        message: "Project not found".to_string(),
+        field: Some("project_id".to_string()),
+    }
+}
+
+fn first_of_month(today: NaiveDate) -> NaiveDate {
+    today.with_day(1).unwrap_or(today)
+}
+
+// One link per project for `today`'s month. Duplicates only arise from two computers linking the
+// same project concurrently; the lowest category id is the one reported.
+pub(crate) fn project_budget_links_for(
+    conn: &Connection,
+    today: NaiveDate,
+) -> Result<Vec<ProjectBudgetLink>, AppError> {
+    let month = i32::try_from(today.month()).unwrap_or(1);
+    let figures = projects_db::get_linked_category_figures(conn, today.year(), month)?;
+
+    let mut by_project: std::collections::BTreeMap<i64, ProjectBudgetLink> =
+        std::collections::BTreeMap::new();
+    for (category_id, figures) in figures.into_iter().filter(|(_, figures)| !figures.is_deleted) {
+        let link = ProjectBudgetLink {
+            project_id: figures.project_id,
+            category_id,
+            group_id: figures.group_id,
+            month_target_cents: figures.month_target_cents,
+            set_aside_cents: figures.set_aside_cents,
+        };
+        by_project
+            .entry(figures.project_id)
+            .and_modify(|existing| {
+                if category_id < existing.category_id {
+                    *existing = link.clone();
+                }
+            })
+            .or_insert(link);
+    }
+
+    Ok(by_project.into_values().collect())
+}
+
+// `group_name` is the frontend-localized name of the "Projects" group, used only when that group has
+// to be created. `monthly_cents` is the user's amount for an undated project and is ignored for a
+// dated one, whose target is calculated.
+pub(crate) fn add_project_to_budget_inner(
+    active: &ActiveDataset,
+    project_id: i64,
+    group_name: &str,
+    monthly_cents: Option<i64>,
+    today: NaiveDate,
+) -> Result<ProjectBudgetLink, AppError> {
+    let link = active.write(|tx| {
+        let project = projects_db::get_project_by_id(tx, project_id).map_err(|_| project_not_found())?;
+        if project.archived_at.is_some() {
+            return Err(project_not_found());
+        }
+
+        if !budget_db::get_active_linked_category_ids(tx, project_id)?.is_empty() {
+            return Err(AppError::Validation {
+                message: "This project is already in your budget".to_string(),
+                field: Some("project_id".to_string()),
+            });
+        }
+
+        let month_start = first_of_month(today);
+        let target_cents = if budget_link::is_dated(project.target_date.as_ref()) {
+            let saved_before = projects_db::get_project_saved_before(
+                tx,
+                project_id,
+                &month_start.format("%Y-%m-%d").to_string(),
+            )?;
+            budget_link::monthly_commitment_cents(
+                project.target_cents,
+                saved_before,
+                project.target_date.as_ref(),
+                month_start,
+                0,
+            )
+        } else {
+            match monthly_cents {
+                Some(amount) if amount > 0 => amount,
+                _ => {
+                    return Err(AppError::Validation {
+                        message: "Monthly amount must be greater than 0".to_string(),
+                        field: Some("monthly_cents".to_string()),
+                    })
+                }
+            }
+        };
+
+        let group_id = match projects_db::resolve_projects_budget_group(tx)? {
+            Some(group_id) => group_id,
+            None => {
+                let group = budget_db::create_budget_group(
+                    tx,
+                    &CreateBudgetGroup {
+                        name: group_name.to_string(),
+                    },
+                )?;
+                projects_db::remember_projects_budget_group(tx, group.id)?;
+                group.id
+            }
+        };
+
+        budget_db::create_linked_budget_category(
+            tx,
+            &CreateBudgetCategory {
+                group_id,
+                name: project.name.clone(),
+                target_cents,
+            },
+            project_id,
+        )?;
+
+        project_budget_links_for(tx, today)?
+            .into_iter()
+            .find(|link| link.project_id == project_id)
+            .ok_or_else(|| AppError::Database {
+                message: "The new budget line could not be read back".to_string(),
+            })
+    })?;
+
+    let new_json = serde_json::to_string(&link).unwrap_or_default();
+    audit_db::record(active, "project", project_id, "budget_link", None, Some(&new_json));
+
+    Ok(link)
+}
+
+pub(crate) fn remove_project_from_budget_inner(
+    active: &ActiveDataset,
+    project_id: i64,
+) -> Result<(), AppError> {
+    let unlinked = active.write(|tx| {
+        let linked = budget_db::get_active_linked_category_ids(tx, project_id)?;
+        if linked.is_empty() {
+            return Err(AppError::Validation {
+                message: "This project is not in your budget".to_string(),
+                field: Some("project_id".to_string()),
+            });
+        }
+        for category_id in &linked {
+            budget_db::delete_budget_category(tx, *category_id)?;
+        }
+        Ok(linked)
+    })?;
+
+    record_budget_unlink(active, project_id, &unlinked);
+
+    Ok(())
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn add_project_to_budget(
+    state: State<DbState>,
+    project_id: i64,
+    group_name: String,
+    monthly_cents: Option<i64>,
+) -> Result<ProjectBudgetLink, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    add_project_to_budget_inner(
+        &active,
+        project_id,
+        &group_name,
+        monthly_cents,
+        chrono::Local::now().date_naive(),
+    )
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn remove_project_from_budget(state: State<DbState>, project_id: i64) -> Result<(), AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+
+    remove_project_from_budget_inner(&active, project_id)
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_project_budget_links(state: State<DbState>) -> Result<Vec<ProjectBudgetLink>, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+
+    project_budget_links_for(conn, chrono::Local::now().date_naive())
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -427,7 +658,10 @@ fn over_target_categories(state: &State<'_, DbState>) -> Result<Vec<BudgetCatego
         budget_db::get_budget_status(conn, year, month)?
     };
 
-    categories.retain(|category| category.spent_cents > category.target_cents);
+    // A savings line's "spent" is money set aside, so going over its target is not overspending.
+    categories.retain(|category| {
+        category.project_id.is_none() && category.spent_cents > category.target_cents
+    });
     categories.sort_by_key(|category| {
         std::cmp::Reverse(category.spent_cents.saturating_sub(category.target_cents))
     });
@@ -812,6 +1046,10 @@ pub fn remove_project_image(state: State<DbState>, project_id: i64) -> Result<()
     })?;
     remove_project_image_inner(&active, project_id)
 }
+
+#[cfg(test)]
+#[path = "tests_project_budget.rs"]
+mod tests_project_budget;
 
 #[cfg(test)]
 mod tests {

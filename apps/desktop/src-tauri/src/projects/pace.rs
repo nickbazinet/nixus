@@ -51,17 +51,14 @@ fn created_date(created_at: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(created_at.get(..10)?, "%Y-%m-%d").ok()
 }
 
-// A project younger than one whole month with nothing saved has no trailing average to measure: its
-// 3-month window is mostly time it did not exist, so any ratio would read as "way behind" on day one.
-// An unparseable `created_at` is treated as old enough rather than as too new, so bad data cannot
-// permanently suppress the badge.
+// A project younger than the full trailing window has no honest average to compare: dividing its
+// contributions by months it did not exist would read as "behind" on a project created last week,
+// even after a generous first deposit. Until the window is covered it gets the plan (the required
+// rate) without a verdict. An unparseable `created_at` is treated as old enough rather than as too
+// new, so bad data cannot permanently suppress the status.
 fn too_new_to_judge(input: &PaceInput<'_>, today: Option<NaiveDate>) -> bool {
-    if input.project.saved_cents != 0 {
-        return false;
-    }
-
     match (today, created_date(&input.project.created_at)) {
-        (Some(today), Some(created)) => whole_months(created, today) < 1,
+        (Some(today), Some(created)) => whole_months(created, today) < RECENT_WINDOW_MONTHS,
         _ => false,
     }
 }
@@ -92,9 +89,10 @@ fn status_for(actual_monthly_cents: i64, required_monthly_cents: i64) -> &'stati
 }
 
 // Gate order is the contract, not an implementation detail. A met goal wins outright — there is
-// nothing left to pace, so it is `good` even without a deadline. "Too new" comes next so a fresh
-// project reports no rate at all rather than a rate it has had no chance to hit. Only then does the
-// deadline decide whether a rate is even definable.
+// nothing left to pace, so it is `good` even without a deadline. The deadline comes next and decides
+// whether a required rate is even definable. A passed deadline is `over` regardless of age. Only then
+// does "too new" withhold the verdict: a fresh project still reports the rate it needs (the plan) but
+// no actual average and a `neutral` status, because it has not had the window to be measured over.
 pub fn compute_project_pace(input: &PaceInput<'_>) -> ProjectPace {
     let project = input.project;
     let remaining_cents = project.target_cents.saturating_sub(project.saved_cents);
@@ -103,10 +101,6 @@ pub fn compute_project_pace(input: &PaceInput<'_>) -> ProjectPace {
     }
 
     let today = NaiveDate::parse_from_str(input.today, "%Y-%m-%d").ok();
-
-    if too_new_to_judge(input, today) {
-        return pace(project.project_id, STATUS_NEUTRAL);
-    }
 
     // `None` is "no deadline": an absent date, an unparseable date, or an unparseable `today`. Every
     // one of them leaves the required rate undefined, so none of them may produce a status.
@@ -117,9 +111,20 @@ pub fn compute_project_pace(input: &PaceInput<'_>) -> ProjectPace {
     // Ceiling division: paying the floor every month would land short of the target by up to
     // `months - 1` cents. `months` is clamped to at least 1 upstream, so this cannot divide by zero.
     let required_monthly_cents = remaining_cents.saturating_add(months - 1) / months;
+
+    let passed = target_date_passed(project.target_date.as_ref(), today);
+    if !passed && too_new_to_judge(input, today) {
+        return ProjectPace {
+            project_id: project.project_id,
+            required_monthly_cents: Some(required_monthly_cents),
+            actual_monthly_cents: None,
+            status: STATUS_NEUTRAL.to_string(),
+        };
+    }
+
     let actual_monthly_cents = project.recent_cents / RECENT_WINDOW_MONTHS;
 
-    let status = if target_date_passed(project.target_date.as_ref(), today) {
+    let status = if passed {
         STATUS_OVER
     } else {
         status_for(actual_monthly_cents, required_monthly_cents)
@@ -274,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn a_brand_new_project_with_no_contributions_is_neutral() {
+    fn a_brand_new_project_with_no_contributions_gets_the_plan_without_a_verdict() {
         let project = ProjectPaceRow {
             created_at: "2026-08-01 09:30:00".to_string(),
             ..row(600_000, 0, 0)
@@ -283,12 +288,14 @@ mod tests {
         let result = compute(&project);
 
         assert_eq!(result.status, STATUS_NEUTRAL);
-        assert_eq!(result.required_monthly_cents, None);
+        assert_eq!(result.required_monthly_cents, Some(100_000));
         assert_eq!(result.actual_monthly_cents, None);
     }
 
+    // The case that motivated the window gate: a first deposit inside month one is $400 in one month,
+    // not $133/mo over three, and must never read as "behind".
     #[test]
-    fn a_brand_new_project_that_already_contributed_is_judged() {
+    fn a_brand_new_project_that_already_contributed_is_not_judged() {
         let project = ProjectPaceRow {
             created_at: "2026-08-01 09:30:00".to_string(),
             ..row(600_000, 300_000, 300_000)
@@ -296,19 +303,60 @@ mod tests {
 
         let result = compute(&project);
 
-        assert_eq!(result.status, STATUS_GOOD);
+        assert_eq!(result.status, STATUS_NEUTRAL);
         assert_eq!(result.required_monthly_cents, Some(50_000));
-        assert_eq!(result.actual_monthly_cents, Some(100_000));
+        assert_eq!(result.actual_monthly_cents, None);
     }
 
     #[test]
-    fn a_project_exactly_one_whole_month_old_is_judged() {
+    fn a_project_one_day_short_of_the_full_window_is_not_judged() {
         let project = ProjectPaceRow {
-            created_at: "2026-07-12 09:30:00".to_string(),
+            created_at: "2026-05-13 09:30:00".to_string(),
             ..six_months_out(0)
         };
 
+        let result = compute(&project);
+
+        assert_eq!(result.status, STATUS_NEUTRAL);
+        assert_eq!(result.actual_monthly_cents, None);
+    }
+
+    #[test]
+    fn a_project_exactly_one_full_window_old_is_judged() {
+        let project = ProjectPaceRow {
+            created_at: "2026-05-12 09:30:00".to_string(),
+            ..six_months_out(0)
+        };
+
+        let result = compute(&project);
+
+        assert_eq!(result.status, STATUS_OVER);
+        assert_eq!(result.actual_monthly_cents, Some(0));
+    }
+
+    #[test]
+    fn a_brand_new_project_past_its_deadline_is_still_over() {
+        let project = ProjectPaceRow {
+            created_at: "2026-08-01 09:30:00".to_string(),
+            target_date: Some("2026-08-11".to_string()),
+            ..row(600_000, 0, 0)
+        };
+
         assert_eq!(compute(&project).status, STATUS_OVER);
+    }
+
+    #[test]
+    fn a_brand_new_project_with_no_deadline_is_neutral_with_no_rate() {
+        let project = ProjectPaceRow {
+            created_at: "2026-08-01 09:30:00".to_string(),
+            target_date: None,
+            ..row(600_000, 0, 0)
+        };
+
+        let result = compute(&project);
+
+        assert_eq!(result.status, STATUS_NEUTRAL);
+        assert_eq!(result.required_monthly_cents, None);
     }
 
     #[test]

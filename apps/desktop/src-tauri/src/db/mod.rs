@@ -63,6 +63,8 @@ mod tests_migration_038;
 #[cfg(test)]
 mod tests_migration_039;
 #[cfg(test)]
+mod tests_migration_041;
+#[cfg(test)]
 mod tests_stock;
 #[cfg(test)]
 mod tests_stock_account;
@@ -407,6 +409,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../../migrations/039_stock_holdings_account_id.sql"),
     ),
     (40, include_str!("../../migrations/040_recurring_frequency.sql")),
+    (
+        41,
+        include_str!("../../migrations/041_budget_category_project_link.sql"),
+    ),
 ];
 
 /// The scalar SQL function migration 030 backfills `project_images.image_sha256` with.

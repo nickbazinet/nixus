@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { RecurrenceFields } from "@/components/shared/RecurrenceFields";
 import { todayIso } from "@/lib/recurrence";
 import { MoneyInput } from "@/components/shared/MoneyInput";
-import { useAllBudgetCategories } from "@/hooks/useExpenses";
+import { useExpenseCategories } from "@/hooks/useExpenses";
 import { useBudgetGroups } from "@/hooks/useBudget";
 import { useUpdateRecurringTemplate } from "@/hooks/useRecurringExpenses";
 import type { RecurringExpenseTemplate, RecurrenceFrequency } from "@/lib/types";
@@ -42,7 +42,7 @@ export function EditRecurringTemplateForm({
   onClose,
 }: EditRecurringTemplateFormProps) {
   const { t } = useTranslation();
-  const { data: categories = [] } = useAllBudgetCategories();
+  const { data: categories = [] } = useExpenseCategories();
   const { data: groups = [] } = useBudgetGroups();
   const updateTemplate = useUpdateRecurringTemplate();
 

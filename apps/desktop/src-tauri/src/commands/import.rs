@@ -276,7 +276,8 @@ pub async fn import_cc_statement(
         })?;
         let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
         let active_id = active.id.clone().ok_or(AppError::NotConfigured)?;
-        let cats = budget_db::get_all_budget_categories(conn)?;
+        let mut cats = budget_db::get_all_budget_categories(conn)?;
+        cats.retain(|category| category.project_id.is_none());
         let groups = budget_db::get_budget_groups(conn)?;
         let hints = expense_db::get_merchant_category_hints(conn)?;
         (cats, groups, hints, active_id)

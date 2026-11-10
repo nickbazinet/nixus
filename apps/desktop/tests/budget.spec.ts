@@ -27,6 +27,19 @@ interface SummaryFixture {
   averageMonthlyIncomeCents: number;
   incomeMonthCount: number;
   recurring?: RecurringFixture;
+  linked?: LinkedFixture;
+}
+
+/**
+ * A savings project's budget line in a "Projects" group, as `get_budget_status` reports it: the
+ * month's calculated target and the money set aside. `storedTargetCents` is the category's own
+ * snapshot, deliberately different so a surface reading it instead of the status is caught.
+ */
+interface LinkedFixture {
+  dated: boolean;
+  monthTargetCents: number;
+  setAsideCents: number;
+  storedTargetCents: number;
 }
 
 const NO_INCOME_HISTORY: SummaryFixture = {
@@ -63,6 +76,7 @@ async function setupTauriMock(
       target_cents: number;
       sort_order: number;
       created_at: string;
+      project_id: number | null;
     }
 
     if (summary.seedTargetCents > 0) {
@@ -80,6 +94,28 @@ async function setupTauriMock(
         target_cents: summary.seedTargetCents,
         sort_order: 0,
         created_at: new Date().toISOString(),
+        project_id: null,
+      });
+    }
+
+    const linked = summary.linked;
+    const LINKED_PROJECT_ID = 7;
+    if (linked) {
+      const groupId = nextGroupId++;
+      groups.push({
+        id: groupId,
+        name: "Projects",
+        sort_order: 1,
+        created_at: new Date().toISOString(),
+      });
+      categories.push({
+        id: nextCategoryId++,
+        group_id: groupId,
+        name: "GLI Summer Tire",
+        target_cents: linked.storedTargetCents,
+        sort_order: 0,
+        created_at: new Date().toISOString(),
+        project_id: LINKED_PROJECT_ID,
       });
     }
 
@@ -160,6 +196,7 @@ async function setupTauriMock(
               sort_order: categories.filter((c) => c.group_id === catGroupId)
                 .length,
               created_at: new Date().toISOString(),
+              project_id: null,
             };
             categories.push(category);
             return Promise.resolve(category);
@@ -326,12 +363,41 @@ async function setupTauriMock(
                 id: c.id,
                 group_id: c.group_id,
                 name: c.name,
-                target_cents: c.target_cents,
-                spent_cents: 0,
+                target_cents:
+                  c.project_id !== null && linked?.dated
+                    ? linked.monthTargetCents
+                    : c.target_cents,
+                spent_cents: c.project_id !== null ? linked?.setAsideCents ?? 0 : 0,
                 is_deleted: false,
+                project_id: c.project_id,
               }))
             );
           }
+
+          case "get_projects":
+            return Promise.resolve(
+              linked
+                ? [
+                    {
+                      id: LINKED_PROJECT_ID,
+                      name: "GLI Summer Tire",
+                      target_cents: 120_000,
+                      target_date: linked.dated ? "2027-05-01" : null,
+                      priority: 0,
+                      icon: null,
+                      color: null,
+                      archived_at: null,
+                      created_at: "2026-01-01T00:00:00Z",
+                      updated_at: "2026-01-01T00:00:00Z",
+                    },
+                  ]
+                : []
+            );
+
+          case "get_project_saved_totals":
+            return Promise.resolve(
+              linked ? [{ project_id: LINKED_PROJECT_ID, saved_cents: 30_000 }] : []
+            );
 
           case "get_budget_summary": {
             const totalTarget = categories.reduce(
@@ -1576,5 +1642,82 @@ test.describe("Add transactions menu", () => {
       };
     });
     expect(layout).toEqual({ lines: 1, clipped: false });
+  });
+});
+
+test.describe("A savings project's budget line", () => {
+  const DATED_LINE: LinkedFixture = {
+    dated: true,
+    monthTargetCents: 20_000,
+    setAsideCents: 7_500,
+    storedTargetCents: 100,
+  };
+
+  async function openBudget(page: Page, linked: LinkedFixture) {
+    await setupTauriMock(page, { ...NO_INCOME_HISTORY, seedTargetCents: 50_000, linked });
+    await page.goto("/spending/budget");
+    await expect(page.getByTestId("budget-summary-strip")).toBeVisible();
+  }
+
+  function linkedRow(page: Page) {
+    return page
+      .getByTestId("budget-status-row")
+      .filter({ has: page.getByTestId("linked-category-icon") });
+  }
+
+  test("a dated line reads as set aside against a calculated, read-only target", async ({
+    page,
+  }) => {
+    await openBudget(page, DATED_LINE);
+
+    const row = linkedRow(page);
+    await expect(row).toHaveCount(1);
+    await expect(row.getByTestId("spent-target")).toContainText("$75.00");
+    await expect(row.getByTestId("spent-target")).toContainText("$200.00");
+    await expect(row.getByTestId("status-badge")).toHaveText("$125.00 to set aside");
+    await expect(row.getByTestId("progress-bar")).toHaveAccessibleName(
+      "Share of GLI Summer Tire set aside"
+    );
+    await expect(row.getByTestId("linked-target-info")).toBeVisible();
+    await expect(row.getByTestId("category-expand-toggle")).toHaveCount(0);
+
+    await row.getByTestId("category-target").click();
+    await expect(row.getByTestId("category-target-input")).toHaveCount(0);
+
+    const name = row.getByTestId("category-name");
+    await expect(name).toHaveText("GLI Summer Tire");
+    await expect(name).toHaveAttribute("href", "/wealth/projects");
+
+    // The group total is the calculated target, not the category's stored snapshot.
+    const projectsGroup = page
+      .locator("[data-budget-group-id]")
+      .filter({ has: page.getByRole("heading", { name: "Projects" }) });
+    await expect(projectsGroup.getByTestId("group-total")).toHaveText("$200.00");
+  });
+
+  test("an undated line keeps an editable monthly amount", async ({ page }) => {
+    await openBudget(page, {
+      dated: false,
+      monthTargetCents: 15_000,
+      setAsideCents: 0,
+      storedTargetCents: 15_000,
+    });
+
+    const row = linkedRow(page);
+    await expect(row.getByTestId("linked-target-info")).toHaveCount(0);
+    await row.getByTestId("category-target").click();
+    await expect(row.getByTestId("category-target-input")).toBeVisible();
+  });
+
+  test("the expense form never offers a savings line", async ({ page }) => {
+    await openBudget(page, DATED_LINE);
+
+    await page.getByRole("button", { name: "Add transactions" }).click();
+    await page.getByTestId("add-expense-manually-item").click();
+    const form = page.getByTestId("add-expense-form");
+    await form.getByLabel("Category").click();
+
+    await expect(page.getByRole("option", { name: "Housing" })).toBeVisible();
+    await expect(page.getByRole("option", { name: "GLI Summer Tire" })).toHaveCount(0);
   });
 });

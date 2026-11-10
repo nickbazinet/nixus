@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::db::budget as budget_db;
 use crate::db::expense as expense_db;
 use crate::db::recurrence::{self, StoredSchedule};
 use crate::error::AppError;
@@ -21,6 +22,7 @@ pub fn insert_template(
     input: &CreateRecurringExpenseTemplateInput,
 ) -> Result<RecurringExpenseTemplate, AppError> {
     let merchant = validate_merchant_and_amount(&input.merchant, input.amount_cents)?;
+    validate_template_category(conn, input.budget_category_id)?;
     let schedule = recurrence::normalize(
         input.frequency,
         input.day_of_month,
@@ -64,6 +66,7 @@ pub fn update_template(
     input: &UpdateRecurringExpenseTemplateInput,
 ) -> Result<RecurringExpenseTemplate, AppError> {
     let merchant = validate_merchant_and_amount(&input.merchant, input.amount_cents)?;
+    validate_template_category(conn, input.budget_category_id)?;
     let previous = get_template_by_id(conn, id)
         .optional()?
         .ok_or_else(|| AppError::Database {
@@ -97,6 +100,26 @@ pub fn update_template(
     )?;
 
     get_template_by_id(conn, id).map_err(AppError::from)
+}
+
+fn validate_template_category(conn: &Connection, budget_category_id: i64) -> Result<(), AppError> {
+    let category_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL)",
+        params![budget_category_id],
+        |row| row.get(0),
+    )?;
+    if !category_exists {
+        return Err(AppError::Validation {
+            message: "Budget category not found".to_string(),
+            field: Some("budget_category_id".to_string()),
+        });
+    }
+
+    if budget_db::is_project_linked_category(conn, budget_category_id)? {
+        return Err(budget_db::project_linked_category_rejected());
+    }
+
+    Ok(())
 }
 
 fn validate_merchant_and_amount(merchant: &str, amount_cents: i64) -> Result<&str, AppError> {
@@ -197,6 +220,17 @@ fn try_apply_template(
     occurrence: NaiveDate,
 ) -> Result<Option<Expense>, AppError> {
     let date = occurrence.format("%Y-%m-%d").to_string();
+
+    // Only a build without the template guard (an older version on another computer, arriving
+    // through sync) can point a template at a savings line. Recording it would fail the whole
+    // batch, so this one template is skipped instead.
+    if budget_db::is_project_linked_category(conn, template.budget_category_id)? {
+        tracing::warn!(
+            "Skipping recurring expense template {}: its category tracks a savings project",
+            template.id
+        );
+        return Ok(None);
+    }
 
     if recurring_expense_exists(conn, &template.merchant, &date, template.amount_cents)? {
         return Ok(None);
@@ -370,7 +404,8 @@ mod tests {
                 group_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 target_cents INTEGER NOT NULL DEFAULT 0,
-                deleted_at TEXT
+                deleted_at TEXT,
+                project_id INTEGER
             );
             CREATE TABLE recurring_expense_templates (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

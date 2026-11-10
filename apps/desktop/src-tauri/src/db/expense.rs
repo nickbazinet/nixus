@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::account::{self as account_db, BalanceCauseRow, BalanceChange, CashFlowKind};
+use crate::db::budget as budget_db;
 use crate::sync::capture::{self as capture, BalanceCause};
 use crate::sync::identity;
 use crate::error::AppError;
@@ -74,6 +75,9 @@ pub fn insert_expense_with_source_with_balance_changes(
             message: "Budget category not found".to_string(),
             field: Some("budget_category_id".to_string()),
         });
+    }
+    if budget_db::is_project_linked_category(&tx, input.budget_category_id)? {
+        return Err(budget_db::project_linked_category_rejected());
     }
     validate_account_id(&tx, input.account_id)?;
 
@@ -177,6 +181,9 @@ pub fn update_expense(
             field: Some("budget_category_id".to_string()),
         });
     }
+    if budget_db::is_project_linked_category(&tx, input.budget_category_id)? {
+        return Err(budget_db::project_linked_category_rejected());
+    }
     validate_account_id(&tx, input.account_id)?;
 
     let mut balance_changes = Vec::new();
@@ -256,6 +263,16 @@ pub fn bulk_insert_imported_expenses(
         if !category_exists {
             return Err(AppError::Validation {
                 message: format!("Row {}: budget category not found (id={})", i + 1, category_id),
+                field: Some("budget_category_id".to_string()),
+            });
+        }
+        if budget_db::is_project_linked_category(conn, *category_id)? {
+            return Err(AppError::Validation {
+                message: format!(
+                    "Row {}: category {} tracks a savings project and cannot hold expenses",
+                    i + 1,
+                    category_id
+                ),
                 field: Some("budget_category_id".to_string()),
             });
         }
@@ -501,6 +518,9 @@ pub fn get_merchant_category_hints(conn: &Connection) -> Result<Vec<MerchantHint
     let mut stmt = conn.prepare(
         "SELECT merchant, budget_category_id, confidence_score, usage_count
          FROM merchant_category_hints
+         WHERE budget_category_id NOT IN (
+             SELECT id FROM budget_categories WHERE project_id IS NOT NULL
+         )
          ORDER BY confidence_score * usage_count DESC
          LIMIT 50",
     )?;
@@ -892,7 +912,8 @@ mod tests {
                 target_cents INTEGER NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                deleted_at TEXT
+                deleted_at TEXT,
+                project_id INTEGER
             );
             CREATE TABLE expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,10 +1,13 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronRight, GripVertical, Trash2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { ChevronDown, ChevronRight, GripVertical, PiggyBank, Trash2 } from "lucide-react";
 import { Badge, Button, Meter, Money } from "@nixus/shared";
 import { ExpenseList } from "@/components/expenses/ExpenseList";
+import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
 import { InlineEditText, InlineEditMoney } from "@/components/shared/InlineEdit";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
+import { useProjectSavedTotals, useProjects } from "@/hooks/useProjects";
 import { useMaskProps, useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { cn } from "@/lib/utils";
 import type { BudgetCategoryStatus, Expense } from "@/lib/types";
@@ -68,15 +71,53 @@ export function BudgetCategoryRow({
   const { hidden } = useValuesHidden();
   const [expanded, setExpanded] = useState(false);
 
+  // A savings-project line: its "spent" is money set aside for the project, its name follows the
+  // project, and a dated project's target is calculated in Rust. The project queries only run for
+  // such a line, so a budget with none makes no project reads.
+  const linked = category.project_id != null;
+  const { data: projects = [] } = useProjects(linked);
+  const { data: savedTotals = [] } = useProjectSavedTotals(linked);
+  const project = linked
+    ? projects.find((entry) => entry.id === category.project_id)
+    : undefined;
+  const projectSavedCents =
+    savedTotals.find((entry) => entry.project_id === category.project_id)?.saved_cents ?? 0;
+  const goalReached =
+    project !== undefined &&
+    category.target_cents === 0 &&
+    projectSavedCents >= project.target_cents;
+  const targetIsCalculated = linked && project?.target_date != null;
+
   const pacing = getPacing(category.spent_cents, category.target_cents);
   const remainingCents = category.target_cents - category.spent_cents;
 
-  const paceSentence = t("budget.categoryMeterValue", {
-    spent: formatCurrency(category.spent_cents),
-    target: formatCurrency(category.target_cents),
-  });
+  const paceSentence = linked
+    ? t("budget.linkedMeterValue", {
+        setAside: formatCurrency(category.spent_cents),
+        target: formatCurrency(category.target_cents),
+      })
+    : t("budget.categoryMeterValue", {
+        spent: formatCurrency(category.spent_cents),
+        target: formatCurrency(category.target_cents),
+      });
 
-  const badge = (() => {
+  const linkedBadge = (() => {
+    if (goalReached) {
+      return { variant: "good" as const, label: t("budget.linkedGoalReached") };
+    }
+    if (remainingCents > 0) {
+      return {
+        variant: "neutral" as const,
+        label: t("budget.linkedSetAsideLeft", { amount: formatCurrency(remainingCents) }),
+      };
+    }
+    return { variant: "good" as const, label: t("budget.linkedFullySetAside") };
+  })();
+
+  // Setting aside more than planned is not overspending, so a linked line never reads as "over".
+  const dotPacing: Pacing = linked && pacing === "over" ? "met" : pacing;
+
+  const badge = linked ? linkedBadge : (() => {
     switch (pacing) {
       case "over":
         return {
@@ -123,27 +164,44 @@ export function BudgetCategoryRow({
               <GripVertical className="size-4" aria-hidden="true" />
             </span>
           )}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => setExpanded(!expanded)}
-            aria-label={expanded ? t("budget.collapseCategory") : t("budget.expandCategory")}
-            aria-expanded={expanded}
-            data-testid="category-expand-toggle"
-          >
-            {expanded ? (
-              <ChevronDown className="text-ink-dim" aria-hidden="true" />
-            ) : (
-              <ChevronRight className="text-ink-dim" aria-hidden="true" />
-            )}
-          </Button>
+          {linked ? (
+            <PiggyBank
+              className="size-4 shrink-0 text-ink-dim"
+              aria-label={t("budget.linkedSavingsProject")}
+              data-testid="linked-category-icon"
+            />
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => setExpanded(!expanded)}
+              aria-label={expanded ? t("budget.collapseCategory") : t("budget.expandCategory")}
+              aria-expanded={expanded}
+              data-testid="category-expand-toggle"
+            >
+              {expanded ? (
+                <ChevronDown className="text-ink-dim" aria-hidden="true" />
+              ) : (
+                <ChevronRight className="text-ink-dim" aria-hidden="true" />
+              )}
+            </Button>
+          )}
           <span
             data-slot="status-dot"
-            data-status={pacing}
+            data-status={dotPacing}
             aria-hidden="true"
-            className={cn("size-[7px] shrink-0 rounded-full", dotClasses[pacing])}
+            className={cn("size-[7px] shrink-0 rounded-full", dotClasses[dotPacing])}
           />
-          {onRename ? (
+          {linked && project ? (
+            <Link
+              to="/wealth/projects"
+              className="truncate text-label text-ink hover:underline"
+              aria-label={t("budget.linkedOpenProject", { name: category.name })}
+              data-testid="category-name"
+            >
+              {category.name}
+            </Link>
+          ) : onRename && !linked ? (
             <InlineEditText
               value={category.name}
               onSave={onRename}
@@ -169,7 +227,7 @@ export function BudgetCategoryRow({
             <Money cents={category.spent_cents} locale={i18n.language} {...maskProps} />
             <span aria-hidden="true"> / </span>
             <span className="sr-only"> {t("budget.ofSeparator")} </span>
-            {onUpdateTarget ? (
+            {onUpdateTarget && !targetIsCalculated ? (
               <InlineEditMoney
                 value={category.target_cents}
                 onSave={onUpdateTarget}
@@ -181,6 +239,13 @@ export function BudgetCategoryRow({
               </span>
             )}
           </span>
+          {targetIsCalculated && (
+            <MetricInfoTooltip
+              ariaLabel={t("budget.linkedTargetCalculatedAria")}
+              content={t("budget.linkedTargetCalculated")}
+              testId="linked-target-info"
+            />
+          )}
           <Badge variant={badge.variant} data-testid="status-badge">
             {badge.label}
           </Badge>
@@ -202,12 +267,16 @@ export function BudgetCategoryRow({
         <Meter
           value={category.spent_cents}
           max={category.target_cents}
-          label={t("budget.categoryMeterLabel", { name: category.name })}
+          label={
+            linked
+              ? t("budget.linkedMeterLabel", { name: category.name })
+              : t("budget.categoryMeterLabel", { name: category.name })
+          }
           valueText={hidden ? t("common.amountHidden") : paceSentence}
           data-testid="progress-bar"
         />
       )}
-      {expanded && (
+      {expanded && !linked && (
         <div className="mt-2.5" data-testid="category-expenses">
           <ExpenseList expenses={expenses} onAddExpense={onAddExpense} />
         </div>

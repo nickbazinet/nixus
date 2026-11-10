@@ -46,7 +46,12 @@ import { Plus, Receipt, Search } from "lucide-react";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { InlineEditMoney } from "@/components/shared/InlineEdit";
 import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
-import { useUpdateExpense, useDeleteExpense, useAllBudgetCategories } from "@/hooks/useExpenses";
+import {
+  useUpdateExpense,
+  useDeleteExpense,
+  useAllBudgetCategories,
+  useExpenseCategories,
+} from "@/hooks/useExpenses";
 import { useAccounts } from "@/hooks/useAccounts";
 import { useBudgetGroups } from "@/hooks/useBudget";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
@@ -83,7 +88,7 @@ function formatShortDate(isoDate: string, locale: string): string {
 
 function EditExpenseForm({ expense, onClose }: { expense: Expense; onClose: () => void }) {
   const { t } = useTranslation();
-  const { data: categories = [] } = useAllBudgetCategories();
+  const { data: categories = [] } = useExpenseCategories();
   const { data: groups = [] } = useBudgetGroups();
   const updateExpense = useUpdateExpense();
 

@@ -288,6 +288,7 @@ pub fn get_top_discretionary_categories(
          JOIN budget_groups bg ON bc.group_id = bg.id
          LEFT JOIN expenses e ON e.budget_category_id = bc.id
              AND strftime('%Y-%m', e.date) < strftime('%Y-%m', 'now')
+         WHERE bc.project_id IS NULL
          GROUP BY bc.id, bc.name, bg.name",
     )?;
 
@@ -353,7 +354,8 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id INTEGER NOT NULL REFERENCES budget_groups(id),
                 name TEXT NOT NULL,
-                target_cents INTEGER NOT NULL DEFAULT 0
+                target_cents INTEGER NOT NULL DEFAULT 0,
+                project_id INTEGER
             );
             CREATE TABLE expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -94,22 +94,33 @@ export function ProjectRow({
 
   const { data: paces = [] } = useProjectPace();
   const pace = paces.find((entry) => entry.project_id === project.id);
+  const requiredMonthlyCents = pace?.required_monthly_cents ?? null;
+  const actualMonthlyCents = pace?.actual_monthly_cents ?? null;
   // A pace badge replaces the "to go" badge only when it can say something the amount cannot: the
-  // goal is still open, it has a deadline, and Rust returned a rate. `neutral` keeps the plain
-  // remaining badge rather than adding a second uninformative pill.
-  const paceBadge =
+  // goal is still open, it has a deadline, and Rust returned a required rate. A verdict always shows
+  // the actual average beside the required one, so the status is never contradicted by the number
+  // next to it. A project too new to judge (`neutral` with a rate) shows only what it needs.
+  const hasPlan =
     !reached &&
     project.target_date !== null &&
     pace !== undefined &&
-    pace.status !== "neutral" &&
-    pace.required_monthly_cents !== null
+    requiredMonthlyCents !== null;
+  const paceBadge = !hasPlan
+    ? null
+    : pace.status === "neutral" || actualMonthlyCents === null
       ? {
           variant: pace.status,
-          text: t(PACE_BADGE_KEYS[pace.status], {
-            amount: formatCurrency(pace.required_monthly_cents),
+          text: t("projects.paceBadgeNeeded", {
+            amount: formatCurrency(requiredMonthlyCents),
           }),
         }
-      : null;
+      : {
+          variant: pace.status,
+          text: t(PACE_BADGE_KEYS[pace.status], {
+            actual: formatCurrency(actualMonthlyCents),
+            required: formatCurrency(requiredMonthlyCents),
+          }),
+        };
 
   const progressSentence = t("projects.savedOfTarget", {
     saved: formatCurrency(savedCents),
@@ -205,6 +216,7 @@ export function ProjectRow({
           )}
           <ProjectRowMenu
             project={project}
+            reached={reached}
             onEdit={onEdit}
             onArchive={onArchive}
             onImageErrorKey={setImageErrorKey}

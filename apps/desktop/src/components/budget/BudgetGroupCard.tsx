@@ -205,7 +205,11 @@ export function BudgetGroupCard({
     });
   };
 
-  const groupTargetCents = categories.reduce((sum, cat) => sum + cat.target_cents, 0);
+  // The status carries a savings line's calculated target; the stored one is only a snapshot.
+  const groupTargetCents = categories.reduce(
+    (sum, cat) => sum + (statusByCategory?.get(cat.id)?.target_cents ?? cat.target_cents),
+    0
+  );
 
   return (
     <>
@@ -290,6 +294,7 @@ export function BudgetGroupCard({
                   target_cents: cat.target_cents,
                   spent_cents: 0,
                   is_deleted: false,
+                  project_id: cat.project_id,
                 };
                 return (
                   <BudgetCategoryRow

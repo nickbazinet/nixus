@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection};
 
 use crate::db::aggregates;
+use crate::db::projects as projects_db;
 use crate::error::AppError;
 use crate::models::{BudgetSummary, DashboardBudgetCategory, SpendingByCategory};
 
@@ -12,8 +13,11 @@ pub fn get_budget_summary(
     let year_str = format!("{:04}", year);
     let month_str = format!("{:02}", month);
 
-    let (total_target_cents, total_spent_cents): (i64, i64) = conn.query_row(
-        "SELECT COALESCE((SELECT SUM(target_cents) FROM budget_categories WHERE deleted_at IS NULL), 0),
+    let (regular_target_cents, total_spent_cents): (i64, i64) = conn.query_row(
+        "SELECT COALESCE((
+                    SELECT SUM(target_cents) FROM budget_categories
+                    WHERE deleted_at IS NULL AND project_id IS NULL
+                ), 0),
                 COALESCE((
                     SELECT SUM(amount_cents) FROM expenses
                     WHERE strftime('%Y', date) = ?1
@@ -23,13 +27,27 @@ pub fn get_budget_summary(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
 
+    // A savings line counts toward what is budgeted, but what is set aside for it is not spending:
+    // it only lowers what is still left to set aside, and setting aside more than planned frees
+    // nothing for other categories.
+    let linked = projects_db::get_linked_category_figures(conn, year, month)?;
+    let (linked_target_cents, linked_remaining_cents) = linked
+        .values()
+        .filter(|figures| !figures.is_deleted)
+        .fold((0i64, 0i64), |(target, remaining), figures| {
+            (
+                target + figures.month_target_cents,
+                remaining + (figures.month_target_cents - figures.set_aside_cents).max(0),
+            )
+        });
+
     let (average_monthly_income_cents, income_month_count) =
         aggregates::get_trailing_income_average(conn)?;
 
     Ok(BudgetSummary {
-        total_target_cents,
+        total_target_cents: regular_target_cents + linked_target_cents,
         total_spent_cents,
-        remaining_cents: total_target_cents - total_spent_cents,
+        remaining_cents: regular_target_cents - total_spent_cents + linked_remaining_cents,
         month: format!("{}-{}", year_str, month_str),
         average_monthly_income_cents,
         income_month_count,
@@ -57,7 +75,8 @@ pub fn get_top_budget_categories(
                AND strftime('%m', date) = ?2
              GROUP BY budget_category_id
          ) e_agg ON e_agg.budget_category_id = bc.id
-         WHERE bc.deleted_at IS NULL OR COALESCE(e_agg.spent, 0) > 0
+         WHERE bc.project_id IS NULL
+           AND (bc.deleted_at IS NULL OR COALESCE(e_agg.spent, 0) > 0)
          ORDER BY spent_cents DESC
          LIMIT ?3",
     )?;
@@ -133,7 +152,20 @@ mod tests {
                 group_id INTEGER NOT NULL REFERENCES budget_groups(id),
                 name TEXT NOT NULL,
                 target_cents INTEGER NOT NULL DEFAULT 0,
-                deleted_at TEXT
+                deleted_at TEXT,
+                project_id INTEGER REFERENCES projects(id)
+            );
+            CREATE TABLE projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                target_cents INTEGER NOT NULL,
+                target_date TEXT
+            );
+            CREATE TABLE project_contributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                amount_cents INTEGER NOT NULL,
+                date TEXT NOT NULL
             );
             CREATE TABLE expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

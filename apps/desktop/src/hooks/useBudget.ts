@@ -181,6 +181,7 @@ export function useUpdateBudgetCategory() {
         queryKey: ["budget-status"],
       });
       invalidateTrendsQueries(queryClient);
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectBudgetLinks });
     },
   });
 }
@@ -199,6 +200,8 @@ export function useDeleteBudgetCategory() {
         queryKey: ["budget-status"],
       });
       invalidateTrendsQueries(queryClient);
+      // Deleting a project's budget line ends the link.
+      queryClient.invalidateQueries({ queryKey: queryKeys.projectBudgetLinks });
     },
   });
 }

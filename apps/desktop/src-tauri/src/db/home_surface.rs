@@ -670,6 +670,9 @@ fn net_worth_history(conn: &Connection, window: &Window) -> Result<HomeDataset, 
 fn budget_vs_actual(conn: &Connection, month: YearMonth) -> Result<HomeDataset, AppError> {
     let rows = budget_db::get_budget_status(conn, month.year, month.month as i32)?
         .into_iter()
+        // A savings line's "spent" is money set aside, which a budget-vs-actual chart would draw
+        // as spending.
+        .filter(|status| status.project_id.is_none())
         .filter(|status| status.target_cents > 0 || status.spent_cents > 0)
         .map(|status| HomeDatasetRow {
             details: Vec::new(),

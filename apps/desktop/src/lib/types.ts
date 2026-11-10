@@ -13,8 +13,11 @@ export interface BudgetCategory {
   target_cents: number;
   sort_order: number;
   created_at: string;
+  project_id: number | null;
 }
 
+// For a category linked to a savings project, `target_cents` is the month's computed commitment and
+// `spent_cents` is the money set aside for the project that month, never expenses.
 export interface BudgetCategoryStatus {
   id: number;
   group_id: number;
@@ -22,6 +25,7 @@ export interface BudgetCategoryStatus {
   target_cents: number;
   spent_cents: number;
   is_deleted: boolean;
+  project_id: number | null;
 }
 
 export interface ApplyBudgetTemplateResult {
@@ -934,6 +938,14 @@ export interface ProjectAllocationInput {
   date: string;
 }
 
+export interface ProjectBudgetLink {
+  project_id: number;
+  category_id: number;
+  group_id: number;
+  month_target_cents: number;
+  set_aside_cents: number;
+}
+
 export interface ProjectSavedTotal {
   project_id: number;
   saved_cents: number;
@@ -961,7 +973,8 @@ export interface SavingsProjectsSummary {
 
 // Mirrors `models::ProjectPace`. `status` is the `Badge` variant the row renders, so the union is
 // exhaustive by contract: Rust emits exactly these four strings and nothing else. Both rates are
-// nullable because a `neutral` project has no definable required rate — `null` is "no rate", never 0.
+// nullable — `null` is "no rate", never 0. A `neutral` project without a deadline has neither; one
+// with a deadline that is too new to judge has a required rate but no actual average.
 export interface ProjectPace {
   project_id: number;
   required_monthly_cents: number | null;

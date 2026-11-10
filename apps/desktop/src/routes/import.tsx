@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { Check, FileQuestion } from "lucide-react";
 import { toast } from "sonner";
@@ -40,6 +40,7 @@ import {
 } from "../components/import/importDraft";
 import { useImport, type ParsedTransaction, type ImportError } from "../hooks/useImport";
 import { useFormatCurrency } from "../hooks/useFormatCurrency";
+import { useExpenseCategories } from "../hooks/useExpenses";
 import {
   useBudgetGroups,
   useCreateBudgetGroup,
@@ -213,10 +214,7 @@ function ReviewScreen({
   const [confirmed, setConfirmed] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
 
-  const { data: categories = [] } = useQuery({
-    queryKey: queryKeys.allBudgetCategories,
-    queryFn: () => invoke<BudgetCategory[]>("get_all_budget_categories"),
-  });
+  const { data: categories = [] } = useExpenseCategories();
 
   const { data: loadedGroups } = useBudgetGroups();
   const groups = useMemo<ImportSelectGroup[]>(() => loadedGroups ?? [], [loadedGroups]);

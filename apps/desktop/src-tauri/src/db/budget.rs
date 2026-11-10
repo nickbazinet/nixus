@@ -1,6 +1,7 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::AppError;
+use crate::projects::budget_link::is_dated;
 use crate::models::{BudgetCategory, BudgetCategoryStatus, BudgetGroup, CreateBudgetCategory, CreateBudgetGroup};
 
 /// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`, so its writes are
@@ -89,6 +90,13 @@ pub fn get_budget_groups_for_month(
                   AND strftime('%Y', e.date) = ?1
                   AND strftime('%m', e.date) = ?2
             )
+            OR EXISTS (
+                SELECT 1 FROM budget_categories bc
+                JOIN project_contributions pc ON pc.project_id = bc.project_id
+                WHERE bc.group_id = bg.id
+                  AND strftime('%Y', pc.date) = ?1
+                  AND strftime('%m', pc.date) = ?2
+            )
          ORDER BY bg.sort_order",
     )?;
 
@@ -113,7 +121,7 @@ pub fn create_budget_category(
     conn: &Connection,
     input: &CreateBudgetCategory,
 ) -> Result<BudgetCategory, AppError> {
-    insert_budget_category(conn, input, false)
+    insert_budget_category(conn, input, false, None)
 }
 
 /// Same as [`create_budget_category`] but accepts a zero target. Only the quick-add path in the
@@ -125,15 +133,29 @@ pub fn create_budget_category_allowing_zero_target(
     conn: &Connection,
     input: &CreateBudgetCategory,
 ) -> Result<BudgetCategory, AppError> {
-    insert_budget_category(conn, input, true)
+    insert_budget_category(conn, input, true, None)
 }
 
-/// CAPTURE-SANCTIONED (AD-3): private, reached only through the two `create_budget_category*`
-/// wrappers above, both of which are only called through `ActiveDataset::write`.
+/// The budget line of a savings project. A zero target is allowed: a dated project whose goal is
+/// already met commits nothing this month.
+///
+/// CAPTURE-SANCTIONED (AD-3): its one caller, `commands::projects`, reaches it through
+/// `ActiveDataset::write`.
+pub fn create_linked_budget_category(
+    conn: &Connection,
+    input: &CreateBudgetCategory,
+    project_id: i64,
+) -> Result<BudgetCategory, AppError> {
+    insert_budget_category(conn, input, true, Some(project_id))
+}
+
+/// CAPTURE-SANCTIONED (AD-3): private, reached only through the `create_*budget_category*`
+/// wrappers above, all of which are only called through `ActiveDataset::write`.
 fn insert_budget_category(
     conn: &Connection,
     input: &CreateBudgetCategory,
     allow_zero_target: bool,
+    project_id: Option<i64>,
 ) -> Result<BudgetCategory, AppError> {
     let name = input.name.trim();
     if name.is_empty() {
@@ -158,14 +180,14 @@ fn insert_budget_category(
     )?;
 
     conn.execute(
-        "INSERT INTO budget_categories (group_id, name, target_cents, sort_order) VALUES (?1, ?2, ?3, ?4)",
-        params![input.group_id, name, input.target_cents, sort_order],
+        "INSERT INTO budget_categories (group_id, name, target_cents, sort_order, project_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![input.group_id, name, input.target_cents, sort_order, project_id],
     )?;
 
     let id = conn.last_insert_rowid();
 
     conn.query_row(
-        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE id = ?1",
+        "SELECT id, group_id, name, target_cents, sort_order, created_at, project_id FROM budget_categories WHERE id = ?1",
         params![id],
         |row| {
             Ok(BudgetCategory {
@@ -175,6 +197,7 @@ fn insert_budget_category(
                 target_cents: row.get(3)?,
                 sort_order: row.get(4)?,
                 created_at: row.get(5)?,
+                project_id: row.get(6)?,
             })
         },
     )
@@ -186,7 +209,7 @@ pub fn get_budget_categories_by_group(
     group_id: i64,
 ) -> Result<Vec<BudgetCategory>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE group_id = ?1 AND deleted_at IS NULL ORDER BY sort_order",
+        "SELECT id, group_id, name, target_cents, sort_order, created_at, project_id FROM budget_categories WHERE group_id = ?1 AND deleted_at IS NULL ORDER BY sort_order",
     )?;
 
     let categories = stmt
@@ -198,11 +221,58 @@ pub fn get_budget_categories_by_group(
                 target_cents: row.get(3)?,
                 sort_order: row.get(4)?,
                 created_at: row.get(5)?,
+                project_id: row.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(categories)
+}
+
+pub(crate) fn is_project_linked_category(conn: &Connection, id: i64) -> Result<bool, AppError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM budget_categories WHERE id = ?1 AND project_id IS NOT NULL)",
+        params![id],
+        |row| row.get(0),
+    )?)
+}
+
+pub(crate) fn project_linked_category_rejected() -> AppError {
+    AppError::Validation {
+        message: "This category tracks a savings project and cannot hold expenses".to_string(),
+        field: Some("budget_category_id".to_string()),
+    }
+}
+
+/// Active categories linked to `project_id`, lowest id first: the first is "the" link, and any
+/// further ones exist only because two computers linked the same project concurrently.
+pub fn get_active_linked_category_ids(
+    conn: &Connection,
+    project_id: i64,
+) -> Result<Vec<i64>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM budget_categories
+         WHERE project_id = ?1 AND deleted_at IS NULL
+         ORDER BY id",
+    )?;
+    let ids = stmt
+        .query_map(params![project_id], |row| row.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+
+    Ok(ids)
+}
+
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
+pub fn rename_linked_categories(
+    conn: &Connection,
+    project_id: i64,
+    name: &str,
+) -> Result<usize, AppError> {
+    Ok(conn.execute(
+        "UPDATE budget_categories SET name = ?1
+         WHERE project_id = ?2 AND deleted_at IS NULL AND name != ?1",
+        params![name, project_id],
+    )?)
 }
 
 fn invalid_category_ids(message: &str) -> AppError {
@@ -348,7 +418,7 @@ pub fn move_budget_category(
     tx.commit()?;
 
     conn.query_row(
-        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE id = ?1",
+        "SELECT id, group_id, name, target_cents, sort_order, created_at, project_id FROM budget_categories WHERE id = ?1",
         params![id],
         |row| {
             Ok(BudgetCategory {
@@ -358,6 +428,7 @@ pub fn move_budget_category(
                 target_cents: row.get(3)?,
                 sort_order: row.get(4)?,
                 created_at: row.get(5)?,
+                project_id: row.get(6)?,
             })
         },
     )
@@ -444,6 +515,32 @@ pub fn update_budget_category(
         });
     }
 
+    // `Some(target_date)` when the category is a savings-project line. Its name follows the
+    // project, and a dated project's target is computed, so neither can be set here.
+    let linked_project_date: Option<Option<String>> = conn
+        .query_row(
+            "SELECT p.target_date FROM budget_categories bc
+             JOIN projects p ON p.id = bc.project_id
+             WHERE bc.id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(target_date) = &linked_project_date {
+        if name.is_some() {
+            return Err(AppError::Validation {
+                message: "A savings project's budget line is named after the project".to_string(),
+                field: Some("name".to_string()),
+            });
+        }
+        if target_cents.is_some() && is_dated(target_date.as_ref()) {
+            return Err(AppError::Validation {
+                message: "This target is calculated from the project's target date".to_string(),
+                field: Some("target_cents".to_string()),
+            });
+        }
+    }
+
     if let Some(ref n) = name {
         conn.execute(
             "UPDATE budget_categories SET name = ?1 WHERE id = ?2",
@@ -459,7 +556,7 @@ pub fn update_budget_category(
     }
 
     conn.query_row(
-        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE id = ?1",
+        "SELECT id, group_id, name, target_cents, sort_order, created_at, project_id FROM budget_categories WHERE id = ?1",
         params![id],
         |row| {
             Ok(BudgetCategory {
@@ -469,6 +566,7 @@ pub fn update_budget_category(
                 target_cents: row.get(3)?,
                 sort_order: row.get(4)?,
                 created_at: row.get(5)?,
+                project_id: row.get(6)?,
             })
         },
     )
@@ -593,10 +691,13 @@ pub fn get_budget_status(
     let year_str = format!("{:04}", year);
     let month_str = format!("{:02}", month);
 
+    // A removed line still renders for a month that has activity on it: expenses for a spending
+    // category, project contributions for a line linked to a savings project.
     let mut stmt = conn.prepare(
         "SELECT bc.id, bc.group_id, bc.name, bc.target_cents,
                 COALESCE(SUM(e.amount_cents), 0) AS spent_cents,
-                CASE WHEN bc.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted
+                CASE WHEN bc.deleted_at IS NOT NULL THEN 1 ELSE 0 END AS is_deleted,
+                bc.project_id
          FROM budget_categories bc
          LEFT JOIN expenses e ON e.budget_category_id = bc.id
            AND strftime('%Y', e.date) = ?1
@@ -608,11 +709,17 @@ pub fn get_budget_status(
                   AND strftime('%Y', ex.date) = ?1
                   AND strftime('%m', ex.date) = ?2
             )
+            OR (bc.project_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM project_contributions pc
+                WHERE pc.project_id = bc.project_id
+                  AND strftime('%Y', pc.date) = ?1
+                  AND strftime('%m', pc.date) = ?2
+            ))
          GROUP BY bc.id
          ORDER BY bc.group_id, bc.sort_order",
     )?;
 
-    let statuses = stmt
+    let mut statuses = stmt
         .query_map(params![year_str, month_str], |row| {
             Ok(BudgetCategoryStatus {
                 id: row.get(0)?,
@@ -621,16 +728,26 @@ pub fn get_budget_status(
                 target_cents: row.get(3)?,
                 spent_cents: row.get(4)?,
                 is_deleted: row.get::<_, i32>(5)? != 0,
+                project_id: row.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+
+    if statuses.iter().any(|status| status.project_id.is_some()) {
+        let figures = super::projects::get_linked_category_figures(conn, year, month)?;
+        for status in statuses.iter_mut().filter(|status| status.project_id.is_some()) {
+            let linked = figures.get(&status.id);
+            status.target_cents = linked.map_or(0, |figures| figures.month_target_cents);
+            status.spent_cents = linked.map_or(0, |figures| figures.set_aside_cents);
+        }
+    }
 
     Ok(statuses)
 }
 
 pub fn get_all_budget_categories(conn: &Connection) -> Result<Vec<BudgetCategory>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE deleted_at IS NULL ORDER BY group_id, sort_order",
+        "SELECT id, group_id, name, target_cents, sort_order, created_at, project_id FROM budget_categories WHERE deleted_at IS NULL ORDER BY group_id, sort_order",
     )?;
 
     let categories = stmt
@@ -642,6 +759,7 @@ pub fn get_all_budget_categories(conn: &Connection) -> Result<Vec<BudgetCategory
                 target_cents: row.get(3)?,
                 sort_order: row.get(4)?,
                 created_at: row.get(5)?,
+                project_id: row.get(6)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -659,6 +777,7 @@ pub enum CategoryNameMatch {
 }
 
 // SQLite `LOWER` folds ASCII only: accented or non-Latin names must match stored case.
+// Savings-project lines are not expense categories, so a chat action can never resolve to one.
 pub fn resolve_active_category_id_by_name(
     conn: &Connection,
     name: &str,
@@ -670,7 +789,7 @@ pub fn resolve_active_category_id_by_name(
 
     let mut stmt = conn.prepare(
         "SELECT id FROM budget_categories
-         WHERE deleted_at IS NULL AND LOWER(TRIM(name)) = LOWER(?1)
+         WHERE deleted_at IS NULL AND project_id IS NULL AND LOWER(TRIM(name)) = LOWER(?1)
          ORDER BY id ASC
          LIMIT 2",
     )?;
@@ -738,6 +857,19 @@ mod tests {
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 deleted_at TEXT
             );
+            CREATE TABLE projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                target_cents INTEGER NOT NULL,
+                target_date TEXT,
+                archived_at TEXT
+            );
+            CREATE TABLE project_contributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL REFERENCES projects(id),
+                amount_cents INTEGER NOT NULL,
+                date TEXT NOT NULL
+            );
             CREATE TABLE budget_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 group_id INTEGER NOT NULL REFERENCES budget_groups(id),
@@ -745,7 +877,8 @@ mod tests {
                 target_cents INTEGER NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                deleted_at TEXT
+                deleted_at TEXT,
+                project_id INTEGER REFERENCES projects(id)
             );
             CREATE TABLE expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

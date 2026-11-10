@@ -259,7 +259,9 @@ async function setupTauriMock(
             }
 
             case "get_all_budget_categories":
-              return Promise.resolve(categories);
+              // A fresh array, as IPC deserialization always produces: handing back the array this
+              // mock mutates would make a memoized `select` see "no change" after a create.
+              return Promise.resolve([...categories]);
 
             case "get_budget_groups":
               return Promise.resolve(groupsUnavailable ? null : groups);
