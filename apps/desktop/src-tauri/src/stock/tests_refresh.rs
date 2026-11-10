@@ -199,14 +199,13 @@ fn snapshots(state: &DbState) -> (i64, i64, String) {
     })
 }
 
-/// A stock has no net-worth category of its own, so `map_asset_type_to_category` files it under
-/// `other` — that bucket is where its value has to show up.
-fn other_cents(breakdown_json: &str) -> i64 {
+/// A stock has its own net-worth category, so that bucket is where its value has to show up.
+fn stock_cents(breakdown_json: &str) -> i64 {
     serde_json::from_str::<serde_json::Value>(breakdown_json)
         .expect("the breakdown is JSON")
-        .get("other_cents")
+        .get("stock_cents")
         .and_then(serde_json::Value::as_i64)
-        .expect("the breakdown carries other_cents")
+        .expect("the breakdown carries stock_cents")
 }
 
 fn failed_symbols(results: &[StockRefreshResult]) -> Vec<&str> {
@@ -583,7 +582,7 @@ async fn a_value_changing_refresh_snapshots_the_new_total_and_audits_only_what_m
         total_cents, 30_000,
         "the snapshot total must reflect the values the refresh just wrote"
     );
-    assert_eq!(other_cents(&breakdown), 30_000);
+    assert_eq!(stock_cents(&breakdown), 30_000);
     assert_eq!(
         price_refresh_audit(&state),
         vec![
@@ -610,7 +609,7 @@ async fn a_value_changing_refresh_snapshots_the_new_total_and_audits_only_what_m
     let (count, total_cents, breakdown) = snapshots(&state);
     assert_eq!(count, 1, "the snapshot is upserted per date, not appended");
     assert_eq!(total_cents, 32_500, "the snapshot followed the new value");
-    assert_eq!(other_cents(&breakdown), 32_500);
+    assert_eq!(stock_cents(&breakdown), 32_500);
 
     assert_eq!(
         price_refresh_audit(&state),

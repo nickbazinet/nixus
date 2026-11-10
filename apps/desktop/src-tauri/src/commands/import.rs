@@ -250,8 +250,14 @@ pub async fn import_cc_statement(
     app: AppHandle,
     db_state: State<'_, DbState>,
     ai_state: State<'_, Mutex<AiState>>,
-    file_path: String,
+    file_paths: Vec<String>,
 ) -> Result<(), AppError> {
+    if file_paths.is_empty() {
+        return Err(AppError::File {
+            message: "No statement files selected".to_string(),
+        });
+    }
+
     // Emit uploading stage
     let _ = app.emit(
         "import:progress",
@@ -276,11 +282,10 @@ pub async fn import_cc_statement(
         (cats, groups, hints, active_id)
     };
 
-    reject_import_source_outside_active_dataset(
-        &datasets::global_root(&app)?,
-        &active_id,
-        &file_path,
-    )?;
+    let global_root = datasets::global_root(&app)?;
+    for file_path in &file_paths {
+        reject_import_source_outside_active_dataset(&global_root, &active_id, file_path)?;
+    }
 
     // Snapshot the BYO provider before any await point. Statement import is
     // multimodal and therefore Bedrock-only, but that rule is enforced once in the
@@ -294,22 +299,49 @@ pub async fn import_cc_statement(
         clone_provider(&ai.provider)
     };
 
-    // Emit extracting stage
-    let _ = app.emit(
-        "import:progress",
-        ImportProgress {
-            stage: "extracting".to_string(),
-            message: Some("AI is reading your statement...".to_string()),
-        },
-    );
+    // The statement paths are deliberately not logged (AD-11).
+    info!("Starting AI extraction for {} statement(s)", file_paths.len());
 
-    // The statement path is deliberately not logged (AD-11).
-    info!("Starting AI extraction for the selected statement");
-
-    // Call AI parser
-    let result =
-        cc_parser::parse_cc_statement(byo.as_ref(), &file_path, &categories, &groups, &hints)
-            .await;
+    // Parse files sequentially and merge; the first failure fails the whole import.
+    let total = file_paths.len();
+    let mut merged = cc_parser::ParseResult {
+        transactions: Vec::new(),
+        flagged_count: 0,
+        auto_count: 0,
+        unreadable: Vec::new(),
+    };
+    let mut result: Result<cc_parser::ParseResult, AppError> = Ok(merged.clone());
+    for (i, file_path) in file_paths.iter().enumerate() {
+        let message = if total == 1 {
+            "AI is reading your statement...".to_string()
+        } else {
+            format!("AI is reading statement {} of {}...", i + 1, total)
+        };
+        let _ = app.emit(
+            "import:progress",
+            ImportProgress {
+                stage: "extracting".to_string(),
+                message: Some(message),
+            },
+        );
+        match cc_parser::parse_cc_statement(byo.as_ref(), file_path, &categories, &groups, &hints)
+            .await
+        {
+            Ok(r) => {
+                merged.transactions.extend(r.transactions);
+                merged.flagged_count += r.flagged_count;
+                merged.auto_count += r.auto_count;
+                merged.unreadable.extend(r.unreadable);
+            }
+            Err(e) => {
+                result = Err(e);
+                break;
+            }
+        }
+    }
+    if result.is_ok() {
+        result = Ok(merged);
+    }
 
     match result {
         Ok(parse_result) => {

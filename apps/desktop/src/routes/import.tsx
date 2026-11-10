@@ -127,8 +127,8 @@ function ImportPage() {
 
             {status === "idle" && (
               <UploadZone
-                onValidated={(file) => {
-                  startImport(file.file_path);
+                onValidated={(files) => {
+                  startImport(files.map((f) => f.file_path));
                 }}
               />
             )}

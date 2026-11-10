@@ -84,6 +84,7 @@ fn map_asset_type_to_category(asset_type: &str) -> &str {
         "real_estate" => "housing",
         "vehicle" => "vehicles",
         "business" => "business",
+        "stock" => "stock",
         _ => "other",
     }
 }
@@ -100,6 +101,7 @@ pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, 
         non_registered_cents: 0,
         business_cents: 0,
         vehicles_cents: 0,
+        stock_cents: 0,
         other_cents: 0,
     };
 
@@ -137,6 +139,7 @@ pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, 
             "housing" => breakdown.housing_cents += value_cents,
             "vehicles" => breakdown.vehicles_cents += value_cents,
             "business" => breakdown.business_cents += value_cents,
+            "stock" => breakdown.stock_cents += value_cents,
             _ => breakdown.other_cents += value_cents,
         }
     }
@@ -152,6 +155,7 @@ pub fn record_net_worth_snapshot(conn: &Connection) -> Result<NetWorthSnapshot, 
         + breakdown.non_registered_cents
         + breakdown.business_cents
         + breakdown.vehicles_cents
+        + breakdown.stock_cents
         + breakdown.other_cents
         - liabilities_cents;
 

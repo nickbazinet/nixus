@@ -59,7 +59,7 @@ describe("useImport", () => {
 
   async function startImport() {
     await act(async () => {
-      await hook.startImport("/tmp/statement.pdf");
+      await hook.startImport(["/tmp/statement.pdf"]);
     });
   }
 

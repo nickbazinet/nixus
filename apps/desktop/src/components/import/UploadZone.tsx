@@ -19,7 +19,7 @@ interface ClipboardImageSaveResult {
 }
 
 interface UploadZoneProps {
-  onValidated: (result: FileValidationResult) => void;
+  onValidated: (results: FileValidationResult[]) => void;
 }
 
 type ClipboardImageExtract =
@@ -98,7 +98,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
   const { t } = useTranslation();
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [validatedFile, setValidatedFile] = useState<FileValidationResult | null>(null);
+  const [validatedFile, setValidatedFile] = useState<FileValidationResult[] | null>(null);
   const [validating, setValidating] = useState(false);
   const validatingRef = useRef(false);
   const mountedRef = useRef(true);
@@ -108,17 +108,22 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
     if (mountedRef.current) setValidating(value);
   }, []);
 
-  const validateFile = useCallback(
-    async (filePath: string) => {
+  const validateFiles = useCallback(
+    async (filePaths: string[]) => {
       if (mountedRef.current) setError(null);
       setValidatingSafe(true);
       try {
-        const result = await invoke<FileValidationResult>("validate_cc_file", {
-          file_path: filePath,
-        });
+        const results: FileValidationResult[] = [];
+        for (const filePath of filePaths) {
+          results.push(
+            await invoke<FileValidationResult>("validate_cc_file", {
+              file_path: filePath,
+            })
+          );
+        }
         if (!mountedRef.current) return;
-        setValidatedFile(result);
-        onValidated(result);
+        setValidatedFile(results);
+        onValidated(results);
       } catch (err: unknown) {
         if (!mountedRef.current) return;
         const error = err as { message?: string };
@@ -176,7 +181,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
           }
         );
         if (!mountedRef.current) return;
-        await validateFile(saved.file_path);
+        await validateFiles([saved.file_path]);
       } catch (err: unknown) {
         if (!mountedRef.current) return;
         const error = err as { message?: string };
@@ -185,7 +190,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
         setValidatingSafe(false);
       }
     },
-    [t, validateFile, setValidatingSafe]
+    [t, validateFiles, setValidatingSafe]
   );
 
   useEffect(() => {
@@ -202,7 +207,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
 
   const handleClick = useCallback(async () => {
     const selected = await open({
-      multiple: false,
+      multiple: true,
       filters: [
         {
           name: t("import.ccStatement"),
@@ -211,9 +216,9 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
       ],
     });
     if (selected) {
-      await validateFile(selected);
+      await validateFiles(Array.isArray(selected) ? selected : [selected]);
     }
-  }, [validateFile, t]);
+  }, [validateFiles, t]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -233,19 +238,20 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
       e.stopPropagation();
       setDragOver(false);
 
-      const file = e.dataTransfer.files[0];
-      if (file) {
-        // In Tauri, dropped files provide a path via webkitRelativePath or name
-        // but we need the actual filesystem path. Tauri's drag-drop gives us the path.
-        const filePath = (file as File & { path?: string }).path;
-        if (filePath) {
-          await validateFile(filePath);
-        } else {
-          setError(t("import.filePathError"));
-        }
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length === 0) return;
+      // In Tauri, dropped files provide a path via webkitRelativePath or name
+      // but we need the actual filesystem path. Tauri's drag-drop gives us the path.
+      const paths = files
+        .map((file) => (file as File & { path?: string }).path)
+        .filter((p): p is string => Boolean(p));
+      if (paths.length === files.length) {
+        await validateFiles(paths);
+      } else {
+        setError(t("import.filePathError"));
       }
     },
-    [validateFile, t]
+    [validateFiles, t]
   );
 
   if (validatedFile) {
@@ -259,7 +265,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
             <FileCheck className="size-5" />
           </span>
           <p className="text-h2 text-ink" data-testid="validated-file-name">
-            {validatedFile.file_name}
+            {validatedFile.map((f) => f.file_name).join(", ")}
           </p>
           <p className="text-caption text-ink-dim">{t("import.fileValidated")}</p>
         </CardContent>

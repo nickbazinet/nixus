@@ -309,6 +309,9 @@ pub struct NetWorthBreakdown {
     pub non_registered_cents: i64,
     pub business_cents: i64,
     pub vehicles_cents: i64,
+    /// Absent from snapshots recorded before stocks had their own bucket.
+    #[serde(default)]
+    pub stock_cents: i64,
     pub other_cents: i64,
 }
 

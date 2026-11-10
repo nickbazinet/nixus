@@ -111,7 +111,7 @@ export function useImport() {
     };
   }, []);
 
-  const startImport = useCallback(async (filePath: string) => {
+  const startImport = useCallback(async (filePaths: string[]) => {
     setStatus("processing");
     setStage("uploading");
     setMessage(null);
@@ -119,7 +119,7 @@ export function useImport() {
     setError(null);
 
     try {
-      await invoke("import_cc_statement", { file_path: filePath });
+      await invoke("import_cc_statement", { file_paths: filePaths });
     } catch (err: unknown) {
       const parsed = parseAppError(err);
       setStatus("error");

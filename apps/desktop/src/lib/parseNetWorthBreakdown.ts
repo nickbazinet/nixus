@@ -10,6 +10,7 @@ interface BreakdownJson {
   non_registered_cents: number;
   business_cents: number;
   vehicles_cents: number;
+  stock_cents?: number;
   other_cents: number;
 }
 
@@ -23,6 +24,7 @@ const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
   housing_cents: { label: "Housing", color: "#059669" },
   business_cents: { label: "Business", color: "#EC4899" },
   vehicles_cents: { label: "Vehicles", color: "#F97316" },
+  stock_cents: { label: "Stocks", color: "#2563EB" },
   other_cents: { label: "Other", color: "#64748B" },
 };
 
@@ -31,7 +33,7 @@ export function parseNetWorthBreakdown(
 ): NetWorthBreakdownCategory[] {
   const data: BreakdownJson = JSON.parse(breakdownJson);
 
-  const total = Object.values(data).reduce((sum, val) => sum + val, 0);
+  const total = Object.values(data).reduce((sum, val) => sum + (val ?? 0), 0);
   if (total === 0) return [];
 
   const categories: NetWorthBreakdownCategory[] = [];
