@@ -64,12 +64,16 @@ export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthN
         onClick={goPrev}
         aria-label={`${t("budget.goTo")} ${getMonthName(prevM, locale, "long")} ${prevY}`}
         data-testid="prev-month-button"
+        className="w-20 justify-start"
       >
-        <ChevronLeft aria-hidden="true" />
-        {getMonthName(prevM, locale, "short")}
+        <ChevronLeft aria-hidden="true" className="shrink-0" />
+        <span className="truncate">{getMonthName(prevM, locale, "short")}</span>
       </Button>
 
-      <span className="text-h3 text-ink" data-testid="current-month-label">
+      <span
+        className="text-h3 text-ink min-w-32 text-center"
+        data-testid="current-month-label"
+      >
         {getMonthName(selectedMonth, locale)} {selectedYear}
       </span>
 
@@ -79,9 +83,10 @@ export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthN
         onClick={goNext}
         aria-label={`${t("budget.goTo")} ${getMonthName(nextM, locale, "long")} ${nextY}`}
         data-testid="next-month-button"
+        className="w-20 justify-end"
       >
-        {getMonthName(nextM, locale, "short")}
-        <ChevronRight aria-hidden="true" />
+        <span className="truncate">{getMonthName(nextM, locale, "short")}</span>
+        <ChevronRight aria-hidden="true" className="shrink-0" />
       </Button>
     </div>
   );

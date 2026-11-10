@@ -173,7 +173,7 @@ export function AccountRow({ account, onEdit, stockAssets = [] }: AccountRowProp
       <TableRow data-testid="account-row">
         <TableCell>
           <div className="flex items-start gap-2">
-            {expandable && (
+            {expandable ? (
               <Button
                 variant="ghost"
                 size="icon-xs"
@@ -193,6 +193,10 @@ export function AccountRow({ account, onEdit, stockAssets = [] }: AccountRowProp
                   <ChevronRight className="text-ink-dim" aria-hidden="true" />
                 )}
               </Button>
+            ) : (
+              // Reserves the toggle button's footprint so the icon and name line up with
+              // expandable rows above/below instead of drifting left when there's nothing to expand.
+              <span className="size-6 shrink-0" aria-hidden="true" />
             )}
             <TypeIcon
               className="mt-0.5 size-4 shrink-0 text-ink-faint"
