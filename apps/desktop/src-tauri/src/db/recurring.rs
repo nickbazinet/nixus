@@ -486,6 +486,18 @@ mod tests {
     }
 
     #[test]
+    fn apply_due_recurring_creates_the_creation_months_occurrence_even_if_its_day_already_passed() {
+        let conn = setup_test_db();
+        insert_template(&conn, "Gocery Store", 20000, 9, "2026-11-10 21:19:00");
+
+        let today = NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        let created = apply_due_recurring_expenses_as_of(&conn, today).unwrap();
+
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].date, "2026-11-09");
+    }
+
+    #[test]
     fn apply_due_recurring_skips_future_occurrence_in_current_month() {
         let conn = setup_test_db();
         insert_template(&conn, "Gym", 5000, 25, "2026-03-01 00:00:00");

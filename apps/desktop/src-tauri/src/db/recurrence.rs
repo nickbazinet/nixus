@@ -137,8 +137,10 @@ fn roll_forward(anchor: NaiveDate, interval: i64, today: NaiveDate) -> NaiveDate
 
 /// Every occurrence from the schedule's first recordable date through `today`, inclusive.
 ///
-/// A monthly schedule without a `start_date` starts at `created_at`, which is the rule every
-/// template followed before schedules could change.
+/// A monthly schedule without a `start_date` starts at the first of `created_at`'s month, not
+/// `created_at`'s exact day: `day_of_month` can land earlier in that same month than the moment
+/// the template was created (e.g. created on the 10th for day 9), and that occurrence is still
+/// due, not "before the template existed". Months before the creation month stay excluded.
 pub(crate) fn due_occurrences(
     schedule: &StoredSchedule,
     created_at: &str,
@@ -150,7 +152,9 @@ pub(crate) fn due_occurrences(
         None => {
             let floor = match schedule.start_date.as_deref() {
                 Some(start) => parse_date(start)?,
-                None => parse_template_start_date(created_at)?,
+                None => parse_template_start_date(created_at)?
+                    .with_day(1)
+                    .expect("day 1 is always a valid date"),
             };
             let (mut year, mut month) = (floor.year(), floor.month());
             while (year, month) <= (today.year(), today.month()) {
@@ -357,6 +361,18 @@ mod tests {
         };
         let dates = due_occurrences(&schedule, "2026-01-01 00:00:00", d(2026, 4, 20)).unwrap();
         assert_eq!(dates, vec![d(2026, 4, 15)]);
+    }
+
+    #[test]
+    fn monthly_due_occurrences_include_the_creation_months_day_even_if_already_past() {
+        // Created on the 10th for day 9: day 9 of that same month is still due.
+        let schedule = StoredSchedule {
+            frequency: Monthly,
+            day_of_month: 9,
+            start_date: None,
+        };
+        let dates = due_occurrences(&schedule, "2026-11-10 21:19:00", d(2026, 11, 10)).unwrap();
+        assert_eq!(dates, vec![d(2026, 11, 9)]);
     }
 
     #[test]

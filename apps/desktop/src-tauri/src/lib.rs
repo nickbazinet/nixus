@@ -21,7 +21,7 @@ mod tfsa;
 
 use db::{ActiveDataset, DbState};
 use std::sync::Mutex;
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -198,68 +198,7 @@ pub fn run() {
             let catalog_data_dir = app_data_dir.clone();
             maintenance::catalog::spawn_background_catalog_refresh(catalog_data_dir);
 
-            // Cloned before the recurring task takes ownership of the handle below, so the price
-            // refresh can be spawned after it in source order without borrowing a moved value.
-            let stock_refresh_handle = app_handle.clone();
-
-            tauri::async_runtime::spawn(async move {
-                let state = app_handle.state::<DbState>();
-                let (expense_result, income_result) = match state.0.lock() {
-                    Ok(active) => match active.conn.as_ref() {
-                        Some(_) => (
-                            commands::recurring::apply_due_recurring_expenses(&active),
-                            commands::recurring_income::apply_due_recurring_income(&active),
-                        ),
-                        // Unreachable in practice — .setup() selected a dataset
-                        // before spawning this — but skipping beats panicking in
-                        // a task nobody is awaiting.
-                        None => {
-                            tracing::error!(
-                                "No dataset selected; skipping background recurring apply"
-                            );
-                            return;
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to lock database for recurring apply: {}", e);
-                        return;
-                    }
-                };
-
-                match expense_result {
-                    Ok(created) => {
-                        if created.is_empty() {
-                            info!("Background recurring apply: no missing expenses");
-                        } else {
-                            info!(
-                                "Background recurring apply: created {} expense(s)",
-                                created.len()
-                            );
-                            let _ = app_handle.emit("recurring:applied", created.len());
-                        }
-                    }
-                    Err(e) => tracing::error!("Background recurring apply failed: {}", e),
-                }
-
-                match income_result {
-                    Ok(created) => {
-                        if created.is_empty() {
-                            info!("Background recurring apply: no missing income");
-                        } else {
-                            info!(
-                                "Background recurring apply: created {} income entry(ies)",
-                                created.len()
-                            );
-                            let _ = app_handle.emit("recurring-income:applied", created.len());
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Background recurring income apply failed: {}", e)
-                    }
-                }
-            });
-
-            commands::stock::spawn_startup_refresh(stock_refresh_handle);
+            commands::stock::spawn_startup_refresh(app_handle);
 
             // Placed after the tracing subscriber is initialized above, so deep-link
             // log lines actually reach the log file.
