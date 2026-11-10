@@ -301,10 +301,10 @@ pub async fn import_cc_statement(
     };
 
     // The statement paths are deliberately not logged (AD-11).
-    info!("Starting AI extraction for {} statement(s)", file_paths.len());
+    let total = file_paths.len();
+    info!("Starting AI extraction for {} statement(s)", total);
 
     // Parse files sequentially and merge; the first failure fails the whole import.
-    let total = file_paths.len();
     let mut merged = cc_parser::ParseResult {
         transactions: Vec::new(),
         flagged_count: 0,
