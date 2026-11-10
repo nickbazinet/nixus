@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Upload, FileCheck } from "lucide-react";
 import { Alert, Card, CardContent, focusRing } from "@nixus/shared";
@@ -102,6 +103,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
   const [validating, setValidating] = useState(false);
   const validatingRef = useRef(false);
   const mountedRef = useRef(true);
+  const zoneRef = useRef<HTMLDivElement | null>(null);
 
   const setValidatingSafe = useCallback((value: boolean) => {
     validatingRef.current = value;
@@ -205,6 +207,55 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
     };
   }, [handlePasteEvent]);
 
+  // Tauri intercepts OS file drops, so HTML drop events never fire for them.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    const isOverZone = (pos: { x: number; y: number }) => {
+      const el = zoneRef.current;
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      const x = pos.x / window.devicePixelRatio;
+      const y = pos.y / window.devicePixelRatio;
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+
+    try {
+      getCurrentWebview()
+        .onDragDropEvent((event) => {
+          const payload = event.payload;
+          if (payload.type === "leave") {
+            setDragOver(false);
+          } else if (payload.type === "enter" || payload.type === "over") {
+            setDragOver(isOverZone(payload.position));
+          } else if (payload.type === "drop") {
+            setDragOver(false);
+            if (!isOverZone(payload.position) || validatingRef.current) return;
+            const allowed = /\.(png|jpe?g|pdf)$/i;
+            const paths = payload.paths.filter((p) => allowed.test(p));
+            if (paths.length === 0) {
+              if (payload.paths.length > 0) setError(t("import.filePathError"));
+              return;
+            }
+            void validateFiles(paths);
+          }
+        })
+        .then((fn) => {
+          if (cancelled) fn();
+          else unlisten = fn;
+        })
+        .catch(() => {});
+    } catch {
+      // Not running inside Tauri (e.g. browser tests); HTML handlers apply.
+    }
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [validateFiles, t]);
+
   const handleClick = useCallback(async () => {
     const selected = await open({
       multiple: true,
@@ -276,6 +327,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
   return (
     <div>
       <div
+        ref={zoneRef}
         role="button"
         tabIndex={0}
         aria-label={t("import.dropHere")}

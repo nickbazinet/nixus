@@ -6,6 +6,7 @@ import type {
   PassiveAsset,
   CreateAssetInput,
   CreateStockAssetInput,
+  StockQuotePreview,
   StockRefreshResult,
   StockSearchResult,
   UpdateAssetInput,
@@ -126,6 +127,18 @@ export function invalidateAssetsAndNetWorth(
   queryClient.invalidateQueries({ queryKey: queryKeys.assets });
   queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
   queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
+}
+
+/** The live quote behind the add form's readonly price. Disabled until a listing is picked. */
+export function useStockQuote(symbol: string | null) {
+  return useQuery({
+    queryKey: queryKeys.stockQuote(symbol ?? ""),
+    queryFn: () =>
+      invoke<StockQuotePreview | null>("get_stock_quote", { symbol }),
+    enabled: !!symbol,
+    staleTime: 60_000,
+    retry: false,
+  });
 }
 
 export function useCreateStockAsset() {

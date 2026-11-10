@@ -224,6 +224,15 @@ pub struct StockSearchResult {
     pub exchange: String,
 }
 
+/// A read-only price preview for the add form: the quote as the exchange states it, plus the rate
+/// that converts it to the base currency, so the form can show what a holding WOULD be worth.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StockQuotePreview {
+    pub price_cents: i64,
+    pub currency: String,
+    pub fx_rate_to_base_micros: i64,
+}
+
 /// Per-symbol outcome of one refresh pass, so a partial failure is reportable rather than fatal.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StockRefreshResult {

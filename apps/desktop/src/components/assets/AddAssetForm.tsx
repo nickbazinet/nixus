@@ -15,6 +15,7 @@ import {
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
 import { StockAssetFields } from "@/components/assets/StockAssetFields";
+import { StockQuotePreview } from "@/components/assets/StockQuotePreview";
 import { useCreateAsset, useCreateStockAsset } from "@/hooks/useAssets";
 import { isStockLinkableAccount } from "@/lib/accountUtils";
 import {
@@ -177,6 +178,11 @@ export function AddAssetForm({ onClose }: AddAssetFormProps) {
               },
             })}
             quantityError={errors.quantity}
+          />
+
+          <StockQuotePreview
+            symbol={symbol?.symbol ?? null}
+            quantity={watch("quantity")}
           />
 
           <Controller

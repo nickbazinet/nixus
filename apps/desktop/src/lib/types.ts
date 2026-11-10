@@ -172,6 +172,12 @@ export interface StockSearchResult {
   exchange: string;
 }
 
+export interface StockQuotePreview {
+  price_cents: number;
+  currency: string;
+  fx_rate_to_base_micros: number;
+}
+
 export interface StockRefreshResult {
   asset_id: number;
   symbol: string;

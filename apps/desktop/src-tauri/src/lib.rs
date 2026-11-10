@@ -341,6 +341,7 @@ pub fn run() {
             commands::asset::update_asset,
             commands::asset::delete_asset,
             commands::stock::search_stocks,
+            commands::stock::get_stock_quote,
             commands::stock::create_stock_asset,
             commands::stock::update_stock_quantity,
             commands::stock::update_stock_account,

@@ -4,8 +4,10 @@ use crate::db::audit as audit_db;
 use crate::db::net_worth as net_worth_db;
 use crate::db::{stock as stock_db, DbState};
 use crate::error::AppError;
-use crate::models::{CreateStockAssetInput, PassiveAsset, StockRefreshResult, StockSearchResult};
-use crate::stock::provider::{PriceProvider, MIN_SEARCH_CHARS};
+use crate::models::{
+    CreateStockAssetInput, PassiveAsset, StockQuotePreview, StockRefreshResult, StockSearchResult,
+};
+use crate::stock::provider::{fx_symbol, PriceProvider, MIN_SEARCH_CHARS};
 use crate::stock::refresh;
 use crate::stock::yahoo::YahooProvider;
 
@@ -46,6 +48,49 @@ pub async fn search_stocks(query: String) -> Result<Vec<StockSearchResult>, AppE
     let provider = YahooProvider::new()?;
 
     provider.search(trimmed).await
+}
+
+/// The current price of one symbol, with the FX rate into the base currency. Nothing is stored: this
+/// feeds the add form's readonly preview, and the saved holding is still priced by the refresh.
+///
+/// `None` when the symbol or its FX leg cannot be quoted, so the form shows "unavailable" instead
+/// of an error toast on a field the user is only browsing.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_stock_quote(
+    state: State<'_, DbState>,
+    symbol: String,
+) -> Result<Option<StockQuotePreview>, AppError> {
+    let symbol = stock_db::normalized_symbol(&symbol)?;
+    let base_currency = {
+        let active = locked(state.inner())?;
+        let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
+        stock_db::base_currency(conn)?
+    };
+
+    let provider = YahooProvider::new()?;
+    let quotes = provider.quote(std::slice::from_ref(&symbol)).await?;
+    let Some(quote) = quotes.get(&symbol) else {
+        return Ok(None);
+    };
+
+    let fx_rate_to_base_micros = if quote.currency == base_currency {
+        stock_db::UNIT_FX_MICROS
+    } else {
+        let pair = fx_symbol(&quote.currency, &base_currency);
+        let rates = provider.quote(std::slice::from_ref(&pair)).await?;
+        match rates.get(&pair) {
+            Some(rate) if rate.currency == base_currency && rate.price_micros > 0 => {
+                rate.price_micros
+            }
+            _ => return Ok(None),
+        }
+    };
+
+    Ok(Some(StockQuotePreview {
+        price_cents: quote.price_cents(),
+        currency: quote.currency.clone(),
+        fx_rate_to_base_micros,
+    }))
 }
 
 /// Creates the asset, then prices it in a SECOND step that is allowed to fail.
