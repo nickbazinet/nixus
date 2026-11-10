@@ -24,6 +24,8 @@ export function useCreateRecurringIncomeTemplate() {
         source_id: input.source_id,
         amount_cents: input.amount_cents,
         day_of_month: input.day_of_month,
+        frequency: input.frequency,
+        start_date: input.start_date,
         account_id: input.account_id ?? null,
       }),
     onSuccess: () => {
@@ -44,6 +46,8 @@ export function useUpdateRecurringIncomeTemplate() {
         source_id: input.source_id,
         amount_cents: input.amount_cents,
         day_of_month: input.day_of_month,
+        frequency: input.frequency,
+        start_date: input.start_date,
         account_id: input.account_id ?? null,
         is_active: input.is_active,
       }),

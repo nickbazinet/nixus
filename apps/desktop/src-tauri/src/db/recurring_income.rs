@@ -1,15 +1,15 @@
-use chrono::{Datelike, NaiveDate};
-use rusqlite::{params, Connection};
+use chrono::NaiveDate;
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::account::BalanceChange;
 use crate::db::income as income_db;
-use crate::db::recurring::{clamp_day_to_month, next_month, parse_template_start_date};
+use crate::db::recurrence::{self, StoredSchedule};
 use crate::error::AppError;
 use crate::sync::capture;
 use crate::sync::identity;
 use crate::models::{
     CreateIncomeEntryInput, CreateRecurringIncomeTemplateInput, IncomeEntry,
-    RecurringIncomeTemplate, UpdateRecurringIncomeTemplateInput,
+    RecurrenceFrequency, RecurringIncomeTemplate, UpdateRecurringIncomeTemplateInput,
 };
 
 /// Entries created by a backfill run, with the account movements they caused so the caller can
@@ -21,7 +21,8 @@ pub struct AppliedRecurringIncome {
 }
 
 const SELECT_TEMPLATE: &str = "SELECT t.id, t.source_id, s.name, s.income_type, t.amount_cents,
-            t.day_of_month, t.account_id, t.is_active, t.created_at, t.updated_at
+            t.day_of_month, t.frequency, t.start_date, t.account_id, t.is_active, t.created_at,
+            t.updated_at
      FROM recurring_income_templates t
      JOIN income_sources s ON s.id = t.source_id";
 
@@ -31,23 +32,32 @@ pub fn insert_template(
     input: &CreateRecurringIncomeTemplateInput,
 ) -> Result<RecurringIncomeTemplate, AppError> {
     validate_amount(input.amount_cents)?;
-    validate_day_of_month(input.day_of_month)?;
+    let schedule = recurrence::normalize(
+        input.frequency,
+        input.day_of_month,
+        input.start_date.as_deref(),
+        None,
+        chrono::Local::now().date_naive(),
+    )?;
     validate_source_id(conn, input.source_id)?;
     income_db::validate_account_id(conn, input.account_id)?;
 
     conn.execute(
-        "INSERT INTO recurring_income_templates (source_id, amount_cents, day_of_month, account_id)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO recurring_income_templates
+            (source_id, amount_cents, day_of_month, frequency, start_date, account_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             input.source_id,
             input.amount_cents,
-            input.day_of_month,
+            schedule.day_of_month,
+            schedule.frequency,
+            schedule.start_date,
             input.account_id
         ],
     )?;
 
     let id = conn.last_insert_rowid();
-    get_template_by_id(conn, id)
+    get_template_by_id(conn, id).map_err(AppError::from)
 }
 
 pub fn get_all_templates(conn: &Connection) -> Result<Vec<RecurringIncomeTemplate>, AppError> {
@@ -67,34 +77,41 @@ pub fn update_template(
     input: &UpdateRecurringIncomeTemplateInput,
 ) -> Result<RecurringIncomeTemplate, AppError> {
     validate_amount(input.amount_cents)?;
-    validate_day_of_month(input.day_of_month)?;
+    let previous = get_template_by_id(conn, id)
+        .optional()?
+        .ok_or_else(|| AppError::Database {
+            message: "Recurring income template not found".to_string(),
+        })?;
+    let schedule = recurrence::normalize(
+        input.frequency,
+        input.day_of_month,
+        input.start_date.as_deref(),
+        Some(&schedule_of(&previous)),
+        chrono::Local::now().date_naive(),
+    )?;
     validate_source_id(conn, input.source_id)?;
     income_db::validate_account_id(conn, input.account_id)?;
 
     let is_active_int: i64 = if input.is_active { 1 } else { 0 };
 
-    let rows = conn.execute(
+    conn.execute(
         "UPDATE recurring_income_templates
-         SET source_id = ?1, amount_cents = ?2, day_of_month = ?3, account_id = ?4,
-             is_active = ?5, updated_at = datetime('now')
-         WHERE id = ?6",
+         SET source_id = ?1, amount_cents = ?2, day_of_month = ?3, frequency = ?4,
+             start_date = ?5, account_id = ?6, is_active = ?7, updated_at = datetime('now')
+         WHERE id = ?8",
         params![
             input.source_id,
             input.amount_cents,
-            input.day_of_month,
+            schedule.day_of_month,
+            schedule.frequency,
+            schedule.start_date,
             input.account_id,
             is_active_int,
             id
         ],
     )?;
 
-    if rows == 0 {
-        return Err(AppError::Database {
-            message: "Recurring income template not found".to_string(),
-        });
-    }
-
-    get_template_by_id(conn, id)
+    get_template_by_id(conn, id).map_err(AppError::from)
 }
 
 /// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
@@ -146,35 +163,24 @@ fn apply_template_as_of(
     today: NaiveDate,
     applied: &mut AppliedRecurringIncome,
 ) -> Result<(), AppError> {
-    let start_date = parse_template_start_date(&template.created_at)?;
-    let mut year = start_date.year();
-    let mut month = start_date.month();
+    let dates = recurrence::due_occurrences(&schedule_of(template), &template.created_at, today)?;
 
-    while (year, month) <= (today.year(), today.month()) {
-        let occurrence_date = occurrence_date_for(template, year, month)?;
-
-        if occurrence_date >= start_date && occurrence_date <= today {
-            if let Some(mutation) = try_apply_template(conn, template, occurrence_date)? {
-                applied.entries.push(mutation.entry);
-                applied.balance_changes.extend(mutation.balance_changes);
-            }
+    for occurrence_date in dates {
+        if let Some(mutation) = try_apply_template(conn, template, occurrence_date)? {
+            applied.entries.push(mutation.entry);
+            applied.balance_changes.extend(mutation.balance_changes);
         }
-
-        (year, month) = next_month(year, month);
     }
 
     Ok(())
 }
 
-fn occurrence_date_for(
-    template: &RecurringIncomeTemplate,
-    year: i32,
-    month: u32,
-) -> Result<NaiveDate, AppError> {
-    let day = clamp_day_to_month(year, month, template.day_of_month);
-    NaiveDate::from_ymd_opt(year, month, day as u32).ok_or_else(|| AppError::Database {
-        message: format!("Invalid recurring income date: {year}-{month}-{day}"),
-    })
+fn schedule_of(template: &RecurringIncomeTemplate) -> StoredSchedule {
+    StoredSchedule {
+        frequency: template.frequency,
+        day_of_month: template.day_of_month,
+        start_date: template.start_date.clone(),
+    }
 }
 
 fn try_apply_template(
@@ -183,9 +189,8 @@ fn try_apply_template(
     occurrence_date: NaiveDate,
 ) -> Result<Option<income_db::LinkedIncomeEntryMutation>, AppError> {
     let date = occurrence_date.format("%Y-%m-%d").to_string();
-    let month = occurrence_date.format("%Y-%m").to_string();
 
-    if occurrence_already_applied(conn, template, &month, &date)? {
+    if occurrence_already_applied(conn, template, &date)? {
         return Ok(None);
     }
 
@@ -197,7 +202,8 @@ fn try_apply_template(
     };
     let mutation =
         income_db::insert_income_entry_from_template(conn, &input, Some(template.id))?;
-    bind_generated_entry_identity(conn, template.id, mutation.entry.id, &month)?;
+    let period = recurrence::period_of(template.frequency, occurrence_date);
+    bind_generated_entry_identity(conn, template.id, mutation.entry.id, &period)?;
 
     Ok(Some(mutation))
 }
@@ -229,25 +235,26 @@ fn bind_generated_entry_identity(
     Ok(())
 }
 
-/// Two independent claims on a month. The template stamp is what survives an edit to the amount or
-/// day; the source/date/amount match is how a manually recorded paycheque claims its own month.
+/// Two independent claims on an occurrence. The template stamp is what survives an edit to the
+/// amount or day: a monthly template claims its whole month, a week-based one only its own date,
+/// since it records several entries a month. The source/date/amount match is how a manually
+/// recorded paycheque claims its own occurrence.
 fn occurrence_already_applied(
     conn: &Connection,
     template: &RecurringIncomeTemplate,
-    month: &str,
     date: &str,
 ) -> Result<bool, AppError> {
+    let stamp_claim = match template.frequency {
+        RecurrenceFrequency::Monthly => "month = substr(?2, 1, 7)",
+        _ => "date = ?2",
+    };
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM income_entries
-         WHERE (recurring_income_template_id = ?1 AND month = ?2)
-            OR (source_id = ?3 AND date = ?4 AND amount_cents = ?5)",
-        params![
-            template.id,
-            month,
-            template.source_id,
-            date,
-            template.amount_cents
-        ],
+        &format!(
+            "SELECT COUNT(*) FROM income_entries
+             WHERE (recurring_income_template_id = ?1 AND {stamp_claim})
+                OR (source_id = ?3 AND date = ?2 AND amount_cents = ?4)"
+        ),
+        params![template.id, date, template.source_id, template.amount_cents],
         |row| row.get(0),
     )?;
 
@@ -269,13 +276,12 @@ fn get_active_templates(conn: &Connection) -> Result<Vec<RecurringIncomeTemplate
 pub fn get_template_by_id(
     conn: &Connection,
     id: i64,
-) -> Result<RecurringIncomeTemplate, AppError> {
+) -> rusqlite::Result<RecurringIncomeTemplate> {
     conn.query_row(
         &format!("{SELECT_TEMPLATE} WHERE t.id = ?1"),
         params![id],
         row_to_template,
     )
-    .map_err(AppError::from)
 }
 
 fn row_to_template(row: &rusqlite::Row) -> rusqlite::Result<RecurringIncomeTemplate> {
@@ -286,10 +292,12 @@ fn row_to_template(row: &rusqlite::Row) -> rusqlite::Result<RecurringIncomeTempl
         income_type: row.get(3)?,
         amount_cents: row.get(4)?,
         day_of_month: row.get(5)?,
-        account_id: row.get(6)?,
-        is_active: row.get::<_, i64>(7)? != 0,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        frequency: row.get(6)?,
+        start_date: row.get(7)?,
+        account_id: row.get(8)?,
+        is_active: row.get::<_, i64>(9)? != 0,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
@@ -298,16 +306,6 @@ fn validate_amount(amount_cents: i64) -> Result<(), AppError> {
         return Err(AppError::Validation {
             message: "Amount must be greater than $0".to_string(),
             field: Some("amount_cents".to_string()),
-        });
-    }
-    Ok(())
-}
-
-fn validate_day_of_month(day_of_month: i32) -> Result<(), AppError> {
-    if !(1..=31).contains(&day_of_month) {
-        return Err(AppError::Validation {
-            message: "Day of month must be between 1 and 31".to_string(),
-            field: Some("day_of_month".to_string()),
         });
     }
     Ok(())
@@ -493,6 +491,26 @@ mod tests {
     }
 
     #[test]
+    fn a_biweekly_template_records_every_other_week_and_claims_each_date_separately() {
+        let conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO recurring_income_templates
+             (source_id, amount_cents, day_of_month, frequency, start_date, created_at, updated_at)
+             VALUES (1, 180000, 1, 'biweekly', '2026-10-01', '2026-10-01 00:00:00',
+                     '2026-10-01 00:00:00')",
+            [],
+        )
+        .unwrap();
+
+        let created = apply_due(&conn, as_of(2026, 10, 30));
+        let dates: Vec<&str> = created.iter().map(|e| e.date.as_str()).collect();
+        assert_eq!(dates, vec!["2026-10-01", "2026-10-15", "2026-10-29"]);
+
+        // A second run finds every date already claimed, though they share one month.
+        assert!(apply_due(&conn, as_of(2026, 10, 30)).is_empty());
+    }
+
+    #[test]
     fn apply_due_reports_balance_changes_for_linked_accounts() {
         let conn = setup_test_db();
         seed_template(&conn, 1, 250_000, Some(1), "2026-03-01 00:00:00");
@@ -571,6 +589,8 @@ mod tests {
                 source_id: 1,
                 amount_cents: 260_000,
                 day_of_month: 15,
+                frequency: Default::default(),
+                start_date: None,
                 account_id: Some(1),
                 is_active: true,
             },
@@ -596,6 +616,8 @@ mod tests {
                 source_id: 1,
                 amount_cents: 250_000,
                 day_of_month: 20,
+                frequency: Default::default(),
+                start_date: None,
                 account_id: None,
                 is_active: true,
             },
@@ -664,6 +686,8 @@ mod tests {
             source_id: 1,
             amount_cents: 0,
             day_of_month: 15,
+            frequency: Default::default(),
+            start_date: None,
             account_id: None,
         };
 
@@ -682,6 +706,8 @@ mod tests {
             source_id: 1,
             amount_cents: 100,
             day_of_month: 32,
+            frequency: Default::default(),
+            start_date: None,
             account_id: None,
         };
 
@@ -700,6 +726,8 @@ mod tests {
             source_id: 1,
             amount_cents: 100,
             day_of_month: 15,
+            frequency: Default::default(),
+            start_date: None,
             account_id: Some(99),
         };
 
@@ -718,6 +746,8 @@ mod tests {
             source_id: 99,
             amount_cents: 100,
             day_of_month: 15,
+            frequency: Default::default(),
+            start_date: None,
             account_id: None,
         };
 
@@ -751,6 +781,8 @@ mod tests {
             source_id: 1,
             amount_cents: 300_000,
             day_of_month: 20,
+            frequency: Default::default(),
+            start_date: None,
             account_id: Some(1),
             is_active: false,
         };

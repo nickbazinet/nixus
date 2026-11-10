@@ -34,7 +34,7 @@
 //! it finds nothing and emits nothing.
 
 use rusqlite::types::Value;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tracing::warn;
 
 use crate::db::sync_capture::{self, ColumnState, LoggedMessage};
@@ -850,10 +850,29 @@ fn template_identity(
         "recurring_income_templates",
     )?;
 
-    Ok(match (template, text_of(values, "month")) {
-        (Some(template), Some(month)) => Some(identity::recurring_income(&template, &month)),
+    let Some(template) = template else {
+        return Ok(None);
+    };
+
+    // The period the insert site named the entry by: its month for a monthly template, its exact
+    // date for a week-based one (several entries a month). See `recurrence::period_of`.
+    let template_row = values.iter().find_map(|(name, value)| match value {
+        Value::Integer(row_id) if *name == "recurring_income_template_id" => Some(*row_id),
         _ => None,
-    })
+    });
+    let frequency: Option<String> = conn
+        .query_row(
+            "SELECT frequency FROM recurring_income_templates WHERE id = ?1",
+            [template_row],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let period_column = match frequency.as_deref() {
+        Some("monthly") | None => "month",
+        Some(_) => "date",
+    };
+
+    Ok(text_of(values, period_column).map(|period| identity::recurring_income(&template, &period)))
 }
 
 fn text_of(values: &[(&'static str, Value)], column: &str) -> Option<String> {

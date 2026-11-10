@@ -61,6 +61,17 @@ const REQUIRED_KEYS = [
   "recurring.dayHint",
   "recurring.dayRequired",
   "recurring.dayRange",
+  "recurring.frequencyLabel",
+  "recurring.frequencyMonthly",
+  "recurring.frequencyWeekly",
+  "recurring.frequencyBiweekly",
+  "recurring.frequencyEveryFourWeeks",
+  "recurring.startDate",
+  "recurring.startRequired",
+  "recurring.startHint",
+  "recurring.everyWeekday",
+  "recurring.everyOtherWeekday",
+  "recurring.everyFourWeeksOn",
 ] as const;
 
 // Keys outside the `recurring.` namespace that the recurring income forms and rows render.

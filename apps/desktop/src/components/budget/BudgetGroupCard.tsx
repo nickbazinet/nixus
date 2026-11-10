@@ -47,6 +47,8 @@ interface BudgetGroupCardProps {
   statusByCategory?: Map<number, BudgetCategoryStatus>;
   expensesByCategory?: Record<number, Expense[]>;
   onAddExpense?: (categoryId: number) => void;
+  /** True when another active group exists, so a category row can be dragged into it. */
+  canMoveBetweenGroups?: boolean;
 }
 
 export function BudgetGroupCard({
@@ -54,6 +56,7 @@ export function BudgetGroupCard({
   statusByCategory,
   expensesByCategory,
   onAddExpense,
+  canMoveBetweenGroups = false,
 }: BudgetGroupCardProps) {
   const { t, i18n } = useTranslation();
   const formatCurrency = useFormatCurrency();
@@ -206,7 +209,10 @@ export function BudgetGroupCard({
 
   return (
     <>
-      <Card>
+      <Card
+        data-budget-group-id={group.is_deleted ? undefined : group.id}
+        className="data-[drop-target=true]:ring-2 data-[drop-target=true]:ring-brand"
+      >
         <CardHeader>
           <div className="flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-1.5">
@@ -295,7 +301,7 @@ export function BudgetGroupCard({
                     onUpdateTarget={(cents) => handleUpdateCategoryTarget(cat, cents)}
                     onDelete={() => setDeleteTarget(cat)}
                     onAddExpense={onAddExpense ? () => onAddExpense(cat.id) : undefined}
-                    showDragHandle={orderedCategories.length > 1}
+                    showDragHandle={orderedCategories.length > 1 || canMoveBetweenGroups}
                     onDragHandlePointerDown={beginPointerDrag(index)}
                     rowRef={setRowRef(index)}
                     isDragSource={drag?.from === index}

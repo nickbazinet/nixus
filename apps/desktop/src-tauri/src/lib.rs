@@ -314,6 +314,7 @@ pub fn run() {
             commands::budget::create_budget_category_quick,
             commands::budget::get_budget_categories,
             commands::budget::reorder_budget_categories,
+            commands::budget::move_budget_category,
             commands::budget::update_budget_group,
             commands::budget::update_budget_category,
             commands::budget::delete_budget_category,

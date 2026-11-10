@@ -39,6 +39,7 @@ import type {
   RecurringIncomeTemplate,
   BudgetCategory,
 } from "@/lib/types";
+import { scheduleLabel } from "@/lib/recurrence";
 import { EditRecurringTemplateForm } from "./EditRecurringTemplateForm";
 import { EditRecurringIncomeForm } from "@/components/income/EditRecurringIncomeForm";
 
@@ -114,6 +115,8 @@ export function RecurringTemplateList({
           amount_cents: template.amount_cents,
           budget_category_id: template.budget_category_id,
           day_of_month: template.day_of_month,
+          frequency: template.frequency,
+          start_date: template.start_date,
           is_active: isActive,
         },
         { onError }
@@ -128,6 +131,8 @@ export function RecurringTemplateList({
         source_id: template.source_id,
         amount_cents: template.amount_cents,
         day_of_month: template.day_of_month,
+        frequency: template.frequency,
+        start_date: template.start_date,
         account_id: template.account_id,
         is_active: isActive,
       },
@@ -247,7 +252,7 @@ export function RecurringTemplateList({
                 <TableCell>{name}</TableCell>
                 <TableCell dim>{secondary}</TableCell>
                 <TableCell dim>
-                  {t("recurring.dayLabel", { day: row.template.day_of_month })}
+                  {scheduleLabel(t, row.template, i18n.language)}
                 </TableCell>
                 <TableCell numeric>
                   <Money

@@ -37,6 +37,7 @@ function BudgetPage() {
   const [expenseCategoryId, setExpenseCategoryId] = useState<number | undefined>(undefined);
   const { year: selectedYear, month: selectedMonth } = usePeriod();
   const { data: groups = [] } = useBudgetGroupsForMonth(selectedYear, selectedMonth);
+  const activeGroupCount = groups.filter((group) => !group.is_deleted).length;
   const createGroup = useCreateBudgetGroup();
 
   const { data: statusList = [] } = useBudgetStatus(selectedYear, selectedMonth);
@@ -149,6 +150,7 @@ function BudgetPage() {
             statusByCategory={statusByCategory}
             expensesByCategory={expensesByCategory}
             onAddExpense={openExpenseForm}
+            canMoveBetweenGroups={activeGroupCount > 1}
           />
         ))}
       </div>

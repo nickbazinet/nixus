@@ -522,6 +522,18 @@ pub struct MerchantHint {
     pub usage_count: i64,
 }
 
+/// How often a recurring template repeats. `Monthly` lands on `day_of_month`; the week-based
+/// cadences count whole weeks from the template's `start_date`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecurrenceFrequency {
+    #[default]
+    Monthly,
+    Weekly,
+    Biweekly,
+    EveryFourWeeks,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecurringExpenseTemplate {
     pub id: i64,
@@ -529,6 +541,10 @@ pub struct RecurringExpenseTemplate {
     pub amount_cents: i64,
     pub budget_category_id: i64,
     pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -540,6 +556,10 @@ pub struct CreateRecurringExpenseTemplateInput {
     pub amount_cents: i64,
     pub budget_category_id: i64,
     pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -548,6 +568,10 @@ pub struct UpdateRecurringExpenseTemplateInput {
     pub amount_cents: i64,
     pub budget_category_id: i64,
     pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
     pub is_active: bool,
 }
 
@@ -559,6 +583,10 @@ pub struct RecurringIncomeTemplate {
     pub income_type: String,
     pub amount_cents: i64,
     pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
     pub account_id: Option<i64>,
     pub is_active: bool,
     pub created_at: String,
@@ -570,6 +598,10 @@ pub struct CreateRecurringIncomeTemplateInput {
     pub source_id: i64,
     pub amount_cents: i64,
     pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
     pub account_id: Option<i64>,
 }
 
@@ -578,6 +610,10 @@ pub struct UpdateRecurringIncomeTemplateInput {
     pub source_id: i64,
     pub amount_cents: i64,
     pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
     pub account_id: Option<i64>,
     pub is_active: bool,
 }

@@ -25,6 +25,8 @@ export function useCreateRecurringTemplate() {
         amount_cents: input.amount_cents,
         budget_category_id: input.budget_category_id,
         day_of_month: input.day_of_month,
+        frequency: input.frequency,
+        start_date: input.start_date,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.recurringTemplates });
@@ -43,6 +45,8 @@ export function useUpdateRecurringTemplate() {
         amount_cents: input.amount_cents,
         budget_category_id: input.budget_category_id,
         day_of_month: input.day_of_month,
+        frequency: input.frequency,
+        start_date: input.start_date,
         is_active: input.is_active,
       }),
     onSuccess: () => {

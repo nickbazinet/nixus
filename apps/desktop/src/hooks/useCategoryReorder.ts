@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { useReorderBudgetCategories } from "@/hooks/useBudget";
+import { useMoveBudgetCategory, useReorderBudgetCategories } from "@/hooks/useBudget";
 import type { BudgetCategory } from "@/lib/types";
 
 function moveId(ids: number[], from: number, to: number): number[] {
@@ -11,6 +11,28 @@ function moveId(ids: number[], from: number, to: number): number[] {
   next.splice(from, 1);
   next.splice(to, 0, moved);
   return next;
+}
+
+// Group cards mark themselves with this attribute so a drag started in one card can find the card
+// the pointer is released over. Archived groups never carry it: nothing can be moved into them.
+const GROUP_ATTR = "data-budget-group-id";
+const DROP_TARGET_ATTR = "data-drop-target";
+const ARCHIVED_ROW = '[data-testid="archived-budget-category-row"]';
+
+function groupCardAt(clientX: number, clientY: number): HTMLElement | null {
+  return document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>(`[${GROUP_ATTR}]`) ?? null;
+}
+
+// Where a row dropped at `clientY` lands among the target group's active rows.
+function insertionIndexIn(card: HTMLElement, clientY: number): number {
+  const rows = Array.from(
+    card.querySelectorAll<HTMLElement>('[data-testid="budget-status-row"]')
+  ).filter((row) => !row.closest(ARCHIVED_ROW));
+  const index = rows.findIndex((row) => {
+    const rect = row.getBoundingClientRect();
+    return clientY < rect.top + rect.height / 2;
+  });
+  return index === -1 ? rows.length : index;
 }
 
 interface DragState {
@@ -27,6 +49,7 @@ export function useCategoryReorder(
   const [drag, setDrag] = useState<DragState | null>(null);
   const rowRefs = useRef<Array<HTMLElement | null>>([]);
   const reorderCategories = useReorderBudgetCategories();
+  const moveCategory = useMoveBudgetCategory();
 
   const serverIds = useMemo(
     () => categories?.map((category) => category.id) ?? [],
@@ -78,6 +101,23 @@ export function useCategoryReorder(
     [orderedCategories, groupId, reorderCategories, serverIds, t]
   );
 
+  const commitMove = useCallback(
+    (index: number, targetGroupId: number, position: number) => {
+      const category = orderedCategories[index];
+      if (!category) return;
+      moveCategory.mutate(
+        {
+          id: category.id,
+          source_group_id: groupId,
+          target_group_id: targetGroupId,
+          position,
+        },
+        { onError: () => toast.error(t("budget.moveFailed")) }
+      );
+    },
+    [orderedCategories, groupId, moveCategory, t]
+  );
+
   const setRowRef = useCallback(
     (index: number) => (el: HTMLElement | null) => {
       rowRefs.current[index] = el;
@@ -102,8 +142,23 @@ export function useCategoryReorder(
       event.preventDefault();
       setDrag({ from: index, over: index });
 
+      let highlighted: HTMLElement | null = null;
+      const setHighlight = (card: HTMLElement | null) => {
+        if (card === highlighted) return;
+        highlighted?.removeAttribute(DROP_TARGET_ATTR);
+        card?.setAttribute(DROP_TARGET_ATTR, "true");
+        highlighted = card;
+      };
+      // A card other than the one the drag started in, or null while the pointer is over this group.
+      const foreignCardAt = (x: number, y: number): HTMLElement | null => {
+        const card = groupCardAt(x, y);
+        return card && Number(card.getAttribute(GROUP_ATTR)) !== groupId ? card : null;
+      };
+
       const handleMove = (moveEvent: PointerEvent) => {
-        const over = indexAtClientY(moveEvent.clientY);
+        const foreign = foreignCardAt(moveEvent.clientX, moveEvent.clientY);
+        setHighlight(foreign);
+        const over = foreign ? index : indexAtClientY(moveEvent.clientY);
         setDrag((current) => (current ? { ...current, over } : current));
       };
 
@@ -111,16 +166,26 @@ export function useCategoryReorder(
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleUp);
         window.removeEventListener("pointercancel", handleUp);
-        const over = indexAtClientY(upEvent.clientY);
+        const foreign =
+          upEvent.type === "pointercancel" ? null : foreignCardAt(upEvent.clientX, upEvent.clientY);
+        setHighlight(null);
         setDrag(null);
-        commitOrder(index, over);
+        if (foreign) {
+          commitMove(
+            index,
+            Number(foreign.getAttribute(GROUP_ATTR)),
+            insertionIndexIn(foreign, upEvent.clientY)
+          );
+          return;
+        }
+        commitOrder(index, indexAtClientY(upEvent.clientY));
       };
 
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleUp);
       window.addEventListener("pointercancel", handleUp);
     },
-    [commitOrder]
+    [commitOrder, commitMove, groupId]
   );
 
   return { orderedCategories, drag, setRowRef, beginPointerDrag };

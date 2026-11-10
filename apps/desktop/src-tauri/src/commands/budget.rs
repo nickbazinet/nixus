@@ -105,6 +105,19 @@ pub fn reorder_budget_categories(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn move_budget_category(
+    state: State<DbState>,
+    id: i64,
+    target_group_id: i64,
+    position: usize,
+) -> Result<BudgetCategory, AppError> {
+    let active = state.0.lock().map_err(|e| AppError::Database {
+        message: e.to_string(),
+    })?;
+    active.write(|tx| budget_db::move_budget_category(tx, id, target_group_id, position))
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn update_budget_group(
     state: State<DbState>,
     id: i64,

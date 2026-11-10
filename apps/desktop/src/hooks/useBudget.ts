@@ -115,6 +115,34 @@ export function useReorderBudgetCategories() {
   });
 }
 
+export function useMoveBudgetCategory() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: {
+      id: number;
+      source_group_id: number;
+      target_group_id: number;
+      position: number;
+    }) =>
+      invoke<BudgetCategory>("move_budget_category", {
+        id: input.id,
+        target_group_id: input.target_group_id,
+        position: input.position,
+      }),
+    onSettled: (_data, _error, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.budgetCategories(variables.source_group_id),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.budgetCategories(variables.target_group_id),
+      });
+      queryClient.invalidateQueries({ queryKey: ["budget-status"] });
+      invalidateTrendsQueries(queryClient);
+    },
+  });
+}
+
 export function useUpdateBudgetGroup() {
   const queryClient = useQueryClient();
 

@@ -28,6 +28,7 @@ pub mod net_worth;
 pub mod onboarding;
 pub mod projection;
 pub mod projects;
+pub(crate) mod recurrence;
 pub mod recurring;
 pub mod recurring_income;
 pub mod retirement;
@@ -405,6 +406,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         39,
         include_str!("../../migrations/039_stock_holdings_account_id.sql"),
     ),
+    (40, include_str!("../../migrations/040_recurring_frequency.sql")),
 ];
 
 /// The scalar SQL function migration 030 backfills `project_images.image_sha256` with.

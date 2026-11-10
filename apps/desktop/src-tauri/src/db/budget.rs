@@ -277,6 +277,95 @@ pub fn reorder_budget_categories(
 
 /// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`, so its writes are
 /// recorded in `sync_log` by the pre-update hook in the same transaction.
+///
+/// Moves an active category into another active group at `position` (clamped to the end), and
+/// renumbers `sort_order` in both groups so neither is left with a gap. Only `group_id` and
+/// `sort_order` change: expenses, recurring templates and merchant hints reference the category's
+/// own id, so they follow it with no rewrite. Rows whose values do not change are not written, so
+/// sync carries only what actually moved.
+pub fn move_budget_category(
+    conn: &Connection,
+    id: i64,
+    target_group_id: i64,
+    position: usize,
+) -> Result<BudgetCategory, AppError> {
+    let source_group_id: i64 = conn
+        .query_row(
+            "SELECT group_id FROM budget_categories WHERE id = ?1 AND deleted_at IS NULL",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(|err| match err {
+            rusqlite::Error::QueryReturnedNoRows => AppError::Database {
+                message: "Budget category not found".to_string(),
+            },
+            other => AppError::from(other),
+        })?;
+
+    let target_is_active: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM budget_groups WHERE id = ?1 AND deleted_at IS NULL)",
+        params![target_group_id],
+        |row| row.get(0),
+    )?;
+    if !target_is_active {
+        return Err(AppError::Database {
+            message: "Budget group not found".to_string(),
+        });
+    }
+
+    let mut target_ids: Vec<i64> = get_budget_categories_by_group(conn, target_group_id)?
+        .into_iter()
+        .map(|category| category.id)
+        .filter(|category_id| *category_id != id)
+        .collect();
+    target_ids.insert(position.min(target_ids.len()), id);
+
+    let source_ids: Vec<i64> = if source_group_id == target_group_id {
+        Vec::new()
+    } else {
+        get_budget_categories_by_group(conn, source_group_id)?
+            .into_iter()
+            .map(|category| category.id)
+            .filter(|category_id| *category_id != id)
+            .collect()
+    };
+
+    let tx = super::grouped(conn)?;
+
+    for (group_id, ids) in [(target_group_id, &target_ids), (source_group_id, &source_ids)] {
+        for (index, category_id) in ids.iter().enumerate() {
+            let sort_order = i32::try_from(index).map_err(|_| {
+                invalid_category_ids("The group contains more categories than supported")
+            })?;
+            tx.execute(
+                "UPDATE budget_categories SET group_id = ?1, sort_order = ?2
+                 WHERE id = ?3 AND (group_id != ?1 OR sort_order != ?2)",
+                params![group_id, sort_order, category_id],
+            )?;
+        }
+    }
+
+    tx.commit()?;
+
+    conn.query_row(
+        "SELECT id, group_id, name, target_cents, sort_order, created_at FROM budget_categories WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(BudgetCategory {
+                id: row.get(0)?,
+                group_id: row.get(1)?,
+                name: row.get(2)?,
+                target_cents: row.get(3)?,
+                sort_order: row.get(4)?,
+                created_at: row.get(5)?,
+            })
+        },
+    )
+    .map_err(AppError::from)
+}
+
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`, so its writes are
+/// recorded in `sync_log` by the pre-update hook in the same transaction.
 pub fn update_budget_group(
     conn: &Connection,
     id: i64,
@@ -1239,6 +1328,160 @@ mod tests {
             }
             other => panic!("expected validation error, got {other:?}"),
         }
+    }
+
+    fn two_group_db() -> Connection {
+        let conn = budget_test_db();
+        insert_category(&conn, 2, "Rent");
+        conn.execute(
+            "INSERT INTO budget_groups (id, name, sort_order) VALUES (2, 'Wants', 2)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO budget_categories (id, group_id, name, target_cents, sort_order)
+             VALUES (10, 2, 'Dining', 10000, 0), (11, 2, 'Movies', 5000, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE budget_categories SET sort_order = id - 1 WHERE id IN (1, 2)", [])
+            .unwrap();
+        conn
+    }
+
+    fn ids_in_group(conn: &Connection, group_id: i64) -> Vec<i64> {
+        conn.prepare(
+            "SELECT id FROM budget_categories WHERE group_id = ?1 AND deleted_at IS NULL ORDER BY sort_order",
+        )
+        .unwrap()
+        .query_map(params![group_id], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    }
+
+    #[test]
+    fn move_budget_category_inserts_at_position_and_renumbers_both_groups() {
+        let conn = two_group_db();
+
+        let moved = move_budget_category(&conn, 1, 2, 1).unwrap();
+
+        assert_eq!(moved.group_id, 2);
+        assert_eq!(moved.sort_order, 1);
+        assert_eq!(ids_in_group(&conn, 2), vec![10, 1, 11]);
+        assert_eq!(ids_in_group(&conn, 1), vec![2]);
+        let source_orders: Vec<i32> = conn
+            .prepare("SELECT sort_order FROM budget_categories WHERE group_id = 1")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(source_orders, vec![0], "the source group has no gap left behind");
+    }
+
+    #[test]
+    fn move_budget_category_clamps_position_to_the_end() {
+        let conn = two_group_db();
+
+        move_budget_category(&conn, 1, 2, 99).unwrap();
+
+        assert_eq!(ids_in_group(&conn, 2), vec![10, 11, 1]);
+    }
+
+    #[test]
+    fn move_budget_category_into_an_empty_group() {
+        let conn = two_group_db();
+        conn.execute(
+            "INSERT INTO budget_groups (id, name, sort_order) VALUES (3, 'Savings', 3)",
+            [],
+        )
+        .unwrap();
+
+        let moved = move_budget_category(&conn, 1, 3, 0).unwrap();
+
+        assert_eq!((moved.group_id, moved.sort_order), (3, 0));
+        assert_eq!(ids_in_group(&conn, 3), vec![1]);
+    }
+
+    #[test]
+    fn move_budget_category_keeps_expenses_recurring_templates_and_hints_attached() {
+        let conn = two_group_db();
+        conn.execute_batch(
+            "INSERT INTO expenses (merchant, amount_cents, budget_category_id, date)
+                 VALUES ('Store', 1200, 1, '2026-11-01');
+             INSERT INTO recurring_expense_templates (merchant, amount_cents, budget_category_id, day_of_month)
+                 VALUES ('Store', 1200, 1, 1);
+             INSERT INTO merchant_category_hints (merchant, budget_category_id) VALUES ('Store', 1);",
+        )
+        .unwrap();
+        let before: (String, i64) = conn
+            .query_row(
+                "SELECT name, target_cents FROM budget_categories WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        move_budget_category(&conn, 1, 2, 0).unwrap();
+
+        for table in ["expenses", "recurring_expense_templates", "merchant_category_hints"] {
+            let count: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE budget_category_id = 1"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "{table} still points at the moved category");
+        }
+        let after: (String, i64) = conn
+            .query_row(
+                "SELECT name, target_cents FROM budget_categories WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(before, after, "name and target are untouched");
+    }
+
+    #[test]
+    fn move_budget_category_within_the_same_group_repositions_it() {
+        let conn = two_group_db();
+
+        let moved = move_budget_category(&conn, 1, 1, 1).unwrap();
+
+        assert_eq!(moved.group_id, 1);
+        assert_eq!(ids_in_group(&conn, 1), vec![2, 1]);
+    }
+
+    #[test]
+    fn move_budget_category_rejects_unknown_soft_deleted_or_archived_targets() {
+        let conn = two_group_db();
+        conn.execute("UPDATE budget_groups SET deleted_at = datetime('now') WHERE id = 2", [])
+            .unwrap();
+
+        assert!(matches!(
+            move_budget_category(&conn, 1, 2, 0),
+            Err(AppError::Database { .. })
+        ));
+        assert!(matches!(
+            move_budget_category(&conn, 1, 404, 0),
+            Err(AppError::Database { .. })
+        ));
+        assert!(matches!(
+            move_budget_category(&conn, 404, 1, 0),
+            Err(AppError::Database { .. })
+        ));
+        assert_eq!(ids_in_group(&conn, 1), vec![1, 2], "a rejected move changes nothing");
+
+        conn.execute("UPDATE budget_groups SET deleted_at = NULL WHERE id = 2", [])
+            .unwrap();
+        delete_budget_category(&conn, 1).unwrap();
+        assert!(matches!(
+            move_budget_category(&conn, 1, 2, 0),
+            Err(AppError::Database { .. })
+        ));
     }
 
     #[test]

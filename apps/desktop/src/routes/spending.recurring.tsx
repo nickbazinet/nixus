@@ -22,6 +22,7 @@ import { useRecurringTemplates } from "@/hooks/useRecurringExpenses";
 import { useRecurringIncomeTemplates } from "@/hooks/useRecurringIncome";
 import { useAllBudgetCategories } from "@/hooks/useExpenses";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
+import { monthlyEquivalentCents } from "@/lib/recurrence";
 
 export const Route = createFileRoute("/spending/recurring")({
   component: RecurringExpensesPage,
@@ -45,11 +46,11 @@ function RecurringExpensesPage() {
     (template) => template.is_active
   );
   const committedCents = activeTemplates.reduce(
-    (sum, template) => sum + template.amount_cents,
+    (sum, template) => sum + monthlyEquivalentCents(template),
     0
   );
   const expectedIncomeCents = activeIncomeTemplates.reduce(
-    (sum, template) => sum + template.amount_cents,
+    (sum, template) => sum + monthlyEquivalentCents(template),
     0
   );
 

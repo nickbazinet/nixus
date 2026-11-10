@@ -17,6 +17,8 @@ async function setupTauriMock(page: Page) {
       income_type: string;
       amount_cents: number;
       day_of_month: number;
+      frequency: string;
+      start_date: string | null;
       account_id: number | null;
       is_active: boolean;
       created_at: string;
@@ -33,6 +35,8 @@ async function setupTauriMock(page: Page) {
           amount_cents: 150000,
           budget_category_id: 1,
           day_of_month: 1,
+          frequency: "monthly",
+          start_date: null,
           is_active: true,
           created_at: "2026-01-01",
           updated_at: "2026-01-01",
@@ -69,6 +73,8 @@ async function setupTauriMock(page: Page) {
               income_type: source.income_type,
               amount_cents: args.amount_cents as number,
               day_of_month: args.day_of_month as number,
+              frequency: (args.frequency as string) ?? "monthly",
+              start_date: (args.start_date as string | null) ?? null,
               account_id: (args.account_id as number | null) ?? null,
               is_active: true,
               created_at: "2026-08-01",
@@ -81,6 +87,8 @@ async function setupTauriMock(page: Page) {
             const found = state.incomeTemplates.find((tpl) => tpl.id === args.id)!;
             found.amount_cents = args.amount_cents as number;
             found.day_of_month = args.day_of_month as number;
+            found.frequency = args.frequency as string;
+            found.start_date = (args.start_date as string | null) ?? null;
             found.account_id = (args.account_id as number | null) ?? null;
             found.is_active = args.is_active as boolean;
             return Promise.resolve(found);
@@ -190,6 +198,52 @@ test("recurring income can be added, seen in the combined list, toggled and dele
   await page.getByTestId("confirm-delete-recurring-button").click();
   await expect(page.getByTestId("recurring-income-row")).toHaveCount(0);
   await expect(page.getByTestId("recurring-template-row")).toHaveCount(1);
+});
+
+test("recurring income can repeat weekly, shows its weekday and counts as a monthly equivalent", async ({
+  page,
+}) => {
+  await setupTauriMock(page);
+  await page.goto("/spending/recurring");
+
+  await page.getByRole("button", { name: "Add Template" }).click();
+  await page.getByTestId("recurring-add-kind-income").click();
+  const form = page.getByTestId("add-recurring-income-form");
+
+  await form.locator("#recurring-income-source").click();
+  await page.getByRole("option", { name: "Acme Payroll" }).click();
+  await form.locator("#recurring-income-amount").fill("1000.00");
+
+  // Monthly is the default and asks for a day; a weekly cadence asks for a start date instead.
+  await expect(form.locator("#recurring-income-day")).toBeVisible();
+  await form.locator("#recurring-income-frequency").click();
+  await page.getByRole("option", { name: "Weekly" }).click();
+  await expect(form.locator("#recurring-income-day")).toHaveCount(0);
+  await expect(form.locator("#recurring-income-start")).toBeVisible();
+
+  const weekday = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date());
+  await expect(form.getByTestId("recurring-income-start-hint")).toContainText(
+    `Every ${weekday}`
+  );
+  await form.getByRole("button", { name: "Save Template" }).click();
+
+  const incomeRow = page.getByTestId("recurring-income-row");
+  await expect(incomeRow).toHaveCount(1);
+  await expect(incomeRow).toContainText(`Every ${weekday}`);
+  await expect(incomeRow).toContainText("$1,000.00");
+  // 52 paycheques a year over 12 months, not "four a month".
+  await expect(page.getByTestId("recurring-expected-total")).toContainText("$4,333.33");
+
+  // The edit form reopens on the weekly cadence, and switching to every two weeks relabels it.
+  await incomeRow.getByText("Acme Payroll").click();
+  const editForm = page.getByTestId("edit-recurring-income-form");
+  await expect(editForm.locator("#edit-recurring-income-frequency")).toContainText("Weekly");
+  await editForm.locator("#edit-recurring-income-frequency").click();
+  await page.getByRole("option", { name: "Every 2 weeks" }).click();
+  await editForm.getByRole("button", { name: "Save Template" }).click();
+
+  await expect(incomeRow).toContainText(`Every other ${weekday}`);
+  await expect(page.getByTestId("recurring-expected-total")).toContainText("$2,166.67");
 });
 
 test("recurring income form explains itself when no income source exists", async ({ page }) => {

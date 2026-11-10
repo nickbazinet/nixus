@@ -5,7 +5,7 @@ use crate::db::recurring as recurring_db;
 use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::models::{
-    CreateRecurringExpenseTemplateInput, Expense, RecurringExpenseTemplate,
+    CreateRecurringExpenseTemplateInput, Expense, RecurrenceFrequency, RecurringExpenseTemplate,
     UpdateRecurringExpenseTemplateInput,
 };
 
@@ -16,6 +16,8 @@ pub fn create_recurring_template(
     amount_cents: i64,
     budget_category_id: i64,
     day_of_month: i32,
+    frequency: Option<RecurrenceFrequency>,
+    start_date: Option<String>,
 ) -> Result<RecurringExpenseTemplate, AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
@@ -25,6 +27,8 @@ pub fn create_recurring_template(
         amount_cents,
         budget_category_id,
         day_of_month,
+        frequency: frequency.unwrap_or_default(),
+        start_date,
     };
     let result = active.write(|tx| recurring_db::insert_template(tx, &input))?;
 
@@ -47,6 +51,7 @@ pub fn get_recurring_templates(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
 pub fn update_recurring_template(
     state: State<DbState>,
     id: i64,
@@ -54,6 +59,8 @@ pub fn update_recurring_template(
     amount_cents: i64,
     budget_category_id: i64,
     day_of_month: i32,
+    frequency: Option<RecurrenceFrequency>,
+    start_date: Option<String>,
     is_active: bool,
 ) -> Result<RecurringExpenseTemplate, AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
@@ -68,6 +75,8 @@ pub fn update_recurring_template(
         amount_cents,
         budget_category_id,
         day_of_month,
+        frequency: frequency.unwrap_or_default(),
+        start_date,
         is_active,
     };
     let result = active.write(|tx| recurring_db::update_template(tx, id, &input))?;
@@ -133,23 +142,7 @@ fn audit_created_expenses(active: &ActiveDataset, created: &[Expense]) {
 }
 
 fn get_template_json(conn: &rusqlite::Connection, id: i64) -> Option<String> {
-    conn.query_row(
-        "SELECT id, merchant, amount_cents, budget_category_id, day_of_month, is_active, created_at, updated_at
-         FROM recurring_expense_templates WHERE id = ?1",
-        rusqlite::params![id],
-        |row| {
-            Ok(RecurringExpenseTemplate {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                day_of_month: row.get(4)?,
-                is_active: row.get::<_, i64>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        },
-    )
-    .ok()
-    .and_then(|t| serde_json::to_string(&t).ok())
+    recurring_db::get_template_by_id(conn, id)
+        .ok()
+        .and_then(|t| serde_json::to_string(&t).ok())
 }

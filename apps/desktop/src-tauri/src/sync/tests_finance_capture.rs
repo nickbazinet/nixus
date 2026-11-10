@@ -232,6 +232,25 @@ fn the_budget_category_write_sites_are_captured() {
     // column — so the assertion is about the write being captured at all, not about a count.
     assert!(replica.kinds_for("budget_categories").len() <= 1);
 
+    let other_group = replica
+        .write(|tx| {
+            budget_db::create_budget_group(
+                tx,
+                &crate::models::CreateBudgetGroup {
+                    name: "Wants".to_string(),
+                },
+            )
+        })
+        .expect("the second group is created");
+    replica.clear_log();
+    replica
+        .write(|tx| budget_db::move_budget_category(tx, category.id, other_group.id, 0))
+        .expect("the category moves to another group");
+    assert!(
+        !replica.kinds_for("budget_categories").is_empty(),
+        "a move between groups must be captured"
+    );
+
     replica.clear_log();
     replica
         .write(|tx| budget_db::delete_budget_category(tx, category.id))
@@ -539,6 +558,8 @@ fn the_recurring_template_write_sites_are_captured() {
                     amount_cents: 5_000,
                     budget_category_id: category,
                     day_of_month: 1,
+                    frequency: Default::default(),
+                    start_date: None,
                 },
             )
         })
@@ -559,6 +580,8 @@ fn the_recurring_template_write_sites_are_captured() {
                     amount_cents: 6_000,
                     budget_category_id: category,
                     day_of_month: 2,
+                    frequency: Default::default(),
+                    start_date: None,
                     is_active: true,
                 },
             )
@@ -587,6 +610,8 @@ fn the_recurring_template_write_sites_are_captured() {
                     source_id: source,
                     amount_cents: 100_000,
                     day_of_month: 15,
+                    frequency: Default::default(),
+                    start_date: None,
                     account_id: None,
                 },
             )
@@ -607,6 +632,8 @@ fn the_recurring_template_write_sites_are_captured() {
                     source_id: source,
                     amount_cents: 120_000,
                     day_of_month: 16,
+                    frequency: Default::default(),
+                    start_date: None,
                     account_id: None,
                     is_active: true,
                 },
@@ -655,6 +682,8 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
                         amount_cents: 5_000,
                         budget_category_id: category,
                         day_of_month: DAY_OF_MONTH,
+                        frequency: Default::default(),
+                        start_date: None,
                     },
                 )
             })
@@ -667,6 +696,8 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
                         source_id: source,
                         amount_cents: 100_000,
                         day_of_month: DAY_OF_MONTH,
+                        frequency: Default::default(),
+                        start_date: None,
                         account_id: None,
                     },
                 )

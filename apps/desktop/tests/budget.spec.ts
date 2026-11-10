@@ -251,6 +251,40 @@ async function setupTauriMock(
             );
           }
 
+          case "move_budget_category": {
+            const moveId = args.id as number;
+            const targetGroupId = args.target_group_id as number;
+            const position = args.position as number;
+            const moving = categories.find((c) => c.id === moveId);
+            if (!moving || !groups.some((g) => g.id === targetGroupId)) {
+              return Promise.reject({
+                type: "database",
+                message: "Budget category not found",
+              });
+            }
+            const sourceGroupId = moving.group_id;
+            const renumber = (groupId: number, ids: number[]) =>
+              ids.forEach((id, index) => {
+                const category = categories.find((c) => c.id === id);
+                if (category) {
+                  category.group_id = groupId;
+                  category.sort_order = index;
+                }
+              });
+            const idsIn = (groupId: number) =>
+              categories
+                .filter((c) => c.group_id === groupId && c.id !== moveId)
+                .sort((a, b) => a.sort_order - b.sort_order)
+                .map((c) => c.id);
+            const targetIds = idsIn(targetGroupId);
+            targetIds.splice(Math.min(position, targetIds.length), 0, moveId);
+            renumber(targetGroupId, targetIds);
+            if (sourceGroupId !== targetGroupId) {
+              renumber(sourceGroupId, idsIn(sourceGroupId));
+            }
+            return Promise.resolve({ ...moving });
+          }
+
           case "delete_budget_category": {
             const delCatId = args.id as number;
             const idx = categories.findIndex((c) => c.id === delCatId);
@@ -1046,6 +1080,137 @@ test.describe("Budget Page", () => {
     await expect(
       page.getByText(
         "Could not save the new order. Your previous order was kept."
+      )
+    ).toBeVisible();
+  });
+
+  // Cross-group drags use the same pointer events as in-group reordering, released over another
+  // group's card instead of over a sibling row.
+  async function groupCard(page: Page, name: string) {
+    return page.locator("[data-budget-group-id]").filter({
+      has: page.getByRole("heading", { name }),
+    });
+  }
+
+  async function createCategoryIn(
+    page: Page,
+    group: string,
+    name: string,
+    target: string
+  ) {
+    const card = await groupCard(page, group);
+    await card.getByTestId("add-category-button").click();
+    await card.getByLabel("Category Name").fill(name);
+    await card.getByLabel("Monthly Target").fill(target);
+    await card.getByRole("button", { name: "Save Category" }).click();
+    await expect(
+      card.getByTestId("budget-category-row").getByText(name)
+    ).toBeVisible();
+  }
+
+  async function dragCategoryToGroup(
+    page: Page,
+    fromGroup: string,
+    categoryName: string,
+    toGroup: string,
+    dropOn: "top" | "bottom"
+  ) {
+    const source = await groupCard(page, fromGroup);
+    const row = source
+      .getByTestId("budget-status-row")
+      .filter({ hasText: categoryName });
+    const handle = row.getByTestId("category-drag-handle");
+    const handleBox = await handle.boundingBox();
+    const target = await groupCard(page, toGroup);
+    const targetBox = await target.boundingBox();
+    if (!handleBox || !targetBox) throw new Error("missing bounding box for drag");
+
+    await page.mouse.move(
+      handleBox.x + handleBox.width / 2,
+      handleBox.y + handleBox.height / 2
+    );
+    await page.mouse.down();
+    const y = dropOn === "top" ? targetBox.y + 4 : targetBox.y + targetBox.height - 4;
+    await page.mouse.move(targetBox.x + targetBox.width / 2, y, { steps: 8 });
+    await page.mouse.up();
+  }
+
+  test("dragging a category onto another group moves it there and keeps its target", async ({
+    page,
+  }) => {
+    await createGroup(page, "Essentials");
+    await createGroup(page, "Living");
+    await createCategoryIn(page, "Essentials", "Housing", "700");
+    await createCategoryIn(page, "Essentials", "Internet", "50");
+    await createCategoryIn(page, "Living", "Groceries", "400");
+
+    await dragCategoryToGroup(page, "Essentials", "Internet", "Living", "bottom");
+
+    const essentials = await groupCard(page, "Essentials");
+    const living = await groupCard(page, "Living");
+    await expect(essentials.getByTestId("category-name")).toHaveText(["Housing"]);
+    await expect(living.getByTestId("category-name")).toHaveText([
+      "Groceries",
+      "Internet",
+    ]);
+    await expect(
+      living
+        .getByTestId("budget-status-row")
+        .filter({ hasText: "Internet" })
+        .getByTestId("category-target")
+    ).toHaveText("$50.00");
+  });
+
+  test("a category can be the last one moved out of its group, and lands first when dropped on top", async ({
+    page,
+  }) => {
+    await createGroup(page, "Essentials");
+    await createGroup(page, "Living");
+    await createCategoryIn(page, "Essentials", "Housing", "700");
+    await createCategoryIn(page, "Living", "Groceries", "400");
+
+    // The only row of its group is still draggable because another group exists.
+    await dragCategoryToGroup(page, "Essentials", "Housing", "Living", "top");
+
+    const essentials = await groupCard(page, "Essentials");
+    const living = await groupCard(page, "Living");
+    await expect(essentials.getByTestId("category-name")).toHaveCount(0);
+    await expect(living.getByTestId("category-name")).toHaveText([
+      "Housing",
+      "Groceries",
+    ]);
+  });
+
+  test("a rejected move leaves the category in its group and warns the user", async ({
+    page,
+  }) => {
+    await createGroup(page, "Essentials");
+    await createGroup(page, "Living");
+    await createCategoryIn(page, "Essentials", "Housing", "700");
+    await createCategoryIn(page, "Living", "Groceries", "400");
+
+    await page.evaluate(() => {
+      const internals = (window as unknown as Record<string, unknown>)
+        .__TAURI_INTERNALS__ as {
+        invoke: (
+          cmd: string,
+          args: Record<string, unknown>
+        ) => Promise<unknown>;
+      };
+      const original = internals.invoke;
+      internals.invoke = (cmd, args) =>
+        cmd === "move_budget_category"
+          ? Promise.reject({ type: "database", message: "disk is full" })
+          : original(cmd, args);
+    });
+
+    await dragCategoryToGroup(page, "Essentials", "Housing", "Living", "bottom");
+
+    const essentials = await groupCard(page, "Essentials");
+    await expect(essentials.getByTestId("category-name")).toHaveText(["Housing"]);
+    await expect(
+      page.getByText(
+        "Could not move the category. It was left in its original group."
       )
     ).toBeVisible();
   });

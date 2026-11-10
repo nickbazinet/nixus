@@ -500,12 +500,17 @@ export interface RetirementInput {
   expense_month_count: number;
 }
 
+/** How often a recurring template repeats. Week-based cadences count from `start_date`. */
+export type RecurrenceFrequency = "monthly" | "weekly" | "biweekly" | "every_four_weeks";
+
 export interface RecurringExpenseTemplate {
   id: number;
   merchant: string;
   amount_cents: number;
   budget_category_id: number;
   day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -516,6 +521,8 @@ export interface CreateRecurringExpenseTemplateInput {
   amount_cents: number;
   budget_category_id: number;
   day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
 }
 
 export interface UpdateRecurringExpenseTemplateInput {
@@ -524,6 +531,8 @@ export interface UpdateRecurringExpenseTemplateInput {
   amount_cents: number;
   budget_category_id: number;
   day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
   is_active: boolean;
 }
 
@@ -534,6 +543,8 @@ export interface RecurringIncomeTemplate {
   income_type: string;
   amount_cents: number;
   day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
   account_id: number | null;
   is_active: boolean;
   created_at: string;
@@ -544,6 +555,8 @@ export interface CreateRecurringIncomeTemplateInput {
   source_id: number;
   amount_cents: number;
   day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
   account_id: number | null;
 }
 
@@ -552,6 +565,8 @@ export interface UpdateRecurringIncomeTemplateInput {
   source_id: number;
   amount_cents: number;
   day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
   account_id: number | null;
   is_active: boolean;
 }

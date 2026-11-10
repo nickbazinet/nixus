@@ -1,7 +1,8 @@
-use chrono::{Datelike, NaiveDate};
-use rusqlite::{params, Connection};
+use chrono::NaiveDate;
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::expense as expense_db;
+use crate::db::recurrence::{self, StoredSchedule};
 use crate::error::AppError;
 use crate::sync::capture;
 use crate::sync::identity;
@@ -10,63 +11,47 @@ use crate::models::{
     UpdateRecurringExpenseTemplateInput,
 };
 
+const SELECT_TEMPLATE: &str = "SELECT id, merchant, amount_cents, budget_category_id, day_of_month,
+            frequency, start_date, is_active, created_at, updated_at
+     FROM recurring_expense_templates";
+
 /// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
 pub fn insert_template(
     conn: &Connection,
     input: &CreateRecurringExpenseTemplateInput,
 ) -> Result<RecurringExpenseTemplate, AppError> {
-    let merchant = input.merchant.trim();
-    if merchant.is_empty() {
-        return Err(AppError::Validation {
-            message: "Merchant name is required".to_string(),
-            field: Some("merchant".to_string()),
-        });
-    }
-
-    if input.amount_cents <= 0 {
-        return Err(AppError::Validation {
-            message: "Amount must be greater than $0".to_string(),
-            field: Some("amount_cents".to_string()),
-        });
-    }
-
-    if input.day_of_month < 1 || input.day_of_month > 31 {
-        return Err(AppError::Validation {
-            message: "Day of month must be between 1 and 31".to_string(),
-            field: Some("day_of_month".to_string()),
-        });
-    }
+    let merchant = validate_merchant_and_amount(&input.merchant, input.amount_cents)?;
+    let schedule = recurrence::normalize(
+        input.frequency,
+        input.day_of_month,
+        input.start_date.as_deref(),
+        None,
+        chrono::Local::now().date_naive(),
+    )?;
 
     conn.execute(
-        "INSERT INTO recurring_expense_templates (merchant, amount_cents, budget_category_id, day_of_month)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![merchant, input.amount_cents, input.budget_category_id, input.day_of_month],
+        "INSERT INTO recurring_expense_templates
+            (merchant, amount_cents, budget_category_id, day_of_month, frequency, start_date)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            merchant,
+            input.amount_cents,
+            input.budget_category_id,
+            schedule.day_of_month,
+            schedule.frequency,
+            schedule.start_date
+        ],
     )?;
 
     let id = conn.last_insert_rowid();
-    get_template_by_id(conn, id)
+    get_template_by_id(conn, id).map_err(AppError::from)
 }
 
 pub fn get_all_templates(conn: &Connection) -> Result<Vec<RecurringExpenseTemplate>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, merchant, amount_cents, budget_category_id, day_of_month, is_active, created_at, updated_at
-         FROM recurring_expense_templates
-         ORDER BY merchant ASC",
-    )?;
+    let mut stmt = conn.prepare(&format!("{SELECT_TEMPLATE} ORDER BY merchant ASC"))?;
 
     let templates = stmt
-        .query_map([], |row| {
-            Ok(RecurringExpenseTemplate {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                day_of_month: row.get(4)?,
-                is_active: row.get::<_, i64>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })?
+        .query_map([], row_to_template)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(templates)
@@ -78,7 +63,44 @@ pub fn update_template(
     id: i64,
     input: &UpdateRecurringExpenseTemplateInput,
 ) -> Result<RecurringExpenseTemplate, AppError> {
-    let merchant = input.merchant.trim();
+    let merchant = validate_merchant_and_amount(&input.merchant, input.amount_cents)?;
+    let previous = get_template_by_id(conn, id)
+        .optional()?
+        .ok_or_else(|| AppError::Database {
+            message: "Recurring template not found".to_string(),
+        })?;
+    let schedule = recurrence::normalize(
+        input.frequency,
+        input.day_of_month,
+        input.start_date.as_deref(),
+        Some(&schedule_of(&previous)),
+        chrono::Local::now().date_naive(),
+    )?;
+
+    let is_active_int: i64 = if input.is_active { 1 } else { 0 };
+
+    conn.execute(
+        "UPDATE recurring_expense_templates
+         SET merchant = ?1, amount_cents = ?2, budget_category_id = ?3, day_of_month = ?4,
+             frequency = ?5, start_date = ?6, is_active = ?7, updated_at = datetime('now')
+         WHERE id = ?8",
+        params![
+            merchant,
+            input.amount_cents,
+            input.budget_category_id,
+            schedule.day_of_month,
+            schedule.frequency,
+            schedule.start_date,
+            is_active_int,
+            id
+        ],
+    )?;
+
+    get_template_by_id(conn, id).map_err(AppError::from)
+}
+
+fn validate_merchant_and_amount(merchant: &str, amount_cents: i64) -> Result<&str, AppError> {
+    let merchant = merchant.trim();
     if merchant.is_empty() {
         return Err(AppError::Validation {
             message: "Merchant name is required".to_string(),
@@ -86,36 +108,14 @@ pub fn update_template(
         });
     }
 
-    if input.amount_cents <= 0 {
+    if amount_cents <= 0 {
         return Err(AppError::Validation {
             message: "Amount must be greater than $0".to_string(),
             field: Some("amount_cents".to_string()),
         });
     }
 
-    if input.day_of_month < 1 || input.day_of_month > 31 {
-        return Err(AppError::Validation {
-            message: "Day of month must be between 1 and 31".to_string(),
-            field: Some("day_of_month".to_string()),
-        });
-    }
-
-    let is_active_int: i64 = if input.is_active { 1 } else { 0 };
-
-    let rows = conn.execute(
-        "UPDATE recurring_expense_templates
-         SET merchant = ?1, amount_cents = ?2, budget_category_id = ?3, day_of_month = ?4, is_active = ?5, updated_at = datetime('now')
-         WHERE id = ?6",
-        params![merchant, input.amount_cents, input.budget_category_id, input.day_of_month, is_active_int, id],
-    )?;
-
-    if rows == 0 {
-        return Err(AppError::Database {
-            message: "Recurring template not found".to_string(),
-        });
-    }
-
-    get_template_by_id(conn, id)
+    Ok(merchant)
 }
 
 /// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
@@ -132,6 +132,8 @@ pub fn delete_template(conn: &Connection, id: i64) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Records every occurrence of every active template that falls in the given month: one for a
+/// monthly template, one per week for a weekly one.
 pub fn apply_recurring_for_month(
     conn: &Connection,
     year: i32,
@@ -141,8 +143,10 @@ pub fn apply_recurring_for_month(
     let mut created = Vec::new();
 
     for template in templates {
-        if let Some(expense) = try_apply_template_for_month(conn, &template, year, month)? {
-            created.push(expense);
+        for date in recurrence::occurrences_in_month(&schedule_of(&template), year, month)? {
+            if let Some(expense) = try_apply_template(conn, &template, date)? {
+                created.push(expense);
+            }
         }
     }
 
@@ -164,42 +168,35 @@ fn apply_due_recurring_expenses_as_of(
     let mut created = Vec::new();
 
     for template in templates {
-        let start_date = parse_template_start_date(&template.created_at)?;
-        let mut year = start_date.year();
-        let mut month = start_date.month();
-
-        while (year, month) <= (today.year(), today.month()) {
-            let actual_day = clamp_day_to_month(year, month, template.day_of_month);
-            let occurrence_date =
-                NaiveDate::from_ymd_opt(year, month, actual_day as u32).ok_or_else(|| {
-                    AppError::Database {
-                        message: format!("Invalid recurring expense date: {year}-{month}-{actual_day}"),
-                    }
-                })?;
-
-            if occurrence_date >= start_date && occurrence_date <= today {
-                if let Some(expense) =
-                    try_apply_template_for_month(conn, &template, year, month)?
-                {
-                    created.push(expense);
+        // One unusable template must not stop the others, matching the income backfill.
+        let dates =
+            match recurrence::due_occurrences(&schedule_of(&template), &template.created_at, today) {
+                Ok(dates) => dates,
+                Err(e) => {
+                    tracing::error!(
+                        "Skipping recurring expense template {}: {:?}",
+                        template.id,
+                        e
+                    );
+                    continue;
                 }
+            };
+        for date in dates {
+            if let Some(expense) = try_apply_template(conn, &template, date)? {
+                created.push(expense);
             }
-
-            (year, month) = next_month(year, month);
         }
     }
 
     Ok(created)
 }
 
-fn try_apply_template_for_month(
+fn try_apply_template(
     conn: &Connection,
     template: &RecurringExpenseTemplate,
-    year: i32,
-    month: u32,
+    occurrence: NaiveDate,
 ) -> Result<Option<Expense>, AppError> {
-    let actual_day = clamp_day_to_month(year, month, template.day_of_month);
-    let date = format!("{:04}-{:02}-{:02}", year, month, actual_day);
+    let date = occurrence.format("%Y-%m-%d").to_string();
 
     if recurring_expense_exists(conn, &template.merchant, &date, template.amount_cents)? {
         return Ok(None);
@@ -213,7 +210,8 @@ fn try_apply_template_for_month(
         account_id: None,
     };
     let expense = expense_db::insert_expense_with_source(conn, &input, "recurring")?;
-    bind_generated_expense_identity(conn, template.id, expense.id, year, month)?;
+    let period = recurrence::period_of(template.frequency, occurrence);
+    bind_generated_expense_identity(conn, template.id, expense.id, &period)?;
 
     Ok(Some(expense))
 }
@@ -228,16 +226,14 @@ fn bind_generated_expense_identity(
     conn: &Connection,
     template_id: i64,
     expense_id: i64,
-    year: i32,
-    month: u32,
+    period: &str,
 ) -> Result<(), AppError> {
     if !capture::is_capturing() {
         return Ok(());
     }
 
     let template = identity::existing_uuid_for(conn, "recurring_expense_templates", template_id)?;
-    let period = format!("{year:04}-{month:02}");
-    let derived = identity::recurring_expense(&template, &period);
+    let derived = identity::recurring_expense(&template, period);
 
     let mapping = identity::ensure_derived(conn, "expenses", expense_id, &derived)?;
     if mapping.row_id != expense_id {
@@ -265,6 +261,14 @@ fn recurring_expense_exists(
     .map_err(AppError::from)
 }
 
+fn schedule_of(template: &RecurringExpenseTemplate) -> StoredSchedule {
+    StoredSchedule {
+        frequency: template.frequency,
+        day_of_month: template.day_of_month,
+        start_date: template.start_date.clone(),
+    }
+}
+
 pub(crate) fn parse_template_start_date(created_at: &str) -> Result<NaiveDate, AppError> {
     let date_part = created_at.split([' ', 'T']).next().unwrap_or(created_at);
     NaiveDate::parse_from_str(date_part, "%Y-%m-%d").map_err(|e| AppError::Database {
@@ -281,51 +285,41 @@ pub(crate) fn next_month(year: i32, month: u32) -> (i32, u32) {
 }
 
 fn get_active_templates(conn: &Connection) -> Result<Vec<RecurringExpenseTemplate>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, merchant, amount_cents, budget_category_id, day_of_month, is_active, created_at, updated_at
-         FROM recurring_expense_templates
-         WHERE is_active = 1
-         ORDER BY merchant ASC",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "{SELECT_TEMPLATE} WHERE is_active = 1 ORDER BY merchant ASC"
+    ))?;
 
     let templates = stmt
-        .query_map([], |row| {
-            Ok(RecurringExpenseTemplate {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                day_of_month: row.get(4)?,
-                is_active: row.get::<_, i64>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })?
+        .query_map([], row_to_template)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(templates)
 }
 
-fn get_template_by_id(conn: &Connection, id: i64) -> Result<RecurringExpenseTemplate, AppError> {
+pub(crate) fn get_template_by_id(
+    conn: &Connection,
+    id: i64,
+) -> rusqlite::Result<RecurringExpenseTemplate> {
     conn.query_row(
-        "SELECT id, merchant, amount_cents, budget_category_id, day_of_month, is_active, created_at, updated_at
-         FROM recurring_expense_templates
-         WHERE id = ?1",
+        &format!("{SELECT_TEMPLATE} WHERE id = ?1"),
         params![id],
-        |row| {
-            Ok(RecurringExpenseTemplate {
-                id: row.get(0)?,
-                merchant: row.get(1)?,
-                amount_cents: row.get(2)?,
-                budget_category_id: row.get(3)?,
-                day_of_month: row.get(4)?,
-                is_active: row.get::<_, i64>(5)? != 0,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        },
+        row_to_template,
     )
-    .map_err(AppError::from)
+}
+
+fn row_to_template(row: &rusqlite::Row) -> rusqlite::Result<RecurringExpenseTemplate> {
+    Ok(RecurringExpenseTemplate {
+        id: row.get(0)?,
+        merchant: row.get(1)?,
+        amount_cents: row.get(2)?,
+        budget_category_id: row.get(3)?,
+        day_of_month: row.get(4)?,
+        frequency: row.get(5)?,
+        start_date: row.get(6)?,
+        is_active: row.get::<_, i64>(7)? != 0,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
 }
 
 pub(crate) fn clamp_day_to_month(year: i32, month: u32, day: i32) -> i32 {
@@ -384,6 +378,8 @@ mod tests {
                 amount_cents INTEGER NOT NULL CHECK(amount_cents > 0),
                 budget_category_id INTEGER NOT NULL REFERENCES budget_categories(id),
                 day_of_month INTEGER NOT NULL CHECK(day_of_month BETWEEN 1 AND 31),
+                frequency TEXT NOT NULL DEFAULT 'monthly',
+                start_date TEXT,
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -496,5 +492,28 @@ mod tests {
 
         let created = apply_recurring_for_month(&conn, 2026, 3).unwrap();
         assert!(created.is_empty());
+    }
+
+    #[test]
+    fn a_weekly_template_backfills_each_week_and_applies_every_week_of_a_month() {
+        let conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO recurring_expense_templates
+             (merchant, amount_cents, budget_category_id, day_of_month, frequency, start_date,
+              created_at, updated_at)
+             VALUES ('Cleaner', 6000, 1, 5, 'weekly', '2026-11-05', '2026-11-05 00:00:00',
+                     '2026-11-05 00:00:00')",
+            [],
+        )
+        .unwrap();
+
+        let due = apply_due_recurring_expenses_as_of(&conn, NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())
+            .unwrap();
+        let dates: Vec<&str> = due.iter().map(|e| e.date.as_str()).collect();
+        assert_eq!(dates, vec!["2026-11-05", "2026-11-12", "2026-11-19"]);
+
+        let rest = apply_recurring_for_month(&conn, 2026, 11).unwrap();
+        let dates: Vec<&str> = rest.iter().map(|e| e.date.as_str()).collect();
+        assert_eq!(dates, vec!["2026-11-26"]);
     }
 }

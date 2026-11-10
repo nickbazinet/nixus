@@ -6,7 +6,7 @@ use crate::db::recurring_income as recurring_income_db;
 use crate::db::{ActiveDataset, DbState};
 use crate::error::AppError;
 use crate::models::{
-    CreateRecurringIncomeTemplateInput, IncomeEntry, RecurringIncomeTemplate,
+    CreateRecurringIncomeTemplateInput, IncomeEntry, RecurrenceFrequency, RecurringIncomeTemplate,
     UpdateRecurringIncomeTemplateInput,
 };
 
@@ -16,6 +16,8 @@ pub fn create_recurring_income_template(
     source_id: i64,
     amount_cents: i64,
     day_of_month: i32,
+    frequency: Option<RecurrenceFrequency>,
+    start_date: Option<String>,
     account_id: Option<i64>,
 ) -> Result<RecurringIncomeTemplate, AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
@@ -25,6 +27,8 @@ pub fn create_recurring_income_template(
         source_id,
         amount_cents,
         day_of_month,
+        frequency: frequency.unwrap_or_default(),
+        start_date,
         account_id,
     };
     let result = active.write(|tx| recurring_income_db::insert_template(tx, &input))?;
@@ -55,12 +59,15 @@ pub fn get_recurring_income_templates(
 }
 
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
 pub fn update_recurring_income_template(
     state: State<DbState>,
     id: i64,
     source_id: i64,
     amount_cents: i64,
     day_of_month: i32,
+    frequency: Option<RecurrenceFrequency>,
+    start_date: Option<String>,
     account_id: Option<i64>,
     is_active: bool,
 ) -> Result<RecurringIncomeTemplate, AppError> {
@@ -75,6 +82,8 @@ pub fn update_recurring_income_template(
         source_id,
         amount_cents,
         day_of_month,
+        frequency: frequency.unwrap_or_default(),
+        start_date,
         account_id,
         is_active,
     };
