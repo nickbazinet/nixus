@@ -20,7 +20,7 @@ use crate::error::AppError;
 
 const MAX_FILE_SIZE: u64 = 20 * 1024 * 1024; // 20MB
 
-const ALLOWED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "pdf"];
+const ALLOWED_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "pdf", "csv"];
 
 const CLIPBOARD_IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 
@@ -176,7 +176,7 @@ pub fn validate_cc_file(file_path: String) -> Result<FileValidationResult, AppEr
 
     if !ALLOWED_EXTENSIONS.contains(&extension.as_str()) {
         return Err(AppError::File {
-            message: "Only images and PDFs supported".to_string(),
+            message: "Only images, PDFs, and CSV files supported".to_string(),
         });
     }
 

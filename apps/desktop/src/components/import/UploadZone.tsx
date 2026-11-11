@@ -232,7 +232,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
           } else if (payload.type === "drop") {
             setDragOver(false);
             if (!isOverZone(payload.position) || validatingRef.current) return;
-            const allowed = /\.(png|jpe?g|pdf)$/i;
+            const allowed = /\.(png|jpe?g|pdf|csv)$/i;
             const paths = payload.paths.filter((p) => allowed.test(p));
             if (paths.length === 0) {
               if (payload.paths.length > 0) setError(t("import.filePathError"));
@@ -262,7 +262,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
       filters: [
         {
           name: t("import.ccStatement"),
-          extensions: ["png", "jpg", "jpeg", "pdf"],
+          extensions: ["png", "jpg", "jpeg", "pdf", "csv"],
         },
       ],
     });

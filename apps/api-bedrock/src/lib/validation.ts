@@ -73,16 +73,16 @@ const IMAGE_FORMATS: readonly CloudAiImageFormat[] = ["png", "jpeg"];
 /**
  * Document formats per operation, not one global list.
  *
- * `statement_import` is deliberately PDF-only: it is a fixed pipeline whose prompt and
- * parser were built and tuned for statement PDFs and screenshots, so widening it for
- * chat's benefit would change a surface this feature must leave alone. An empty list
- * means the operation takes no document at all.
+ * `statement_import` is deliberately limited to PDF and CSV: it is a fixed pipeline whose
+ * prompt and parser were built for statement PDFs, CSV exports, and screenshots, so chat's
+ * wider set (txt, spreadsheets) stays out. An empty list means the operation takes no
+ * document at all.
  */
 const DOCUMENT_FORMATS: Readonly<
   Record<CloudAiOperation, readonly CloudAiDocumentFormat[]>
 > = {
   chat: ["pdf", "csv", "txt", "xls", "xlsx"],
-  statement_import: ["pdf"],
+  statement_import: ["pdf", "csv"],
   project_advice: [],
   trends_insight: [],
 };

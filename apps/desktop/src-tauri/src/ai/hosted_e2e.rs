@@ -1036,11 +1036,11 @@ fn an_attached_chat_turn_obeys_the_closed_fallback_table() {
     );
 }
 
-/// Invariant 2 across the hosted path: `statement_import` takes PDF documents only, and the
-/// port refuses a wider chat format before a request leaves the machine — so no quota unit is
-/// spent discovering that the server would have rejected it too.
+/// Invariant 2 across the hosted path: `statement_import` takes PDF and CSV documents only,
+/// and the port refuses a wider chat format before a request leaves the machine — so no quota
+/// unit is spent discovering that the server would have rejected it too.
 #[test]
-fn a_non_pdf_document_never_reaches_the_gateway_as_a_statement_import() {
+fn an_unsupported_document_never_reaches_the_gateway_as_a_statement_import() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
     let _harness = Harness::new(&gateway);
 
@@ -1049,13 +1049,13 @@ fn a_non_pdf_document_never_reaches_the_gateway_as_a_statement_import() {
         system: "Extract.".to_string(),
         turns: vec![AiTurn::user("Extract all transactions.")],
         attachment: Some(crate::ai::backend::AiAttachment::Document {
-            format: crate::ai::backend::AiDocumentFormat::Csv,
+            format: crate::ai::backend::AiDocumentFormat::Txt,
             bytes: b"date,amount\n".to_vec(),
         }),
     };
 
     let deltas = Arc::new(Mutex::new(Vec::new()));
-    let error = run(request, &deltas).expect_err("a csv is not a statement");
+    let error = run(request, &deltas).expect_err("a text file is not a statement");
 
     assert!(matches!(error, AppError::AiService { .. }), "got {error:?}");
     assert_eq!(
@@ -1067,10 +1067,10 @@ fn a_non_pdf_document_never_reaches_the_gateway_as_a_statement_import() {
     assert!(deltas.lock().unwrap().is_empty());
 }
 
-/// The complement: the same CSV IS legal on chat, which is what proves the refusal above is
-/// specific to statement import rather than a blanket ban on the wider formats.
+/// The complement: chat's wider document formats ARE legal on chat, which is what proves the
+/// refusal above is specific to statement import rather than a blanket ban on those formats.
 #[test]
-fn the_same_csv_is_accepted_on_a_chat_turn() {
+fn a_csv_is_accepted_on_a_chat_turn() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
     let _harness = Harness::new(&gateway);
 

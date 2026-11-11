@@ -366,7 +366,7 @@ describe("per-operation content rules", () => {
       expectFailure(
         statementBody({ type: "document", format: "docx", data_base64: base64OfBytes(8) })
       ).message
-    ).toMatch(/format for operation 'statement_import' must be one of: pdf/);
+    ).toMatch(/format for operation 'statement_import' must be one of: pdf, csv/);
   });
 
   it("never accepts a client-supplied document name", () => {
@@ -823,15 +823,17 @@ describe("per-operation document formats and names", () => {
     });
   }
 
-  const WIDER_FORMATS = ["csv", "txt", "xls", "xlsx"] as const;
+  const WIDER_FORMATS = ["txt", "xls", "xlsx"] as const;
 
-  /* INVARIANT — statement_import keeps exactly the documents it accepted before chat
-   * attachments existed. Its prompt and parser were built for statement PDFs. */
-  it("accepts a pdf document for statement_import", () => {
-    const prepared = expectSuccess(documentBody("statement_import", "pdf"));
-    const media = prepared.messages[0]!.content[1]!;
+  /* INVARIANT — statement_import accepts exactly statement PDFs and CSV exports as
+   * documents. Its prompt and parser were built for those. */
+  it("accepts pdf and csv documents for statement_import", () => {
+    for (const format of ["pdf", "csv"] as const) {
+      const prepared = expectSuccess(documentBody("statement_import", format));
+      const media = prepared.messages[0]!.content[1]!;
 
-    expect(media.type === "document" && media.format).toBe("pdf");
+      expect(media.type === "document" && media.format, format).toBe(format);
+    }
   });
 
   it("refuses every wider chat document format on statement_import", () => {

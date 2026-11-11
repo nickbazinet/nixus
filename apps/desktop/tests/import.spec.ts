@@ -82,6 +82,8 @@ async function setupTauriMock(
     groupsUnavailable?: boolean;
     /** Adds a category whose `group_id` matches no group in the list. */
     orphanCategory?: boolean;
+    /** Path the file dialog returns; defaults to a PNG screenshot. */
+    pickedFile?: string;
   }
 ) {
   const aiError = options?.aiError ?? false;
@@ -94,6 +96,7 @@ async function setupTauriMock(
   const longNames = options?.longNames ?? false;
   const groupsUnavailable = options?.groupsUnavailable ?? false;
   const orphanCategory = options?.orphanCategory ?? false;
+  const pickedFile = options?.pickedFile ?? "/tmp/statement.png";
 
   await page.addInitScript(
     ({
@@ -106,6 +109,7 @@ async function setupTauriMock(
       unreadable,
       longNames,
       groupsUnavailable,
+      pickedFile,
       categories,
       groups,
     }) => {
@@ -144,7 +148,7 @@ async function setupTauriMock(
             return Promise.resolve(handlerId);
           }
           if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
-          if (cmd === "plugin:dialog|open") return Promise.resolve("/tmp/statement.png");
+          if (cmd === "plugin:dialog|open") return Promise.resolve(pickedFile);
 
           switch (cmd) {
             case "check_picker_gate":
@@ -154,8 +158,8 @@ async function setupTauriMock(
               const filePath = args.file_path as string;
               if (!filePath) return Promise.reject({ type: "file", message: "File not found" });
               const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-              if (!["png", "jpg", "jpeg", "pdf"].includes(ext)) {
-                return Promise.reject({ type: "file", message: "Only images and PDFs supported" });
+              if (!["png", "jpg", "jpeg", "pdf", "csv"].includes(ext)) {
+                return Promise.reject({ type: "file", message: "Only images, PDFs, and CSV files supported" });
               }
               const fileName = filePath.split("/").pop() ?? "unknown";
               return Promise.resolve({ file_name: fileName, file_path: filePath, file_size: 1024 });
@@ -339,6 +343,7 @@ async function setupTauriMock(
       unreadable,
       longNames,
       groupsUnavailable,
+      pickedFile,
       categories: longNames
         ? LONG_CATEGORIES
         : orphanCategory
@@ -432,7 +437,7 @@ test.describe("Import Page — Story 6.1", () => {
     const zone = page.getByTestId("upload-zone");
     await expect(zone).toContainText("Drop your statement here");
     await expect(zone).toContainText("paste a screenshot");
-    await expect(zone).toContainText("PNG, JPG, PDF accepted");
+    await expect(zone).toContainText("PNG, JPG, PDF, CSV accepted");
   });
 
   test("pasting a screenshot image starts the import pipeline [AC1, AC7]", async ({ page }) => {
@@ -512,7 +517,7 @@ test.describe("Import Page — Story 6.1", () => {
         return { success: true };
       } catch (e) { return e; }
     });
-    expect(result).toEqual({ type: "file", message: "Only images and PDFs supported" });
+    expect(result).toEqual({ type: "file", message: "Only images, PDFs, and CSV files supported" });
   });
 
   test("valid file validation returns success result [AC4, AC5]", async ({ page }) => {
@@ -523,6 +528,30 @@ test.describe("Import Page — Story 6.1", () => {
       return internals.invoke("validate_cc_file", { file_path: "/tmp/statement.png" });
     });
     expect(result).toEqual({ file_name: "statement.png", file_path: "/tmp/statement.png", file_size: 1024 });
+  });
+});
+
+test.describe("Import Page — CSV statements", () => {
+  test("picking a CSV export sends it to the AI import pipeline", async ({ page }) => {
+    await setupTauriMock(page, { pickedFile: "/tmp/statement.csv" });
+    await page.goto("/import");
+    await triggerUpload(page);
+
+    await expect(page.getByTestId("import-progress-stepper")).toBeVisible({ timeout: 5000 });
+
+    const calls = await page.evaluate(() => {
+      const log =
+        ((window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__ as
+          | { cmd: string; args: Record<string, unknown> }[]
+          | undefined) ?? [];
+      return {
+        dialog: log.find((entry) => entry.cmd === "plugin:dialog|open")?.args,
+        imported: log.find((entry) => entry.cmd === "import_cc_statement")?.args,
+      };
+    });
+    const filters = (calls.dialog?.options as { filters: { extensions: string[] }[] }).filters;
+    expect(filters[0].extensions).toContain("csv");
+    expect(calls.imported?.file_paths).toEqual(["/tmp/statement.csv"]);
   });
 });
 

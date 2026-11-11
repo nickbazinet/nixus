@@ -105,7 +105,7 @@ fn build_system_prompt(today: &str, categories: &[BudgetCategory], groups: &[Bud
     };
 
     format!(
-        r#"You are a financial data extraction assistant. Extract transactions from the credit card statement image or PDF provided.
+        r#"You are a financial data extraction assistant. Extract transactions from the credit card statement image, PDF, or CSV export provided.
 
 Today's date is {today}. Use the current year for any dates that don't include a year.
 
@@ -166,6 +166,10 @@ fn attachment_for(ext: &str, bytes: Vec<u8>) -> Result<AiAttachment, AppError> {
     match ext {
         "pdf" => Ok(AiAttachment::Document {
             format: AiDocumentFormat::Pdf,
+            bytes,
+        }),
+        "csv" => Ok(AiAttachment::Document {
+            format: AiDocumentFormat::Csv,
             bytes,
         }),
         "png" => Ok(AiAttachment::Image {

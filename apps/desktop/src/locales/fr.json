@@ -594,7 +594,7 @@
   "import.ccStatement": "Relevé de carte de crédit",
   "import.fileValidated": "Prêt à lire. C'est parti.",
   "import.dropHere": "Déposez votre relevé ici",
-  "import.orClickToBrowse": "ou cliquez pour parcourir / coller une capture. PNG, JPG, PDF acceptés.",
+  "import.orClickToBrowse": "ou cliquez pour parcourir / coller une capture. PNG, JPG, PDF, CSV acceptés.",
   "import.pasteNoImage": "Le presse-papiers ne contient aucune image. Copiez d'abord une capture d'écran.",
   "import.pasteUnsupportedImage": "Seules les captures PNG et JPEG peuvent être collées.",
   "import.pasteTooLarge": "Le fichier dépasse la limite de 20 Mo",
