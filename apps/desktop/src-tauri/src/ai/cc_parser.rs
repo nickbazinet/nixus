@@ -145,7 +145,7 @@ fn build_system_prompt(
     };
 
     format!(
-        r#"You are a financial data extraction assistant. Extract transactions from the bank or credit card statement image, PDF, or CSV export provided.
+        r#"You are a financial data extraction assistant. Extract transactions from the bank or credit card statement provided: an image, a PDF, a CSV/TSV or Excel export, or an OFX/QFX/QBO bank download.
 
 Today's date is {today}. Use the current year for any dates that don't include a year.
 
@@ -291,6 +291,20 @@ fn attachment_for(ext: &str, bytes: Vec<u8>) -> Result<AiAttachment, AppError> {
             format: AiDocumentFormat::Csv,
             bytes,
         }),
+        "xls" => Ok(AiAttachment::Document {
+            format: AiDocumentFormat::Xls,
+            bytes,
+        }),
+        "xlsx" => Ok(AiAttachment::Document {
+            format: AiDocumentFormat::Xlsx,
+            bytes,
+        }),
+        // Bedrock has no native format for TSV or OFX/QFX/QBO bank downloads, but all
+        // are plain text (OFX is SGML/XML), so they travel as `txt`.
+        "txt" | "tsv" | "ofx" | "qfx" | "qbo" => Ok(AiAttachment::Document {
+            format: AiDocumentFormat::Txt,
+            bytes,
+        }),
         "png" => Ok(AiAttachment::Image {
             format: AiImageFormat::Png,
             bytes,
@@ -423,6 +437,30 @@ mod tests {
 
     fn ai_transaction(json: serde_json::Value) -> AiTransaction {
         serde_json::from_value(json).unwrap()
+    }
+
+    fn document_format(ext: &str) -> AiDocumentFormat {
+        match attachment_for(ext, vec![1]).expect(ext) {
+            AiAttachment::Document { format, .. } => format,
+            AiAttachment::Image { .. } => panic!("{ext} must map to a document"),
+        }
+    }
+
+    #[test]
+    fn spreadsheet_and_text_exports_map_to_their_document_formats() {
+        assert_eq!(document_format("xls"), AiDocumentFormat::Xls);
+        assert_eq!(document_format("xlsx"), AiDocumentFormat::Xlsx);
+        for ext in ["txt", "tsv", "ofx", "qfx", "qbo"] {
+            assert_eq!(document_format(ext), AiDocumentFormat::Txt, "{ext}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_extension_is_rejected() {
+        assert!(matches!(
+            attachment_for("docx", vec![1]),
+            Err(AppError::Validation { .. })
+        ));
     }
 
     #[test]

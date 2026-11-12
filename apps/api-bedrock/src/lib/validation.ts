@@ -73,16 +73,15 @@ const IMAGE_FORMATS: readonly CloudAiImageFormat[] = ["png", "jpeg"];
 /**
  * Document formats per operation, not one global list.
  *
- * `statement_import` is deliberately limited to PDF and CSV: it is a fixed pipeline whose
- * prompt and parser were built for statement PDFs, CSV exports, and screenshots, so chat's
- * wider set (txt, spreadsheets) stays out. An empty list means the operation takes no
- * document at all.
+ * `statement_import` takes statement PDFs, CSV exports, Excel workbooks, and plain-text
+ * exports. The desktop sends TSV and OFX/QFX/QBO bank downloads as `txt`, because Bedrock
+ * has no native format for them. An empty list means the operation takes no document at all.
  */
 const DOCUMENT_FORMATS: Readonly<
   Record<CloudAiOperation, readonly CloudAiDocumentFormat[]>
 > = {
   chat: ["pdf", "csv", "txt", "xls", "xlsx"],
-  statement_import: ["pdf", "csv"],
+  statement_import: ["pdf", "csv", "txt", "xls", "xlsx"],
   project_advice: [],
   trends_insight: [],
 };

@@ -66,23 +66,13 @@ impl AiOperation {
 
     /// Whether this operation may carry this attachment at all.
     ///
-    /// Document formats are per-operation, not global: `statement_import` takes statement
-    /// PDFs, CSV exports, and screenshots, and letting chat's wider set through here would
-    /// send a spreadsheet or text file into a parser built for statements — which the server
-    /// would reject only after a quota unit had been spent.
+    /// Mirrors `DOCUMENT_FORMATS` in `apps/api-bedrock`: the text-only surfaces take
+    /// nothing, while chat and `statement_import` take every image and document format, so
+    /// a mismatch is refused here before the server would reject it after a quota unit.
     pub fn permits(self, attachment: &AiAttachment) -> bool {
         match (self, attachment) {
             (AiOperation::ProjectAdvice | AiOperation::TrendsInsight, _) => false,
-            (_, AiAttachment::Image { .. }) => true,
-            (
-                AiOperation::StatementImport,
-                AiAttachment::Document {
-                    format: AiDocumentFormat::Pdf | AiDocumentFormat::Csv,
-                    ..
-                },
-            ) => true,
-            (AiOperation::StatementImport, AiAttachment::Document { .. }) => false,
-            (AiOperation::Chat, AiAttachment::Document { .. }) => true,
+            (AiOperation::Chat | AiOperation::StatementImport, _) => true,
         }
     }
 }
@@ -1091,23 +1081,20 @@ mod tests {
         }
     }
 
-    /// INVARIANT 2 — document formats are per operation. `statement_import` accepts
-    /// exactly PDF and CSV documents plus PNG/JPEG images; chat's other formats stay out.
+    /// INVARIANT 2 — `statement_import` accepts every document format (PDF, CSV, Excel, and
+    /// plain-text exports) plus PNG/JPEG images.
     #[test]
-    fn statement_import_accepts_only_pdf_and_csv_documents_plus_its_images() {
+    fn statement_import_accepts_all_five_document_formats_and_both_image_formats() {
         let operation = AiOperation::StatementImport;
 
-        assert!(operation.permits(&document(AiDocumentFormat::Pdf)));
-        assert!(operation.permits(&document(AiDocumentFormat::Csv)));
         for format in [
+            AiDocumentFormat::Pdf,
+            AiDocumentFormat::Csv,
             AiDocumentFormat::Txt,
             AiDocumentFormat::Xls,
             AiDocumentFormat::Xlsx,
         ] {
-            assert!(
-                !operation.permits(&document(format)),
-                "{format:?} must not reach the statement-import pipeline"
-            );
+            assert!(operation.permits(&document(format)), "{format:?}");
         }
 
         for format in [AiImageFormat::Png, AiImageFormat::Jpeg] {
@@ -1155,14 +1142,14 @@ mod tests {
     /// The guard runs at the port, so a mismatch is refused before either adapter — no
     /// round-trip, no quota unit, and no chance of hosted and BYO disagreeing.
     #[test]
-    fn the_port_refuses_an_unsupported_document_on_statement_import() {
+    fn the_port_refuses_an_attachment_on_a_text_only_surface() {
         let error = check_attachment(&AiRequest {
-            operation: AiOperation::StatementImport,
+            operation: AiOperation::ProjectAdvice,
             system: "s".to_string(),
-            turns: vec![AiTurn::user("extract")],
+            turns: vec![AiTurn::user("advise")],
             attachment: Some(document(AiDocumentFormat::Xlsx)),
         })
-        .expect_err("a workbook is not a statement");
+        .expect_err("project advice takes no attachment");
 
         match error {
             AppError::AiService { recoverable, .. } => assert!(!recoverable),
@@ -1175,6 +1162,8 @@ mod tests {
         let cases = [
             (AiOperation::StatementImport, document(AiDocumentFormat::Pdf)),
             (AiOperation::StatementImport, document(AiDocumentFormat::Csv)),
+            (AiOperation::StatementImport, document(AiDocumentFormat::Xlsx)),
+            (AiOperation::StatementImport, document(AiDocumentFormat::Txt)),
             (AiOperation::Chat, document(AiDocumentFormat::Xlsx)),
             (
                 AiOperation::StatementImport,

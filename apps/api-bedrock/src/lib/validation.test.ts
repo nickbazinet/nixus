@@ -366,7 +366,9 @@ describe("per-operation content rules", () => {
       expectFailure(
         statementBody({ type: "document", format: "docx", data_base64: base64OfBytes(8) })
       ).message
-    ).toMatch(/format for operation 'statement_import' must be one of: pdf, csv/);
+    ).toMatch(
+      /format for operation 'statement_import' must be one of: pdf, csv, txt, xls, xlsx/
+    );
   });
 
   it("never accepts a client-supplied document name", () => {
@@ -825,10 +827,10 @@ describe("per-operation document formats and names", () => {
 
   const WIDER_FORMATS = ["txt", "xls", "xlsx"] as const;
 
-  /* INVARIANT — statement_import accepts exactly statement PDFs and CSV exports as
-   * documents. Its prompt and parser were built for those. */
-  it("accepts pdf and csv documents for statement_import", () => {
-    for (const format of ["pdf", "csv"] as const) {
+  /* INVARIANT — statement_import accepts statement PDFs, CSV exports, Excel workbooks, and
+   * plain-text exports (txt/tsv and OFX/QFX/QBO bank downloads, all sent as `txt`). */
+  it("accepts pdf, csv, txt, xls, and xlsx documents for statement_import", () => {
+    for (const format of ["pdf", "csv", ...WIDER_FORMATS] as const) {
       const prepared = expectSuccess(documentBody("statement_import", format));
       const media = prepared.messages[0]!.content[1]!;
 
@@ -836,20 +838,6 @@ describe("per-operation document formats and names", () => {
     }
   });
 
-  it("refuses every wider chat document format on statement_import", () => {
-    for (const format of WIDER_FORMATS) {
-      const failure = expectFailure(documentBody("statement_import", format));
-
-      expect(failure.code, format).toBe("validation");
-      expect(failure.status, format).toBe(400);
-      // Names the operation, so the message does not read as a universal ban on the format.
-      expect(failure.message, format).toContain("statement_import");
-      expect(failure.message, format).toContain("pdf");
-    }
-  });
-
-  /* The complement, which is what proves the refusal above is operation-specific rather
-   * than the contract simply not supporting these formats. */
   it("accepts every wider format on chat", () => {
     for (const format of WIDER_FORMATS) {
       const prepared = expectSuccess(documentBody("chat", format));

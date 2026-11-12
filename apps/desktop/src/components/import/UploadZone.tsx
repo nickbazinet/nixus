@@ -9,6 +9,23 @@ import { cn } from "@/lib/utils";
 
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
 
+const STATEMENT_EXTENSIONS = [
+  "png",
+  "jpg",
+  "jpeg",
+  "pdf",
+  "csv",
+  "tsv",
+  "txt",
+  "xls",
+  "xlsx",
+  "ofx",
+  "qfx",
+  "qbo",
+];
+
+const STATEMENT_PATH = new RegExp(`\\.(${STATEMENT_EXTENSIONS.join("|")})$`, "i");
+
 interface FileValidationResult {
   file_name: string;
   file_path: string;
@@ -232,8 +249,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
           } else if (payload.type === "drop") {
             setDragOver(false);
             if (!isOverZone(payload.position) || validatingRef.current) return;
-            const allowed = /\.(png|jpe?g|pdf|csv)$/i;
-            const paths = payload.paths.filter((p) => allowed.test(p));
+            const paths = payload.paths.filter((p) => STATEMENT_PATH.test(p));
             if (paths.length === 0) {
               if (payload.paths.length > 0) setError(t("import.filePathError"));
               return;
@@ -262,7 +278,7 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
       filters: [
         {
           name: t("import.ccStatement"),
-          extensions: ["png", "jpg", "jpeg", "pdf", "csv"],
+          extensions: STATEMENT_EXTENSIONS,
         },
       ],
     });

@@ -1036,18 +1036,18 @@ fn an_attached_chat_turn_obeys_the_closed_fallback_table() {
     );
 }
 
-/// Invariant 2 across the hosted path: `statement_import` takes PDF and CSV documents only,
-/// and the port refuses a wider chat format before a request leaves the machine — so no quota
-/// unit is spent discovering that the server would have rejected it too.
+/// Invariant 2 across the hosted path: a text-only surface takes no attachment, and the port
+/// refuses one before a request leaves the machine — so no quota unit is spent discovering
+/// that the server would have rejected it too.
 #[test]
-fn an_unsupported_document_never_reaches_the_gateway_as_a_statement_import() {
+fn an_attachment_never_reaches_the_gateway_on_a_text_only_surface() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
     let _harness = Harness::new(&gateway);
 
     let request = AiRequest {
-        operation: AiOperation::StatementImport,
-        system: "Extract.".to_string(),
-        turns: vec![AiTurn::user("Extract all transactions.")],
+        operation: AiOperation::ProjectAdvice,
+        system: "Advise.".to_string(),
+        turns: vec![AiTurn::user("Advise on this project.")],
         attachment: Some(crate::ai::backend::AiAttachment::Document {
             format: crate::ai::backend::AiDocumentFormat::Txt,
             bytes: b"date,amount\n".to_vec(),
@@ -1055,7 +1055,7 @@ fn an_unsupported_document_never_reaches_the_gateway_as_a_statement_import() {
     };
 
     let deltas = Arc::new(Mutex::new(Vec::new()));
-    let error = run(request, &deltas).expect_err("a text file is not a statement");
+    let error = run(request, &deltas).expect_err("project advice takes no attachment");
 
     assert!(matches!(error, AppError::AiService { .. }), "got {error:?}");
     assert_eq!(
@@ -1067,8 +1067,8 @@ fn an_unsupported_document_never_reaches_the_gateway_as_a_statement_import() {
     assert!(deltas.lock().unwrap().is_empty());
 }
 
-/// The complement: chat's wider document formats ARE legal on chat, which is what proves the
-/// refusal above is specific to statement import rather than a blanket ban on those formats.
+/// The complement: chat accepts document formats, which is what proves the refusal above is
+/// specific to the text-only surfaces rather than a blanket ban on those formats.
 #[test]
 fn a_csv_is_accepted_on_a_chat_turn() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));

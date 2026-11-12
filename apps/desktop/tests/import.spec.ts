@@ -162,8 +162,8 @@ async function setupTauriMock(
               const filePath = args.file_path as string;
               if (!filePath) return Promise.reject({ type: "file", message: "File not found" });
               const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-              if (!["png", "jpg", "jpeg", "pdf", "csv"].includes(ext)) {
-                return Promise.reject({ type: "file", message: "Only images, PDFs, and CSV files supported" });
+              if (!["png", "jpg", "jpeg", "pdf", "csv", "tsv", "txt", "xls", "xlsx", "ofx", "qfx", "qbo"].includes(ext)) {
+                return Promise.reject({ type: "file", message: "Only images, PDFs, spreadsheets (CSV, TSV, Excel), text, and OFX/QFX/QBO files supported" });
               }
               const fileName = filePath.split("/").pop() ?? "unknown";
               return Promise.resolve({ file_name: fileName, file_path: filePath, file_size: 1024 });
@@ -462,7 +462,7 @@ test.describe("Import Page — Story 6.1", () => {
     const zone = page.getByTestId("upload-zone");
     await expect(zone).toContainText("Drop your statement here");
     await expect(zone).toContainText("paste a screenshot");
-    await expect(zone).toContainText("PNG, JPG, PDF, CSV accepted");
+    await expect(zone).toContainText("PNG, JPG, PDF, CSV, TSV, TXT, Excel, OFX/QFX/QBO accepted");
   });
 
   test("pasting a screenshot image starts the import pipeline [AC1, AC7]", async ({ page }) => {
@@ -542,7 +542,7 @@ test.describe("Import Page — Story 6.1", () => {
         return { success: true };
       } catch (e) { return e; }
     });
-    expect(result).toEqual({ type: "file", message: "Only images, PDFs, and CSV files supported" });
+    expect(result).toEqual({ type: "file", message: "Only images, PDFs, spreadsheets (CSV, TSV, Excel), text, and OFX/QFX/QBO files supported" });
   });
 
   test("valid file validation returns success result [AC4, AC5]", async ({ page }) => {
@@ -578,6 +578,33 @@ test.describe("Import Page — CSV statements", () => {
     expect(filters[0].extensions).toContain("csv");
     expect(calls.imported?.file_paths).toEqual(["/tmp/statement.csv"]);
   });
+});
+
+test.describe("Import Page — spreadsheet, text, and bank download statements", () => {
+  for (const ext of ["xlsx", "xls", "txt", "tsv", "ofx", "qfx", "qbo"]) {
+    test(`picking a .${ext} statement sends it to the AI import pipeline`, async ({ page }) => {
+      const filePath = `/tmp/statement.${ext}`;
+      await setupTauriMock(page, { pickedFile: filePath });
+      await page.goto("/import");
+      await triggerUpload(page);
+
+      await expect(page.getByTestId("import-progress-stepper")).toBeVisible({ timeout: 5000 });
+
+      const calls = await page.evaluate(() => {
+        const log =
+          ((window as unknown as Record<string, unknown>).__TAURI_INVOKE_LOG__ as
+            | { cmd: string; args: Record<string, unknown> }[]
+            | undefined) ?? [];
+        return {
+          dialog: log.find((entry) => entry.cmd === "plugin:dialog|open")?.args,
+          imported: log.find((entry) => entry.cmd === "import_cc_statement")?.args,
+        };
+      });
+      const filters = (calls.dialog?.options as { filters: { extensions: string[] }[] }).filters;
+      expect(filters[0].extensions).toContain(ext);
+      expect(calls.imported?.file_paths).toEqual([filePath]);
+    });
+  }
 });
 
 // === Story 6.2 Tests ===
