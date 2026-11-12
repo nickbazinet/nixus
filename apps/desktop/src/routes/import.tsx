@@ -38,7 +38,15 @@ import {
   type ImportDraft,
   type ManualEntry,
 } from "../components/import/importDraft";
-import { useImport, type ParsedTransaction, type ImportError } from "../hooks/useImport";
+import {
+  rowIncomeSourceId,
+  rowKind,
+  rowNewIncomeSourceName,
+  useImport,
+  type ParsedTransaction,
+  type ImportError,
+} from "../hooks/useImport";
+import { useIncomeSources } from "../hooks/useIncome";
 import { useFormatCurrency } from "../hooks/useFormatCurrency";
 import { useExpenseCategories } from "../hooks/useExpenses";
 import {
@@ -215,6 +223,7 @@ function ReviewScreen({
   const [commitError, setCommitError] = useState<string | null>(null);
 
   const { data: categories = [] } = useExpenseCategories();
+  const { data: incomeSources = [] } = useIncomeSources();
 
   const { data: loadedGroups } = useBudgetGroups();
   const groups = useMemo<ImportSelectGroup[]>(() => loadedGroups ?? [], [loadedGroups]);
@@ -419,19 +428,41 @@ function ReviewScreen({
     [transactions, deselected]
   );
 
+  const isIncomeRow = useCallback(
+    (i: number) => rowKind(transactions[i], fieldOverrides[i]) === "income",
+    [transactions, fieldOverrides]
+  );
+  const selectedExpenseIndices = useMemo(
+    () => selectedIndices.filter((i) => !isIncomeRow(i)),
+    [selectedIndices, isIncomeRow]
+  );
+  const selectedIncomeIndices = useMemo(
+    () => selectedIndices.filter(isIncomeRow),
+    [selectedIndices, isIncomeRow]
+  );
+  const amountAt = useCallback(
+    (i: number) => fieldOverrides[i]?.amount_cents ?? transactions[i].amount_cents,
+    [fieldOverrides, transactions]
+  );
+  const incomeSourceResolved = (i: number) =>
+    rowIncomeSourceId(transactions[i], fieldOverrides[i]) > 0 ||
+    rowNewIncomeSourceName(transactions[i], fieldOverrides[i]) !== "";
+
   const validManualEntries = useMemo(
     () => manualEntries.filter((e) => e.merchant.trim() !== "" && e.amount_cents > 0),
     [manualEntries]
   );
 
+  // Money out only: adding income into the same figure would make it meaningless.
   const selectedSumCents = useMemo(
     () =>
-      selectedIndices.reduce(
-        (sum, i) =>
-          sum + (fieldOverrides[i]?.amount_cents ?? transactions[i].amount_cents),
-        0
-      ) + validManualEntries.reduce((sum, e) => sum + e.amount_cents, 0),
-    [selectedIndices, fieldOverrides, transactions, validManualEntries]
+      selectedExpenseIndices.reduce((sum, i) => sum + amountAt(i), 0) +
+      validManualEntries.reduce((sum, e) => sum + e.amount_cents, 0),
+    [selectedExpenseIndices, amountAt, validManualEntries]
+  );
+  const selectedIncomeSumCents = useMemo(
+    () => selectedIncomeIndices.reduce((sum, i) => sum + amountAt(i), 0),
+    [selectedIncomeIndices, amountAt]
   );
 
   const startedManualEntries = manualEntries.filter((e) => e.merchant.trim() !== "");
@@ -441,16 +472,19 @@ function ReviewScreen({
   const datesComplete = selectedIndices.every((i) =>
     DATE_REGEX.test(fieldOverrides[i]?.date ?? transactions[i].date)
   );
-  const categoriesComplete = selectedIndices.every((i) => {
+  const categoriesComplete = selectedExpenseIndices.every((i) => {
     const catId =
       fieldOverrides[i]?.suggested_category_id ?? transactions[i].suggested_category_id;
     return catId != null && catId > 0;
   });
+  const sourcesComplete = selectedIncomeIndices.every(incomeSourceResolved);
 
   const totalCount = selectedIndices.length + startedManualEntries.length;
   const blockedReason = !categoriesComplete
     ? t("import.confirmBlockedCategory")
-    : !datesComplete
+    : !sourcesComplete
+      ? t("import.confirmBlockedSource")
+      : !datesComplete
       ? t("import.confirmBlockedDate")
       : !manualComplete
         ? t("import.confirmBlockedManual")
@@ -484,15 +518,31 @@ function ReviewScreen({
     setConfirming(true);
     setCommitError(null);
     try {
-      const finalTransactions = selectedIndices.map((i) => ({
-        merchant: fieldOverrides[i]?.merchant ?? transactions[i].merchant,
-        amount_cents: fieldOverrides[i]?.amount_cents ?? transactions[i].amount_cents,
-        budget_category_id:
-          fieldOverrides[i]?.suggested_category_id ??
-          transactions[i].suggested_category_id ??
-          0,
-        date: fieldOverrides[i]?.date ?? transactions[i].date,
-      }));
+      const finalTransactions = selectedIndices.map((i) => {
+        const tx = transactions[i];
+        const overrides = fieldOverrides[i];
+        const row = {
+          merchant: overrides?.merchant ?? tx.merchant,
+          amount_cents: amountAt(i),
+          date: overrides?.date ?? tx.date,
+        };
+        if (!isIncomeRow(i)) {
+          return {
+            ...row,
+            kind: "expense" as const,
+            budget_category_id:
+              overrides?.suggested_category_id ?? tx.suggested_category_id ?? 0,
+          };
+        }
+        const sourceId = rowIncomeSourceId(tx, overrides);
+        return {
+          ...row,
+          kind: "income" as const,
+          budget_category_id: 0,
+          income_source_id: sourceId > 0 ? sourceId : null,
+          income_source_name: sourceId > 0 ? null : rowNewIncomeSourceName(tx, overrides),
+        };
+      });
 
       const allTransactions = [...finalTransactions, ...validManualEntries];
       const invalidDate = allTransactions.find((tx) => !DATE_REGEX.test(tx.date));
@@ -513,6 +563,13 @@ function ReviewScreen({
       queryClient.invalidateQueries({ queryKey: ["budget-summary"] });
       queryClient.invalidateQueries({ queryKey: ["spending-breakdown"] });
       queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+      if (selectedIncomeIndices.length > 0) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.incomeSources });
+        queryClient.invalidateQueries({ queryKey: ["income-entries"] });
+        queryClient.invalidateQueries({ queryKey: ["income-entries-by-month"] });
+        queryClient.invalidateQueries({ queryKey: ["income-total"] });
+        queryClient.invalidateQueries({ queryKey: ["income-source-year-totals"] });
+      }
 
       clearImportDraft();
       setConfirmed(true);
@@ -527,7 +584,7 @@ function ReviewScreen({
 
   if (confirmed) {
     const uniqueCategories = new Set(
-      selectedIndices
+      selectedExpenseIndices
         .map(
           (i) =>
             fieldOverrides[i]?.suggested_category_id ??
@@ -558,6 +615,14 @@ function ReviewScreen({
           )}`}
           data-testid="completion-total"
         />
+        {selectedIncomeIndices.length > 0 && (
+          <p className="text-caption text-ink-dim" data-testid="completion-income">
+            {t("import.completionIncome", {
+              count: selectedIncomeIndices.length,
+              amount: formatCurrency(selectedIncomeSumCents),
+            })}
+          </p>
+        )}
         <p className="text-caption text-ink-dim">{t("import.rememberLine")}</p>
         <div className="flex flex-wrap items-center justify-center gap-2">
           <Button onClick={() => navigate({ to: "/" })} data-testid="view-dashboard-button">
@@ -618,7 +683,7 @@ function ReviewScreen({
             categories={categories}
             groups={groups}
             disabled={selectedIndices.length === 0}
-            onApply={(categoryId) => applyCategoryTo(selectedIndices, categoryId)}
+            onApply={(categoryId) => applyCategoryTo(selectedExpenseIndices, categoryId)}
           />
         </BulkBar>
       </Card>
@@ -637,6 +702,7 @@ function ReviewScreen({
         fieldOverrides={fieldOverrides}
         globalIndices={autoGlobalIndices}
         duplicateIndices={duplicateIndices}
+        incomeSources={incomeSources}
       />
 
       {flaggedGlobalIndices.length > 0 && (
@@ -647,6 +713,7 @@ function ReviewScreen({
               const tx = transactions[globalIndex];
               const overrides = fieldOverrides[globalIndex];
               const selectedId = overrides?.suggested_category_id ?? tx.suggested_category_id;
+              const kind = rowKind(tx, overrides);
               return (
                 <TransactionReviewCard
                   key={globalIndex}
@@ -661,7 +728,11 @@ function ReviewScreen({
                   onCategoryChange={(catId) =>
                     handleFlaggedCategoryChange(globalIndex, catId)
                   }
-                  isResolved={selectedId != null && selectedId > 0}
+                  isResolved={
+                    kind === "income"
+                      ? incomeSourceResolved(globalIndex)
+                      : selectedId != null && selectedId > 0
+                  }
                   selected={!deselected.has(globalIndex)}
                   onToggleSelect={() => handleToggleSelect(globalIndex)}
                   onMerchantChange={(value) =>
@@ -679,6 +750,14 @@ function ReviewScreen({
                     handleCreateProposedCategory(globalIndex)
                   }
                   creatingProposedCategory={creatingProposalIndices.has(globalIndex)}
+                  kind={kind}
+                  onKindChange={(next) => handleFieldChange(globalIndex, "kind", next)}
+                  incomeSources={incomeSources}
+                  incomeSourceId={rowIncomeSourceId(tx, overrides)}
+                  newIncomeSourceName={rowNewIncomeSourceName(tx, overrides)}
+                  onIncomeSourceChange={(sourceId) =>
+                    handleFieldChange(globalIndex, "suggested_income_source_id", sourceId)
+                  }
                 />
               );
             });
@@ -697,7 +776,12 @@ function ReviewScreen({
                 count={groupIndices.length}
                 categories={categories}
                 groups={groups}
-                onApplyToAll={(categoryId) => applyCategoryTo(groupIndices, categoryId)}
+                onApplyToAll={(categoryId) =>
+                  applyCategoryTo(
+                    groupIndices.filter((i) => !isIncomeRow(i)),
+                    categoryId
+                  )
+                }
               >
                 {cards}
               </MerchantGroup>

@@ -9,14 +9,16 @@ use std::sync::Mutex;
 
 use base64::Engine;
 
-use crate::ai::cc_parser;
+use crate::ai::cc_parser::{self, TransactionKind};
 use crate::ai::{clone_provider, AiState};
 use crate::datasets;
 use crate::db::audit as audit_db;
 use crate::db::budget as budget_db;
 use crate::db::expense as expense_db;
+use crate::db::income as income_db;
 use crate::db::DbState;
 use crate::error::AppError;
+use crate::models::CreateIncomeEntryInput;
 
 const MAX_FILE_SIZE: u64 = 20 * 1024 * 1024; // 20MB
 
@@ -270,7 +272,7 @@ pub async fn import_cc_statement(
     // Fetch budget categories, groups, and merchant hints for AI context. The
     // active id is read off the same guard as the connection so the staging check
     // below cannot be validated against a dataset that has since been switched.
-    let (categories, groups, hints, active_id) = {
+    let (categories, groups, hints, income_sources, active_id) = {
         let active = db_state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
@@ -280,7 +282,8 @@ pub async fn import_cc_statement(
         cats.retain(|category| category.project_id.is_none());
         let groups = budget_db::get_budget_groups(conn)?;
         let hints = expense_db::get_merchant_category_hints(conn)?;
-        (cats, groups, hints, active_id)
+        let income_sources = income_db::get_all_income_sources(conn)?;
+        (cats, groups, hints, income_sources, active_id)
     };
 
     let global_root = datasets::global_root(&app)?;
@@ -325,8 +328,15 @@ pub async fn import_cc_statement(
                 message: Some(message),
             },
         );
-        match cc_parser::parse_cc_statement(byo.as_ref(), file_path, &categories, &groups, &hints)
-            .await
+        match cc_parser::parse_cc_statement(
+            byo.as_ref(),
+            file_path,
+            &categories,
+            &groups,
+            &hints,
+            &income_sources,
+        )
+        .await
         {
             Ok(r) => {
                 merged.transactions.extend(r.transactions);
@@ -364,12 +374,33 @@ pub async fn import_cc_statement(
                     message: e.to_string(),
                 })?;
                 let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
-                let tuples: Vec<(String, String, i64)> = parse_result
+                let (incomes, expenses): (Vec<_>, Vec<_>) = parse_result
                     .transactions
                     .iter()
-                    .map(|t| (t.merchant.clone(), t.date.clone(), t.amount_cents))
+                    .enumerate()
+                    .partition(|(_, t)| t.kind == TransactionKind::Income);
+
+                let expense_tuples: Vec<(String, String, i64)> = expenses
+                    .iter()
+                    .map(|(_, t)| (t.merchant.clone(), t.date.clone(), t.amount_cents))
                     .collect();
-                expense_db::find_duplicate_indices(conn, &tuples)
+                let income_tuples: Vec<(String, i64)> = incomes
+                    .iter()
+                    .map(|(_, t)| (t.date.clone(), t.amount_cents))
+                    .collect();
+
+                let mut indices: Vec<usize> =
+                    expense_db::find_duplicate_indices(conn, &expense_tuples)?
+                        .into_iter()
+                        .map(|local| expenses[local].0)
+                        .chain(
+                            income_db::find_duplicate_income_indices(conn, &income_tuples)?
+                                .into_iter()
+                                .map(|local| incomes[local].0),
+                        )
+                        .collect();
+                indices.sort_unstable();
+                Ok(indices)
             })()
             .unwrap_or_else(|e| {
                 error!("Duplicate check failed (non-blocking): {}", e);
@@ -422,9 +453,41 @@ pub async fn import_cc_statement(
 pub struct ConfirmTransaction {
     pub merchant: String,
     pub amount_cents: i64,
+    #[serde(default)]
     pub budget_category_id: i64,
     pub date: String,
     pub original_suggested_category_id: Option<i64>,
+    #[serde(default)]
+    pub kind: TransactionKind,
+    #[serde(default)]
+    pub income_source_id: Option<i64>,
+    #[serde(default)]
+    pub income_source_name: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+enum ImportIncomeSource {
+    Existing(i64),
+    Named(String),
+}
+
+fn income_source_for(row: usize, t: &ConfirmTransaction) -> Result<ImportIncomeSource, AppError> {
+    if let Some(id) = t.income_source_id.filter(|id| *id > 0) {
+        return Ok(ImportIncomeSource::Existing(id));
+    }
+    let name = t
+        .income_source_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| t.merchant.trim());
+    if name.is_empty() {
+        return Err(AppError::Validation {
+            message: format!("Row {}: income source is required", row + 1),
+            field: Some("income_source_id".to_string()),
+        });
+    }
+    Ok(ImportIncomeSource::Named(name.to_string()))
 }
 
 #[derive(Serialize)]
@@ -493,7 +556,11 @@ pub fn confirm_import(
         message: e.to_string(),
     })?;
 
-    let tuples: Vec<(String, i64, i64, String)> = transactions
+    let (incomes, expenses): (Vec<&ConfirmTransaction>, Vec<&ConfirmTransaction>) = transactions
+        .iter()
+        .partition(|t| t.kind == TransactionKind::Income);
+
+    let tuples: Vec<(String, i64, i64, String)> = expenses
         .iter()
         .map(|t| {
             let normalized_date = normalize_date(&t.date)?;
@@ -506,14 +573,50 @@ pub fn confirm_import(
         })
         .collect::<Result<Vec<_>, AppError>>()?;
 
-    let count = active.write(|tx| expense_db::bulk_insert_imported_expenses(tx, &tuples))?;
+    let income_rows: Vec<(ImportIncomeSource, i64, String)> = incomes
+        .iter()
+        .enumerate()
+        .map(|(row, t)| Ok((income_source_for(row, t)?, t.amount_cents, normalize_date(&t.date)?)))
+        .collect::<Result<Vec<_>, AppError>>()?;
+
+    let (count, created_sources) = active.write(|tx| {
+        let count = expense_db::bulk_insert_imported_expenses(tx, &tuples)?;
+        let mut created_sources = Vec::new();
+        for (source, amount_cents, date) in &income_rows {
+            let source_id = match source {
+                ImportIncomeSource::Existing(id) => *id,
+                ImportIncomeSource::Named(name) => {
+                    let (source, created) = income_db::find_or_create_income_source_by_name(tx, name)?;
+                    if created {
+                        created_sources.push(source.clone());
+                    }
+                    source.id
+                }
+            };
+            income_db::insert_income_entry(
+                tx,
+                &CreateIncomeEntryInput {
+                    source_id,
+                    amount_cents: *amount_cents,
+                    date: date.clone(),
+                    account_id: None,
+                },
+            )?;
+        }
+        Ok((count, created_sources))
+    })?;
+
+    for source in &created_sources {
+        let details = serde_json::to_string(source).unwrap_or_default();
+        audit_db::record(&active, "income_source", source.id, "create", None, Some(&details));
+    }
 
     // Record merchant-category hints for future imports
     //
     // One captured transaction for the whole batch with a savepoint per hint, so a hint that
     // cannot be recorded is still skipped with a warning instead of discarding the ones before it.
     let recorded = active.write(|write| {
-        for imported in &transactions {
+        for imported in &expenses {
             if imported.merchant.trim().len() <= 2 {
                 continue;
             }
@@ -541,13 +644,21 @@ pub fn confirm_import(
     }
 
     // Audit log
-    let details = format!("{{\"transaction_count\":{},\"source\":\"cc_import\"}}", count);
+    let details = format!(
+        "{{\"transaction_count\":{},\"income_count\":{},\"source\":\"cc_import\"}}",
+        count,
+        income_rows.len()
+    );
     active.write(|tx| audit_db::insert_audit_log(tx, "import", 0, "create", None, Some(&details)))?;
 
-    info!("Confirmed import: {} transactions saved", count);
+    info!(
+        "Confirmed import: {} expenses and {} income entries saved",
+        count,
+        income_rows.len()
+    );
 
     Ok(ConfirmResult {
-        imported_count: count,
+        imported_count: count + income_rows.len(),
     })
 }
 
@@ -678,6 +789,50 @@ mod tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode([1u8, 2, 3, 4]);
         assert_eq!(decode_clipboard_base64(&encoded).unwrap(), vec![1, 2, 3, 4]);
         assert!(decode_clipboard_base64("%%%").is_err());
+    }
+
+    fn income_row(json: serde_json::Value) -> ConfirmTransaction {
+        serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn a_confirm_row_without_kind_is_an_expense() {
+        let row = income_row(serde_json::json!({
+            "merchant": "Grocer", "amount_cents": 100, "budget_category_id": 1, "date": "2026-03-01"
+        }));
+        assert_eq!(row.kind, TransactionKind::Expense);
+    }
+
+    #[test]
+    fn income_source_for_prefers_the_chosen_source_then_the_name_then_the_merchant() {
+        let chosen = income_row(serde_json::json!({
+            "kind": "income", "merchant": "ACME", "amount_cents": 100, "date": "2026-03-01",
+            "income_source_id": 4, "income_source_name": "Ignored"
+        }));
+        assert_eq!(income_source_for(0, &chosen).unwrap(), ImportIncomeSource::Existing(4));
+
+        let named = income_row(serde_json::json!({
+            "kind": "income", "merchant": "ACME", "amount_cents": 100, "date": "2026-03-01",
+            "income_source_id": 0, "income_source_name": " Salary "
+        }));
+        assert_eq!(
+            income_source_for(0, &named).unwrap(),
+            ImportIncomeSource::Named("Salary".to_string())
+        );
+
+        let fallback = income_row(serde_json::json!({
+            "kind": "income", "merchant": " ACME Payroll ", "amount_cents": 100, "date": "2026-03-01"
+        }));
+        assert_eq!(
+            income_source_for(0, &fallback).unwrap(),
+            ImportIncomeSource::Named("ACME Payroll".to_string())
+        );
+
+        let empty = income_row(serde_json::json!({
+            "kind": "income", "merchant": "  ", "amount_cents": 100, "date": "2026-03-01",
+            "income_source_name": ""
+        }));
+        assert!(income_source_for(0, &empty).is_err());
     }
 
     #[test]

@@ -8,6 +8,7 @@ import {
   DatePicker,
   Input,
   Label,
+  PillTabs,
 } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,16 @@ import {
   type ImportSelectCategory,
   type ImportSelectGroup,
 } from "@/components/import/ImportCategorySelect";
-import type { ParsedTransaction } from "@/hooks/useImport";
+import {
+  ImportIncomeSourceSelect,
+  type ImportSelectIncomeSource,
+} from "@/components/import/ImportIncomeSourceSelect";
+import {
+  rowIncomeSourceId,
+  rowKind,
+  rowNewIncomeSourceName,
+  type ParsedTransaction,
+} from "@/hooks/useImport";
 
 interface AutoCategorizedSummaryProps {
   transactions: ParsedTransaction[];
@@ -31,6 +41,7 @@ interface AutoCategorizedSummaryProps {
   fieldOverrides: Record<number, Partial<ParsedTransaction>>;
   globalIndices: number[];
   duplicateIndices?: Set<number>;
+  incomeSources: ImportSelectIncomeSource[];
 }
 
 export function AutoCategorizedSummary({
@@ -45,6 +56,7 @@ export function AutoCategorizedSummary({
   fieldOverrides,
   globalIndices,
   duplicateIndices,
+  incomeSources,
 }: AutoCategorizedSummaryProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -110,6 +122,7 @@ export function AutoCategorizedSummary({
             const amountId = `auto-amount-${gi}`;
             const dateId = `auto-date-${gi}`;
             const categoryId = `auto-category-${gi}`;
+            const kind = rowKind(tx, overrides);
 
             return (
               <div
@@ -145,6 +158,18 @@ export function AutoCategorizedSummary({
                         data-testid="auto-merchant-input"
                       />
                     </div>
+                    <div role="group" aria-label={t("import.kindLabel")} className="shrink-0">
+                      <PillTabs
+                        options={["expense", "income"] as const}
+                        labels={{
+                          expense: t("recurring.typeExpense"),
+                          income: t("recurring.typeIncome"),
+                        }}
+                        value={kind}
+                        onChange={(next) => onFieldChange(index, "kind", next)}
+                        data-testid="auto-kind-toggle"
+                      />
+                    </div>
                     <div className="w-28 shrink-0" data-testid="auto-amount-input-field">
                       <Label htmlFor={amountId} className="sr-only">
                         {t("common.amount")}
@@ -171,20 +196,36 @@ export function AutoCategorizedSummary({
                     </div>
                     <div className="min-w-0 flex-1">
                       <Label htmlFor={categoryId} className="sr-only">
-                        {t("common.category")}
+                        {kind === "income"
+                          ? t("import.incomeSourceLabel")
+                          : t("common.category")}
                       </Label>
-                      <ImportCategorySelect
-                        id={categoryId}
-                        value={
-                          overrides?.suggested_category_id ?? tx.suggested_category_id ?? null
-                        }
-                        onChange={(catId) => onCategoryChange(index, catId)}
-                        categories={categories}
-                        groups={groups}
-                        placeholder={t("import.select")}
-                        testId="auto-category-select"
-                        className="w-full"
-                      />
+                      {kind === "income" ? (
+                        <ImportIncomeSourceSelect
+                          id={categoryId}
+                          value={rowIncomeSourceId(tx, overrides)}
+                          newSourceName={rowNewIncomeSourceName(tx, overrides)}
+                          onChange={(sourceId) =>
+                            onFieldChange(index, "suggested_income_source_id", sourceId)
+                          }
+                          sources={incomeSources}
+                          testId="auto-income-source-select"
+                          className="w-full"
+                        />
+                      ) : (
+                        <ImportCategorySelect
+                          id={categoryId}
+                          value={
+                            overrides?.suggested_category_id ?? tx.suggested_category_id ?? null
+                          }
+                          onChange={(catId) => onCategoryChange(index, catId)}
+                          categories={categories}
+                          groups={groups}
+                          placeholder={t("import.select")}
+                          testId="auto-category-select"
+                          className="w-full"
+                        />
+                      )}
                     </div>
                     {isDup && (
                       <Badge variant="caution" data-testid="duplicate-badge">

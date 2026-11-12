@@ -84,6 +84,8 @@ async function setupTauriMock(
     orphanCategory?: boolean;
     /** Path the file dialog returns; defaults to a PNG screenshot. */
     pickedFile?: string;
+    /** Adds money-in rows: one matched to an existing source, one proposing a new source. */
+    incomeRows?: boolean;
   }
 ) {
   const aiError = options?.aiError ?? false;
@@ -97,6 +99,7 @@ async function setupTauriMock(
   const groupsUnavailable = options?.groupsUnavailable ?? false;
   const orphanCategory = options?.orphanCategory ?? false;
   const pickedFile = options?.pickedFile ?? "/tmp/statement.png";
+  const incomeRows = options?.incomeRows ?? false;
 
   await page.addInitScript(
     ({
@@ -110,6 +113,7 @@ async function setupTauriMock(
       longNames,
       groupsUnavailable,
       pickedFile,
+      incomeRows,
       categories,
       groups,
     }) => {
@@ -217,7 +221,14 @@ async function setupTauriMock(
               setTimeout(() => emitEvent("import:progress", { stage: "categorizing", message: "Categorized 2 transactions..." }), 200);
               setTimeout(() => {
                 emitEvent("import:progress", { stage: "done" });
-                const transactions = badDates
+                const transactions = incomeRows
+                  ? [
+                      { kind: "expense", merchant: "Amazon", amount_cents: 4599, date: "2026-03-10", suggested_category_id: 1, confidence: 0.95 },
+                      { kind: "income", merchant: "ACME Payroll", amount_cents: 250000, date: "2026-03-15", suggested_category_id: null, confidence: 0.9, suggested_income_source_id: 1 },
+                      { kind: "income", merchant: "Interest Paid", amount_cents: 312, date: "2026-03-31", suggested_category_id: null, confidence: 0.0, suggested_income_source_id: null, propose_income_source: "Interest" },
+                      { kind: "expense", merchant: "E-Transfer Refund", amount_cents: 2150, date: "2026-03-11", suggested_category_id: null, confidence: 0.3 },
+                    ]
+                  : badDates
                   ? [
                       { merchant: "Coffee Shop", amount_cents: 550, date: "14 MAR", suggested_category_id: 1, confidence: 0.95 },
                       { merchant: "Gas Station", amount_cents: 4200, date: "2026-03-15", suggested_category_id: 2, confidence: 0.95 },
@@ -269,6 +280,19 @@ async function setupTauriMock(
 
             case "get_budget_groups":
               return Promise.resolve(groupsUnavailable ? null : groups);
+
+            case "get_income_sources":
+              return Promise.resolve([
+                {
+                  id: 1,
+                  name: "Salary",
+                  income_type: "employment",
+                  last_amount_cents: null,
+                  last_month: null,
+                  created_at: "2026-01-01",
+                  updated_at: "2026-01-01",
+                },
+              ]);
 
             case "create_budget_group": {
               const newGroup = {
@@ -344,6 +368,7 @@ async function setupTauriMock(
       longNames,
       groupsUnavailable,
       pickedFile,
+      incomeRows,
       categories: longNames
         ? LONG_CATEGORIES
         : orphanCategory
@@ -755,6 +780,88 @@ test.describe("Import Page — Story 6.3", () => {
     await expect(page.getByTestId("import-completion")).toBeVisible({ timeout: 5000 });
     await page.getByTestId("view-dashboard-button").click();
     await expect(page).toHaveURL("/");
+  });
+});
+
+test.describe("Import Page — Income rows", () => {
+  test.beforeEach(async ({ page }) => {
+    await setupTauriMock(page, { incomeRows: true });
+    await page.goto("/import");
+    await triggerUpload(page);
+    await expect(page.getByTestId("import-review-screen")).toBeVisible({ timeout: 5000 });
+  });
+
+  test("money-in rows are marked income and show a source instead of a category", async ({
+    page,
+  }) => {
+    await page.getByTestId("auto-categorized-toggle").click();
+    const payroll = page
+      .getByTestId("auto-categorized-row")
+      .filter({ has: page.locator('input[value="ACME Payroll"]') });
+    await expect(payroll.getByTestId("auto-kind-toggle-income")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    await expect(payroll.getByTestId("auto-income-source-select")).toContainText("Salary");
+    await expect(payroll.getByTestId("auto-category-select")).toHaveCount(0);
+
+    const interest = page
+      .getByTestId("transaction-review-card")
+      .filter({ has: page.locator('input[value="Interest Paid"]') });
+    await expect(interest.getByTestId("kind-toggle-income")).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
+    await expect(interest.getByTestId("income-source-select")).toContainText(
+      "New source: Interest"
+    );
+    await expect(interest.getByTestId("review-row-status")).toHaveText("Sorted");
+  });
+
+  test("flipping a row to income lets it be added without a category", async ({ page }) => {
+    const refund = page
+      .getByTestId("transaction-review-card")
+      .filter({ has: page.locator('input[value="E-Transfer Refund"]') });
+    await expect(refund.getByTestId("review-row-status")).toHaveText("Needs a category");
+    await expect(page.getByTestId("confirm-import-button")).toBeDisabled();
+
+    await refund.getByTestId("kind-toggle-income").click();
+    await expect(refund.getByTestId("income-source-select")).toContainText(
+      "New source: E-Transfer Refund"
+    );
+    await refund.getByTestId("income-source-select").click();
+    await page.getByRole("option", { name: "Salary" }).click();
+    await expect(refund.getByTestId("income-source-select")).toContainText("Salary");
+
+    await page.getByTestId("confirm-import-button").click();
+    const completion = page.getByTestId("import-completion");
+    await expect(completion).toBeVisible({ timeout: 5000 });
+    await expect(completion.getByTestId("completion-income")).toContainText("3 income entries");
+
+    const sent = (await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).__LAST_CONFIRM_IMPORT_ARGS__
+    )) as { transactions: Record<string, unknown>[] };
+    expect(sent.transactions).toEqual([
+      expect.objectContaining({ merchant: "Amazon", kind: "expense", budget_category_id: 1 }),
+      expect.objectContaining({
+        merchant: "ACME Payroll",
+        kind: "income",
+        amount_cents: 250000,
+        income_source_id: 1,
+        income_source_name: null,
+      }),
+      expect.objectContaining({
+        merchant: "Interest Paid",
+        kind: "income",
+        income_source_id: null,
+        income_source_name: "Interest",
+      }),
+      expect.objectContaining({
+        merchant: "E-Transfer Refund",
+        kind: "income",
+        income_source_id: 1,
+      }),
+    ]);
   });
 });
 

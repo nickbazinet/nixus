@@ -14,6 +14,8 @@ export interface ProposedCategory {
   group_name: string | null;
 }
 
+export type TransactionKind = "expense" | "income";
+
 export interface ParsedTransaction {
   merchant: string;
   amount_cents: number;
@@ -21,6 +23,29 @@ export interface ParsedTransaction {
   suggested_category_id: number | null;
   confidence: number;
   propose_category?: ProposedCategory | null;
+  kind?: TransactionKind;
+  /** `0` in a review override means "create a new source" rather than "no override". */
+  suggested_income_source_id?: number | null;
+  propose_income_source?: string | null;
+}
+
+type RowOverrides = Partial<ParsedTransaction> | undefined;
+
+export function rowKind(tx: ParsedTransaction, overrides: RowOverrides): TransactionKind {
+  return overrides?.kind ?? tx.kind ?? "expense";
+}
+
+export function rowIncomeSourceId(tx: ParsedTransaction, overrides: RowOverrides): number {
+  return overrides?.suggested_income_source_id ?? tx.suggested_income_source_id ?? 0;
+}
+
+export function rowNewIncomeSourceName(tx: ParsedTransaction, overrides: RowOverrides): string {
+  return (
+    overrides?.propose_income_source ??
+    tx.propose_income_source ??
+    overrides?.merchant ??
+    tx.merchant
+  ).trim();
 }
 
 interface ImportCompletePayload {

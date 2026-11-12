@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::account::{self as account_db, BalanceCauseRow, BalanceChange, CashFlowKind};
 use crate::sync::capture::BalanceCause;
@@ -475,10 +475,86 @@ pub(crate) fn validate_account_id(conn: &Connection, account_id: Option<i64>) ->
     Ok(())
 }
 
+/// Income has no merchant column, so this matches on date and amount alone.
+pub fn find_duplicate_income_indices(
+    conn: &Connection,
+    entries: &[(String, i64)],
+) -> Result<Vec<usize>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT EXISTS(SELECT 1 FROM income_entries WHERE date = ?1 AND amount_cents = ?2)",
+    )?;
+    let mut duplicates = Vec::new();
+    for (i, (date, amount_cents)) in entries.iter().enumerate() {
+        let exists: bool = stmt.query_row(params![date, amount_cents], |row| row.get(0))?;
+        if exists {
+            duplicates.push(i);
+        }
+    }
+    Ok(duplicates)
+}
+
+/// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`.
+/// Matches case-insensitively; a created source is typed `other`. The flag is `true` when created.
+pub fn find_or_create_income_source_by_name(
+    conn: &Connection,
+    name: &str,
+) -> Result<(IncomeSource, bool), AppError> {
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM income_sources WHERE LOWER(TRIM(name)) = LOWER(TRIM(?1)) ORDER BY id LIMIT 1",
+            params![name],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    match existing {
+        Some(id) => Ok((get_income_source_by_id(conn, id)?, false)),
+        None => {
+            let input = CreateIncomeSourceInput {
+                name: name.to_string(),
+                income_type: "other".to_string(),
+            };
+            Ok((insert_income_source(conn, &input)?, true))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn find_or_create_income_source_reuses_a_case_insensitive_match() {
+        let conn = income_test_db();
+
+        let (source, created) = find_or_create_income_source_by_name(&conn, " salary ").unwrap();
+        assert_eq!(source.id, 1);
+        assert!(!created);
+
+        let (source, created) = find_or_create_income_source_by_name(&conn, "Interest").unwrap();
+        assert!(created);
+        assert_eq!(source.name, "Interest");
+        assert_eq!(source.income_type, "other");
+    }
+
+    #[test]
+    fn find_duplicate_income_indices_matches_date_and_amount() {
+        let conn = income_test_db();
+        insert_income_entry(&conn, &income_input(None, 2_500)).unwrap();
+
+        let duplicates = find_duplicate_income_indices(
+            &conn,
+            &[
+                ("2026-06-10".to_string(), 2_500),
+                ("2026-06-10".to_string(), 2_501),
+                ("2026-06-11".to_string(), 2_500),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(duplicates, vec![0]);
+    }
 
     #[test]
     fn insert_income_entry_with_account_increases_asset_balance() {

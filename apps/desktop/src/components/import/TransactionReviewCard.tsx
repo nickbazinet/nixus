@@ -10,6 +10,7 @@ import {
   DatePicker,
   Input,
   Label,
+  PillTabs,
 } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { cn } from "@/lib/utils";
@@ -19,7 +20,11 @@ import {
   type ImportSelectCategory,
   type ImportSelectGroup,
 } from "@/components/import/ImportCategorySelect";
-import type { ProposedCategory } from "@/hooks/useImport";
+import {
+  ImportIncomeSourceSelect,
+  type ImportSelectIncomeSource,
+} from "@/components/import/ImportIncomeSourceSelect";
+import type { ProposedCategory, TransactionKind } from "@/hooks/useImport";
 
 /** Mirrors the create path in `import.tsx`: a usable group id is reused, anything else means a
  *  new group named after the proposal. A stated id that is not in the loaded groups falls back to
@@ -62,6 +67,12 @@ interface TransactionReviewCardProps {
   proposedCategory?: ProposedCategory | null;
   onCreateProposedCategory?: () => void;
   creatingProposedCategory?: boolean;
+  kind: TransactionKind;
+  onKindChange: (kind: TransactionKind) => void;
+  incomeSources: ImportSelectIncomeSource[];
+  incomeSourceId: number;
+  newIncomeSourceName: string;
+  onIncomeSourceChange: (sourceId: number) => void;
 }
 
 export function TransactionReviewCard({
@@ -84,6 +95,12 @@ export function TransactionReviewCard({
   proposedCategory,
   onCreateProposedCategory,
   creatingProposedCategory,
+  kind,
+  onKindChange,
+  incomeSources,
+  incomeSourceId,
+  newIncomeSourceName,
+  onIncomeSourceChange,
 }: TransactionReviewCardProps) {
   const { t } = useTranslation();
   const formatCurrency = useFormatCurrency();
@@ -91,14 +108,18 @@ export function TransactionReviewCard({
   const amountId = `review-amount-${rowId}`;
   const dateId = `review-date-${rowId}`;
   const categoryId = `review-category-${rowId}`;
+  const isIncome = kind === "income";
+  const statusLabel = isResolved
+    ? t("import.rowSorted")
+    : isIncome
+      ? t("import.rowNeedsSource")
+      : t("import.rowNeedsCategory");
 
   return (
     <Card
       flush
       data-testid="transaction-review-card"
-      aria-label={`${merchant} ${formatCurrency(amountCents)} — ${
-        isResolved ? t("import.rowSorted") : t("import.rowNeedsCategory")
-      }`}
+      aria-label={`${merchant} ${formatCurrency(amountCents)} — ${statusLabel}`}
     >
       {isDuplicate && (
         <Alert variant="caution" data-testid="duplicate-badge">
@@ -131,6 +152,18 @@ export function TransactionReviewCard({
                   data-testid="merchant-input"
                 />
               </div>
+              <div role="group" aria-label={t("import.kindLabel")} className="shrink-0">
+                <PillTabs
+                  options={["expense", "income"] as const}
+                  labels={{
+                    expense: t("recurring.typeExpense"),
+                    income: t("recurring.typeIncome"),
+                  }}
+                  value={kind}
+                  onChange={onKindChange}
+                  data-testid="kind-toggle"
+                />
+              </div>
               <div className="w-28 shrink-0" data-testid="amount-input-field">
                 <Label htmlFor={amountId} className="sr-only">
                   {t("common.amount")}
@@ -152,30 +185,40 @@ export function TransactionReviewCard({
               </div>
               <div className="min-w-0 flex-1">
                 <Label htmlFor={categoryId} className="sr-only">
-                  {t("common.category")}
+                  {isIncome ? t("import.incomeSourceLabel") : t("common.category")}
                 </Label>
-                <ImportCategorySelect
-                  id={categoryId}
-                  value={selectedCategoryId ?? suggestedCategoryId}
-                  onChange={onCategoryChange}
-                  categories={categories}
-                  groups={groups}
-                  placeholder={t("import.selectCategory")}
-                  testId="category-select"
-                  className="w-full"
-                />
+                {isIncome ? (
+                  <ImportIncomeSourceSelect
+                    id={categoryId}
+                    value={incomeSourceId}
+                    newSourceName={newIncomeSourceName}
+                    onChange={onIncomeSourceChange}
+                    sources={incomeSources}
+                    testId="income-source-select"
+                    className="w-full"
+                  />
+                ) : (
+                  <ImportCategorySelect
+                    id={categoryId}
+                    value={selectedCategoryId ?? suggestedCategoryId}
+                    onChange={onCategoryChange}
+                    categories={categories}
+                    groups={groups}
+                    placeholder={t("import.selectCategory")}
+                    testId="category-select"
+                    className="w-full"
+                  />
+                )}
               </div>
               <Badge
                 variant={isResolved ? "good" : "caution"}
                 data-testid="review-row-status"
               >
-                {isResolved
-                  ? t("import.rowSorted")
-                  : t("import.rowNeedsCategory")}
+                {statusLabel}
               </Badge>
             </div>
 
-            {!isResolved && proposedCategory && (
+            {!isIncome && !isResolved && proposedCategory && (
               <Alert
                 variant="caution"
                 className="mt-2"
