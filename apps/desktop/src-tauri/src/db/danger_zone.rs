@@ -41,6 +41,8 @@ pub const WIPE_TABLES: &[&str] = &[
     "maintenance_service_logs",
     "maintenance_tasks",
     "vehicles",
+    "account_transfers",
+    "recurring_transfer_templates",
     "income_entries",
     "recurring_income_templates",
     "income_sources",
@@ -138,6 +140,13 @@ mod tests {
                 VALUES (1, 500000, '2026-08-01', '2026-08');
             INSERT INTO recurring_income_templates (source_id, amount_cents, day_of_month)
                 VALUES (1, 500000, 1);
+            -- One account on both ends keeps the seed at one account; only the app refuses that.
+            INSERT INTO recurring_transfer_templates
+                (id, from_account_id, to_account_id, amount_cents, day_of_month)
+                VALUES (1, 1, 1, 20000, 1);
+            INSERT INTO account_transfers
+                (recurring_transfer_template_id, from_account_id, to_account_id, amount_cents, date)
+                VALUES (1, 1, 1, 20000, '2026-08-01');
             INSERT INTO chat_conversations (id, title) VALUES (1, 'Chat');
             INSERT INTO chat_messages (conversation_id, role, content)
                 VALUES (1, 'user', 'hello');

@@ -34,25 +34,35 @@ import {
   useDeleteRecurringIncomeTemplate,
   useUpdateRecurringIncomeTemplate,
 } from "@/hooks/useRecurringIncome";
+import {
+  useDeleteRecurringTransferTemplate,
+  useUpdateRecurringTransferTemplate,
+} from "@/hooks/useRecurringTransfers";
 import type {
+  Account,
   RecurringExpenseTemplate,
   RecurringIncomeTemplate,
+  RecurringTransferTemplate,
   BudgetCategory,
 } from "@/lib/types";
 import { scheduleLabel } from "@/lib/recurrence";
 import { EditRecurringTemplateForm } from "./EditRecurringTemplateForm";
 import { EditRecurringIncomeForm } from "@/components/income/EditRecurringIncomeForm";
+import { RecurringTransferForm } from "@/components/accounts/RecurringTransferForm";
 
 // One table renders both kinds, so every row carries its origin rather than the caller
 // keeping two parallel lists in sync.
 type RecurringRow =
   | { kind: "expense"; template: RecurringExpenseTemplate }
-  | { kind: "income"; template: RecurringIncomeTemplate };
+  | { kind: "income"; template: RecurringIncomeTemplate }
+  | { kind: "transfer"; template: RecurringTransferTemplate };
 
 interface RecurringTemplateListProps {
   expenseTemplates: RecurringExpenseTemplate[];
   incomeTemplates: RecurringIncomeTemplate[];
+  transferTemplates: RecurringTransferTemplate[];
   categories: BudgetCategory[];
+  accounts: Account[];
   isLoading?: boolean;
   onAddTemplate?: () => void;
 }
@@ -64,8 +74,29 @@ const INCOME_TYPE_KEYS: Record<string, string> = {
   other: "income.typeOther",
 };
 
-function rowName(row: RecurringRow): string {
-  return row.kind === "expense" ? row.template.merchant : row.template.source_name;
+const ROW_TEST_IDS: Record<RecurringRow["kind"], string> = {
+  expense: "recurring-template-row",
+  income: "recurring-income-row",
+  transfer: "recurring-transfer-row",
+};
+
+const BADGES = {
+  expense: { variant: "neutral", labelKey: "recurring.typeExpense" },
+  income: { variant: "good", labelKey: "recurring.typeIncome" },
+  transfer: { variant: "brand", labelKey: "recurring.typeTransfer" },
+} as const;
+
+function rowName(row: RecurringRow, accountNames: Map<number, string>): string {
+  switch (row.kind) {
+    case "expense":
+      return row.template.merchant;
+    case "income":
+      return row.template.source_name;
+    case "transfer":
+      return `${accountNames.get(row.template.from_account_id) ?? "—"} → ${
+        accountNames.get(row.template.to_account_id) ?? "—"
+      }`;
+  }
 }
 
 function rowKey(row: RecurringRow): string {
@@ -75,7 +106,9 @@ function rowKey(row: RecurringRow): string {
 export function RecurringTemplateList({
   expenseTemplates,
   incomeTemplates,
+  transferTemplates,
   categories,
+  accounts,
   isLoading = false,
   onAddTemplate,
 }: RecurringTemplateListProps) {
@@ -86,15 +119,20 @@ export function RecurringTemplateList({
   const updateTemplate = useUpdateRecurringTemplate();
   const deleteIncomeTemplate = useDeleteRecurringIncomeTemplate();
   const updateIncomeTemplate = useUpdateRecurringIncomeTemplate();
+  const deleteTransferTemplate = useDeleteRecurringTransferTemplate();
+  const updateTransferTemplate = useUpdateRecurringTransferTemplate();
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RecurringRow | null>(null);
 
+  const accountNames = new Map(accounts.map((account) => [account.id, account.name]));
+  const nameOf = (row: RecurringRow) => rowName(row, accountNames);
   const rows: RecurringRow[] = [
     ...expenseTemplates.map(
       (template): RecurringRow => ({ kind: "expense", template })
     ),
     ...incomeTemplates.map((template): RecurringRow => ({ kind: "income", template })),
-  ].sort((a, b) => rowName(a).localeCompare(rowName(b), i18n.language));
+    ...transferTemplates.map((template): RecurringRow => ({ kind: "transfer", template })),
+  ].sort((a, b) => nameOf(a).localeCompare(nameOf(b), i18n.language));
 
   const lastRowCount = useRef(3);
   useEffect(() => {
@@ -124,6 +162,11 @@ export function RecurringTemplateList({
       return;
     }
 
+    if (row.kind === "transfer") {
+      updateTransferTemplate.mutate({ ...row.template, is_active: isActive }, { onError });
+      return;
+    }
+
     const template = row.template;
     updateIncomeTemplate.mutate(
       {
@@ -142,8 +185,11 @@ export function RecurringTemplateList({
 
   const handleDelete = () => {
     if (!deleteTarget) return;
-    const mutation =
-      deleteTarget.kind === "expense" ? deleteTemplate : deleteIncomeTemplate;
+    const mutation = {
+      expense: deleteTemplate,
+      income: deleteIncomeTemplate,
+      transfer: deleteTransferTemplate,
+    }[deleteTarget.kind];
 
     mutation.mutate(deleteTarget.template.id, {
       onSuccess: () => {
@@ -160,6 +206,7 @@ export function RecurringTemplateList({
   const editingRow = rows.find((row) => rowKey(row) === editingKey);
   const activeExpenseCount = expenseTemplates.filter((tpl) => tpl.is_active).length;
   const activeIncomeCount = incomeTemplates.filter((tpl) => tpl.is_active).length;
+  const activeTransferCount = transferTemplates.filter((tpl) => tpl.is_active).length;
 
   // Chrome resolves first and only the cells are skeletons; the row count is the last real one so
   // the list does not jump when data lands.
@@ -225,29 +272,24 @@ export function RecurringTemplateList({
         </TableHeader>
         <TableBody>
           {rows.map((row) => {
-            const name = rowName(row);
+            const name = nameOf(row);
             const secondary =
               row.kind === "expense"
                 ? (categoryMap.get(row.template.budget_category_id) ?? "—")
-                : t(INCOME_TYPE_KEYS[row.template.income_type] ?? "income.typeOther");
+                : row.kind === "income"
+                  ? t(INCOME_TYPE_KEYS[row.template.income_type] ?? "income.typeOther")
+                  : t("recurring.transferCategory");
+            const badge = BADGES[row.kind];
 
             return (
               <TableRow
                 key={rowKey(row)}
                 onActivate={() => setEditingKey(rowKey(row))}
                 aria-label={t("recurring.openTemplate", { merchant: name })}
-                data-testid={
-                  row.kind === "expense"
-                    ? "recurring-template-row"
-                    : "recurring-income-row"
-                }
+                data-testid={ROW_TEST_IDS[row.kind]}
               >
                 <TableCell>
-                  <Badge variant={row.kind === "income" ? "good" : "neutral"}>
-                    {row.kind === "income"
-                      ? t("recurring.typeIncome")
-                      : t("recurring.typeExpense")}
-                  </Badge>
+                  <Badge variant={badge.variant}>{t(badge.labelKey)}</Badge>
                 </TableCell>
                 <TableCell>{name}</TableCell>
                 <TableCell dim>{secondary}</TableCell>
@@ -290,11 +332,14 @@ export function RecurringTemplateList({
         </TableBody>
         <TableFooter>
           <TableRow>
-            <TableCell colSpan={4} className="text-caption">
+            <TableCell colSpan={3} className="text-caption">
               {t("recurring.activeCount", { count: activeExpenseCount })}
             </TableCell>
-            <TableCell colSpan={3} className="text-caption" data-testid="recurring-active-income-count">
+            <TableCell colSpan={2} className="text-caption" data-testid="recurring-active-income-count">
               {t("recurring.activeIncomeCount", { count: activeIncomeCount })}
+            </TableCell>
+            <TableCell colSpan={2} className="text-caption" data-testid="recurring-active-transfer-count">
+              {t("recurring.activeTransferCount", { count: activeTransferCount })}
             </TableCell>
           </TableRow>
         </TableFooter>
@@ -306,12 +351,16 @@ export function RecurringTemplateList({
         title={
           editingRow?.kind === "income"
             ? t("recurring.editIncome")
-            : t("recurring.editTemplate")
+            : editingRow?.kind === "transfer"
+              ? t("recurring.editTransfer")
+              : t("recurring.editTemplate")
         }
         description={
           editingRow?.kind === "income"
             ? t("recurring.editIncomeDescription")
-            : t("recurring.editTemplateDescription")
+            : editingRow?.kind === "transfer"
+              ? t("recurring.editTransferDescription")
+              : t("recurring.editTemplateDescription")
         }
         data-testid="edit-recurring-template-slide-over"
       >
@@ -323,6 +372,12 @@ export function RecurringTemplateList({
         )}
         {editingRow?.kind === "income" && (
           <EditRecurringIncomeForm
+            template={editingRow.template}
+            onClose={() => setEditingKey(null)}
+          />
+        )}
+        {editingRow?.kind === "transfer" && (
+          <RecurringTransferForm
             template={editingRow.template}
             onClose={() => setEditingKey(null)}
           />
@@ -339,7 +394,7 @@ export function RecurringTemplateList({
           <DialogHeader>
             <DialogTitle>
               {t("recurring.deleteTemplate", {
-                merchant: deleteTarget ? rowName(deleteTarget) : "",
+                merchant: deleteTarget ? nameOf(deleteTarget) : "",
               })}
             </DialogTitle>
             <DialogDescription>
@@ -347,7 +402,11 @@ export function RecurringTemplateList({
                 ? t("recurring.deleteIncomeExplain", {
                     amount: formatCurrency(deleteTarget.template.amount_cents),
                   })
-                : t("recurring.deleteTemplateExplain", {
+                : deleteTarget?.kind === "transfer"
+                  ? t("recurring.deleteTransferExplain", {
+                      amount: formatCurrency(deleteTarget.template.amount_cents),
+                    })
+                  : t("recurring.deleteTemplateExplain", {
                     amount: deleteTarget
                       ? formatCurrency(deleteTarget.template.amount_cents)
                       : "",

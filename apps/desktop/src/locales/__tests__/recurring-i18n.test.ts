@@ -72,6 +72,27 @@ const REQUIRED_KEYS = [
   "recurring.everyWeekday",
   "recurring.everyOtherWeekday",
   "recurring.everyFourWeeksOn",
+  "recurring.typeTransfer",
+  "recurring.addTransfer",
+  "recurring.addTransferDescription",
+  "recurring.editTransfer",
+  "recurring.editTransferDescription",
+  "recurring.transferSaved",
+  "recurring.transferSaveFailed",
+  "recurring.transferNeedsAccounts",
+  "recurring.transferFrom",
+  "recurring.transferTo",
+  "recurring.transferSelectAccount",
+  "recurring.transferFromRequired",
+  "recurring.transferToRequired",
+  "recurring.transferSameAccount",
+  "recurring.transferCurrencyMismatch",
+  "recurring.transferHelp",
+  "recurring.transferActiveLabel",
+  "recurring.transferActiveHint",
+  "recurring.transferCategory",
+  "recurring.deleteTransferExplain",
+  "recurring.activeTransferCount",
 ] as const;
 
 // Keys outside the `recurring.` namespace that the recurring income forms and rows render.
@@ -127,7 +148,11 @@ describe("recurring i18n parity", () => {
   });
 
   it("keeps the plural and singular forms of the income counters together", () => {
-    for (const key of ["recurring.activeIncomeCount", "recurring.activeIncomeTemplateCount"]) {
+    for (const key of [
+      "recurring.activeIncomeCount",
+      "recurring.activeIncomeTemplateCount",
+      "recurring.activeTransferCount",
+    ]) {
       expect(en[`${key}_one`], `Missing EN key ${key}_one`).toBeTruthy();
       expect(fr[`${key}_one`], `Missing FR key ${key}_one`).toBeTruthy();
     }

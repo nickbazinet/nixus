@@ -622,6 +622,58 @@ pub struct UpdateRecurringIncomeTemplateInput {
     pub is_active: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTransferTemplate {
+    pub id: i64,
+    pub from_account_id: i64,
+    pub to_account_id: i64,
+    pub amount_cents: i64,
+    pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    pub is_active: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRecurringTransferTemplateInput {
+    pub from_account_id: i64,
+    pub to_account_id: i64,
+    pub amount_cents: i64,
+    pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateRecurringTransferTemplateInput {
+    pub from_account_id: i64,
+    pub to_account_id: i64,
+    pub amount_cents: i64,
+    pub day_of_month: i32,
+    #[serde(default)]
+    pub frequency: RecurrenceFrequency,
+    #[serde(default)]
+    pub start_date: Option<String>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountTransfer {
+    pub id: i64,
+    pub recurring_transfer_template_id: Option<i64>,
+    pub from_account_id: Option<i64>,
+    pub to_account_id: Option<i64>,
+    pub amount_cents: i64,
+    pub date: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscretionaryCategory {
     pub category_id: i64,

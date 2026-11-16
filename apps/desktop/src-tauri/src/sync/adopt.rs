@@ -121,6 +121,12 @@ struct Facts {
 /// purpose: their identity is already a function of a natural key (AD-2), and a record cannot have
 /// two sources of truth about which record it is.
 const FACTS_V1: &[Facts] = &[
+    // The accounts are links that go NULL when an account is deleted, so they are state.
+    Facts {
+        table: "account_transfers",
+        columns: &["amount_cents", "date", "created_at"],
+        parents: &["recurring_transfer_template_id"],
+    },
     Facts {
         table: "accounts",
         columns: &[
@@ -232,6 +238,12 @@ const FACTS_V1: &[Facts] = &[
         table: "recurring_income_templates",
         columns: &["created_at"],
         parents: &["source_id"],
+    },
+    // Both accounts are settings the user re-points, like an income template's amount and day.
+    Facts {
+        table: "recurring_transfer_templates",
+        columns: &["created_at"],
+        parents: &[],
     },
     Facts {
         table: "vehicles",

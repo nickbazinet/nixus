@@ -17,9 +17,12 @@ import {
 import { PageHeader } from "@/components/shared/PageHeader";
 import { AddRecurringTemplateForm } from "@/components/expenses/AddRecurringTemplateForm";
 import { AddRecurringIncomeForm } from "@/components/income/AddRecurringIncomeForm";
+import { RecurringTransferForm } from "@/components/accounts/RecurringTransferForm";
 import { RecurringTemplateList } from "@/components/expenses/RecurringTemplateList";
 import { useRecurringTemplates } from "@/hooks/useRecurringExpenses";
 import { useRecurringIncomeTemplates } from "@/hooks/useRecurringIncome";
+import { useRecurringTransferTemplates } from "@/hooks/useRecurringTransfers";
+import { useAccounts } from "@/hooks/useAccounts";
 import { useAllBudgetCategories } from "@/hooks/useExpenses";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import { monthlyEquivalentCents } from "@/lib/recurrence";
@@ -28,8 +31,20 @@ export const Route = createFileRoute("/spending/recurring")({
   component: RecurringExpensesPage,
 });
 
-const ADD_KINDS = ["expense", "income"] as const;
+const ADD_KINDS = ["expense", "income", "transfer"] as const;
 type AddKind = (typeof ADD_KINDS)[number];
+
+const ADD_TITLE_KEYS: Record<AddKind, string> = {
+  expense: "recurring.addTemplate",
+  income: "recurring.addIncome",
+  transfer: "recurring.addTransfer",
+};
+
+const ADD_DESCRIPTION_KEYS: Record<AddKind, string> = {
+  expense: "recurring.addTemplateDescription",
+  income: "recurring.addIncomeDescription",
+  transfer: "recurring.addTransferDescription",
+};
 
 function RecurringExpensesPage() {
   const { t, i18n } = useTranslation();
@@ -39,7 +54,10 @@ function RecurringExpensesPage() {
   const { data: templates = [], isLoading } = useRecurringTemplates();
   const { data: incomeTemplates = [], isLoading: isLoadingIncome } =
     useRecurringIncomeTemplates();
+  const { data: transferTemplates = [], isLoading: isLoadingTransfers } =
+    useRecurringTransferTemplates();
   const { data: categories = [] } = useAllBudgetCategories();
+  const { data: accounts = [] } = useAccounts();
 
   const activeTemplates = templates.filter((template) => template.is_active);
   const activeIncomeTemplates = incomeTemplates.filter(
@@ -120,8 +138,10 @@ function RecurringExpensesPage() {
         <RecurringTemplateList
           expenseTemplates={templates}
           incomeTemplates={incomeTemplates}
+          transferTemplates={transferTemplates}
           categories={categories}
-          isLoading={isLoading || isLoadingIncome}
+          accounts={accounts}
+          isLoading={isLoading || isLoadingIncome || isLoadingTransfers}
           onAddTemplate={() => openAddForm("expense")}
         />
       </Card>
@@ -129,14 +149,8 @@ function RecurringExpensesPage() {
       <SlideOver
         open={showAddForm}
         onClose={() => setShowAddForm(false)}
-        title={
-          addKind === "income" ? t("recurring.addIncome") : t("recurring.addTemplate")
-        }
-        description={
-          addKind === "income"
-            ? t("recurring.addIncomeDescription")
-            : t("recurring.addTemplateDescription")
-        }
+        title={t(ADD_TITLE_KEYS[addKind])}
+        description={t(ADD_DESCRIPTION_KEYS[addKind])}
         data-testid="add-recurring-template-slide-over"
       >
         <div className="space-y-4">
@@ -145,15 +159,20 @@ function RecurringExpensesPage() {
             labels={{
               expense: t("recurring.typeExpense"),
               income: t("recurring.typeIncome"),
+              transfer: t("recurring.typeTransfer"),
             }}
             value={addKind}
             onChange={setAddKind}
             data-testid="recurring-add-kind"
           />
-          {addKind === "expense" ? (
+          {addKind === "expense" && (
             <AddRecurringTemplateForm onClose={() => setShowAddForm(false)} />
-          ) : (
+          )}
+          {addKind === "income" && (
             <AddRecurringIncomeForm onClose={() => setShowAddForm(false)} />
+          )}
+          {addKind === "transfer" && (
+            <RecurringTransferForm onClose={() => setShowAddForm(false)} />
           )}
         </div>
       </SlideOver>

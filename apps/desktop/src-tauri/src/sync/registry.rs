@@ -146,6 +146,9 @@ use TableClass::{AppendOnly, LocalOnly, Synced};
 /// Every table of the real schema. "Everything the user can see or has done syncs" (AD-5), so the
 /// list is overwhelmingly `Synced` and the exceptions are the interesting part.
 pub const TABLES: &[TableRule] = &[
+    // A transfer generated from a recurring template is derived from `(template uuid, period)`,
+    // like a generated income entry, so two computers backfilling it move the money once (AD-2).
+    rule("account_transfers", Synced, Some(SurrogateOrTemplate)),
     rule("accounts", Synced, Some(Surrogate)),
     rule("audit_log", AppendOnly, Some(Surrogate)),
     rule("budget_categories", Synced, Some(Surrogate)),
@@ -176,6 +179,7 @@ pub const TABLES: &[TableRule] = &[
     rule("projects", Synced, Some(Surrogate)),
     rule("recurring_expense_templates", Synced, Some(Surrogate)),
     rule("recurring_income_templates", Synced, Some(Surrogate)),
+    rule("recurring_transfer_templates", Synced, Some(Surrogate)),
     // Its primary key IS `passive_asset_id`, so it takes its owning asset's uuid (AD-2).
     rule("stock_holdings", Synced, Some(Natural)),
     rule("vehicles", Synced, Some(Surrogate)),
@@ -201,6 +205,13 @@ pub const TABLES: &[TableRule] = &[
 /// the row came into being, the second is a value the user's own edits move and therefore merges
 /// like any other.
 pub const COLUMNS: &[ColumnRule] = &[
+    column("account_transfers", "id", LocalId),
+    column("account_transfers", "recurring_transfer_template_id", LocalId),
+    column("account_transfers", "from_account_id", LocalId),
+    column("account_transfers", "to_account_id", LocalId),
+    column("account_transfers", "amount_cents", Lww),
+    column("account_transfers", "date", Lww),
+    column("account_transfers", "created_at", Immutable),
     column("accounts", "id", LocalId),
     column("accounts", "name", Lww),
     column("accounts", "institution", Lww),
@@ -381,6 +392,16 @@ pub const COLUMNS: &[ColumnRule] = &[
     column("recurring_income_templates", "is_active", Lww),
     column("recurring_income_templates", "created_at", Immutable),
     column("recurring_income_templates", "updated_at", Lww),
+    column("recurring_transfer_templates", "id", LocalId),
+    column("recurring_transfer_templates", "from_account_id", LocalId),
+    column("recurring_transfer_templates", "to_account_id", LocalId),
+    column("recurring_transfer_templates", "amount_cents", Lww),
+    column("recurring_transfer_templates", "day_of_month", Lww),
+    column("recurring_transfer_templates", "frequency", Lww),
+    column("recurring_transfer_templates", "start_date", Lww),
+    column("recurring_transfer_templates", "is_active", Lww),
+    column("recurring_transfer_templates", "created_at", Immutable),
+    column("recurring_transfer_templates", "updated_at", Lww),
     column("stock_holdings", "passive_asset_id", LocalId),
     column("stock_holdings", "symbol", Lww),
     column("stock_holdings", "exchange", Lww),
@@ -410,6 +431,14 @@ pub const COLUMNS: &[ColumnRule] = &[
 
 /// Every foreign-key edge of the real schema, with AD-12's policy for it.
 pub const EDGES: &[EdgeRule] = &[
+    edge("account_transfers", "from_account_id", "accounts", FkPolicy::SetNull),
+    edge(
+        "account_transfers",
+        "recurring_transfer_template_id",
+        "recurring_transfer_templates",
+        FkPolicy::SetNull,
+    ),
+    edge("account_transfers", "to_account_id", "accounts", FkPolicy::SetNull),
     edge("budget_categories", "group_id", "budget_groups", FkPolicy::NoAction),
     edge("budget_categories", "project_id", "projects", FkPolicy::SetNull),
     edge("chat_messages", "conversation_id", "chat_conversations", FkPolicy::NoAction),
@@ -444,6 +473,8 @@ pub const EDGES: &[EdgeRule] = &[
     ),
     edge("recurring_income_templates", "account_id", "accounts", FkPolicy::SetNull),
     edge("recurring_income_templates", "source_id", "income_sources", FkPolicy::Cascade),
+    edge("recurring_transfer_templates", "from_account_id", "accounts", FkPolicy::Cascade),
+    edge("recurring_transfer_templates", "to_account_id", "accounts", FkPolicy::Cascade),
     edge("stock_holdings", "account_id", "accounts", FkPolicy::SetNull),
     edge("stock_holdings", "passive_asset_id", "passive_assets", FkPolicy::Cascade),
 ];
@@ -752,7 +783,7 @@ mod tests {
     fn every_foreign_key_edge_is_classified_and_matches_what_sqlite_will_do() {
         let (_dir, conn) = dataset();
         let live = live_edges(&conn);
-        assert_eq!(live.len(), 20, "the live schema's edge count changed");
+        assert_eq!(live.len(), 25, "the live schema's edge count changed");
 
         for ((child_table, child_column), (parent_table, on_delete)) in &live {
             let declared = EDGES

@@ -9,6 +9,7 @@ export function RecurringApplyListener() {
   useEffect(() => {
     let unlistenExpenses: (() => void) | undefined;
     let unlistenIncome: (() => void) | undefined;
+    let unlistenTransfers: (() => void) | undefined;
 
     const setup = async () => {
       unlistenExpenses = await listen<number>("recurring:applied", () => {
@@ -33,6 +34,14 @@ export function RecurringApplyListener() {
         queryClient.invalidateQueries({ queryKey: ["yearly-summary"] });
         queryClient.invalidateQueries({ queryKey: queryKeys.projectionInput });
       });
+
+      unlistenTransfers = await listen<number>("recurring-transfer:applied", () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.accounts });
+        queryClient.invalidateQueries({ queryKey: queryKeys.netWorthCurrent });
+        queryClient.invalidateQueries({ queryKey: queryKeys.netWorthSnapshotsRecent });
+        queryClient.invalidateQueries({ queryKey: queryKeys.financialHealth });
+        queryClient.invalidateQueries({ queryKey: queryKeys.projectionInput });
+      });
     };
 
     setup();
@@ -40,6 +49,7 @@ export function RecurringApplyListener() {
     return () => {
       unlistenExpenses?.();
       unlistenIncome?.();
+      unlistenTransfers?.();
     };
   }, [queryClient]);
 

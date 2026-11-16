@@ -16,13 +16,15 @@ use crate::db::sync_capture::{self, StoredMessage};
 use crate::db::{
     account as account_db, asset as asset_db, budget as budget_db, expense as expense_db,
     income as income_db, net_worth as net_worth_db, recurring as recurring_db,
-    recurring_income as recurring_income_db, sync_identity, test_dataset, ActiveDataset,
+    recurring_income as recurring_income_db, recurring_transfer as recurring_transfer_db,
+    sync_identity, test_dataset, ActiveDataset,
 };
 use crate::error::AppError;
 use crate::models::{
     CreateAccountInput, CreateAssetInput, CreateBudgetCategory, CreateBudgetGroup,
     CreateExpenseInput, CreateIncomeEntryInput, CreateIncomeSourceInput,
-    CreateRecurringExpenseTemplateInput, CreateRecurringIncomeTemplateInput, DatasetKind,
+    CreateRecurringExpenseTemplateInput, CreateRecurringIncomeTemplateInput,
+    CreateRecurringTransferTemplateInput, DatasetKind,
     UpdateAccountInput, UpdateAssetInput, UpdateExpenseInput, UpdateIncomeEntryInput,
     UpdateIncomeSourceInput, UpdateRecurringExpenseTemplateInput,
     UpdateRecurringIncomeTemplateInput,
@@ -774,6 +776,112 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
     assert_ne!(
         one_expense, one_entry,
         "an expense is not an income entry even for the same period"
+    );
+}
+
+/// The transfer half of AD-2's template rule, and the reason it matters for money: both balance
+/// deltas of a backfilled transfer are caused by the transfer row, so two computers that backfill
+/// the same occurrence emit the SAME causes and the apply ledger adds each movement once.
+#[test]
+fn a_backfilled_recurring_transfer_takes_its_derived_identity_and_shared_causes() {
+    const PERIOD: &str = "2024-01";
+    const CREATED_AT: &str = "2024-01-01 12:00:00";
+    const OCCURRENCE: &str = "2024-01-05";
+
+    let backfill = |replica: &Replica| -> (Vec<u8>, BTreeSet<Vec<u8>>) {
+        let chequing = replica.seed_account();
+        let savings = replica
+            .write(|tx| {
+                account_db::insert_account(
+                    tx,
+                    &CreateAccountInput {
+                        name: "Savings".to_string(),
+                        institution: "Test Bank".to_string(),
+                        account_type: "savings".to_string(),
+                        currency: "CAD".to_string(),
+                    },
+                )
+            })
+            .expect("the savings account is seeded")
+            .id;
+        let template = replica
+            .write(|tx| {
+                recurring_transfer_db::insert_template(
+                    tx,
+                    &CreateRecurringTransferTemplateInput {
+                        from_account_id: chequing,
+                        to_account_id: savings,
+                        amount_cents: 20_000,
+                        day_of_month: 5,
+                        frequency: Default::default(),
+                        start_date: None,
+                    },
+                )
+            })
+            .expect("the transfer template is created");
+
+        replica
+            .conn()
+            .execute(
+                "UPDATE recurring_transfer_templates SET created_at = ?1 WHERE id = ?2",
+                rusqlite::params![CREATED_AT, template.id],
+            )
+            .expect("the template start date is pinned");
+        sync_identity::forget(replica.conn(), "recurring_transfer_templates", template.id)
+            .expect("the mapping drops");
+        sync_identity::ensure(
+            replica.conn(),
+            "recurring_transfer_templates",
+            template.id,
+            &[0xC3; 16],
+        )
+        .expect("the identity binds");
+        replica.clear_log();
+
+        let applied = replica
+            .write(|tx| recurring_transfer_db::apply_due_recurring_transfers(tx))
+            .expect("the transfers backfill");
+        let generated = applied
+            .transfers
+            .iter()
+            .find(|transfer| transfer.date == OCCURRENCE)
+            .expect("the fixture must generate the transfer of the pinned period");
+
+        let causes: Vec<Vec<u8>> = replica
+            .messages()
+            .into_iter()
+            .filter(|message| message.kind == "balance_delta")
+            .map(|message| message.cause_uuid.expect("a delta names its cause"))
+            .collect();
+        assert_eq!(
+            causes.len(),
+            2 * applied.transfers.len(),
+            "every transfer moves exactly two balances"
+        );
+
+        (
+            sync_identity::lookup(replica.conn(), "account_transfers", generated.id)
+                .expect("the mapping reads")
+                .expect("a generated transfer has an identity")
+                .to_vec(),
+            causes.into_iter().collect(),
+        )
+    };
+
+    let one = Replica::open();
+    let two = Replica::open();
+    let (one_transfer, one_causes) = backfill(&one);
+    let (two_transfer, two_causes) = backfill(&two);
+
+    assert_eq!(
+        one_transfer,
+        identity::recurring_transfer(&[0xC3; 16], PERIOD).to_vec(),
+        "the generated transfer takes (template uuid, period)"
+    );
+    assert_eq!(one_transfer, two_transfer, "two computers agree on the transfer");
+    assert_eq!(
+        one_causes, two_causes,
+        "and on the causes of its balance movements, so each is applied once"
     );
 }
 

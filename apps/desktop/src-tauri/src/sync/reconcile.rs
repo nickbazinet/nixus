@@ -819,60 +819,83 @@ pub(crate) fn identity_of_existing(
     adopt::legacy_identity(conn, rule.table, row_id, observed, None)
 }
 
+/// A table whose generated rows keep a reference to the recurring template that produced them.
+struct TemplateLink {
+    template_column: &'static str,
+    template_table: &'static str,
+    derive: fn(&RowUuid, &str) -> RowUuid,
+}
+
+fn template_link(table: &str) -> Option<TemplateLink> {
+    match table {
+        "income_entries" => Some(TemplateLink {
+            template_column: "recurring_income_template_id",
+            template_table: "recurring_income_templates",
+            derive: identity::recurring_income,
+        }),
+        "account_transfers" => Some(TemplateLink {
+            template_column: "recurring_transfer_template_id",
+            template_table: "recurring_transfer_templates",
+            derive: identity::recurring_transfer,
+        }),
+        _ => None,
+    }
+}
+
 /// Whether a row of this table can carry an identity derived from the recurring template it came
-/// from. Only income entries keep that reference; an expense keeps none (see below).
+/// from. Income entries and account transfers keep that reference; an expense keeps none (see
+/// below).
 pub(crate) fn can_derive_from_template(table: &str) -> bool {
-    table == "income_entries"
+    template_link(table).is_some()
 }
 
 /// The template-derived identity of a row that EVERY computer generates on its own (AD-2), when the
 /// row still says which template and which period it came from.
 ///
-/// `income_entries` carries both (`recurring_income_template_id` and `month`), so a generated entry
-/// that predates capture gets the identity its insert site would have bound. `expenses` carries
-/// NEITHER — the generated row keeps no reference to its template — so a pre-capture recurring
-/// expense is indistinguishable from a hand-entered one by its own columns and is minted as a
-/// surrogate. Recorded as the honest limit rather than guessed at from `source = 'recurring'`,
-/// which would bind an identity derived from a template this row may not have come from.
+/// `income_entries` and `account_transfers` carry both (their template id, and a `month` or a
+/// `date`), so a generated row that predates capture gets the identity its insert site would have
+/// bound. `expenses` carries NEITHER — the generated row keeps no reference to its template — so a
+/// pre-capture recurring expense is indistinguishable from a hand-entered one by its own columns
+/// and is minted as a surrogate. Recorded as the honest limit rather than guessed at from
+/// `source = 'recurring'`, which would bind an identity derived from a template this row may not
+/// have come from.
 fn template_identity(
     conn: &Connection,
     table: &str,
     values: &[(&'static str, Value)],
 ) -> Result<Option<RowUuid>, AppError> {
-    if !can_derive_from_template(table) {
+    let Some(link) = template_link(table) else {
         return Ok(None);
-    }
+    };
 
-    let template = parent_uuid(
-        conn,
-        values,
-        "recurring_income_template_id",
-        "recurring_income_templates",
-    )?;
+    let template = parent_uuid(conn, values, link.template_column, link.template_table)?;
 
     let Some(template) = template else {
         return Ok(None);
     };
 
-    // The period the insert site named the entry by: its month for a monthly template, its exact
-    // date for a week-based one (several entries a month). See `recurrence::period_of`.
+    // The period the insert site named the row by: its month for a monthly template, its exact
+    // date for a week-based one (several rows a month). See `recurrence::period_of`. A transfer
+    // stores no `month`, so its month is the date's first seven characters.
     let template_row = values.iter().find_map(|(name, value)| match value {
-        Value::Integer(row_id) if *name == "recurring_income_template_id" => Some(*row_id),
+        Value::Integer(row_id) if *name == link.template_column => Some(*row_id),
         _ => None,
     });
     let frequency: Option<String> = conn
         .query_row(
-            "SELECT frequency FROM recurring_income_templates WHERE id = ?1",
+            &format!("SELECT frequency FROM {} WHERE id = ?1", link.template_table),
             [template_row],
             |row| row.get(0),
         )
         .optional()?;
-    let period_column = match frequency.as_deref() {
-        Some("monthly") | None => "month",
-        Some(_) => "date",
+    let date = text_of(values, "date");
+    let period = match frequency.as_deref() {
+        Some("monthly") | None => text_of(values, "month")
+            .or_else(|| date.and_then(|date| date.get(..7).map(str::to_string))),
+        Some(_) => date,
     };
 
-    Ok(text_of(values, period_column).map(|period| identity::recurring_income(&template, &period)))
+    Ok(period.map(|period| (link.derive)(&template, &period)))
 }
 
 fn text_of(values: &[(&'static str, Value)], column: &str) -> Option<String> {

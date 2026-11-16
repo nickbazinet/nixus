@@ -53,6 +53,7 @@ export const queryKeys = {
   projectionInput: ["projection-input"] as const,
   recurringTemplates: ["recurring-templates"] as const,
   recurringIncomeTemplates: ["recurring-income-templates"] as const,
+  recurringTransferTemplates: ["recurring-transfer-templates"] as const,
   chatConversations: (agentId: string) =>
     ["chat-conversations", agentId] as const,
   agents: ["agents"] as const,

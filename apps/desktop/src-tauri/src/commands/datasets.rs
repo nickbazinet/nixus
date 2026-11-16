@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tracing::{info, warn};
 
 use crate::ai::{self, AiState};
-use crate::commands::{recurring, recurring_income};
+use crate::commands::{recurring, recurring_income, recurring_transfer};
 use crate::datasets;
 use crate::db::{init_db, ActiveDataset, DbState};
 use crate::sync::capture::Capture;
@@ -92,7 +92,7 @@ pub(crate) fn select_dataset_now(app: &AppHandle, dataset_id: &str) -> Result<()
     Ok(())
 }
 
-/// Backfills missed recurring expenses and income for whichever dataset is active once this
+/// Backfills missed recurring expenses, income and transfers for whichever dataset is active once this
 /// runs, mirroring a manual "Add transactions" entry closely enough to show up the same way.
 ///
 /// Spawned rather than awaited so a slow backfill cannot delay the switch the caller is waiting
@@ -102,11 +102,12 @@ fn spawn_recurring_backfill(app: &AppHandle) {
     let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = app_handle.state::<DbState>();
-        let (expense_result, income_result) = match state.0.lock() {
+        let (expense_result, income_result, transfer_result) = match state.0.lock() {
             Ok(active) => match active.conn.as_ref() {
                 Some(_) => (
                     recurring::apply_due_recurring_expenses(&active),
                     recurring_income::apply_due_recurring_income(&active),
+                    recurring_transfer::apply_due_recurring_transfers(&active),
                 ),
                 // Unreachable in practice — this only runs right after a successful swap —
                 // but skipping beats panicking in a task nobody is awaiting.
@@ -145,6 +146,19 @@ fn spawn_recurring_backfill(app: &AppHandle) {
                 }
             }
             Err(e) => warn!("Background recurring income apply failed: {}", e),
+        }
+
+        match transfer_result {
+            Ok(created) => {
+                if !created.is_empty() {
+                    info!(
+                        "Background recurring apply: created {} transfer(s)",
+                        created.len()
+                    );
+                    let _ = app_handle.emit("recurring-transfer:applied", created.len());
+                }
+            }
+            Err(e) => warn!("Background recurring transfer apply failed: {}", e),
         }
     });
 }

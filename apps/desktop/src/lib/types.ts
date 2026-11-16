@@ -575,6 +575,33 @@ export interface UpdateRecurringIncomeTemplateInput {
   is_active: boolean;
 }
 
+export interface RecurringTransferTemplate {
+  id: number;
+  from_account_id: number;
+  to_account_id: number;
+  amount_cents: number;
+  day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateRecurringTransferTemplateInput {
+  from_account_id: number;
+  to_account_id: number;
+  amount_cents: number;
+  day_of_month: number;
+  frequency: RecurrenceFrequency;
+  start_date: string | null;
+}
+
+export interface UpdateRecurringTransferTemplateInput extends CreateRecurringTransferTemplateInput {
+  id: number;
+  is_active: boolean;
+}
+
 export interface ChatConversation {
   id: number;
   title: string | null;

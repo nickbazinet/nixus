@@ -141,6 +141,11 @@ pub fn recurring_income(template: &RowUuid, period: &str) -> RowUuid {
     derive("income_entries", &[template, period.as_bytes()])
 }
 
+/// The transfer half of the same rule.
+pub fn recurring_transfer(template: &RowUuid, period: &str) -> RowUuid {
+    derive("account_transfers", &[template, period.as_bytes()])
+}
+
 /// A record that EXISTED BEFORE IT HAD AN IDENTITY: `(table, digest of its creation facts, ordinal)`.
 ///
 /// The one place a surrogate table's identity is a function of the row instead of a coin toss, and
@@ -317,6 +322,7 @@ mod tests {
             config_key("theme"),
             recurring_expense(&TEMPLATE, "2026-10"),
             recurring_income(&TEMPLATE, "2026-10"),
+            recurring_transfer(&TEMPLATE, "2026-10"),
         ] {
             let uuid = Uuid::from_bytes(derived);
             assert_eq!(uuid.get_version_num(), 5, "{uuid} must be a derived uuid");
@@ -352,6 +358,10 @@ mod tests {
         assert_ne!(
             recurring_expense(&TEMPLATE, "2026-10"),
             recurring_income(&TEMPLATE, "2026-10"),
+        );
+        assert_ne!(
+            recurring_income(&TEMPLATE, "2026-10"),
+            recurring_transfer(&TEMPLATE, "2026-10"),
         );
     }
 

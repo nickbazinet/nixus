@@ -461,7 +461,7 @@ fn revives(
 
 /// A derived uuid cannot be re-minted, which is what makes the absorbing rule unsound for it.
 ///
-/// `SurrogateOrTemplate` (`expenses`, `income_entries`) is covered too, and the reason it is SAFE
+/// `SurrogateOrTemplate` (`expenses`, `income_entries`, `account_transfers`) is covered too, and the reason it is SAFE
 /// to cover a table that also holds hand-entered rows is the shape of the message rather than the
 /// table: [`is_whole_row`] is only ever an INSERT — capture emits every column on an insert and
 /// only the CHANGED ones on an update, and an update never carries the `Immutable` columns at all —
