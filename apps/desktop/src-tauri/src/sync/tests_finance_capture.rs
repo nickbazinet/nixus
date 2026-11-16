@@ -706,8 +706,8 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
             })
             .expect("the income template is created");
 
-        // The income backfill derives its first occurrence from `created_at`, so the fixture pins
-        // it rather than inheriting the clock.
+        // Both backfills derive their first occurrence from `created_at`, so the fixture pins it
+        // rather than inheriting the clock.
         replica
             .conn()
             .execute(
@@ -715,6 +715,13 @@ fn a_backfilled_recurring_row_takes_its_derived_identity() {
                 rusqlite::params![CREATED_AT, income_template.id],
             )
             .expect("the income template start date is pinned");
+        replica
+            .conn()
+            .execute(
+                "UPDATE recurring_expense_templates SET created_at = ?1 WHERE id = ?2",
+                rusqlite::params![CREATED_AT, expense_template.id],
+            )
+            .expect("the expense template start date is pinned");
 
         // Both templates are bound to the SAME uuid on both replicas, which is what the apply path
         // will do for real (Story 20) and what makes the derived rows comparable at all.

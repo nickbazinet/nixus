@@ -135,6 +135,19 @@ fn roll_forward(anchor: NaiveDate, interval: i64, today: NaiveDate) -> NaiveDate
     anchor + Duration::days(steps * interval)
 }
 
+/// The earliest date a monthly schedule may ever record: its `start_date` if one was set (e.g.
+/// after a schedule change), otherwise the first of `created_at`'s month. Shared by
+/// `due_occurrences` and `occurrences_in_month` so neither path can record a month that predates
+/// the template.
+fn monthly_floor(schedule: &StoredSchedule, created_at: &str) -> Result<NaiveDate, AppError> {
+    match schedule.start_date.as_deref() {
+        Some(start) => parse_date(start),
+        None => Ok(parse_template_start_date(created_at)?
+            .with_day(1)
+            .expect("day 1 is always a valid date")),
+    }
+}
+
 /// Every occurrence from the schedule's first recordable date through `today`, inclusive.
 ///
 /// A monthly schedule without a `start_date` starts at the first of `created_at`'s month, not
@@ -150,12 +163,7 @@ pub(crate) fn due_occurrences(
 
     match schedule.frequency.interval_days() {
         None => {
-            let floor = match schedule.start_date.as_deref() {
-                Some(start) => parse_date(start)?,
-                None => parse_template_start_date(created_at)?
-                    .with_day(1)
-                    .expect("day 1 is always a valid date"),
-            };
+            let floor = monthly_floor(schedule, created_at)?;
             let (mut year, mut month) = (floor.year(), floor.month());
             while (year, month) <= (today.year(), today.month()) {
                 let date = monthly_date(schedule.day_of_month, year, month)?;
@@ -177,15 +185,23 @@ pub(crate) fn due_occurrences(
     Ok(dates)
 }
 
-/// Every occurrence that falls in one calendar month. A monthly schedule always has exactly one; a
-/// week-based schedule has those on or after its anchor.
+/// Every occurrence that falls in one calendar month. A monthly schedule has exactly one, unless
+/// the month predates `monthly_floor` (the template didn't exist yet), in which case it has none; a
+/// week-based schedule has those on or after its anchor, which `normalize` already keeps at or
+/// after creation.
 pub(crate) fn occurrences_in_month(
     schedule: &StoredSchedule,
+    created_at: &str,
     year: i32,
     month: u32,
 ) -> Result<Vec<NaiveDate>, AppError> {
     let Some(interval) = schedule.frequency.interval_days() else {
-        return Ok(vec![monthly_date(schedule.day_of_month, year, month)?]);
+        let date = monthly_date(schedule.day_of_month, year, month)?;
+        return Ok(if date >= monthly_floor(schedule, created_at)? {
+            vec![date]
+        } else {
+            vec![]
+        });
     };
 
     let first = NaiveDate::from_ymd_opt(year, month, 1).ok_or_else(|| AppError::Validation {
@@ -379,7 +395,7 @@ mod tests {
     fn occurrences_in_month_lists_every_week_based_hit() {
         let schedule = weekly(Weekly, "2026-10-01");
         assert_eq!(
-            occurrences_in_month(&schedule, 2026, 11).unwrap(),
+            occurrences_in_month(&schedule, "2026-10-01 00:00:00", 2026, 11).unwrap(),
             vec![
                 d(2026, 11, 5),
                 d(2026, 11, 12),
@@ -388,12 +404,36 @@ mod tests {
             ]
         );
         // Nothing before the anchor's own month.
-        assert!(occurrences_in_month(&schedule, 2026, 9).unwrap().is_empty());
+        assert!(occurrences_in_month(&schedule, "2026-10-01 00:00:00", 2026, 9)
+            .unwrap()
+            .is_empty());
 
         let every_four = weekly(EveryFourWeeks, "2026-10-01");
         assert_eq!(
-            occurrences_in_month(&every_four, 2026, 10).unwrap(),
+            occurrences_in_month(&every_four, "2026-10-01 00:00:00", 2026, 10).unwrap(),
             vec![d(2026, 10, 1), d(2026, 10, 29)]
+        );
+    }
+
+    #[test]
+    fn occurrences_in_month_excludes_months_before_the_template_was_created() {
+        let schedule = StoredSchedule {
+            frequency: Monthly,
+            day_of_month: 15,
+            start_date: None,
+        };
+        // Created in November: October (before creation) has none, November (creation month) and
+        // December (after) each have their occurrence.
+        assert!(occurrences_in_month(&schedule, "2026-11-10 00:00:00", 2026, 10)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            occurrences_in_month(&schedule, "2026-11-10 00:00:00", 2026, 11).unwrap(),
+            vec![d(2026, 11, 15)]
+        );
+        assert_eq!(
+            occurrences_in_month(&schedule, "2026-11-10 00:00:00", 2026, 12).unwrap(),
+            vec![d(2026, 12, 15)]
         );
     }
 

@@ -166,7 +166,9 @@ pub fn apply_recurring_for_month(
     let mut created = Vec::new();
 
     for template in templates {
-        for date in recurrence::occurrences_in_month(&schedule_of(&template), year, month)? {
+        for date in
+            recurrence::occurrences_in_month(&schedule_of(&template), &template.created_at, year, month)?
+        {
             if let Some(expense) = try_apply_template(conn, &template, date)? {
                 created.push(expense);
             }
