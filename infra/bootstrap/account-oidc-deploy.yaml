@@ -406,73 +406,6 @@ Resources:
                   - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-*'
 
         # -------------------------------------------------------------------
-        # Observability and cost.
-        # -------------------------------------------------------------------
-        - PolicyName: account-observability
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: ExplicitLogGroups
-                Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:DeleteLogGroup
-                  - logs:PutRetentionPolicy
-                  - logs:DeleteRetentionPolicy
-                  - logs:TagResource
-                  - logs:UntagResource
-                  - logs:ListTagsForResource
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*'
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*:*'
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/${ApplicationStackName}-*'
-                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/${ApplicationStackName}-*:*'
-              - Sid: FindExplicitLogGroups
-                Effect: Allow
-                Action:
-                  - logs:DescribeLogGroups
-                Resource: '*'
-              - Sid: ErrorRateAlarms
-                Effect: Allow
-                Action:
-                  - cloudwatch:PutMetricAlarm
-                  - cloudwatch:DeleteAlarms
-                  - cloudwatch:DescribeAlarms
-                  - cloudwatch:TagResource
-                  - cloudwatch:UntagResource
-                  - cloudwatch:ListTagsForResource
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ApplicationStackName}-*'
-              - Sid: AlarmTopicAndSubscription
-                Effect: Allow
-                Action:
-                  - sns:CreateTopic
-                  - sns:DeleteTopic
-                  - sns:GetTopicAttributes
-                  - sns:SetTopicAttributes
-                  - sns:Subscribe
-                  - sns:Unsubscribe
-                  - sns:GetSubscriptionAttributes
-                  - sns:ListSubscriptionsByTopic
-                  - sns:TagResource
-                  - sns:UntagResource
-                  - sns:ListTagsForResource
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${ApplicationStackName}-*'
-              - Sid: MonthlySpendBudget
-                Effect: Allow
-                Action:
-                  # AWS Budgets authorizes create, modify and delete through the
-                  # single ModifyBudget action; there is no CreateBudget. Budget
-                  # ARNs carry no stack name, so this is the account namespace.
-                  - budgets:ModifyBudget
-                  - budgets:ViewBudget
-                  - budgets:TagResource
-                  - budgets:UntagResource
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/*'
-
-        # -------------------------------------------------------------------
         # Cognito: a read for the pre-deploy assertions, and Epic F's own client.
         # Never the pool, and never the resource server - UpdateResourceServer is
         # a full replace, so a pipeline that could call it could delete
@@ -505,113 +438,191 @@ Resources:
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}'
 
-        # -------------------------------------------------------------------
-        # EPIC F - the account app's hosting: CloudFront, its static bucket, the
-        # client secret it reads, its certificate and its DNS record.
-        # -------------------------------------------------------------------
-        - PolicyName: account-web-hosting
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: CloudFrontDistribution
-                Effect: Allow
-                Action:
-                  - cloudfront:CreateDistribution
-                  - cloudfront:UpdateDistribution
-                  - cloudfront:DeleteDistribution
-                  - cloudfront:GetDistribution
-                  - cloudfront:GetDistributionConfig
-                  - cloudfront:TagResource
-                  - cloudfront:UntagResource
-                  - cloudfront:ListTagsForResource
-                  - cloudfront:CreateInvalidation
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*'
-              # CloudFront's origin access controls and its cache / origin-request
-              # policies are account-level resources with NO ARN form at all, so
-              # IAM accepts only `*` for them. The actions stay enumerated, which
-              # is the only bound available here.
-              - Sid: CloudFrontAccountLevelResourcesCannotBeNameScoped
-                Effect: Allow
-                Action:
-                  - cloudfront:CreateOriginAccessControl
-                  - cloudfront:UpdateOriginAccessControl
-                  - cloudfront:DeleteOriginAccessControl
-                  - cloudfront:GetOriginAccessControl
-                  - cloudfront:GetOriginAccessControlConfig
-                  - cloudfront:CreateCachePolicy
-                  - cloudfront:UpdateCachePolicy
-                  - cloudfront:DeleteCachePolicy
-                  - cloudfront:GetCachePolicy
-                  - cloudfront:GetCachePolicyConfig
-                  - cloudfront:CreateOriginRequestPolicy
-                  - cloudfront:UpdateOriginRequestPolicy
-                  - cloudfront:DeleteOriginRequestPolicy
-                  - cloudfront:GetOriginRequestPolicy
-                  - cloudfront:GetOriginRequestPolicyConfig
-                  - cloudfront:CreateResponseHeadersPolicy
-                  - cloudfront:UpdateResponseHeadersPolicy
-                  - cloudfront:DeleteResponseHeadersPolicy
-                  - cloudfront:GetResponseHeadersPolicy
-                  - cloudfront:GetResponseHeadersPolicyConfig
-                Resource: '*'
-              - Sid: StaticAssetBucket
-                Effect: Allow
-                Action:
-                  - s3:CreateBucket
-                  - s3:GetBucketLocation
-                  - s3:GetBucketPolicy
-                  - s3:PutBucketPolicy
-                  - s3:DeleteBucketPolicy
-                  - s3:PutBucketPublicAccessBlock
-                  - s3:GetBucketPublicAccessBlock
-                  - s3:PutBucketVersioning
-                  - s3:GetBucketVersioning
-                  - s3:PutEncryptionConfiguration
-                  - s3:GetEncryptionConfiguration
-                  - s3:PutBucketOwnershipControls
-                  - s3:GetBucketOwnershipControls
-                  - s3:PutBucketTagging
-                  - s3:GetBucketTagging
-                  - s3:ListBucket
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:s3:::${ApplicationStackName}-*'
-              - Sid: StaticAssetObjects
-                Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                  - s3:DeleteObject
-                  - s3:PutObjectTagging
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:s3:::${ApplicationStackName}-*/*'
-              - Sid: ReadTheWebClientSecretAtDeployTime
-                Effect: Allow
-                Action:
-                  # Read only, and only under this path: the owner creates the
-                  # SecureString by hand, and the pipeline never writes it.
-                  - ssm:GetParameter
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ApplicationStackName}/*'
-              - Sid: AttachTheCertificateToTheAccountDomain
-                Effect: Allow
-                Action:
-                  # ListCertificates takes no resource, and DescribeCertificate's
-                  # ARN carries a per-certificate id nobody can pin before the
-                  # certificate exists.
-                  - acm:DescribeCertificate
-                  - acm:ListCertificates
-                Resource: '*'
-              - Sid: AccountDomainDnsRecord
-                Effect: Allow
-                Action:
-                  - route53:ChangeResourceRecordSets
-                  - route53:GetChange
-                  - route53:ListResourceRecordSets
-                  - route53:GetHostedZone
-                Resource:
-                  - !Sub 'arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}'
-                  - !Sub 'arn:${AWS::Partition}:route53:::change/*'
+  # Customer-managed rather than inline: IAM caps a role's inline policies at
+  # 10,240 bytes in aggregate, and the full grant set exceeds it. Each is attached
+  # only to the deploy role, which holds no IAM permission on managed policies, so
+  # it cannot change them either.
+  #
+  # Observability and cost.
+  AccountDeployObservabilityPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ApplicationStackName}-github-deploy-observability'
+      Roles:
+        - !Ref AccountDeployRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ExplicitLogGroups
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:DeleteLogGroup
+              - logs:PutRetentionPolicy
+              - logs:DeleteRetentionPolicy
+              - logs:TagResource
+              - logs:UntagResource
+              - logs:ListTagsForResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*'
+              - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*:*'
+              - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/${ApplicationStackName}-*'
+              - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/${ApplicationStackName}-*:*'
+          - Sid: FindExplicitLogGroups
+            Effect: Allow
+            Action:
+              - logs:DescribeLogGroups
+            Resource: '*'
+          - Sid: ErrorRateAlarms
+            Effect: Allow
+            Action:
+              - cloudwatch:PutMetricAlarm
+              - cloudwatch:DeleteAlarms
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:TagResource
+              - cloudwatch:UntagResource
+              - cloudwatch:ListTagsForResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ApplicationStackName}-*'
+          - Sid: AlarmTopicAndSubscription
+            Effect: Allow
+            Action:
+              - sns:CreateTopic
+              - sns:DeleteTopic
+              - sns:GetTopicAttributes
+              - sns:SetTopicAttributes
+              - sns:Subscribe
+              - sns:Unsubscribe
+              - sns:GetSubscriptionAttributes
+              - sns:ListSubscriptionsByTopic
+              - sns:TagResource
+              - sns:UntagResource
+              - sns:ListTagsForResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${ApplicationStackName}-*'
+          - Sid: MonthlySpendBudget
+            Effect: Allow
+            Action:
+              # AWS Budgets authorizes create, modify and delete through the
+              # single ModifyBudget action; there is no CreateBudget. Budget
+              # ARNs carry no stack name, so this is the account namespace.
+              - budgets:ModifyBudget
+              - budgets:ViewBudget
+              - budgets:TagResource
+              - budgets:UntagResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/*'
+
+  # EPIC F - the account app's hosting: CloudFront, its static bucket, the client
+  # secret it reads, its certificate and its DNS record.
+  AccountDeployWebHostingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ApplicationStackName}-github-deploy-web-hosting'
+      Roles:
+        - !Ref AccountDeployRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontDistribution
+            Effect: Allow
+            Action:
+              - cloudfront:CreateDistribution
+              - cloudfront:UpdateDistribution
+              - cloudfront:DeleteDistribution
+              - cloudfront:GetDistribution
+              - cloudfront:GetDistributionConfig
+              - cloudfront:TagResource
+              - cloudfront:UntagResource
+              - cloudfront:ListTagsForResource
+              - cloudfront:CreateInvalidation
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*'
+          # CloudFront's origin access controls and its cache / origin-request
+          # policies are account-level resources with NO ARN form at all, so
+          # IAM accepts only `*` for them. The actions stay enumerated, which
+          # is the only bound available here.
+          - Sid: CloudFrontAccountLevelResourcesCannotBeNameScoped
+            Effect: Allow
+            Action:
+              - cloudfront:CreateOriginAccessControl
+              - cloudfront:UpdateOriginAccessControl
+              - cloudfront:DeleteOriginAccessControl
+              - cloudfront:GetOriginAccessControl
+              - cloudfront:GetOriginAccessControlConfig
+              - cloudfront:CreateCachePolicy
+              - cloudfront:UpdateCachePolicy
+              - cloudfront:DeleteCachePolicy
+              - cloudfront:GetCachePolicy
+              - cloudfront:GetCachePolicyConfig
+              - cloudfront:CreateOriginRequestPolicy
+              - cloudfront:UpdateOriginRequestPolicy
+              - cloudfront:DeleteOriginRequestPolicy
+              - cloudfront:GetOriginRequestPolicy
+              - cloudfront:GetOriginRequestPolicyConfig
+              - cloudfront:CreateResponseHeadersPolicy
+              - cloudfront:UpdateResponseHeadersPolicy
+              - cloudfront:DeleteResponseHeadersPolicy
+              - cloudfront:GetResponseHeadersPolicy
+              - cloudfront:GetResponseHeadersPolicyConfig
+            Resource: '*'
+          - Sid: StaticAssetBucket
+            Effect: Allow
+            Action:
+              - s3:CreateBucket
+              - s3:GetBucketLocation
+              - s3:GetBucketPolicy
+              - s3:PutBucketPolicy
+              - s3:DeleteBucketPolicy
+              - s3:PutBucketPublicAccessBlock
+              - s3:GetBucketPublicAccessBlock
+              - s3:PutBucketVersioning
+              - s3:GetBucketVersioning
+              - s3:PutEncryptionConfiguration
+              - s3:GetEncryptionConfiguration
+              - s3:PutBucketOwnershipControls
+              - s3:GetBucketOwnershipControls
+              - s3:PutBucketTagging
+              - s3:GetBucketTagging
+              - s3:ListBucket
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ApplicationStackName}-*'
+          - Sid: StaticAssetObjects
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:PutObjectTagging
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::${ApplicationStackName}-*/*'
+          - Sid: ReadTheWebClientSecretAtDeployTime
+            Effect: Allow
+            Action:
+              # Read only, and only under this path: the owner creates the
+              # SecureString by hand, and the pipeline never writes it.
+              - ssm:GetParameter
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ApplicationStackName}/*'
+          - Sid: AttachTheCertificateToTheAccountDomain
+            Effect: Allow
+            Action:
+              # ListCertificates takes no resource, and DescribeCertificate's
+              # ARN carries a per-certificate id nobody can pin before the
+              # certificate exists.
+              - acm:DescribeCertificate
+              - acm:ListCertificates
+            Resource: '*'
+          - Sid: AccountDomainDnsRecord
+            Effect: Allow
+            Action:
+              - route53:ChangeResourceRecordSets
+              - route53:GetChange
+              - route53:ListResourceRecordSets
+              - route53:GetHostedZone
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}'
+              - !Sub 'arn:${AWS::Partition}:route53:::change/*'
 
 Outputs:
   DeployRoleArn:

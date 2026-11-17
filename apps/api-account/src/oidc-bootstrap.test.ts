@@ -25,8 +25,20 @@ import {
 const BOOTSTRAP = loadTemplate("infra/bootstrap/account-oidc-deploy.yaml");
 const ROLE = "AccountDeployRole";
 
-const STATEMENTS = statementsOf(BOOTSTRAP, ROLE);
-const ACTIONS = actionsOf(BOOTSTRAP, ROLE);
+/* IAM caps a role's inline policies at 10,240 bytes in aggregate, so part of the
+ * grant set lives in customer-managed policies attached to this one role. Every
+ * assertion below reads the union, so nothing can hide in either half. */
+const MANAGED_POLICIES = resourcesOfType(BOOTSTRAP, "AWS::IAM::ManagedPolicy");
+const MANAGED_STATEMENTS: IamStatement[] = MANAGED_POLICIES.flatMap(
+  ([, policy]) => policy.Properties.PolicyDocument.Statement as IamStatement[]
+);
+const STATEMENTS = [...statementsOf(BOOTSTRAP, ROLE), ...MANAGED_STATEMENTS];
+const ACTIONS = [
+  ...actionsOf(BOOTSTRAP, ROLE),
+  ...MANAGED_STATEMENTS.flatMap((entry) =>
+    Array.isArray(entry.Action) ? entry.Action : [entry.Action]
+  ),
+];
 
 function statement(sid: string): IamStatement {
   const found = STATEMENTS.find((entry) => entry.Sid === sid);
@@ -62,9 +74,30 @@ describe("the bootstrap is a reviewed, hand-applied template", () => {
     );
   });
 
-  it("creates exactly one role and nothing else at all", () => {
-    expect(Object.keys(BOOTSTRAP.resources)).toEqual([ROLE]);
+  it("creates exactly one role and only policies attached to it", () => {
     expect(resourcesOfType(BOOTSTRAP, "AWS::IAM::Role")).toHaveLength(1);
+    expect(Object.keys(BOOTSTRAP.resources).sort()).toEqual(
+      [ROLE, ...MANAGED_POLICIES.map(([id]) => id)].sort()
+    );
+    expect(MANAGED_POLICIES.length).toBeGreaterThan(0);
+    for (const [id, policy] of MANAGED_POLICIES) {
+      expect(policy.Properties.Roles, id).toEqual([{ __cfn: "Ref", value: ROLE }]);
+      expect(policy.Properties.Users, id).toBeUndefined();
+      expect(policy.Properties.Groups, id).toBeUndefined();
+    }
+  });
+
+  /* The limit the split exists for: IAM rejects a role whose inline policies
+   * total more than 10,240 non-whitespace bytes, and a managed policy over 6,144. */
+  it("keeps every policy under its IAM size limit", () => {
+    const compact = (value: unknown) => JSON.stringify(value).length;
+    const inline = (
+      BOOTSTRAP.resources[ROLE].Properties.Policies as { PolicyDocument: unknown }[]
+    ).reduce((total, policy) => total + compact(policy.PolicyDocument), 0);
+    expect(inline).toBeLessThan(10_240);
+    for (const [id, policy] of MANAGED_POLICIES) {
+      expect(compact(policy.Properties.PolicyDocument), id).toBeLessThan(6_144);
+    }
   });
 
   /* An account may hold only one provider per issuer URL; the hosted-AI
