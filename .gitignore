@@ -8,6 +8,7 @@ apps/web/.nitro/
 apps/web/.tanstack/
 apps/web/.lighthouseci/
 apps/api-bedrock/.aws-sam/
+apps/api-account/.aws-sam/
 
 # Tauri build/generated
 apps/desktop/src-tauri/target/

@@ -1,0 +1,38 @@
+{
+  "include": ["src", "vitest.config.ts"],
+  "exclude": ["node_modules", ".aws-sam", "dist"],
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "types": ["node"],
+
+    /* `jsx` and the DOM lib exist only so tsc can traverse the `@nixus/shared`
+       root barrel, which also re-exports the React UI surface. Service code has no
+       use for either; `no-restricted-globals` in eslint.config.js blocks the DOM
+       globals that are most likely to be reached for by accident. */
+    "lib": ["ES2023", "DOM"],
+    "jsx": "react-jsx",
+
+    /* Bundler mode — esbuild (Vitest) and the Makefile build, never tsc emit */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    /* Off deliberately: the 570 KB ISO 3166 catalog is typed by
+       src/types/iso3166.d.ts instead, so tsc never infers a type from 25k lines of
+       literal JSON on every typecheck. esbuild still bundles the file itself. */
+    "resolveJsonModule": false,
+    "isolatedModules": true,
+
+    /* Linting */
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}
