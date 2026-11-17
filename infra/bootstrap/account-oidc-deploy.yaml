@@ -194,6 +194,16 @@ Resources:
                   - cloudformation:UntagResource
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ApplicationStackName}/*'
+              # The pipeline asserts, before and after deploying, that the stack
+              # owning api.nixusapp.com exists and still maps the catch-all to its
+              # own API. Read-only: no change-set or update action reaches it.
+              - Sid: ReadTheBedrockStackThatOwnsTheDomain
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/nixus-bedrock-api/*'
               - Sid: TemplateValidationIsNotStackScoped
                 Effect: Allow
                 Action:

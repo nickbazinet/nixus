@@ -162,6 +162,25 @@ describe("the trust policy is an exact subject match", () => {
   });
 });
 
+describe("the Bedrock stack is readable and nothing more", () => {
+  it("grants only describe calls on nixus-bedrock-api", () => {
+    expect(statement("ReadTheBedrockStackThatOwnsTheDomain").Action).toEqual([
+      "cloudformation:DescribeStacks",
+      "cloudformation:DescribeStackResource",
+    ]);
+    expect(resourcesOf("ReadTheBedrockStackThatOwnsTheDomain")).toEqual([
+      "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/nixus-bedrock-api/*",
+    ]);
+    const writers = STATEMENTS.filter(
+      (entry) =>
+        entry.Effect === "Allow" &&
+        JSON.stringify(entry.Resource ?? "").includes("nixus-bedrock-api") &&
+        entry.Sid !== "ReadTheBedrockStackThatOwnsTheDomain"
+    );
+    expect(writers).toEqual([]);
+  });
+});
+
 describe("no administrator access and no wildcard actions", () => {
   it("attaches no managed policy", () => {
     expect(BOOTSTRAP.resources[ROLE].Properties.ManagedPolicyArns).toBeUndefined();
@@ -223,6 +242,8 @@ describe("no administrator access and no wildcard actions", () => {
           resource.includes("${CognitoUserPoolId}") ||
           resource.includes("${HostedZoneId}") ||
           resource.includes("nixus-sam-artifacts-") ||
+          // Read-only, and pinned by its own test below.
+          resource.endsWith(":stack/nixus-bedrock-api/*") ||
           // Budget, CloudFront distribution and Route 53 change ARNs carry no
           // name this stack controls.
           resource.includes("budget/") ||
