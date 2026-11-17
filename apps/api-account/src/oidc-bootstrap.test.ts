@@ -403,13 +403,12 @@ describe("Epic F resources are covered so the bootstrap is applied once", () => 
     }
   });
 
-  /* The web-function action NAMES are assumed from the service's operation
-   * names, and an action that does not exist is silently inert in a policy. The
-   * comment saying so is part of the contract. */
-  it("records which web-function facts were verified and which were assumed", () => {
+  /* An action that does not exist is silently inert in a policy, so the record of
+   * where the web-function action names were checked is part of the contract. */
+  it("records that the web-function action names were checked against the IAM reference", () => {
     expect(BOOTSTRAP.text).toContain("AWS::Lambda::WebFunction");
-    expect(BOOTSTRAP.text).toContain("ASSUMED");
-    expect(BOOTSTRAP.text).toContain("re-checked against the IAM reference");
+    expect(BOOTSTRAP.text).toContain("Service\n              # Authorization Reference for AWS Lambda");
+    expect(BOOTSTRAP.text).not.toContain("ASSUMED");
   });
 
   it("reads the web client secret only, under this stack's SSM path", () => {

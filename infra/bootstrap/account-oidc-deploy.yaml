@@ -314,13 +314,10 @@ Resources:
               # lambda:PutResourcePolicy, and the ARN resource type is
               # `web-function`.
               #
-              # ASSUMED, and to be re-checked against the IAM reference before the
-              # first Epic F deploy: the exact action NAMES below. They follow the
-              # service's own naming for the API operations, but a Lambda IAM
-              # action is not guaranteed to be named after its operation, and an
-              # action that does not exist is silently inert in a policy rather
-              # than an error - so a missing permission would surface as an
-              # AccessDenied on the first web-function deploy, not here.
+              # The action NAMES below were checked against the Service
+              # Authorization Reference for AWS Lambda (list_awslambda.html) on
+              # 2026-11-17: every one exists. That matters because an action that
+              # does not exist is silently inert in a policy rather than an error.
               - Sid: EpicFWebFunctions
                 Effect: Allow
                 Action:

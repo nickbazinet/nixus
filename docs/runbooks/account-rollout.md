@@ -283,8 +283,8 @@ aws ssm put-parameter \
   CloudFormation resource; it is applied after the deploy with
   `lambda:PutResourcePolicy`, which the role holds.
 
-The web-function IAM **action names** in the bootstrap are assumed from the
-service's operation names and are flagged as such in the template. An IAM action
-that does not exist is silently inert in a policy, so re-check them against the
-Lambda IAM reference before the first Epic F deploy — a missing one surfaces as an
-`AccessDenied` on that deploy, not on this bootstrap.
+The web-function IAM **action names** in the bootstrap were checked against the
+Service Authorization Reference for AWS Lambda on 2026-11-17. An IAM action that
+does not exist is silently inert in a policy, so re-check them whenever the list
+changes — a missing one surfaces as an `AccessDenied` on a deploy, not on this
+bootstrap.

@@ -113,8 +113,8 @@ describe("Epic F is covered by the one application of the bootstrap", () => {
     expect(RUNBOOK).toContain("lambda:PutResourcePolicy");
   });
 
-  it("records that the web-function action names are assumed, not verified", () => {
-    expect(RUNBOOK).toMatch(/assumed from the\s+service's operation\s+names/);
+  it("records where the web-function action names were verified", () => {
+    expect(RUNBOOK).toMatch(/checked against the\s+Service Authorization Reference for AWS Lambda/);
     expect(RUNBOOK).toContain("AccessDenied");
   });
 
