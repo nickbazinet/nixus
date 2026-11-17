@@ -72,6 +72,11 @@ async function setupRetirement(page: Page, options: MockOptions = {}) {
           case "get_retirement_employer_pension_cents":
           case "get_user_profile":
             return Promise.resolve(null);
+          case "get_profile_source":
+            return Promise.resolve({
+              kind: "cloud",
+              source_key: "cloud:default",
+            });
           case "get_auth_session":
             return Promise.resolve({
               status: "LoggedIn",

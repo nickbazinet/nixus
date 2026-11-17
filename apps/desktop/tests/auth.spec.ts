@@ -546,7 +546,7 @@ test.describe("header profile entry point", () => {
     );
   });
 
-  test("a local profile's trigger goes to the picker, reading no session and starting no cloud flow", async ({
+  test("a local profile's menu reaches the picker, reading no session and starting no cloud flow", async ({
     page,
   }) => {
     // A stored Cognito session is present on purpose: a local profile is unauthenticated whatever
@@ -561,7 +561,7 @@ test.describe("header profile entry point", () => {
 
     const trigger = page.getByTestId("profile-menu-trigger");
     await expect(trigger).toHaveAttribute("data-profile-kind", "local");
-    await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
+    await expect(trigger).toHaveAttribute("aria-label", "Profile menu");
     // Absent, not merely unset to some benign value: an auth-derived attribute here would mean the
     // header had an opinion about a session it is not allowed to have read.
     await expect(trigger).not.toHaveAttribute("data-auth-state");
@@ -574,6 +574,7 @@ test.describe("header profile entry point", () => {
     }
 
     await trigger.click();
+    await page.getByTestId("profile-menu-switch-profile").click();
 
     // A single click may never begin an OAuth round trip, because completing one creates or reopens
     // a cloud profile and switches the active profile away from the local one the user works in.
@@ -593,7 +594,7 @@ test.describe("header profile entry point", () => {
     await expect(cloud).toHaveAttribute("data-cloud-entry", "continue");
   });
 
-  test("a local profile's header offers switching profiles with no error state", async ({
+  test("a local profile's header offers its profile and switching, with no error state", async ({
     page,
   }) => {
     await setupTauriMock(page, {
@@ -607,8 +608,27 @@ test.describe("header profile entry point", () => {
 
     await expect(trigger).toBeVisible();
     await expect(trigger).toHaveAttribute("data-profile-kind", "local");
-    await expect(trigger).toHaveAttribute("aria-label", "Switch profile");
+    await expect(trigger).toHaveAttribute("aria-label", "Profile menu");
     await expect(trigger).not.toHaveAttribute("aria-label", /Nixus Cloud/);
+
+    // A local profile keeps demographics of its own on this computer, so the Profile entry is
+    // visible for it (AD-6) — and reaching it still costs no session read.
+    await trigger.click();
+    await expect(page.getByTestId("profile-menu-profile")).toBeVisible();
+    await expect(
+      page.getByTestId("profile-menu-switch-profile"),
+    ).toBeVisible();
+    for (const absent of [
+      "profile-menu-email",
+      "profile-menu-sign-out",
+      "profile-menu-cloud-action",
+      "profile-menu-cloud-status",
+      "profile-menu-premium",
+    ]) {
+      await expect(page.getByTestId(absent), absent).toHaveCount(0);
+    }
+    expect(await countIpcCalls(page, "get_auth_session")).toBe(0);
+    await page.keyboard.press("Escape");
 
     await expect(page.locator("[data-auth-state]")).toHaveCount(0);
     await expect(header).not.toContainText(/expired|error|failed/i);
@@ -778,15 +798,28 @@ test.describe("the account menu's Nixus Cloud entry points", () => {
 
     const trigger = page.getByTestId("profile-menu-trigger");
     await expect(trigger).toHaveAttribute("data-profile-kind", "local");
-    await expect(trigger).toHaveText("Switch profile");
 
+    // Closed, the header makes no claim at all; open, it carries the profile's own entries and
+    // none of the account's — no identity, no sign-out, and no cloud entry point, whatever the
+    // stored session says.
     for (const testId of [
       "profile-menu-panel",
       "profile-menu-cloud-status",
       "profile-menu-cloud-action",
       "profile-menu-email",
-      "profile-menu-profile",
       "profile-menu-sign-out",
+    ]) {
+      await expect(page.getByTestId(testId), testId).toHaveCount(0);
+    }
+
+    await trigger.click();
+    await expect(page.getByTestId("profile-menu-profile")).toBeVisible();
+    for (const testId of [
+      "profile-menu-cloud-status",
+      "profile-menu-cloud-action",
+      "profile-menu-email",
+      "profile-menu-sign-out",
+      "profile-menu-name",
     ]) {
       await expect(page.getByTestId(testId), testId).toHaveCount(0);
     }
@@ -937,7 +970,7 @@ test.describe("expired session", () => {
 
     const trigger = page.getByTestId("profile-menu-trigger");
     await expect(trigger).toHaveAttribute("data-profile-kind", "local");
-    await expect(trigger).toHaveText("Switch profile");
+    await expect(trigger).toHaveAttribute("aria-label", "Profile menu");
 
     // The expiry is not this profile's to announce: the caution styling the cloud-linked trigger
     // carries cannot be derived here from a session that was never read.

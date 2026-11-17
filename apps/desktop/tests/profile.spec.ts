@@ -10,10 +10,13 @@ type MockAuthState =
   | { status: "LoggedIn"; email: string; name: string | null }
   | { status: "SessionExpired" };
 
-/** `UserProfile` as `profile_store` writes it — snake_case, `schema_version` and `cognito_sub` included. */
+/**
+ * `ProfileView` as `commands::profile` returns it, for BOTH homes — snake_case, carrying the
+ * resolver's opaque `source_key`. A `cognito_sub` on this shape would be the regression the Rust
+ * boundary exists to prevent, so the mock cannot express one.
+ */
 interface MockUserProfile {
-  schema_version: number;
-  cognito_sub: string;
+  source_key: string;
   first_name: string | null;
   last_name: string | null;
   birth_date: string | null;
@@ -49,6 +52,12 @@ interface MockUserAvatar {
   mime_type: string;
   image_base64: string;
   uploaded_at: string;
+}
+
+/** `get_profile_source`'s wire shape: which home the resolver named, and its opaque key (AD-6). */
+interface MockProfileSource {
+  kind: "local" | "cloud" | "none";
+  source_key: string | null;
 }
 
 /** `get_active_profile`'s wire shape. The Cognito subject is deliberately absent from it (AD-10). */
@@ -104,6 +113,12 @@ interface AuthOptions {
    * must degrade to "Switch profile" under, since a Login would activate a cloud dataset instead.
    */
   activeProfile?: MockActiveProfile;
+  /**
+   * What `get_profile_source` answers. Omit to derive it from `activeProfile` exactly as the Rust
+   * resolver would — and, when that is unstubbed too, to answer with a Nixus Cloud source, which
+   * is the state every pre-existing spec in this file runs in.
+   */
+  profileSource?: MockProfileSource;
   /** What `list_datasets` answers, so the `/picker` destination renders its list rather than an error. */
   datasets?: MockDataset[];
   /**
@@ -301,6 +316,33 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               ? Promise.reject(`Unknown command: ${cmd}`)
               : Promise.resolve(opts.activeProfile);
 
+          // The resolver's answer, mirrored from the active dataset the same way Rust derives it:
+          // a local dataset names its own document, a cloud-linked one names its copy only while
+          // its own account is signed in, and anything else resolves to nothing.
+          case "get_profile_source": {
+            if (opts.profileSource !== undefined) {
+              return Promise.resolve(opts.profileSource);
+            }
+            const active = opts.activeProfile;
+            if (active === undefined) {
+              return Promise.resolve({
+                kind: "cloud",
+                source_key: "cloud:default",
+              });
+            }
+            if (active.kind === "local") {
+              return Promise.resolve({
+                kind: "local",
+                source_key: `local:${active.dataset_id}`,
+              });
+            }
+            return Promise.resolve(
+              active.is_signed_in
+                ? { kind: "cloud", source_key: `cloud:${active.dataset_id}` }
+                : { kind: "none", source_key: null },
+            );
+          }
+
           case "get_cloud_ai_premium":
             return opts.cloudAiPremium === undefined
               ? Promise.resolve(false)
@@ -331,8 +373,7 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               return settle(opts.save_user_profile);
             }
             return Promise.resolve({
-              schema_version: 1,
-              cognito_sub: "mock-sub",
+              source_key: (args.source_key as string | null) ?? "cloud:default",
               first_name: (args.first_name as string | null) ?? null,
               last_name: (args.last_name as string | null) ?? null,
               birth_date: (args.birth_date as string | null) ?? null,
@@ -585,8 +626,7 @@ const LOCATION_COUNTRIES: MockCountry[] = [
 ];
 
 const SAVED_PROFILE: MockUserProfile = {
-  schema_version: 1,
-  cognito_sub: "mock-sub",
+  source_key: "cloud:default",
   first_name: "Ada",
   last_name: "Lovelace",
   birth_date: "1985-03-14",
@@ -669,13 +709,17 @@ test.describe("profile entry point", () => {
     const requested = await readIpcCommands(page);
     expect(requested).not.toContain("get_user_profile");
     expect(requested).not.toContain("get_tfsa_accumulated_limit");
+    // The header derives the source key from the active profile it already reads, so the panel
+    // adds no command of its own either (D11) — the rule that keeps every other spec's mock from
+    // having to grow a case.
+    expect(requested).not.toContain("get_profile_source");
   });
 
-  test("a local profile's header offers no dropdown and no Profile item", async ({
+  test("a local profile's header offers its own Profile item and no account panel", async ({
     page,
   }) => {
-    // A local profile has no account, so there is nothing for a panel to show — and the Profile item
-    // in particular would lead to a surface that only an account can fill.
+    // A local profile keeps demographics on this computer, so the Profile entry is visible for it
+    // (AD-6) — while the account rows stay absent, because there is no account to describe.
     await setupTauriMock(page, {
       session: { status: "LoggedOut" },
       activeProfile: LOCAL_PROFILE,
@@ -684,8 +728,19 @@ test.describe("profile entry point", () => {
 
     const trigger = page.getByTestId("profile-menu-trigger");
     await expect(trigger).toHaveAttribute("data-profile-kind", "local");
-    await expect(page.getByTestId("profile-menu-profile")).toHaveCount(0);
     await expect(page.getByTestId("profile-menu-panel")).toHaveCount(0);
+
+    await trigger.click();
+    await expect(page.getByTestId("profile-menu-panel")).toBeVisible();
+    await expect(page.getByTestId("profile-menu-profile")).toBeVisible();
+    for (const absent of [
+      "profile-menu-email",
+      "profile-menu-sign-out",
+      "profile-menu-cloud-action",
+    ]) {
+      await expect(page.getByTestId(absent), absent).toHaveCount(0);
+    }
+    expect(await readIpcArgs(page, "get_auth_session")).toHaveLength(0);
   });
 });
 
@@ -831,14 +886,18 @@ test.describe("account menu hosted-AI entitlement", () => {
     });
     await openAccountMenu(page);
 
-    // The two actuable items, in the order they shipped. A status row that had joined the roving
-    // focus would insert itself here and strand a keyboard user on a label.
-    await page.keyboard.press("ArrowDown");
-    await expect(page.getByTestId("profile-menu-profile")).toBeFocused();
-    await page.keyboard.press("ArrowDown");
-    await expect(page.getByTestId("profile-menu-sign-out")).toBeFocused();
-    await page.keyboard.press("ArrowDown");
-    await expect(page.getByTestId("profile-menu-profile")).toBeFocused();
+    // Every actuable item, in the order they ship, and the wrap back to the first. A status row
+    // that had joined the roving focus would insert itself in this sequence and strand a keyboard
+    // user on a label.
+    for (const testId of [
+      "profile-menu-profile",
+      "profile-menu-switch-profile",
+      "profile-menu-sign-out",
+      "profile-menu-profile",
+    ]) {
+      await page.keyboard.press("ArrowDown");
+      await expect(page.getByTestId(testId), testId).toBeFocused();
+    }
   });
 
   test("an ineligible account makes no premium claim and gets no free-tier label", async ({
@@ -1081,38 +1140,68 @@ test.describe("/profile session guard", () => {
     );
   });
 
-  test("a local profile's guard switches profiles instead of signing in silently", async ({
+  test("a local profile edits its own demographics with no session at all", async ({
     page,
   }) => {
+    // The branch is on the dataset KIND, before any session is considered (AD-6): a local profile's
+    // demographics live on this computer, so the form is editable with no account — and reading the
+    // session here would open the OS secure store for a profile that has none.
     await setupTauriMock(page, {
-      session: { status: "LoggedOut" },
       activeProfile: LOCAL_PROFILE,
-      datasets: PICKER_DATASETS,
+      profile: {
+        ...SAVED_PROFILE,
+        source_key: `local:${LOCAL_PROFILE.dataset_id}`,
+      },
     });
     await page.goto("/profile");
 
-    const guard = page.getByTestId("profile-sign-in-required");
-    await expect(guard).toBeVisible();
-    // The whole point: completing a Login find-or-creates a cloud dataset and activates it, so this
-    // surface may not offer that in one click while a *local* profile is the one open.
-    await expect(page.getByTestId("profile-sign-in-action")).toHaveCount(0);
-    const switchProfile = page.getByTestId("profile-switch-profile-action");
-    await expect(switchProfile).toHaveText("Switch profile");
+    const page_ = page.getByTestId("profile-page");
+    await expect(page_).toHaveAttribute("data-auth-state", "local");
+    await expect(page_).toHaveAttribute("data-profile-source", "local");
+    await expect(page.getByTestId("profile-sign-in-required")).toHaveCount(0);
+    await expect(page.getByTestId("profile-local-description")).toBeVisible();
 
-    await switchProfile.click();
+    const firstName = page.getByTestId("profile-first-name");
+    await expect(firstName).toHaveValue("Ada");
+    await firstName.fill("Grace");
+    await page.getByTestId("profile-save").click();
+    await expect(toastCount(page)).toHaveCount(1);
 
-    // The destination is asserted, not just the URL: a picker that rendered its load error would
-    // leave the user with no way back and the assertion would still pass on the URL alone.
-    await expect(page).toHaveURL(/\/picker$/);
-    // The local list sits behind the launch screen's default-collapsed disclosure, so it is asked for
-    // before it is asserted.
-    await page.getByTestId("picker-local-disclosure").click();
-    await expect(page.getByTestId("picker-dataset-list")).toBeVisible();
-    await expect(page.getByTestId("picker-load-error")).toHaveCount(0);
-    const commands = await readIpcCommands(page);
-    expect(commands).not.toContain("start_login");
+    const [args] = await readIpcArgs(page, "save_user_profile");
+    expect((args as Record<string, unknown>).source_key).toBe(
+      `local:${LOCAL_PROFILE.dataset_id}`,
+    );
+    expect((args as Record<string, unknown>).first_name).toBe("Grace");
+
+    // The whole claim of the branch: no keyring read, and no identity on screen.
+    expect(await readIpcArgs(page, "get_auth_session")).toHaveLength(0);
+    expect(await readIpcArgs(page, "start_login")).toHaveLength(0);
+    await expect(page.getByTestId("profile-email")).toHaveCount(0);
   });
 
+  test("a local profile is offered no profile picture", async ({ page }) => {
+    // Avatars are Nixus Cloud-only (AD-6), so the control is absent rather than present-and-failing
+    // — and nothing on this surface asks for a picture that cannot exist.
+    await setupTauriMock(page, {
+      activeProfile: LOCAL_PROFILE,
+      profile: {
+        ...SAVED_PROFILE,
+        source_key: `local:${LOCAL_PROFILE.dataset_id}`,
+      },
+    });
+    await page.goto("/profile");
+
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+    await expect(page.getByTestId("profile-avatar")).toHaveCount(0);
+    await expect(page.getByTestId("profile-avatar-upload")).toHaveCount(0);
+    expect(await readIpcArgs(page, "get_user_avatar")).toHaveLength(0);
+    expect(await readIpcArgs(page, "set_user_avatar")).toHaveLength(0);
+  });
+
+  // The only row of this guard that still offers switching rather than signing in: a local profile
+  // no longer reaches the guard at all — it gets its own editable form above (AD-6) — so an
+  // unreadable kind is the remaining case where a one-click Login could cost the user their open
+  // profile.
   test("an unreadable active profile withholds the direct sign-in too", async ({
     page,
   }) => {
@@ -1213,10 +1302,13 @@ test.describe("/profile name form", () => {
 
     const [args] = await readIpcArgs(page, "save_user_profile");
     expect(args).toEqual({
+      // Threaded back so Rust can refuse a write aimed at a source that is no longer active; the
+      // Cognito subject is deliberately absent from it (D3).
+      source_key: "cloud:default",
       first_name: "Grace",
       last_name: "Lovelace",
       birth_date: "1985-03-14",
-  income_bracket: "100k_149k",
+      income_bracket: "100k_149k",
       income_bracket_currency: "CAD",
       country_code: "CA",
       subdivision_code: "CA-QC",
@@ -1246,12 +1338,18 @@ test.describe("/profile name form", () => {
     await setupTauriMock(page, {
       session: LOGGED_IN,
       profile: SAVED_PROFILE,
+      // The refusal carries no submitted value (AD-12): `field` and `reason` are the whole
+      // machine-readable cause, and the UI resolves its own EN/FR sentence from them. A `first_name`
+      // refusal has no reason-specific copy, so it lands on the generic one.
       save_user_profile: {
         kind: "reject",
         error: {
-          type: "validation",
-          message: "That first name is not acceptable",
+          type: "cloud_profile",
+          code: "validation",
+          message: "A profile field was refused.",
           field: "first_name",
+          reason: "invalid_format",
+          recoverable: true,
         },
       },
     });
@@ -1261,8 +1359,12 @@ test.describe("/profile name form", () => {
     await page.getByTestId("profile-save").click();
 
     await expect(
-      page.getByText("That first name is not acceptable"),
+      page.getByText("Nixus could not accept that value. Check it and try again."),
     ).toBeVisible();
+    // The fixed Rust sentence is never rendered: it is an internal diagnostic, not copy.
+    await expect(
+      page.getByText("A profile field was refused."),
+    ).toHaveCount(0);
     await expect(page.getByTestId("profile-first-name")).toHaveAttribute(
       "aria-invalid",
       "true",
@@ -1316,8 +1418,13 @@ test.describe("/profile name form", () => {
     await expect(save).toHaveText("Save");
   });
 
-  test("the form is absent in every non-signed-in state", async ({ page }) => {
-    await setupTauriMock(page, { session: { status: "SessionExpired" } });
+  test("the form is absent in every non-signed-in state of a cloud-linked profile", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: { status: "SessionExpired" },
+      activeProfile: CLOUD_PROFILE,
+    });
     await page.goto("/profile");
 
     await expect(page.getByTestId("profile-sign-in-required")).toBeVisible();
@@ -1403,9 +1510,12 @@ test.describe("/profile country selector", () => {
       save_user_profile: {
         kind: "reject",
         error: {
-          type: "validation",
-          message: "Invalid country code: ZZ",
+          type: "cloud_profile",
+          code: "validation",
+          message: "A profile field was refused.",
           field: "country_code",
+          reason: "not_allowed",
+          recoverable: true,
         },
       },
     });
@@ -1414,7 +1524,10 @@ test.describe("/profile country selector", () => {
     await expect(page.getByTestId("profile-country")).toHaveText("Canada");
     await page.getByTestId("profile-save").click();
 
-    await expect(page.getByText("Invalid country code: ZZ")).toBeVisible();
+    // The code the user picked is never echoed back at them: the refusal carries `not_allowed`
+    // and the UI owns the sentence (AD-12).
+    await expect(page.getByText("Pick a country from the list.")).toBeVisible();
+    await expect(page.getByText(/ZZ/)).toHaveCount(0);
     await expect(page.getByTestId("profile-country")).toHaveAttribute(
       "aria-invalid",
       "true",
@@ -1612,9 +1725,12 @@ test.describe("/profile subdivision selector", () => {
       save_user_profile: {
         kind: "reject",
         error: {
-          type: "validation",
-          message: "Invalid state, province, or region code: CA-QC",
+          type: "cloud_profile",
+          code: "validation",
+          message: "A profile field was refused.",
           field: "subdivision_code",
+          reason: "not_allowed",
+          recoverable: true,
         },
       },
     });
@@ -1626,7 +1742,7 @@ test.describe("/profile subdivision selector", () => {
     await page.getByTestId("profile-save").click();
 
     await expect(
-      page.getByText("Invalid state, province, or region code: CA-QC"),
+      page.getByText("Pick a state, province, or region from the list."),
     ).toBeVisible();
     await expect(page.getByTestId("profile-subdivision-trigger")).toHaveAttribute(
       "aria-invalid",
@@ -1829,9 +1945,12 @@ test.describe("/profile income bracket and currency", () => {
       save_user_profile: {
         kind: "reject",
         error: {
-          type: "validation",
-          message: "Select the currency your income bracket is in",
+          type: "cloud_profile",
+          code: "validation",
+          message: "A profile field was refused.",
           field: "income_bracket_currency",
+          reason: "required",
+          recoverable: true,
         },
       },
     });
@@ -1851,8 +1970,12 @@ test.describe("/profile income bracket and currency", () => {
       (args as Record<string, unknown>).income_bracket_currency,
     ).toBeNull();
 
+    // The field-specific copy, not the generic sentence: a bracket without a currency is reported
+    // against the currency the user has yet to pick, and the shipped wording says exactly that.
     await expect(
-      page.getByText("Select the currency your income bracket is in"),
+      page.getByText(
+        "Pick the currency this range is in so Nixus reads the scale correctly.",
+      ),
     ).toBeVisible();
     await expect(page.getByTestId("profile-income-currency")).toHaveAttribute(
       "aria-invalid",
@@ -1874,9 +1997,12 @@ test.describe("/profile income bracket and currency", () => {
       save_user_profile: {
         kind: "reject",
         error: {
-          type: "validation",
-          message: "Invalid income bracket: bracket-3",
+          type: "cloud_profile",
+          code: "validation",
+          message: "A profile field was refused.",
           field: "income_bracket",
+          reason: "not_allowed",
+          recoverable: true,
         },
       },
     });
@@ -1888,8 +2014,9 @@ test.describe("/profile income bracket and currency", () => {
     await page.getByTestId("profile-save").click();
 
     await expect(
-      page.getByText("Invalid income bracket: bracket-3"),
+      page.getByText("Pick an income range from the list."),
     ).toBeVisible();
+    await expect(page.getByText(/bracket-3/)).toHaveCount(0);
     await expect(page.getByTestId("profile-income-bracket")).toHaveAttribute(
       "aria-invalid",
       "true",
@@ -2092,9 +2219,13 @@ test.describe("profile picture", () => {
     await expect(page.getByTestId("profile-avatar-placeholder")).toHaveCount(0);
     await expect(page.getByTestId("profile-avatar-error")).toHaveCount(0);
 
-    // And exactly the picked path crossed IPC — never bytes, and never a subject
+    // And exactly the picked path plus the resolver's key crossed IPC — never bytes, and never a
+    // subject: the key names the DATASET, which is what lets it cross at all (D3)
     expect(await readIpcArgs(page, "set_user_avatar")).toEqual([
-      { file_path: PICKED_PATH },
+      {
+        source_key: `cloud:${CLOUD_PROFILE_SIGNED_IN.dataset_id}`,
+        file_path: PICKED_PATH,
+      },
     ]);
     // Validation ran before the write, so a bad file could never have reached the store
     const commands = await readIpcCommands(page);
@@ -2144,7 +2275,10 @@ test.describe("profile picture", () => {
     ).toHaveCount(0);
     // One write, not two: the replace is an upsert, never an add on top of a remove
     expect(await readIpcArgs(page, "set_user_avatar")).toEqual([
-      { file_path: PICKED_PATH },
+      {
+        source_key: `cloud:${CLOUD_PROFILE_SIGNED_IN.dataset_id}`,
+        file_path: PICKED_PATH,
+      },
     ]);
   });
 

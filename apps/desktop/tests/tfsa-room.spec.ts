@@ -181,6 +181,10 @@ const defaultAccounts = [
     switch (cmd) {
       case "get_tfsa_accumulated_limit":
         return resolveTfsa();
+      // Mounted wherever a demographic consumer is: the resolver names the home before any
+      // document is read (AD-6).
+      case "get_profile_source":
+        return Promise.resolve({ kind: "cloud", source_key: "cloud:default" });
       case "get_user_profile":
         return Promise.resolve(opts.profile ?? null);
       case "get_auth_session":

@@ -59,12 +59,20 @@ async function setupRetirementMock(page: Page, opts: RetirementMockOptions = {})
                   name: null,
                 })
               : Promise.reject(`Unknown command: ${cmd}`);
+          // The demographic source the resolver names (AD-6). A signed-in cloud profile resolves
+          // to its copy; without a session nothing resolves, which is what withholds the profile
+          // read entirely rather than answering it with null.
+          case "get_profile_source":
+            return Promise.resolve(
+              options.loggedIn
+                ? { kind: "cloud", source_key: "cloud:default" }
+                : { kind: "none", source_key: null },
+            );
           case "get_user_profile":
             return Promise.resolve(
               options.loggedIn
                 ? {
-                    schema_version: 1,
-                    cognito_sub: "mock-sub",
+                    source_key: "cloud:default",
                     first_name: null,
                     last_name: null,
                     birth_date: options.birthDate ?? null,

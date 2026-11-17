@@ -42,6 +42,11 @@ async function setupPage(page: Page, surface: Surface) {
               recoverable: true,
               prompt: null,
             });
+          case "get_profile_source":
+            return Promise.resolve({
+              kind: "cloud",
+              source_key: "cloud:default",
+            });
           case "get_user_avatar":
           case "get_user_profile":
             return Promise.resolve(null);
