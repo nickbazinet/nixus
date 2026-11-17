@@ -1,5 +1,6 @@
 /**
- * Regenerates `apps/desktop/src-tauri/data/iso3166.json`.
+ * Regenerates `packages/shared/data/iso3166.json`, the one canonical ISO 3166 dataset (AD-5):
+ * the desktop embeds it via `include_str!` and the profile Lambda bundles it.
  *
  * DEV-ONLY. Run by a human, deliberately, as `pnpm --filter @nixus/desktop generate:iso3166`;
  * the produced file is reviewed and committed. This script is never wired into `dev`, `build`,
@@ -43,7 +44,7 @@ const GENERATED_BY =
   "Never fetched at runtime, never wired into build or CI.";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
-const OUTPUT_PATH = resolve(SCRIPT_DIR, "../src-tauri/data/iso3166.json");
+const OUTPUT_PATH = resolve(SCRIPT_DIR, "../../../packages/shared/data/iso3166.json");
 
 async function fetchText(url) {
   const response = await fetch(url);

@@ -75,7 +75,9 @@ if matches "$ci|^packages/shared/|^(package\.json|pnpm-lock\.yaml|pnpm-workspace
   || grep '^apps/desktop/' <<< "$changed" | grep -qv "$crate"; then
   frontend=true
 fi
-if matches "$ci|$crate|^rust-toolchain\.toml$"; then rust=true; fi
+# The crate embeds the shared ISO dataset and its parity tests read the account contract,
+# so a change to either is a Rust change even though neither lives under the crate.
+if matches "$ci|$crate|^rust-toolchain\.toml$|^packages/shared/data/|^packages/shared/src/types/account(\.fixtures\.json|\.ts)$"; then rust=true; fi
 if matches "$ci|^rust-toolchain\.toml$|${crate}(src/(sync|db)/|migrations/|Cargo\.(toml|lock)$)"; then sync=true; fi
 if matches "$ci|^rust-toolchain\.toml$|${crate}(Cargo\.(toml|lock)|build\.rs|tauri\.conf\.json)$|${crate}\.cargo/"; then deps=true; fi
 

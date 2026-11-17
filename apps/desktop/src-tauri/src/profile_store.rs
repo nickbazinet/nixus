@@ -11,8 +11,9 @@ pub const PROFILE_SCHEMA_VERSION: u32 = 1;
 
 // Embedded at compile time so the country list is available on a first offline
 // run: `country_code` gates validation, and an empty catalog would leave the
-// field unfillable rather than merely unhelpful.
-const ISO3166_JSON: &str = include_str!("../data/iso3166.json");
+// field unfillable rather than merely unhelpful. The file is the single canonical
+// copy shared with the profile Lambda (AD-5); no second copy may exist.
+const ISO3166_JSON: &str = include_str!("../../../../packages/shared/data/iso3166.json");
 static ISO3166: OnceLock<Iso3166Dataset> = OnceLock::new();
 
 // Parsed once. Re-parsing ~570 KB on every get_countries call is avoidable.
