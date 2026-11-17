@@ -60,6 +60,23 @@ interface MockProfileSource {
   source_key: string | null;
 }
 
+/**
+ * `cloud_profile::CloudProfileStatus` as the three new commands answer it (AD-7): a lifecycle
+ * state, whether AD-8's prompt is owed, and whether there is a copy. No subject, no field value
+ * and no version — a `cognito_sub` on this shape would be the regression the Rust boundary exists
+ * to prevent, so the mock cannot express one.
+ */
+interface MockCloudProfileStatus {
+  state:
+    | "ready"
+    | "offline_with_copy"
+    | "offline_no_copy"
+    | "reauthentication_required"
+    | "signed_out";
+  consent_pending: boolean;
+  has_copy: boolean;
+}
+
 /** `get_active_profile`'s wire shape. The Cognito subject is deliberately absent from it (AD-10). */
 interface MockActiveProfile {
   dataset_id: string;
@@ -146,6 +163,19 @@ interface AuthOptions {
    */
   validateRejectField?: string | null;
   /**
+   * What `refresh_cloud_profile_now` and `get_cloud_profile_status` answer. Omit for a reachable
+   * profile with nothing owed, which is the state every pre-existing spec in this file runs in.
+   */
+  cloudStatus?: MockCloudProfileStatus;
+  /** Delays the status answer so the page's own pending window is assertable. */
+  cloudStatusDelayMs?: number;
+  refresh_cloud_profile_now?: CommandOutcome;
+  /**
+   * What `answer_profile_upload` answers. Omit to settle the prompt exactly as Rust does — accept
+   * and decline both retire it, and only accept turns an absent copy into a present one.
+   */
+  answer_profile_upload?: CommandOutcome;
+  /**
    * The `field` `set_user_avatar` refuses with, or omit to let the write land. Validation has
    * already passed by the time this fires, which is the only way to reach the
    * derivative-failure guard (`user_avatar_unprocessable`) with a picture already on screen.
@@ -205,6 +235,32 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
         // Storage unavailable: the seeded value still serves this page load.
       }
       return opts.avatar ?? null;
+    };
+    // Kept in `sessionStorage` for the same reason the avatar is: the init script re-runs on every
+    // navigation, and an answered consent has to outlive a reload or "never asked again" (AD-8) is
+    // not something a locator can see. Rust persists the same fact on the document itself.
+    const CLOUD_STATUS_KEY = "__nixus_profile_cloud_status__";
+    const seededStatus: MockCloudProfileStatus = opts.cloudStatus ?? {
+      state: "ready",
+      consent_pending: false,
+      has_copy: true,
+    };
+    const loadCloudStatus = (): MockCloudProfileStatus => {
+      try {
+        const raw = sessionStorage.getItem(CLOUD_STATUS_KEY);
+        if (raw !== null) return JSON.parse(raw) as MockCloudProfileStatus;
+      } catch {
+        // Storage unavailable: the seeded value still serves this page load.
+      }
+      return seededStatus;
+    };
+    let cloudStatus = loadCloudStatus();
+    const persistCloudStatus = () => {
+      try {
+        sessionStorage.setItem(CLOUD_STATUS_KEY, JSON.stringify(cloudStatus));
+      } catch {
+        // Nothing to do: the in-memory value still serves this page load.
+      }
     };
     let storedAvatar = loadAvatar();
     const persistAvatar = () => {
@@ -506,6 +562,32 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
               recoverable: true,
               prompt: null,
             });
+          // The Nixus Cloud lifecycle, held in a mutable local so an answered consent prompt stays
+          // answered for the rest of the page's life — exactly as Rust's per-subject state does.
+          case "refresh_cloud_profile_now":
+          case "get_cloud_profile_status":
+            if (opts.refresh_cloud_profile_now !== undefined) {
+              return settle(opts.refresh_cloud_profile_now);
+            }
+            return settle({
+              kind: "resolve",
+              value: cloudStatus,
+              delayMs: opts.cloudStatusDelayMs,
+            });
+
+          case "answer_profile_upload":
+            if (opts.answer_profile_upload !== undefined) {
+              return settle(opts.answer_profile_upload);
+            }
+            cloudStatus = {
+              state: "ready",
+              consent_pending: false,
+              has_copy:
+                cloudStatus.has_copy || (args.accept as boolean) === true,
+            };
+            persistCloudStatus();
+            return Promise.resolve(cloudStatus);
+
           // The account trigger is mounted on every screen, so this read must be answered even where
           // the surface under test has nothing to do with an account (see project-context.md, Testing).
           case "get_user_avatar":
@@ -1262,6 +1344,369 @@ test.describe("/profile session guard", () => {
     await expect(
       page.locator("nav").first().getByRole("link", { name: /profil/i }),
     ).toHaveCount(0);
+  });
+});
+
+test.describe("/profile Nixus Cloud lifecycle", () => {
+  /** The signed-in cloud profile every test here runs in, so only the lifecycle state varies. */
+  const signedIn = {
+    session: LOGGED_IN,
+    activeProfile: CLOUD_PROFILE_SIGNED_IN,
+  } as const;
+
+  test("opening the page refreshes the copy in Rust before it renders anything", async ({
+    page,
+  }) => {
+    // AD-7's "when the Profile page opens" trigger. Asserted as the command the page issues
+    // rather than as an effect, because the refresh itself is Rust's and leaves no DOM trace.
+    await setupTauriMock(page, signedIn);
+    await page.goto("/profile");
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+
+    const refreshes = (await readIpcCommands(page)).filter(
+      (cmd) => cmd === "refresh_cloud_profile_now",
+    );
+    expect(refreshes).toHaveLength(1);
+    expect(await readIpcArgs(page, "refresh_cloud_profile_now")).toEqual([
+      { source_key: `cloud:${CLOUD_PROFILE.dataset_id}` },
+    ]);
+  });
+
+  test("the refresh carries no identity across IPC", async ({ page }) => {
+    // D3: the subject is resolved in Rust and the page is handed the dataset-keyed source key
+    // instead, so a sub reaching this argument would be the leak the boundary exists to prevent.
+    await setupTauriMock(page, signedIn);
+    await page.goto("/profile");
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+
+    const serialized = JSON.stringify(
+      await readIpcArgs(page, "refresh_cloud_profile_now"),
+    );
+    expect(serialized).not.toContain("sub");
+    expect(serialized).not.toContain("cognito");
+  });
+
+  test("a pending refresh shows a skeleton and never flashes the form", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, { ...signedIn, cloudStatusDelayMs: 2000 });
+    await page.goto("/profile");
+
+    await expect(page.getByTestId("profile-cloud-skeleton")).toBeVisible();
+    await expect(page.getByTestId("profile-form")).toHaveCount(0);
+    await expect(page.getByTestId("profile-cloud-state")).toHaveCount(0);
+
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+  });
+
+  test("a session without the profile scope offers a fresh sign-in instead of the form", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      ...signedIn,
+      cloudStatus: {
+        state: "reauthentication_required",
+        consent_pending: false,
+        has_copy: true,
+      },
+    });
+    await page.goto("/profile");
+
+    const state = page.getByTestId("profile-cloud-state");
+    await expect(state).toBeVisible();
+    await expect(state).toHaveAttribute(
+      "data-cloud-state",
+      "reauthentication-required",
+    );
+    await expect(page.getByTestId("profile-form")).toHaveCount(0);
+    await expect(page.getByTestId("profile-avatar")).toHaveCount(0);
+    await expect(state).toContainText("Nixus Cloud");
+
+    // The one action, and it is the browser sign-in: a refresh grant cannot add a scope, so
+    // nothing short of a fresh sign-in repairs this state.
+    await page.getByTestId("profile-reauth-action").click();
+    expect(await readIpcArgs(page, "start_login")).toEqual([
+      { intent: { kind: "Login" }, entry: "SignIn" },
+    ]);
+  });
+
+  test("offline with a copy shows the copy, disables Save, and says why", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      ...signedIn,
+      profile: {
+        source_key: `cloud:${CLOUD_PROFILE.dataset_id}`,
+        first_name: "Ada",
+        last_name: "Lovelace",
+        birth_date: null,
+        income_bracket: null,
+        income_bracket_currency: null,
+        country_code: null,
+        subdivision_code: null,
+        created_at: "2026-01-01T00:00:00+00:00",
+        updated_at: "2026-01-01T00:00:00+00:00",
+      },
+      cloudStatus: {
+        state: "offline_with_copy",
+        consent_pending: false,
+        has_copy: true,
+      },
+    });
+    await page.goto("/profile");
+
+    // The copy is still worth reading, so the form renders and stays editable.
+    await expect(page.getByTestId("profile-first-name")).toHaveValue("Ada");
+    await expect(page.getByTestId("profile-offline-notice")).toBeVisible();
+    await expect(page.getByTestId("profile-save")).toBeDisabled();
+  });
+
+  test("offline with no copy asks for a connection and offers no form", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      ...signedIn,
+      cloudStatus: {
+        state: "offline_no_copy",
+        consent_pending: false,
+        has_copy: false,
+      },
+    });
+    await page.goto("/profile");
+
+    const state = page.getByTestId("profile-cloud-state");
+    await expect(state).toBeVisible();
+    await expect(state).toHaveAttribute("data-cloud-state", "offline-no-copy");
+    await expect(page.getByTestId("profile-form")).toHaveCount(0);
+    // No retry button: there is nothing to retry from inside the app.
+    await expect(state.getByRole("button")).toHaveCount(0);
+  });
+
+  test("a signed-out answer from the refresh falls back to the sign-in state", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      ...signedIn,
+      cloudStatus: {
+        state: "signed_out",
+        consent_pending: false,
+        has_copy: false,
+      },
+    });
+    await page.goto("/profile");
+
+    const guard = page.getByTestId("profile-sign-in-required");
+    await expect(guard).toBeVisible();
+    await expect(guard).toHaveAttribute("data-auth-state", "logged-out");
+    await expect(page.getByTestId("profile-form")).toHaveCount(0);
+  });
+
+  test("the lifecycle states are fully localized in French", async ({ page }) => {
+    await setupTauriMock(page, {
+      ...signedIn,
+      language: "fr",
+      cloudStatus: {
+        state: "reauthentication_required",
+        consent_pending: false,
+        has_copy: true,
+      },
+    });
+    await page.goto("/profile");
+
+    const state = page.getByTestId("profile-cloud-state");
+    await expect(state).toBeVisible();
+    await expect(state).not.toContainText("profile.");
+    // AD-16: the brand term stays untranslated on every surface.
+    await expect(state).toContainText("Nixus Cloud");
+    await expect(page.getByTestId("profile-reauth-action")).toHaveText(
+      "Se reconnecter",
+    );
+  });
+
+  test("a local profile never asks for a cloud lifecycle at all", async ({
+    page,
+  }) => {
+    // A local profile has no cloud lifecycle, and asking for one would be an IPC round trip for
+    // a profile that has no account.
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: LOCAL_PROFILE,
+    });
+    await page.goto("/profile");
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+
+    expect(await readIpcCommands(page)).not.toContain(
+      "refresh_cloud_profile_now",
+    );
+    await expect(page.getByTestId("profile-cloud-state")).toHaveCount(0);
+    await expect(page.getByTestId("profile-upload-consent")).toHaveCount(0);
+  });
+});
+
+test.describe("/profile first-upload consent", () => {
+  const pendingConsent = {
+    session: LOGGED_IN,
+    activeProfile: CLOUD_PROFILE_SIGNED_IN,
+    cloudStatus: {
+      state: "ready" as const,
+      consent_pending: true,
+      has_copy: true,
+    },
+  };
+
+  test("a pending consent asks once, above the details it is about", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, pendingConsent);
+    await page.goto("/profile");
+
+    const consent = page.getByTestId("profile-upload-consent");
+    await expect(consent).toBeVisible();
+
+    // AD-16: the in-app copy names the account, never a provider or a region.
+    await expect(consent).toContainText("Nixus Cloud");
+    for (const forbidden of ["AWS", "Amazon", "DynamoDB", "us-east-1", "United States"]) {
+      await expect(consent).not.toContainText(forbidden);
+    }
+
+    // The form stays on screen below it: a prompt that hid the details would ask the user to
+    // consent to something they cannot see.
+    const form = page.getByTestId("profile-form");
+    await expect(form).toBeVisible();
+    const consentBox = (await consent.boundingBox())!;
+    const formBox = (await form.boundingBox())!;
+    expect(consentBox.y).toBeLessThan(formBox.y);
+  });
+
+  test("accepting uploads and retires the prompt", async ({ page }) => {
+    await setupTauriMock(page, pendingConsent);
+    await page.goto("/profile");
+
+    await page.getByTestId("profile-upload-consent-accept").click();
+
+    await expect(page.getByTestId("profile-upload-consent")).toHaveCount(0);
+    expect(await readIpcArgs(page, "answer_profile_upload")).toEqual([
+      { source_key: `cloud:${CLOUD_PROFILE.dataset_id}`, accept: true },
+    ]);
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+  });
+
+  test("declining retires the prompt and is never asked again", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, pendingConsent);
+    await page.goto("/profile");
+
+    await page.getByTestId("profile-upload-consent-decline").click();
+
+    await expect(page.getByTestId("profile-upload-consent")).toHaveCount(0);
+    expect(await readIpcArgs(page, "answer_profile_upload")).toEqual([
+      { source_key: `cloud:${CLOUD_PROFILE.dataset_id}`, accept: false },
+    ]);
+
+    // The mock settles the answer the way Rust's per-subject state does, so a re-read of the
+    // status is what would resurrect the prompt if the decline were not recorded.
+    await page.reload();
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+    await expect(page.getByTestId("profile-upload-consent")).toHaveCount(0);
+  });
+
+  test("a refused answer reports the contract refusal and leaves the prompt up", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      ...pendingConsent,
+      answer_profile_upload: {
+        kind: "reject",
+        error: {
+          type: "cloud_profile",
+          message: "Your Nixus Cloud profile is temporarily unavailable.",
+          recoverable: true,
+        },
+      },
+    });
+    await page.goto("/profile");
+
+    await page.getByTestId("profile-upload-consent-accept").click();
+
+    await expect(toastCount(page)).toHaveCount(1);
+    await expect(toastCount(page).first()).toContainText(
+      "Your Nixus Cloud profile is unavailable right now. Try again shortly.",
+    );
+    // Nothing was uploaded, so the question still stands.
+    await expect(page.getByTestId("profile-upload-consent")).toBeVisible();
+  });
+
+  test("the consent prompt is fully localized in French", async ({ page }) => {
+    await setupTauriMock(page, { ...pendingConsent, language: "fr" });
+    await page.goto("/profile");
+
+    const consent = page.getByTestId("profile-upload-consent");
+    await expect(consent).toBeVisible();
+    await expect(consent).not.toContainText("profile.");
+    await expect(consent).toContainText("Nixus Cloud");
+    await expect(
+      page.getByTestId("profile-upload-consent-accept"),
+    ).toHaveText("Enregistrer dans mon compte");
+  });
+});
+
+/**
+ * GATE (AD-15): "an `ai.invoke`-only session shows re-sign-in, then the AD-8 prompt after
+ * re-sign-in" — the UI half of the Rust gate in `cloud_profile::e2e`.
+ *
+ * The two states in one test on purpose: the failure this gate exists for is the composition. A
+ * pre-upgrade user whose refresh is silently a no-op is never prompted and never told, so proving
+ * each state in isolation would prove nothing about the path between them (adversary C1).
+ */
+test.describe("/profile scope upgrade gate", () => {
+  test("an ai.invoke-only session shows re-sign-in, then the upload prompt after signing in again", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudStatus: {
+        state: "reauthentication_required",
+        consent_pending: false,
+        has_copy: true,
+      },
+    });
+    await page.goto("/profile");
+
+    const state = page.getByTestId("profile-cloud-state");
+    await expect(state).toHaveAttribute(
+      "data-cloud-state",
+      "reauthentication-required",
+    );
+    // The legacy details are NOT offered for upload yet: the prompt is owed only after a GET that
+    // actually reached the API, which this session cannot make.
+    await expect(page.getByTestId("profile-upload-consent")).toHaveCount(0);
+    await expect(page.getByTestId("profile-save")).toHaveCount(0);
+
+    await page.getByTestId("profile-reauth-action").click();
+    expect(await readIpcArgs(page, "start_login")).toEqual([
+      { intent: { kind: "Login" }, entry: "SignIn" },
+    ]);
+
+    // The fresh sign-in grants the scope, so the next refresh reaches the API, finds no cloud
+    // profile, and owes the AD-8 prompt for the legacy document still on disk.
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudStatus: {
+        state: "ready",
+        consent_pending: true,
+        has_copy: true,
+      },
+    });
+    await page.goto("/profile");
+
+    await expect(page.getByTestId("profile-cloud-state")).toHaveCount(0);
+    await expect(page.getByTestId("profile-upload-consent")).toBeVisible();
+    await expect(
+      page.getByTestId("profile-upload-consent-accept"),
+    ).toBeVisible();
   });
 });
 
