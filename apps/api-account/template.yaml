@@ -367,9 +367,17 @@ Resources:
   # expires_at is the TTL attribute and reclaims storage ONLY. DynamoDB deletes
   # expired items "within a few days", so idle and absolute expiry are both checked
   # in code on every read - without that, a stale cookie keeps working for days.
+  #
+  # Retain is NOT a data-protection claim here (there is deliberately no PITR): the
+  # deploy role holds no dynamodb:DeleteTable at all, by an assertion in
+  # src/oidc-bootstrap.test.ts, so Retain is the only deletion policy under which a
+  # failed CREATE can roll back instead of stalling in DELETE_FAILED. What makes
+  # that safe is the TTL: every retained row expires within seven days.
   # ---------------------------------------------------------------------------
   SessionTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub '${AWS::StackName}-sessions'
       BillingMode: PAY_PER_REQUEST
@@ -464,6 +472,11 @@ Resources:
   # ---------------------------------------------------------------------------
   AccountAssetsBucket:
     Type: AWS::S3::Bucket
+    # Retain for the same reason as the session table, plus one of its own:
+    # CloudFormation cannot delete a bucket that still has objects in it, and this
+    # one always does.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub '${AWS::StackName}-assets-${AWS::AccountId}'
       PublicAccessBlockConfiguration:

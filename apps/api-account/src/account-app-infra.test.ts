@@ -117,11 +117,16 @@ describe("AD-10 the session table", () => {
   });
 
   /* Disposable, unlike the profile table: every row is reconstructible by signing
-   * in again, and a retained table would outlive the stack holding live refresh
-   * tokens. */
-  it("is not retained, and has no point-in-time recovery", () => {
-    expect(session.DeletionPolicy).toBeUndefined();
+   * in again, so there is no point-in-time recovery to pay for.
+   *
+   * Retained all the same, and not as a data claim: the deploy role holds no
+   * dynamodb:DeleteTable - asserted in oidc-bootstrap.test.ts - so Retain is the
+   * only policy under which a failed CREATE rolls back rather than stalling. The
+   * TTL is what makes it safe: every retained row expires within seven days. */
+  it("has no point-in-time recovery, and is retained so a rollback can complete", () => {
     expect(session.Properties).not.toHaveProperty("PointInTimeRecoverySpecification");
+    expect(session.DeletionPolicy).toBe("Retain");
+    expect(session.UpdateReplacePolicy).toBe("Retain");
   });
 });
 
@@ -315,6 +320,14 @@ describe("AD-14 the distribution", () => {
 });
 
 describe("AD-14 the asset bucket", () => {
+  /* CloudFormation cannot delete a bucket that still holds objects, and this one
+   * always does - so a non-retained asset bucket turns any rollback into a
+   * DELETE_FAILED that needs an operator. */
+  it("is retained, because a rollback cannot delete a bucket with objects in it", () => {
+    expect(TEMPLATE.resources.AccountAssetsBucket.DeletionPolicy).toBe("Retain");
+    expect(TEMPLATE.resources.AccountAssetsBucket.UpdateReplacePolicy).toBe("Retain");
+  });
+
   it("blocks all public access and enforces bucket ownership", () => {
     expect(props("AccountAssetsBucket").PublicAccessBlockConfiguration).toEqual({
       BlockPublicAcls: true,
