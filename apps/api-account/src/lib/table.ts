@@ -25,9 +25,13 @@ export const VERSION_ATTRIBUTE = "version";
  * The claim must look like a Cognito `sub` before it becomes half of a partition
  * key (AD-3). A claim of any other shape is not a user this service has storage
  * for, so it is refused before a key exists at all.
+ *
+ * The 8-4-4-4-12 hex SHAPE only, deliberately not RFC 4122 version/variant bits:
+ * this pool issues subs such as `…-7055-4c26-…`, whose variant nibble is outside
+ * `[89ab]`, so a stricter pattern refuses every real user.
  */
 const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-9a-f][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function isUuidShaped(value: string): boolean {
   return UUID_PATTERN.test(value);

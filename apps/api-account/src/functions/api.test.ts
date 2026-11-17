@@ -98,6 +98,19 @@ describe("identity comes from the authorizer and must look like a sub", () => {
     expect(dynamo.sent).toEqual([]);
   });
 
+  /* Regression: the live pool issues subs whose version/variant nibbles are not
+   * RFC 4122 (here `7055` and `4c26`). The shape check must accept them. */
+  it("accepts a Cognito sub that is UUID-shaped but not RFC 4122 variant-conformant", async () => {
+    const response = await call({
+      route: "/",
+      method: "GET",
+      sub: "0123abcd-40e1-7055-4c26-6626acb8e19b",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.payload).toBeNull();
+  });
+
   it("never echoes the rejected claim or a composed key", async () => {
     const response = await call({
       route: "/",
