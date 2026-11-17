@@ -341,9 +341,6 @@ Resources:
                   - lambda:GetWebFunction
                   - lambda:GetWebFunctionRevision
                   - lambda:GetWebFunctionEndpoint
-                  - lambda:ListWebFunctions
-                  - lambda:ListWebFunctionRevisions
-                  - lambda:ListWebFunctionEndpoints
                   - lambda:PutResourcePolicy
                   - lambda:GetResourcePolicy
                   - lambda:DeleteResourcePolicy
@@ -351,6 +348,18 @@ Resources:
                   - lambda:UntagResource
                 Resource:
                   - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:web-function/${ApplicationStackName}-*'
+              # The three list operations take no resource at all, so IAM accepts
+              # only `*` for them. Scoping them to the web-function ARN prefix did
+              # not narrow anything - it made them silently inert, which surfaces as
+              # a mid-deploy AccessDenied on a call CloudFormation makes to
+              # reconcile the revision it just created.
+              - Sid: EpicFWebFunctionListsTakeNoResource
+                Effect: Allow
+                Action:
+                  - lambda:ListWebFunctions
+                  - lambda:ListWebFunctionRevisions
+                  - lambda:ListWebFunctionEndpoints
+                Resource: '*'
 
         # -------------------------------------------------------------------
         # Edge: the REST API, its stage, and the mapping under the shared domain.
@@ -397,8 +406,9 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # No DeleteTable at all, and the Deny above makes that structural for
-              # the profile table specifically.
+              # No DeleteTable at all, which is why BOTH tables carry
+              # `DeletionPolicy: Retain` - CloudFormation then skips deleting them
+              # on a rollback instead of stalling on an authorization failure.
               - Sid: ApplicationTables
                 Effect: Allow
                 Action:
@@ -546,6 +556,10 @@ Resources:
               - cloudfront:UntagResource
               - cloudfront:ListTagsForResource
               - cloudfront:CreateInvalidation
+              # The pipeline WAITS for the invalidation it created, so it has to be
+              # able to read it back. Without this the deploy reports success while
+              # the edge is still serving the previous assets.
+              - cloudfront:GetInvalidation
             Resource:
               - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*'
           # CloudFront's origin access controls and its cache / origin-request

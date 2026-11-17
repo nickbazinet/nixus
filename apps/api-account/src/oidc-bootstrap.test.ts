@@ -216,6 +216,7 @@ describe("no administrator access and no wildcard actions", () => {
     expect(unscoped.sort()).toEqual([
       "AttachTheCertificateToTheAccountDomain",
       "CloudFrontAccountLevelResourcesCannotBeNameScoped",
+      "EpicFWebFunctionListsTakeNoResource",
       "FindExplicitLogGroups",
       "TemplateValidationIsNotStackScoped",
     ]);
@@ -225,6 +226,7 @@ describe("no administrator access and no wildcard actions", () => {
     const exempt = new Set([
       "AttachTheCertificateToTheAccountDomain",
       "CloudFrontAccountLevelResourcesCannotBeNameScoped",
+      "EpicFWebFunctionListsTakeNoResource",
       "FindExplicitLogGroups",
       "TemplateValidationIsNotStackScoped",
     ]);
