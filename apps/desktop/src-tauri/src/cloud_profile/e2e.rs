@@ -22,9 +22,10 @@ use tempfile::TempDir;
 use tiny_http::{Header, Response, Server};
 
 use crate::avatar_store;
-use crate::cloud_profile::{
-    self, OFFLINE_NO_COPY, OFFLINE_WITH_COPY, READY, REAUTHENTICATION_REQUIRED, SIGNED_OUT,
+use super::state::{
+    OFFLINE_NO_COPY, OFFLINE_WITH_COPY, READY, REAUTHENTICATION_REQUIRED, SIGNED_OUT,
 };
+use crate::cloud_profile;
 use crate::credentials;
 use crate::error::AppError;
 use crate::models::{CognitoSession, UpdateUserProfileInput};

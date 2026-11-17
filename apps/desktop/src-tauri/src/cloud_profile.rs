@@ -8,21 +8,16 @@
 //!
 //! It holds no HTTP client of its own — every request goes through `profile_client.rs`, the sole
 //! profile network module (AD-9) — and no credential: the token is resolved inside that client.
-//!
-//! The per-subject state below is the Rust-internal mirror of `ai/hosted_state.rs`: keyed on the
-//! Cognito subject, never exposed over IPC, and read back only through `CloudProfileStatus`, which
-//! carries no identity and no profile value (AD-12).
+//! What each outcome means to the Profile page lives in `state`, beside it.
 
 #[cfg(test)]
 mod e2e;
+mod state;
 
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use serde::Serialize;
 use tracing::{info, warn};
 
 use crate::account_contract::{AVATAR_MAX_DECODED_BYTES, AVATAR_MIME_TYPES};
@@ -35,88 +30,11 @@ use crate::models::{
 use crate::profile_client::{self, ProfileClientError};
 use crate::profile_store::{self, CloudCopyState};
 
-pub(crate) const READY: &str = "ready";
-pub(crate) const OFFLINE_WITH_COPY: &str = "offline_with_copy";
-pub(crate) const OFFLINE_NO_COPY: &str = "offline_no_copy";
-pub(crate) const REAUTHENTICATION_REQUIRED: &str = "reauthentication_required";
-pub(crate) const SIGNED_OUT: &str = "signed_out";
-
-/// What the Profile page may know about the cloud lifecycle: a lifecycle state, whether AD-8's
-/// prompt is owed, and whether there is a copy to render. No subject, no field value, no version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CloudProfileStatus {
-    pub state: &'static str,
-    pub consent_pending: bool,
-    pub has_copy: bool,
-}
-
-impl CloudProfileStatus {
-    /// A local profile has no cloud lifecycle at all: nothing blocks editing and nothing is owed.
-    pub(crate) fn local() -> Self {
-        Self {
-            state: READY,
-            consent_pending: false,
-            has_copy: false,
-        }
-    }
-}
-
-/// The last outcome a refresh or save observed for one subject.
-///
-/// `Unknown` is the pre-first-refresh state and reads as `ready`: nothing is known to be wrong, and
-/// the page issues its own refresh on open before the user can act on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Reachability {
-    Unknown,
-    Ready,
-    Offline,
-    ReauthenticationRequired,
-    SignedOut,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct SubjectState {
-    reachability: Reachability,
-    consent_pending: bool,
-}
-
-impl Default for SubjectState {
-    fn default() -> Self {
-        Self {
-            reachability: Reachability::Unknown,
-            consent_pending: false,
-        }
-    }
-}
-
-fn states() -> &'static Mutex<HashMap<String, SubjectState>> {
-    static STATES: OnceLock<Mutex<HashMap<String, SubjectState>>> = OnceLock::new();
-    STATES.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn read_state(sub: &str) -> SubjectState {
-    states()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(sub)
-        .copied()
-        .unwrap_or_default()
-}
-
-fn update_state(sub: &str, mutate: impl FnOnce(&mut SubjectState)) {
-    let mut states = states()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    mutate(states.entry(sub.to_string()).or_default());
-}
+pub(crate) use state::{status, CloudProfileStatus};
+use state::{copy_state, reachability_for, update_state, Reachability};
 
 #[cfg(test)]
-pub(crate) fn forget_state(sub: &str) {
-    states()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .remove(sub);
-}
+pub(crate) use state::forget_state;
 
 /// Fixed English sentences, one per code, for the refusals this module raises itself.
 ///
@@ -146,46 +64,6 @@ fn code_of(error: &ProfileClientError) -> &str {
         ProfileClientError::VersionConflict { .. } => "version_conflict",
         ProfileClientError::Failed(AppError::CloudProfile { code, .. }) => code,
         ProfileClientError::Failed(_) => "unavailable",
-    }
-}
-
-fn reachability_for(code: &str) -> Reachability {
-    match code {
-        // The one refusal AD-7's "a failed refresh is silent" does not cover: a refresh grant
-        // cannot add a scope, so only a fresh sign-in repairs it (adversary C1).
-        "reauthentication_required" => Reachability::ReauthenticationRequired,
-        "unauthorized" => Reachability::SignedOut,
-        _ => Reachability::Offline,
-    }
-}
-
-fn copy_state(dir: &Path, sub: &str) -> CloudCopyState {
-    profile_store::probe_cloud_copy(dir, sub).unwrap_or(CloudCopyState::Unreadable)
-}
-
-fn has_copy(state: &CloudCopyState) -> bool {
-    matches!(
-        state,
-        CloudCopyState::Legacy | CloudCopyState::Declined | CloudCopyState::Synced(_)
-    )
-}
-
-/// The lifecycle state as it stands, with no request issued.
-pub(crate) fn status(dir: &Path, sub: &str) -> CloudProfileStatus {
-    let state = read_state(sub);
-    let copy = copy_state(dir, sub);
-    let has_copy = has_copy(&copy);
-
-    CloudProfileStatus {
-        state: match state.reachability {
-            Reachability::ReauthenticationRequired => REAUTHENTICATION_REQUIRED,
-            Reachability::SignedOut => SIGNED_OUT,
-            Reachability::Offline if has_copy => OFFLINE_WITH_COPY,
-            Reachability::Offline => OFFLINE_NO_COPY,
-            Reachability::Unknown | Reachability::Ready => READY,
-        },
-        consent_pending: state.consent_pending,
-        has_copy,
     }
 }
 
@@ -543,37 +421,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_absent_copy_reads_as_ready_with_nothing_to_render() {
-        let root = TempDir::new().expect("temp dir");
-        forget_state(SUB);
 
-        let status = status(&dir(&root), SUB);
-        assert_eq!(status.state, READY);
-        assert!(!status.has_copy);
-        assert!(!status.consent_pending);
-    }
 
-    #[test]
-    fn a_refused_scope_is_the_one_outcome_that_is_never_silent() {
-        assert_eq!(
-            reachability_for("reauthentication_required"),
-            Reachability::ReauthenticationRequired
-        );
-        assert_eq!(reachability_for("unauthorized"), Reachability::SignedOut);
-        for code in ["unavailable", "rate_limited", "validation", "whatever"] {
-            assert_eq!(reachability_for(code), Reachability::Offline);
-        }
-    }
-
-    #[test]
-    fn offline_distinguishes_a_copy_it_can_render_from_one_it_cannot() {
-        assert!(has_copy(&CloudCopyState::Legacy));
-        assert!(has_copy(&CloudCopyState::Declined));
-        assert!(has_copy(&CloudCopyState::Synced(3)));
-        assert!(!has_copy(&CloudCopyState::Absent));
-        assert!(!has_copy(&CloudCopyState::Unreadable));
-    }
 
     // A legacy, declined or unreadable copy carries no server version, so the `PUT` must be
     // create-only rather than conditional on a number nobody has.
@@ -639,11 +488,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_local_profile_has_no_cloud_lifecycle() {
-        let status = CloudProfileStatus::local();
-        assert_eq!(status.state, READY);
-        assert!(!status.consent_pending);
-        assert!(!status.has_copy);
-    }
 }
