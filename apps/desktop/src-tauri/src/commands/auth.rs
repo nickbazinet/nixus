@@ -53,7 +53,18 @@ pub const COGNITO_SIGNOUT_URI: &str = "nixus://auth/signout";
 /// classified as `reauthentication_required` rather than retried.
 pub const HOSTED_AI_SCOPE: &str = "nixus-api/ai.invoke";
 
-pub const COGNITO_SCOPES: &str = "openid email profile nixus-api/ai.invoke";
+/// Resource-server scope required by every `apps/api-account` profile route (AD-3,
+/// AD-9). Classified exactly like `HOSTED_AI_SCOPE`: the refresh grant replays the
+/// originally granted scopes, so a pre-upgrade session can never acquire this one
+/// and its absence is `reauthentication_required` rather than a retry.
+#[allow(dead_code)] // WHY: read by `profile_client`, which lands in the next commit of this epic.
+pub(crate) const PROFILE_SCOPE: &str = "nixus-api/profile";
+
+/// The one scope set every authorize request asks for. A caller's required scope is
+/// only ever *verified* against the granted claim (AD-9) — narrowing a request to a
+/// single scope would hand back a token that no longer satisfies the other callers.
+pub const COGNITO_SCOPES: &str =
+    "openid email profile nixus-api/ai.invoke nixus-api/profile";
 
 /// Proactive refresh margin for call-time tokens (AD-10). Deliberately non-zero:
 /// a token that passes an expiry check and then expires in flight would surface to
@@ -986,6 +997,43 @@ enum ResolvedSession {
     Expired,
 }
 
+/// Whether `refreshed` would drop a scope the stored grant already carried.
+///
+/// Pure, and deliberately tolerant of an unreadable *previous* token (there is no grant
+/// left to protect) while strict about an unreadable *refreshed* one: its scope set reads
+/// as empty, so it narrows anything and is refused.
+fn narrows_granted_scopes(previous_access_token: &str, refreshed_access_token: &str) -> bool {
+    let previous = access_token_scopes(previous_access_token).unwrap_or_default();
+    let refreshed = access_token_scopes(refreshed_access_token).unwrap_or_default();
+
+    previous.iter().any(|scope| !refreshed.contains(scope))
+}
+
+/// Persists a refreshed session, unless adopting it would narrow the stored grant (AD-9).
+///
+/// `Ok(None)` means "not adopted", and every caller treats it exactly like a refresh that
+/// did not complete: the stored session is left byte-identical so a later, correct refresh
+/// can still succeed, and the user is sent through a fresh sign-in — which is the only
+/// repair for a grant that lost a scope, since the refresh grant cannot add one back.
+fn adopt_refreshed_session(
+    previous: &CognitoSession,
+    refreshed: CognitoSession,
+) -> Result<Option<CognitoSession>, AppError> {
+    if narrows_granted_scopes(&previous.access_token, &refreshed.access_token) {
+        // Only the fact is logged: the scope claim is read off a bearer credential.
+        tracing::error!(
+            "Refused a refreshed Cognito session that narrowed the granted scope set"
+        );
+        return Ok(None);
+    }
+
+    // Same keyring service and account as the original entry, so this overwrites it
+    // rather than creating a second one, and it goes through the sole accessor.
+    credentials::store_cognito_session(&refreshed)?;
+
+    Ok(Some(refreshed))
+}
+
 async fn resolve_session() -> Result<ResolvedSession, AppError> {
     // A malformed keyring blob propagates as a recoverable error (AC 12) rather
     // than being smoothed into `LoggedOut`, which would hide the real problem.
@@ -1006,12 +1054,10 @@ async fn resolve_session() -> Result<ResolvedSession, AppError> {
         None => return Ok(ResolvedSession::Expired),
     };
 
-    // Same keyring service and account as the original entry, so this overwrites
-    // it rather than creating a second one (AC 3's "in place"), and it goes
-    // through the sole accessor.
-    credentials::store_cognito_session(&refreshed)?;
-
-    Ok(ResolvedSession::Refreshed(refreshed))
+    match adopt_refreshed_session(&session, refreshed)? {
+        Some(adopted) => Ok(ResolvedSession::Refreshed(adopted)),
+        None => Ok(ResolvedSession::Expired),
+    }
 }
 
 /// Resolves the session for the frontend. The network is touched only when the
@@ -1164,67 +1210,78 @@ fn access_token_scopes(access_token: &str) -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-fn access_token_has_hosted_scope(access_token: &str) -> Result<bool, AppError> {
+fn access_token_grants(access_token: &str, required_scope: &str) -> Result<bool, AppError> {
     Ok(access_token_scopes(access_token)?
         .iter()
-        .any(|scope| scope == HOSTED_AI_SCOPE))
+        .any(|scope| scope == required_scope))
 }
 
-/// Outcome of resolving a call-time hosted-AI credential (AD-10).
-pub(crate) enum HostedAiAuth {
+/// Outcome of resolving a call-time access token for one required scope (AD-9).
+///
+/// Scope-agnostic on purpose: this type carries no hosted-AI or profile semantics, so
+/// the side effects either caller needs — clearing the hosted status cache, surfacing a
+/// re-sign-in state on the Profile page — belong to that caller, not here.
+pub(crate) enum AccessTokenAuth {
     Ready {
         access_token: String,
         subject_sub: String,
     },
-    /// The token is valid but structurally lacks `nixus-api/ai.invoke`. A refresh
-    /// cannot add a scope to an existing grant, so this demands a full sign-in.
+    /// The token is valid but structurally lacks the required scope. Cognito's refresh
+    /// grant replays the originally granted scopes and cannot add one, so this demands
+    /// a full sign-in rather than a retry.
     ReauthenticationRequired,
     SignedOut,
 }
 
-/// Returns a call-time access token, refreshed proactively at the 120-second skew.
-/// The hosted adapter goes through here and never touches `credentials.rs` itself,
-/// which stays the sole keyring accessor.
-pub(crate) async fn hosted_ai_token() -> Result<HostedAiAuth, AppError> {
-    hosted_ai_auth_from_resolved(resolve_session().await?)
+/// The one call-time access-token accessor (AD-9), refreshed proactively at the
+/// 120-second skew by `resolve_session`.
+///
+/// `required_scope` is **verified** against the granted `scope` claim and never
+/// requested: every grant asks for the whole `COGNITO_SCOPES` set, so one caller can
+/// never hand another a token it cannot use. Callers go through here and never touch
+/// `credentials.rs`, which stays the sole keyring accessor.
+pub(crate) async fn access_token(required_scope: &str) -> Result<AccessTokenAuth, AppError> {
+    access_token_from_resolved(resolve_session().await?, required_scope)
 }
 
-/// Forces one refresh regardless of local expiry, for the single 401 retry the
-/// closed fallback table allows. A `401` can mean the server rejected a token this
-/// device still considers live, which a skew check alone cannot detect.
-pub(crate) async fn refresh_hosted_ai_token() -> Result<HostedAiAuth, AppError> {
+/// Forces one refresh regardless of local expiry, for the single 401 retry each
+/// caller allows. A `401` can mean the server rejected a token this device still
+/// considers live, which a skew check alone cannot detect.
+pub(crate) async fn refresh_access_token(
+    required_scope: &str,
+) -> Result<AccessTokenAuth, AppError> {
     let session = match credentials::load_cognito_session()? {
         Some(session) => session,
-        None => return Ok(HostedAiAuth::SignedOut),
+        None => return Ok(AccessTokenAuth::SignedOut),
     };
 
     let refreshed = match refresh_session(&session).await? {
         Some(refreshed) => refreshed,
-        None => {
-            crate::ai::hosted_state::clear();
-            return Ok(HostedAiAuth::SignedOut);
-        }
+        None => return Ok(AccessTokenAuth::SignedOut),
     };
 
-    credentials::store_cognito_session(&refreshed)?;
-    hosted_ai_auth_from_resolved(ResolvedSession::Refreshed(refreshed))
+    match adopt_refreshed_session(&session, refreshed)? {
+        Some(adopted) => {
+            access_token_from_resolved(ResolvedSession::Refreshed(adopted), required_scope)
+        }
+        None => Ok(AccessTokenAuth::SignedOut),
+    }
 }
 
 /// Split out so every branch is unit-testable without a keyring or network.
-fn hosted_ai_auth_from_resolved(resolved: ResolvedSession) -> Result<HostedAiAuth, AppError> {
+fn access_token_from_resolved(
+    resolved: ResolvedSession,
+    required_scope: &str,
+) -> Result<AccessTokenAuth, AppError> {
     let session = match resolved {
         ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => session,
         ResolvedSession::None | ResolvedSession::Expired => {
-            // No hosted call may be attempted, and no status may survive, while
-            // there is no usable session (AD-9 cache rules).
-            crate::ai::hosted_state::clear();
-            return Ok(HostedAiAuth::SignedOut);
+            return Ok(AccessTokenAuth::SignedOut)
         }
     };
 
-    if !access_token_has_hosted_scope(&session.access_token)? {
-        crate::ai::hosted_state::clear();
-        return Ok(HostedAiAuth::ReauthenticationRequired);
+    if !access_token_grants(&session.access_token, required_scope)? {
+        return Ok(AccessTokenAuth::ReauthenticationRequired);
     }
 
     let claims = decode_id_token_claims(&session.id_token)?;
@@ -1232,7 +1289,7 @@ fn hosted_ai_auth_from_resolved(resolved: ResolvedSession) -> Result<HostedAiAut
         return Err(unreadable_session_error());
     }
 
-    Ok(HostedAiAuth::Ready {
+    Ok(AccessTokenAuth::Ready {
         access_token: session.access_token,
         subject_sub: claims.sub,
     })
@@ -1240,7 +1297,7 @@ fn hosted_ai_auth_from_resolved(resolved: ResolvedSession) -> Result<HostedAiAut
 
 /// Outcome of resolving a call-time **ID** token for sync (AD-7, inherited AD-10).
 ///
-/// Separate from `HostedAiAuth` because the two credentials differ: hosted AI presents
+/// Separate from `AccessTokenAuth` because the two credentials differ: hosted AI presents
 /// the *access* token to `apps/api-bedrock` and needs the `nixus-api/ai.invoke` scope,
 /// while the identity pool consumes the *id* token and no scope applies to it. Folding
 /// them together would make a missing AI scope block sync, which is wrong.
@@ -1357,6 +1414,24 @@ mod tests {
         assert_eq!(HOSTED_AI_SCOPE, "nixus-api/ai.invoke");
     }
 
+    /// Same reasoning as the hosted-AI scope one row up, for the profile API (AD-9).
+    #[test]
+    fn scopes_include_the_profile_resource_server_scope() {
+        let scopes: Vec<&str> = COGNITO_SCOPES.split(' ').collect();
+        assert!(scopes.contains(&PROFILE_SCOPE));
+        assert_eq!(PROFILE_SCOPE, "nixus-api/profile");
+    }
+
+    /// Both resource-server scopes travel on one grant, so neither caller can be
+    /// served by a token the other cannot use (AD-9's "never narrows").
+    #[test]
+    fn the_requested_scope_set_is_byte_exact() {
+        assert_eq!(
+            COGNITO_SCOPES,
+            "openid email profile nixus-api/ai.invoke nixus-api/profile"
+        );
+    }
+
     #[test]
     fn client_id_is_populated() {
         assert!(!COGNITO_CLIENT_ID.starts_with("REPLACE_WITH"));
@@ -1450,7 +1525,7 @@ mod tests {
              ?response_type=code\
              &client_id=6525109r95las7odvuesf13joj\
              &redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback\
-             &scope=openid%20email%20profile%20nixus-api%2Fai.invoke\
+             &scope=openid%20email%20profile%20nixus-api%2Fai.invoke%20nixus-api%2Fprofile\
              &code_challenge=CHALLENGE\
              &code_challenge_method=S256\
              &state=STATE\
@@ -1469,7 +1544,7 @@ mod tests {
              ?response_type=code\
              &client_id=6525109r95las7odvuesf13joj\
              &redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback\
-             &scope=openid%20email%20profile%20nixus-api%2Fai.invoke\
+             &scope=openid%20email%20profile%20nixus-api%2Fai.invoke%20nixus-api%2Fprofile\
              &code_challenge=CHALLENGE\
              &code_challenge_method=S256\
              &state=STATE"
@@ -1919,28 +1994,44 @@ mod tests {
     fn a_missing_scope_claim_yields_no_scopes_rather_than_an_error() {
         let token = id_token_with_payload(r#"{"sub":"abc-123","token_use":"access"}"#);
         assert_eq!(access_token_scopes(&token).unwrap(), Vec::<String>::new());
-        assert!(!access_token_has_hosted_scope(&token).unwrap());
+        assert!(!access_token_grants(&token, HOSTED_AI_SCOPE).unwrap());
+        assert!(!access_token_grants(&token, PROFILE_SCOPE).unwrap());
     }
 
     #[test]
-    fn hosted_scope_detection_requires_a_whole_token_match() {
-        assert!(
-            access_token_has_hosted_scope(&access_token_with_scope("nixus-api/ai.invoke")).unwrap()
-        );
-        assert!(access_token_has_hosted_scope(&access_token_with_scope(
-            "openid nixus-api/ai.invoke profile"
-        ))
+    fn scope_detection_requires_a_whole_token_match() {
+        assert!(access_token_grants(
+            &access_token_with_scope("nixus-api/ai.invoke"),
+            HOSTED_AI_SCOPE
+        )
+        .unwrap());
+        assert!(access_token_grants(
+            &access_token_with_scope("openid nixus-api/ai.invoke profile"),
+            HOSTED_AI_SCOPE
+        )
         .unwrap());
 
         // A prefix match would wrongly accept a differently-scoped grant.
-        assert!(!access_token_has_hosted_scope(&access_token_with_scope(
-            "nixus-api/ai.invoke.readonly"
-        ))
+        assert!(!access_token_grants(
+            &access_token_with_scope("nixus-api/ai.invoke.readonly"),
+            HOSTED_AI_SCOPE
+        )
         .unwrap());
         assert!(
-            !access_token_has_hosted_scope(&access_token_with_scope("nixus-api/ai")).unwrap()
+            !access_token_grants(&access_token_with_scope("nixus-api/ai"), HOSTED_AI_SCOPE).unwrap()
         );
-        assert!(!access_token_has_hosted_scope(&access_token_with_scope("openid")).unwrap());
+        assert!(!access_token_grants(&access_token_with_scope("openid"), HOSTED_AI_SCOPE).unwrap());
+
+        assert!(access_token_grants(
+            &access_token_with_scope("openid nixus-api/profile"),
+            PROFILE_SCOPE
+        )
+        .unwrap());
+        assert!(!access_token_grants(
+            &access_token_with_scope("nixus-api/profile.readonly"),
+            PROFILE_SCOPE
+        )
+        .unwrap());
     }
 
     #[test]
@@ -1954,8 +2045,8 @@ mod tests {
         let _guard = credentials::test_keyring_guard();
 
         let resolved = ResolvedSession::Live(hosted_session("openid nixus-api/ai.invoke"));
-        match hosted_ai_auth_from_resolved(resolved).unwrap() {
-            HostedAiAuth::Ready {
+        match access_token_from_resolved(resolved, HOSTED_AI_SCOPE).unwrap() {
+            AccessTokenAuth::Ready {
                 access_token,
                 subject_sub,
             } => {
@@ -1972,8 +2063,8 @@ mod tests {
 
         let resolved = ResolvedSession::Refreshed(hosted_session("nixus-api/ai.invoke"));
         assert!(matches!(
-            hosted_ai_auth_from_resolved(resolved).unwrap(),
-            HostedAiAuth::Ready { .. }
+            access_token_from_resolved(resolved, HOSTED_AI_SCOPE).unwrap(),
+            AccessTokenAuth::Ready { .. }
         ));
     }
 
@@ -1985,9 +2076,53 @@ mod tests {
 
         let resolved = ResolvedSession::Live(hosted_session("openid email profile"));
         assert!(matches!(
-            hosted_ai_auth_from_resolved(resolved).unwrap(),
-            HostedAiAuth::ReauthenticationRequired
+            access_token_from_resolved(resolved, HOSTED_AI_SCOPE).unwrap(),
+            AccessTokenAuth::ReauthenticationRequired
         ));
+    }
+
+    /// The pre-upgrade cohort (C1/C5): a grant issued before `nixus-api/profile` existed
+    /// serves hosted AI exactly as before and refuses only the profile scope. One accessor
+    /// must not let one caller's missing scope become the other caller's failure.
+    #[test]
+    fn a_missing_scope_is_refused_per_caller_and_not_for_the_whole_session() {
+        let _guard = credentials::test_keyring_guard();
+
+        let session = hosted_session("openid email profile nixus-api/ai.invoke");
+
+        assert!(matches!(
+            access_token_from_resolved(ResolvedSession::Live(session.clone()), PROFILE_SCOPE)
+                .unwrap(),
+            AccessTokenAuth::ReauthenticationRequired
+        ));
+        assert!(matches!(
+            access_token_from_resolved(ResolvedSession::Live(session), HOSTED_AI_SCOPE).unwrap(),
+            AccessTokenAuth::Ready { .. }
+        ));
+    }
+
+    /// The accessor is scope-agnostic: a profile-scope refusal must not take the hosted
+    /// path's subject-bound premium/quota answer with it (AD-9). The hosted adapter owns
+    /// that clearing, and `ai::hosted_bedrock` tests it.
+    #[test]
+    fn a_profile_scope_refusal_leaves_the_hosted_status_cache_alone() {
+        let _guard = credentials::test_keyring_guard();
+
+        crate::ai::hosted_state::store(
+            "abc-123",
+            crate::ai::hosted_state::HostedAiStatus {
+                premium: true,
+                monthly_request_limit: 100,
+                charged_count: 0,
+                period: "2026-08".to_string(),
+            },
+        );
+
+        let session = hosted_session("openid email profile nixus-api/ai.invoke");
+        access_token_from_resolved(ResolvedSession::Live(session), PROFILE_SCOPE).unwrap();
+
+        assert!(crate::ai::hosted_state::get_fresh("abc-123").is_some());
+        crate::ai::hosted_state::clear();
     }
 
     #[test]
@@ -1995,53 +2130,13 @@ mod tests {
         let _guard = credentials::test_keyring_guard();
 
         assert!(matches!(
-            hosted_ai_auth_from_resolved(ResolvedSession::None).unwrap(),
-            HostedAiAuth::SignedOut
+            access_token_from_resolved(ResolvedSession::None, HOSTED_AI_SCOPE).unwrap(),
+            AccessTokenAuth::SignedOut
         ));
         assert!(matches!(
-            hosted_ai_auth_from_resolved(ResolvedSession::Expired).unwrap(),
-            HostedAiAuth::SignedOut
+            access_token_from_resolved(ResolvedSession::Expired, PROFILE_SCOPE).unwrap(),
+            AccessTokenAuth::SignedOut
         ));
-    }
-
-    /// Losing the session must take the subject-bound status with it, or the next
-    /// user to sign in could be routed against the previous user's quota (AD-9).
-    #[test]
-    fn resolving_without_a_usable_session_clears_the_hosted_status_cache() {
-        let _guard = credentials::test_keyring_guard();
-
-        crate::ai::hosted_state::store(
-            "abc-123",
-            crate::ai::hosted_state::HostedAiStatus {
-                premium: true,
-                monthly_request_limit: 100,
-                charged_count: 0,
-                period: "2026-08".to_string(),
-            },
-        );
-
-        hosted_ai_auth_from_resolved(ResolvedSession::Expired).unwrap();
-
-        assert!(crate::ai::hosted_state::get_fresh("abc-123").is_none());
-    }
-
-    #[test]
-    fn a_missing_scope_also_clears_the_hosted_status_cache() {
-        let _guard = credentials::test_keyring_guard();
-
-        crate::ai::hosted_state::store(
-            "abc-123",
-            crate::ai::hosted_state::HostedAiStatus {
-                premium: true,
-                monthly_request_limit: 100,
-                charged_count: 0,
-                period: "2026-08".to_string(),
-            },
-        );
-
-        hosted_ai_auth_from_resolved(ResolvedSession::Live(hosted_session("openid"))).unwrap();
-
-        assert!(crate::ai::hosted_state::get_fresh("abc-123").is_none());
     }
 
     #[test]
@@ -2461,6 +2556,223 @@ mod tests {
         }
 
         assert_eq!(resolved, "https://auth.nixusapp.com/oauth2/token");
+    }
+
+    /// AD-9's never-narrow rule, as a pure check: the comparison is on the granted
+    /// scope *set*, so reordering or widening is fine and dropping one is not.
+    #[test]
+    fn narrowing_is_detected_by_set_inclusion_rather_than_by_equality() {
+        let full = access_token_with_scope("openid email nixus-api/ai.invoke nixus-api/profile");
+
+        assert!(!narrows_granted_scopes(
+            &full,
+            &access_token_with_scope("nixus-api/profile nixus-api/ai.invoke openid email")
+        ));
+        assert!(!narrows_granted_scopes(
+            &full,
+            &access_token_with_scope("openid email profile nixus-api/ai.invoke nixus-api/profile")
+        ));
+        assert!(narrows_granted_scopes(
+            &full,
+            &access_token_with_scope("openid email nixus-api/profile")
+        ));
+        assert!(narrows_granted_scopes(
+            &full,
+            &access_token_with_scope("openid email nixus-api/ai.invoke")
+        ));
+    }
+
+    /// An unreadable refreshed token narrows everything, so it is refused; an unreadable
+    /// stored one leaves no grant to protect, so it does not block its own replacement.
+    #[test]
+    fn an_unreadable_token_narrows_only_in_the_direction_that_is_safe() {
+        let full = access_token_with_scope("openid nixus-api/ai.invoke");
+
+        assert!(narrows_granted_scopes(&full, "not-a-jwt"));
+        assert!(!narrows_granted_scopes("not-a-jwt", &full));
+    }
+
+    /// GATE (AD-15, C5): a refreshed session may never replace the stored one with a
+    /// narrower grant. The stored entry is left byte-identical so a later, correct
+    /// refresh still works, and the outcome reads as "the refresh did not complete".
+    #[test]
+    fn a_narrower_refreshed_session_is_never_stored() {
+        let _guard = credentials::test_keyring_guard();
+        let _ = credentials::clear_cognito_session();
+
+        let stored = hosted_session("openid email nixus-api/ai.invoke nixus-api/profile");
+        credentials::store_cognito_session(&stored).expect("seeded");
+
+        let narrowed = CognitoSession {
+            access_token: access_token_with_scope("openid email nixus-api/profile"),
+            ..stored.clone()
+        };
+
+        let adopted = adopt_refreshed_session(&stored, narrowed).expect("no local fault");
+
+        assert!(adopted.is_none(), "a narrowed grant must not be adopted");
+        let kept = credentials::load_cognito_session()
+            .expect("readable")
+            .expect("still present");
+        assert_eq!(kept.access_token, stored.access_token);
+        assert!(access_token_grants(&kept.access_token, HOSTED_AI_SCOPE).unwrap());
+    }
+
+    /// The same path's positive arm: a refresh that keeps the grant is stored in place.
+    #[test]
+    fn a_refresh_that_preserves_the_grant_is_stored_in_place() {
+        let _guard = credentials::test_keyring_guard();
+        let _ = credentials::clear_cognito_session();
+
+        let stored = hosted_session("openid email nixus-api/ai.invoke nixus-api/profile");
+        credentials::store_cognito_session(&stored).expect("seeded");
+
+        let refreshed = CognitoSession {
+            access_token: access_token_with_scope(
+                "openid email nixus-api/ai.invoke nixus-api/profile",
+            ),
+            expires_at: stored.expires_at + 3600,
+            ..stored.clone()
+        };
+
+        let adopted = adopt_refreshed_session(&stored, refreshed).expect("no local fault");
+
+        assert!(adopted.is_some());
+        let kept = credentials::load_cognito_session()
+            .expect("readable")
+            .expect("still present");
+        assert_eq!(kept.expires_at, stored.expires_at + 3600);
+        assert!(access_token_grants(&kept.access_token, HOSTED_AI_SCOPE).unwrap());
+        assert!(access_token_grants(&kept.access_token, PROFILE_SCOPE).unwrap());
+    }
+
+    /// Answers exactly one `POST /oauth2/token` with `body`, then stops. Returns the base
+    /// URL `token_endpoint`'s test override consumes, so the refresh grant this drives is
+    /// the real one — `refresh_session`, `reqwest`, status handling and all.
+    fn spawn_token_stub(body: String) -> String {
+        let server =
+            std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("stub binds"));
+        let base = format!(
+            "http://127.0.0.1:{}",
+            server.server_addr().to_ip().expect("ip addr").port()
+        );
+
+        let thread_server = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || {
+            if let Ok(request) = thread_server.recv() {
+                let header = tiny_http::Header::from_bytes(
+                    &b"Content-Type"[..],
+                    &b"application/json"[..],
+                )
+                .expect("header");
+                let _ = request.respond(
+                    tiny_http::Response::from_string(body).with_header(header),
+                );
+            }
+        });
+
+        base
+    }
+
+    fn with_token_stub<T>(body: String, run: impl FnOnce() -> T) -> T {
+        let previous = std::env::var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL").ok();
+        std::env::set_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL", spawn_token_stub(body));
+
+        let outcome = run();
+
+        match previous {
+            Some(value) => std::env::set_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL", value),
+            None => std::env::remove_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL"),
+        }
+
+        outcome
+    }
+
+    /// GATE (AD-15): "after a profile refresh, the stored session still carries
+    /// `ai.invoke`".
+    ///
+    /// Drives the whole accessor — expired stored session, real refresh grant against a
+    /// local stub, keyring write — with `nixus-api/profile` as the required scope, which is
+    /// the exact sequence C5 says silently breaks hosted AI for every premium user.
+    #[test]
+    fn a_profile_scope_refresh_keeps_the_stored_session_usable_for_hosted_ai() {
+        let _guard = credentials::test_keyring_guard();
+        let _ = credentials::clear_cognito_session();
+
+        let full_scopes = "openid email profile nixus-api/ai.invoke nixus-api/profile";
+        credentials::store_cognito_session(&CognitoSession {
+            // Already past the skew, so the accessor must refresh rather than serve it.
+            expires_at: Utc::now().timestamp() - 10,
+            ..hosted_session(full_scopes)
+        })
+        .expect("seeded");
+
+        let body = serde_json::json!({
+            "access_token": access_token_with_scope(full_scopes),
+            "id_token": id_token_with_payload(
+                r#"{"sub":"abc-123","email":"user@example.com","token_use":"id"}"#,
+            ),
+            "expires_in": 3600,
+        })
+        .to_string();
+
+        let resolved = with_token_stub(body, || {
+            tauri::async_runtime::block_on(access_token(PROFILE_SCOPE))
+        })
+        .expect("no local fault");
+
+        assert!(
+            matches!(resolved, AccessTokenAuth::Ready { .. }),
+            "the refreshed grant carries the profile scope"
+        );
+
+        let stored = credentials::load_cognito_session()
+            .expect("readable")
+            .expect("present");
+        assert!(
+            access_token_grants(&stored.access_token, HOSTED_AI_SCOPE).unwrap(),
+            "the profile refresh must not cost the session its ai.invoke scope"
+        );
+        assert!(access_token_grants(&stored.access_token, PROFILE_SCOPE).unwrap());
+    }
+
+    /// The hostile half of the same gate: a server that answers the refresh with a
+    /// narrowed grant leaves the stored session — and hosted AI — untouched.
+    #[test]
+    fn a_refresh_answered_with_a_narrowed_grant_leaves_hosted_ai_alone() {
+        let _guard = credentials::test_keyring_guard();
+        let _ = credentials::clear_cognito_session();
+
+        let seeded = CognitoSession {
+            expires_at: Utc::now().timestamp() - 10,
+            ..hosted_session("openid email profile nixus-api/ai.invoke nixus-api/profile")
+        };
+        credentials::store_cognito_session(&seeded).expect("seeded");
+
+        let body = serde_json::json!({
+            "access_token": access_token_with_scope("openid email profile nixus-api/profile"),
+            "id_token": id_token_with_payload(
+                r#"{"sub":"abc-123","email":"user@example.com","token_use":"id"}"#,
+            ),
+            "expires_in": 3600,
+        })
+        .to_string();
+
+        let resolved = with_token_stub(body, || {
+            tauri::async_runtime::block_on(access_token(PROFILE_SCOPE))
+        })
+        .expect("no local fault");
+
+        assert!(
+            matches!(resolved, AccessTokenAuth::SignedOut),
+            "a refusal to adopt reads as a refresh that did not complete"
+        );
+
+        let stored = credentials::load_cognito_session()
+            .expect("readable")
+            .expect("present");
+        assert_eq!(stored.access_token, seeded.access_token);
+        assert!(access_token_grants(&stored.access_token, HOSTED_AI_SCOPE).unwrap());
     }
 
     fn session_with_claims(payload: &str) -> CognitoSession {

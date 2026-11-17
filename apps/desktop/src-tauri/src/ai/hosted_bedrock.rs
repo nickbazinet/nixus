@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::ai::backend::{self, AiAttachment, AiImageFormat, AiRequest, AiRole, DeltaSink};
 use crate::ai::hosted_state::{self, HostedAiStatus};
-use crate::commands::auth::{self, HostedAiAuth};
+use crate::commands::auth::{self, AccessTokenAuth};
 use crate::error::AppError;
 
 /// Stable production URL, compiled into release builds (AD-15).
@@ -269,19 +269,46 @@ pub async fn retry_after_refresh(request: &AiRequest, on_delta: DeltaSink<'_>) -
     invoke_with_auth(request, on_delta, true).await
 }
 
+fn reauthentication_required() -> HostedOutcome {
+    HostedOutcome::PreOutput {
+        code: "reauthentication_required".to_string(),
+        message: "Please sign in again to use Nixus Cloud AI.".to_string(),
+    }
+}
+
+/// Adapts the scope-agnostic accessor (AD-9) to the hosted path, and owns the one side
+/// effect that accessor deliberately does not: a session that cannot serve a hosted call
+/// must not leave a subject-bound premium/quota answer behind, or the next user to sign in
+/// could be routed against the previous user's status.
+///
+/// An `Err` is left uncleared on purpose: an unreadable session blob is a local fault, not
+/// a statement that this account lost its session.
 fn resolve_hosted_auth(
-    auth_result: Result<HostedAiAuth, AppError>,
+    auth_result: Result<AccessTokenAuth, AppError>,
 ) -> Result<(String, String), HostedOutcome> {
     match auth_result {
-        Ok(HostedAiAuth::Ready {
+        Ok(AccessTokenAuth::Ready {
             access_token,
             subject_sub,
         }) => Ok((access_token, subject_sub)),
-        Ok(HostedAiAuth::ReauthenticationRequired) | Err(_) => Err(HostedOutcome::PreOutput {
-            code: "reauthentication_required".to_string(),
-            message: "Please sign in again to use Nixus Cloud AI.".to_string(),
-        }),
-        Ok(HostedAiAuth::SignedOut) => Err(HostedOutcome::Skipped),
+        Ok(AccessTokenAuth::ReauthenticationRequired) => {
+            hosted_state::clear();
+            Err(reauthentication_required())
+        }
+        Err(_) => Err(reauthentication_required()),
+        Ok(AccessTokenAuth::SignedOut) => {
+            hosted_state::clear();
+            Err(HostedOutcome::Skipped)
+        }
+    }
+}
+
+/// The hosted path's required scope, verified by the accessor and never requested.
+async fn hosted_auth(force_refresh: bool) -> Result<AccessTokenAuth, AppError> {
+    if force_refresh {
+        auth::refresh_access_token(auth::HOSTED_AI_SCOPE).await
+    } else {
+        auth::access_token(auth::HOSTED_AI_SCOPE).await
     }
 }
 
@@ -294,13 +321,7 @@ async fn invoke_with_auth(
         return HostedOutcome::Skipped;
     };
 
-    let auth_result = if force_refresh {
-        auth::refresh_hosted_ai_token().await
-    } else {
-        auth::hosted_ai_token().await
-    };
-
-    let (access_token, subject_sub) = match resolve_hosted_auth(auth_result) {
+    let (access_token, subject_sub) = match resolve_hosted_auth(hosted_auth(force_refresh).await) {
         Ok(credentials) => credentials,
         Err(outcome) => return outcome,
     };
@@ -341,7 +362,7 @@ pub async fn premium_entitlement() -> bool {
         return false;
     };
 
-    let Ok((access_token, subject_sub)) = resolve_hosted_auth(auth::hosted_ai_token().await) else {
+    let Ok((access_token, subject_sub)) = resolve_hosted_auth(hosted_auth(false).await) else {
         return false;
     };
 
@@ -402,12 +423,7 @@ async fn eligibility_with(refreshed: bool) -> HostedEligibility {
         return HostedEligibility::Unavailable;
     };
 
-    let auth_result = if refreshed {
-        auth::refresh_hosted_ai_token().await
-    } else {
-        auth::hosted_ai_token().await
-    };
-    let (access_token, subject_sub) = match resolve_hosted_auth(auth_result) {
+    let (access_token, subject_sub) = match resolve_hosted_auth(hosted_auth(refreshed).await) {
         Ok(credentials) => credentials,
         Err(HostedOutcome::Skipped) => return HostedEligibility::SignedOut,
         Err(_) => return HostedEligibility::ReauthenticationRequired,
@@ -436,9 +452,7 @@ async fn premium_after_refresh() -> bool {
         return false;
     };
 
-    let Ok((access_token, subject_sub)) =
-        resolve_hosted_auth(auth::refresh_hosted_ai_token().await)
-    else {
+    let Ok((access_token, subject_sub)) = resolve_hosted_auth(hosted_auth(true).await) else {
         return false;
     };
 
@@ -1050,6 +1064,61 @@ mod tests {
             outcome,
             Err(HostedOutcome::PreOutput { code, .. }) if code == "reauthentication_required"
         ));
+    }
+
+    fn seed_status_cache() {
+        hosted_state::store(
+            "abc-123",
+            HostedAiStatus {
+                premium: true,
+                monthly_request_limit: 100,
+                charged_count: 0,
+                period: "2026-08".to_string(),
+            },
+        );
+    }
+
+    /// Losing the session must take the subject-bound status with it, or the next user to
+    /// sign in could be routed against the previous user's quota (AD-9). Owned here rather
+    /// than in `commands/auth.rs` since Epic C: the accessor is scope-agnostic and must not
+    /// clear an AI cache when it is a *profile* call that lacks its scope.
+    #[test]
+    fn a_signed_out_session_clears_the_hosted_status_cache() {
+        seed_status_cache();
+
+        let outcome = resolve_hosted_auth(Ok(AccessTokenAuth::SignedOut));
+
+        assert!(matches!(outcome, Err(HostedOutcome::Skipped)));
+        assert!(hosted_state::get_fresh("abc-123").is_none());
+    }
+
+    #[test]
+    fn a_missing_hosted_scope_also_clears_the_hosted_status_cache() {
+        seed_status_cache();
+
+        let outcome = resolve_hosted_auth(Ok(AccessTokenAuth::ReauthenticationRequired));
+
+        assert!(matches!(
+            outcome,
+            Err(HostedOutcome::PreOutput { code, .. }) if code == "reauthentication_required"
+        ));
+        assert!(hosted_state::get_fresh("abc-123").is_none());
+    }
+
+    /// A local fault is not a statement that the account lost its session, so the cached
+    /// answer survives it — the one asymmetry between the `Err` and `Ok` refusals.
+    #[test]
+    fn a_secure_storage_error_leaves_the_hosted_status_cache_intact() {
+        seed_status_cache();
+
+        resolve_hosted_auth(Err(AppError::Auth {
+            message: "secure storage access was canceled".to_string(),
+            recoverable: true,
+        }))
+        .expect_err("a storage fault cannot yield credentials");
+
+        assert!(hosted_state::get_fresh("abc-123").is_some());
+        hosted_state::clear();
     }
 
     /// The Bearer token and the user's financial prompt both travel on this
