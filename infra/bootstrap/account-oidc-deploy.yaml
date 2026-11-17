@@ -1,0 +1,642 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  ONE-TIME bootstrap for the Nixus Cloud account delivery pipeline. Creates the
+  single GitHub OIDC deploy role account-ci.yml assumes, scoped to the
+  nixus-account CloudFormation stack and to resources named nixus-account-*. It
+  also covers the Epic F resources, so the owner applies it once. Applied by hand
+  from a workstation; see docs/runbooks/account-rollout.md.
+
+# Deliberately NOT part of apps/api-account/template.yaml: AD-14 forbids the
+# application stack from defining the role that deploys it. This stack is the
+# separately reviewed out-of-band step that requirement refers to, and no workflow
+# applies it - so no static AWS key is involved at any point.
+#
+# Two deliberate differences from infra/bootstrap/github-oidc-deploy.yaml:
+#
+#   - It does NOT create the GitHub OIDC identity provider. An AWS account may
+#     hold only one provider per issuer URL, the hosted-AI bootstrap already
+#     created this one with `DeletionPolicy: Retain`, and an IAM OIDC provider's
+#     ARN is fully determined by the account id and the issuer host - so the ARN is
+#     derived below rather than created or passed in.
+#
+#   - It creates ONE role rather than that pipeline's deploy/execution pair,
+#     because account-ci.yml runs `sam deploy` without `--role-arn`: this role
+#     drives CloudFormation AND creates the stack's resources. Two guards keep that
+#     from being self-escalating - the IAM grant reaches only the application's own
+#     role-name prefixes, and an explicit Deny, which no later Allow can override,
+#     forbids this role from touching its own policies or trust. Splitting it in
+#     two later needs no change to the application template.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: nickbazinet
+    Description: GitHub account that owns the repository.
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9-]*$'
+  GitHubRepo:
+    Type: String
+    Default: nixus
+    Description: Repository name.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    Description: >-
+      GitHub environment whose deployments may assume this role. The trust policy
+      matches it exactly, so a workflow running outside this environment cannot
+      assume the role even from the default branch.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  ApplicationStackName:
+    Type: String
+    Default: nixus-account
+    Description: >-
+      The single application stack this role may act on. Every CloudFormation
+      permission below is scoped to this name, and every application resource
+      permission to the `<stack name>-` naming prefix CloudFormation derives from
+      it, so the role cannot touch another stack in the account.
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+  ApiDomainName:
+    Type: String
+    Default: api.nixusapp.com
+    Description: >-
+      The shared custom domain the application stack adds its `v1/profile` API
+      mapping under. The role may READ this domain and manage mappings on it; it
+      holds no permission to update or delete the domain itself, which belongs to
+      stack nixus-bedrock-api.
+    AllowedPattern: '^[a-z0-9.-]+$'
+  AccountDomainName:
+    Type: String
+    Default: account.nixusapp.com
+    Description: Hostname Epic F serves the account app on, through CloudFront.
+    AllowedPattern: '^[a-z0-9.-]+$'
+  CognitoUserPoolId:
+    Type: String
+    Default: us-east-1_7gfGQ0emg
+    Description: >-
+      The console-managed user pool. The role reads its `nixus-api` resource
+      server before deploying, and manages ONLY the account app's own client and
+      managed-login branding on it - never the pool, never the resource server.
+    AllowedPattern: '^[\w-]+_[0-9a-zA-Z]+$'
+  HostedZoneId:
+    Type: String
+    Description: >-
+      Hosted zone for nixusapp.com, so Epic F can create the
+      account.nixusapp.com record. Account-specific, so it is supplied at apply
+      time rather than committed.
+    AllowedPattern: '^[A-Z0-9]+$'
+
+Resources:
+  AccountDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApplicationStackName}-github-deploy'
+      Description: >-
+        Assumed by GitHub Actions via OIDC to deploy the Nixus Cloud account
+        stack. Scoped to one CloudFormation stack and to resources named after it.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              # Derived, not created: an account holds one provider per issuer URL
+              # and this one already exists, retained, from the hosted-AI
+              # bootstrap. The ARN of an IAM OIDC provider is exactly
+              # `oidc-provider/<issuer host>` in the account, so deriving it
+              # cannot drift from the real provider.
+              Federated: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                # Audience and subject are both exact matches. A loose subject is
+                # account-wide escalation reachable from any fork, branch or pull
+                # request. This repository has immutable subject claims disabled,
+                # so the plain `repo:owner/name` form is what GitHub emits.
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:${GitHubEnvironment}'
+      Policies:
+        # -------------------------------------------------------------------
+        # Denies first. A Deny cannot be overridden by any later Allow, in this
+        # policy or any other.
+        # -------------------------------------------------------------------
+        - PolicyName: account-deny-self-escalation-and-data-loss
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # This role's name starts with the same prefix the application's own
+              # roles do, so without this it could rewrite its own policies or
+              # trust policy and grant itself anything.
+              - Sid: NeverModifyThisRole
+                Effect: Deny
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:UpdateRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-github-deploy'
+              # The profile table is retained by policy in the application
+              # template; this makes it structural rather than a matter of
+              # remembering to omit the action from an Allow (AD-14).
+              - Sid: NeverDeleteAProfileTableOrItsBackups
+                Effect: Deny
+                Action:
+                  - dynamodb:DeleteTable
+                  - dynamodb:DeleteBackup
+                  - dynamodb:DisableKinesisStreamingDestination
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-profile'
+              # The domain belongs to nixus-bedrock-api. Mappings under it are
+              # this stack's business; the domain itself never is.
+              - Sid: NeverChangeTheSharedDomainItself
+                Effect: Deny
+                Action:
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}'
+
+        # -------------------------------------------------------------------
+        # CloudFormation: one stack, plus the SAM transform and the artifact
+        # bucket `sam deploy` uploads to.
+        # -------------------------------------------------------------------
+        - PolicyName: account-cloudformation-one-stack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DriveTheApplicationStackOnly
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListStackResources
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ListChangeSets
+                  - cloudformation:TagResource
+                  - cloudformation:UntagResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ApplicationStackName}/*'
+              - Sid: TemplateValidationIsNotStackScoped
+                Effect: Allow
+                Action:
+                  # Neither call carries a resource to scope to; SAM makes both
+                  # during `deploy`.
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource: '*'
+              - Sid: SamTransformNeedsTheServerlessRepo
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+        - PolicyName: account-sam-artifact-bucket
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The bucket the hosted-AI bootstrap created (private, encrypted,
+              # versioned, TLS-only, retained). Reused rather than duplicated: a
+              # second artifact bucket would be a second set of lifecycle and
+              # encryption guarantees to keep in step. `account-ci.yml` uploads
+              # under the `nixus-account` prefix.
+              - Sid: UploadPackagesOnly
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::nixus-sam-artifacts-${AWS::AccountId}-${AWS::Region}/*'
+              - Sid: LocateTheArtifactBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:ListBucketMultipartUploads
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::nixus-sam-artifacts-${AWS::AccountId}-${AWS::Region}'
+
+        # -------------------------------------------------------------------
+        # IAM: the application's own execution roles, and nothing else.
+        # -------------------------------------------------------------------
+        - PolicyName: account-application-roles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # CloudFormation derives a role name from the stack name and the
+              # logical id, so these three prefixes cover the profile function's
+              # role and the account app's roles without covering this role.
+              # iam:AttachRolePolicy, iam:CreatePolicy and every user/group action
+              # are deliberately absent: an inline policy on a stack-owned role is
+              # the only IAM shape the application template declares.
+              - Sid: ApplicationExecutionRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:UpdateRole
+                  - iam:UpdateRoleDescription
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Profile*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Account*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Web*'
+              - Sid: PassApplicationRolesToLambdaOnly
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Profile*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Account*'
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Web*'
+                Condition:
+                  StringEquals:
+                    'iam:PassedToService': lambda.amazonaws.com
+
+        # -------------------------------------------------------------------
+        # Compute: the profile Lambda, and Epic F's Lambda Web Function.
+        # -------------------------------------------------------------------
+        - PolicyName: account-lambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ApplicationFunctions
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionConcurrency
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:GetPolicy
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                  - lambda:PutRuntimeManagementConfig
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ApplicationStackName}-*'
+              # EPIC F - Lambda Web Functions. Verified against the AWS Lambda
+              # developer guide (2026): the CloudFormation resource types are
+              # AWS::Lambda::WebFunction, ::WebFunctionRevision and
+              # ::WebFunctionEndpoint, the endpoint's resource policy is NOT a
+              # CloudFormation resource and is applied post-deploy through
+              # lambda:PutResourcePolicy, and the ARN resource type is
+              # `web-function`.
+              #
+              # ASSUMED, and to be re-checked against the IAM reference before the
+              # first Epic F deploy: the exact action NAMES below. They follow the
+              # service's own naming for the API operations, but a Lambda IAM
+              # action is not guaranteed to be named after its operation, and an
+              # action that does not exist is silently inert in a policy rather
+              # than an error - so a missing permission would surface as an
+              # AccessDenied on the first web-function deploy, not here.
+              - Sid: EpicFWebFunctions
+                Effect: Allow
+                Action:
+                  - lambda:CreateWebFunction
+                  - lambda:CreateWebFunctionRevision
+                  - lambda:DeleteWebFunctionRevision
+                  - lambda:CreateWebFunctionEndpoint
+                  - lambda:UpdateWebFunctionEndpoint
+                  - lambda:DeleteWebFunctionEndpoint
+                  - lambda:DeleteWebFunction
+                  - lambda:GetWebFunction
+                  - lambda:GetWebFunctionRevision
+                  - lambda:GetWebFunctionEndpoint
+                  - lambda:ListWebFunctions
+                  - lambda:ListWebFunctionRevisions
+                  - lambda:ListWebFunctionEndpoints
+                  - lambda:PutResourcePolicy
+                  - lambda:GetResourcePolicy
+                  - lambda:DeleteResourcePolicy
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:web-function/${ApplicationStackName}-*'
+
+        # -------------------------------------------------------------------
+        # Edge: the REST API, its stage, and the mapping under the shared domain.
+        # -------------------------------------------------------------------
+        - PolicyName: account-api-gateway
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # API Gateway authorizes by HTTP verb, so this is the complete
+              # explicit set rather than a wildcard. `/restapis/*` covers the
+              # stage, deployment, resources, methods and authorizer the SAM
+              # transform creates.
+              - Sid: RestApiAndItsStage
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/*'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/*'
+              # The mappings under the shared domain, and a read of the domain
+              # itself for the pre-deploy routing-mode assertion. The Deny above
+              # keeps every other verb off the domain resource.
+              - Sid: ApiMappingsOnTheSharedDomain
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}/apimappings'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}/apimappings/*'
+
+        # -------------------------------------------------------------------
+        # Storage: the profile table, and Epic F's session table.
+        # -------------------------------------------------------------------
+        - PolicyName: account-dynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # No DeleteTable at all, and the Deny above makes that structural for
+              # the profile table specifically.
+              - Sid: ApplicationTables
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-*'
+
+        # -------------------------------------------------------------------
+        # Observability and cost.
+        # -------------------------------------------------------------------
+        - PolicyName: account-observability
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ExplicitLogGroups
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*'
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*:*'
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/${ApplicationStackName}-*'
+                  - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/${ApplicationStackName}-*:*'
+              - Sid: FindExplicitLogGroups
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource: '*'
+              - Sid: ErrorRateAlarms
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ApplicationStackName}-*'
+              - Sid: AlarmTopicAndSubscription
+                Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:GetSubscriptionAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:TagResource
+                  - sns:UntagResource
+                  - sns:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${ApplicationStackName}-*'
+              - Sid: MonthlySpendBudget
+                Effect: Allow
+                Action:
+                  # AWS Budgets authorizes create, modify and delete through the
+                  # single ModifyBudget action; there is no CreateBudget. Budget
+                  # ARNs carry no stack name, so this is the account namespace.
+                  - budgets:ModifyBudget
+                  - budgets:ViewBudget
+                  - budgets:TagResource
+                  - budgets:UntagResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/*'
+
+        # -------------------------------------------------------------------
+        # Cognito: a read for the pre-deploy assertions, and Epic F's own client.
+        # Never the pool, and never the resource server - UpdateResourceServer is
+        # a full replace, so a pipeline that could call it could delete
+        # nixus-api/ai.invoke and take hosted AI down.
+        # -------------------------------------------------------------------
+        - PolicyName: account-cognito
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadTheResourceServerBeforeDeploying
+                Effect: Allow
+                Action:
+                  - cognito-idp:DescribeResourceServer
+                  - cognito-idp:DescribeUserPoolClient
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}'
+              # EPIC F - the account app's confidential client and its managed
+              # login branding, on that one pool.
+              - Sid: EpicFWebClientAndBranding
+                Effect: Allow
+                Action:
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:DeleteUserPoolClient
+                  - cognito-idp:CreateManagedLoginBranding
+                  - cognito-idp:UpdateManagedLoginBranding
+                  - cognito-idp:DeleteManagedLoginBranding
+                  - cognito-idp:DescribeManagedLoginBranding
+                  - cognito-idp:DescribeManagedLoginBrandingByClient
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}'
+
+        # -------------------------------------------------------------------
+        # EPIC F - the account app's hosting: CloudFront, its static bucket, the
+        # client secret it reads, its certificate and its DNS record.
+        # -------------------------------------------------------------------
+        - PolicyName: account-web-hosting
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudFrontDistribution
+                Effect: Allow
+                Action:
+                  - cloudfront:CreateDistribution
+                  - cloudfront:UpdateDistribution
+                  - cloudfront:DeleteDistribution
+                  - cloudfront:GetDistribution
+                  - cloudfront:GetDistributionConfig
+                  - cloudfront:TagResource
+                  - cloudfront:UntagResource
+                  - cloudfront:ListTagsForResource
+                  - cloudfront:CreateInvalidation
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/*'
+              # CloudFront's origin access controls and its cache / origin-request
+              # policies are account-level resources with NO ARN form at all, so
+              # IAM accepts only `*` for them. The actions stay enumerated, which
+              # is the only bound available here.
+              - Sid: CloudFrontAccountLevelResourcesCannotBeNameScoped
+                Effect: Allow
+                Action:
+                  - cloudfront:CreateOriginAccessControl
+                  - cloudfront:UpdateOriginAccessControl
+                  - cloudfront:DeleteOriginAccessControl
+                  - cloudfront:GetOriginAccessControl
+                  - cloudfront:GetOriginAccessControlConfig
+                  - cloudfront:CreateCachePolicy
+                  - cloudfront:UpdateCachePolicy
+                  - cloudfront:DeleteCachePolicy
+                  - cloudfront:GetCachePolicy
+                  - cloudfront:GetCachePolicyConfig
+                  - cloudfront:CreateOriginRequestPolicy
+                  - cloudfront:UpdateOriginRequestPolicy
+                  - cloudfront:DeleteOriginRequestPolicy
+                  - cloudfront:GetOriginRequestPolicy
+                  - cloudfront:GetOriginRequestPolicyConfig
+                  - cloudfront:CreateResponseHeadersPolicy
+                  - cloudfront:UpdateResponseHeadersPolicy
+                  - cloudfront:DeleteResponseHeadersPolicy
+                  - cloudfront:GetResponseHeadersPolicy
+                  - cloudfront:GetResponseHeadersPolicyConfig
+                Resource: '*'
+              - Sid: StaticAssetBucket
+                Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:GetBucketLocation
+                  - s3:GetBucketPolicy
+                  - s3:PutBucketPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:PutBucketVersioning
+                  - s3:GetBucketVersioning
+                  - s3:PutEncryptionConfiguration
+                  - s3:GetEncryptionConfiguration
+                  - s3:PutBucketOwnershipControls
+                  - s3:GetBucketOwnershipControls
+                  - s3:PutBucketTagging
+                  - s3:GetBucketTagging
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::${ApplicationStackName}-*'
+              - Sid: StaticAssetObjects
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:PutObjectTagging
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:s3:::${ApplicationStackName}-*/*'
+              - Sid: ReadTheWebClientSecretAtDeployTime
+                Effect: Allow
+                Action:
+                  # Read only, and only under this path: the owner creates the
+                  # SecureString by hand, and the pipeline never writes it.
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ApplicationStackName}/*'
+              - Sid: AttachTheCertificateToTheAccountDomain
+                Effect: Allow
+                Action:
+                  # ListCertificates takes no resource, and DescribeCertificate's
+                  # ARN carries a per-certificate id nobody can pin before the
+                  # certificate exists.
+                  - acm:DescribeCertificate
+                  - acm:ListCertificates
+                Resource: '*'
+              - Sid: AccountDomainDnsRecord
+                Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                  - route53:ListResourceRecordSets
+                  - route53:GetHostedZone
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:route53:::hostedzone/${HostedZoneId}'
+                  - !Sub 'arn:${AWS::Partition}:route53:::change/*'
+
+Outputs:
+  DeployRoleArn:
+    Description: >-
+      Set as the AWS_ACCOUNT_DEPLOY_ROLE_ARN secret on the production environment.
+    Value: !GetAtt AccountDeployRole.Arn
+  TrustedSubject:
+    Description: >-
+      The exact `sub` claim this role accepts. Compare it against the claim a
+      failing workflow run reports before changing anything.
+    Value: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:${GitHubEnvironment}'
+  OidcProviderArn:
+    Description: >-
+      The provider this role trusts. Created and retained by the hosted-AI
+      bootstrap; this stack only derives its ARN.
+    Value: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+  SamArtifactBucketName:
+    Description: >-
+      The existing artifact bucket this role may upload to, under the
+      nixus-account prefix. Already set as the SAM_ARTIFACT_BUCKET variable on the
+      production environment by the hosted-AI rollout.
+    Value: !Sub 'nixus-sam-artifacts-${AWS::AccountId}-${AWS::Region}'
+  AccountAppDomainName:
+    Description: Hostname Epic F will serve the account app on.
+    Value: !Ref AccountDomainName
