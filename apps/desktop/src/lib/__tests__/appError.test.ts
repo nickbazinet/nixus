@@ -3,7 +3,16 @@ import { describe, expect, it } from "vitest";
 import en from "@/locales/en.json";
 import fr from "@/locales/fr.json";
 import {
+  ACCOUNT_ERROR_CODES,
+  VALIDATION_FIELDS,
+  VALIDATION_REASONS,
+  type AccountErrorCode,
+  type ValidationField,
+  type ValidationReason,
+} from "@nixus/shared";
+import {
   chatAttachmentMessageKey,
+  cloudProfileMessageKey,
   hostedAiIsRetryable,
   hostedAiMessageKey,
   hostedAiNeedsSignIn,
@@ -13,6 +22,7 @@ import {
   parseAppError,
   projectImageMessageKey,
   userAvatarMessageKey,
+  type CloudProfileError,
   type HostedAiErrorCode,
   type SyncErrorCode,
 } from "../appError";
@@ -466,5 +476,163 @@ describe("parseAppError narrows the cloud_profile envelope", () => {
     });
     expect(isHostedAiError(parsed)).toBe(false);
     expect(isSyncError(parsed)).toBe(false);
+  });
+});
+
+describe("cloudProfileMessageKey", () => {
+  function error(
+    code: AccountErrorCode,
+    field: ValidationField | null = null,
+    reason: ValidationReason | null = null,
+  ): CloudProfileError {
+    return {
+      type: "cloud_profile",
+      code,
+      message: "a fixed support sentence",
+      field,
+      reason,
+      recoverable: true,
+    };
+  }
+
+  /**
+   * The whole closed union, crossed with every field and reason the contract defines. This is
+   * what makes "every code maps to a key that exists in both locales" a fact rather than a claim:
+   * a reason added to `account.ts` fails here until its EN and FR copy is written.
+   */
+  it("resolves a key present in both locales for every code, field and reason", () => {
+    const resolved = new Set<string>();
+
+    for (const code of ACCOUNT_ERROR_CODES) {
+      const keys = [error(code), error(code, null, null)].map(
+        cloudProfileMessageKey,
+      );
+      for (const field of VALIDATION_FIELDS) {
+        for (const reason of VALIDATION_REASONS) {
+          keys.push(cloudProfileMessageKey(error(code, field, reason)));
+        }
+      }
+
+      for (const key of keys) {
+        expect(key, `${code} resolved an empty key`).toBeTruthy();
+        expect(key.startsWith("profile.errors."), `${code} -> ${key}`).toBe(
+          true,
+        );
+        expect(en[key as keyof typeof en], `${key} missing in en.json`).toBeTruthy();
+        expect(fr[key as keyof typeof fr], `${key} missing in fr.json`).toBeTruthy();
+        resolved.add(key);
+      }
+    }
+
+    // Every shipped key is reachable: an orphan is copy no refusal can ever show.
+    const shipped = Object.keys(en).filter((key) =>
+      key.startsWith("profile.errors."),
+    );
+    expect([...resolved].sort()).toEqual(shipped.sort());
+  });
+
+  it("keys a non-validation code by the code alone", () => {
+    expect(cloudProfileMessageKey(error("unauthorized"))).toBe(
+      "profile.errors.unauthorized",
+    );
+    expect(cloudProfileMessageKey(error("version_conflict"))).toBe(
+      "profile.errors.versionConflict",
+    );
+    // A field and reason that arrived alongside a non-validation code are ignored, not blended in.
+    expect(
+      cloudProfileMessageKey(error("unavailable", "birth_date", "too_young")),
+    ).toBe("profile.errors.unavailable");
+  });
+
+  it("keys a validation by its reason, and falls back when the reason is absent", () => {
+    expect(
+      cloudProfileMessageKey(error("validation", "birth_date", "in_future")),
+    ).toBe("profile.errors.validation.inFuture");
+    expect(cloudProfileMessageKey(error("validation", "birth_date", null))).toBe(
+      "profile.errors.validation.generic",
+    );
+    expect(cloudProfileMessageKey(error("validation", null, null))).toBe(
+      "profile.errors.validation.generic",
+    );
+  });
+
+  /**
+   * The one field-specific override. The reason-only sentence ("that entry is required") would be
+   * read as a bug on a currency the user never touched, because what the server refuses is a
+   * bracket left without one.
+   */
+  it("prefers the field-specific key where the reason alone would mislead", () => {
+    expect(
+      cloudProfileMessageKey(
+        error("validation", "income_bracket_currency", "required"),
+      ),
+    ).toBe("profile.errors.validation.incomeBracketCurrencyRequired");
+    expect(
+      cloudProfileMessageKey(error("validation", "first_name", "required")),
+    ).toBe("profile.errors.validation.required");
+  });
+});
+
+describe("userAvatarMessageKey reads a cloud_profile refusal", () => {
+  function cloudProfile(
+    code: string,
+    field: string | null = null,
+    reason: string | null = null,
+  ): unknown {
+    return {
+      type: "cloud_profile",
+      code,
+      message: "a fixed support sentence",
+      field,
+      reason,
+      recoverable: true,
+    };
+  }
+
+  it("maps the server refusals that are about the picture itself", () => {
+    expect(userAvatarMessageKey(cloudProfile("unsupported_media"))).toBe(
+      "profile.avatar.unsupportedType",
+    );
+    expect(userAvatarMessageKey(cloudProfile("payload_too_large"))).toBe(
+      "profile.avatar.tooLarge",
+    );
+    expect(
+      userAvatarMessageKey(
+        cloudProfile("validation", "data", "dimensions_exceeded"),
+      ),
+    ).toBe("profile.avatar.dimensions");
+    expect(
+      userAvatarMessageKey(cloudProfile("validation", "data", "invalid_format")),
+    ).toBe("profile.avatar.unreadable");
+  });
+
+  it("returns null for a refusal that is about the request rather than the file", () => {
+    for (const error of [
+      cloudProfile("reauthentication_required"),
+      cloudProfile("unauthorized"),
+      cloudProfile("version_conflict"),
+      cloudProfile("rate_limited"),
+      cloudProfile("unavailable"),
+      // A refused demographic field is not a picture problem, even with the same reason.
+      cloudProfile("validation", "birth_date", "invalid_format"),
+      cloudProfile("validation", "data", "required"),
+      cloudProfile("validation", "data", null),
+      cloudProfile("validation", null, "dimensions_exceeded"),
+    ]) {
+      expect(userAvatarMessageKey(error)).toBeNull();
+    }
+  });
+
+  /**
+   * The local half still works: one photo-picker click can be refused by either validator, and
+   * both must reach the same profile-owned copy (H7).
+   */
+  it("still maps the local validator's refusals", () => {
+    expect(
+      userAvatarMessageKey({
+        type: "validation",
+        field: "project_image_too_large",
+      }),
+    ).toBe("profile.avatar.tooLarge");
   });
 });

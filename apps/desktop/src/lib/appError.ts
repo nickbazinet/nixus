@@ -484,9 +484,14 @@ export type UserAvatarRejection = keyof typeof USER_AVATAR_MESSAGE_KEYS;
  * `null` rather than a nearest-neighbour guess, for the same reason `projectImageMessageKey`
  * returns it: a keyring failure or a rejected session is not a bad file, and the caller renders a
  * generic failure instead of sending the user to pick a different picture.
+ *
+ * Reads BOTH error types on purpose (H7): one photo-picker click can be refused locally as
+ * `validation` by the shared image validator, or by the profile API as `cloud_profile`. Gating on
+ * the local type alone is what used to drop a server-side refusal into the generic fallback.
  */
 export function userAvatarMessageKey(error: unknown): string | null {
   if (!isRecord(error)) return null;
+  if (error.type === "cloud_profile") return cloudAvatarMessageKey(error);
   if (error.type !== "validation") return null;
   const field = error.field;
   if (typeof field !== "string") return null;
@@ -495,4 +500,86 @@ export function userAvatarMessageKey(error: unknown): string | null {
     return null;
   }
   return USER_AVATAR_MESSAGE_KEYS[field as UserAvatarRejection];
+}
+
+/**
+ * The four server refusals that mean "this picture is the problem", mapped onto the same copy the
+ * local validator's refusals resolve to. Every other code — a conflict, a sign-in, an outage — is
+ * about the request rather than the file, so it stays `null` and the caller renders its own state.
+ */
+function cloudAvatarMessageKey(error: Record<string, unknown>): string | null {
+  const code = toAccountErrorCode(error.code);
+  if (code === "unsupported_media") return "profile.avatar.unsupportedType";
+  if (code === "payload_too_large") return "profile.avatar.tooLarge";
+  if (code !== "validation") return null;
+
+  // Only the avatar's own `data` member: a refused `birth_date` is not a picture problem.
+  if (oneOf(VALIDATION_FIELDS, error.field) !== "data") return null;
+
+  switch (oneOf(VALIDATION_REASONS, error.reason)) {
+    case "dimensions_exceeded":
+      return "profile.avatar.dimensions";
+    case "invalid_format":
+      return "profile.avatar.unreadable";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The i18n key for a Nixus Cloud profile failure, for every code in the closed union (AD-13).
+ *
+ * Keyed by `code`, and for a `validation` by its `reason` — never by `message`, which is a fixed
+ * English support sentence carrying no submitted value (AD-12). A field is consulted only where it
+ * changes the sentence rather than the subject: the form already marks which input was refused, so
+ * one key per reason is what the user actually reads.
+ */
+const CLOUD_PROFILE_CODE_KEYS: Record<AccountErrorCode, string> = {
+  unauthorized: "profile.errors.unauthorized",
+  reauthentication_required: "profile.errors.reauthenticationRequired",
+  validation: "profile.errors.validation.generic",
+  version_conflict: "profile.errors.versionConflict",
+  payload_too_large: "profile.errors.payloadTooLarge",
+  unsupported_media: "profile.errors.unsupportedMedia",
+  rate_limited: "profile.errors.rateLimited",
+  unavailable: "profile.errors.unavailable",
+};
+
+const CLOUD_PROFILE_REASON_KEYS: Record<ValidationReason, string> = {
+  invalid_type: "profile.errors.validation.invalidType",
+  invalid_format: "profile.errors.validation.invalidFormat",
+  required: "profile.errors.validation.required",
+  not_allowed: "profile.errors.validation.notAllowed",
+  in_future: "profile.errors.validation.inFuture",
+  too_young: "profile.errors.validation.tooYoung",
+  too_old: "profile.errors.validation.tooOld",
+  requires_country: "profile.errors.validation.requiresCountry",
+  no_subdivisions: "profile.errors.validation.noSubdivisions",
+  dimensions_exceeded: "profile.errors.validation.dimensionsExceeded",
+  unknown_field: "profile.errors.validation.unknownField",
+};
+
+/**
+ * The one field+reason pair whose reason-only sentence would be useless: a bare "this is required"
+ * on a currency the user never touched reads as a bug, because what the server is actually refusing
+ * is an income bracket left without one (the AD-5 asymmetry).
+ */
+const CLOUD_PROFILE_FIELD_REASON_KEYS: Partial<
+  Record<`${ValidationField}.${ValidationReason}`, string>
+> = {
+  "income_bracket_currency.required":
+    "profile.errors.validation.incomeBracketCurrencyRequired",
+};
+
+export function cloudProfileMessageKey(error: CloudProfileError): string {
+  if (error.code !== "validation") return CLOUD_PROFILE_CODE_KEYS[error.code];
+  if (error.reason === null) return CLOUD_PROFILE_CODE_KEYS.validation;
+
+  if (error.field !== null) {
+    const specific =
+      CLOUD_PROFILE_FIELD_REASON_KEYS[`${error.field}.${error.reason}`];
+    if (specific !== undefined) return specific;
+  }
+
+  return CLOUD_PROFILE_REASON_KEYS[error.reason];
 }
