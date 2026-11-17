@@ -1,6 +1,6 @@
 use chrono::{Datelike, NaiveDate};
 
-use crate::models::{TfsaAccumulatedLimit, UserProfile};
+use crate::models::{ProfileFields, TfsaAccumulatedLimit};
 use crate::tfsa::constants::{ANNUAL_LIMITS_CENTS, KNOWN_THROUGH_YEAR, TFSA_FIRST_YEAR};
 
 /// The single decision point for shown-vs-withheld. Every withholding condition
@@ -20,7 +20,7 @@ use crate::tfsa::constants::{ANNUAL_LIMITS_CENTS, KNOWN_THROUGH_YEAR, TFSA_FIRST
 /// Takes no `State<DbState>` and holds no `Connection`, so subtracting a TFSA
 /// account balance is unreachable here rather than merely forbidden.
 pub fn accumulated_limit_for_profile(
-    profile: Option<&UserProfile>,
+    profile: Option<&ProfileFields>,
     current_year: i32,
 ) -> Option<TfsaAccumulatedLimit> {
     let profile = profile?;
@@ -164,10 +164,8 @@ mod tests {
         assert!(result.is_none());
     }
 
-    fn base_profile() -> UserProfile {
-        UserProfile {
-            schema_version: 1,
-            cognito_sub: "sub-123".to_string(),
+    fn base_profile() -> ProfileFields {
+        ProfileFields {
             first_name: Some("Ada".to_string()),
             last_name: Some("Lovelace".to_string()),
             birth_date: Some("1985-06-15".to_string()),
@@ -175,8 +173,6 @@ mod tests {
             income_bracket_currency: None,
             country_code: Some("CA".to_string()),
             subdivision_code: None,
-            created_at: "2026-01-01T00:00:00+00:00".to_string(),
-            updated_at: "2026-01-01T00:00:00+00:00".to_string(),
         }
     }
 
@@ -198,7 +194,7 @@ mod tests {
 
     #[test]
     fn an_unset_country_withholds_the_figure() {
-        let profile = UserProfile {
+        let profile = ProfileFields {
             country_code: None,
             ..base_profile()
         };
@@ -208,7 +204,7 @@ mod tests {
     #[test]
     fn a_non_canadian_country_withholds_the_figure() {
         for code in ["US", "FR", "JP", "GB"] {
-            let profile = UserProfile {
+            let profile = ProfileFields {
                 country_code: Some(code.to_string()),
                 ..base_profile()
             };
@@ -226,7 +222,7 @@ mod tests {
     #[test]
     fn country_matching_is_exact_so_near_misses_withhold_the_figure() {
         for code in ["ca", "Ca", "CAN", "CA "] {
-            let profile = UserProfile {
+            let profile = ProfileFields {
                 country_code: Some(code.to_string()),
                 ..base_profile()
             };
@@ -240,7 +236,7 @@ mod tests {
 
     #[test]
     fn a_canadian_profile_with_no_birth_date_withholds_the_figure() {
-        let profile = UserProfile {
+        let profile = ProfileFields {
             birth_date: None,
             ..base_profile()
         };
@@ -252,7 +248,7 @@ mod tests {
     #[test]
     fn the_gate_passes_through_the_calculators_own_withholding_conditions() {
         for birth_date in ["", "not-a-date", "2099-01-01"] {
-            let profile = UserProfile {
+            let profile = ProfileFields {
                 birth_date: Some(birth_date.to_string()),
                 ..base_profile()
             };

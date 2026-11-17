@@ -128,6 +128,29 @@ pub fn run() {
             let registered_datasets = datasets::bootstrap_registry(&app_handle)
                 .expect("dataset registry is corrupt or unreadable");
 
+            // AD-6's orphan sweep, and the reason it sits here: it needs the registry that was
+            // just bootstrapped, and the ids it compares against are the only record of which
+            // local documents still have a dataset. Non-fatal and logged once — a demographic
+            // document outliving its profile is a privacy defect, not a reason to refuse launch,
+            // and the next launch retries.
+            match profile_store::sweep_local_orphans(
+                &profile_store::profiles_dir(&app_data_dir),
+                &registered_datasets
+                    .iter()
+                    .map(|dataset| dataset.id.clone())
+                    .collect::<Vec<_>>(),
+            ) {
+                Ok(removed) if !removed.is_empty() => info!(
+                    "Removed {} orphaned local profile document(s)",
+                    removed.len()
+                ),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(
+                    "Orphaned local profile documents could not be swept and will be retried on the next launch ({})",
+                    e
+                ),
+            }
+
             // Must happen before any credential access. Debug builds get a file store
             // so `tauri dev` rebuilds do not re-trigger macOS Keychain prompts.
             credentials::install_store(&app_data_dir)
@@ -394,6 +417,7 @@ pub fn run() {
             commands::auth::continue_cloud_session,
             commands::auth::sign_out,
             commands::cloud_ai::get_cloud_ai_premium,
+            commands::profile::get_profile_source,
             commands::profile::get_user_profile,
             commands::profile::save_user_profile,
             commands::profile::get_user_avatar,
