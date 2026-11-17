@@ -300,12 +300,17 @@ describe("deploy step", () => {
     expect(SAMCONFIG_TEXT).toContain("resolve_s3 = false");
   });
 
-  /* One stack, one cadence (AD-14). Epic F's account-app build has to land
-   * before the SAM build, and the seam must still be there when it does. */
-  it("builds the artifact before deploying and leaves the Epic F seam in place", () => {
-    expect(stepIndex(DEPLOY, "Build SAM application")).toBeLessThan(
-      stepIndex(DEPLOY, "Deploy stack")
-    );
+  /* One stack, one cadence (AD-14): the account app is built and packaged before
+   * `sam build`, so one `sam deploy` ships both halves from the same commit. */
+  it("builds both artifacts before deploying", () => {
+    const deployIndex = stepIndex(DEPLOY, "Deploy stack");
+    for (const fragment of [
+      "Build account app",
+      "Package account app for Lambda",
+      "Build SAM application",
+    ]) {
+      expect(stepIndex(DEPLOY, fragment), fragment).toBeLessThan(deployIndex);
+    }
     expect(WORKFLOW_TEXT).toContain("EPIC F SEAM");
     expect(WORKFLOW_TEXT).toContain("@nixus/account build");
   });
@@ -390,5 +395,163 @@ describe("post-deploy gates (AD-15)", () => {
     ]) {
       expect(WORKFLOW_DIRECTIVES, leak).not.toContain(leak);
     }
+  });
+});
+
+describe("Epic F verification gates", () => {
+  it("runs the account app's lint, typecheck, unit and security-gate tests", () => {
+    const commands = runCommands(VERIFY);
+
+    for (const script of ["lint", "typecheck", "test", "build", "package"]) {
+      expect(commands, script).toContain(`pnpm --filter @nixus/account ${script}`);
+    }
+  });
+
+  /* The packaged bundle is what the E2E drives, so packaging has to happen first.
+   * The E2E is also the only gate that proves the srvx entry wrapper and the
+   * AWS_LAMBDA_HTTP_ENDPOINT contract work at all. */
+  it("drives the packaged artifact through Playwright, after packaging it", () => {
+    expect(stepIndex(VERIFY, "Package account app for Lambda")).toBeLessThan(
+      stepIndex(VERIFY, "Account app E2E")
+    );
+    expect(runCommands(VERIFY)).toContain("pnpm --filter @nixus/account test:e2e");
+  });
+
+  /* `ubuntu-latest` moved to Ubuntu 26.04, where `playwright install --with-deps
+   * chromium` refuses outright. The pin is what keeps the suite runnable. */
+  it("pins the Playwright runner to a release Playwright supports", () => {
+    expect(VERIFY["runs-on"]).toBe("ubuntu-24.04");
+    expect(runCommands(VERIFY)).toContain("playwright install --with-deps chromium");
+  });
+
+  /* The SAM CLI's bundled cfn-lint has no schema for AWS::Lambda::WebFunction* and
+   * reports the type as nonexistent, which is why E3006/E3031 are suppressed on
+   * those resources. This step is what still validates them. */
+  it("lints the application template with the current cfn-lint too", () => {
+    expect(runCommands(VERIFY)).toContain(
+      "cfn-lint apps/api-account/template.yaml"
+    );
+  });
+});
+
+describe("Epic F deploy sequence", () => {
+  const ORDERED = [
+    "Deploy stack",
+    "Allow CloudFront to invoke the web function endpoint",
+    "Publish the account app's static assets",
+    "Invalidate the account app's edge cache",
+    "Smoke-test the deployed account app",
+  ];
+
+  it("runs the post-deploy steps in order, after the deploy", () => {
+    const indices = ORDERED.map((fragment) => stepIndex(DEPLOY, fragment));
+    expect(indices).toEqual([...indices].sort((a, b) => a - b));
+  });
+
+  /* CreateWebFunctionRevision reads the object during stack CREATION, so the
+   * bucket and the object both have to exist before `sam deploy` - which is why
+   * the bucket cannot be a stack resource. */
+  it("creates the versioned code bucket and uploads the package before deploying", () => {
+    const deployIndex = stepIndex(DEPLOY, "Deploy stack");
+    expect(stepIndex(DEPLOY, "code bucket exists and is versioned")).toBeLessThan(
+      deployIndex
+    );
+    expect(stepIndex(DEPLOY, "Upload the account app package")).toBeLessThan(
+      deployIndex
+    );
+    expect(stepIndex(DEPLOY, "code bucket exists and is versioned")).toBeLessThan(
+      stepIndex(DEPLOY, "Upload the account app package")
+    );
+  });
+
+  /* Lambda Web stores code by REFERENCE and CreateWebFunctionRevision fails
+   * outright without bucket versioning. The step asserts the enabled state rather
+   * than assuming the call worked. */
+  it("proves versioning is enabled rather than only requesting it", () => {
+    const script = step(DEPLOY, "code bucket exists and is versioned").run as string;
+
+    expect(script).toContain("put-bucket-versioning");
+    expect(script).toContain("get-bucket-versioning");
+    expect(script).toContain('test "${versioning}" = "Enabled"');
+    expect(script).toContain("set -euo pipefail");
+    expect(script).toContain("exit 1");
+  });
+
+  /* A revision is fully immutable, so the content hash IS the deploy trigger: an
+   * unchanged app re-deploys the same key and CloudFormation makes no change. */
+  it("keys the package by content hash and passes that key to the deploy", () => {
+    expect(step(DEPLOY, "Upload the account app package").run as string).toContain(
+      "app.zip.sha256"
+    );
+
+    const commands = runCommands(DEPLOY);
+    for (const parameter of [
+      "AccountDomainName=",
+      "AccountCertificateArn=",
+      "HostedZoneId=",
+      "AccountAppCodeBucket=",
+      "AccountAppCodeKey=",
+    ]) {
+      expect(commands, `missing override ${parameter}`).toContain(parameter);
+    }
+  });
+
+  /* Not a CloudFormation resource: it needs the distribution id, which does not
+   * exist until the stack is created. There is no AddPermission for Web Functions,
+   * and PutResourcePolicy replaces the policy wholesale. */
+  it("writes the resource policy with the function arn and the endpoint arn", () => {
+    const script = step(DEPLOY, "Allow CloudFront to invoke").run as string;
+
+    expect(script).toContain("AccountWebFunctionArn");
+    expect(script).toContain("AccountWebFunctionEndpointArn");
+    expect(script).toContain("lambda:InvokeWebFunctionEndpoint");
+    expect(script).toContain("cloudfront.amazonaws.com");
+    expect(script).toContain("aws:SourceArn");
+    expect(script).toContain("put_resource_policy");
+    // Read back, so a silently wrong policy fails the deploy rather than the site.
+    expect(script).toContain("get_resource_policy");
+    expect(script).toContain("boto3");
+  });
+
+  it("publishes assets additively and waits for the invalidation", () => {
+    const assets = step(DEPLOY, "Publish the account app's static assets")
+      .run as string;
+    expect(assets).toContain("s3 sync");
+    expect(assets).toContain("AccountAssetsBucketName");
+    expect(assets).toContain("max-age=31536000, immutable");
+    // Nothing is deleted: an HTML document already in flight must keep resolving
+    // the assets it references.
+    expect(assets).not.toContain("--delete");
+
+    const invalidation = step(DEPLOY, "Invalidate the account app's edge cache")
+      .run as string;
+    expect(invalidation).toContain("create-invalidation");
+    expect(invalidation).toContain("wait invalidation-completed");
+  });
+
+  it("smoke-tests the landing page, the login redirect and the Origin refusal", () => {
+    const script = step(DEPLOY, "Smoke-test the deployed account app").run as string;
+
+    expect(script).toContain('test "${code}" = "200"');
+    expect(script).toContain("/auth/login");
+    expect(script).toContain('test "${login_code}" = "302"');
+    expect(script).toContain("auth\\.nixusapp\\.com/oauth2/authorize");
+    // A browser silently DROPS a __Host- cookie that is missing Secure, which
+    // presents as a sign-in that never completes rather than as an error.
+    expect(script).toContain("__Host-nixus_preauth");
+    expect(script).toContain("Secure");
+    expect(script).toContain('test "${origin_code}" = "403"');
+    // No gate ever sends a token.
+    expect(script).not.toContain("Authorization:");
+  });
+
+  it("names the account hostname and the code bucket as inputs, not literals", () => {
+    expect(DEPLOY.env.ACCOUNT_DOMAIN_NAME).toBe("account.nixusapp.com");
+    expect(DEPLOY.env.ACCOUNT_CODE_BUCKET).toContain("vars.ACCOUNT_CODE_BUCKET");
+    // The certificate and the zone are account topology, so they stay secrets.
+    expect(WORKFLOW_TEXT).toContain("secrets.API_CERTIFICATE_ARN");
+    expect(WORKFLOW_TEXT).toContain("secrets.HOSTED_ZONE_ID");
+    expect(WORKFLOW_DIRECTIVES).not.toMatch(/arn:aws:acm:/);
+    expect(WORKFLOW_DIRECTIVES).not.toMatch(/\bZ[0-9A-Z]{10,}\b/);
   });
 });

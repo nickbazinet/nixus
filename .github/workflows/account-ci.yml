@@ -60,9 +60,13 @@ permissions:
 
 jobs:
   verify:
-    name: Verify (lint, typecheck, test, cfn-lint, sam validate, sam build)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Verify (lint, typecheck, test, cfn-lint, sam validate, sam build, E2E)
+    # Pinned, not `ubuntu-latest`: that label moved to Ubuntu 26.04, where
+    # `playwright install --with-deps chromium` refuses with "Playwright does not
+    # support chromium on ubuntu26.04-x64". The pin comes off when Playwright
+    # ships 26.04 support.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -105,11 +109,59 @@ jobs:
       - name: Unit and infrastructure contract tests
         run: pnpm --filter @nixus/api-account test
 
+      # The account app (Epic F). Its security gates - login CSRF, session
+      # fixation, pre-auth replay, open redirect, expired-but-present session,
+      # Origin verification and the no-personal-data-in-logs check - are vitest
+      # specs over the real server logic, so they run on every pull request.
+      - name: Lint account app
+        run: pnpm --filter @nixus/account lint
+
+      - name: Typecheck account app
+        run: pnpm --filter @nixus/account typecheck
+
+      - name: Account app unit and security-gate tests
+        run: pnpm --filter @nixus/account test
+
+      - name: Build account app
+        run: pnpm --filter @nixus/account build
+
+      # Packaging is part of verification, not just of the deploy: the step asserts
+      # that every bare import in the built server is a declared runtime root and
+      # that the package carries no native binary, both of which fail at request
+      # time on Lambda rather than at build time.
+      - name: Package account app for Lambda
+        run: pnpm --filter @nixus/account package
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @nixus/account exec playwright install --with-deps chromium
+
+      # Drives the packaged bundle through the same srvx entry wrapper and the same
+      # AWS_LAMBDA_HTTP_ENDPOINT contract Lambda uses, behind a fake edge, a stub
+      # IdP that signs real RS256 id_tokens, and stub profile and DynamoDB APIs.
+      - name: Account app E2E (Playwright)
+        run: pnpm --filter @nixus/account test:e2e
+
+      - name: Upload account app Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-playwright-report
+          path: apps/account/playwright-report/
+          retention-days: 7
+
       # The bootstrap stack is plain CloudFormation, so `sam validate` never sees
       # it. Without this it is a deployable template whose syntax is checked by
       # nothing, while holding the IAM grants that bound the whole pipeline.
       - name: Lint the bootstrap template
         run: pipx run cfn-lint infra/bootstrap/account-oidc-deploy.yaml
+
+      # The SAM CLI bundles its own, older cfn-lint with no schema for
+      # AWS::Lambda::WebFunction* yet, so E3006/E3031 are suppressed on exactly
+      # those four resources in the template. This step runs the CURRENT cfn-lint,
+      # which does carry the schema and validates every property of them - without
+      # it, the Epic F resources would be checked by nothing.
+      - name: Lint the application template with the current cfn-lint
+        run: pipx run cfn-lint apps/api-account/template.yaml
 
       # Offline gates: cfn-lint through SAM, and an esbuild bundle. No credentials.
       - name: Validate SAM template
@@ -157,6 +209,12 @@ jobs:
       API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
       COGNITO_RESOURCE_SERVER_IDENTIFIER: nixus-api
       REQUIRED_COGNITO_SCOPES: ai.invoke profile
+      # Epic F. The code bucket is an environment variable for the same reason
+      # SAM_ARTIFACT_BUCKET is: its name embeds the account id, which is topology
+      # rather than something to commit. It must start with `nixus-account-`, which
+      # is the prefix the deploy role's S3 grant reaches.
+      ACCOUNT_DOMAIN_NAME: account.nixusapp.com
+      ACCOUNT_CODE_BUCKET: ${{ vars.ACCOUNT_CODE_BUCKET }}
 
     steps:
       - name: Checkout
@@ -181,11 +239,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # EPIC F SEAM: the account app's build goes here, before `sam build`, so one
-      # `sam deploy` ships both the profile Lambda and the account app from the
-      # same commit:
-      #   - name: Build account app
-      #     run: pnpm --filter @nixus/account build
+      # EPIC F SEAM: one `sam deploy` ships both the profile Lambda and the account
+      # app from the same commit (AD-14), so the account app is built and packaged
+      # here, before `sam build`.
+      - name: Build account app
+        run: pnpm --filter @nixus/account build
+
+      - name: Package account app for Lambda
+        run: pnpm --filter @nixus/account package
 
       - name: Build SAM application
         run: pnpm --filter @nixus/api-account sam:build
@@ -267,6 +328,63 @@ jobs:
         env:
           AWS_DEFAULT_REGION: us-east-1
 
+      # The code bucket cannot be a stack resource: CreateWebFunctionRevision reads
+      # the object during stack CREATION, so CloudFormation would have to order a
+      # bucket it owns ahead of an upload into that bucket, which it cannot. The
+      # simplest robust alternative is this idempotent step - the same shape the
+      # Phase 0 spike used - and the template owns the bucket POLICY, which is the
+      # part Lambda actually needs.
+      #
+      # Versioning is MANDATORY, not hygiene: Lambda Web stores code by REFERENCE
+      # and CreateWebFunctionRevision fails outright with "You must enable S3
+      # versioning for your S3 bucket when S3ObjectStorageMode is set to REFERENCE".
+      - name: Ensure the account app code bucket exists and is versioned
+        run: |
+          set -euo pipefail
+          test -n "${ACCOUNT_CODE_BUCKET}" || {
+            echo "ACCOUNT_CODE_BUCKET is not set on the production environment." >&2
+            exit 1
+          }
+
+          if ! aws s3api head-bucket --bucket "${ACCOUNT_CODE_BUCKET}" 2>/dev/null; then
+            echo "creating ${ACCOUNT_CODE_BUCKET}"
+            aws s3api create-bucket --bucket "${ACCOUNT_CODE_BUCKET}"
+          fi
+
+          aws s3api put-bucket-versioning \
+            --bucket "${ACCOUNT_CODE_BUCKET}" \
+            --versioning-configuration Status=Enabled
+          aws s3api put-public-access-block \
+            --bucket "${ACCOUNT_CODE_BUCKET}" \
+            --public-access-block-configuration \
+              'BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=true'
+          aws s3api put-bucket-encryption \
+            --bucket "${ACCOUNT_CODE_BUCKET}" \
+            --server-side-encryption-configuration \
+              '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+          versioning="$(aws s3api get-bucket-versioning \
+            --bucket "${ACCOUNT_CODE_BUCKET}" --query 'Status' --output text)"
+          echo "code_bucket=${ACCOUNT_CODE_BUCKET} versioning=${versioning}"
+          test "${versioning}" = "Enabled" || {
+            echo "CreateWebFunctionRevision requires bucket versioning." >&2
+            exit 1
+          }
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # A revision is fully immutable, so a content-hash key is what produces a new
+      # revision and shifts the endpoint's traffic. An unchanged app re-deploys the
+      # same key and CloudFormation makes no change at all.
+      - name: Upload the account app package
+        run: |
+          set -euo pipefail
+          key="account-app/$(cat apps/account/.deploy/app.zip.sha256).zip"
+          aws s3 cp apps/account/.deploy/app.zip "s3://${ACCOUNT_CODE_BUCKET}/${key}"
+          echo "account_code_key=${key}"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
       - name: Deploy stack
         working-directory: apps/api-account
         run: |
@@ -275,6 +393,10 @@ jobs:
             echo "SAM_ARTIFACT_BUCKET is not set on the production environment." >&2
             exit 1
           }
+          # Re-derived from the artifact rather than carried between steps: a run
+          # file would be a second place the key could be wrong, and the deploy
+          # must name the object that was actually uploaded.
+          account_code_key="account-app/$(cat ../account/.deploy/app.zip.sha256).zip"
 
           # The bucket is explicit because `resolve_s3` is off: SAM's managed
           # bucket would be created outside the bootstrap stack and outside its
@@ -289,10 +411,17 @@ jobs:
               "CognitoUserPoolArn=${COGNITO_USER_POOL_ARN}" \
               "CognitoUserPoolId=${COGNITO_USER_POOL_ID}" \
               "ApiDomainName=${API_DOMAIN_NAME}" \
-              "AlertEmail=${ALERT_EMAIL}"
+              "AlertEmail=${ALERT_EMAIL}" \
+              "AccountDomainName=${ACCOUNT_DOMAIN_NAME}" \
+              "AccountCertificateArn=${API_CERTIFICATE_ARN}" \
+              "HostedZoneId=${HOSTED_ZONE_ID}" \
+              "AccountAppCodeBucket=${ACCOUNT_CODE_BUCKET}" \
+              "AccountAppCodeKey=${account_code_key}"
         env:
           AWS_DEFAULT_REGION: us-east-1
           SAM_ARTIFACT_BUCKET: ${{ vars.SAM_ARTIFACT_BUCKET }}
+          API_CERTIFICATE_ARN: ${{ secrets.API_CERTIFICATE_ARN }}
+          HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
           # Stable prefix so the bucket's policy and lifecycle rules apply to one
           # predictable path rather than whatever key SAM invents per run.
           SAM_ARTIFACT_PREFIX: nixus-account
@@ -406,5 +535,165 @@ jobs:
             exit 1
           fi
           echo "profile_envelope=ok"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # The CloudFront -> endpoint resource policy is NOT a CloudFormation resource:
+      # it needs the distribution id, which does not exist until the stack is
+      # created. There is also no AddPermission for Web Functions, and
+      # PutResourcePolicy REPLACES the policy wholesale - so this writes the one
+      # statement from scratch every time and then reads it back, which is also what
+      # makes it idempotent.
+      #
+      # resourceArn is the FUNCTION arn; the Resource inside the policy is the
+      # ENDPOINT arn. boto3's lambda-web client uses lowerCamelCase parameters.
+      - name: Allow CloudFront to invoke the web function endpoint
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cleanup() { rm -rf "${work}"; }
+          trap cleanup EXIT
+
+          outputs() {
+            aws cloudformation describe-stacks \
+              --stack-name "${ACCOUNT_STACK_NAME}" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+
+          function_arn="$(outputs AccountWebFunctionArn)"
+          endpoint_arn="$(outputs AccountWebFunctionEndpointArn)"
+          distribution_id="$(outputs AccountAppDistributionId)"
+          account_id="$(aws sts get-caller-identity --query Account --output text)"
+
+          for value in "${function_arn}" "${endpoint_arn}" "${distribution_id}"; do
+            test -n "${value}" && test "${value}" != "None"
+          done
+          echo "distribution=${distribution_id}"
+
+          jq -n \
+            --arg endpoint "${endpoint_arn}" \
+            --arg source "arn:aws:cloudfront::${account_id}:distribution/${distribution_id}" \
+            '{Version:"2012-10-17",Statement:[{Sid:"AllowCloudFrontOacAccess",Effect:"Allow",Principal:{Service:"cloudfront.amazonaws.com"},Action:"lambda:InvokeWebFunctionEndpoint",Resource:$endpoint,Condition:{StringEquals:{"aws:SourceArn":$source}}}]}' \
+            > "${work}/resource-policy.json"
+
+          # The runner's AWS CLI v2 may predate the `lambda-web` command set, in
+          # which case the action is silently absent rather than an error - so boto3
+          # is used unconditionally. It is the same call either way.
+          python3 -m pip install --quiet --disable-pip-version-check boto3
+          FUNCTION_ARN="${function_arn}" POLICY_FILE="${work}/resource-policy.json" python3 - <<'PY'
+          import json, os
+          import boto3
+
+          client = boto3.client("lambda-web", region_name="us-east-1")
+          arn = os.environ["FUNCTION_ARN"]
+          with open(os.environ["POLICY_FILE"], encoding="utf-8") as handle:
+              wanted = handle.read()
+
+          result = client.put_resource_policy(resourceArn=arn, policy=wanted)
+          print("revisionId", result["revisionId"])
+
+          applied = json.loads(client.get_resource_policy(resourceArn=arn)["policy"])
+          statement = applied["Statement"][0]
+          assert statement["Action"] == "lambda:InvokeWebFunctionEndpoint", statement
+          assert statement["Principal"]["Service"] == "cloudfront.amazonaws.com", statement
+          assert statement["Resource"] == json.loads(wanted)["Statement"][0]["Resource"], statement
+          assert "aws:SourceArn" in statement["Condition"]["StringEquals"], statement
+          print("resource_policy=ok")
+          PY
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # Additively, and AFTER the deploy: an HTML document already in flight must
+      # keep resolving the assets it references. Filenames are content hashes, so
+      # nothing is overwritten and nothing is deleted.
+      - name: Publish the account app's static assets
+        run: |
+          set -euo pipefail
+          bucket="$(aws cloudformation describe-stacks \
+            --stack-name "${ACCOUNT_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='AccountAssetsBucketName'].OutputValue" \
+            --output text)"
+          test -n "${bucket}" && test "${bucket}" != "None"
+          echo "assets_bucket=${bucket}"
+
+          aws s3 sync apps/account/dist/client "s3://${bucket}" \
+            --exclude "*.map" \
+            --cache-control "public, max-age=31536000, immutable"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # Only the dynamic behaviour is cached-disabled; /assets/* is cached hard. The
+      # asset paths are content hashes so they never need invalidating, but the
+      # distribution config itself may have changed, so the cheap root invalidation
+      # is what makes a config change visible immediately.
+      - name: Invalidate the account app's edge cache
+        run: |
+          set -euo pipefail
+          distribution_id="$(aws cloudformation describe-stacks \
+            --stack-name "${ACCOUNT_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='AccountAppDistributionId'].OutputValue" \
+            --output text)"
+
+          invalidation_id="$(aws cloudfront create-invalidation \
+            --distribution-id "${distribution_id}" \
+            --paths "/" "/fr" "/profile" "/fr/profile" \
+            --query 'Invalidation.Id' --output text)"
+          echo "invalidation=${invalidation_id}"
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "${distribution_id}" \
+            --id "${invalidation_id}"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # AD-15's account-app smoke test, over the real deployed edge. Each of the
+      # three proves something a unit test cannot: that CloudFront reaches the
+      # endpoint at all, that a `__Host-` cookie survives the edge, and that the
+      # Origin check is live in the deployed artifact.
+      - name: Smoke-test the deployed account app
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cleanup() { rm -rf "${work}"; }
+          trap cleanup EXIT
+
+          base="https://${ACCOUNT_DOMAIN_NAME}"
+
+          code="$(curl -sS -o "${work}/landing.html" -w '%{http_code}' "${base}/")"
+          echo "landing_code=${code}"
+          test "${code}" = "200" || {
+            echo "GET / answered ${code}, expected 200." >&2
+            exit 1
+          }
+
+          curl -sS -D "${work}/login.headers" -o /dev/null \
+            "${base}/auth/login?next=profile" || true
+          login_code="$(awk 'NR==1 {print $2}' "${work}/login.headers")"
+          echo "login_code=${login_code}"
+          test "${login_code}" = "302" || {
+            echo "GET /auth/login answered ${login_code}, expected 302." >&2
+            exit 1
+          }
+          grep -iq '^location: https://auth\.nixusapp\.com/oauth2/authorize' \
+            "${work}/login.headers" || {
+            echo "/auth/login did not redirect to managed login." >&2
+            exit 1
+          }
+          # Secure, HttpOnly and the __Host- prefix all have to survive the edge:
+          # a browser silently DROPS a __Host- cookie missing any of them, which
+          # presents as a sign-in that never completes.
+          grep -iq '^set-cookie: __Host-nixus_preauth=.*Secure' \
+            "${work}/login.headers" || {
+            echo "/auth/login set no __Host- pre-auth cookie." >&2
+            exit 1
+          }
+
+          origin_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -X POST "${base}/auth/signout")"
+          echo "no_origin_post_code=${origin_code}"
+          test "${origin_code}" = "403" || {
+            echo "A POST with no Origin answered ${origin_code}, expected 403." >&2
+            exit 1
+          }
+          echo "account_app_smoke=ok"
         env:
           AWS_DEFAULT_REGION: us-east-1
