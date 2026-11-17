@@ -26,6 +26,9 @@ import { queryKeys } from "@/lib/constants";
 import { IMPORT_DRAFT_STORAGE_KEY } from "@/lib/datasetSwitch";
 import { installLocalStorageMock } from "@/test/localStorageMock";
 
+/** Any resolver key: the sweep is on the shared prefix, so the key's own value is irrelevant. */
+const SOURCE_KEY = "cloud:00000000-0000-4000-8000-000000000001";
+
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
 }
@@ -478,23 +481,54 @@ describe("useAuth", () => {
     ]);
   });
 
-  // Row 10 of Story 30.2's degradation matrix. TanStack Query removes by key PREFIX, and
-  // ["tfsa-accumulated-limit"] shares no prefix with ["profile"], so the Story 28.2 removal does not
-  // reach it. A dev reasoning "the profile cache is cleared, so the derived figure is too" ships the
-  // previous account's dollar amount — a wrong number and a privacy leak at once. Sign-out now sweeps
-  // wholesale, so the surviving prefix hazard is the *sign-in* path, which still removes key by key.
+  // Row 10 of Story 30.2's degradation matrix, now closed structurally rather than by a list: every
+  // profile-family key shares the `profile` prefix, so one `removeQueries` reaches the derived TFSA
+  // figure too. The hazard this replaces was a dev reasoning "the profile cache is cleared, so the
+  // derived figure is too" while ["tfsa-accumulated-limit"] shared no prefix with ["profile"] —
+  // shipping the previous account's dollar amount, a wrong number and a privacy leak at once.
   it("removes the accumulated TFSA figure when a different account signs in", async () => {
     invokeMock.mockResolvedValue({ status: "LoggedOut" });
 
     render(<SessionHarness />);
     await settleQueries(() => listenMock.mock.calls.length > 0);
+    queryClient.setQueryData(queryKeys.tfsaAccumulatedLimit, 95000);
 
     act(() => {
       fireCallbackEvent();
     });
 
-    expect(removedKeys()).toContainEqual(["tfsa-accumulated-limit"]);
-    expect(invalidatedKeys()).not.toContainEqual(["tfsa-accumulated-limit"]);
+    expect(removedKeys()).toContainEqual(["profile"]);
+    expect(invalidatedKeys()).not.toContainEqual(["profile"]);
+    expect(
+      queryClient.getQueryData(queryKeys.tfsaAccumulatedLimit),
+    ).toBeUndefined();
+  });
+
+  // The prefix rule is the contract, so it is asserted as a rule: a key added to the family later
+  // is swept without anyone remembering to list it here.
+  it("sweeps every profile-family key on the one prefix when a different account signs in", async () => {
+    invokeMock.mockResolvedValue({ status: "LoggedOut" });
+
+    render(<SessionHarness />);
+    await settleQueries(() => listenMock.mock.calls.length > 0);
+
+    const familyKeys = [
+      queryKeys.profileSource,
+      queryKeys.profileDocument(SOURCE_KEY),
+      queryKeys.userAvatar(SOURCE_KEY),
+      queryKeys.tfsaAccumulatedLimit,
+    ];
+    for (const key of familyKeys) {
+      queryClient.setQueryData(key, { belongsTo: "previous" });
+    }
+
+    act(() => {
+      fireCallbackEvent();
+    });
+
+    for (const key of familyKeys) {
+      expect(queryClient.getQueryData(key), key.join("/")).toBeUndefined();
+    }
   });
 
   // The most visible cross-account leak this feature could ship: TanStack Query serves a stale
@@ -505,7 +539,7 @@ describe("useAuth", () => {
 
     render(<SessionHarness />);
     await settleQueries(() => listenMock.mock.calls.length > 0);
-    queryClient.setQueryData(queryKeys.userAvatar, {
+    queryClient.setQueryData(queryKeys.userAvatar(SOURCE_KEY), {
       mime_type: "image/png",
       image_base64: "cHJldmlvdXMtc3ViamVjdA==",
       uploaded_at: "2026-09-01T00:00:00+00:00",
@@ -515,14 +549,16 @@ describe("useAuth", () => {
       fireCallbackEvent();
     });
 
-    expect(removedKeys()).toContainEqual(["user-avatar"]);
-    expect(invalidatedKeys()).not.toContainEqual(["user-avatar"]);
-    expect(queryClient.getQueryData(queryKeys.userAvatar)).toBeUndefined();
+    expect(removedKeys()).toContainEqual(["profile"]);
+    expect(invalidatedKeys()).not.toContainEqual(["profile"]);
+    expect(
+      queryClient.getQueryData(queryKeys.userAvatar(SOURCE_KEY)),
+    ).toBeUndefined();
   });
 
   it("sweeps the profile picture away with the rest of the account on sign-out", async () => {
     invokeMock.mockResolvedValue(null);
-    queryClient.setQueryData(queryKeys.userAvatar, {
+    queryClient.setQueryData(queryKeys.userAvatar(SOURCE_KEY), {
       mime_type: "image/png",
       image_base64: "cHJldmlvdXMtc3ViamVjdA==",
       uploaded_at: "2026-09-01T00:00:00+00:00",
@@ -533,7 +569,9 @@ describe("useAuth", () => {
     });
 
     expect(clearSpy).toHaveBeenCalled();
-    expect(queryClient.getQueryData(queryKeys.userAvatar)).toBeUndefined();
+    expect(
+      queryClient.getQueryData(queryKeys.userAvatar(SOURCE_KEY)),
+    ).toBeUndefined();
   });
 
   it("unsubscribes the callback listener on unmount", async () => {

@@ -68,17 +68,11 @@ export function useAuthSession({ enabled = true }: { enabled?: boolean } = {}) {
         // brand-new one (Story 35.3), and the signed-in badge is derived from the
         // pair, so the active profile is re-read alongside the session.
         queryClient.invalidateQueries({ queryKey: queryKeys.activeProfile });
-        // `removeQueries`, never `invalidateQueries`: invalidation keeps the
-        // previous account's profile rendered while refetching, which is a
-        // visible cross-account leak.
+        // `removeQueries` on the shared prefix, never `invalidateQueries` and never a
+        // hand-maintained list: invalidation keeps the previous account's profile and FACE
+        // rendered while refetching, which is a visible cross-account leak, and a list is what
+        // lets a newly added profile-family key be forgotten here (D5).
         queryClient.removeQueries({ queryKey: queryKeys.profile });
-        // The same rule, and the most visible instance of it: an invalidated
-        // avatar keeps the previous subject's FACE on the account trigger and on
-        // /profile while the incoming one is still in flight.
-        queryClient.removeQueries({ queryKey: queryKeys.userAvatar });
-        queryClient.removeQueries({
-          queryKey: queryKeys.tfsaAccumulatedLimit,
-        });
         // Same reasoning: an invalidated `true` keeps a Premium badge on screen
         // under the account that just signed in, which may not be entitled to it.
         queryClient.removeQueries({ queryKey: queryKeys.cloudAiPremium });

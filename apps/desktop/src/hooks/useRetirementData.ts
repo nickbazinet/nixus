@@ -2,8 +2,8 @@ import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { queryKeys } from "@/lib/constants";
-import type { RetirementInput, UserProfile } from "@/lib/types";
-import { useAuthSession } from "@/hooks/useAuth";
+import type { RetirementInput } from "@/lib/types";
+import { useProfileSource, useUserProfile } from "@/hooks/useProfile";
 import {
   CA_DEFAULT_PENSION_ANNUAL_CENTS,
   DEFAULT_EMPLOYER_PENSION_START_AGE,
@@ -24,16 +24,18 @@ export function useRetirementInput() {
   });
 }
 
+/**
+ * The demographics this surface reads, from whichever home the resolver names (AD-6).
+ *
+ * Gated on the resolved source rather than on the session: a local profile's own date of birth is
+ * readable with no account at all, and a cloud-linked profile whose account is not the one signed
+ * in resolves to no source — so there is nothing to ask for. It shares `useUserProfile`'s cache
+ * entry, so opening this route after `/profile` costs no second command.
+ */
 export function useRetirementProfile() {
-  const { data: session } = useAuthSession();
-  const loggedIn = session?.status === "LoggedIn";
+  const { data: source } = useProfileSource();
 
-  return useQuery({
-    queryKey: queryKeys.profile,
-    queryFn: () => invoke<UserProfile | null>("get_user_profile"),
-    enabled: loggedIn,
-    retry: false,
-  });
+  return useUserProfile(source?.source_key ?? null);
 }
 
 export function useRetirementPension() {

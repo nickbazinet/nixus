@@ -808,9 +808,12 @@ export type AuthState =
   | { status: "LoggedIn"; email: string; name: string | null }
   | { status: "SessionExpired" };
 
+// Mirrors `models::ProfileView`: the demographic field set of whichever home the
+// Rust resolver named, for BOTH a local profile and a Nixus Cloud copy. It carries
+// the opaque `source_key` instead of a `cognito_sub` — the Cognito subject is
+// resolved in Rust and never crosses IPC in either direction.
 export interface UserProfile {
-  schema_version: number;
-  cognito_sub: string;
+  source_key: string;
   first_name: string | null;
   last_name: string | null;
   birth_date: string | null;

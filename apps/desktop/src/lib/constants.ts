@@ -84,12 +84,19 @@ export const queryKeys = {
   cloudAiPremium: ["cloud-ai-premium"] as const,
   homeSurface: ["home-surface"] as const,
   homeComposerAccess: ["home-composer-access"] as const,
+  // Every profile-family key shares the `profile` prefix, so one `removeQueries`
+  // on that prefix sweeps the whole family on an identity change (D5) — a
+  // hand-maintained list is what let a key be forgotten. The source key is part
+  // of each one, so one source's cached document can never be served to another.
   profile: ["profile"] as const,
-  userAvatar: ["user-avatar"] as const,
+  profileSource: ["profile", "source"] as const,
+  profileDocument: (sourceKey: string) =>
+    ["profile", "document", sourceKey] as const,
+  userAvatar: (sourceKey: string) => ["profile", "avatar", sourceKey] as const,
   countries: ["countries"] as const,
   subdivisions: (countryCode: string) =>
     ["subdivisions", countryCode] as const,
-  tfsaAccumulatedLimit: ["tfsa-accumulated-limit"] as const,
+  tfsaAccumulatedLimit: ["profile", "tfsa"] as const,
   projects: ["projects"] as const,
   project: (id: number) => ["projects", id] as const,
   projectContributions: (projectId: number) =>
