@@ -3,8 +3,6 @@
 //! the avatar ceilings, and its tests are the desktop half of the contract tests: they read the
 //! TypeScript source and the shared fixtures, so a drift on either side fails here.
 
-#![allow(dead_code)] // Consumed by the profile client and the profile homes (Epics C/D/E).
-
 pub const ERROR_CODES: [&str; 8] = [
     "unauthorized",
     "reauthentication_required",
@@ -45,6 +43,10 @@ pub const VALIDATION_FIELDS: [&str; 11] = [
 ];
 
 pub const AVATAR_MIME_TYPES: [&str; 2] = ["image/png", "image/jpeg"];
+/// The server's own dimension ceiling. Read by the contract tests below rather than by the
+/// desktop: the derivative's 256px edge is enforced by `projects::image`'s downscale ladder, which
+/// owns the only resizer, so a second check here could only disagree with it.
+#[allow(dead_code)]
 pub const AVATAR_MAX_EDGE_PX: u32 = 256;
 pub const AVATAR_MAX_DECODED_BYTES: usize = 64 * 1024;
 

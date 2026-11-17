@@ -7,8 +7,6 @@
 //! `credentials.rs` or `keyring_core`. Nothing it logs carries a token, a profile value,
 //! avatar bytes, a response body or a URL — only statuses, byte sizes and booleans (AD-12).
 
-#![allow(dead_code)] // Consumed by `commands/profile.rs`'s refresh and save paths (Epic E).
-
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;

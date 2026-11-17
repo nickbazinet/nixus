@@ -1114,7 +1114,6 @@ pub struct UserAvatar {
 // fixtures into these so the two sides cannot drift. Unknown response fields are ignored
 // (serde's default), which is the additive-evolution rule. Option fields serialize as `null`,
 // never omitted, so `expected_version: null` (create-only) is always explicit on the wire.
-#[allow(dead_code)] // Consumed by the profile client and the profile homes (Epics C/D/E).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileFields {
     pub first_name: Option<String>,
@@ -1126,7 +1125,6 @@ pub struct ProfileFields {
     pub subdivision_code: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudProfileWire {
     #[serde(flatten)]
@@ -1137,7 +1135,6 @@ pub struct CloudProfileWire {
     pub avatar_version: Option<u64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PutProfileRequestWire {
     #[serde(flatten)]
@@ -1146,7 +1143,6 @@ pub struct PutProfileRequestWire {
 }
 
 // `data` is base64 of the derivative; callers log its byte size only, never the value (AD-12).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudAvatarWire {
     pub mime_type: String,
@@ -1155,7 +1151,6 @@ pub struct CloudAvatarWire {
     pub updated_at: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PutAvatarRequestWire {
     pub mime_type: String,
@@ -1163,7 +1158,6 @@ pub struct PutAvatarRequestWire {
     pub expected_version: Option<u64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountErrorWire {
     pub code: String,
@@ -1180,7 +1174,6 @@ pub struct AccountErrorWire {
     pub current_version: Option<u64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountErrorEnvelopeWire {
     pub error: AccountErrorWire,
