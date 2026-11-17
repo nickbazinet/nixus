@@ -41,6 +41,46 @@ Parameters:
     Description: Operator address subscribed to the CloudWatch alarms and the AWS Budget.
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
 
+  # ---------------------------------------------------------------------------
+  # EPIC F - the account app (AD-10, AD-14).
+  # ---------------------------------------------------------------------------
+  AccountDomainName:
+    Type: String
+    Default: account.nixusapp.com
+    Description: >-
+      Hostname CloudFront serves the account app on. It is also the app's
+      PUBLIC_ORIGIN: behind the AllViewerExceptHostHeader origin-request policy the
+      server's own Host header is the Lambda endpoint's domain, so every absolute
+      URL and the Origin comparison are built from this value instead (AD-10).
+    AllowedPattern: '^[a-z0-9.-]+$'
+  AccountCertificateArn:
+    Type: String
+    Description: >-
+      The EXISTING wildcard *.nixusapp.com certificate in us-east-1. Referenced,
+      never requested: a second certificate for a name an existing one already
+      covers is a second renewal to keep alive.
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:acm:us-east-1:\d{12}:certificate/.+$'
+  HostedZoneId:
+    Type: String
+    Description: Hosted zone for nixusapp.com, where the account record is created.
+    AllowedPattern: '^[A-Z0-9]+$'
+  AccountAppCodeBucket:
+    Type: String
+    Description: >-
+      Versioned bucket holding the account app's deployment package. Created
+      idempotently by the pipeline BEFORE this stack, because CreateWebFunctionRevision
+      reads the object during stack creation and CloudFormation cannot order a
+      bucket it owns ahead of the upload into it. This stack owns the bucket POLICY
+      (below), which is what Lambda needs to read the object.
+    AllowedPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+  AccountAppCodeKey:
+    Type: String
+    Description: >-
+      Content-hash key of the package the pipeline just uploaded. A revision is
+      fully immutable, so a new key is what produces a new revision and shifts the
+      endpoint's traffic to it.
+    MinLength: 1
+
 Globals:
   Function:
     # Node.js 24, deliberately ahead of nixus-bedrock-api's Node 22: 22 leaves
@@ -317,6 +357,465 @@ Resources:
             Method: get
 
   # ---------------------------------------------------------------------------
+  # EPIC F / AD-10 - the account app's session storage.
+  #
+  # Disposable by design, so no Retain policy: every row is reconstructible by
+  # signing in again, and a retained table would survive a stack delete holding
+  # live refresh tokens. Rows are keyed by the SHA-256 of the cookie value, so the
+  # table never holds a usable cookie.
+  #
+  # expires_at is the TTL attribute and reclaims storage ONLY. DynamoDB deletes
+  # expired items "within a few days", so idle and absolute expiry are both checked
+  # in code on every read - without that, a stale cookie keeps working for days.
+  # ---------------------------------------------------------------------------
+  SessionTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-sessions'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------------------
+  # EPIC F / AD-11 - the account app's execution role.
+  #
+  # The logical id starts with `Account` so the name CloudFormation derives falls
+  # under the bootstrap's `nixus-account-Account*` IAM grant.
+  #
+  # It holds NOTHING on the profile table. The app reads and writes profiles only
+  # through https://api.nixusapp.com/v1/profile with the user's own access token, so
+  # there is exactly one writer and one validation authority for a profile -
+  # src/iam-isolation.test.ts asserts both directions of that.
+  # ---------------------------------------------------------------------------
+  AccountAppExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: account-app-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub '${AccountAppLogGroup.Arn}:*'
+                  # Web Functions also write to a per-Region ".local" group, which
+                  # is why this one entry carries a region wildcard.
+                  - !Sub 'arn:${AWS::Partition}:logs:*:${AWS::AccountId}:log-group:/aws/lambda/web/${AWS::StackName}-app.local:*'
+        - PolicyName: account-app-sessions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Four actions, one table. No Query, no Scan, no BatchGetItem: every
+              # access is a single item looked up by the hash of a cookie the caller
+              # already presented, so an enumeration primitive has no use here.
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt SessionTable.Arn
+        - PolicyName: account-app-client-secret
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # One parameter, by exact ARN. The owner creates the SecureString by
+              # hand after the first deploy; nothing in this stack writes it.
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AWS::StackName}/web-client-secret'
+              - Effect: Allow
+                Action: kms:Decrypt
+                # The AWS-managed SSM key has no stack-scoped ARN, so the bound is
+                # the ViaService condition: this grant is unusable for anything but
+                # a Parameter Store read in this Region.
+                Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+                Condition:
+                  StringEquals:
+                    'kms:ViaService': !Sub 'ssm.${AWS::Region}.amazonaws.com'
+
+  AccountAppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/web/${AWS::StackName}-app'
+      RetentionInDays: 14
+
+  # ---------------------------------------------------------------------------
+  # EPIC F / AD-14 - static assets, and the policy that lets Lambda read the code.
+  # ---------------------------------------------------------------------------
+  AccountAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-assets-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  AccountAssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccountAssetsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Readable by this distribution and nothing else - not by a signed URL,
+          # not by a second distribution in the same account.
+          - Sid: AllowCloudFrontOacReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${AccountAssetsBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${AccountDistribution}'
+
+  AccountAppCodeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AccountAppCodeBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Lambda Web stores code by REFERENCE, so the SERVICE reads the object -
+          # not this stack's role. Without this statement CreateWebFunctionRevision
+          # fails with "Lambda service principal does not have s3:GetObject and
+          # s3:GetObjectVersion permission". GetObjectVersion is required because
+          # the reference is to a specific version, which is also why the bucket
+          # must have versioning enabled.
+          - Sid: AllowLambdaWebReadCode
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+            Resource: !Sub 'arn:${AWS::Partition}:s3:::${AccountAppCodeBucket}/*'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+
+  # ---------------------------------------------------------------------------
+  # EPIC F / AD-14 - the Lambda Web Function.
+  #
+  # Every revision property is create-only, so each deploy creates a new revision
+  # and the endpoint shifts traffic to it. Web Functions have no MemorySize and no
+  # Architectures property (memory is fixed at 2 GB), which is why the deployment
+  # package must contain no native binaries.
+  # ---------------------------------------------------------------------------
+  AccountWebFunction:
+    Type: AWS::Lambda::WebFunction
+    Metadata:
+      cfn-lint:
+        config:
+          # The SAM CLI bundles its own, older cfn-lint, which has no schema for
+          # AWS::Lambda::WebFunction* yet and reports the type as nonexistent. The
+          # check is suppressed on these four resources ONLY; the pipeline also runs
+          # the current standalone cfn-lint over this template, and that one DOES
+          # carry the schema and validates every property of them.
+          ignore_checks:
+            - E3006
+            - E3031
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-app'
+
+  AccountWebFunctionRevision:
+    Type: AWS::Lambda::WebFunctionRevision
+    # The policy must exist before the service tries to read the object.
+    DependsOn: AccountAppCodeBucketPolicy
+    Metadata:
+      cfn-lint:
+        config:
+          # The SAM CLI bundles its own, older cfn-lint, which has no schema for
+          # AWS::Lambda::WebFunction* yet and reports the type as nonexistent. The
+          # check is suppressed on these four resources ONLY; the pipeline also runs
+          # the current standalone cfn-lint over this template, and that one DOES
+          # carry the schema and validates every property of them.
+          ignore_checks:
+            - E3006
+            - E3031
+    Properties:
+      FunctionName: !Ref AccountWebFunction
+      Description: !Sub 'account app ${AccountAppCodeKey}'
+      BuildConfig:
+        CodeConfig:
+          S3Object:
+            Bucket: !Ref AccountAppCodeBucket
+            Key: !Ref AccountAppCodeKey
+        RuntimeConfig:
+          Runtime: nodejs24.x
+      ServiceConfig:
+        ExecutionRoleArn: !GetAtt AccountAppExecutionRole.Arn
+        TimeoutSeconds: 29
+        TelemetryConfig:
+          LoggingConfig:
+            LogGroup: !Ref AccountAppLogGroup
+            ApplicationLogLevel: INFO
+            SystemLogLevel: WARN
+        EnvironmentVariables:
+          # Non-secret configuration only. The client secret is an SSM SecureString
+          # read at cold start and never an environment variable (AD-10).
+          PUBLIC_ORIGIN: !Sub 'https://${AccountDomainName}'
+          COGNITO_DOMAIN: https://auth.nixusapp.com
+          COGNITO_CLIENT_ID: !Ref AccountWebClient
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          SESSION_TABLE_NAME: !Ref SessionTable
+          PROFILE_API_BASE_URL: !Sub 'https://${ApiDomainName}/v1/profile'
+          CLIENT_SECRET_PARAMETER_NAME: !Sub '/${AWS::StackName}/web-client-secret'
+
+  AccountWebFunctionEndpoint:
+    Type: AWS::Lambda::WebFunctionEndpoint
+    Metadata:
+      cfn-lint:
+        config:
+          # The SAM CLI bundles its own, older cfn-lint, which has no schema for
+          # AWS::Lambda::WebFunction* yet and reports the type as nonexistent. The
+          # check is suppressed on these four resources ONLY; the pipeline also runs
+          # the current standalone cfn-lint over this template, and that one DOES
+          # carry the schema and validates every property of them.
+          ignore_checks:
+            - E3006
+            - E3031
+    Properties:
+      FunctionName: !Ref AccountWebFunction
+      EndpointName: !Sub '${AWS::StackName}-app-ep'
+      # HomeRegion, not MultiRegion: MultiRegion forces OAC SigningProtocol sigv4a
+      # and excludes opt-in Regions, for a single-Region service.
+      EndpointType: HomeRegion
+      # IamAuth is required for OAC. ApplicationManaged would make the endpoint
+      # publicly invokable, bypassing CloudFront entirely.
+      AuthType: IamAuth
+      RevisionWeights:
+        - RevisionId: !GetAtt AccountWebFunctionRevision.RevisionId
+          Weight: 100
+      ThrottleConfig:
+        RateLimit: 50
+
+  # ---------------------------------------------------------------------------
+  # EPIC F / AD-10 - the confidential web client and its managed login branding.
+  #
+  # Branding is NOT optional: CreateUserPoolClient through an SDK or CloudFormation
+  # creates no branding style, and managed login is unavailable for such a client
+  # until a CreateManagedLoginBranding request is made. Without this resource
+  # sign-in is dead on the first deploy.
+  # ---------------------------------------------------------------------------
+  AccountWebClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CognitoUserPoolId
+      ClientName: !Sub '${AWS::StackName}-web'
+      # Confidential: the secret never reaches the browser, because the browser
+      # holds one opaque session cookie and the tokens stay on the server.
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+        - nixus-api/profile
+      # Sole callback. A second one is a second thing to validate on the callback.
+      CallbackURLs:
+        - !Sub 'https://${AccountDomainName}/auth/callback'
+      LogoutURLs:
+        - !Sub 'https://${AccountDomainName}/'
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+      # Revocation is what makes sign-out mean anything: it is per refresh token on
+      # THIS client, so it never reaches the desktop's own session.
+      EnableTokenRevocation: true
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 15
+      IdTokenValidity: 15
+      RefreshTokenValidity: 7
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  AccountWebClientBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    Properties:
+      UserPoolId: !Ref CognitoUserPoolId
+      ClientId: !Ref AccountWebClient
+      UseCognitoProvidedValues: true
+
+  # ---------------------------------------------------------------------------
+  # EPIC F / AD-14 - CloudFront in front of the Web Function, assets from S3.
+  # ---------------------------------------------------------------------------
+  AccountLambdaOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Metadata:
+      cfn-lint:
+        config:
+          # The SAM CLI bundles its own, older cfn-lint, which has no schema for
+          # AWS::Lambda::WebFunction* yet and reports the type as nonexistent. The
+          # check is suppressed on these four resources ONLY; the pipeline also runs
+          # the current standalone cfn-lint over this template, and that one DOES
+          # carry the schema and validates every property of them.
+          ignore_checks:
+            - E3006
+            - E3031
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-lambda-oac'
+        Description: OAC for the account app's Lambda Web Function origin.
+        OriginAccessControlOriginType: lambda
+        # CloudFront rejects every other signing behaviour for a Web Function
+        # origin. It signs with a CloudFront-specific header AND forwards the
+        # viewer's own Authorization header unmodified, so app-level auth still
+        # works on an IamAuth endpoint.
+        SigningBehavior: always-amz-auth
+        SigningProtocol: sigv4
+
+  AccountS3Oac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-s3-oac'
+        Description: OAC for the account app's static asset origin.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  AccountSecurityHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub '${AWS::StackName}-security-headers'
+        SecurityHeadersConfig:
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            # No preload: that commits every nixusapp.com host, including ones this
+            # stack does not own, and is effectively irreversible.
+            Preload: false
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          ContentSecurityPolicy:
+            # frame-ancestors only. A script-src policy would have to allow the
+            # inline hydration script TanStack Start emits, and a CSP that allows
+            # unsafe-inline buys nothing while reading as protection.
+            ContentSecurityPolicy: "frame-ancestors 'none'"
+            Override: true
+
+  AccountDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub '${AWS::StackName} account app'
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Aliases:
+          - !Ref AccountDomainName
+        ViewerCertificate:
+          AcmCertificateArn: !Ref AccountCertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: lambda-web
+            DomainName: !GetAtt AccountWebFunctionEndpoint.DomainName
+            OriginAccessControlId: !GetAtt AccountLambdaOac.Id
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              HTTPSPort: 443
+              OriginSSLProtocols:
+                - TLSv1.2
+          - Id: s3-assets
+            DomainName: !GetAtt AccountAssetsBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt AccountS3Oac.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: lambda-web
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # Managed CachingDisabled. Every response here is session-dependent, so a
+          # cache is a way to serve one visitor's Set-Cookie to the next.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          # Managed AllViewerExceptHostHeader. The endpoint requires Host to equal
+          # its OWN domain; forwarding the viewer's Host yields 404. Do not use
+          # AllViewer. This is also why the app derives its origin from
+          # configuration rather than from the request.
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          ResponseHeadersPolicyId: !Ref AccountSecurityHeaders
+        CacheBehaviors:
+          - PathPattern: /assets/*
+            TargetOriginId: s3-assets
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            # Managed CachingOptimized: the filenames are content hashes.
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+            ResponseHeadersPolicyId: !Ref AccountSecurityHeaders
+
+  AccountDnsRecordV4:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref AccountDomainName
+      Type: A
+      AliasTarget:
+        # The fixed hosted-zone id of every CloudFront distribution.
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt AccountDistribution.DomainName
+        EvaluateTargetHealth: false
+
+  AccountDnsRecordV6:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref AccountDomainName
+      Type: AAAA
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt AccountDistribution.DomainName
+        EvaluateTargetHealth: false
+
+  # ---------------------------------------------------------------------------
   # AD-14 - alerting and budget. They notify; they never stop traffic.
   # ---------------------------------------------------------------------------
   AccountAlertTopic:
@@ -394,6 +893,30 @@ Resources:
       AlarmActions:
         - !Ref AccountAlertTopic
 
+  AccountDistributionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-account-app-5xx'
+      AlarmDescription: >-
+        5xx rate at the account app's edge. CloudFront publishes to AWS/CloudFront
+        in us-east-1 only, with the Region dimension fixed to Global - this stack is
+        already there, so no cross-Region alarm is needed.
+      Namespace: AWS/CloudFront
+      MetricName: 5xxErrorRate
+      Dimensions:
+        - Name: DistributionId
+          Value: !Ref AccountDistribution
+        - Name: Region
+          Value: Global
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AccountAlertTopic
+
   AccountMonthlyBudget:
     Type: AWS::Budgets::Budget
     Properties:
@@ -413,6 +936,8 @@ Resources:
             - Amazon DynamoDB
             - Amazon API Gateway
             - AWS Lambda
+            - Amazon CloudFront
+            - Amazon Simple Storage Service
       NotificationsWithSubscribers:
         - Notification:
             NotificationType: ACTUAL
@@ -449,6 +974,39 @@ Outputs:
   AlertTopicArn:
     Description: SNS topic backing the CloudWatch alarms.
     Value: !Ref AccountAlertTopic
+  AccountAppDistributionId:
+    Description: >-
+      Distribution the post-deploy PutResourcePolicy scopes the CloudFront
+      principal to, and the target of the cache invalidation.
+    Value: !Ref AccountDistribution
+  AccountAppDistributionDomain:
+    Description: CloudFront domain behind the account.nixusapp.com alias.
+    Value: !GetAtt AccountDistribution.DomainName
+  AccountWebFunctionArn:
+    Description: >-
+      resourceArn for PutResourcePolicy. The FUNCTION ARN is the resource the call
+      targets, while the ARN inside the policy is the ENDPOINT's.
+    Value: !GetAtt AccountWebFunction.FunctionArn
+  AccountWebFunctionEndpointArn:
+    Description: Resource the CloudFront service principal is allowed to invoke.
+    Value: !GetAtt AccountWebFunctionEndpoint.EndpointArn
+  AccountWebFunctionEndpointDomain:
+    Description: Origin domain the distribution sends the default behaviour to.
+    Value: !GetAtt AccountWebFunctionEndpoint.DomainName
+  AccountAssetsBucketName:
+    Description: Bucket the pipeline syncs dist/client into after a deploy.
+    Value: !Ref AccountAssetsBucket
+  AccountWebClientId:
+    Description: >-
+      Confidential client the owner reads the secret from with
+      `describe-user-pool-client` before creating the SSM SecureString.
+    Value: !Ref AccountWebClient
+  AccountClientSecretParameterName:
+    Description: SSM SecureString path the account app reads at cold start.
+    Value: !Sub '/${AWS::StackName}/web-client-secret'
+  SessionTableName:
+    Description: Disposable session table. The account app's only storage (AD-11).
+    Value: !Ref SessionTable
   CognitoUserPoolIdEcho:
     Description: >-
       Echo of the external user pool this stack authorizes against, so an operator
