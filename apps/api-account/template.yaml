@@ -1,0 +1,456 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Nixus Cloud account stack (stack nixus-account). Holds the profile service of
+  apps/api-account: one Regional REST API attached to the existing
+  api.nixusapp.com domain by an API mapping on the key v1/profile, one Node.js 24
+  ARM64 Lambda serving all five profile routes, and one retained on-demand
+  DynamoDB table holding USER#<sub>/PROFILE and USER#<sub>/AVATAR.
+
+  The domain itself belongs to stack nixus-bedrock-api and is referenced here BY
+  NAME only - no CloudFormation export, no import, and nothing in this stack ever
+  edits the domain or the Bedrock mapping (AD-3).
+
+  The Cognito user pool and its nixus-api resource server are console-managed and
+  are likewise only referenced (AD-3). The account app of Epic F (CloudFront, S3,
+  a Lambda Web Function, a session table and a web Cognito client) is added to
+  THIS stack later, so both share one release cadence (AD-14).
+
+Parameters:
+  CognitoUserPoolArn:
+    Type: String
+    Description: >-
+      ARN of the EXISTING Cognito user pool from architecture-login.md. This
+      stack never creates, imports, or owns the pool or its resource server.
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:cognito-idp:[a-z0-9-]+:\d{12}:userpool/.+$'
+  CognitoUserPoolId:
+    Type: String
+    Description: ID of the same existing Cognito user pool, for operator traceability.
+    AllowedPattern: '^[\w-]+_[0-9a-zA-Z]+$'
+  ApiDomainName:
+    Type: String
+    Default: api.nixusapp.com
+    Description: >-
+      Custom domain owned by stack nixus-bedrock-api. Referenced by name because
+      an export/import would couple two stacks' lifecycles: this stack only adds
+      a mapping under it, and the Bedrock catch-all mapping stays untouched.
+      Longest-prefix match sends /v1/profile/* here and everything else there.
+    AllowedPattern: '^[a-z0-9.-]+$'
+  AlertEmail:
+    Type: String
+    Description: Operator address subscribed to the CloudWatch alarms and the AWS Budget.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+
+Globals:
+  Function:
+    # Node.js 24, deliberately ahead of nixus-bedrock-api's Node 22: 22 leaves
+    # upstream security support in April 2027, and a new stack has no reason to
+    # start on an expiring runtime (AD-14).
+    Runtime: nodejs24.x
+    Architectures:
+      - arm64
+    MemorySize: 512
+    Timeout: 29
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # AD-3 - Regional REST edge, Cognito authorizer requiring nixus-api/profile
+  # ---------------------------------------------------------------------------
+  ProfileApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      # A literal stage name, because the API mapping below must name one and
+      # DependsOn has to reference the stage resource SAM generates from it.
+      StageName: v1
+      EndpointConfiguration: REGIONAL
+      # The default execute-api host is not a production fallback: the shared
+      # custom domain is the only reachable endpoint.
+      DisableExecuteApiEndpoint: true
+      # No Domain property: the domain belongs to nixus-bedrock-api (AD-3). SAM
+      # would otherwise try to own the domain, its certificate and its DNS record.
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !Ref CognitoUserPoolArn
+            # Profile scope only. nixus-api/ai.invoke authorizes the Bedrock API
+            # and must never authorize a profile route, in either direction.
+            AuthorizationScopes:
+              - nixus-api/profile
+      # The ISO 3166 catalog is ~570 KB of JSON, so responses above 1 KB are
+      # gzipped for clients that ask.
+      MinimumCompressionSize: 1024
+      MethodSettings:
+        # DataTraceEnabled=false is explicit: request/response bodies carry
+        # profile values and avatar bytes and must never reach CloudWatch
+        # (AD-12). LoggingLevel and AccessLogSetting are deliberately unset
+        # because both require an account-level API Gateway CloudWatch role this
+        # stack does not own.
+        - HttpMethod: '*'
+          ResourcePath: '/*'
+          ThrottlingRateLimit: 10
+          ThrottlingBurstLimit: 20
+          DataTraceEnabled: false
+          MetricsEnabled: true
+      GatewayResponses:
+        # Exactly the types ACCOUNT_GATEWAY_RESPONSES enumerates (AD-13). Left to
+        # its default body, API Gateway answers `{"message":"..."}`, which carries
+        # no code in the closed union - so a client falls back to guessing from the
+        # HTTP status, which is how a stage throttle gets read as a validation
+        # failure.
+        UNAUTHORIZED:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        # Insufficient scope. It stays `unauthorized` on the wire: the desktop
+        # reclassifies this one as reauthentication_required, because a token
+        # refresh cannot add a scope (AD-13).
+        ACCESS_DENIED:
+          StatusCode: 403
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        EXPIRED_TOKEN:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        MISSING_AUTHENTICATION_TOKEN:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        THROTTLED:
+          StatusCode: 429
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"rate_limited","message":"Too many requests.","request_id":"$context.requestId"}}'
+        REQUEST_TOO_LARGE:
+          StatusCode: 413
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"payload_too_large","message":"The request is too large.","request_id":"$context.requestId"}}'
+        # No StatusCode: an unclassified 4xx keeps the gateway's own status, which
+        # is the one piece of information it does carry (contract: status null).
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unavailable","message":"The profile service is unavailable.","request_id":"$context.requestId"}}'
+        DEFAULT_5XX:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unavailable","message":"The profile service is unavailable.","request_id":"$context.requestId"}}'
+
+  # ---------------------------------------------------------------------------
+  # AD-3 - attach to the shared domain by mapping only. ApiMappingKey `v1/profile`
+  # wins over the Bedrock stack's empty-key catch-all by longest match, and API
+  # Gateway strips the base path before invoking this API - which is why the REST
+  # resources below are `/`, `/avatar` and `/locations`.
+  # ---------------------------------------------------------------------------
+  ProfileApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    # The stage must exist before the mapping can name it. This is the stage
+    # resource the SAM transform generates from ProfileApi's StageName.
+    DependsOn: ProfileApiv1Stage
+    Properties:
+      ApiId: !Ref ProfileApi
+      DomainName: !Ref ApiDomainName
+      ApiMappingKey: v1/profile
+      # A literal, never a Ref to a stage resource: this property takes a stage
+      # NAME.
+      Stage: v1
+
+  # ---------------------------------------------------------------------------
+  # AD-12 / AD-14 - explicit log group, 14-day retention, no logs:* grant
+  # ---------------------------------------------------------------------------
+  ProfileLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api'
+      RetentionInDays: 14
+
+  # ---------------------------------------------------------------------------
+  # AD-4 / AD-14 - one retained on-demand table, PITR enabled. Sort keys
+  # ENTITLEMENT and BILLING_CUSTOMER are reserved for the billing spine and are
+  # written by nothing in this stack.
+  # ---------------------------------------------------------------------------
+  ProfileTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${AWS::StackName}-profile'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------------------
+  # Execution role - exact actions only, no wildcards
+  # ---------------------------------------------------------------------------
+  ProfileExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      # No ManagedPolicyArns: AWSLambdaBasicExecutionRole would grant logs:* on
+      # an implicit group, which AD-12's logging boundary forbids.
+      Policies:
+        - PolicyName: account-profile-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub '${ProfileLogGroup.Arn}:*'
+        - PolicyName: account-profile-table
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Two actions, one table. No UpdateItem (every write is a whole-item
+              # conditional Put), no DeleteItem, no Query, no Scan, and no
+              # TransactWriteItems - the profile and the avatar are never written
+              # in one operation (AD-4).
+              #
+              # dynamodb:LeadingKeys bounds the PARTITION key to this service's own
+              # USER# namespace. DynamoDB's fine-grained access control has no
+              # condition key for the SORT key, so AD-4's "limited to PROFILE and
+              # AVATAR" half cannot be expressed in IAM at all: it is enforced by
+              # the code owning exactly two sort-key literals plus the CI guard in
+              # src/iam-isolation.test.ts. If a sort-key condition key ever ships,
+              # it belongs here.
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !GetAtt ProfileTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    'dynamodb:LeadingKeys':
+                      - 'USER#*'
+
+  # ---------------------------------------------------------------------------
+  # AD-3 - one Lambda, one entry point, all five routes
+  # ---------------------------------------------------------------------------
+  ProfileFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      # See Makefile for why this is `makefile` and not SAM's `esbuild` builder.
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      CodeUri: ./
+      Handler: api.handler
+      Role: !GetAtt ProfileExecutionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref ProfileLogGroup
+      Environment:
+        Variables:
+          PROFILE_TABLE_NAME: !Ref ProfileTable
+      Events:
+        GetProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /
+            Method: get
+        PutProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /
+            Method: put
+        GetAvatar:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /avatar
+            Method: get
+        PutAvatar:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /avatar
+            Method: put
+        GetLocations:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ProfileApi
+            Path: /locations
+            Method: get
+
+  # ---------------------------------------------------------------------------
+  # AD-14 - alerting and budget. They notify; they never stop traffic.
+  # ---------------------------------------------------------------------------
+  AccountAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Nixus account alerts
+
+  AccountAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AccountAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  ProfileApiServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-api-5xx'
+      AlarmDescription: API Gateway 5XX rate on the profile stage.
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub '${AWS::StackName}-api'
+        - Name: Stage
+          Value: v1
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AccountAlertTopic
+
+  ProfileFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-function-errors'
+      AlarmDescription: Lambda invocation errors on the profile function.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProfileFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AccountAlertTopic
+
+  ProfileFunctionThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-function-throttles'
+      AlarmDescription: >-
+        Concurrency throttling on the profile function. With no function-level
+        reservation this fires when the ACCOUNT's shared unreserved pool is
+        exhausted - by this function or by any other - and surfaces to callers as
+        the gateway's throttle response.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProfileFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AccountAlertTopic
+
+  AccountMonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-monthly'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: 10
+          Unit: USD
+        # Account-wide spend on the three services this stack uses. Isolating cost
+        # to this one stack is not claimed here; it would need verified
+        # cost-allocation tags, and the Bedrock stack's own API, Lambda and table
+        # therefore count toward this ceiling too.
+        CostFilters:
+          Service:
+            - Amazon DynamoDB
+            - Amazon API Gateway
+            - AWS Lambda
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  ProfileApiBaseUrl:
+    Description: Base URL every surface calls, through the shared custom domain.
+    Value: !Sub 'https://${ApiDomainName}/v1/profile'
+  ProfileApiId:
+    Description: >-
+      REST API id the v1/profile mapping points at, so a deploy can assert the
+      Bedrock catch-all still points somewhere else.
+    Value: !Ref ProfileApi
+  ProfileTableName:
+    Description: Retained profile table holding PROFILE and AVATAR items.
+    Value: !Ref ProfileTable
+  ProfileFunctionName:
+    Description: Sole profile Lambda.
+    Value: !Ref ProfileFunction
+  AlertTopicArn:
+    Description: SNS topic backing the CloudWatch alarms.
+    Value: !Ref AccountAlertTopic
+  CognitoUserPoolIdEcho:
+    Description: >-
+      Echo of the external user pool this stack authorizes against, so an operator
+      can confirm the nixus-api/profile scope was added to the right pool.
+    Value: !Ref CognitoUserPoolId
