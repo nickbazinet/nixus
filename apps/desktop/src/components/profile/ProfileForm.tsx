@@ -19,6 +19,8 @@ import {
   useSubdivisions,
   useUserProfile,
 } from "@/hooks/useProfile";
+import { isCloudProfileError, parseAppError } from "@/lib/appError";
+import type { ValidationField, ValidationReason } from "@nixus/shared";
 
 // Field names are the snake_case IPC parameter names, which is what lets an
 // AppError::Validation { field } map straight onto setError with no translation
@@ -70,26 +72,9 @@ const INCOME_BRACKET_CURRENCIES = [
   "PLN",
 ] as const;
 
-interface InvokeError {
-  type?: string;
-  message?: string;
-  field?: string;
-}
-
-function readError(err: unknown): { type: string; message: string; field?: string } {
-  const e = err as InvokeError;
-  const message =
-    e?.message ?? (typeof err === "string" ? err : JSON.stringify(err, null, 2));
-  return {
-    type: e?.type ?? "unknown",
-    message: message ?? "An unexpected error occurred",
-    field: e?.field,
-  };
-}
-
 // A guard against setError being handed a key the form does not own, not a
 // translation table: the field string is passed through unmodified.
-function isProfileField(field: string | undefined): field is keyof ProfileFormData {
+function isProfileField(field: string | null | undefined): field is keyof ProfileFormData {
   return (
     field === "first_name" ||
     field === "last_name" ||
@@ -101,16 +86,62 @@ function isProfileField(field: string | undefined): field is keyof ProfileFormDa
   );
 }
 
+/**
+ * The i18n key for a refused field, resolved from the contract's `field` + `reason` pair.
+ *
+ * The Rust message is never rendered: it is a fixed sentence that carries no submitted value by
+ * design (AD-12), so the wording — and its FR half — lives here. Keyed on the pair rather than the
+ * reason alone wherever the two fields need different instructions: "select a country first" and
+ * "pick the currency this range is in" are both `requires_country`-shaped but send the user to
+ * different controls.
+ */
+const VALIDATION_MESSAGE_KEYS: Partial<
+  Record<`${ValidationField}.${ValidationReason}`, string>
+> = {
+  "birth_date.invalid_format": "profile.validation.birthDateFormat",
+  "birth_date.in_future": "profile.validation.birthDateFuture",
+  "birth_date.too_young": "profile.validation.birthDateTooYoung",
+  "birth_date.too_old": "profile.validation.birthDateTooOld",
+  "country_code.not_allowed": "profile.validation.countryNotAllowed",
+  "subdivision_code.requires_country":
+    "profile.validation.subdivisionRequiresCountry",
+  "subdivision_code.no_subdivisions":
+    "profile.validation.subdivisionUnavailable",
+  "subdivision_code.not_allowed": "profile.validation.subdivisionNotAllowed",
+  "income_bracket.not_allowed": "profile.validation.incomeBracketNotAllowed",
+  "income_bracket_currency.not_allowed":
+    "profile.validation.incomeCurrencyNotAllowed",
+  "income_bracket_currency.required": "profile.incomeBracketCurrencyRequired",
+};
+
+const GENERIC_VALIDATION_KEY = "profile.validation.generic";
+
+export function profileValidationMessageKey(
+  field: ValidationField | null,
+  reason: ValidationReason | null,
+): string {
+  if (field === null || reason === null) return GENERIC_VALIDATION_KEY;
+  const pair = `${field}.${reason}` as const;
+  return Object.prototype.hasOwnProperty.call(VALIDATION_MESSAGE_KEYS, pair)
+    ? (VALIDATION_MESSAGE_KEYS[pair] ?? GENERIC_VALIDATION_KEY)
+    : GENERIC_VALIDATION_KEY;
+}
+
 const emptyToNull = (value: string) => {
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
 };
 
-export function ProfileForm() {
+interface ProfileFormProps {
+  /** The resolver's opaque key for the home this form reads and writes (AD-6). */
+  sourceKey: string | null;
+}
+
+export function ProfileForm({ sourceKey }: ProfileFormProps) {
   const { i18n, t } = useTranslation();
-  const { data } = useUserProfile();
+  const { data } = useUserProfile(sourceKey);
   const { data: countries } = useCountries();
-  const saveProfile = useSaveUserProfile();
+  const saveProfile = useSaveUserProfile(sourceKey);
   const birthDateId = useId();
   const birthDateErrorId = useId();
   const countryId = useId();
@@ -238,9 +269,17 @@ export function ProfileForm() {
           toast.success(t("toast.saveSuccess"));
         },
         onError: (err) => {
-          const { type, message, field } = readError(err);
-          if (type === "validation" && isProfileField(field)) {
-            setError(field, { message });
+          const error = parseAppError(err);
+          if (
+            isCloudProfileError(error) &&
+            error.code === "validation" &&
+            isProfileField(error.field)
+          ) {
+            setError(error.field, {
+              message: t(
+                profileValidationMessageKey(error.field, error.reason),
+              ),
+            });
             return;
           }
           toast.error(t("toast.saveFailed"));

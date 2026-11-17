@@ -29,11 +29,16 @@ const PICKER_OPTIONS = {
  * and the write itself refuses ahead of the upsert, so the previous face survives every failure
  * path and the page stays usable.
  */
-export function ProfileAvatarField() {
+interface ProfileAvatarFieldProps {
+  /** The resolver's key for the Nixus Cloud home this picture belongs to (AD-6). */
+  sourceKey: string | null;
+}
+
+export function ProfileAvatarField({ sourceKey }: ProfileAvatarFieldProps) {
   const { t } = useTranslation();
-  const avatar = useUserAvatar();
+  const avatar = useUserAvatar({ sourceKey });
   const isPremium = usePremiumEntitlement();
-  const setAvatar = useSetUserAvatar();
+  const setAvatar = useSetUserAvatar(sourceKey);
   const {
     picked,
     errorKey: pickErrorKey,

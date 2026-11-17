@@ -11,6 +11,7 @@ const REQUIRED_KEYS = [
   "profile.accountMenu",
   "profile.accountMenuPremium",
   "profile.loading",
+  "profile.localAccountMenu",
   "profile.signedInAs",
   "profile.premiumBadge",
   "profile.signOut",
@@ -83,6 +84,40 @@ const REQUIRED_KEYS = [
   "profile.errors.validation.dimensionsExceeded",
   "profile.errors.validation.unknownField",
   "profile.errors.validation.incomeBracketCurrencyRequired",
+  "profile.localDescription",
+  "profile.validation.birthDateFormat",
+  "profile.validation.birthDateFuture",
+  "profile.validation.birthDateTooYoung",
+  "profile.validation.birthDateTooOld",
+  "profile.validation.countryNotAllowed",
+  "profile.validation.subdivisionRequiresCountry",
+  "profile.validation.subdivisionUnavailable",
+  "profile.validation.subdivisionNotAllowed",
+  "profile.validation.incomeBracketNotAllowed",
+  "profile.validation.incomeCurrencyNotAllowed",
+  "profile.validation.generic",
+] as const;
+
+/**
+ * Every (field, reason) pair the Rust validator can refuse with, as `profileValidationMessageKey`
+ * maps them. The enforcement side is `profile_store::validate_fields_at`, whose refusals carry only
+ * a field and a reason now — the message is a fixed sentence that never reaches the user (AD-12) —
+ * so this list is what proves each cause reaches its own localized wording instead of collapsing
+ * into the generic fallback.
+ */
+const VALIDATION_REFUSAL_KEYS = [
+  "profile.validation.birthDateFormat",
+  "profile.validation.birthDateFuture",
+  "profile.validation.birthDateTooYoung",
+  "profile.validation.birthDateTooOld",
+  "profile.validation.countryNotAllowed",
+  "profile.validation.subdivisionRequiresCountry",
+  "profile.validation.subdivisionUnavailable",
+  "profile.validation.subdivisionNotAllowed",
+  "profile.validation.incomeBracketNotAllowed",
+  "profile.validation.incomeCurrencyNotAllowed",
+  "profile.incomeBracketCurrencyRequired",
+  "profile.validation.generic",
 ] as const;
 
 /**
@@ -133,6 +168,7 @@ const ARIA_LABEL_KEYS = [
   "profile.accountMenu",
   "profile.accountMenuPremium",
   "profile.loading",
+  "profile.localAccountMenu",
   "profile.sessionExpiredAction",
   "profile.avatar.alt",
 ] as const;
@@ -454,6 +490,45 @@ describe("profile menu i18n", () => {
           locale[key].toLowerCase(),
           `${key} mentions the subject in ${name}`,
         ).not.toContain("cognito");
+      }
+    }
+  });
+
+  it.each(VALIDATION_REFUSAL_KEYS)(
+    "gives %s its own non-empty wording in both locales",
+    (key) => {
+      expect(en[key]?.trim(), `${key} is blank in en.json`).toBeTruthy();
+      expect(fr[key]?.trim(), `${key} is blank in fr.json`).toBeTruthy();
+    },
+  );
+
+  it("keeps every validation refusal distinguishable within each locale", () => {
+    // Two causes sharing one sentence is the failure this guards: the user's next action differs
+    // across them ("pick from the list" versus "you must be at least 18").
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      const messages = VALIDATION_REFUSAL_KEYS.map((key) => locale[key]);
+      expect(new Set(messages).size, `duplicate refusal copy in ${name}`).toBe(
+        VALIDATION_REFUSAL_KEYS.length,
+      );
+    }
+  });
+
+  it("never echoes a submitted value into validation copy (AD-12)", () => {
+    // The Rust refusal carries no value at all, so there is nothing to interpolate — a key that
+    // grew a placeholder would be asking for one.
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      for (const key of profileKeys(locale).filter((k) =>
+        k.startsWith("profile.validation."),
+      )) {
+        expect(locale[key], `${key} interpolates a value in ${name}`).not.toContain(
+          "{{",
+        );
       }
     }
   });
