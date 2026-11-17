@@ -85,6 +85,18 @@ const REQUIRED_KEYS = [
   "profile.errors.validation.unknownField",
   "profile.errors.validation.incomeBracketCurrencyRequired",
   "profile.localDescription",
+  "profile.cloud.reauthTitle",
+  "profile.cloud.reauthBody",
+  "profile.cloud.reauthAction",
+  "profile.cloud.offlineNoCopyTitle",
+  "profile.cloud.offlineNoCopyBody",
+  "profile.cloud.offlineNotice",
+  "profile.consent.title",
+  "profile.consent.body",
+  "profile.consent.accept",
+  "profile.consent.decline",
+  "profile.consent.pending",
+  "profile.consent.failed",
   "profile.validation.birthDateFormat",
   "profile.validation.birthDateFuture",
   "profile.validation.birthDateTooYoung",
@@ -128,6 +140,16 @@ const VALIDATION_REFUSAL_KEYS = [
  */
 const CLOUD_PROFILE_ERROR_KEYS = REQUIRED_KEYS.filter((key) =>
   key.startsWith("profile.errors."),
+);
+
+/**
+ * The Nixus Cloud lifecycle copy `/profile` branches on (AD-7) and AD-8's consent prompt. Declared
+ * so the parity and no-orphan assertions cover them, and so the AD-16 brand rule and the AD-12
+ * no-value rule below sweep them rather than only the refusal catalog.
+ */
+const CLOUD_LIFECYCLE_KEYS = REQUIRED_KEYS.filter(
+  (key) =>
+    key.startsWith("profile.cloud.") || key.startsWith("profile.consent."),
 );
 
 /**
@@ -186,6 +208,7 @@ const ELLIPSIS_KEYS = [
   "profile.loading",
   "profile.saving",
   "profile.avatar.uploading",
+  "profile.consent.pending",
 ] as const;
 
 function profileKeys(locale: Record<string, string>): string[] {
@@ -460,10 +483,16 @@ describe("profile menu i18n", () => {
   });
 
   it("leaves Nixus Cloud untranslated in the French cloud-profile copy (AD-16)", () => {
-    const branded = CLOUD_PROFILE_ERROR_KEYS.filter((key) =>
+    // Every profile string that names the brand, not only the refusals: the lifecycle states and
+    // the consent prompt name it too, and AD-16 scopes the rule to every surface.
+    const branded = profileKeys(en).filter((key) =>
       en[key].includes("Nixus Cloud"),
     );
     expect(branded.length).toBeGreaterThan(0);
+    const lifecycle = new Set<string>(CLOUD_LIFECYCLE_KEYS);
+    expect(branded.filter((key) => lifecycle.has(key)).length).toBeGreaterThan(
+      0,
+    );
 
     for (const key of branded) {
       expect(fr[key], `${key} dropped the brand term in fr.json`).toContain(
@@ -482,7 +511,7 @@ describe("profile menu i18n", () => {
       [en, "en.json"],
       [fr, "fr.json"],
     ] as const) {
-      for (const key of CLOUD_PROFILE_ERROR_KEYS) {
+      for (const key of [...CLOUD_PROFILE_ERROR_KEYS, ...CLOUD_LIFECYCLE_KEYS]) {
         expect(locale[key], `${key} interpolates in ${name}`).not.toContain(
           "{{",
         );
