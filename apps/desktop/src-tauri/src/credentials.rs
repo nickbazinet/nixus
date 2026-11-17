@@ -1,9 +1,51 @@
 use std::sync::Mutex;
 
 use keyring_core::{Entry, Error};
+use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::models::CognitoSession;
+
+/// Installs the process-wide credential store. Must run before any credential access.
+///
+/// Release builds use the OS store (macOS Keychain, Windows Credential Manager).
+/// Debug builds use a SQLite file in the app data dir instead: every `tauri dev`
+/// rebuild is a new unsigned binary, which the macOS Keychain treats as a stranger
+/// and re-prompts for on every access. The file holds secrets in plaintext, which
+/// is why it is compiled out of release builds rather than merely switched off.
+pub(crate) fn install_store(app_data_dir: &std::path::Path) -> Result<(), Error> {
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app_data_dir;
+        keyring::use_native_store(false)
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let path = app_data_dir.join("debug-credentials.sqlite3");
+        let path_str = path.to_str().ok_or_else(|| {
+            Error::Invalid(
+                "path".to_string(),
+                "the app data dir is not UTF-8".to_string(),
+            )
+        })?;
+        keyring::use_sqlite_store(&std::collections::HashMap::from([("path", path_str)]))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if path.exists() {
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+
+        tracing::info!(
+            "Debug build: credentials are stored in {:?}, not the OS keychain",
+            path
+        );
+        Ok(())
+    }
+}
 
 const KEYRING_SERVICE: &str = "nixus";
 const KEYRING_AUTH_SERVICE: &str = "nixus-auth";
@@ -83,64 +125,151 @@ const CHUNK_MAX_CHARS: usize = 1_000;
 #[cfg(target_os = "windows")]
 const MAX_CHUNKS_PER_FIELD: usize = 500;
 
+// WHY one entry per dataset instead of one per credential (the prior layout):
+// on macOS every keychain item carries its own access list, so four items
+// meant up to four "Nixus wants to access..." prompts per profile — and four
+// more after every update an ad-hoc build shipped. One entry also makes a
+// save all-or-nothing (a failed second write used to leave a profile
+// half-configured) and turns wipe, copy and migrate into single operations.
+// The blob is a few hundred characters, far under the Windows Credential
+// Manager cap the Cognito session has to chunk around.
+const AI_CREDENTIALS_ACCOUNT: &str = "ai-credentials";
+
+/// Every AI-provider credential one dataset holds, stored as one JSON blob.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct AiCredentials {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aws_access_key_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aws_secret_access_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aws_region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    openai_api_key: Option<String>,
+}
+
+type FieldSlot = fn(&mut AiCredentials) -> &mut Option<String>;
+
+/// Each field paired with the account name it had in the superseded per-entry
+/// layout. The migration and the wipe both walk this, so a field added to the
+/// struct without a row here is caught by `every_field_has_a_per_entry_name`.
+const PER_ENTRY_FIELDS: [(&str, FieldSlot); 4] = [
+    ("aws_access_key_id", |c| &mut c.aws_access_key_id),
+    ("aws_secret_access_key", |c| &mut c.aws_secret_access_key),
+    ("aws_region", |c| &mut c.aws_region),
+    ("openai_api_key", |c| &mut c.openai_api_key),
+];
+
+impl AiCredentials {
+    fn configured_count(&self) -> usize {
+        [
+            &self.aws_access_key_id,
+            &self.aws_secret_access_key,
+            &self.aws_region,
+            &self.openai_api_key,
+        ]
+        .iter()
+        .filter(|field| field.is_some())
+        .count()
+    }
+}
+
+fn ai_entry(dataset_id: &str) -> Result<Entry, Error> {
+    Entry::new(&ai_service(dataset_id), AI_CREDENTIALS_ACCOUNT)
+}
+
+/// The fixed message a corrupt blob reports: never the blob itself, which may
+/// still hold a readable secret.
+const CORRUPT_AI_CREDENTIALS: &str = "the stored AI credentials are not readable";
+
+fn decode_ai_credentials(blob: &str) -> Result<AiCredentials, Error> {
+    serde_json::from_str(blob)
+        .map_err(|_| Error::BadStoreFormat(CORRUPT_AI_CREDENTIALS.to_string()))
+}
+
+fn encode_ai_credentials(credentials: &AiCredentials) -> Result<String, Error> {
+    serde_json::to_string(credentials)
+        .map_err(|_| Error::BadStoreFormat("the AI credentials could not be encoded".to_string()))
+}
+
+/// `Ok(None)` is genuine absence; a keyring that declines to answer and a blob
+/// that does not decode are both errors, so no caller mistakes them for it.
+fn read_ai_credentials(entry: &Entry) -> Result<Option<AiCredentials>, Error> {
+    match entry.get_password() {
+        Ok(blob) => decode_ai_credentials(&blob).map(Some),
+        Err(Error::NoEntry) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Read-modify-write, so saving one provider keeps the other's keys.
+///
+/// A corrupt blob is replaced rather than refused: nothing in it is usable, and
+/// refusing would leave the user unable to reconfigure AI at all. A keyring
+/// that declines the read still fails the save, because overwriting what it
+/// would not show us could destroy the other provider's keys.
+fn update_ai_credentials(
+    dataset_id: &str,
+    apply: impl FnOnce(&mut AiCredentials),
+) -> Result<(), Error> {
+    let entry = ai_entry(dataset_id)?;
+    let mut credentials = match read_ai_credentials(&entry) {
+        Ok(existing) => existing.unwrap_or_default(),
+        Err(Error::BadStoreFormat(_)) => AiCredentials::default(),
+        Err(e) => return Err(e),
+    };
+    apply(&mut credentials);
+    entry.set_password(&encode_ai_credentials(&credentials)?)
+}
+
+fn load_ai_credentials(dataset_id: &str) -> Option<AiCredentials> {
+    read_ai_credentials(&ai_entry(dataset_id).ok()?).ok()?
+}
+
 pub fn store_aws_credentials(
     dataset_id: &str,
     access_key: &str,
     secret_key: &str,
     region: &str,
 ) -> Result<(), Error> {
-    let service = ai_service(dataset_id);
-    Entry::new(&service, "aws_access_key_id")?.set_password(access_key)?;
-    Entry::new(&service, "aws_secret_access_key")?.set_password(secret_key)?;
-    Entry::new(&service, "aws_region")?.set_password(region)?;
-    Ok(())
+    update_ai_credentials(dataset_id, |credentials| {
+        credentials.aws_access_key_id = Some(access_key.to_string());
+        credentials.aws_secret_access_key = Some(secret_key.to_string());
+        credentials.aws_region = Some(region.to_string());
+    })
 }
 
 pub fn load_aws_credentials(dataset_id: &str) -> Option<(String, String, String)> {
-    let service = ai_service(dataset_id);
-    let access_key = Entry::new(&service, "aws_access_key_id")
-        .ok()?
-        .get_password()
-        .ok()?;
-    let secret_key = Entry::new(&service, "aws_secret_access_key")
-        .ok()?
-        .get_password()
-        .ok()?;
-    let region = Entry::new(&service, "aws_region")
-        .ok()?
-        .get_password()
-        .ok()?;
-    Some((access_key, secret_key, region))
+    let credentials = load_ai_credentials(dataset_id)?;
+    Some((
+        credentials.aws_access_key_id?,
+        credentials.aws_secret_access_key?,
+        credentials.aws_region?,
+    ))
 }
 
 pub fn store_openai_key(dataset_id: &str, api_key: &str) -> Result<(), Error> {
-    Entry::new(&ai_service(dataset_id), "openai_api_key")?.set_password(api_key)?;
-    Ok(())
+    update_ai_credentials(dataset_id, |credentials| {
+        credentials.openai_api_key = Some(api_key.to_string());
+    })
 }
 
 pub fn load_openai_key(dataset_id: &str) -> Option<String> {
-    Entry::new(&ai_service(dataset_id), "openai_api_key")
-        .ok()?
-        .get_password()
-        .ok()
+    load_ai_credentials(dataset_id)?.openai_api_key
 }
 
-/// Every per-dataset AI-provider credential name, enumerated because a keyring
-/// cannot be listed at runtime: `clear_credentials` and `copy_ai_credentials`
-/// both have to know the whole set, and a name missing here is a key that
-/// silently survives a wipe or fails to follow a migration (AD-12).
-const AI_CREDENTIAL_NAMES: [&str; 4] = [
-    "aws_access_key_id",
-    "aws_secret_access_key",
-    "aws_region",
-    "openai_api_key",
-];
-
+/// Removes the dataset's AI entry and anything either superseded per-entry
+/// layout left behind, so a credential whose migration was interrupted cannot
+/// survive a wipe and resurface on the next launch's migration.
 pub fn clear_credentials(dataset_id: &str) {
-    let service = ai_service(dataset_id);
-    for name in AI_CREDENTIAL_NAMES {
-        if let Ok(entry) = Entry::new(&service, name) {
-            let _ = entry.delete_credential();
+    if let Ok(entry) = ai_entry(dataset_id) {
+        let _ = entry.delete_credential();
+    }
+    for service in [ai_service(dataset_id), legacy_ai_service(dataset_id)] {
+        for (name, _) in PER_ENTRY_FIELDS {
+            if let Ok(entry) = Entry::new(&service, name) {
+                let _ = entry.delete_credential();
+            }
         }
     }
 }
@@ -149,45 +278,36 @@ pub fn clear_credentials(dataset_id: &str) {
 /// `destination_dataset_id`'s own service (Story 35.3's Migrate branch).
 ///
 /// Lives here because `credentials.rs` is the sole caller of `keyring_core::Entry`
-/// — a copy loop anywhere else would be a second accessor. A credential the
-/// source simply does not have is skipped, which is the normal case for a profile
-/// that only ever configured one provider; every other failure — a read the
-/// keyring refused as much as a write it rejected — is fatal, because silently
-/// dropping a key would leave the migrated profile unable to reach the AI it was
-/// configured for with nothing anywhere reporting why.
+/// — a copy anywhere else would be a second accessor. A source with nothing
+/// configured copies nothing, which is the normal case; every other failure — a
+/// read the keyring refused, a blob that does not decode, a write it rejected —
+/// is fatal, because silently dropping the keys would leave the migrated profile
+/// unable to reach the AI it was configured for with nothing reporting why.
 ///
-/// Returns how many entries were copied, which is what the caller logs.
+/// Returns how many credentials were copied, which is what the caller logs.
 pub fn copy_ai_credentials(
     source_dataset_id: &str,
     destination_dataset_id: &str,
 ) -> Result<usize, AppError> {
-    let source = ai_service(source_dataset_id);
-    let destination = ai_service(destination_dataset_id);
-    let mut copied = 0;
+    let source = ai_entry(source_dataset_id)
+        .and_then(|entry| read_ai_credentials(&entry))
+        .map_err(|e| AppError::File {
+            message: format!("Failed to read the AI credentials to copy: {}", e),
+        })?;
 
-    for name in AI_CREDENTIAL_NAMES {
-        let value = match Entry::new(&source, name).and_then(|entry| entry.get_password()) {
-            Ok(value) => value,
-            // Genuinely absent: skipped, and the destination is left without it.
-            Err(Error::NoEntry) => continue,
-            // Anything else is the keyring declining to answer — a locked
-            // keychain, a denied access prompt, an unusable store. Skipping it
-            // would be indistinguishable from absence, which is how a migration
-            // reports success and still hands back an AI-keyless profile.
-            Err(e) => {
-                return Err(AppError::File {
-                    message: format!("Failed to read the AI credentials to copy: {}", e),
-                })
-            }
-        };
-
-        Entry::new(&destination, name)
-            .and_then(|entry| entry.set_password(&value))
-            .map_err(|e| AppError::File {
-                message: format!("Failed to copy AI credentials: {}", e),
-            })?;
-        copied += 1;
+    let Some(credentials) = source else {
+        return Ok(0);
+    };
+    let copied = credentials.configured_count();
+    if copied == 0 {
+        return Ok(0);
     }
+
+    ai_entry(destination_dataset_id)
+        .and_then(|entry| entry.set_password(&encode_ai_credentials(&credentials)?))
+        .map_err(|e| AppError::File {
+            message: format!("Failed to copy AI credentials: {}", e),
+        })?;
 
     Ok(copied)
 }
@@ -210,129 +330,157 @@ impl CredentialMigration {
     }
 }
 
-/// Moves every AI-provider credential from the pre-Nixus keyring service to the
-/// Nixus one, for each of `dataset_ids`.
+/// Folds every per-entry AI credential — the Nixus per-entry layout and the
+/// pre-rename `nkbaz-finance` one before it — into each dataset's single entry.
 ///
-/// Convergent and per-entry, in both directions. An absent destination is filled
-/// and the legacy entry removed only after the copy reads back identically — the
-/// delete being the one irreversible step, it never runs on an unverified copy. A
-/// destination that *already* holds a value wins outright: it is never read into,
-/// never overwritten, and the now-redundant legacy entry beside it is discarded so
-/// the pair converges. Either way nothing is left for a later launch to find, which
-/// is what makes the second launch a genuine no-op rather than a silent repeat.
+/// Convergent and per-credential. A field the single entry lacks is filled from
+/// the newest per-entry layout that has it; a field it already holds wins
+/// outright and the per-entry copies beside it are discarded as superseded. No
+/// per-entry source is deleted until the merged entry has been written and read
+/// back identically — the delete being the one irreversible step, it never runs
+/// on an unverified write. Either way nothing is left for a later launch to
+/// find, which is what makes the second launch a genuine no-op.
 ///
 /// Nothing here can fail the caller: an unreachable or locked keyring yields a
 /// message, and whatever it prevented is retried on the next launch.
 pub(crate) fn migrate_legacy_ai_credentials(dataset_ids: &[String]) -> CredentialMigration {
     let mut outcome = CredentialMigration::default();
-
     for dataset_id in dataset_ids {
-        let legacy = legacy_ai_service(dataset_id);
-        let destination = ai_service(dataset_id);
-        if legacy == destination {
-            continue;
-        }
+        migrate_dataset_ai_credentials(dataset_id, &mut outcome);
+    }
+    outcome
+}
 
-        for name in AI_CREDENTIAL_NAMES {
-            match migrate_one_credential(&legacy, &destination, name) {
-                Ok(CredentialMove::Moved) => outcome.moved += 1,
-                Ok(CredentialMove::Superseded) => outcome.superseded += 1,
-                Ok(CredentialMove::Absent) => {}
+fn migrate_dataset_ai_credentials(dataset_id: &str, outcome: &mut CredentialMigration) {
+    let destination = match ai_entry(dataset_id) {
+        Ok(entry) => entry,
+        Err(e) => {
+            outcome
+                .failures
+                .push(format!("{AI_CREDENTIALS_ACCOUNT}: {e}"));
+            return;
+        }
+    };
+    // A destination the keyring will not show us is never written over: it may
+    // hold the newer value of every field.
+    let previous = match read_ai_credentials(&destination) {
+        Ok(previous) => previous,
+        Err(e) => {
+            outcome
+                .failures
+                .push(format!("{AI_CREDENTIALS_ACCOUNT}: {e}"));
+            return;
+        }
+    };
+
+    let mut merged = previous.clone().unwrap_or_default();
+    let mut moved = Vec::new();
+    let mut superseded = Vec::new();
+
+    // Newest layout first: a per-entry value under the Nixus service was written
+    // after any pre-rename one, so it is the one that fills an empty field.
+    for service in [ai_service(dataset_id), legacy_ai_service(dataset_id)] {
+        for (name, slot) in PER_ENTRY_FIELDS {
+            let entry = match Entry::new(&service, name) {
+                Ok(entry) => entry,
+                Err(e) => {
+                    outcome.failures.push(format!("{name}: {e}"));
+                    continue;
+                }
+            };
+            match entry.get_password() {
+                Err(Error::NoEntry) => {}
                 // The name, never the value: a message is logged verbatim.
-                Err(message) => outcome.failures.push(format!("{name}: {message}")),
+                Err(e) => outcome.failures.push(format!("{name}: {e}")),
+                Ok(value) => {
+                    let field = slot(&mut merged);
+                    if field.is_some() {
+                        superseded.push((name, entry));
+                    } else {
+                        *field = Some(value);
+                        moved.push((name, entry));
+                    }
+                }
             }
         }
     }
 
-    outcome
-}
-
-enum CredentialMove {
-    Moved,
-    Superseded,
-    Absent,
-}
-
-fn migrate_one_credential(
-    legacy: &str,
-    destination: &str,
-    name: &str,
-) -> Result<CredentialMove, String> {
-    let legacy_entry = Entry::new(legacy, name).map_err(|e| e.to_string())?;
-    if let Err(e) = legacy_entry.get_password() {
-        return match e {
-            Error::NoEntry => Ok(CredentialMove::Absent),
-            e => Err(e.to_string()),
-        };
-    }
-
-    let destination_entry = Entry::new(destination, name).map_err(|e| e.to_string())?;
-    match destination_entry.get_password() {
-        // Destination wins, and the redundant legacy copy goes. The destination is
-        // proven readable by this very branch before anything is deleted, so the
-        // discarded value is only ever a superseded duplicate — never the last copy.
-        Ok(_) => {
-            legacy_entry
-                .delete_credential()
-                .map_err(|e| e.to_string())?;
-            return Ok(CredentialMove::Superseded);
+    if !moved.is_empty() {
+        let written = encode_ai_credentials(&merged).map_err(|e| e.to_string());
+        let previous_blob = previous
+            .as_ref()
+            .map(encode_ai_credentials)
+            .transpose()
+            .map_err(|e| e.to_string());
+        let verified = written.and_then(|written| {
+            let previous_blob = previous_blob?;
+            store_verified_copy(&destination, &written, previous_blob.as_deref(), || {
+                ai_entry(dataset_id)
+                    .and_then(|entry| entry.get_password())
+                    .map_err(|e| e.to_string())
+            })
+        });
+        if let Err(message) = verified {
+            // Every source survives untouched, so the retry has everything it needs.
+            outcome
+                .failures
+                .push(format!("{AI_CREDENTIALS_ACCOUNT}: {message}"));
+            return;
         }
-        Err(Error::NoEntry) => {}
-        Err(e) => return Err(e.to_string()),
     }
 
-    // Re-read rather than reuse the value from the presence check above: the write
-    // below is what the read-back is verified against, so both sides of the
-    // comparison must come from the same round of lookups.
-    let value = legacy_entry.get_password().map_err(|e| e.to_string())?;
-
-    // A fresh lookup, so a backend that accepted a write it did not durably store is
-    // caught before the legacy copy is destroyed.
-    store_verified_copy(&destination_entry, &value, || {
-        Entry::new(destination, name)
-            .and_then(|entry| entry.get_password())
-            .map_err(|e| e.to_string())
-    })?;
-
-    legacy_entry
-        .delete_credential()
-        .map_err(|e| e.to_string())?;
-
-    Ok(CredentialMove::Moved)
+    for (name, entry) in moved {
+        match entry.delete_credential() {
+            Ok(()) => outcome.moved += 1,
+            // The value is already in the single entry; the leftover is
+            // discarded as superseded on the next launch.
+            Err(e) => outcome.failures.push(format!("{name}: {e}")),
+        }
+    }
+    for (name, entry) in superseded {
+        match entry.delete_credential() {
+            Ok(()) => outcome.superseded += 1,
+            Err(e) => outcome.failures.push(format!("{name}: {e}")),
+        }
+    }
 }
 
 /// Writes `value` into `destination`, keeping it only if `read_back` proves it landed.
 ///
 /// Rolling the write back on *any* unverified outcome — a mismatch as much as a read
-/// the keyring refused — is what keeps the destination-wins branch above honest. That
-/// branch treats "the destination has a value" as "the destination is authoritative",
-/// so a half-written or wrong value left behind here would be adopted as the winner on
-/// the next launch and would then cause the *legacy original* to be deleted as a
-/// redundant duplicate. Rolling back means the next launch sees an absent destination
-/// and retries the copy from a legacy source this function never touches.
+/// the keyring refused — is what keeps the destination-wins rule honest. The migration
+/// treats every field the destination holds as authoritative and discards the
+/// per-entry sources beside it, so a half-written or wrong value left behind here
+/// would be adopted as the winner on the next launch and would then cause the real
+/// credential to be deleted as a redundant duplicate. Rolling back restores the
+/// destination to `previous` (or removes it when there was none), so the next launch
+/// retries from sources this function never touches.
 ///
-/// The delete is best-effort: the error the caller needs is the verification failure
-/// that caused the rollback, not whatever went wrong undoing it. A rollback that
-/// itself fails leaves exactly the state a retry already handles.
+/// The rollback is best-effort: the error the caller needs is the verification failure
+/// that caused it, not whatever went wrong undoing it. A rollback that itself fails
+/// leaves exactly the state a retry already handles.
 ///
-/// `read_back` is injected for the same reason `clear_session_and_cache`'s `delete` is:
-/// the mock keyring store cannot be made to return a value different from the one just
-/// written, so a mismatch is unreachable through the real lookup and this ordering is
-/// only worth having if it is tested.
+/// `read_back` is injected because the mock keyring store cannot be made to return a
+/// value different from the one just written, so a mismatch is unreachable through the
+/// real lookup and this ordering is only worth having if it is tested.
 fn store_verified_copy(
     destination: &Entry,
     value: &str,
+    previous: Option<&str>,
     read_back: impl FnOnce() -> Result<String, String>,
 ) -> Result<(), String> {
     destination.set_password(value).map_err(|e| e.to_string())?;
 
     let verified = match read_back() {
         Ok(stored) if stored == value => return Ok(()),
-        Ok(_) => "the copied credential did not read back identically".to_string(),
-        Err(e) => format!("the copied credential could not be read back: {e}"),
+        Ok(_) => "the copied credentials did not read back identically".to_string(),
+        Err(e) => format!("the copied credentials could not be read back: {e}"),
     };
 
-    let _ = destination.delete_credential();
+    let _ = match previous {
+        Some(previous) => destination.set_password(previous),
+        None => destination.delete_credential(),
+    };
 
     Err(verified)
 }
@@ -508,9 +656,15 @@ fn clear_cognito_session_uncached() -> Result<(), AppError> {
 fn store_cognito_session_uncached(session: &CognitoSession) -> Result<(), AppError> {
     let expires_at = session.expires_at.to_string();
     let fields = [
-        (KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN, session.access_token.as_str()),
+        (
+            KEYRING_AUTH_ACCOUNT_ACCESS_TOKEN,
+            session.access_token.as_str(),
+        ),
         (KEYRING_AUTH_ACCOUNT_ID_TOKEN, session.id_token.as_str()),
-        (KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN, session.refresh_token.as_str()),
+        (
+            KEYRING_AUTH_ACCOUNT_REFRESH_TOKEN,
+            session.refresh_token.as_str(),
+        ),
         (KEYRING_AUTH_ACCOUNT_EXPIRES_AT, expires_at.as_str()),
     ];
 
@@ -591,7 +745,9 @@ fn clear_cognito_session_uncached() -> Result<(), AppError> {
 static SESSION_CACHE: Mutex<Option<Option<CognitoSession>>> = Mutex::new(None);
 
 fn cache_session(session: Option<CognitoSession>) {
-    let mut cache = SESSION_CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cache = SESSION_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *cache = Some(session);
 }
 
@@ -603,7 +759,9 @@ pub fn store_cognito_session(session: &CognitoSession) -> Result<(), AppError> {
 
 pub fn load_cognito_session() -> Result<Option<CognitoSession>, AppError> {
     {
-        let cache = SESSION_CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cache = SESSION_CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(cached) = cache.as_ref() {
             return Ok(cached.clone());
         }
@@ -646,7 +804,9 @@ pub fn clear_cognito_session() -> Result<(), AppError> {
 // `guard()`'s own `clear_cognito_session()` call would shadow that write.
 #[cfg(test)]
 fn reset_session_cache_for_test() {
-    let mut cache = SESSION_CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cache = SESSION_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *cache = None;
 }
 
@@ -687,15 +847,9 @@ mod tests {
         let g = test_keyring_guard();
         let _ = clear_cognito_session();
         for dataset_id in [DEFAULT_DATASET_ID, DATASET_A, DATASET_B] {
+            // Also removes both per-entry layouts: the mock store is process-global,
+            // so an entry seeded by one test would otherwise be migrated by the next.
             clear_credentials(dataset_id);
-            // The mock store is process-global, so a legacy entry seeded by one test
-            // would otherwise be migrated by the next one.
-            let legacy = legacy_ai_service(dataset_id);
-            for name in AI_CREDENTIAL_NAMES {
-                if let Ok(entry) = Entry::new(&legacy, name) {
-                    let _ = entry.delete_credential();
-                }
-            }
         }
         g
     }
@@ -836,7 +990,9 @@ mod tests {
         // of the cache, it would now see `None`.
         clear_cognito_session_uncached().unwrap();
 
-        let second = load_cognito_session().unwrap().expect("cache still holds it");
+        let second = load_cognito_session()
+            .unwrap()
+            .expect("cache still holds it");
         assert_eq!(second.access_token, "at");
     }
 
@@ -1017,6 +1173,35 @@ mod tests {
             .ok()
     }
 
+    /// The Nixus per-entry layout every build shipped before the single entry.
+    fn seed_per_entry(dataset_id: &str, values: &[(&str, &str)]) {
+        let service = ai_service(dataset_id);
+        for (name, value) in values {
+            Entry::new(&service, name)
+                .unwrap()
+                .set_password(value)
+                .unwrap();
+        }
+    }
+
+    fn per_entry_value(dataset_id: &str, name: &str) -> Option<String> {
+        Entry::new(&ai_service(dataset_id), name)
+            .ok()?
+            .get_password()
+            .ok()
+    }
+
+    fn arm_read_error(entry: &Entry, name: &str) {
+        let cred: &keyring_core::mock::Cred = entry
+            .as_any()
+            .downcast_ref()
+            .expect("the test store is the mock store");
+        cred.set_error(Error::Invalid(
+            name.to_string(),
+            "the keyring is locked".to_string(),
+        ));
+    }
+
     /// The upgrade path: keys written by every pre-rename build must be readable through
     /// the ordinary dataset-aware readers after one launch, with no legacy entry left.
     #[test]
@@ -1039,7 +1224,7 @@ mod tests {
 
         let outcome = migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
 
-        assert_eq!(outcome.moved, AI_CREDENTIAL_NAMES.len());
+        assert_eq!(outcome.moved, PER_ENTRY_FIELDS.len());
         assert_eq!(outcome.superseded, 0);
         assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
         assert_eq!(
@@ -1054,7 +1239,7 @@ mod tests {
                 "us-east-1".to_string()
             ))
         );
-        for name in AI_CREDENTIAL_NAMES {
+        for (name, _) in PER_ENTRY_FIELDS {
             assert_eq!(
                 legacy_value(DEFAULT_DATASET_ID, name),
                 None,
@@ -1133,7 +1318,7 @@ mod tests {
         );
 
         let first = migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
-        assert_eq!(first.superseded, AI_CREDENTIAL_NAMES.len());
+        assert_eq!(first.superseded, PER_ENTRY_FIELDS.len());
         assert_eq!(first.moved, 0);
 
         let second = migrate_legacy_ai_credentials(&[DEFAULT_DATASET_ID.to_string()]);
@@ -1187,7 +1372,7 @@ mod tests {
                 "us-east-1".to_string()
             ))
         );
-        for name in AI_CREDENTIAL_NAMES {
+        for (name, _) in PER_ENTRY_FIELDS {
             assert_eq!(
                 legacy_value(DATASET_A, name),
                 None,
@@ -1242,10 +1427,11 @@ mod tests {
     fn an_unverified_destination_write_is_rolled_back_so_it_cannot_become_the_winner() {
         let _g = guard();
         seed_legacy(DATASET_A, &[("openai_api_key", "sk-legacy")]);
-        let destination = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
+        let destination = ai_entry(DATASET_A).unwrap();
+        let blob = r#"{"openai_api_key":"sk-legacy"}"#;
 
-        let error = store_verified_copy(&destination, "sk-legacy", || {
-            Ok("sk-corrupted-by-the-backend".to_string())
+        let error = store_verified_copy(&destination, blob, None, || {
+            Ok(r#"{"openai_api_key":"sk-corrupted-by-the-backend"}"#.to_string())
         })
         .expect_err("a mismatched read-back must fail");
 
@@ -1282,9 +1468,10 @@ mod tests {
     fn a_destination_write_whose_read_back_fails_is_also_rolled_back() {
         let _g = guard();
         seed_legacy(DATASET_A, &[("openai_api_key", "sk-legacy")]);
-        let destination = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
+        let destination = ai_entry(DATASET_A).unwrap();
+        let blob = r#"{"openai_api_key":"sk-legacy"}"#;
 
-        let error = store_verified_copy(&destination, "sk-legacy", || Err("locked".to_string()))
+        let error = store_verified_copy(&destination, blob, None, || Err("locked".to_string()))
             .expect_err("an unreadable read-back must fail");
 
         assert!(
@@ -1303,9 +1490,10 @@ mod tests {
     #[test]
     fn a_verified_destination_write_is_kept() {
         let _g = guard();
-        let destination = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
+        let destination = ai_entry(DATASET_A).unwrap();
+        let blob = r#"{"openai_api_key":"sk-a"}"#;
 
-        store_verified_copy(&destination, "sk-a", || Ok("sk-a".to_string()))
+        store_verified_copy(&destination, blob, None, || Ok(blob.to_string()))
             .expect("a matching read-back must succeed");
 
         assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
@@ -1319,15 +1507,10 @@ mod tests {
         let _g = guard();
         seed_legacy(DATASET_A, &[("openai_api_key", "sk-a")]);
 
-        let entry = Entry::new(&legacy_ai_service(DATASET_A), "openai_api_key").unwrap();
-        let cred: &keyring_core::mock::Cred = entry
-            .as_any()
-            .downcast_ref()
-            .expect("the test store is the mock store");
-        cred.set_error(Error::Invalid(
-            "openai_api_key".to_string(),
-            "the keyring is locked".to_string(),
-        ));
+        arm_read_error(
+            &Entry::new(&legacy_ai_service(DATASET_A), "openai_api_key").unwrap(),
+            "openai_api_key",
+        );
 
         let outcome = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
 
@@ -1408,7 +1591,7 @@ mod tests {
 
         let copied = copy_ai_credentials(DATASET_A, DATASET_B).expect("copy succeeds");
 
-        assert_eq!(copied, AI_CREDENTIAL_NAMES.len());
+        assert_eq!(copied, PER_ENTRY_FIELDS.len());
         assert_eq!(load_openai_key(DATASET_B), Some("sk-a".to_string()));
         assert_eq!(
             load_aws_credentials(DATASET_B),
@@ -1449,24 +1632,11 @@ mod tests {
     /// and a copy that could not tell them apart reported success while handing
     /// back an AI-keyless migrated profile.
     ///
-    /// The mock's injected error is consumed by the first call that hits it, which
-    /// is why the key with the error armed is the last name in the loop: the three
-    /// before it are genuinely absent, so this asserts the abort came from the
-    /// fault and not from the absence.
     #[test]
     fn a_keyring_that_refuses_a_read_aborts_the_copy_instead_of_skipping_it() {
         let _g = guard();
         store_openai_key(DATASET_A, "sk-a").unwrap();
-
-        let entry = Entry::new(&ai_service(DATASET_A), "openai_api_key").unwrap();
-        let cred: &keyring_core::mock::Cred = entry
-            .as_any()
-            .downcast_ref()
-            .expect("the test store is the mock store");
-        cred.set_error(Error::Invalid(
-            "openai_api_key".to_string(),
-            "the keyring is locked".to_string(),
-        ));
+        arm_read_error(&ai_entry(DATASET_A).unwrap(), AI_CREDENTIALS_ACCOUNT);
 
         let error = copy_ai_credentials(DATASET_A, DATASET_B).expect_err("the copy must abort");
 
@@ -1478,10 +1648,30 @@ mod tests {
         );
     }
 
-    /// The enumerated list is the whole contract: a name missing from it is a key
-    /// that silently fails to follow a migration and one a wipe leaves behind.
+    /// The per-entry table is the migration's and the wipe's whole contract: a field
+    /// missing from it is a key that silently fails to follow a migration. Listing
+    /// every field in a struct literal makes adding one a compile error here, which
+    /// is what forces the table to be revisited.
     #[test]
-    fn the_enumerated_names_cover_every_key_the_writers_can_store() {
+    fn every_field_has_a_per_entry_name() {
+        let every_field = AiCredentials {
+            aws_access_key_id: Some("aws_access_key_id".to_string()),
+            aws_secret_access_key: Some("aws_secret_access_key".to_string()),
+            aws_region: Some("aws_region".to_string()),
+            openai_api_key: Some("openai_api_key".to_string()),
+        };
+
+        let mut filled = AiCredentials::default();
+        for (name, slot) in PER_ENTRY_FIELDS {
+            *slot(&mut filled) = Some(name.to_string());
+        }
+
+        assert_eq!(filled, every_field);
+        assert_eq!(filled.configured_count(), PER_ENTRY_FIELDS.len());
+    }
+
+    #[test]
+    fn clearing_removes_every_key_the_writers_can_store() {
         let _g = guard();
         store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
         store_openai_key(DATASET_A, "sk-a").unwrap();
@@ -1489,6 +1679,177 @@ mod tests {
         clear_credentials(DATASET_A);
 
         assert_eq!(load_aws_credentials(DATASET_A), None);
+        assert_eq!(load_openai_key(DATASET_A), None);
+    }
+
+    /// One keychain item per profile is the point of the layout: every extra item
+    /// is another macOS access prompt.
+    #[test]
+    fn every_ai_credential_of_a_profile_lives_in_one_keyring_entry() {
+        let _g = guard();
+        store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+
+        for (name, _) in PER_ENTRY_FIELDS {
+            assert_eq!(
+                per_entry_value(DATASET_A, name),
+                None,
+                "{name} got its own entry"
+            );
+        }
+        let stored = read_ai_credentials(&ai_entry(DATASET_A).unwrap())
+            .unwrap()
+            .expect("the single entry exists");
+        assert_eq!(stored.configured_count(), PER_ENTRY_FIELDS.len());
+    }
+
+    /// Saving is a read-modify-write: configuring one provider must not erase the other.
+    #[test]
+    fn saving_one_provider_keeps_the_others_keys() {
+        let _g = guard();
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+        store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
+        store_openai_key(DATASET_A, "sk-a2").unwrap();
+
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a2".to_string()));
+        assert_eq!(
+            load_aws_credentials(DATASET_A),
+            Some((
+                "access-a".to_string(),
+                "secret-a".to_string(),
+                "ca-central-1".to_string()
+            ))
+        );
+    }
+
+    /// A save the keyring would not let us read first must not overwrite the entry:
+    /// doing so would silently drop the other provider's keys.
+    #[test]
+    fn a_save_whose_read_is_refused_fails_instead_of_overwriting() {
+        let _g = guard();
+        store_aws_credentials(DATASET_A, "access-a", "secret-a", "ca-central-1").unwrap();
+        arm_read_error(&ai_entry(DATASET_A).unwrap(), AI_CREDENTIALS_ACCOUNT);
+
+        assert!(store_openai_key(DATASET_A, "sk-a").is_err());
+        assert!(load_aws_credentials(DATASET_A).is_some());
+    }
+
+    /// Nothing in an undecodable entry is usable, so it reads as unconfigured and the
+    /// next save replaces it rather than leaving the user unable to reconfigure AI.
+    #[test]
+    fn a_corrupted_entry_reads_as_unconfigured_and_the_next_save_replaces_it() {
+        let _g = guard();
+        ai_entry(DATASET_A)
+            .unwrap()
+            .set_password("not valid json")
+            .unwrap();
+
+        assert_eq!(load_openai_key(DATASET_A), None);
+        assert!(copy_ai_credentials(DATASET_A, DATASET_B).is_err());
+
+        store_openai_key(DATASET_A, "sk-a").unwrap();
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+    }
+
+    /// Windows Credential Manager caps one credential at 2560 bytes of UTF-16 (1280
+    /// chars), which is why the Cognito session is chunked there. The AI entry is
+    /// not, so a realistically oversized one must stay well under that ceiling.
+    #[test]
+    fn a_fully_configured_entry_fits_in_one_windows_credential() {
+        let generous = AiCredentials {
+            aws_access_key_id: Some("A".repeat(128)),
+            aws_secret_access_key: Some("s".repeat(128)),
+            aws_region: Some("ap-southeast-5".to_string()),
+            openai_api_key: Some("k".repeat(400)),
+        };
+
+        let blob = encode_ai_credentials(&generous).unwrap();
+
+        assert!(blob.encode_utf16().count() <= 1_000, "{} chars", blob.len());
+    }
+
+    /// The layout every Nixus build shipped before the single entry: one item per key
+    /// under the Nixus service. An upgrade folds them in and leaves none behind.
+    #[test]
+    fn nixus_per_entry_credentials_are_folded_into_the_single_entry() {
+        let _g = guard();
+        seed_per_entry(
+            DATASET_A,
+            &[
+                ("openai_api_key", "sk-a"),
+                ("aws_access_key_id", "access-a"),
+                ("aws_secret_access_key", "secret-a"),
+                ("aws_region", "ca-central-1"),
+            ],
+        );
+
+        let outcome = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(outcome.moved, PER_ENTRY_FIELDS.len());
+        assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-a".to_string()));
+        assert_eq!(
+            load_aws_credentials(DATASET_A),
+            Some((
+                "access-a".to_string(),
+                "secret-a".to_string(),
+                "ca-central-1".to_string()
+            ))
+        );
+        for (name, _) in PER_ENTRY_FIELDS {
+            assert_eq!(per_entry_value(DATASET_A, name), None, "{name} survived");
+        }
+        assert!(migrate_legacy_ai_credentials(&[DATASET_A.to_string()]).is_noop());
+    }
+
+    /// An install that went through the rename while still on the per-entry layout can
+    /// hold both: the Nixus per-entry value is the newer one and must be the one kept.
+    #[test]
+    fn a_nixus_per_entry_value_wins_over_its_pre_rename_twin() {
+        let _g = guard();
+        seed_per_entry(DATASET_A, &[("openai_api_key", "sk-new")]);
+        seed_legacy(DATASET_A, &[("openai_api_key", "sk-old")]);
+
+        let outcome = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(outcome.moved, 1);
+        assert_eq!(outcome.superseded, 1);
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-new".to_string()));
+        assert_eq!(per_entry_value(DATASET_A, "openai_api_key"), None);
+        assert_eq!(legacy_value(DATASET_A, "openai_api_key"), None);
+    }
+
+    /// A destination the keyring refuses to show may hold newer values for every
+    /// field, so it is never written over and no source is deleted.
+    #[test]
+    fn a_destination_the_keyring_refuses_to_read_is_left_alone() {
+        let _g = guard();
+        store_openai_key(DATASET_A, "sk-current").unwrap();
+        seed_per_entry(DATASET_A, &[("aws_region", "us-east-1")]);
+        arm_read_error(&ai_entry(DATASET_A).unwrap(), AI_CREDENTIALS_ACCOUNT);
+
+        let outcome = migrate_legacy_ai_credentials(&[DATASET_A.to_string()]);
+
+        assert_eq!(outcome.moved, 0);
+        assert_eq!(outcome.failures.len(), 1);
+        assert_eq!(load_openai_key(DATASET_A), Some("sk-current".to_string()));
+        assert_eq!(
+            per_entry_value(DATASET_A, "aws_region"),
+            Some("us-east-1".to_string())
+        );
+    }
+
+    /// An interrupted migration can leave a per-entry key behind; a wipe must not let
+    /// it resurface through the next launch's migration.
+    #[test]
+    fn clearing_also_removes_leftover_per_entry_keys_of_both_layouts() {
+        let _g = guard();
+        seed_per_entry(DATASET_A, &[("openai_api_key", "sk-a")]);
+        seed_legacy(DATASET_A, &[("aws_region", "us-east-1")]);
+
+        clear_credentials(DATASET_A);
+
+        assert!(migrate_legacy_ai_credentials(&[DATASET_A.to_string()]).is_noop());
         assert_eq!(load_openai_key(DATASET_A), None);
     }
 

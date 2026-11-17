@@ -126,9 +126,10 @@ pub fn run() {
             let registered_datasets = datasets::bootstrap_registry(&app_handle)
                 .expect("dataset registry is corrupt or unreadable");
 
-            // Initialize OS keychain store (must happen before any credential access)
-            keyring::use_native_store(false)
-                .expect("failed to initialize keychain store");
+            // Must happen before any credential access. Debug builds get a file store
+            // so `tauri dev` rebuilds do not re-trigger macOS Keychain prompts.
+            credentials::install_store(&app_data_dir)
+                .expect("failed to initialize the credential store");
 
             // After the keychain store above and before `init_ai_client` below, which
             // is the first reader: a credential still under the legacy service would

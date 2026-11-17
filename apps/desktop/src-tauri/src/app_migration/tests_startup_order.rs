@@ -42,7 +42,7 @@ const MIGRATION_CALL: &str = "app_migration::migrate_from_legacy_identity(";
 
 /// Steps the *credential* migration must sit between, for the same class of reason.
 const CREDENTIAL_MIGRATION_CALL: &str = "credentials::migrate_legacy_ai_credentials(";
-const KEYCHAIN_INIT: &str = "keyring::use_native_store(";
+const KEYCHAIN_INIT: &str = "credentials::install_store(";
 const AI_CLIENT_INIT: &str = "ai::init_ai_client(";
 
 fn lib_source() -> String {
