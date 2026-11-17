@@ -89,6 +89,7 @@ Before you download: an honest list so you know if this is worth your time.
 - **Single user** — one person's finances per install.
 - **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for premium Nixus Cloud accounts, through Nixus infrastructure to AWS Bedrock in the United States. See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
 - **Sync, if you turn it on, stores a copy of your records in Nixus-operated cloud storage** — it is off by default, needs a Nixus Cloud account that includes it, and is **not** end-to-end encrypted in this first version. See [Sync across your computers (optional)](#sync-across-your-computers-optional). Leave it off and no copy of your records leaves your machine.
+- **A Nixus Cloud account has a profile stored in the cloud, not on your machine** — name, date of birth, income bracket, location, and picture. See [Your Nixus Cloud profile](#your-nixus-cloud-profile). A local profile with no Nixus Cloud account keeps this information on your device only.
 - **Pre-alpha** — features change and things break between releases.
 - **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
 
@@ -133,6 +134,26 @@ Nixus is local-only by default. If you want the same records on a second compute
 **Retention and deletion.** Old change-log segments are deleted once a newer snapshot covers them, and previous versions of each object expire after 30 days. The current copy is kept for as long as sync is on, and it is kept — never deleted — if your account stops being eligible, in which case sync freezes: transfers stop and the local app keeps working normally. "Delete everything" in the app stops the cloud copy from ever being loaded again — by that computer, by your other computers, or by a new one you link afterwards — but it does **not** erase the stored objects, and most of them are not deleted at any later point either. The app is deliberately granted no permission to delete your data: its only delete permission is the cleanup inside your own location — superseded snapshots and change-log segments a newer snapshot covers — and it has none for the account binding, the pointers and roster your computers coordinate through, or your project images, so one computer cannot erase what the others are mid-download of. In practice the superseded snapshots are swept once newer ones replace them, while the change-log segments written before a "delete everything" and your uploaded pictures are not reclaimed at all. To have the stored bytes deleted outright, [email me](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20sync%20data%20deletion%20request) and ask; it is handled manually. Turning sync off stops transfers but does not delete the copy.
 
 Sync is not a backup service — keeping your own backups is still your responsibility. Full detail: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
+
+---
+
+## Your Nixus Cloud profile
+
+Every Nixus Cloud account has a profile — first and last name, date of birth, income bracket and its currency, country and state, province, or region, and an optional picture — even free accounts. It is kept in a Nixus-operated database on AWS in the US East (N. Virginia) region, keyed to your account.
+
+You edit it from the desktop app or from [account.nixusapp.com](https://account.nixusapp.com); saving a change needs an internet connection either way. The desktop app keeps a read-only copy on your computer so it can show the profile and keep working offline between edits. Transfers use TLS. Nixus never sells or shares your profile and never uses it for advertising.
+
+If you use Nixus without a Nixus Cloud account, your profile stays on that device only and is never uploaded. If you already had a profile on a computer before this feature existed, Nixus asks before uploading it the first time; declining keeps it on that computer and you are not asked again.
+
+"Delete everything" in the app removes the copy on that computer, but it does not delete your Nixus Cloud profile — it reappears the next time you sign in anywhere. To have the Nixus Cloud profile itself deleted, [email me](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20Cloud%20profile%20deletion%20request) and ask; this is handled manually today, since deleting a Nixus Cloud account isn't built yet.
+
+The account website at account.nixusapp.com uses one essential, first-party session cookie to keep you signed in there; it stays on Nixus's server and is never read by page scripts. Signing out of the website does not sign you out of the desktop app, and signing out of the desktop app does not sign you out of the website. No analytics or advertising cookies come with this feature.
+
+Nixus does not log your profile values, your picture, or any token or cookie. What it logs for running the service is your account identifier, the route called, the response status, timing, and sizes.
+
+There is no payments or billing system in Nixus yet.
+
+Full terms: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
 
 ---
 
