@@ -4,7 +4,12 @@ import { useLocation } from "@tanstack/react-router";
 import { cn, NixusLogo } from "@nixus/shared";
 
 import { DownloadCTA } from "@/features/download/DownloadCTA";
-import { betaPagePath, homePath, localeFromLanguage } from "@/lib/localePaths";
+import {
+  accountAppUrl,
+  betaPagePath,
+  homePath,
+  localeFromLanguage,
+} from "@/lib/localePaths";
 import { LanguageToggle } from "./LanguageToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -130,6 +135,14 @@ export function SiteHeader() {
             )}
           >
             {t("header.beta")}
+          </a>
+          <a
+            href={accountAppUrl(locale)}
+            data-testid="header-signin-link"
+            aria-label={t("header.signInAria")}
+            className="mkt-tap inline-flex items-center justify-center rounded-md px-2.5 py-1.5 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            {t("header.signIn")}
           </a>
           <ThemeToggle />
           <LanguageToggle />

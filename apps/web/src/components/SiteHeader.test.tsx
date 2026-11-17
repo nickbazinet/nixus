@@ -22,6 +22,36 @@ describe("SiteHeader", () => {
     expect(link).toHaveTextContent("Founding");
   });
 
+  /* AD-10's marketing-site half: a plain cross-origin link with a neutral label.
+   * No session is read and no signed-in state is rendered, so the site stays fully
+   * static and cacheable - signed-in state here is explicitly deferred. */
+  it("links to the account app with a neutral label", () => {
+    renderWithProviders(<SiteHeader />);
+    const link = screen.getByTestId("header-signin-link");
+
+    expect(link).toHaveAttribute("href", "https://account.nixusapp.com");
+    expect(link).toHaveTextContent("Sign in");
+    expect(link).toHaveAttribute(
+      "aria-label",
+      "Sign in to your Nixus Cloud account",
+    );
+  });
+
+  it("reads no session state for that link", () => {
+    renderWithProviders(<SiteHeader />);
+    const link = screen.getByTestId("header-signin-link");
+
+    // Not a router Link and not conditional: a different label for a signed-in
+    // visitor would mean this page had to know who they are.
+    expect(link.tagName).toBe("A");
+    expect(link).not.toHaveAttribute("aria-current");
+  });
+
+  it("keeps the account app reachable on a phone", () => {
+    renderWithProviders(<SiteHeader />);
+    expect(screen.getByTestId("header-signin-link")).not.toHaveClass("hidden");
+  });
+
   it("renders the DownloadCTA", () => {
     renderWithProviders(<SiteHeader />);
     expect(screen.getByTestId("download-cta")).toBeInTheDocument();
@@ -100,6 +130,7 @@ describe("SiteHeader", () => {
         bar: container.querySelector("header > div"),
         brand: container.querySelector('header a[aria-label]'),
         founding: screen.getByTestId("header-beta-link"),
+        signIn: screen.getByTestId("header-signin-link"),
         ctaSlot: screen.getByTestId("download-cta").parentElement,
       };
 

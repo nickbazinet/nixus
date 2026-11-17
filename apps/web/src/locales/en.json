@@ -8,6 +8,8 @@
   "header.languageEnglish": "English",
   "header.languageFrench": "Français",
   "header.beta": "Founding",
+  "header.signIn": "Sign in",
+  "header.signInAria": "Sign in to your Nixus Cloud account",
   "header.macos": "macOS",
   "header.windows": "Windows",
   "skipToMain": "Skip to main content",

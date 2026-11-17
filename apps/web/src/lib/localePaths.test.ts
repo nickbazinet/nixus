@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  accountAppUrl,
   betaPagePath,
   homePath,
   localeFromLanguage,
@@ -56,5 +57,29 @@ describe("localeFromLanguage", () => {
     expect(localeFromLanguage("en")).toBe("en");
     expect(localeFromLanguage("en-US")).toBe("en");
     expect(localeFromLanguage(undefined)).toBe("en");
+  });
+});
+
+describe("accountAppUrl", () => {
+  it("is an absolute https url on the account origin, per locale", () => {
+    expect(accountAppUrl("en")).toBe("https://account.nixusapp.com");
+    expect(accountAppUrl("fr")).toBe("https://account.nixusapp.com/fr");
+  });
+
+  /* A visitor on /fr must land in French, and the account app has no trailing-slash
+   * index route - its router normalises /fr/ to /fr with a 307, so linking the
+   * slashed form would cost every French visitor an extra redirect. */
+  it("never carries a trailing slash", () => {
+    for (const locale of ["en", "fr"] as const) {
+      expect(accountAppUrl(locale).endsWith("/")).toBe(false);
+    }
+  });
+
+  it("stays on the account host, not the marketing or api host", () => {
+    for (const locale of ["en", "fr"] as const) {
+      const { origin, protocol } = new URL(accountAppUrl(locale));
+      expect(protocol).toBe("https:");
+      expect(origin).toBe("https://account.nixusapp.com");
+    }
   });
 });

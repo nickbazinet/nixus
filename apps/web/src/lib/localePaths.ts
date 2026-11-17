@@ -14,6 +14,19 @@ export function betaPagePath(locale: Locale): string {
   return locale === "fr" ? "/fr/beta" : "/beta";
 }
 
+/**
+ * The account app, which is a separate origin with its own deploy (AD-10).
+ *
+ * A plain cross-origin link with a neutral label, and nothing more: the marketing
+ * site reads no session and renders no signed-in state, so it stays fully static
+ * and cacheable. Signed-in state on this site is explicitly deferred.
+ */
+export function accountAppUrl(locale: Locale): string {
+  return locale === "fr"
+    ? "https://account.nixusapp.com/fr"
+    : "https://account.nixusapp.com";
+}
+
 /** Home path for the given locale. */
 export function homePath(locale: Locale): string {
   return locale === "fr" ? "/fr/" : "/";
