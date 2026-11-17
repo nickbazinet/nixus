@@ -1037,6 +1037,16 @@ pub enum AuthState {
 pub struct UserProfile {
     pub schema_version: u32,
     pub cognito_sub: String,
+    /// The server-owned profile version (AD-4), written only from a server response. `None` is a
+    /// LEGACY document and is AD-8's whole detection signal, which is why `serde(default)` is
+    /// load-bearing — without it every shipped `profiles/<sub>.json` fails to deserialize and is
+    /// quarantined — and why `skip_serializing_if` is too: a `"version": null` member added by a
+    /// mere load/save would read as "not legacy".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
+    /// AD-8's "never ask again" record. Same serde treatment, same reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_declined: Option<bool>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub birth_date: Option<String>,
@@ -1059,6 +1069,32 @@ pub struct UpdateUserProfileInput {
     pub income_bracket_currency: Option<String>,
     pub country_code: Option<String>,
     pub subdivision_code: Option<String>,
+}
+
+// The on-device demographic document of a LOCAL dataset (AD-6). Keyed by `dataset_id` and
+// carrying no `cognito_sub`, which is what makes it structurally impossible to use as an upload
+// body — the cloud wire contract has no member it could fill.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalUserProfile {
+    pub schema_version: u32,
+    pub dataset_id: String,
+    #[serde(flatten)]
+    pub fields: ProfileFields,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// What `/profile` and every demographic consumer receive, for BOTH homes (AD-6). It carries the
+// resolver's opaque `source_key` instead of `cognito_sub`: the subject is resolved in Rust and
+// never crosses IPC in either direction (D3), and a single shape is what lets one form, one query
+// key and one validator serve a local document and a Nixus Cloud copy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileView {
+    pub source_key: String,
+    #[serde(flatten)]
+    pub fields: ProfileFields,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 // The stored 256px/64 KiB derivative, base64'd for an `<img src="data:...">`.

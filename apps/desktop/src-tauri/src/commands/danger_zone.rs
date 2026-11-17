@@ -1,6 +1,7 @@
 use tauri::{AppHandle, State};
 use tracing::{info, warn};
 
+use crate::avatar_store;
 use crate::datasets;
 use crate::db::danger_zone as danger_zone_db;
 use crate::db::sync_state;
@@ -35,16 +36,29 @@ use crate::profile_store;
 ///    made unreachable by the epoch and expire through retention.
 ///
 /// What is NOT account-wide: edits made on another computer AFTER the wipe are kept (they are
-/// published at the new epoch), and the global profile store is erased only here, on the computer
-/// where the user asked, because that PII belongs to the person rather than to a dataset.
+/// published at the new epoch), and the profile stores are erased only here, on the computer where
+/// the user asked.
+///
+/// The on-disk scope is AD-7's matrix, and it is deliberately narrower than the recursive
+/// `profiles/` wipe it replaces. Every account's Nixus Cloud copy and the whole avatar cache go,
+/// because that PII belongs to the person rather than to a dataset — but of the local documents
+/// only the ACTIVE dataset's is removed: the others are the sole copy of a profile the user did not
+/// ask to delete and has no cloud to restore it from. Nothing in Nixus Cloud is touched; the
+/// confirmation copy says so (AD-16, owned by Epic G).
 #[tauri::command(rename_all = "snake_case")]
 pub async fn delete_all_data(app: AppHandle, state: State<'_, DbState>) -> Result<(), AppError> {
     crate::commands::sync::disable_and_stop(&app).await;
+
+    let active_dataset_id;
 
     {
         let mut active = state.0.lock().map_err(|e| AppError::Database {
             message: e.to_string(),
         })?;
+
+        // Read off the guard that is already held: resolving it through `datasets` would re-acquire
+        // this same non-reentrant lock and deadlock.
+        active_dataset_id = active.id.clone();
 
         // Read BEFORE the wipe, because the wipe deletes the row it comes from. A dataset that
         // never JOINED has published nothing and holds none of the account's rows, so there is no
@@ -93,10 +107,18 @@ pub async fn delete_all_data(app: AppHandle, state: State<'_, DbState>) -> Resul
     // global_root, not active_dataset_dir — otherwise profile PII could survive
     // a "delete all data" run from a non-default dataset (NFR4).
     let app_data_dir = datasets::global_root(&app)?;
+    let profiles_dir = profile_store::profiles_dir(&app_data_dir);
 
     // Fatal, unlike reclaim_space: a failure here means profile PII is still on
     // disk after the user asked for everything to be deleted (NFR4).
-    profile_store::delete_all_profiles(&profile_store::profiles_dir(&app_data_dir))?;
+    //
+    // Each store is asked to delete its own files — this command never touches `profiles/` itself
+    // (AD-6) — and the local removal is scoped to the active dataset alone.
+    profile_store::delete_all_cloud_copies(&profiles_dir)?;
+    avatar_store::delete_all_avatars(&profiles_dir)?;
+    if let Some(dataset_id) = &active_dataset_id {
+        profile_store::delete_local(&profiles_dir, dataset_id)?;
+    }
 
     // Nothing else restarts it: `disable_and_stop` dropped the handle (it `take`s the supervisor
     // slot), and the frontend only relaunches the app on its happy path. `ensure_started` and not
