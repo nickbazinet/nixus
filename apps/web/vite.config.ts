@@ -22,6 +22,11 @@ export default defineConfig({
       prerender: {
         enabled: true,
         crawlLinks: true,
+        // The crawler keeps only the PATH of every link, so the header's
+        // absolute https://account.nixusapp.com/fr is crawled as this site's
+        // `/fr` - a redirect to `/fr/` whose output can overwrite the real
+        // French home depending on crawl order. Nothing on this site lives at `/fr`.
+        filter: ({ path }) => path !== "/fr",
       },
     }),
     viteReact(),
