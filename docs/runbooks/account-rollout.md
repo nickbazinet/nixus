@@ -163,9 +163,22 @@ gh secret set AWS_ACCOUNT_DEPLOY_ROLE_ARN --env production --body "${role_arn}"
 | `ALERT_EMAIL` | environment secret | alarm + budget subscriber | reused |
 | `API_DOMAIN_NAME` | environment variable | `api.nixusapp.com` | reused |
 | `SAM_ARTIFACT_BUCKET` | environment variable | `nixus-sam-artifacts-<account>-<region>` | reused |
+| `API_CERTIFICATE_ARN` | environment secret | the existing `*.nixusapp.com` certificate in us-east-1 | reused (Epic F) |
+| `HOSTED_ZONE_ID` | environment secret | hosted zone for `nixusapp.com` | reused (Epic F) |
+| `ACCOUNT_CODE_BUCKET` | environment variable | `nixus-account-code-<account>` | **new (Epic F)** |
 
-The five reused entries are the same ones `api-bedrock-ci.yml` reads; this service
-adds no second copy of any of them.
+The reused entries are the same ones `api-bedrock-ci.yml` and `web-ci.yml` read;
+this service adds no second copy of any of them.
+
+`ACCOUNT_CODE_BUCKET` names the bucket the pipeline creates idempotently and
+uploads the account app's package to. It **must** start with `nixus-account-`,
+which is the only S3 prefix the deploy role can reach:
+
+```bash
+account_id="$(aws sts get-caller-identity --query Account --output text)"
+gh variable set ACCOUNT_CODE_BUCKET --env production \
+  --body "nixus-account-code-${account_id}"
+```
 
 Then switch deployment on. `ACCOUNT_DEPLOY_ENABLED` is read in the deploy job's
 `if`, which is evaluated before the environment resolves, so it must be a
@@ -260,7 +273,94 @@ that does not hold the new grant yet.
 
 ---
 
-## 9. Already granted for Epic F (the account app)
+## 9. Epic F — the account app (`account.nixusapp.com`)
+
+The account app ships in **this same stack** on the same deploy (AD-14), so §5 is
+the whole deployment. The pipeline builds `apps/account`, creates the versioned
+code bucket, uploads the package under its content hash, passes that key to
+`sam deploy`, then applies the resource policy, publishes the static assets,
+invalidates, and smoke-tests the live edge.
+
+### 9.1 The one manual step, AFTER the first deploy
+
+The confidential client's secret exists only once the client exists, and the
+pipeline deliberately cannot write it. Run this once, then re-run §5 so the app
+starts a container that can read it:
+
+```bash
+client_id="$(aws cloudformation describe-stacks \
+  --stack-name nixus-account --region us-east-1 \
+  --query "Stacks[0].Outputs[?OutputKey=='AccountWebClientId'].OutputValue" \
+  --output text)"
+
+client_secret="$(aws cognito-idp describe-user-pool-client \
+  --user-pool-id us-east-1_7gfGQ0emg \
+  --client-id "${client_id}" --region us-east-1 \
+  --query 'UserPoolClient.ClientSecret' --output text)"
+
+aws ssm put-parameter \
+  --name /nixus-account/web-client-secret \
+  --type SecureString \
+  --value "${client_secret}" \
+  --region us-east-1 \
+  --overwrite
+```
+
+Do not echo `client_secret`, and do not put it in a shell history file, a
+CloudFormation parameter, or a GitHub secret. The app reads it from SSM at cold
+start and it exists nowhere else.
+
+### 9.2 What the deploy does for you, and the one thing to check
+
+`PutResourcePolicy` for CloudFront → endpoint runs **in the pipeline** and is
+idempotent (it replaces the one statement and reads it back). It is not a
+CloudFormation resource because it needs the distribution id, which does not exist
+until the stack is created, and there is no `AddPermission` for Web Functions.
+
+If that step is ever skipped, the site answers `403` from the Lambda endpoint on
+every request. To apply it by hand:
+
+```bash
+uvx --with boto3 python - <<'PY_SCRIPT'
+import boto3, json
+cfn = boto3.client("cloudformation", region_name="us-east-1")
+out = {o["OutputKey"]: o["OutputValue"]
+       for o in cfn.describe_stacks(StackName="nixus-account")["Stacks"][0]["Outputs"]}
+account = boto3.client("sts").get_caller_identity()["Account"]
+policy = {"Version": "2012-10-17", "Statement": [{
+    "Sid": "AllowCloudFrontOacAccess", "Effect": "Allow",
+    "Principal": {"Service": "cloudfront.amazonaws.com"},
+    "Action": "lambda:InvokeWebFunctionEndpoint",
+    "Resource": out["AccountWebFunctionEndpointArn"],
+    "Condition": {"StringEquals": {"aws:SourceArn":
+        f"arn:aws:cloudfront::{account}:distribution/{out['AccountAppDistributionId']}"}}}]}
+web = boto3.client("lambda-web", region_name="us-east-1")
+print(web.put_resource_policy(resourceArn=out["AccountWebFunctionArn"],
+                              policy=json.dumps(policy))["revisionId"])
+PY_SCRIPT
+```
+
+`resourceArn` is the **function** ARN; the `Resource` inside the policy is the
+**endpoint** ARN. `put_resource_policy` replaces the policy wholesale, and boto3's
+`lambda-web` parameters are lowerCamelCase.
+
+### 9.3 Verify by hand, in a real browser
+
+```bash
+curl -sSI https://account.nixusapp.com/ | head -1          # 200
+curl -sSi 'https://account.nixusapp.com/auth/login?next=profile' | \
+  grep -iE '^(HTTP|location|set-cookie)'                   # 302 to auth.nixusapp.com + __Host- cookie
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  -X POST https://account.nixusapp.com/auth/signout        # 403, no Origin
+```
+
+Then, signed in: edit and save the profile, upload a picture, switch to `/fr`, and
+sign out — and confirm the **desktop app stays signed in**, which is the property
+AD-10 forbids web sign-out from breaking.
+
+---
+
+## 10. Already granted for Epic F (the account app)
 
 The bootstrap is applied **once**. It already covers what
 `account.nixusapp.com` will need, so adding the account app to the same
