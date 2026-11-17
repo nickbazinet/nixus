@@ -63,12 +63,17 @@ describe("template conventions", () => {
     expect(TEMPLATE.parameters.ApiDomainName.Default).toBe("api.nixusapp.com");
 
     expect(resourcesOfType(TEMPLATE, "AWS::Cognito::UserPool")).toEqual([]);
-    expect(resourcesOfType(TEMPLATE, "AWS::Cognito::UserPoolClient")).toEqual(
-      []
-    );
     expect(
       resourcesOfType(TEMPLATE, "AWS::Cognito::UserPoolResourceServer")
     ).toEqual([]);
+
+    /* The account app's own client IS owned here (AD-10), and it is the only one:
+     * UpdateResourceServer is a full replace, so a template that could touch the
+     * resource server could delete nixus-api/ai.invoke and take hosted AI down. */
+    expect(
+      resourcesOfType(TEMPLATE, "AWS::Cognito::UserPoolClient").map(([name]) => name)
+    ).toEqual(["AccountWebClient"]);
+    expect(props("AccountWebClient").UserPoolId).toEqual(ref("CognitoUserPoolId"));
   });
 
   /* The domain, its certificate and its DNS record belong to nixus-bedrock-api.
@@ -78,16 +83,39 @@ describe("template conventions", () => {
     expect(resourcesOfType(TEMPLATE, "AWS::ApiGatewayV2::DomainName")).toEqual(
       []
     );
-    expect(resourcesOfType(TEMPLATE, "AWS::Route53::RecordSet")).toEqual([]);
-    expect(resourcesOfType(TEMPLATE, "AWS::CertificateManager::Certificate")).toEqual(
-      []
-    );
     expect(props("ProfileApi")).not.toHaveProperty("Domain");
     expect(TEMPLATE.parameters).not.toHaveProperty("ApiCertificateArn");
-    expect(TEMPLATE.parameters).not.toHaveProperty("HostedZoneId");
     // By name, never by export/import: an import would couple the two stacks.
     expect(DECLARED).not.toContain("ImportValue");
     expect(DECLARED).not.toContain("nixus-bedrock-api");
+  });
+
+  /* Epic F adds a DNS record and a certificate reference, both for the ACCOUNT
+   * hostname. Neither may reach the api hostname, whose record and certificate
+   * belong to nixus-bedrock-api. */
+  it("creates DNS only for the account hostname, and requests no certificate", () => {
+    const records = resourcesOfType(TEMPLATE, "AWS::Route53::RecordSet");
+    expect(records.map(([, record]) => record.Properties.Type).sort()).toEqual([
+      "A",
+      "AAAA",
+    ]);
+
+    for (const [name, record] of records) {
+      expect(record.Properties.Name, name).toEqual(ref("AccountDomainName"));
+      expect(record.Properties.HostedZoneId, name).toEqual(ref("HostedZoneId"));
+      // The fixed hosted-zone id of every CloudFront distribution.
+      expect(record.Properties.AliasTarget.HostedZoneId, name).toBe("Z2FDTNDATAQYW2");
+      expect(JSON.stringify(record), name).not.toContain("ApiDomainName");
+    }
+
+    // The existing wildcard certificate is referenced, never re-requested: a
+    // second certificate for a covered name is a second renewal to keep alive.
+    expect(resourcesOfType(TEMPLATE, "AWS::CertificateManager::Certificate")).toEqual(
+      []
+    );
+    expect(TEMPLATE.parameters.AccountCertificateArn.AllowedPattern).toContain(
+      "us-east-1"
+    );
   });
 
   it("never defines the OIDC deploy role or provider that deploys this stack (AD-14)", () => {
@@ -269,9 +297,8 @@ describe("AD-13 gateway responses match the shared contract exactly", () => {
 describe("AD-4 / AD-14 data protection", () => {
   const table = TEMPLATE.resources.ProfileTable;
 
-  it("keeps a pk/sk schema on one on-demand table", () => {
+  it("keeps a pk/sk schema on the on-demand profile table", () => {
     expect(table.Type).toBe("AWS::DynamoDB::Table");
-    expect(resourcesOfType(TEMPLATE, "AWS::DynamoDB::Table")).toHaveLength(1);
     expect(table.Properties.BillingMode).toBe("PAY_PER_REQUEST");
     expect(table.Properties.KeySchema).toEqual([
       { AttributeName: "pk", KeyType: "HASH" },
@@ -406,7 +433,7 @@ describe("AD-14 cost and error controls", () => {
     const metrics = alarms
       .map(([, alarm]) => alarm.Properties.MetricName)
       .sort();
-    expect(metrics).toEqual(["5XXError", "Errors", "Throttles"]);
+    expect(metrics).toEqual(["5XXError", "5xxErrorRate", "Errors", "Throttles"]);
 
     for (const [name, alarm] of alarms) {
       expect(alarm.Properties.AlarmActions, name).toEqual([
@@ -476,12 +503,21 @@ describe("build wiring", () => {
 
   it("exposes the shared-domain base URL and the ids a deploy asserts on", () => {
     expect(Object.keys(TEMPLATE.outputs).sort()).toEqual([
+      "AccountAppDistributionDomain",
+      "AccountAppDistributionId",
+      "AccountAssetsBucketName",
+      "AccountClientSecretParameterName",
+      "AccountWebClientId",
+      "AccountWebFunctionArn",
+      "AccountWebFunctionEndpointArn",
+      "AccountWebFunctionEndpointDomain",
       "AlertTopicArn",
       "CognitoUserPoolIdEcho",
       "ProfileApiBaseUrl",
       "ProfileApiId",
       "ProfileFunctionName",
       "ProfileTableName",
+      "SessionTableName",
     ]);
     expect(TEMPLATE.outputs.ProfileApiBaseUrl.Value).toEqual({
       __cfn: "Sub",

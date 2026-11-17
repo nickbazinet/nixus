@@ -23,6 +23,8 @@ const TEMPLATE = loadTemplate("apps/api-account/template.yaml");
 
 const PROFILE_ROLE = "ProfileExecutionRole";
 const PROFILE_TABLE = "ProfileTable";
+const ACCOUNT_ROLE = "AccountAppExecutionRole";
+const SESSION_TABLE = "SessionTable";
 
 const SRC_ROOT = fileURLToPath(new URL("./", import.meta.url));
 
@@ -109,10 +111,96 @@ describe("no other role in the stack may reach the profile table", () => {
     }
   });
 
-  it("declares no second DynamoDB table yet, so the one grant is unambiguous", () => {
-    expect(resourcesOfType(TEMPLATE, "AWS::DynamoDB::Table").map(([name]) => name)).toEqual(
-      [PROFILE_TABLE]
+  /* Two tables now, so "the one grant" has to be stated as a pair rather than as
+   * a count: the profile role reaches only the profile table, and the account
+   * app's role only the session table. */
+  it("declares exactly the profile table and the account app's session table", () => {
+    expect(
+      resourcesOfType(TEMPLATE, "AWS::DynamoDB::Table")
+        .map(([name]) => name)
+        .sort()
+    ).toEqual([PROFILE_TABLE, SESSION_TABLE]);
+  });
+});
+
+describe("the account app reaches nothing but the session table (AD-11)", () => {
+  it("exists, so this guard is not vacuous", () => {
+    expect(TEMPLATE.resources).toHaveProperty(ACCOUNT_ROLE);
+  });
+
+  it("names the session table and never the profile table", () => {
+    const statements = JSON.stringify(statementsOf(TEMPLATE, ACCOUNT_ROLE));
+
+    expect(statements).toContain(`${SESSION_TABLE}.Arn`);
+    expect(statements).not.toContain(PROFILE_TABLE);
+    expect(statements).not.toMatch(/table\/\$\{AWS::StackName\}-profile/);
+    expect(statements).not.toMatch(/USER#/);
+  });
+
+  it("holds four single-item actions and no scan or query", () => {
+    const dynamo = statementsOf(TEMPLATE, ACCOUNT_ROLE)
+      .flatMap((statement) =>
+        Array.isArray(statement.Action) ? statement.Action : [statement.Action]
+      )
+      .filter((action) => action.startsWith("dynamodb:"))
+      .sort();
+
+    expect(dynamo).toEqual([
+      "dynamodb:DeleteItem",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+    ]);
+  });
+
+  /* The app reads profiles over HTTPS with the user's own token, so an AWS grant
+   * on anything but its own session table and its own secret is a second writer
+   * waiting to happen. */
+  it("reaches only logs, its session table, and its own client secret", () => {
+    const services = statementsOf(TEMPLATE, ACCOUNT_ROLE)
+      .flatMap((statement) =>
+        Array.isArray(statement.Action) ? statement.Action : [statement.Action]
+      )
+      .map((action) => action.split(":")[0]);
+
+    expect([...new Set(services)].sort()).toEqual(["dynamodb", "kms", "logs", "ssm"]);
+  });
+
+  it("reads one SSM parameter by exact path, and never writes one", () => {
+    const ssm = statementsOf(TEMPLATE, ACCOUNT_ROLE).filter((statement) =>
+      JSON.stringify(statement.Action).includes("ssm:")
     );
+
+    expect(ssm).toHaveLength(1);
+    expect(ssm[0]?.Action).toBe("ssm:GetParameter");
+    expect(JSON.stringify(ssm[0]?.Resource)).toContain("web-client-secret");
+    expect(JSON.stringify(ssm[0]?.Resource)).not.toContain("parameter/*");
+  });
+
+  /* The AWS-managed SSM key has no stack-scoped ARN, so ViaService is the only
+   * available bound - without it the grant decrypts anything that key protects. */
+  it("bounds kms:Decrypt to Parameter Store in this Region", () => {
+    const kms = statementsOf(TEMPLATE, ACCOUNT_ROLE).filter((statement) =>
+      JSON.stringify(statement.Action).includes("kms:")
+    );
+
+    expect(kms).toHaveLength(1);
+    expect(kms[0]?.Condition?.StringEquals?.["kms:ViaService"]).toEqual({
+      __cfn: "Sub",
+      value: "ssm.${AWS::Region}.amazonaws.com",
+    });
+  });
+
+  /* CloudFormation derives a role name from the stack name and the logical id, and
+   * the bootstrap's IAM grant reaches only `nixus-account-Account*` and
+   * `nixus-account-Web*`. A rename outside those prefixes fails the deploy on
+   * authorization, which reads as a broken pipeline rather than a renamed role. */
+  it("carries a logical id the bootstrap's role-name grant covers", () => {
+    for (const [name] of resourcesOfType(TEMPLATE, "AWS::IAM::Role")) {
+      expect(name, `${name} falls outside the bootstrap's grant`).toMatch(
+        /^(Profile|Account|Web)/
+      );
+    }
   });
 });
 
