@@ -25,6 +25,15 @@ jobs:
       contents: write
       id-token: write
 
+    # Not secrets: they are printed in every signed binary and notarization log. The
+    # Team ID is what the macOS Keychain trusts across updates, so a release signed by
+    # any other team would re-prompt every existing user — the verify step pins it.
+    env:
+      NIXUS_APPLE_TEAM_ID: R62CVT2UPJ
+      NIXUS_APPLE_SIGNING_IDENTITY: "Developer ID Application: Nicolas Bazinet (R62CVT2UPJ)"
+      NIXUS_APPLE_API_KEY_ID: YA5R3N33HA
+      NIXUS_APPLE_API_ISSUER: f1f2b689-f93d-454d-bf03-9ea41dfc6db4
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -172,6 +181,69 @@ jobs:
             throw "Azure Artifact Signing probe did not produce a valid, timestamped signature."
           }
 
+      # The Developer ID certificate chains to Apple's root through this intermediate, and
+      # codesign refuses an identity whose chain it cannot build. Pinned by hash so a
+      # tampered download cannot slip a different CA into the System keychain.
+      - name: Install Apple's Developer ID G2 intermediate certificate
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a"
+          cert="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl -fsSL -o "$cert" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          actual="$(shasum -a 256 "$cert" | cut -d' ' -f1)"
+          if [ "$actual" != "$expected" ]; then
+            echo "DeveloperIDG2CA.cer hash is $actual, expected $expected" >&2
+            exit 1
+          fi
+          if security find-certificate -a -Z /Library/Keychains/System.keychain | grep -qi "$expected"; then
+            echo "Already installed."
+          else
+            sudo security add-certificates -k /Library/Keychains/System.keychain "$cert"
+          fi
+
+      # Fails in seconds what tauri-action would otherwise only discover after the whole
+      # universal build: a wrong password, a .p12 without its private key, or a chain
+      # that does not validate (`-v` lists valid identities only).
+      - name: Validate the Developer ID signing certificate
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          p12="$RUNNER_TEMP/nixus-probe.p12"
+          keychain="$RUNNER_TEMP/nixus-probe.keychain-db"
+          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -f "$p12"' EXIT
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$p12"
+          security create-keychain -p probe "$keychain"
+          security unlock-keychain -p probe "$keychain"
+          security import "$p12" -f pkcs12 -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" >/dev/null
+          identities="$(security find-identity -v -p codesigning "$keychain")"
+          echo "$identities"
+          if ! grep -qF "\"$NIXUS_APPLE_SIGNING_IDENTITY\"" <<<"$identities"; then
+            echo "APPLE_CERTIFICATE does not hold a valid '$NIXUS_APPLE_SIGNING_IDENTITY' identity." >&2
+            exit 1
+          fi
+
+      - name: Provide the notarization API key
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/AuthKey_${NIXUS_APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$key_path"
+          chmod 600 "$key_path"
+          if ! grep -q "BEGIN PRIVATE KEY" "$key_path"; then
+            echo "APPLE_API_KEY_P8 is not a .p8 private key." >&2
+            exit 1
+          fi
+          echo "APPLE_API_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
       # target/ is restored from the cargo cache, so bundles from a previous release would
       # otherwise sit next to this one and break the single-installer signature checks.
       - name: Clear stale bundles from the restored cache
@@ -183,6 +255,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS only: the Tauri bundler signs with the Developer ID (hardened runtime
+          # is its default), notarizes through the API key and staples the ticket.
+          # APPLE_API_KEY_PATH comes from the step above via GITHUB_ENV.
+          APPLE_CERTIFICATE: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && env.NIXUS_APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_API_KEY: ${{ matrix.platform == 'macos-latest' && env.NIXUS_APPLE_API_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ matrix.platform == 'macos-latest' && env.NIXUS_APPLE_API_ISSUER || '' }}
         with:
           projectPath: apps/desktop
           tagName: v__VERSION__
@@ -191,6 +271,80 @@ jobs:
           releaseDraft: true
           updaterJsonKeepUniversal: true
           args: ${{ matrix.args }}
+
+      # Checks every copy of the app a user can end up running: the bundle, the one in
+      # the DMG new users install, and the one in the updater tarball existing users get.
+      # The designated requirement is checked explicitly because it is what the macOS
+      # Keychain matches on: an app that is merely "signed" by another identity would
+      # re-prompt every user for their keychain password.
+      - name: Verify macOS signatures and notarization
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          bundle="$GITHUB_WORKSPACE/apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle"
+          apps=("$bundle"/macos/*.app)
+          tarballs=("$bundle"/macos/*.app.tar.gz)
+          dmgs=("$bundle"/dmg/*.dmg)
+          [ ${#apps[@]} -eq 1 ] || { echo "Expected one .app, found ${#apps[@]}." >&2; exit 1; }
+          [ ${#tarballs[@]} -eq 1 ] || { echo "Expected one updater tarball, found ${#tarballs[@]}." >&2; exit 1; }
+          [ ${#dmgs[@]} -eq 1 ] || { echo "Expected one DMG, found ${#dmgs[@]}." >&2; exit 1; }
+
+          updater_dir="$RUNNER_TEMP/nixus-updater-payload"
+          mkdir -p "$updater_dir"
+          tar -xzf "${tarballs[0]}" -C "$updater_dir"
+          updater_apps=("$updater_dir"/*.app)
+          [ ${#updater_apps[@]} -eq 1 ] || { echo "Expected one .app in the updater tarball." >&2; exit 1; }
+
+          dmg_mount="$RUNNER_TEMP/nixus-dmg"
+          hdiutil attach -nobrowse -readonly -mountpoint "$dmg_mount" "${dmgs[0]}" >/dev/null
+          trap 'hdiutil detach "$dmg_mount" >/dev/null 2>&1 || true' EXIT
+          dmg_apps=("$dmg_mount"/*.app)
+          [ ${#dmg_apps[@]} -eq 1 ] || { echo "Expected one .app in the DMG." >&2; exit 1; }
+
+          failures=0
+          check() {
+            local app="$1" stapled="$2" details requirement assessment
+            echo "== $app"
+            if ! codesign --verify --deep --strict --verbose=2 "$app"; then
+              echo "::error::$app: signature does not verify"; failures=$((failures + 1)); return
+            fi
+            details="$(codesign -dvv "$app" 2>&1)"
+            requirement="$(codesign -d -r- "$app" 2>&1)"
+            assessment="$(spctl --assess --type execute --verbose=2 "$app" 2>&1 || true)"
+            echo "$details" | grep -E '^(Identifier|Authority|TeamIdentifier|Timestamp)=' || true
+            echo "$requirement" | tail -n 1
+            echo "$assessment"
+            grep -qxF "TeamIdentifier=$NIXUS_APPLE_TEAM_ID" <<<"$details" \
+              || { echo "::error::$app: not signed by team $NIXUS_APPLE_TEAM_ID"; failures=$((failures + 1)); }
+            grep -qxF "Authority=$NIXUS_APPLE_SIGNING_IDENTITY" <<<"$details" \
+              || { echo "::error::$app: not signed with '$NIXUS_APPLE_SIGNING_IDENTITY'"; failures=$((failures + 1)); }
+            grep -q '^Timestamp=' <<<"$details" \
+              || { echo "::error::$app: signature is not timestamped"; failures=$((failures + 1)); }
+            grep -q '(runtime)' <<<"$details" \
+              || { echo "::error::$app: hardened runtime is off"; failures=$((failures + 1)); }
+            if ! grep -qF 'identifier "org.nixusapp.nixus"' <<<"$requirement" \
+              || ! grep -qF "certificate leaf[subject.OU] = $NIXUS_APPLE_TEAM_ID" <<<"$requirement"; then
+              echo "::error::$app: designated requirement is not pinned to org.nixusapp.nixus and team $NIXUS_APPLE_TEAM_ID"; failures=$((failures + 1))
+            fi
+            grep -q 'source=Notarized Developer ID' <<<"$assessment" \
+              || { echo "::error::$app: Gatekeeper does not accept it as notarized"; failures=$((failures + 1)); }
+            if [ "$stapled" = yes ] && ! xcrun stapler validate "$app"; then
+              echo "::error::$app: notarization ticket is not stapled"; failures=$((failures + 1))
+            fi
+          }
+
+          check "${apps[0]}" yes
+          check "${dmg_apps[0]}" no
+          check "${updater_apps[0]}" no
+
+          if [ "$failures" -gt 0 ]; then
+            echo "$failures macOS signing check(s) failed. This release is not usable." >&2
+            exit 1
+          fi
+          echo "All macOS artifacts are signed by $NIXUS_APPLE_TEAM_ID, notarized, and pinned to org.nixusapp.nixus."
 
       - name: Verify Windows Authenticode signatures
         if: matrix.platform == 'windows-latest'
