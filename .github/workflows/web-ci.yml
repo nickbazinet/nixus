@@ -38,7 +38,12 @@ concurrency:
 jobs:
   verify:
     name: Verify (typecheck, test, build, responsive E2E, Lighthouse)
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`: that label moved to Ubuntu 26.04, where the
+    # Playwright step below fails outright with "Playwright does not support
+    # chromium on ubuntu26.04-x64" - so the responsive and Lighthouse gates stopped
+    # running on every pull request. The pin comes off when Playwright ships 26.04
+    # support.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
 
     steps:
@@ -122,7 +127,9 @@ jobs:
     needs: verify
     # Only run on push to the default branch, never on PRs.
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # Pinned to match the verify job, so the artifact that was gated is built on
+    # the same image that ships.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     # Publish order is a correctness property, not a preference.
