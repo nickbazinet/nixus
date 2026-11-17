@@ -135,9 +135,17 @@ const emptyToNull = (value: string) => {
 interface ProfileFormProps {
   /** The resolver's opaque key for the home this form reads and writes (AD-6). */
   sourceKey: string | null;
+  /**
+   * Disables Save while a Nixus Cloud profile cannot be written at all (AD-1/AD-7).
+   *
+   * Saving a cloud profile requires connectivity on every surface — no device queues or replays an
+   * edit — so an enabled button offline would collect an edit the app has nowhere to put. The form
+   * stays editable, because the copy on screen is still worth reading.
+   */
+  saveDisabled?: boolean;
 }
 
-export function ProfileForm({ sourceKey }: ProfileFormProps) {
+export function ProfileForm({ sourceKey, saveDisabled = false }: ProfileFormProps) {
   const { i18n, t } = useTranslation();
   const { data } = useUserProfile(sourceKey);
   const { data: countries } = useCountries();
@@ -581,7 +589,7 @@ export function ProfileForm({ sourceKey }: ProfileFormProps) {
       <Button
         type="submit"
         size="sm"
-        disabled={saveProfile.isPending}
+        disabled={saveProfile.isPending || saveDisabled}
         data-testid="profile-save"
       >
         {saveProfile.isPending ? t("profile.saving") : t("common.save")}
