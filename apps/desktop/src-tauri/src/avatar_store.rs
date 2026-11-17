@@ -48,7 +48,6 @@ pub struct StoredAvatar {
     pub image_bytes: Vec<u8>,
     pub mime_type: String,
     pub uploaded_at: String,
-    #[allow(dead_code)] // Read by Epic E, to decide whether `GET /avatar` is needed at all.
     pub version: Option<u64>,
 }
 
@@ -181,8 +180,7 @@ pub fn load_avatar(dir: &Path, sub: &str) -> Result<Option<StoredAvatar>, AppErr
 /// caller cannot backdate it.
 ///
 /// `version` is the server's, and is therefore `Option`: only a write fed by a server response
-/// (Epic E) may claim one, and a device-derived picture has none to claim.
-#[allow(dead_code)] // Epic E passes the server's version; today's picker write goes through `save_avatar`.
+/// may claim one, and a device-derived picture has none to claim.
 pub fn save_avatar_with_version(
     dir: &Path,
     sub: &str,
@@ -224,6 +222,12 @@ pub fn save_avatar_with_version(
     })
 }
 
+/// A version-less write, and the fixture every schema-level test in this module is written against.
+///
+/// `#[cfg(test)]` is the structural half of AD-1: a shipped binary can only reach
+/// `save_avatar_with_version` fed by a server response, so no device-derived picture can be cached
+/// without the cloud having accepted it first.
+#[cfg(test)]
 pub fn save_avatar(
     dir: &Path,
     sub: &str,

@@ -96,6 +96,13 @@ async fn activate(app: &AppHandle, dataset: &Dataset) -> Result<(), AppError> {
     refresh_ai_state(app, &dataset.id).await;
     mark_picker_passed();
 
+    // AD-7's sign-in trigger. Spawned here as well as in `select_dataset`, because a sign-in that
+    // lands on the already-active dataset makes `select_dataset_now` a no-op — and that is exactly
+    // the scope-upgrade case the refresh has to reach (adversary C1).
+    if let Some(sub) = dataset.cognito_sub.as_deref() {
+        crate::commands::profile::spawn_cloud_refresh(app, sub);
+    }
+
     info!("Cloud sign-in landed on dataset {}", dataset.id);
     Ok(())
 }

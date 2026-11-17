@@ -4,9 +4,10 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use chrono::Datelike;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::avatar_store;
+use crate::cloud_profile::{self, CloudProfileStatus};
 use crate::datasets;
 use crate::db::account as account_db;
 use crate::db::DbState;
@@ -38,7 +39,6 @@ pub(crate) enum ProfileSource {
 
 impl ProfileSource {
     /// The spine's source token (`cloud:<sub>` / `local:<dataset-id>`), for logs and diagnostics.
-    #[allow(dead_code)] // The refresh/save orchestration that logs it lands with Epic E.
     pub(crate) fn token(&self) -> String {
         match self {
             ProfileSource::Cloud { sub } => format!("cloud:{sub}"),
@@ -187,15 +187,98 @@ fn view(source_key: &str, fields: ProfileFields, created_at: String, updated_at:
 }
 
 fn fields_of_cloud_copy(profile: crate::models::UserProfile) -> ProfileFields {
-    ProfileFields {
-        first_name: profile.first_name,
-        last_name: profile.last_name,
-        birth_date: profile.birth_date,
-        income_bracket: profile.income_bracket,
-        income_bracket_currency: profile.income_bracket_currency,
-        country_code: profile.country_code,
-        subdivision_code: profile.subdivision_code,
+    cloud_profile::fields_of_copy(&profile)
+}
+
+fn consent_requires_cloud() -> AppError {
+    AppError::CloudProfile {
+        code: "unauthorized".to_string(),
+        message: "This profile has no Nixus Cloud profile to upload.".to_string(),
+        field: None,
+        reason: None,
+        recoverable: false,
     }
+}
+
+/// Runs AD-7's refresh for a cloud-linked activation without blocking it.
+///
+/// Spawned rather than awaited, and in Rust rather than from a mounted component: a refresh that
+/// delayed `select_dataset` would make opening a profile wait on the network, and an always-mounted
+/// component may not add an `invoke()` at all (D11). The event it emits is identity-free, and the
+/// `/profile` route is the only listener.
+pub(crate) fn spawn_cloud_refresh(app: &AppHandle, sub: &str) {
+    let app = app.clone();
+    let sub = sub.to_string();
+    let token = ProfileSource::Cloud { sub: sub.clone() }.token();
+
+    tauri::async_runtime::spawn(async move {
+        let dir = match resolve_profiles_dir(&app) {
+            Ok(dir) => dir,
+            Err(error) => {
+                tracing::warn!("The profiles directory could not be resolved: {}", error);
+                return;
+            }
+        };
+
+        let status = cloud_profile::refresh(&dir, &sub).await;
+        tracing::info!(
+            "Refreshed {} (state={}, consent_pending={})",
+            token,
+            status.state,
+            status.consent_pending
+        );
+
+        let _ = app.emit("profile:refreshed", ());
+    });
+}
+
+/// What the Profile page branches on, with no request issued (AD-7).
+#[tauri::command(rename_all = "snake_case")]
+pub async fn get_cloud_profile_status(
+    app: AppHandle,
+    source_key: String,
+) -> Result<CloudProfileStatus, AppError> {
+    let source = require_source(&app, &source_key).await?;
+
+    let ProfileSource::Cloud { sub } = source else {
+        return Ok(CloudProfileStatus::local());
+    };
+
+    Ok(cloud_profile::status(&resolve_profiles_dir(&app)?, &sub))
+}
+
+/// The Profile page's own refresh trigger (AD-7), answering with the status the attempt left.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn refresh_cloud_profile_now(
+    app: AppHandle,
+    source_key: String,
+) -> Result<CloudProfileStatus, AppError> {
+    let source = require_source(&app, &source_key).await?;
+
+    let ProfileSource::Cloud { sub } = source else {
+        return Ok(CloudProfileStatus::local());
+    };
+
+    Ok(cloud_profile::refresh(&resolve_profiles_dir(&app)?, &sub).await)
+}
+
+/// AD-8's consent answer. Declining is recorded on the document and is never asked again.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn answer_profile_upload(
+    app: AppHandle,
+    source_key: String,
+    accept: bool,
+) -> Result<CloudProfileStatus, AppError> {
+    let source = require_source(&app, &source_key).await?;
+
+    let ProfileSource::Cloud { sub } = source else {
+        return Err(consent_requires_cloud());
+    };
+
+    let status = cloud_profile::answer_upload(&resolve_profiles_dir(&app)?, &sub, accept).await?;
+    let _ = app.emit("profile:refreshed", ());
+
+    Ok(status)
 }
 
 /// This dataset's demographics, from whichever home the resolver names.
@@ -268,11 +351,12 @@ pub async fn save_user_profile(
     };
 
     Ok(match source {
-        // Epic E: the cloud arm becomes `PUT` → await success → `write_cloud_copy` from the
-        // response (AD-1/AD-7). This local write is the seam it replaces, kept so the app is not
-        // broken in the meantime; the local arm below is final.
+        // AD-1/AD-7: `PUT`, await the server's answer, and only then rewrite the copy from it.
+        // Nothing is written locally ahead of a confirmation, so a refused save leaves the copy
+        // byte-identical and the page keeps showing what the cloud actually holds.
         ProfileSource::Cloud { sub } => {
-            let saved = profile_store::save_profile(&dir, &sub, &input)?;
+            let saved = cloud_profile::save(&dir, &sub, &input).await?;
+            let _ = app.emit("profile:refreshed", ());
             view(
                 &source_key,
                 fields_of_cloud_copy(saved.clone()),
@@ -436,13 +520,11 @@ pub async fn set_user_avatar(
 
     let (image_bytes, mime_type) = avatar_store::derive_from_file(&file_path)?;
 
-    // Epic E: this becomes `PUT /avatar` → `save_avatar_with_version` from the response.
-    Ok(encoded_avatar(avatar_store::save_avatar(
-        &dir,
-        &sub,
-        &image_bytes,
-        mime_type,
-    )?))
+    // The derivative is produced here and `PUT` before anything is cached, so the row and the
+    // version it claims both come from the server's answer (AD-1/AD-4). No filename is ever sent.
+    let stored = cloud_profile::save_avatar(&dir, &sub, &image_bytes, mime_type).await?;
+
+    Ok(encoded_avatar(stored))
 }
 
 #[cfg(test)]

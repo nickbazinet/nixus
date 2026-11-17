@@ -291,6 +291,16 @@ pub async fn select_dataset(app: AppHandle, dataset_id: String) -> Result<(), Ap
 
     select_dataset_now(&app, &dataset_id)?;
     refresh_ai_state(&app, &dataset_id).await;
+
+    // AD-7's activation trigger, in Rust and in the background: the Profile page may be opened
+    // minutes later, so the copy is brought up to date now rather than by a mounted component.
+    if let Some(subject) = subject
+        .as_deref()
+        .filter(|subject| is_signed_in(&entry, Some(subject)))
+    {
+        crate::commands::profile::spawn_cloud_refresh(&app, subject);
+    }
+
     Ok(())
 }
 

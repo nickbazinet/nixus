@@ -451,18 +451,20 @@ pub(crate) fn validate_fields_at(
     })
 }
 
-fn validate_fields(input: &UpdateUserProfileInput) -> Result<ProfileFields, AppError> {
+/// The single validation authority both homes save through, and the offline affordance in front of
+/// a `PUT`: the refusals the server would answer with, raised before a request is spent on a value
+/// the API is certain to reject (AD-5).
+pub(crate) fn validate_fields(input: &UpdateUserProfileInput) -> Result<ProfileFields, AppError> {
     validate_fields_at(input, Local::now().date_naive())
 }
 
-// Full replace: every field comes from `input`, so `None` clears it. `created_at`
-// is carried forward verbatim from any existing document — regenerating it would
-// silently destroy it — while `updated_at` is bumped on every save.
-//
-// Epic E: this is the local-first write the network PUT replaces. The copy becomes
-// write-from-server-response-only (AD-1/AD-7), and this function's body is the seam —
-// `validate_fields` stays (it is the offline affordance), the `write_json_atomic` below
-// becomes `write_cloud_copy` fed by the response.
+/// The validator suite's fixture, and no longer a production write path.
+///
+/// A Nixus Cloud copy is written only from a server response (AD-1/AD-7), so `write_cloud_copy` is
+/// the sole writer this module ships. This builder survives because the field-by-field refusal
+/// suite below is written against it, and `#[cfg(test)]` is what proves no shipped code can reach
+/// a local-first cloud write.
+#[cfg(test)]
 pub fn save_profile(
     dir: &Path,
     sub: &str,
@@ -505,7 +507,6 @@ pub fn save_profile(
 }
 
 /// What a `profiles/<sub>.json` is, read WITHOUT touching it (AD-8).
-#[allow(dead_code)] // The launch probe and the consent prompt that read it land with Epic E.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloudCopyState {
     Absent,
@@ -526,7 +527,6 @@ pub enum CloudCopyState {
 /// `load_profile` QUARANTINES a document it cannot parse, which would rename the user's only copy
 /// of their date of birth and income out from under the very prompt that was looking for it
 /// (adversary C4). This path never renames, never writes, and never creates the directory.
-#[allow(dead_code)] // Called by Epic E's refresh, before the `GET`.
 pub fn probe_cloud_copy(dir: &Path, sub: &str) -> Result<CloudCopyState, AppError> {
     validate_sub(sub)?;
 
@@ -589,7 +589,6 @@ fn with_declined_member(raw: &str) -> Option<String> {
 }
 
 /// Records AD-8's decline on an existing copy, and changes nothing else about it.
-#[allow(dead_code)] // Called by Epic E's consent prompt.
 pub fn mark_upload_declined(dir: &Path, sub: &str) -> Result<(), AppError> {
     validate_sub(sub)?;
 
@@ -616,7 +615,6 @@ pub fn mark_upload_declined(dir: &Path, sub: &str) -> Result<(), AppError> {
 /// No validation runs here on purpose: the Profile API is the validation authority (AD-5), so
 /// re-checking its own answer could only reject a value the server has already accepted and leave
 /// the device unable to cache it.
-#[allow(dead_code)] // Called by Epic E, from a `GET`/`PUT` response.
 pub fn write_cloud_copy(
     dir: &Path,
     sub: &str,

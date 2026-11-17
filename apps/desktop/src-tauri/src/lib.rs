@@ -3,6 +3,7 @@ mod ai;
 mod app_migration;
 mod avatar_store;
 mod budget;
+mod cloud_profile;
 mod commands;
 mod credentials;
 mod datasets;
@@ -418,6 +419,9 @@ pub fn run() {
             commands::auth::sign_out,
             commands::cloud_ai::get_cloud_ai_premium,
             commands::profile::get_profile_source,
+            commands::profile::get_cloud_profile_status,
+            commands::profile::refresh_cloud_profile_now,
+            commands::profile::answer_profile_upload,
             commands::profile::get_user_profile,
             commands::profile::save_user_profile,
             commands::profile::get_user_avatar,
