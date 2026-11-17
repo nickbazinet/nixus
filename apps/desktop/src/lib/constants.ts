@@ -90,6 +90,8 @@ export const queryKeys = {
   // of each one, so one source's cached document can never be served to another.
   profile: ["profile"] as const,
   profileSource: ["profile", "source"] as const,
+  profileCloudStatus: (sourceKey: string) =>
+    ["profile", "cloud-status", sourceKey] as const,
   profileDocument: (sourceKey: string) =>
     ["profile", "document", sourceKey] as const,
   userAvatar: (sourceKey: string) => ["profile", "avatar", sourceKey] as const,

@@ -1,8 +1,11 @@
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { queryKeys } from "@/lib/constants";
 import type { ProfileSourceInfo } from "@/lib/profileSource";
 import type {
+  CloudProfileStatus,
   Country,
   Subdivision,
   TfsaAccumulatedLimit,
@@ -39,6 +42,96 @@ export function useUserProfile(sourceKey: string | null) {
       }),
     enabled: sourceKey !== null,
   });
+}
+
+/**
+ * The Nixus Cloud lifecycle state this page branches on, and AD-7's "the Profile page opens"
+ * refresh trigger in the same query.
+ *
+ * `refresh_cloud_profile_now` rather than the passive read because opening the page IS a trigger:
+ * the copy is brought up to date and the status answered from the attempt, which is what makes
+ * "offline" and "sign in again" states truthful rather than remembered. `staleTime: Infinity` keeps
+ * it to one request per open, so a window focus or a remount never spends another.
+ *
+ * `retry: false`: a rejection here is a refused source, not a transient fault, and every network
+ * outcome is already a successful answer carrying an offline state.
+ */
+export function useCloudProfileStatus(sourceKey: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.profileCloudStatus(sourceKey ?? ""),
+    queryFn: () =>
+      invoke<CloudProfileStatus>("refresh_cloud_profile_now", {
+        source_key: sourceKey,
+      }),
+    enabled: enabled && sourceKey !== null,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+/**
+ * AD-8's answer, and the one mutation that can retire the prompt.
+ *
+ * The command answers with the status the attempt left, so it is written straight into the cache:
+ * invalidating would re-issue the page's own refresh and spend a second round trip for a state
+ * already in hand. The document is invalidated because accepting replaces the copy with the
+ * server's response.
+ */
+export function useAnswerProfileUpload(sourceKey: string | null) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (accept: boolean) =>
+      invoke<CloudProfileStatus>("answer_profile_upload", {
+        source_key: sourceKey,
+        accept,
+      }),
+    onSuccess: (status) => {
+      queryClient.setQueryData(
+        queryKeys.profileCloudStatus(sourceKey ?? ""),
+        status,
+      );
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.profileDocument(sourceKey ?? ""),
+      });
+    },
+  });
+}
+
+/**
+ * Keeps the profile family fresh when Rust refreshed the copy on its own (AD-7).
+ *
+ * Route-scoped on purpose: the refresh runs on dataset activation, when no profile surface need be
+ * mounted, so a listener in the app shell would be an always-mounted subscriber to an event only
+ * this page acts on. The event carries no payload — the subject never crosses IPC — so the whole
+ * `profile` prefix is invalidated and the queries that are actually mounted refetch.
+ */
+export function useProfileRefreshedListener() {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    let cleaned = false;
+    const unlisteners: UnlistenFn[] = [];
+
+    const setup = async () => {
+      const unlisten = await listen("profile:refreshed", () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.profile });
+      });
+
+      if (cleaned) {
+        unlisten();
+      } else {
+        unlisteners.push(unlisten);
+      }
+    };
+
+    void setup();
+
+    return () => {
+      cleaned = true;
+      unlisteners.forEach((unlisten) => unlisten());
+    };
+  }, [queryClient]);
 }
 
 // Not session-gated on the Rust side either: the ISO 3166 list is reference
@@ -88,6 +181,13 @@ export function useSaveUserProfile(sourceKey: string | null) {
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: queryKeys.profileDocument(sourceKey ?? ""),
+      });
+      // AD-7's "after each successful save" trigger, and not merely bookkeeping: a save that
+      // created the Nixus Cloud profile retires the first-upload prompt and turns an absent copy
+      // into a present one, so a status left in place would keep offering a consent the server has
+      // already been given.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.profileCloudStatus(sourceKey ?? ""),
       });
       // The figure is derived from birth_date and country_code, so a save that
       // changed either must not leave a stale dollar amount on screen.

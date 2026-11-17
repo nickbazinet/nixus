@@ -835,6 +835,22 @@ export interface UpdateUserProfileInput {
   subdivision_code: string | null;
 }
 
+// Mirrors `cloud_profile::CloudProfileStatus`: the lifecycle state of a Nixus Cloud
+// profile, and nothing about its contents. No subject, no field value, no version —
+// `/profile` branches on it and never derives an identity from it (AD-7, AD-12).
+export type CloudProfileState =
+  | "ready"
+  | "offline_with_copy"
+  | "offline_no_copy"
+  | "reauthentication_required"
+  | "signed_out";
+
+export interface CloudProfileStatus {
+  state: CloudProfileState;
+  consent_pending: boolean;
+  has_copy: boolean;
+}
+
 // Mirrors `models::UserAvatar`: the stored 256px/64 KiB derivative, ready for an
 // `<img src="data:...">`. Deliberately carries no `cognito_sub` — the subject is
 // resolved in Rust and never crosses IPC — and no filename, because the source the
