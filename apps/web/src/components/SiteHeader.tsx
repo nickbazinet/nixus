@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "@tanstack/react-router";
+import { UserRound } from "lucide-react";
 import { cn, NixusLogo } from "@nixus/shared";
 
 import { DownloadCTA } from "@/features/download/DownloadCTA";
@@ -140,9 +141,12 @@ export function SiteHeader() {
             href={accountAppUrl(locale)}
             data-testid="header-signin-link"
             aria-label={t("header.signInAria")}
-            className="mkt-tap inline-flex items-center justify-center rounded-md px-2.5 py-1.5 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+            className="mkt-tap inline-flex min-h-target-min min-w-target-min items-center justify-center rounded-md px-1.5 py-1.5 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-2.5"
           >
-            {t("header.signIn")}
+            {/* Icon-only below `sm`: the French label does not fit a 320px bar
+                beside the beta link and both toggles. The aria-label names it. */}
+            <UserRound aria-hidden="true" className="size-5 sm:hidden" />
+            <span className="sr-only sm:not-sr-only">{t("header.signIn")}</span>
           </a>
           <ThemeToggle />
           <LanguageToggle />
