@@ -1,3 +1,12 @@
+import {
+  VALIDATION_FIELDS,
+  VALIDATION_REASONS,
+  toAccountErrorCode,
+  type AccountErrorCode,
+  type ValidationField,
+  type ValidationReason,
+} from "@nixus/shared";
+
 /**
  * Typed reading of the `AppError` envelope the Rust backend returns from `invoke()`.
  *
@@ -217,12 +226,34 @@ export function syncMessageKey(code: SyncErrorCode): string {
   }
 }
 
+/**
+ * `AppError::CloudProfile` (AD-13): one variant for both profile homes, local validation
+ * included. `code`, `field` and `reason` are the shared account contract's vocabularies; the UI
+ * resolves its EN/FR text from them and never renders `message`, which carries no value (AD-12).
+ */
+export interface CloudProfileError {
+  readonly type: "cloud_profile";
+  readonly code: AccountErrorCode;
+  readonly message: string;
+  readonly field: ValidationField | null;
+  readonly reason: ValidationReason | null;
+  readonly recoverable: boolean;
+}
+
+function oneOf<T extends string>(allowed: readonly T[], value: unknown): T | null {
+  return allowed.find((member) => member === value) ?? null;
+}
+
 export interface GenericAppError {
   readonly type: string | undefined;
   readonly message: string | undefined;
 }
 
-export type ParsedAppError = HostedAiError | SyncError | GenericAppError;
+export type ParsedAppError =
+  | HostedAiError
+  | SyncError
+  | CloudProfileError
+  | GenericAppError;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -234,6 +265,12 @@ export function isHostedAiError(error: ParsedAppError): error is HostedAiError {
 
 export function isSyncError(error: ParsedAppError): error is SyncError {
   return error.type === "sync";
+}
+
+export function isCloudProfileError(
+  error: ParsedAppError,
+): error is CloudProfileError {
+  return error.type === "cloud_profile";
 }
 
 /**
@@ -280,6 +317,19 @@ export function parseAppError(error: unknown): ParsedAppError {
       type: "sync",
       code,
       message: message ?? "",
+      recoverable: error.recoverable !== false,
+    };
+  }
+
+  if (type === "cloud_profile") {
+    // An unknown code degrades to `unavailable` (AD-13's evolution rule), never to a generic
+    // fall-through; an unknown field or reason degrades to `null` rather than a wrong label.
+    return {
+      type: "cloud_profile",
+      code: toAccountErrorCode(error.code),
+      message: message ?? "",
+      field: oneOf(VALIDATION_FIELDS, error.field),
+      reason: oneOf(VALIDATION_REASONS, error.reason),
       recoverable: error.recoverable !== false,
     };
   }

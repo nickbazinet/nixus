@@ -7,6 +7,7 @@ import {
   hostedAiIsRetryable,
   hostedAiMessageKey,
   hostedAiNeedsSignIn,
+  isCloudProfileError,
   isHostedAiError,
   isSyncError,
   parseAppError,
@@ -414,5 +415,56 @@ describe("userAvatarMessageKey", () => {
     ]) {
       expect(userAvatarMessageKey(error)).toBeNull();
     }
+  });
+});
+
+describe("parseAppError narrows the cloud_profile envelope", () => {
+  it("keeps a known code, field and reason", () => {
+    const parsed = parseAppError({
+      type: "cloud_profile",
+      code: "validation",
+      message: "A profile field was refused.",
+      field: "birth_date",
+      reason: "too_young",
+      recoverable: true,
+    });
+    expect(isCloudProfileError(parsed)).toBe(true);
+    expect(parsed).toEqual({
+      type: "cloud_profile",
+      code: "validation",
+      message: "A profile field was refused.",
+      field: "birth_date",
+      reason: "too_young",
+      recoverable: true,
+    });
+  });
+
+  it("degrades an unknown code to unavailable and unknown members to null", () => {
+    const parsed = parseAppError({
+      type: "cloud_profile",
+      code: "brand_new_code",
+      message: "x",
+      field: "constructor",
+      reason: "toString",
+    });
+    expect(parsed).toEqual({
+      type: "cloud_profile",
+      code: "unavailable",
+      message: "x",
+      field: null,
+      reason: null,
+      recoverable: true,
+    });
+  });
+
+  it("is distinct from the hosted_ai and sync narrowings", () => {
+    const parsed = parseAppError({
+      type: "cloud_profile",
+      code: "reauthentication_required",
+      message: "x",
+      recoverable: true,
+    });
+    expect(isHostedAiError(parsed)).toBe(false);
+    expect(isSyncError(parsed)).toBe(false);
   });
 });
