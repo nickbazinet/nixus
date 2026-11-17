@@ -75,10 +75,11 @@ fn is_test_only(relative: &str) -> bool {
 /// no entry here, so a new uncaptured write cannot hide behind the total.
 const JUSTIFICATIONS: &[(&str, &str)] = &[
     (
-        "avatar_store.rs::save_avatar",
+        "avatar_store.rs::save_avatar_with_version",
         "A DIFFERENT DATABASE: `user_avatars` lives in the account-level avatar store keyed by \
          `cognito_sub`, not in a dataset, and `registry::TABLES` therefore does not classify it. \
-         There is no dataset transaction for it to join.",
+         There is no dataset transaction for it to join. `save_avatar` is a thin delegate to it, \
+         so the store still holds exactly one write site.",
     ),
     (
         "db/backup.rs::carry_local_only",
@@ -351,7 +352,7 @@ fn the_scanner_sees_the_unmigrated_sites_and_not_the_migrated_one() {
     // The structural remainder, named rather than counted: each of these CANNOT join a dataset
     // transaction, and the reason is recorded in `JUSTIFICATIONS`.
     for structural in [
-        "avatar_store.rs::save_avatar",
+        "avatar_store.rs::save_avatar_with_version",
         "db/danger_zone.rs::wipe_all",
         "db/projects.rs::set_project_image_bytes",
     ] {

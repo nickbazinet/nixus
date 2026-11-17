@@ -39,11 +39,17 @@ pub const UNPROCESSABLE: &str = "user_avatar_unprocessable";
 
 /// One stored row. `image_bytes` is already the derivative, so there is no second size to track:
 /// `length(image_bytes)` is the only payload length that exists and the schema checks it directly.
+///
+/// `version` is the server's `AVATAR` version (AD-4), and `None` for every row written before the
+/// cloud profile service existed. It is the staleness signal that lets a refresh skip the 64 KiB
+/// download when `avatar_version` has not moved (adversary H4) — nothing else reads it.
 #[derive(Debug, Clone)]
 pub struct StoredAvatar {
     pub image_bytes: Vec<u8>,
     pub mime_type: String,
     pub uploaded_at: String,
+    #[allow(dead_code)] // Read by Epic E, to decide whether `GET /avatar` is needed at all.
+    pub version: Option<u64>,
 }
 
 pub fn avatars_db_path(dir: &Path) -> PathBuf {
@@ -94,14 +100,42 @@ fn open(dir: &Path) -> Result<Connection, AppError> {
              image_bytes BLOB NOT NULL,
              mime_type TEXT NOT NULL,
              uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+             version INTEGER,
              CONSTRAINT user_avatars_payload_positive CHECK (length(image_bytes) > 0),
              CONSTRAINT user_avatars_payload_ceiling CHECK (length(image_bytes) <= {}),
-             CONSTRAINT user_avatars_mime_allowed CHECK (mime_type IN ('image/png', 'image/jpeg'))
+             CONSTRAINT user_avatars_mime_allowed CHECK (mime_type IN ('image/png', 'image/jpeg')),
+             CONSTRAINT user_avatars_version_positive CHECK (version IS NULL OR version >= 1)
          )",
         image::MAX_PROJECT_THUMBNAIL_BYTES
     ))?;
 
+    add_version_column_if_missing(&conn)?;
+
     Ok(conn)
+}
+
+/// Brings a database created before AD-4's `version` up to the current schema.
+///
+/// `IF NOT EXISTS` covers a fresh file but says nothing about one that already exists with the old
+/// four columns, so the column is added explicitly and only when absent — `ADD COLUMN` is an error
+/// on a second run. Nullable with its named `CHECK` carried on the column definition, because
+/// `ALTER TABLE` cannot add a table-level constraint: a pre-migration row has no server version to
+/// claim, and `NULL` is exactly that fact.
+fn add_version_column_if_missing(conn: &Connection) -> Result<(), AppError> {
+    let present = conn
+        .prepare("SELECT 1 FROM pragma_table_info('user_avatars') WHERE name = 'version'")?
+        .exists([])?;
+
+    if present {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        "ALTER TABLE user_avatars ADD COLUMN version INTEGER
+             CONSTRAINT user_avatars_version_positive CHECK (version IS NULL OR version >= 1)",
+    )?;
+
+    Ok(())
 }
 
 /// This subject's avatar, or `None` when it has never set one.
@@ -119,13 +153,19 @@ pub fn load_avatar(dir: &Path, sub: &str) -> Result<Option<StoredAvatar>, AppErr
     let conn = open(dir)?;
 
     conn.query_row(
-        "SELECT image_bytes, mime_type, uploaded_at FROM user_avatars WHERE cognito_sub = ?1",
+        "SELECT image_bytes, mime_type, uploaded_at, version FROM user_avatars WHERE cognito_sub = ?1",
         params![sub],
         |row| {
             Ok(StoredAvatar {
                 image_bytes: row.get(0)?,
                 mime_type: row.get(1)?,
                 uploaded_at: row.get(2)?,
+                // SQLite has no unsigned integer type, and the named `CHECK` already refuses
+                // anything below 1, so a value that cannot widen into the contract's `u64` is a
+                // hand-edited row rather than a version — and reads as "no cached version".
+                version: row
+                    .get::<_, Option<i64>>(3)?
+                    .and_then(|stored| u64::try_from(stored).ok()),
             })
         },
     )
@@ -139,24 +179,42 @@ pub fn load_avatar(dir: &Path, sub: &str) -> Result<Option<StoredAvatar>, AppErr
 /// `project_images`' primary key is: replacement cannot leave the prior derivative behind, and no
 /// second row can accumulate for the same identity. `uploaded_at` comes from SQLite's clock so a
 /// caller cannot backdate it.
-pub fn save_avatar(
+///
+/// `version` is the server's, and is therefore `Option`: only a write fed by a server response
+/// (Epic E) may claim one, and a device-derived picture has none to claim.
+#[allow(dead_code)] // Epic E passes the server's version; today's picker write goes through `save_avatar`.
+pub fn save_avatar_with_version(
     dir: &Path,
     sub: &str,
     image_bytes: &[u8],
     mime_type: &str,
+    version: Option<u64>,
 ) -> Result<StoredAvatar, AppError> {
     profile_store::validate_sub(sub)?;
+
+    // Widened to SQLite's only integer type here rather than at the call site, so the store's own
+    // API keeps the contract's `u64` and no caller has to know how the column is typed.
+    let stored_version = match version.map(i64::try_from) {
+        Some(Ok(version)) => Some(version),
+        Some(Err(_)) => {
+            return Err(AppError::Database {
+                message: "The profile picture version is out of range".to_string(),
+            })
+        }
+        None => None,
+    };
 
     let conn = open(dir)?;
 
     conn.execute(
-        "INSERT INTO user_avatars (cognito_sub, image_bytes, mime_type, uploaded_at)
-         VALUES (?1, ?2, ?3, datetime('now'))
+        "INSERT INTO user_avatars (cognito_sub, image_bytes, mime_type, uploaded_at, version)
+         VALUES (?1, ?2, ?3, datetime('now'), ?4)
          ON CONFLICT(cognito_sub) DO UPDATE SET
              image_bytes = excluded.image_bytes,
              mime_type = excluded.mime_type,
-             uploaded_at = excluded.uploaded_at",
-        params![sub, image_bytes, mime_type],
+             uploaded_at = excluded.uploaded_at,
+             version = excluded.version",
+        params![sub, image_bytes, mime_type, stored_version],
     )?;
 
     // Read back rather than echo the arguments: `uploaded_at` is SQLite's clock, and a failed
@@ -164,6 +222,44 @@ pub fn save_avatar(
     load_avatar(dir, sub)?.ok_or_else(|| AppError::Database {
         message: "The stored profile picture could not be read back".to_string(),
     })
+}
+
+pub fn save_avatar(
+    dir: &Path,
+    sub: &str,
+    image_bytes: &[u8],
+    mime_type: &str,
+) -> Result<StoredAvatar, AppError> {
+    save_avatar_with_version(dir, sub, image_bytes, mime_type, None)
+}
+
+/// Removes the avatar cache for every account on this machine, for the Danger Zone (AD-7).
+///
+/// This store's own function rather than a directory wipe reaching across module boundaries:
+/// `profile_store` must not know this file's name, and the Danger Zone calls both stores
+/// explicitly so neither wipe is "whatever happened to be in the folder". The sidecars are
+/// removed too even though this store never enables WAL — a crashed foreign tool could have left
+/// one holding committed bytes.
+pub fn delete_all_avatars(dir: &Path) -> Result<(), AppError> {
+    let base = avatars_db_path(dir);
+
+    for path in [
+        base.clone(),
+        base.with_extension("db-wal"),
+        base.with_extension("db-shm"),
+    ] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(AppError::File {
+                    message: format!("Failed to delete the avatar cache: {}", e),
+                })
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -354,6 +450,7 @@ mod tests {
                 "user_avatars_mime_allowed".to_string(),
                 "user_avatars_payload_ceiling".to_string(),
                 "user_avatars_payload_positive".to_string(),
+                "user_avatars_version_positive".to_string(),
             ]
         );
     }
@@ -423,19 +520,125 @@ mod tests {
         assert_eq!(loaded.mime_type, "image/png");
     }
 
-    // The wipe is structural, not a second delete anyone has to remember: the file is inside the
-    // directory `delete_all_profiles` removes recursively.
+    // The Danger Zone's wipe is this store's own call, not a directory removal performed on its
+    // behalf: `profiles/` no longer goes recursively, because a local dataset's only copy of its
+    // demographics lives in it (AD-7).
     #[test]
-    fn the_recursive_profiles_wipe_removes_the_avatar_database() {
+    fn delete_all_avatars_removes_the_database_for_every_account() {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(&root);
         save_avatar(&dir, SUB, &derivative(64), "image/png").expect("save succeeds");
+        save_avatar(&dir, OTHER_SUB, &derivative(48), "image/png").expect("save succeeds");
         assert!(avatars_db_path(&dir).exists(), "the fixture must exist first");
 
-        profile_store::delete_all_profiles(&dir).expect("the wipe succeeds");
+        delete_all_avatars(&dir).expect("the wipe succeeds");
 
         assert!(!avatars_db_path(&dir).exists());
         assert!(load_avatar(&dir, SUB).expect("load succeeds").is_none());
+        assert!(load_avatar(&dir, OTHER_SUB).expect("load succeeds").is_none());
+        delete_all_avatars(&dir).expect("the wipe is idempotent");
+    }
+
+    /// A database created by a shipped build, before AD-4's `version` existed. Written with raw
+    /// SQL rather than by an older binary, because the point is that TODAY'S code opens it.
+    fn seed_pre_migration_database(dir: &Path) {
+        std::fs::create_dir_all(dir).expect("dir created");
+        let conn = Connection::open(avatars_db_path(dir)).expect("open succeeds");
+        conn.execute_batch(
+            "CREATE TABLE user_avatars (
+                 cognito_sub TEXT PRIMARY KEY,
+                 image_bytes BLOB NOT NULL,
+                 mime_type TEXT NOT NULL,
+                 uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+                 CONSTRAINT user_avatars_payload_positive CHECK (length(image_bytes) > 0),
+                 CONSTRAINT user_avatars_payload_ceiling CHECK (length(image_bytes) <= 65536),
+                 CONSTRAINT user_avatars_mime_allowed CHECK (mime_type IN ('image/png', 'image/jpeg'))
+             )",
+        )
+        .expect("legacy schema created");
+        conn.execute(
+            "INSERT INTO user_avatars (cognito_sub, image_bytes, mime_type) VALUES (?1, ?2, ?3)",
+            params![SUB, image::rendered_test_image(32, 32, false, image::ProjectImageFormat::Png), "image/png"],
+        )
+        .expect("legacy row inserted");
+    }
+
+    #[test]
+    fn a_pre_migration_database_gains_the_version_column_and_keeps_its_row() {
+        let root = TempDir::new().expect("temp dir");
+        let dir = profiles_dir(&root);
+        seed_pre_migration_database(&dir);
+
+        let loaded = load_avatar(&dir, SUB)
+            .expect("load succeeds")
+            .expect("the existing row survives the migration");
+
+        assert_eq!(
+            loaded.version, None,
+            "a row written before the cloud service has no server version to claim"
+        );
+        assert_eq!(loaded.mime_type, "image/png");
+    }
+
+    // `ADD COLUMN` is an error on a second run, so the migration has to be conditional — and the
+    // condition is what makes every launch after the first one a no-op rather than a failure.
+    #[test]
+    fn the_version_migration_is_idempotent_across_opens() {
+        let root = TempDir::new().expect("temp dir");
+        let dir = profiles_dir(&root);
+        seed_pre_migration_database(&dir);
+
+        for _ in 0..3 {
+            let conn = open(&dir).expect("open succeeds");
+            let mut names = constraint_names(&conn);
+            names.sort();
+            assert_eq!(
+                names,
+                vec![
+                    "user_avatars_mime_allowed".to_string(),
+                    "user_avatars_payload_ceiling".to_string(),
+                    "user_avatars_payload_positive".to_string(),
+                    "user_avatars_version_positive".to_string(),
+                ],
+                "the added column carries its own named CHECK, which ALTER TABLE cannot add at table level"
+            );
+        }
+    }
+
+    #[test]
+    fn a_server_version_round_trips_and_is_replaced_with_the_picture() {
+        let root = TempDir::new().expect("temp dir");
+        let dir = profiles_dir(&root);
+
+        let saved = save_avatar_with_version(&dir, SUB, &derivative(64), "image/png", Some(3))
+            .expect("save succeeds");
+        assert_eq!(saved.version, Some(3));
+        assert_eq!(
+            load_avatar(&dir, SUB).expect("load").expect("row").version,
+            Some(3)
+        );
+
+        // A device-derived replacement has no server version, so the cached one must go with the
+        // bytes it described — keeping it would make a stale picture look current to Epic E.
+        save_avatar(&dir, SUB, &derivative(48), "image/png").expect("replacement succeeds");
+        assert_eq!(
+            load_avatar(&dir, SUB).expect("load").expect("row").version,
+            None
+        );
+    }
+
+    #[test]
+    fn a_version_below_one_is_refused_by_the_named_constraint() {
+        let root = TempDir::new().expect("temp dir");
+        let dir = profiles_dir(&root);
+
+        let error = save_avatar_with_version(&dir, SUB, &derivative(32), "image/png", Some(0))
+            .expect_err("the schema refuses");
+
+        assert!(
+            error.to_string().contains("user_avatars_version_positive"),
+            "the failing rule must be nameable: {error}"
+        );
     }
 
     // No WAL: a sibling `-wal`/`-shm` would hold committed bytes outside the one file, and the
