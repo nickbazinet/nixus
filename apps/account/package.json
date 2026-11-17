@@ -1,0 +1,50 @@
+{
+  "name": "@nixus/account",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "vite dev --port 3100",
+    "build": "vite build",
+    "package": "tsx scripts/package-lambda.ts",
+    "lint": "eslint src scripts tests vite.config.ts vitest.config.ts eslint.config.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1118.0",
+    "@aws-sdk/client-ssm": "^3.1118.0",
+    "@aws-sdk/lib-dynamodb": "^3.1118.0",
+    "@nixus/shared": "workspace:*",
+    "@tanstack/react-router": "~1.169.2",
+    "@tanstack/react-start": "~1.167.65",
+    "i18next": "^26.0.3",
+    "jose": "^6.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-i18next": "^17.0.2",
+    "srvx": "^0.11.22"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^5.2.0",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.6.0",
+    "tailwindcss": "^4.2.1",
+    "tsx": "^4.20.6",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.59.3",
+    "vite": "^7.0.4",
+    "vitest": "^3.2.4"
+  }
+}

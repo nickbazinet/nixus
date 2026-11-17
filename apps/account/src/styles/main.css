@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@import "@nixus/shared/styles/tokens.css";
+
+/* The account app shares the marketing site's token layer so the two surfaces
+   read as one product. It ships no page-specific palette of its own. */
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
