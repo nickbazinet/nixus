@@ -73,17 +73,20 @@ aws cognito-idp describe-resource-server \
   --query 'ResourceServer.{Name: Name, Scopes: Scopes}'
 ```
 
-Then submit **every** scope, the existing ones included:
+Then submit **every** scope, the existing ones included, with the name and
+descriptions exactly as `describe-resource-server` returned them (the values
+below are the ones applied on 2026-11-17 — `--name` is also replaced, so a
+different value renames the resource server):
 
 ```bash
 aws cognito-idp update-resource-server \
   --user-pool-id us-east-1_7gfGQ0emg \
   --identifier nixus-api \
-  --name nixus-api \
+  --name "Nixus API" \
   --region us-east-1 \
   --scopes \
-    'ScopeName=ai.invoke,ScopeDescription=Invoke hosted AI' \
-    'ScopeName=profile,ScopeDescription=Read and write the Nixus Cloud profile'
+    'ScopeName=ai.invoke,ScopeDescription=Invoke Nixus hosted AI' \
+    'ScopeName=profile,ScopeDescription=Read and edit the Nixus Cloud profile'
 ```
 
 Confirm both survived:
