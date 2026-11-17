@@ -57,7 +57,6 @@ pub const HOSTED_AI_SCOPE: &str = "nixus-api/ai.invoke";
 /// AD-9). Classified exactly like `HOSTED_AI_SCOPE`: the refresh grant replays the
 /// originally granted scopes, so a pre-upgrade session can never acquire this one
 /// and its absence is `reauthentication_required` rather than a retry.
-#[allow(dead_code)] // WHY: read by `profile_client`, which lands in the next commit of this epic.
 pub(crate) const PROFILE_SCOPE: &str = "nixus-api/profile";
 
 /// The one scope set every authorize request asks for. A caller's required scope is

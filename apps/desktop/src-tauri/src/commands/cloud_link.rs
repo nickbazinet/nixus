@@ -154,10 +154,15 @@ mod tests {
     /// path this guard protects: it never touches a profile file or `credentials.rs`,
     /// obtains its only credential from `commands/auth.rs`, and sends nothing but a
     /// prompt the user explicitly invoked an AI feature to send.
-    const NETWORKED_MODULES: [&str; 4] = [
+    ///
+    /// `profile_client.rs` is the sole Nixus Cloud profile client (AD-9), and this entry is
+    /// that rule: a second module reaching for the profile API fails this test rather than
+    /// quietly becoming a second place a Cognito access token can be sent.
+    const NETWORKED_MODULES: [&str; 5] = [
         "ai/hosted_bedrock.rs",
         "commands/auth.rs",
         "maintenance/catalog.rs",
+        "profile_client.rs",
         "stock/yahoo.rs",
     ];
 

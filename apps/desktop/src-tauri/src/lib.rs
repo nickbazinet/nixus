@@ -14,6 +14,7 @@ mod home_surface;
 mod json_store;
 mod maintenance;
 mod models;
+mod profile_client;
 mod profile_store;
 mod projects;
 mod stock;
