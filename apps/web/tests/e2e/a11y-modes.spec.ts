@@ -124,8 +124,10 @@ test.describe("keyboard operability", () => {
   test("reaches every chrome destination by keyboard alone", async ({ page }) => {
     await page.goto("/");
 
+    // Budget covers the skip link, brand, the section links, beta, sign-in and
+    // both toggles; each new chrome stop needs a step here.
     const reached: string[] = [];
-    for (let step = 0; step < 12; step += 1) {
+    for (let step = 0; step < 16; step += 1) {
       await page.keyboard.press("Tab");
       const id = await page.evaluate(
         () => document.activeElement?.getAttribute("data-testid") ?? "",
@@ -134,6 +136,7 @@ test.describe("keyboard operability", () => {
     }
 
     expect(reached).toContain("header-beta-link");
+    expect(reached).toContain("header-signin-link");
     expect(reached).toContain("theme-toggle");
     expect(reached).toContain("language-toggle");
   });
