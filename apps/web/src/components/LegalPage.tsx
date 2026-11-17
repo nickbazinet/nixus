@@ -112,6 +112,10 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
     headingKey: "termsPage.cloud.heading",
     bodyKeys: ["termsPage.cloud.body", "termsPage.cloud.availability"],
   },
+  {
+    headingKey: "termsPage.profile.heading",
+    bodyKeys: ["termsPage.profile.body", "termsPage.profile.account"],
+  },
   { headingKey: "termsPage.accounts.heading", bodyKeys: ["termsPage.accounts.body"] },
   { headingKey: "termsPage.noAdvice.heading", bodyKeys: ["termsPage.noAdvice.body"] },
   { headingKey: "termsPage.yourData.heading", bodyKeys: ["termsPage.yourData.body"] },
@@ -129,6 +133,17 @@ export const PRIVACY_SECTIONS: readonly LegalSection[] = [
       // stays stated even though the rest of the section is deliberately short.
       "privacyPage.cloud.protection",
       "privacyPage.cloud.deletion",
+    ],
+  },
+  {
+    headingKey: "privacyPage.profile.heading",
+    bodyKeys: [
+      "privacyPage.profile.body",
+      "privacyPage.profile.edit",
+      "privacyPage.profile.local",
+      "privacyPage.profile.deleteAll",
+      "privacyPage.profile.cookie",
+      "privacyPage.profile.logs",
     ],
   },
   { headingKey: "privacyPage.aiLeaves.heading", bodyKeys: ["privacyPage.aiLeaves.body"] },

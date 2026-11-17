@@ -432,6 +432,112 @@ describe("optional cloud copy disclosure", () => {
   });
 });
 
+/*
+ * The Nixus Cloud profile (name, date of birth, income bracket, location, picture) is a
+ * distinct disclosure from the optional cloud-copy section above: every account has one,
+ * it is edited from two surfaces, and deleting local data does not delete it. Each fact is
+ * pinned to what the architecture spine actually binds, not to a paraphrase of it.
+ */
+describe("Nixus Cloud profile disclosure", () => {
+  it("names the profile fields, storage, and that every account has one", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/Every Nixus Cloud account, including free accounts, has a profile/i);
+    expect(text).toMatch(/first and last name, date of birth, income bracket/i);
+    expect(text).toMatch(/Amazon Web Services in the United States/i);
+    expect(text).toMatch(/never sold or shared/i);
+    expect(text).toMatch(/never used for advertising/i);
+  });
+
+  it("states the two edit surfaces, the offline read-only copy, and TLS", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/account\.nixusapp\.com/i);
+    expect(text).toMatch(/saving a change needs an internet connection/i);
+    expect(text).toMatch(/read-only copy on your computer/i);
+    expect(text).toMatch(/Transfers between your device.*use TLS/i);
+  });
+
+  it("states local profiles never upload, and the one-time legacy-upload consent", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/stays on that device only and is never uploaded/i);
+    expect(text).toMatch(/Nixus asks before uploading it the first time/i);
+    expect(text).toMatch(/you are not asked again/i);
+  });
+
+  it("states delete-all keeps the Nixus Cloud profile, and deletion is by email", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/does not delete your Nixus Cloud profile/i);
+    expect(text).toMatch(/reappears the next time you sign in/i);
+    expect(text).toMatch(/handled manually today/i);
+  });
+
+  it("describes the one session cookie and its independence from the desktop session", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/one essential cookie/i);
+    expect(text).toMatch(/first-party/i);
+    expect(text).toMatch(/does not sign you out of the desktop app/i);
+    expect(text).toMatch(/not an analytics or advertising cookie/i);
+  });
+
+  it("states what is logged and what never is", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/does not record your profile values, your picture/i);
+    expect(text).toMatch(/account identifier, the route called, the response status/i);
+  });
+
+  it("states the Terms version of the same facts, including that billing does not exist yet", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/Every Nixus Cloud account has one profile/i);
+    expect(text).toMatch(/account\.nixusapp\.com/i);
+    expect(text).toMatch(/Payments and billing are not part of Nixus yet/i);
+  });
+
+  it("carries the same facts in French, with Nixus Cloud left untranslated", async () => {
+    await withFrench(() => {
+      const privacy = renderText(<PrivacyPage locale="fr" />);
+
+      expect(privacy).toMatch(/Nixus Cloud/);
+      expect(privacy).toMatch(/possède un profil/i);
+      expect(privacy).toMatch(/Amazon Web Services, aux États-Unis/i);
+      expect(privacy).toMatch(/jamais vendu ni partagé/i);
+      expect(privacy).toMatch(/jamais téléversé/i);
+      expect(privacy).toMatch(/ne serez plus jamais sollicité/i);
+      expect(privacy).toMatch(/ne supprime pas votre profil Nixus Cloud/i);
+      expect(privacy).toMatch(/traitée manuellement aujourd'hui/i);
+      expect(privacy).toMatch(/témoin essentiel/i);
+
+      const terms = renderText(<TermsPage locale="fr" />);
+      expect(terms).toMatch(/Chaque compte Nixus Cloud possède un seul profil/i);
+      expect(terms).toMatch(/ne font pas encore partie de Nixus/i);
+    });
+  });
+
+  it("keeps both documents' profile paragraphs in the rendered section order", () => {
+    const termsKeys = TERMS_SECTIONS.flatMap((section) => section.bodyKeys);
+    const privacyKeys = PRIVACY_SECTIONS.flatMap((section) => section.bodyKeys);
+
+    expect(termsKeys).toEqual(
+      expect.arrayContaining(["termsPage.profile.body", "termsPage.profile.account"])
+    );
+    expect(privacyKeys).toEqual(
+      expect.arrayContaining([
+        "privacyPage.profile.body",
+        "privacyPage.profile.edit",
+        "privacyPage.profile.local",
+        "privacyPage.profile.deleteAll",
+        "privacyPage.profile.cookie",
+        "privacyPage.profile.logs",
+      ])
+    );
+  });
+});
+
 /* A key present in one locale and missing in the other renders the English string on a
  * French legal page without failing anything, which is how a disclosure silently stops
  * being a disclosure for half the users. */
