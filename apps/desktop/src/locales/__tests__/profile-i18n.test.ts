@@ -63,7 +63,37 @@ const REQUIRED_KEYS = [
   "profile.avatar.contentMismatch",
   "profile.avatar.dimensions",
   "profile.avatar.unprocessable",
+  "profile.errors.unauthorized",
+  "profile.errors.reauthenticationRequired",
+  "profile.errors.versionConflict",
+  "profile.errors.payloadTooLarge",
+  "profile.errors.unsupportedMedia",
+  "profile.errors.rateLimited",
+  "profile.errors.unavailable",
+  "profile.errors.validation.generic",
+  "profile.errors.validation.invalidType",
+  "profile.errors.validation.invalidFormat",
+  "profile.errors.validation.required",
+  "profile.errors.validation.notAllowed",
+  "profile.errors.validation.inFuture",
+  "profile.errors.validation.tooYoung",
+  "profile.errors.validation.tooOld",
+  "profile.errors.validation.requiresCountry",
+  "profile.errors.validation.noSubdivisions",
+  "profile.errors.validation.dimensionsExceeded",
+  "profile.errors.validation.unknownField",
+  "profile.errors.validation.incomeBracketCurrencyRequired",
 ] as const;
+
+/**
+ * Every `profile.errors.*` key, as `cloudProfileMessageKey` resolves them. Declared here so the
+ * parity and no-orphan assertions above cover the cloud-profile catalog too; the exhaustive
+ * code x field x reason sweep that proves the mapper reaches each one lives in
+ * `lib/__tests__/appError.test.ts`.
+ */
+const CLOUD_PROFILE_ERROR_KEYS = REQUIRED_KEYS.filter((key) =>
+  key.startsWith("profile.errors."),
+);
 
 /**
  * Every `field` a profile-picture refusal can carry, as `userAvatarMessageKey` maps them. The
@@ -368,6 +398,63 @@ describe("profile menu i18n", () => {
         .filter((key) => key.startsWith("profile.avatar."))
         .sort();
       expect(shipped, `unexpected avatar copy in ${name}`).toEqual(declared);
+    }
+  });
+
+  it.each(CLOUD_PROFILE_ERROR_KEYS)(
+    "gives %s its own non-empty wording in both locales",
+    (key) => {
+      expect(en[key]?.trim(), `${key} is blank in en.json`).toBeTruthy();
+      expect(fr[key]?.trim(), `${key} is blank in fr.json`).toBeTruthy();
+    },
+  );
+
+  it("keeps every cloud-profile refusal distinguishable within each locale", () => {
+    // Two codes sharing one sentence is the failure this guards: the user's next action differs
+    // across them ("sign in again" versus "reload and retry" versus "pick a smaller picture").
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      const messages = CLOUD_PROFILE_ERROR_KEYS.map((key) => locale[key]);
+      expect(new Set(messages).size, `duplicate refusal copy in ${name}`).toBe(
+        CLOUD_PROFILE_ERROR_KEYS.length,
+      );
+    }
+  });
+
+  it("leaves Nixus Cloud untranslated in the French cloud-profile copy (AD-16)", () => {
+    const branded = CLOUD_PROFILE_ERROR_KEYS.filter((key) =>
+      en[key].includes("Nixus Cloud"),
+    );
+    expect(branded.length).toBeGreaterThan(0);
+
+    for (const key of branded) {
+      expect(fr[key], `${key} dropped the brand term in fr.json`).toContain(
+        "Nixus Cloud",
+      );
+      expect(fr[key], `${key} translated the brand term`).not.toMatch(
+        /[Nn]uage Nixus/,
+      );
+    }
+  });
+
+  it("never echoes a submitted value or an identifier in cloud-profile copy (AD-12)", () => {
+    // The copy is resolved from code + field + reason precisely so no value has to appear in it;
+    // an interpolation placeholder here would be a request for one.
+    for (const [locale, name] of [
+      [en, "en.json"],
+      [fr, "fr.json"],
+    ] as const) {
+      for (const key of CLOUD_PROFILE_ERROR_KEYS) {
+        expect(locale[key], `${key} interpolates in ${name}`).not.toContain(
+          "{{",
+        );
+        expect(
+          locale[key].toLowerCase(),
+          `${key} mentions the subject in ${name}`,
+        ).not.toContain("cognito");
+      }
     }
   });
 
