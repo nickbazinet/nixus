@@ -629,8 +629,10 @@ Resources:
       RevisionWeights:
         - RevisionId: !GetAtt AccountWebFunctionRevision.RevisionId
           Weight: 100
+      # The service accepts only 0, 100..1000 in hundreds, or 1000..10000 in
+      # thousands; 100 is the lowest non-zero value.
       ThrottleConfig:
-        RateLimit: 50
+        RateLimit: 100
 
   # ---------------------------------------------------------------------------
   # EPIC F / AD-10 - the confidential web client and its managed login branding.
