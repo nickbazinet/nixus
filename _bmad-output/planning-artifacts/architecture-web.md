@@ -22,6 +22,8 @@ status: 'complete'
 
 # Web App (Marketing Site) Architecture Decision Document
 
+> **Supersession note (2026-11-17):** The planned `/account` and `/login` routes described below move to a separate app at `account.nixusapp.com`, per [`architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md`](architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md). This marketing site (`apps/web`) stays static and only links to that app; it does not host authenticated account surfaces itself.
+
 _This is the module-level architecture document for the Nixus web app, located at `apps/web/`. It inherits all platform-level decisions from [architecture.md](architecture.md) and documents only what's specific to the web application._
 
 **Parent platform architecture:** [architecture.md](architecture.md)

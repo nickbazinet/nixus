@@ -284,6 +284,7 @@ Deployment: stack `nixus-sync` holds the bucket, the identity pool and the authe
 
 - **Accumulating-column audit is done.** Savings-project totals are `SUM` over contributions (derived, nothing to merge); net-worth totals are per-date snapshot rows; odometer is a plain value (service logs only raise it; a direct set is the user's latest action, so last-write-wins); `usage_count` is a `Counter`; `balance_cents` is a `Balance`. The residual risk is `net_worth_snapshots.breakdown_json`, last-write-wins as a whole document with no per-date uniqueness; accept or redesign.
 - **Data outside the dataset DB is not covered.** The demographic Profile (`profiles/<sub>.json`: province, income bracket, TFSA tracking) and avatars (`profiles/avatars.db`) live beside the datasets (Local Profiles AD-13), so they do not sync under this design. Syncing them needs a separate decision and mechanism.
+  > **Supersession note (2026-11-17):** That decision is made in [`../architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md`](../architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md). The Nixus Cloud profile and avatar are replicated by the cloud profile service (its own API, its own table), never by this sync log.
 - **Binary payload encoding and compression level** — chosen in the first implementation story, then frozen with the format version.
 - **Retention (90 days), snapshot thresholds (2 MB / 5,000 messages), poll interval, segment cadence** — tune from beta data against the cost ceiling.
 - **Orphaned blob cleanup.**

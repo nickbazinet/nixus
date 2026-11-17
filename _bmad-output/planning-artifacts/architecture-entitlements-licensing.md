@@ -23,6 +23,8 @@ supersedes: 'architecture.md licensing/subscription section (Cognito + DynamoDB 
 
 # Architecture Decision Document — Entitlements & Module Licensing
 
+> **Supersession note (2026-11-17):** The payment provider decision and the entitlement authority below are superseded by the billing spine deferred from [`architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md`](architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md). That spine's leaning is Stripe Managed Payments as merchant of record (LemonSqueezy closes 2027-03-31), with the entitlement home and signed-statement design decided in the future billing spine, not here.
+
 _This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
 
 **Supersedes:** The user-accounts / licensing / subscription section of [architecture.md](architecture.md) (April 2026, "READY FOR IMPLEMENTATION" but never built — Cognito, DynamoDB Users/Licenses/Subscriptions tables, Rust Lambda API, Stripe Checkout/Portal/webhooks, Stronghold-cached desktop license check). That design is retained in `architecture.md` for historical record but is no longer the source of truth for licensing/payments once this document reaches "complete" status.

@@ -20,6 +20,8 @@ completedAt: '2026-08-10'
 
 # Architecture Decision Document: User Profile Feature
 
+> **Supersession note (2026-11-17):** [`architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md`](architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md) supersedes NFR2, NFR4, and FR8 below for Nixus Cloud profiles (the cloud is now the source of truth; profile data leaves the device by design). It also supersedes FR4 and the local-dataset implications of D1 for local datasets: `/profile` now opens for local datasets, with demographics kept on-device. D13 is superseded by a new `AppError::CloudProfile` variant covering both homes. D10 (no audit-log rows for profile mutations) is retained.
+
 _This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
 
 ## Feature Brief (working, no formal PRD)
