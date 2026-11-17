@@ -97,7 +97,7 @@ export function pensionCountedForYearsCents(
   return Math.round(grossCents * (1 - pension.taxModel.ratePercent / 100));
 }
 
-const RETIREMENT_ELIGIBLE_TYPES = [
+const INVESTMENT_ACCOUNT_TYPES = [
   "tfsa",
   "rrsp",
   "fhsa",
@@ -105,7 +105,10 @@ const RETIREMENT_ELIGIBLE_TYPES = [
   "crypto",
 ] as const;
 
-/** Same 7% annual rate used for these account types in `src/lib/projection.ts`. */
+/** Counted toward retirement but, as in `src/lib/projection.ts`, grown at 0%. */
+const CASH_ACCOUNT_TYPES = ["chequing", "savings"] as const;
+
+/** Same 7% annual rate used for the investment account types in `src/lib/projection.ts`. */
 const GROWTH_RATE_ANNUAL = 0.07;
 const SPENDING_RATIO_IN_RETIREMENT = 0.8;
 export const INFLATION_RATE_ANNUAL = 0.025;
@@ -289,13 +292,12 @@ function computeTiersMonthlyCents(
   );
 }
 
-function currentInvestedCapitalCents(input: RetirementInput): number {
+function sumBalancesCents(
+  input: RetirementInput,
+  types: readonly string[],
+): number {
   return input.account_balances
-    .filter((b) =>
-      (RETIREMENT_ELIGIBLE_TYPES as readonly string[]).includes(
-        b.account_type,
-      ),
-    )
+    .filter((b) => types.includes(b.account_type))
     .reduce((sum, b) => sum + b.total_cents, 0);
 }
 
@@ -348,16 +350,17 @@ export function autoEstimatedTaxRatePercent(annualExpensesCents: number): number
   );
 }
 
-/** Future value of current capital + an ordinary monthly annuity, both at the shared growth rate. */
+/** Future value of invested capital + an ordinary monthly annuity at the shared growth rate, plus cash. */
 function projectedValueCents(
-  currentCapitalCents: number,
+  investedCapitalCents: number,
+  cashCents: number,
   monthlySavingsCents: number,
   years: number,
 ): number {
   const monthlyRate = Math.pow(1 + GROWTH_RATE_ANNUAL, 1 / 12) - 1;
   const months = years * 12;
 
-  const capitalFv = currentCapitalCents * Math.pow(1 + monthlyRate, months);
+  const capitalFv = investedCapitalCents * Math.pow(1 + monthlyRate, months);
 
   const annuityFv =
     monthlyRate === 0
@@ -365,7 +368,7 @@ function projectedValueCents(
       : monthlySavingsCents *
         ((Math.pow(1 + monthlyRate, months) - 1) / monthlyRate);
 
-  return capitalFv + annuityFv;
+  return capitalFv + cashCents + annuityFv;
 }
 
 function cellStatus(
@@ -384,7 +387,8 @@ export function computeRetirementMatrix(
   options?: RetirementMatrixOptions,
 ): RetirementMatrixResult {
   const annualExpensesCents = input.avg_monthly_expense_cents * 12;
-  const currentCapitalCents = currentInvestedCapitalCents(input);
+  const investedCapitalCents = sumBalancesCents(input, INVESTMENT_ACCOUNT_TYPES);
+  const cashCents = sumBalancesCents(input, CASH_ACCOUNT_TYPES);
   const horizons = options?.horizons ?? RETIREMENT_HORIZONS_YEARS;
   const tiersMonthlyCents = computeTiersMonthlyCents(
     input.avg_monthly_income_cents - input.avg_monthly_expense_cents,
@@ -400,7 +404,8 @@ export function computeRetirementMatrix(
         currentAge,
       );
       const projectedCents = projectedValueCents(
-        currentCapitalCents,
+        investedCapitalCents,
+        cashCents,
         monthlySavingsCents,
         years,
       );

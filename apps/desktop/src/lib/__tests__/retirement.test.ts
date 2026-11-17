@@ -85,12 +85,12 @@ describe("computeRetirementMatrix", () => {
     expect(result.tiersMonthlyCents[CURRENT_PACE_TIER_INDEX]).toBe(10_000);
   });
 
-  it("computes current invested capital only from retirement-eligible account types", () => {
+  it("excludes non-retirement balances (real estate, debts) from current capital", () => {
     const input = makeInput({
       account_balances: [
         { account_type: "tfsa", total_cents: 1_000_000 },
         { account_type: "real_estate", total_cents: 50_000_000 },
-        { account_type: "chequing", total_cents: 500_000 },
+        { account_type: "mortgage", total_cents: 30_000_000 },
       ],
     });
     const withRealEstate = computeRetirementMatrix(input, NO_PENSION, AGE);
@@ -99,10 +99,27 @@ describe("computeRetirementMatrix", () => {
       NO_PENSION,
       AGE,
     );
-    // Real estate and chequing balances must not change the projected value.
+    // Real estate and debt balances must not change the projected value.
     expect(withRealEstate.rows[0][0].projectedValueCents).toBe(
       withoutRealEstate.rows[0][0].projectedValueCents,
     );
+  });
+
+  it("counts chequing and savings balances as cash that does not grow", () => {
+    const base = computeRetirementMatrix(makeInput(), NO_PENSION, AGE);
+    const withCash = computeRetirementMatrix(
+      makeInput({
+        account_balances: [
+          { account_type: "chequing", total_cents: 500_000 },
+          { account_type: "savings", total_cents: 1_500_000 },
+        ],
+      }),
+      NO_PENSION,
+      AGE,
+    );
+    expect(
+      withCash.rows[0][0].projectedValueCents - base.rows[0][0].projectedValueCents,
+    ).toBe(2_000_000);
   });
 
   it("requires a bigger nest egg for a younger current age at the same horizon (retiring earlier)", () => {
