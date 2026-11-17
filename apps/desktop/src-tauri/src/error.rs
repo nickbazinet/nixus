@@ -24,6 +24,19 @@ pub enum AppError {
         message: String,
         recoverable: bool,
     },
+    /// A Nixus Cloud profile or local-profile demographics failure (AD-13), for BOTH homes.
+    /// `code` is an `AccountErrorCode` from `packages/shared/src/types/account.ts`; `field` and
+    /// `reason` come from the same contract. `message` is a fixed sentence and never carries a
+    /// submitted value, a token or an identifier (AD-12). `reauthentication_required` means the
+    /// same fact here as in `HostedAi` and `Sync`.
+    #[allow(dead_code)] // Constructed by the profile client and the resolver (Epics C/D).
+    CloudProfile {
+        code: String,
+        message: String,
+        field: Option<String>,
+        reason: Option<String>,
+        recoverable: bool,
+    },
     File { message: String },
     /// A market-data provider failure. Distinct from `Unavailable`, whose serialized message is
     /// worded for the AI surfaces ("AI service unreachable") and would be a lie on a price refresh.
@@ -45,6 +58,9 @@ impl fmt::Display for AppError {
             }
             AppError::Sync { code, message, .. } => {
                 write!(f, "Sync error ({}): {}", code, message)
+            }
+            AppError::CloudProfile { code, message, .. } => {
+                write!(f, "Cloud profile error ({}): {}", code, message)
             }
             AppError::File { message } => write!(f, "File error: {}", message),
             AppError::MarketData { message } => write!(f, "Market data error: {}", message),
@@ -131,6 +147,27 @@ impl Serialize for AppError {
                 map.serialize_entry("recoverable", recoverable)?;
                 map.end()
             }
+            AppError::CloudProfile {
+                code,
+                message,
+                field,
+                reason,
+                recoverable,
+            } => {
+                let len = 4 + usize::from(field.is_some()) + usize::from(reason.is_some());
+                let mut map = serializer.serialize_map(Some(len))?;
+                map.serialize_entry("type", "cloud_profile")?;
+                map.serialize_entry("code", code)?;
+                map.serialize_entry("message", message)?;
+                if let Some(field) = field {
+                    map.serialize_entry("field", field)?;
+                }
+                if let Some(reason) = reason {
+                    map.serialize_entry("reason", reason)?;
+                }
+                map.serialize_entry("recoverable", recoverable)?;
+                map.end()
+            }
             AppError::NotConfigured => {
                 let mut map = serializer.serialize_map(Some(3))?;
                 map.serialize_entry("type", "not_configured")?;
@@ -166,6 +203,38 @@ impl From<rusqlite::Error> for AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cloud_profile_error_serializes_field_and_reason_when_present() {
+        let json = serde_json::to_string(&AppError::CloudProfile {
+            code: "validation".to_string(),
+            message: "A profile field was refused.".to_string(),
+            field: Some("birth_date".to_string()),
+            reason: Some("too_young".to_string()),
+            recoverable: true,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"cloud_profile","code":"validation","message":"A profile field was refused.","field":"birth_date","reason":"too_young","recoverable":true}"#
+        );
+    }
+
+    #[test]
+    fn cloud_profile_error_omits_absent_field_and_reason() {
+        let json = serde_json::to_string(&AppError::CloudProfile {
+            code: "reauthentication_required".to_string(),
+            message: "Sign in again to continue.".to_string(),
+            field: None,
+            reason: None,
+            recoverable: true,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"cloud_profile","code":"reauthentication_required","message":"Sign in again to continue.","recoverable":true}"#
+        );
+    }
 
     #[test]
     fn auth_error_serializes_with_type_message_and_recoverable() {
