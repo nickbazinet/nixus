@@ -1,3 +1,4 @@
+mod account_contract;
 mod ai;
 mod app_migration;
 mod avatar_store;

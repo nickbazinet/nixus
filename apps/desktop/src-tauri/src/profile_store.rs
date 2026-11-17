@@ -66,7 +66,7 @@ const CORRUPT_SUFFIX: &str = "json.corrupt";
 // A range label, not a monetary amount: there is nothing to add, subtract or
 // format, so the `_cents` rule does not apply and the stored value is the
 // categorical code verbatim. Adding cut points later stays additive.
-const VALID_INCOME_BRACKETS: &[&str] = &[
+pub(crate) const VALID_INCOME_BRACKETS: &[&str] = &[
     "under_50k",
     "50k_99k",
     "100k_149k",
@@ -78,13 +78,13 @@ const VALID_INCOME_BRACKETS: &[&str] = &[
 // dataset and NFR6 forbids adding one, and ~180 options is poor UX for a field
 // that qualifies five coarse buckets. This const is the sole validation
 // authority — the frontend option list mirrors it and never overrides it.
-const VALID_INCOME_BRACKET_CURRENCIES: &[&str] = &[
+pub(crate) const VALID_INCOME_BRACKET_CURRENCIES: &[&str] = &[
     "CAD", "USD", "EUR", "GBP", "AUD", "CHF", "JPY", "CNY", "INR", "MXN", "BRL", "SEK", "NOK",
     "DKK", "NZD", "SGD", "HKD", "ZAR", "KRW", "PLN",
 ];
 
-const MIN_AGE_YEARS: i32 = 18;
-const MAX_AGE_YEARS: i32 = 120;
+pub(crate) const MIN_AGE_YEARS: i32 = 18;
+pub(crate) const MAX_AGE_YEARS: i32 = 120;
 
 pub fn profiles_dir(app_data_dir: &Path) -> PathBuf {
     app_data_dir.join("profiles")

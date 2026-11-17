@@ -1073,6 +1073,83 @@ pub struct UserAvatar {
     pub uploaded_at: String,
 }
 
+// The Nixus Cloud profile wire contract (AD-13), mirroring
+// `packages/shared/src/types/account.ts`; `account_contract`'s tests deserialize the shared
+// fixtures into these so the two sides cannot drift. Unknown response fields are ignored
+// (serde's default), which is the additive-evolution rule. Option fields serialize as `null`,
+// never omitted, so `expected_version: null` (create-only) is always explicit on the wire.
+#[allow(dead_code)] // Consumed by the profile client and the profile homes (Epics C/D/E).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfileFields {
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub birth_date: Option<String>,
+    pub income_bracket: Option<String>,
+    pub income_bracket_currency: Option<String>,
+    pub country_code: Option<String>,
+    pub subdivision_code: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudProfileWire {
+    #[serde(flatten)]
+    pub fields: ProfileFields,
+    pub version: u64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub avatar_version: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutProfileRequestWire {
+    #[serde(flatten)]
+    pub fields: ProfileFields,
+    pub expected_version: Option<u64>,
+}
+
+// `data` is base64 of the derivative; callers log its byte size only, never the value (AD-12).
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudAvatarWire {
+    pub mime_type: String,
+    pub data: String,
+    pub version: u64,
+    pub updated_at: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PutAvatarRequestWire {
+    pub mime_type: String,
+    pub data: String,
+    pub expected_version: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountErrorWire {
+    pub code: String,
+    pub message: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub field: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub resource: Option<String>,
+    #[serde(default)]
+    pub current_version: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountErrorEnvelopeWire {
+    pub error: AccountErrorWire,
+}
+
 // `eligible_from_year` is returned rather than only the total because the UI
 // interpolates it into the caption, and `known_through_year` is returned so
 // support can tell "withheld because past the table bound" from "withheld
