@@ -24,6 +24,7 @@ import {
 import { useUserAvatar } from "@/hooks/useProfile";
 import { AccountAvatar } from "@/components/auth/AccountAvatar";
 import { useActiveProfile } from "@/hooks/useDatasets";
+import { deriveProfileSource } from "@/lib/profileSource";
 
 type SessionState =
   | "loading"
@@ -112,10 +113,16 @@ export function ProfileMenu() {
   // named badge inside its menu. The hook owns profile/session gating and costs no extra IPC.
   const isPremium = usePremiumEntitlement();
 
-  // Gated on a confirmed account for the same reason the session read is: `get_user_avatar`
-  // resolves the Cognito subject, so an ungated read would open the OS secure store — and possibly
-  // POST a token refresh — for a local profile that has no account at all.
-  const avatar = useUserAvatar({ enabled: account !== null });
+  // The source key is DERIVED from the active-profile query rather than read through a command of
+  // its own: this header is always mounted, so a new `invoke()` here would put every existing
+  // Playwright spec's mock one command short and render the shell in its error state (D11).
+  // Gated on a confirmed account for the same reason the session read is: a picture belongs to a
+  // Nixus Cloud account, so an ungated read would open the OS secure store for a local profile.
+  const source = deriveProfileSource(activeProfile.data);
+  const avatar = useUserAvatar({
+    sourceKey: source.source_key,
+    enabled: account !== null,
+  });
 
   const startCloudFlow = () => {
     signIn.mutate(
@@ -254,6 +261,7 @@ export function ProfileMenu() {
             </DropdownMenuItem>
           ) : null}
 
+
           {/* Sign-in, never migrate: this profile is already linked, so migrating it again would
            * only produce a second copy. Reattaching the account is the one cloud action left. */}
           {!cloudProfile.is_signed_in ? (
@@ -321,14 +329,62 @@ export function ProfileMenu() {
     );
   }
 
-  // A local profile, or one whose kind could not be read. Neither has an account, so neither gets
-  // an account panel — and a single header click may not start a cloud flow either: completing one
-  // creates or reopens a cloud dataset and switches the active profile away from this one, taking
-  // any in-progress work on it along. The trigger offers the one reversible thing it can offer, and
-  // the picker is where a deliberate cloud sign-in lives.
+  // A local profile has demographics of its own, kept on this computer, so the Profile entry is
+  // visible for it (AD-6) — but it still has no account, so there is no identity, no sign-out and
+  // no session read, and a single header click may not start a cloud flow: completing one creates
+  // or reopens a cloud dataset and switches the active profile away from this one, taking any
+  // in-progress work on it along. The picker is where a deliberate cloud sign-in lives.
   //
   // `from: "switch"` is the arrival context, not a preference: a user who came here to change
   // profiles lands with the local list already open instead of having to ask for it again.
+  if (activeProfile.data?.kind === "local") {
+    return (
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-10"
+              aria-label={t("profile.localAccountMenu")}
+              data-testid={TRIGGER_TESTID}
+              data-profile-kind="local"
+            />
+          }
+        >
+          <User aria-hidden="true" className="size-5" />
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent
+          align="end"
+          className="w-64"
+          data-testid="profile-menu-panel"
+        >
+          <DropdownMenuItem
+            render={<Link to="/profile" data-testid="profile-menu-profile" />}
+          >
+            <User aria-hidden="true" />
+            {t("profile.menuItem")}
+          </DropdownMenuItem>
+
+          <DropdownMenuItem
+            onClick={() => {
+              void navigate({ to: "/picker", search: { from: "switch" } });
+              setOpen(false);
+            }}
+            data-testid="profile-menu-switch-profile"
+          >
+            <ArrowLeftRight aria-hidden="true" />
+            {t("datasets.switchProfile")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  // A profile whose kind could not be read. It gets neither an account panel nor a Profile entry:
+  // the one claim this branch can make is that switching is reversible, and offering a profile
+  // surface for a profile of unknown kind would be a claim about where its data lives.
   return (
     <Button
       variant="ghost"
