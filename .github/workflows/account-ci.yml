@@ -116,6 +116,10 @@ jobs:
       - name: Lint account app
         run: pnpm --filter @nixus/account lint
 
+      # The route tree is generated output and not committed; typecheck needs it.
+      - name: Generate account app route tree
+        run: pnpm --filter @nixus/account generate
+
       - name: Typecheck account app
         run: pnpm --filter @nixus/account typecheck
 

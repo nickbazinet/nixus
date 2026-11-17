@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite dev --port 3100",
     "build": "vite build",
+    "generate": "tsx scripts/generate-routes.ts",
     "package": "tsx scripts/package-lambda.ts",
     "lint": "eslint src scripts tests vite.config.ts vitest.config.ts eslint.config.js",
     "typecheck": "tsc --noEmit",
@@ -41,6 +42,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.6.0",
     "tailwindcss": "^4.2.1",
+    "@tanstack/router-generator": "^1.166.42",
     "tsx": "^4.20.6",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.59.3",
