@@ -847,8 +847,8 @@ fn remove_dataset_dir(dir: &Path) -> Result<(), AppError> {
     }
 }
 
-/// Removes a local profile: its directory, its registry entry, and its own AI
-/// credentials. Nothing else on disk is touched.
+/// Removes a local profile: its directory, its registry entry, its own AI credentials and its
+/// demographic document. Nothing else on disk is touched.
 ///
 /// `REGISTRY_LOCK` is held across the whole read-modify-write, matching
 /// `create_dataset_at` and `rename_dataset_at`: a delete racing a create must not
@@ -913,6 +913,22 @@ pub(crate) fn delete_dataset_at(
     write_json_atomic(&path, &entries)?;
 
     crate::credentials::clear_credentials(id);
+
+    // After the registry write, alongside the keyring clear and for the same reason: the profile
+    // no longer exists, so its demographics have nothing left to belong to (AD-6, AD-7). Before it,
+    // a failed registry write would leave a listed profile whose date of birth and income had
+    // already been deleted.
+    //
+    // Best-effort, unlike the registry write: the launch sweep removes any document whose dataset
+    // is absent from `datasets.json`, so a failure here is corrected rather than permanent — and
+    // failing the deletion the user asked for, over a file that is already unreachable, is worse.
+    if let Err(e) = crate::profile_store::delete_local(&crate::profile_store::profiles_dir(root), id)
+    {
+        warn!(
+            "A deleted profile's demographics could not be removed and will be swept on the next launch ({})",
+            e
+        );
+    }
 
     Ok(())
 }
