@@ -58,11 +58,11 @@ async function pickNoisyImage(page: Page, sizePx: number): Promise<void> {
   });
 }
 
-test("signs in, shows the verified email and the storage notice", async ({ page }) => {
+test("signs in and shows the verified email, with no storage notice", async ({ page }) => {
   await signIn(page);
 
   await expect(page.getByTestId("profile-email")).toContainText(EMAIL);
-  await expect(page.getByTestId("cloud-notice")).toContainText("Nixus Cloud account");
+  await expect(page.getByTestId("cloud-notice")).toHaveCount(0);
   await expect(page.getByTestId("profile-form")).toBeVisible();
 
   // The browser was never given a token, and the cookie it did get is opaque.
@@ -149,9 +149,8 @@ test("serves the French route and keeps the brand term untranslated", async ({ p
   await page.waitForURL(`${harness.origin}/fr/profile`);
 
   await expect(page.locator("html")).toHaveAttribute("lang", "fr");
-  await expect(page.getByTestId("cloud-notice")).toContainText("Nixus Cloud");
-  await expect(page.getByTestId("cloud-notice")).not.toContainText("Nuage");
   await expect(page.getByLabel("Prénom")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("Nuage");
 });
 
 /*

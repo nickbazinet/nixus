@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Info } from "lucide-react";
 import { Alert, Button, Card, CardContent } from "@nixus/shared";
 import type { ProfileFields } from "@nixus/shared";
 
@@ -129,7 +128,6 @@ export function ProfilePanel({ view, locale }: { view: AccountView; locale: Loca
       <div className="mx-auto max-w-2xl">
         <div className="mb-section-gap">
           <h1 className="text-h1 text-ink">{t("profile.heading")}</h1>
-          <p className="mt-1 text-caption text-ink-dim">{t("profile.lead")}</p>
         </div>
 
         <div className="space-y-4">
@@ -165,17 +163,6 @@ export function ProfilePanel({ view, locale }: { view: AccountView; locale: Loca
                   </p>
                 </div>
               ) : null}
-
-              {/* AD-16's point-of-collection notice, at the point of
-                  collection. Inset within the card's own padding, so it reads
-                  as a note on the form rather than a band across it. */}
-              <Alert
-                data-testid="cloud-notice"
-                className="mt-4 rounded-sm"
-                icon={<Info aria-hidden="true" />}
-              >
-                {t("profile.notice")}
-              </Alert>
 
               <div className="mt-4">
                 <ProfileForm

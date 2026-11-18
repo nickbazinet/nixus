@@ -48,17 +48,14 @@ describe("AD-16 brand term", () => {
   });
 });
 
-describe("AD-16 point-of-collection notice", () => {
-  it("states in both locales that the profile lives in the Nixus Cloud account", () => {
-    expect(EN["profile.notice"]).toContain("Nixus Cloud account");
-    expect(FR["profile.notice"]).toContain("Nixus Cloud");
-  });
-
-  it("names no provider or region, on either side", () => {
-    for (const notice of [EN["profile.notice"], FR["profile.notice"]]) {
-      for (const forbidden of ["AWS", "Amazon", "us-east-1", "DynamoDB", "Virginia", "Virginie"]) {
-        expect(notice, `the notice names ${forbidden}`).not.toContain(forbidden);
-      }
+describe("copy the owner removed from the web form", () => {
+  /* 2026-11-18, owner decision: no lead line, storage notice or picture hint on
+   * the web profile form; the Privacy Policy carries the disclosure. */
+  it("carries neither the lead line, the storage notice nor the picture hint", () => {
+    for (const locale of [EN, FR]) {
+      expect(locale["profile.lead"]).toBeUndefined();
+      expect(locale["profile.notice"]).toBeUndefined();
+      expect(locale["profile.avatar.hint"]).toBeUndefined();
     }
   });
 });

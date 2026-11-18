@@ -33,7 +33,6 @@ export function AvatarField({ current, busy, onPicked }: AvatarFieldProps) {
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<"unreadable" | "tooLarge" | null>(null);
-  const hintId = useId();
   const errorId = useId();
 
   const src =
@@ -89,15 +88,11 @@ export function AvatarField({ current, busy, onPicked }: AvatarFieldProps) {
           className="mkt-tap"
           disabled={busy}
           onClick={() => input.current?.click()}
-          aria-describedby={refusal === null ? hintId : `${hintId} ${errorId}`}
+          aria-describedby={refusal === null ? undefined : errorId}
           data-testid="avatar-choose"
         >
           {t("profile.avatar.choose")}
         </Button>
-
-        <p id={hintId} className="text-caption text-ink-dim">
-          {t("profile.avatar.hint")}
-        </p>
 
         {refusal !== null && (
           <p
