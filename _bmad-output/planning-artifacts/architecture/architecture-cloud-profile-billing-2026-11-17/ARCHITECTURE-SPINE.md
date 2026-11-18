@@ -334,6 +334,7 @@ Dependencies point one way: surfaces → Profile API → profile table. Neither 
     - The desktop strings `profile.signInRequiredBody` and `profile.avatar.hint` are rewritten in EN and FR.
     - The delete-all confirmation states that the Nixus Cloud profile is not deleted.
   - **In-app disclosure:** the AD-8 consent prompt, plus a persistent notice on the web profile form that the profile is stored in the user's Nixus Cloud account. In-app copy names no provider or region.
+  - **Amendment 2026-11-18 (owner decision):** the web profile form carries no storage notice. Users reach it only by signing in to their Nixus Cloud account, and the Privacy Policy states where the profile is stored. The desktop consent prompt (AD-8) is unchanged.
   - **Brand term:** "Nixus Cloud" stays untranslated in French on every surface (user-profile NFR8).
   - **Supersedes:** user-profile NFR2, FR8 and NFR4 for Nixus Cloud profiles.
 
