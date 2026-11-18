@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { loadTemplate, ref, resourcesOfType } from "./lib/testing/cfn.ts";
+import { loadTemplate, readRepoFile, ref, REPO_ROOT, resourcesOfType } from "./lib/testing/cfn.ts";
 
 /*
  * The account app's half of the stack (AD-10, AD-14), as an infrastructure
@@ -94,7 +96,38 @@ describe("AD-10 the confidential web client", () => {
     const branding = resourcesOfType(TEMPLATE, "AWS::Cognito::ManagedLoginBranding");
     expect(branding.map(([name]) => name)).toEqual(["AccountWebClientBranding"]);
     expect(props("AccountWebClientBranding").ClientId).toEqual(ref("AccountWebClient"));
-    expect(props("AccountWebClientBranding").UseCognitoProvidedValues).toBe(true);
+  });
+
+  /* The account site's sign-in page must be the same Nixus page the desktop shows,
+   * not Cognito's default style. The branding is generated from ../branding (a copy
+   * of the desktop client's console-managed style), and this pins the template to
+   * those files byte for byte so a hand edit or a stale regeneration fails here. */
+  it("uses the desktop's branding, generated from the committed branding files", () => {
+    const branding = props("AccountWebClientBranding");
+    expect(branding.UseCognitoProvidedValues).toBe(false);
+    expect(branding.Settings).toEqual(
+      JSON.parse(readRepoFile("apps/api-account/branding/managed-login-settings.json")),
+    );
+
+    const assets = branding.Assets as {
+      Category: string;
+      ColorMode: string;
+      Extension: string;
+      Bytes: string;
+    }[];
+    const expected = [
+      ["PAGE_BACKGROUND", "LIGHT", "WEBP", "page-background-light.webp"],
+      ["FAVICON_SVG", "LIGHT", "SVG", "favicon-light.svg"],
+    ];
+    expect(assets.map((asset) => [asset.Category, asset.ColorMode, asset.Extension])).toEqual(
+      expected.map(([category, mode, extension]) => [category, mode, extension]),
+    );
+    for (const [index, [, , , file]] of expected.entries()) {
+      const committed = readFileSync(
+        fileURLToPath(new URL(`apps/api-account/branding/${file}`, REPO_ROOT)),
+      ).toString("base64");
+      expect(assets[index]?.Bytes, file).toBe(committed);
+    }
   });
 });
 
