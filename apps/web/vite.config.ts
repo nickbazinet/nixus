@@ -22,11 +22,13 @@ export default defineConfig({
       prerender: {
         enabled: true,
         crawlLinks: true,
-        // The crawler keeps only the PATH of every link, so the header's
-        // absolute https://account.nixusapp.com/fr is crawled as this site's
-        // `/fr` - a redirect to `/fr/` whose output can overwrite the real
-        // French home depending on crawl order. Nothing on this site lives at `/fr`.
-        filter: ({ path }) => path !== "/fr",
+        // Crawled aliases of an already-prerendered page - `/fr` (linked from the
+        // French 404) and every `/#anchor` / `/fr/#anchor` (the header's section
+        // links) - resolve to the SAME output file as `/fr/` or `/`. The crawler
+        // renders them concurrently and each writeFile truncates that shared file,
+        // which on Node 20 intermittently leaves the home page empty. The canonical
+        // pages are still prerendered; only the duplicate writes are skipped.
+        filter: ({ path }) => path !== "/fr" && !path.includes("#"),
       },
     }),
     viteReact(),
