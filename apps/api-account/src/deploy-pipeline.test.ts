@@ -529,10 +529,13 @@ describe("Epic F deploy sequence", () => {
     expect(invalidation).toContain("wait invalidation-completed");
   });
 
-  it("smoke-tests the landing page, the login redirect and the Origin refusal", () => {
+  it("smoke-tests the sign-in entry redirect, the login redirect and the Origin refusal", () => {
     const script = step(DEPLOY, "Smoke-test the deployed account app").run as string;
 
-    expect(script).toContain('test "${code}" = "200"');
+    // No signed-out landing page: an anonymous / must go straight to sign-in.
+    expect(script).toContain('test "${code}" = "302"');
+    expect(script).toContain("/auth/login\\?next=profile");
+    expect(script).not.toContain('test "${code}" = "200"');
     expect(script).toContain("/auth/login");
     expect(script).toContain('test "${login_code}" = "302"');
     expect(script).toContain("auth\\.nixusapp\\.com/oauth2/authorize");

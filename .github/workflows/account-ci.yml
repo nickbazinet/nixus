@@ -665,10 +665,18 @@ jobs:
 
           base="https://${ACCOUNT_DOMAIN_NAME}"
 
-          code="$(curl -sS -o "${work}/landing.html" -w '%{http_code}' "${base}/")"
-          echo "landing_code=${code}"
-          test "${code}" = "200" || {
-            echo "GET / answered ${code}, expected 200." >&2
+          # There is no signed-out landing page: an anonymous visit to / goes
+          # straight to sign-in, and only through a server-chosen destination.
+          curl -sS -D "${work}/entry.headers" -o /dev/null "${base}/" || true
+          code="$(awk 'NR==1 {print $2}' "${work}/entry.headers")"
+          echo "entry_code=${code}"
+          test "${code}" = "302" || {
+            echo "GET / answered ${code}, expected 302 to sign-in." >&2
+            exit 1
+          }
+          grep -iqE "^location: (${base})?/auth/login\?next=profile(&|$|\r)" \
+            "${work}/entry.headers" || {
+            echo "GET / did not redirect to /auth/login with the profile destination." >&2
             exit 1
           }
 
