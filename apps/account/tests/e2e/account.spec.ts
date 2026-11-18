@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 
 import { EMAIL, startHarness, type Harness } from "./support/harness";
 
@@ -23,8 +23,11 @@ test.afterEach(async () => {
 });
 
 async function signIn(page: Page): Promise<void> {
+  // `/` is a redirect now, so the whole flow is one navigation plus the stub
+  // provider's own sign-in: entry -> `/auth/login` -> Managed Login ->
+  // `/auth/callback` -> `/profile`. There is no landing page to press past.
   await page.goto(`${harness.origin}/`);
-  await page.getByTestId("sign-in").click();
+  await page.getByTestId("stub-idp-sign-in").click();
   await page.waitForURL(`${harness.origin}/profile`);
 }
 
@@ -142,10 +145,7 @@ test("uploads a 256px, 64KiB-bounded derivative the browser produced", async ({ 
 
 test("serves the French route and keeps the brand term untranslated", async ({ page }) => {
   await page.goto(`${harness.origin}/fr`);
-  await expect(page.locator("html")).toHaveAttribute("lang", "fr");
-  await expect(page.getByTestId("sign-in")).toHaveText("Se connecter");
-
-  await page.getByTestId("sign-in").click();
+  await page.getByTestId("stub-idp-sign-in").click();
   await page.waitForURL(`${harness.origin}/fr/profile`);
 
   await expect(page.locator("html")).toHaveAttribute("lang", "fr");
@@ -154,22 +154,131 @@ test("serves the French route and keeps the brand term untranslated", async ({ p
   await expect(page.getByLabel("Prénom")).toBeVisible();
 });
 
+/*
+ * The entry gate (AD-10). There is no signed-out landing page any more, so `/`
+ * and `/fr` have exactly two answers each, and the third state — a cookie whose
+ * session has expired — has to resolve to the same answer as having no cookie
+ * at all rather than to a profile page in an error state.
+ *
+ * Asserted on the response, with redirects unfollowed: a test that only checked
+ * where the browser ended up would pass just as well on a client-side bounce,
+ * which is the thing AD-10 forbids.
+ */
+test.describe("the entry redirects", () => {
+  /**
+   * The status and `Location` the SERVER answered `path` with.
+   *
+   * Read off the navigation's own redirect chain rather than through
+   * `page.request`, for two reasons. The session cookie is `__Host-` and
+   * therefore `Secure`, which Playwright's request fixture declines to send
+   * over the harness's plain-http origin — so every such probe would look
+   * signed out and the signed-in arm could never fail. And reading the response
+   * headers is what proves the redirect was issued server-side: a client-side
+   * bounce would leave a 200 here, which is the thing AD-10 forbids.
+   */
+  async function firstHop(page: Page, path: string): Promise<[number, string | null]> {
+    const response = await page.goto(`${harness.origin}${path}`);
+    const hops: Request[] = [];
+    let request: Request | null = response?.request() ?? null;
+    while (request !== null) {
+      hops.unshift(request);
+      request = request.redirectedFrom();
+    }
+    const served = hops[0] ? await hops[0].response() : null;
+    return [served?.status() ?? 0, served?.headers()["location"] ?? null];
+  }
+
+  test("sends a signed-out visitor from / and /fr straight to sign-in", async ({ page }) => {
+    expect(await firstHop(page, "/")).toEqual([302, "/auth/login?next=profile&lang=en"]);
+    expect(await firstHop(page, "/fr")).toEqual([302, "/auth/login?next=profile-fr&lang=fr"]);
+    expect(await firstHop(page, "/fr/")).toEqual([302, "/auth/login?next=profile-fr&lang=fr"]);
+
+    // Followed to the end, that is the provider's sign-in page — not a page of
+    // this app's own asking the visitor to press a button to get there.
+    await expect(page.getByTestId("stub-idp-sign-in")).toBeVisible();
+  });
+
+  test("sends a signed-out visitor from /profile to sign-in, not to a panel", async ({
+    page,
+  }) => {
+    // 307 rather than 302: this arm is a loader redirect, which preserves the
+    // method. Same Location, from the same allow-list.
+    expect(await firstHop(page, "/profile")).toEqual([
+      307,
+      "/auth/login?next=profile&lang=en",
+    ]);
+    expect(await firstHop(page, "/fr/profile")).toEqual([
+      307,
+      "/auth/login?next=profile-fr&lang=fr",
+    ]);
+    await expect(page.getByTestId("profile-form")).toHaveCount(0);
+  });
+
+  test("sends a signed-in visitor from / and /fr to their own profile", async ({ page }) => {
+    await signIn(page);
+
+    expect(await firstHop(page, "/")).toEqual([302, "/profile"]);
+    expect(await firstHop(page, "/fr")).toEqual([302, "/fr/profile"]);
+    expect(await firstHop(page, "/fr/")).toEqual([302, "/fr/profile"]);
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+  });
+
+  test("treats an expired session exactly like no session", async ({ page }) => {
+    await signIn(page);
+    const [expired] = harness.dynamo.sessionIds();
+    expect(expired).toBeDefined();
+
+    // Re-expired before every probe. Following a login redirect to the end
+    // reaches a provider that still has its own session, so it silently grants
+    // a fresh one — which is correct behaviour, and means one expiry only buys
+    // one observation.
+    for (const [path, status, location] of [
+      ["/", 302, "/auth/login?next=profile&lang=en"],
+      ["/fr", 302, "/auth/login?next=profile-fr&lang=fr"],
+      ["/fr/", 302, "/auth/login?next=profile-fr&lang=fr"],
+      ["/profile", 307, "/auth/login?next=profile&lang=en"],
+      ["/fr/profile", 307, "/auth/login?next=profile-fr&lang=fr"],
+    ] as const) {
+      harness.dynamo.expireSessions();
+      expect(await firstHop(page, path), path).toEqual([status, location]);
+    }
+
+    // The row the expired cookie pointed at is gone, not merely ignored.
+    expect(harness.dynamo.sessionIds()).not.toContain(expired);
+  });
+
+  test("never renders the retired landing copy on any entry path", async ({ page }) => {
+    await signIn(page);
+
+    for (const path of ["/", "/fr", "/fr/", "/profile", "/fr/profile"]) {
+      await page.goto(`${harness.origin}${path}`);
+      const body = await page.content();
+      expect(body, path).not.toContain("Your Nixus Cloud account");
+      expect(body, path).not.toContain("Votre compte Nixus Cloud");
+    }
+  });
+});
+
+
 test("signs out, revoking only this session and leaving the row gone", async ({ page }) => {
   await signIn(page);
-  const before = harness.dynamo.items.size;
-  expect(before).toBeGreaterThan(0);
+  expect(harness.dynamo.sessionCount()).toBe(1);
 
   await page.getByTestId("sign-out").click();
-  await page.waitForURL(`${harness.origin}/`);
 
-  await expect(page.getByTestId("sign-in")).toBeVisible();
+  // Managed Login returns the browser to `/`, which now bounces to sign-in
+  // rather than to a landing page — so the provider's own sign-in page is where
+  // a signed-out visitor lands, which is the intended end of the flow.
+  await expect(page.getByTestId("stub-idp-sign-in")).toBeVisible();
   expect(harness.idp.revoked).toEqual(["refresh-code-1"]);
-  expect(harness.dynamo.items.size).toBe(0);
+  expect(harness.dynamo.sessionCount()).toBe(0);
 
-  // The cookie is gone, so going back to /profile shows the sign-in panel.
+  // The cookie is gone, so /profile cannot be reached by typing it either.
   await page.goto(`${harness.origin}/profile`);
-  await expect(page.getByTestId("sign-in")).toBeVisible();
+  await expect(page.getByTestId("stub-idp-sign-in")).toBeVisible();
+  await expect(page.getByTestId("profile-form")).toHaveCount(0);
 });
+
 
 test("refuses a cross-origin mutation with 403 and no body", async ({ page }) => {
   await signIn(page);
@@ -185,7 +294,7 @@ test("refuses a cross-origin mutation with 403 and no body", async ({ page }) =>
 
   expect(refusal.status()).toBe(403);
   expect(await refusal.text()).toBe("");
-  expect(harness.dynamo.items.size).toBeGreaterThan(0);
+  expect(harness.dynamo.sessionCount()).toBe(1);
 });
 
 test("refuses a mutation with no Origin header at all", async ({ page }) => {
@@ -197,5 +306,119 @@ test("refuses a mutation with no Origin header at all", async ({ page }) => {
   });
 
   expect(refusal.status()).toBe(403);
-  expect(harness.dynamo.items.size).toBeGreaterThan(0);
+  expect(harness.dynamo.sessionCount()).toBe(1);
 });
+
+/*
+ * The shell. These are the owner's complaints turned into assertions: the page
+ * used to have no header, no logo and no footer, no way back to the brand other
+ * than a bare text link, and no dark mode at all.
+ */
+test.describe("the site chrome", () => {
+  test("carries the marketing header and footer, locale-aware", async ({ page }) => {
+    await signIn(page);
+
+    await expect(page.getByTestId("brand-home").first()).toHaveAttribute(
+      "href",
+      "https://nixusapp.com/",
+    );
+    await expect(page.getByTestId("header-rule")).toBeAttached();
+    await expect(page.getByTestId("footer-terms")).toHaveAttribute(
+      "href",
+      "https://nixusapp.com/terms",
+    );
+    await expect(page.getByTestId("footer-privacy")).toHaveAttribute(
+      "href",
+      "https://nixusapp.com/privacy",
+    );
+
+    await page.goto(`${harness.origin}/fr/profile`);
+    await expect(page.getByTestId("brand-home").first()).toHaveAttribute(
+      "href",
+      "https://nixusapp.com/fr/",
+    );
+    await expect(page.getByTestId("footer-terms")).toHaveAttribute(
+      "href",
+      "https://nixusapp.com/fr/terms",
+    );
+    await expect(page.getByTestId("footer-privacy")).toHaveAttribute(
+      "href",
+      "https://nixusapp.com/fr/privacy",
+    );
+
+    await expect(page.getByText("Retour à nixusapp.com")).toHaveCount(0);
+  });
+
+  test("paints the marketing site's own surface and type", async ({ page }) => {
+    await signIn(page);
+
+    const shell = await page.evaluate(() => {
+      const heading = document.querySelector("h1");
+      return {
+        background: getComputedStyle(document.body).backgroundColor,
+        body: getComputedStyle(document.body).fontFamily,
+        heading: heading === null ? "" : getComputedStyle(heading).fontFamily,
+      };
+    });
+
+    // The Warm Editorial `--bg` nixusapp.com paints in light mode, and the two
+    // faces it serves. Pinned because "looks like the same product" is the
+    // requirement, and a token drift is invisible in a diff.
+    expect(shell.background).toBe("rgb(250, 248, 245)");
+    expect(shell.body).toContain("Nunito");
+    expect(shell.heading).toContain("Poppins");
+  });
+
+  test("switches locale through the header toggle", async ({ page }) => {
+    await signIn(page);
+
+    await page.getByTestId("language-toggle").click();
+    await expect(page.getByTestId("language-toggle-option-fr")).toHaveAttribute(
+      "href",
+      "/fr/profile",
+    );
+    await page.getByTestId("language-toggle-option-fr").click();
+    await page.waitForURL(`${harness.origin}/fr/profile`);
+    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+
+    await page.getByTestId("language-toggle").click();
+    await expect(page.getByTestId("language-toggle-option-en")).toHaveAttribute(
+      "href",
+      "/profile",
+    );
+  });
+
+  test("applies the chosen theme before paint on the next load", async ({ page }) => {
+    await signIn(page);
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
+
+    await page.getByTestId("theme-toggle").click();
+    await page.getByTestId("theme-toggle-option-dark").click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+
+    // The inline head script, not React: a reload that only resolved the theme
+    // after hydration would flash light first, which is what it exists to stop.
+    await page.reload({ waitUntil: "commit" });
+    await expect(page.locator("html")).toHaveClass(/dark/);
+
+    await page.getByTestId("theme-toggle").click();
+    await page.getByTestId("theme-toggle-option-light").click();
+    await expect(page.locator("html")).not.toHaveClass(/dark/);
+  });
+
+  test("fits every supported width with no horizontal overflow", async ({ page }) => {
+    await signIn(page);
+
+    for (const width of [320, 375, 768, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const path of ["/profile", "/fr/profile"]) {
+        await page.goto(`${harness.origin}${path}`);
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        expect(overflow, `${path} at ${width}px`).toBeLessThanOrEqual(0);
+      }
+    }
+  });
+});
+

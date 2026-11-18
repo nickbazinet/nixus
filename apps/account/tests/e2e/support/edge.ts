@@ -88,8 +88,11 @@ export async function startEdge(input: {
   return {
     origin: `http://127.0.0.1:${input.port}`,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        // See `fake.ts`: `close()` alone waits on the browser's idle keep-alive
+        // sockets, and this is the origin the browser holds the most of.
+        server.closeAllConnections();
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
   };
 }

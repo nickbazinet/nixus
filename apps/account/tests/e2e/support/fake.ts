@@ -54,9 +54,13 @@ export async function startFake(name: string, route: Route): Promise<RunningFake
   return {
     origin: `http://127.0.0.1:${address.port}`,
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        // Since Node 19 `close()` waits on idle keep-alive sockets, and the
+        // browser holds several per origin — so without this the teardown of a
+        // spec that navigated more than once or twice never resolves.
+        server.closeAllConnections();
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
   };
 }
 

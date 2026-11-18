@@ -13,7 +13,7 @@ import { sendJson, startFake, type RunningFake } from "./fake";
  * app issues; anything else is an explicit failure rather than a silent pass.
  */
 
-type AttributeValue = Record<string, unknown>;
+type AttributeValue = { S?: string; N?: string; BOOL?: boolean };
 type Item = Record<string, AttributeValue>;
 
 interface Target {
@@ -61,6 +61,20 @@ function applyUpdate(item: Item, expression: string, values: Item): Item {
 
 export interface RunningDynamo extends RunningFake {
   readonly items: Map<string, Item>;
+  /**
+   * Expires every stored session while LEAVING the browser's cookie intact —
+   * the one state a test cannot reach by driving the browser, because the TTLs
+   * are hours long.
+   */
+  expireSessions: () => void;
+  /**
+   * Session rows only. The table also holds short-lived pre-auth records, and
+   * every signed-out visit to `/` now starts a login attempt and writes one —
+   * so an empty-table assertion would be measuring the wrong thing.
+   */
+  sessionCount: () => number;
+  /** The ids of the session rows, so a test can prove a specific one was deleted. */
+  sessionIds: () => string[];
 }
 
 export async function startDynamo(): Promise<RunningDynamo> {
@@ -120,5 +134,19 @@ export async function startDynamo(): Promise<RunningDynamo> {
     throw new Error(`unsupported DynamoDB operation: ${operation}`);
   });
 
-  return { origin: fake.origin, close: fake.close, items };
+  return {
+    origin: fake.origin,
+    close: fake.close,
+    items,
+    expireSessions: () => {
+      for (const [id, item] of items) {
+        if (item.type?.S !== "session") continue;
+        items.set(id, { ...item, idle_expires_at: { N: "1" } });
+      }
+    },
+    sessionCount: () =>
+      [...items.values()].filter((item) => item.type?.S === "session").length,
+    sessionIds: () =>
+      [...items.entries()].filter(([, item]) => item.type?.S === "session").map(([id]) => id),
+  };
 }

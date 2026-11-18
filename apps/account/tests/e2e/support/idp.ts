@@ -38,7 +38,7 @@ export async function startIdp(options: IdpOptions): Promise<RunningIdp> {
   const attempts = new Map<string, Attempt>();
   const revoked: string[] = [];
   const clientSecrets: string[] = [];
-  const state = { issuer: "", forgeNonce: null as string | null };
+  const state = { issuer: "", forgeNonce: null as string | null, authenticated: false };
 
   function presentedSecret(authorization: string | undefined): string | null {
     if (!authorization?.startsWith("Basic ")) return null;
@@ -79,6 +79,25 @@ export async function startIdp(options: IdpOptions): Promise<RunningIdp> {
 
     if (pathname === "/oauth2/authorize") {
       const query = request.url.searchParams;
+
+      // Managed Login never grants silently to a browser with no provider
+      // session, and modelling that is what keeps the sign-out assertions from
+      // being vacuous: a fake that auto-granted would mint a fresh session the
+      // instant a signed-out visitor reached `/auth/login`.
+      if (!state.authenticated && query.get("stub_authenticated") !== "1") {
+        // Relative, because the fake does not know its own port in here.
+        const granted = `${request.url.pathname}${request.url.search}&stub_authenticated=1`;
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(
+          `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Stub Managed Login</title></head><body><h1>Stub Managed Login</h1><a data-testid="stub-idp-sign-in" href="${granted.replace(
+            /&/g,
+            "&amp;",
+          )}">Sign in</a></body></html>`,
+        );
+        return true;
+      }
+      state.authenticated = true;
+
       const code = `code-${attempts.size + 1}`;
       attempts.set(code, {
         nonce: query.get("nonce") ?? "",
@@ -130,6 +149,7 @@ export async function startIdp(options: IdpOptions): Promise<RunningIdp> {
     }
 
     if (pathname === "/logout") {
+      state.authenticated = false;
       const back = request.url.searchParams.get("logout_uri") ?? "/";
       response.writeHead(302, { location: back });
       response.end();
