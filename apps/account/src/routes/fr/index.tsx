@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { SignInPanel } from "@/components/SignInPanel";
+import { entryRedirect } from "@/server/entry";
 
+/** `GET /fr` — the French half of the entry redirect. See `routes/index.tsx`. */
 export const Route = createFileRoute("/fr/")({
-  head: () => ({ meta: [{ title: "Compte Nixus Cloud" }] }),
-  component: () => <SignInPanel locale="fr" />,
+  server: { handlers: { GET: () => entryRedirect("fr") } },
 });

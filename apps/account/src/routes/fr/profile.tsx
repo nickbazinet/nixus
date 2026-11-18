@@ -1,14 +1,19 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 import { loadAccountView } from "@/actions/account";
-import { AccountPage } from "@/components/AccountPage";
+import { ProfilePanel } from "@/components/ProfilePanel";
+import { loginLocation } from "@/server/destinations";
 
 export const Route = createFileRoute("/fr/profile")({
-  loader: () => loadAccountView({ data: { locale: "fr" } }),
+  loader: async () => {
+    const view = await loadAccountView({ data: { locale: "fr" } });
+    if (!view.signedIn) throw redirect({ href: loginLocation("fr") });
+    return view;
+  },
   head: () => ({ meta: [{ title: "Profil — Compte Nixus Cloud" }] }),
   component: FrenchProfile,
 });
 
 function FrenchProfile() {
-  return <AccountPage view={Route.useLoaderData()} locale="fr" />;
+  return <ProfilePanel view={Route.useLoaderData()} locale="fr" />;
 }

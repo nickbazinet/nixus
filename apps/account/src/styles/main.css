@@ -1,8 +1,108 @@
 @import "tailwindcss";
 @import "@nixus/shared/styles/tokens.css";
 
+/* Bundled locally, exactly as `apps/web` does it (no Google Fonts CDN): Poppins
+   for titles, Nunito for body. Without these the account app falls back to the
+   system stack and stops reading as the same product as nixusapp.com. */
+@import "@fontsource/poppins/500.css";
+@import "@fontsource/poppins/600.css";
+@import "@fontsource/poppins/700.css";
+@import "@fontsource-variable/nunito/index.css";
+
+/* pnpm symlinks `./node_modules/@nixus/shared` and Tailwind v4 ignores
+   node_modules, so the shared primitives' own utilities would never be
+   generated. Point the scanner at the real source path. */
+@source "../../../../packages/shared/src/**/*.{ts,tsx}";
+
 /* The account app shares the marketing site's token layer so the two surfaces
-   read as one product. It ships no page-specific palette of its own. */
+   read as one product. It ships no page-specific palette of its own.
+
+   "Warm Editorial" — the marketing-only light palette — is reproduced verbatim
+   from `apps/web/src/styles/main.css`. It overrides the VALUES of the shared
+   spine variables, never their names, so re-declaring `--bg` here reaches
+   `bg-page`, `bg-background`, every shared primitive, and hand-written
+   `var(--background)` in one step. `:root:not(.dark)` rather than `.light` for
+   the same three reasons it gives: `next-themes` writes `dark` onto `<html>`,
+   its 0-2-0 specificity clears `tokens.css`'s `:root` regardless of import
+   order, and `.dark` is untouched so this cannot leak into dark mode.
+
+   Colour only. No radius, no font, no type scale, no status/chart change —
+   the account app renders none of those families differently. */
+:root:not(.dark) {
+  /* Surfaces */
+  --bg: #FAF8F5;
+  --card: #FFFFFF;
+  --chrome: #F5F2EC;
+  --hover: #FBF9F6;
+
+  /* Ink */
+  --ink: #1C1917;
+  --ink-dim: #655D54;
+  --ink-faint: #71685F;
+
+  /* Hairlines */
+  --line: #E8E3DA;
+  --line-strong: #D8D1C5;
+
+  /* Brand and action. Nothing else. */
+  --brand: #5E78ED;
+  --brand-ink: #3A4FB8;
+  --brand-soft: #EDF0FD;
+  --focus-ring: #5E78ED;
+}
+
+/* The rhythm and touch contract the marketing chrome is built from, carried
+   over so the header and footer land on the same gutters and the same container
+   measure as nixusapp.com.
+
+   Plain custom properties consumed by plain classes, not `@theme` additions,
+   for the reason `apps/web` documents: `@nixus/shared`'s `cn()` configures
+   tailwind-merge with an explicit allow-list of named spacing tokens, and a
+   local `--spacing-*` addition is invisible to that list — it would silently
+   stop conflicting with the class it is meant to override. */
+:root {
+  /* 16px at 320px -> 32px at 800px and up. */
+  --mkt-gutter-x: clamp(1rem, 0.3333rem + 3.3333vw, 2rem);
+  --mkt-tap-min: 2.75rem;
+  --mkt-container: 80rem;
+}
+
+@media (width >= 96rem) {
+  :root {
+    --mkt-container: 90rem;
+  }
+}
+
+.mkt-page-x {
+  padding-inline: var(--mkt-gutter-x);
+}
+
+.mkt-container {
+  margin-inline: auto;
+  max-inline-size: var(--mkt-container);
+}
+
+/* The 44px phone/tablet touch floor.
+
+   Unlayered on purpose: `@nixus/shared`'s Button and Input both carry the
+   desktop app's 24px `min-h-target-min` from `@layer utilities`, and unlayered
+   declarations win over layered ones regardless of source order — so this floor
+   is deterministic rather than dependent on Tailwind's sort.
+
+   Gated below 1024px so the desktop tier keeps the shared primitives' own
+   geometry, which is what makes this page match `apps/desktop`'s Profile. */
+@media (width < 64rem) {
+  .mkt-tap {
+    min-height: var(--mkt-tap-min);
+    min-width: var(--mkt-tap-min);
+  }
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
 
 @layer base {
   body {

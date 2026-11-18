@@ -19,6 +19,12 @@ importers:
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.1118.0
         version: 3.1118.0(@aws-sdk/client-dynamodb@3.1118.0)
+      '@fontsource-variable/nunito':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/poppins':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@nixus/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -34,6 +40,12 @@ importers:
       jose:
         specifier: ^6.1.0
         version: 6.2.2
+      lucide-react:
+        specifier: ^0.577.0
+        version: 0.577.0(react@19.2.5)
+      next-themes:
+        specifier: ^0.4.6
+        version: 0.4.6(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
       react:
         specifier: ^19.1.0
         version: 19.2.5

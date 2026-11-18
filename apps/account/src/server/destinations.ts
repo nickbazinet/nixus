@@ -42,3 +42,27 @@ export function resolveDestinationKey(
 ): DestinationKey {
   return isDestinationKey(value) ? value : fallback;
 }
+
+/**
+ * The profile destination for a locale — a key, so the only two paths an entry
+ * redirect can name are the two already in the map above.
+ */
+export function profileDestination(locale: "en" | "fr"): DestinationKey {
+  return locale === "fr" ? DEFAULT_DESTINATION_FR : DEFAULT_DESTINATION;
+}
+
+/**
+ * The two `Location` values the entry redirects issue.
+ *
+ * Built from constants only: the profile path is read out of the map above by
+ * key, and the login URL carries that same KEY plus a locale from a two-member
+ * union. No request-supplied string reaches either, so neither is an open
+ * redirect regardless of what the request asked for.
+ */
+export function profileLocation(locale: "en" | "fr"): string {
+  return destinationPath(profileDestination(locale));
+}
+
+export function loginLocation(locale: "en" | "fr"): string {
+  return `/auth/login?next=${profileDestination(locale)}&lang=${locale}`;
+}

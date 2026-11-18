@@ -43,6 +43,10 @@ const RUNTIME_ROOTS = [
   "react-i18next",
   "i18next",
   "jose",
+  // The shell's theme toggle and its icons. Server-rendered, so they are in the
+  // SSR closure, not only the browser bundle.
+  "next-themes",
+  "lucide-react",
 ];
 
 function run(command: string, args: string[], cwd: string): void {

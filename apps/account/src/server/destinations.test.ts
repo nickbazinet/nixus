@@ -5,6 +5,9 @@ import {
   DEFAULT_DESTINATION,
   destinationPath,
   isDestinationKey,
+  loginLocation,
+  profileDestination,
+  profileLocation,
   resolveDestinationKey,
 } from "./destinations.ts";
 
@@ -73,3 +76,45 @@ describe("destinationPath", () => {
     }
   });
 });
+
+/*
+ * The entry redirects (`/`, `/fr`, and the signed-out arm of `/profile`) build
+ * their `Location` here. There is no signed-out landing page any more, so these
+ * two strings are the only thing standing between an arriving visitor and the
+ * sign-in page — and the only thing that could become an open redirect if a
+ * request-supplied value ever reached them.
+ */
+describe("the entry redirect locations", () => {
+  it("sends each locale to its own profile, by key", () => {
+    expect(profileDestination("en")).toBe("profile");
+    expect(profileDestination("fr")).toBe("profile-fr");
+    expect(profileLocation("en")).toBe("/profile");
+    expect(profileLocation("fr")).toBe("/fr/profile");
+  });
+
+  it("carries the destination KEY into login, never a path", () => {
+    expect(loginLocation("en")).toBe("/auth/login?next=profile&lang=en");
+    expect(loginLocation("fr")).toBe("/auth/login?next=profile-fr&lang=fr");
+  });
+
+  it("resolves its own `next` value back to the key it meant", () => {
+    for (const locale of ["en", "fr"] as const) {
+      const next = new URL(loginLocation(locale), "https://account.invalid").searchParams.get(
+        "next",
+      );
+      expect(resolveDestinationKey(next)).toBe(profileDestination(locale));
+    }
+  });
+
+  it.each(["en", "fr"] as const)("stays same-origin and absolute for %s", (locale) => {
+    for (const location of [profileLocation(locale), loginLocation(locale)]) {
+      expect(location.startsWith("/")).toBe(true);
+      expect(location.startsWith("//")).toBe(false);
+      expect(location).not.toContain("\\");
+      expect(location).not.toContain("..");
+      // No scheme, no authority: a browser can only read these as this origin.
+      expect(location).not.toMatch(/^[a-z][a-z0-9+.-]*:/i);
+    }
+  });
+});
+

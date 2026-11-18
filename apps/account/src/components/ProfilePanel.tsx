@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Button } from "@nixus/shared";
+import { Info } from "lucide-react";
+import { Alert, Button, Card, CardContent } from "@nixus/shared";
 import type { ProfileFields } from "@nixus/shared";
 
 import {
@@ -10,11 +11,11 @@ import {
   type SaveProfileResponse,
 } from "@/actions/account";
 import type { AccountView } from "@/actions/gate";
-import { otherLocale, profilePath, type Locale } from "@/lib/i18n";
+import { profileDestinationKey, type Locale } from "@/lib/i18n";
 import { refusalText } from "@/lib/messages";
 import type { AvatarDerivative } from "@/lib/avatar";
 import { AvatarField } from "./AvatarField";
-import { ProfileForm, type LocationOption } from "./ProfileForm";
+import { ProfileForm, type FieldRefusal, type LocationOption } from "./ProfileForm";
 
 /** Shown for a brand-new account, where the cloud has no profile yet. */
 const EMPTY_FIELDS: ProfileFields = {
@@ -32,6 +33,12 @@ type Status =
   | { readonly kind: "busy" }
   | { readonly kind: "message"; readonly tone: "ok" | "warn"; readonly text: string };
 
+/**
+ * The profile surface, laid out as `apps/desktop/src/routes/profile.tsx` is: a
+ * page title, then one `Card` holding the round picture, the read-only email,
+ * and the form — inside a `max-w-2xl` column centred in the site's own
+ * container. The shell above and below it is the marketing site's.
+ */
 export function ProfilePanel({ view, locale }: { view: AccountView; locale: Locale }) {
   const { t } = useTranslation();
   const [profile, setProfile] = useState(view.profile);
@@ -40,11 +47,16 @@ export function ProfilePanel({ view, locale }: { view: AccountView; locale: Loca
     view.subdivisions,
   );
   const [status, setStatus] = useState<Status>(
-    view.error === null ? { kind: "idle" } : { kind: "message", tone: "warn", text: t(`error.${view.error}`) },
+    view.error === null
+      ? { kind: "idle" }
+      : { kind: "message", tone: "warn", text: t(`error.${view.error}`) },
   );
-  const swap = otherLocale(locale);
+  // Separate from `status` on purpose: a refusal the API attributed to one field
+  // belongs next to that field, and the banner says only that the save failed.
+  const [refusal, setRefusal] = useState<FieldRefusal | null>(null);
 
   function applySave(response: SaveProfileResponse): void {
+    setRefusal(null);
     switch (response.kind) {
       case "saved":
         setProfile(response.profile);
@@ -56,13 +68,12 @@ export function ProfilePanel({ view, locale }: { view: AccountView; locale: Loca
         if (response.profile) setProfile(response.profile);
         setStatus({ kind: "message", tone: "warn", text: t("profile.conflict") });
         return;
-      case "rejected":
-        setStatus({
-          kind: "message",
-          tone: "warn",
-          text: refusalText(t, response),
-        });
+      case "rejected": {
+        const text = refusalText(t, response);
+        if (response.field !== null) setRefusal({ field: response.field, text });
+        setStatus({ kind: "message", tone: "warn", text });
         return;
+      }
       case "indeterminate":
         setStatus({ kind: "message", tone: "warn", text: t("profile.indeterminate") });
         return;
@@ -114,69 +125,93 @@ export function ProfilePanel({ view, locale }: { view: AccountView; locale: Loca
   const busy = status.kind === "busy";
 
   return (
-    <main id="main" className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-12">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{t("profile.heading")}</h1>
-          {view.email ? (
-            <p data-testid="profile-email" className="text-caption text-ink-dim">
-              {t("profile.email")}: {view.email}
-            </p>
+    <main id="main" tabIndex={-1} className="mkt-page-x mkt-container py-10 outline-none md:py-14">
+      <div className="mx-auto max-w-2xl">
+        <div className="mb-section-gap">
+          <h1 className="text-h1 text-ink">{t("profile.heading")}</h1>
+          <p className="mt-1 text-caption text-ink-dim">{t("profile.lead")}</p>
+        </div>
+
+        <div className="space-y-4">
+          {status.kind === "message" ? (
+            <Alert
+              data-testid="profile-status"
+              variant={status.tone === "ok" ? "info" : "over"}
+              role={status.tone === "ok" ? "status" : "alert"}
+              className="rounded-sm"
+            >
+              {status.text}
+            </Alert>
+          ) : null}
+
+          <Card>
+            <CardContent>
+              <div className="mb-4">
+                <AvatarField current={avatar} busy={busy} onPicked={onAvatarPicked} />
+              </div>
+
+              {view.email ? (
+                <div className="space-y-1">
+                  <p className="text-caption text-ink-dim">{t("profile.email")}</p>
+                  {/* Read text, not a control: a `Label` with no `htmlFor`
+                      target is an a11y defect, and `title` carries the full
+                      address the truncation hides. */}
+                  <p
+                    data-testid="profile-email"
+                    className="truncate text-body text-ink"
+                    title={view.email}
+                  >
+                    {view.email}
+                  </p>
+                </div>
+              ) : null}
+
+              {/* AD-16's point-of-collection notice, at the point of
+                  collection. Inset within the card's own padding, so it reads
+                  as a note on the form rather than a band across it. */}
+              <Alert
+                data-testid="cloud-notice"
+                className="mt-4 rounded-sm"
+                icon={<Info aria-hidden="true" />}
+              >
+                {t("profile.notice")}
+              </Alert>
+
+              <div className="mt-4">
+                <ProfileForm
+                  // Keyed on the server-owned version: a conflict reload has to
+                  // replace the draft the user is looking at, not merge into it.
+                  key={profile?.version ?? 0}
+                  initial={profile?.fields ?? EMPTY_FIELDS}
+                  countries={view.countries}
+                  subdivisions={subdivisions}
+                  busy={busy}
+                  refusal={refusal}
+                  onCountryChange={onCountryChange}
+                  onSave={onSave}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* A session can end between the server render and a click, and the
+              status banner then says so. This is the way back from there. */}
+          {status.kind === "message" && status.text === t("profile.signedOut") ? (
+            <Button
+              size="sm"
+              className="mkt-tap"
+              render={
+                <a
+                  data-testid="sign-in-again"
+                  href={`/auth/login?next=${profileDestinationKey(locale)}&lang=${locale}`}
+                >
+                  {t("profile.signInAgain")}
+                </a>
+              }
+            />
           ) : null}
         </div>
-
-        <div className="flex items-center gap-3">
-          <a
-            data-testid="language-toggle"
-            href={profilePath(swap)}
-            hrefLang={swap}
-            className="text-sm font-medium underline underline-offset-4"
-          >
-            {t("language.toggle")}
-          </a>
-          {/* A form POST, so the browser sends `Origin` and the route can verify
-              it. A link would be a GET, which no state change may be. */}
-          <form method="post" action="/auth/signout">
-            <Button type="submit" variant="outline" size="sm" data-testid="sign-out">
-              {t("profile.signOut")}
-            </Button>
-          </form>
-        </div>
-      </header>
-
-      <p className="text-muted-foreground">{t("profile.lead")}</p>
-
-      <Alert data-testid="cloud-notice">{t("profile.notice")}</Alert>
-
-      {status.kind === "message" ? (
-        <Alert
-          data-testid="profile-status"
-          variant={status.tone === "ok" ? "info" : "over"}
-        >
-          {status.text}
-        </Alert>
-      ) : null}
-
-      <AvatarField current={avatar} busy={busy} onPicked={onAvatarPicked} />
-
-      {/* Keyed on the server-owned version: a conflict reload has to replace the
-          draft the user is looking at, not merge into it. */}
-      <ProfileForm
-        key={profile?.version ?? 0}
-        initial={profile?.fields ?? EMPTY_FIELDS}
-        countries={view.countries}
-        subdivisions={subdivisions}
-        busy={busy}
-        onCountryChange={onCountryChange}
-        onSave={onSave}
-      />
-
-      <a
-        href="https://nixusapp.com"
-        className="text-sm text-muted-foreground underline underline-offset-4"
-      >
-        {t("landing.marketingLink")}
-      </a>
+      </div>
     </main>
   );
 }
