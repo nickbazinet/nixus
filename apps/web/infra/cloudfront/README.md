@@ -18,15 +18,21 @@ pnpm --filter @nixus/web verify:routes
 
 ---
 
-## Current live state (what is wrong)
+## Current live state (2026-11-17)
 
-The distribution has **no viewer-request function**. Instead, a custom error
-response maps origin 403/404 to `/index.html` with **HTTP 200**. Consequences:
+Steps 1 and 2 below are applied on `E39FCWVISAOWBF`:
 
-- Every unknown URL returns the homepage with a `200`, so crawlers index
-  unlimited soft-404 duplicates of the homepage.
-- Deep routes only work because the error handler swallows the miss, not because
-  the edge resolves them.
+- `nixus-spa-index-rewrite` (published from `spa-index-rewrite.js`) is the
+  default behaviour's viewer-request function, so every route serves its own
+  prerendered page (`/fr/` in French, `/privacy`, `/terms`, …).
+- Origin 403/404 map to `/404/index.html` with **HTTP 404**, so unknown URLs no
+  longer answer `200` with the homepage.
+
+Steps 3 (old-hostname redirect) and 4 (Search Console) are still open.
+
+Before this, the distribution had no viewer-request function and mapped 403 to
+`/index.html` with `200`: every deep route, including the legal pages and all of
+`/fr/*`, silently served the English homepage.
 
 ## Target live state
 
