@@ -846,12 +846,12 @@ test.describe("the cloud-first launch composition", () => {
           const el = document.querySelector<HTMLElement>(
             `[data-testid="${testId}"]`,
           );
-          return el === null ? null : getComputedStyle(el).backgroundColor;
+          return el === null ? null : getComputedStyle(el).backgroundImage;
         };
         const probe = document.createElement("span");
-        probe.className = "bg-brand";
+        probe.className = "bg-logo-gradient";
         document.body.append(probe);
-        const brand = getComputedStyle(probe).backgroundColor;
+        const brand = getComputedStyle(probe).backgroundImage;
         probe.remove();
         return {
           brand,
@@ -860,10 +860,10 @@ test.describe("the cloud-first launch composition", () => {
         };
       });
 
-    // Polled, not read once, and this is a real hazard rather than caution: Button carries
-    // `transition-colors`, so leaving the inert resolving state animates the fill from the disabled
-    // token to the brand one, and a single read taken the instant the branch settles measures a
-    // colour part-way through that transition — neither end of it.
+    // Polled, not read once, and this is a real hazard rather than caution: the primary variant
+    // carries `disabled:bg-none`, so the fill is absent entirely while the button is inert and
+    // appears only once the session query settles. A single read taken at the wrong instant
+    // measures the inert state rather than the settled one.
     const brand = (await readFills()).brand;
     await expect.poll(async () => (await readFills()).cloud).toBe(brand);
 
@@ -873,6 +873,8 @@ test.describe("the cloud-first launch composition", () => {
     // the inequality above and let this test pass on a screen that has no disclosure at all.
     expect(fills.cloud).not.toBeNull();
     expect(fills.disclosure).not.toBeNull();
+    // And the probe must have painted something, or every comparison above is `none` vs `none`.
+    expect(brand).not.toBe("none");
   });
 
   test("the cloud action is described by its browser-return note", async ({ page }) => {

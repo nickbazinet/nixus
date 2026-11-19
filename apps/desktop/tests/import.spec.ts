@@ -1753,9 +1753,20 @@ test.describe("Import Page — Date Picker Navigation", () => {
       await monthArrow(page, direction).click();
       await expect(calendarMonth(page)).toHaveText(month);
       if (month === "February 2026") {
+        // Probed with the token's own utility rather than a literal: `--brand-on`
+        // has already moved once (white to #0B1020 in the branding change), and a
+        // hard-coded hex is precisely what went stale without failing loudly.
+        const selectedInk = await page.evaluate(() => {
+          const probe = document.createElement("span");
+          probe.className = "text-brand-on";
+          document.body.append(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        });
         await expect(calendarPopup(page).locator(".day-outside[aria-selected=true] button")).toHaveCSS(
           "color",
-          "rgb(255, 255, 255)"
+          selectedInk
         );
       }
       visited.push(await calendarGeometry(page));
