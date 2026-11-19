@@ -1,7 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { loadBillingView } from "@/actions/billing";
-import { BillingPanel } from "@/components/BillingPanel";
+import { loadAccountPage } from "@/actions/page";
+import { AccountPage } from "@/components/AccountPage";
 import { billingLoginLocation } from "@/server/destinations";
 
 /**
@@ -20,12 +20,17 @@ export const Route = createFileRoute("/billing")({
   validateSearch: (search: Record<string, unknown>): { plan?: string } =>
     typeof search.plan === "string" ? { plan: search.plan } : {},
   loader: async () => {
-    const view = await loadBillingView();
+    const data = await loadAccountPage("en");
     // Thrown from the loader, so SSR answers with a redirect and the browser
     // never renders a billing shell it would immediately replace.
-    if (!view.signedIn) throw redirect({ href: billingLoginLocation("en") });
-    return view;
+    if (!data.account.signedIn || !data.billing.signedIn) {
+      throw redirect({ href: billingLoginLocation("en") });
+    }
+    return data;
   },
+  // The only client-side navigations here are the section menu's hash changes,
+  // which must not re-read the account.
+  staleTime: Infinity,
   head: () => ({
     meta: [
       { title: "Plan and billing — Nixus Cloud account" },
@@ -39,10 +44,13 @@ export const Route = createFileRoute("/billing")({
 });
 
 function EnglishBilling() {
+  const { account, billing } = Route.useLoaderData();
   return (
-    <BillingPanel
-      view={Route.useLoaderData()}
+    <AccountPage
+      account={account}
+      billing={billing}
       locale="en"
+      initialSection="subscription"
       planParam={Route.useSearch().plan ?? null}
     />
   );

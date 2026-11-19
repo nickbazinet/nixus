@@ -6,7 +6,9 @@ import {
   CHECKOUT_POLL_INTERVAL_MS,
   capabilityLabel,
   formatPeriodEnd,
+  formatPlanAmount,
   formatPlanPrice,
+  listPriceFor,
   resolvePlanDeepLink,
   statusLabel,
   tierDisplayName,
@@ -82,6 +84,31 @@ describe("formatPlanPrice", () => {
   it("formats in the active locale", () => {
     expect(formatPlanPrice(PLANS[1]!, "fr")).toContain("19,99");
     expect(formatPlanPrice(PLANS[1]!, "en")).toContain("19.99");
+  });
+});
+
+describe("formatPlanAmount", () => {
+  it("shows the amount with the local symbol and no code", () => {
+    expect(formatPlanAmount(PLANS[0]!, "en")).toBe("$9.99");
+    expect(formatPlanAmount(PLANS[0]!, "en")).not.toContain("CAD");
+    expect(formatPlanAmount(PLANS[1]!, "fr")).toContain("19,99");
+  });
+});
+
+describe("listPriceFor", () => {
+  it("finds the one catalog entry carrying a tier", () => {
+    expect(listPriceFor(PLANS, "classic")?.lookup_key).toBe("classic_monthly_cad");
+  });
+
+  it("shows nothing for a tier the catalog does not list", () => {
+    expect(listPriceFor(PLANS, "a_tier_shipped_from_the_dashboard")).toBeNull();
+    expect(listPriceFor([], "classic")).toBeNull();
+  });
+
+  it("shows nothing when the tier has more than one price, since the paid one is unknown", () => {
+    const classic = PLANS.find((plan) => plan.tier === "classic")!;
+    const yearly = { ...classic, lookup_key: "classic_yearly_cad", interval: "year" as const };
+    expect(listPriceFor([...PLANS, yearly], "classic")).toBeNull();
   });
 });
 

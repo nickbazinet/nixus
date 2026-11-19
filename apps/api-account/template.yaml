@@ -676,8 +676,12 @@ Resources:
         - !Sub 'https://${AccountDomainName}/auth/callback'
       LogoutURLs:
         - !Sub 'https://${AccountDomainName}/'
+      # The same two sign-in options the desktop client offers. `Google` is the
+      # pool's federated provider, configured out of band like the pool itself;
+      # it must exist before this client can name it.
       SupportedIdentityProviders:
         - COGNITO
+        - Google
       ExplicitAuthFlows:
         - ALLOW_REFRESH_TOKEN_AUTH
       # Revocation is what makes sign-out mean anything: it is per refresh token on

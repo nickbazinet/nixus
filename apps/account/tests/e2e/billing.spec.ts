@@ -54,6 +54,15 @@ async function signedInBilling(page: Page, path = "/billing"): Promise<void> {
   await expect(page.getByTestId("billing-tier")).toBeVisible();
 }
 
+/**
+ * Opens the plan list. It starts open for anyone without a live subscription,
+ * and behind "Compare and change plan" for a subscriber.
+ */
+async function openPlans(page: Page): Promise<void> {
+  const toggle = page.getByTestId("billing-compare");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+}
+
 /** The status and `Location` the SERVER answered `path` with. See `account.spec.ts`. */
 async function firstHop(page: Page, path: string): Promise<[number, string | null]> {
   const response = await page.goto(`${harness.origin}${path}`);
@@ -118,26 +127,19 @@ test.describe("the signed-out gate", () => {
     ]);
   });
 
-  /* `/billing` has no header entry by design - the account header's own comment
-     records that the French sign-out label already does not fit a 320px bar
-     beside both toggles. The profile page is therefore the ONLY in-app way in,
-     which makes it load-bearing rather than decorative. */
-  test("offers the only in-app way into billing from the profile page", async ({
-    page,
-  }) => {
-    for (const [path, href, label] of [
-      ["/profile", "/billing", "Plan and billing"],
-      ["/fr/profile", "/fr/billing", "Forfait et facturation"],
+  test("reaches billing from the profile page's section menu", async ({ page }) => {
+    for (const [path, label] of [
+      ["/profile", "Subscription"],
+      ["/fr/profile", "Abonnement"],
     ] as const) {
       await signIn(page);
       await page.goto(`${harness.origin}${path}`);
-      const link = page.getByTestId("billing-link");
+      const link = page.getByTestId("account-nav-subscription");
       await expect(link).toBeVisible();
-      await expect(link).toHaveAttribute("href", href);
+      await expect(link).toHaveAttribute("href", "#subscription");
       await expect(link).toHaveText(label);
 
       await link.click();
-      await page.waitForURL(`${harness.origin}${href}`);
       await expect(page.getByTestId("billing-tier")).toBeVisible();
     }
   });
@@ -205,6 +207,9 @@ test.describe("the billing page", () => {
   }) => {
     harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), OVERRIDE_OVER_PAID_ACCOUNT);
     await signedInBilling(page);
+    // A subscriber sees their plan first; the list waits behind a button.
+    await expect(page.getByTestId("billing-plan-classic_monthly_cad")).toBeHidden();
+    await openPlans(page);
 
     await expect(page.getByTestId("billing-plan-classic_monthly_cad")).toHaveText(
       "Switch to this plan",
@@ -265,6 +270,7 @@ test.describe("the billing page", () => {
     await signedInBilling(page);
 
     await expect(page.getByTestId("billing-tier")).toHaveText("Classic");
+    await openPlans(page);
     await expect(page.getByTestId("billing-plans-unavailable")).toBeVisible();
   });
 
@@ -344,6 +350,7 @@ test.describe("starting a checkout", () => {
 
     // AD-18: the page asked for a checkout and is handed `destination: portal`.
     // It opens what it was given without deciding anything itself.
+    await openPlans(page);
     await page.getByTestId("billing-plan-advance_monthly_cad").click();
     await expect(page.getByTestId("stub-hosted-portal")).toBeVisible();
   });
@@ -477,9 +484,11 @@ test.describe("the ?plan= deep link from the pricing page", () => {
 test.describe("the Stripe-return landing page", () => {
   test("polls until the webhook has converged, then shows the new plan", async ({ page }) => {
     harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
-    // The loader's read is the first; the entitlement converges on the second,
-    // which is the first poll. This is AD-5's lag, reproduced.
-    harness.billing.convergeEntitlementAfter = 2;
+    // Signing in lands on the account page, which reads the entitlement once;
+    // the landing page's loader read is the second, and the entitlement
+    // converges on the third, which is the first poll. This is AD-5's lag,
+    // reproduced.
+    harness.billing.convergeEntitlementAfter = 3;
     await signIn(page);
 
     await page.goto(`${harness.origin}/checkout/complete`);
@@ -506,6 +515,10 @@ test.describe("the Stripe-return landing page", () => {
   test("stops at its bound with an honest state, never a failure", async ({ page }) => {
     harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
     await signIn(page);
+    const entitlementReads = () =>
+      harness.billing.calls.filter((call) => call.path === "/entitlement").length;
+    // The account page the sign-in lands on reads it too; that one is not this page's.
+    const before = entitlementReads();
 
     await page.goto(`${harness.origin}/checkout/complete`);
 
@@ -517,9 +530,8 @@ test.describe("the Stripe-return landing page", () => {
     await expect(state).not.toContainText("failed");
     await expect(state).not.toContainText("declined");
 
-    const reads = harness.billing.calls.filter((call) => call.path === "/entitlement").length;
     // One loader read plus six polls, and then it stops asking.
-    expect(reads).toBeLessThanOrEqual(7);
+    expect(entitlementReads() - before).toBeLessThanOrEqual(7);
   });
 
   test("renders the French landing page in French", async ({ page }) => {

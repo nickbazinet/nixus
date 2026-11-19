@@ -69,6 +69,31 @@ export function formatPlanPrice(plan: PlanCatalogEntry, locale: Locale): string 
   }).format(plan.unit_amount_cents / 100);
 }
 
+/** The list amount alone, with the local symbol ("$9.99"); the code is shown beside it. */
+export function formatPlanAmount(plan: PlanCatalogEntry, locale: Locale): string {
+  return new Intl.NumberFormat(INTL_LOCALE[locale], {
+    style: "currency",
+    currency: plan.currency,
+    currencyDisplay: "narrowSymbol",
+  }).format(plan.unit_amount_cents / 100);
+}
+
+/**
+ * The catalog entry to show a subscriber's list price from, for display only.
+ *
+ * The entitlement carries no price, so the price shown beside the plan name is
+ * read from the catalog. It is shown only when exactly one entry carries the
+ * subscription's tier: with a monthly and a yearly price for one tier there is
+ * no telling which one is being paid, and a wrong amount is worse than none.
+ */
+export function listPriceFor(
+  plans: readonly PlanCatalogEntry[],
+  tier: string,
+): PlanCatalogEntry | null {
+  const matches = plans.filter((plan) => plan.tier === tier);
+  return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
 /** Epoch seconds in the active locale's own long date form, or `null` if absent. */
 export function formatPeriodEnd(epochSeconds: number | null, locale: Locale): string | null {
   if (epochSeconds === null || !Number.isFinite(epochSeconds)) return null;

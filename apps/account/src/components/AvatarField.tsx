@@ -21,12 +21,10 @@ export interface AvatarFieldProps {
  * derivative is ever uploaded — the original file and its name stay on the
  * device.
  *
- * Laid out as `apps/desktop/src/components/profile/ProfileAvatarField.tsx`
- * does it: a round 80px face on the left, and a labelled button beside it with
- * the hint under that. An 80px picture carrying no affordance of its own is not
- * discoverable, which is why the action has a visible name rather than being
- * the picture itself. A missing picture gets the same round `CircleUser`
- * placeholder the desktop uses, not a dashed box.
+ * A round face on the left and a labelled button beside it. A picture carrying
+ * no affordance of its own is not discoverable, which is why the action has a
+ * visible name rather than being the picture itself. A missing picture gets the
+ * same round `CircleUser` placeholder the desktop uses, not a dashed box.
  */
 export function AvatarField({ current, busy, onPicked }: AvatarFieldProps) {
   const { t } = useTranslation();
@@ -60,32 +58,31 @@ export function AvatarField({ current, busy, onPicked }: AvatarFieldProps) {
   }
 
   return (
-    <div className="flex items-start gap-4" data-testid="profile-avatar">
+    <div className="flex items-center gap-4" data-testid="profile-avatar">
       {src ? (
         <img
           data-testid="avatar-preview"
           src={src}
           alt={t("profile.avatar.alt")}
-          width={80}
-          height={80}
-          className="size-20 rounded-full border border-line object-cover"
+          width={56}
+          height={56}
+          className="size-14 rounded-full border border-line object-cover"
         />
       ) : (
         <CircleUser
           aria-hidden="true"
           data-testid="avatar-empty"
-          className="size-20 shrink-0 text-ink-faint"
+          className="size-14 shrink-0 text-ink-faint"
         />
       )}
 
       <div className="space-y-1">
-        <p className="text-caption text-ink-dim">{t("profile.avatar.heading")}</p>
+        <p className="text-[13px] font-semibold text-ink">{t("profile.avatar.heading")}</p>
 
         <Button
           type="button"
-          variant="secondary"
-          size="sm"
-          className="mkt-tap"
+          variant="outline"
+          className="mkt-tap h-8 rounded-full px-4 font-semibold"
           disabled={busy}
           onClick={() => input.current?.click()}
           aria-describedby={refusal === null ? undefined : errorId}

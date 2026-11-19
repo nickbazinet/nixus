@@ -12,14 +12,30 @@ import type { Locale } from "./i18n";
 
 const MARKETING_ORIGIN = "https://nixusapp.com";
 
+function marketingUrl(locale: Locale, path: string): string {
+  return locale === "fr" ? `${MARKETING_ORIGIN}/fr${path}` : `${MARKETING_ORIGIN}${path}`;
+}
+
 export function marketingHomeUrl(locale: Locale): string {
-  return locale === "fr" ? `${MARKETING_ORIGIN}/fr/` : `${MARKETING_ORIGIN}/`;
+  return marketingUrl(locale, "/");
+}
+
+export function marketingFeaturesUrl(locale: Locale): string {
+  return marketingUrl(locale, "/features");
+}
+
+export function marketingPricingUrl(locale: Locale): string {
+  return marketingUrl(locale, "/pricing");
+}
+
+export function marketingDownloadUrl(locale: Locale): string {
+  return marketingUrl(locale, "/download");
 }
 
 export function marketingPrivacyUrl(locale: Locale): string {
-  return locale === "fr" ? `${MARKETING_ORIGIN}/fr/privacy` : `${MARKETING_ORIGIN}/privacy`;
+  return marketingUrl(locale, "/privacy");
 }
 
 export function marketingTermsUrl(locale: Locale): string {
-  return locale === "fr" ? `${MARKETING_ORIGIN}/fr/terms` : `${MARKETING_ORIGIN}/terms`;
+  return marketingUrl(locale, "/terms");
 }

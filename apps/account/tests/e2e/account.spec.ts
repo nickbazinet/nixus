@@ -85,8 +85,8 @@ test("saves the profile, including a country-dependent subdivision", async ({ pa
   await page.getByLabel("Income range").selectOption("100k_149k");
   await page.getByLabel("Currency").selectOption("CAD");
   await page.getByLabel("Country").selectOption("CA");
-  await expect(page.getByLabel("State, province or region")).toBeEnabled();
-  await page.getByLabel("State, province or region").selectOption("CA-QC");
+  await expect(page.getByLabel("Province, state or region")).toBeEnabled();
+  await page.getByLabel("Province, state or region").selectOption("CA-QC");
 
   await page.getByTestId("profile-save").click();
   await expect(page.getByTestId("profile-status")).toContainText("Profile saved.");
@@ -321,7 +321,10 @@ test.describe("the site chrome", () => {
       "href",
       "https://nixusapp.com/",
     );
-    await expect(page.getByTestId("header-rule")).toBeAttached();
+    await expect(page.getByRole("link", { name: "Pricing" })).toHaveAttribute(
+      "href",
+      "https://nixusapp.com/pricing",
+    );
     await expect(page.getByTestId("footer-terms")).toHaveAttribute(
       "href",
       "https://nixusapp.com/terms",
@@ -360,49 +363,52 @@ test.describe("the site chrome", () => {
       };
     });
 
-    // The Warm Editorial `--bg` nixusapp.com paints in light mode, and the two
-    // faces it serves. Pinned because "looks like the same product" is the
-    // requirement, and a token drift is invisible in a diff.
-    expect(shell.background).toBe("rgb(250, 248, 245)");
+    // The account page's own `--bg`, and the two faces nixusapp.com serves.
+    // Pinned because a token drift is invisible in a diff.
+    expect(shell.background).toBe("rgb(248, 251, 255)");
     expect(shell.body).toContain("Nunito");
     expect(shell.heading).toContain("Poppins");
   });
 
-  test("switches locale through the header toggle", async ({ page }) => {
+  test("switches sections from the menu, one card at a time", async ({ page }) => {
     await signIn(page);
 
-    await page.getByTestId("language-toggle").click();
-    await expect(page.getByTestId("language-toggle-option-fr")).toHaveAttribute(
-      "href",
-      "/fr/profile",
-    );
-    await page.getByTestId("language-toggle-option-fr").click();
-    await page.waitForURL(`${harness.origin}/fr/profile`);
-    await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+    await expect(page.getByTestId("account-nav-personal")).toHaveAttribute("aria-current", "page");
+    await expect(page.getByTestId("profile-form")).toBeVisible();
+    await expect(page.getByTestId("section-subscription")).toBeHidden();
 
-    await page.getByTestId("language-toggle").click();
-    await expect(page.getByTestId("language-toggle-option-en")).toHaveAttribute(
-      "href",
-      "/profile",
-    );
+    await page.getByTestId("account-nav-subscription").click();
+    await expect(page).toHaveURL(`${harness.origin}/profile#subscription`);
+    await expect(page.getByTestId("billing-tier")).toBeVisible();
+    await expect(page.getByTestId("profile-form")).toBeHidden();
+
+    for (const section of ["payment", "invoices", "signin"] as const) {
+      await page.getByTestId(`account-nav-${section}`).click();
+      await expect(page.getByTestId(`section-${section}`)).toBeVisible();
+      await expect(page.getByTestId(`account-nav-${section}`)).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+    }
+
+    // The menu is history: back walks the sections, and a reload keeps one.
+    await page.goBack();
+    await expect(page.getByTestId("section-invoices")).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId("section-invoices")).toBeVisible();
   });
 
-  test("applies the chosen theme before paint on the next load", async ({ page }) => {
+  test("keeps an unsaved draft across a trip to another section", async ({ page }) => {
     await signIn(page);
-    await expect(page.locator("html")).not.toHaveClass(/dark/);
 
-    await page.getByTestId("theme-toggle").click();
-    await page.getByTestId("theme-toggle-option-dark").click();
-    await expect(page.locator("html")).toHaveClass(/dark/);
+    await page.getByLabel("First name").fill("Draft");
+    await page.getByTestId("account-nav-signin").click();
+    await expect(page.getByTestId("signin-email")).toContainText(EMAIL);
+    await page.getByTestId("account-nav-personal").click();
+    await expect(page.getByLabel("First name")).toHaveValue("Draft");
 
-    // The inline head script, not React: a reload that only resolved the theme
-    // after hydration would flash light first, which is what it exists to stop.
-    await page.reload({ waitUntil: "commit" });
-    await expect(page.locator("html")).toHaveClass(/dark/);
-
-    await page.getByTestId("theme-toggle").click();
-    await page.getByTestId("theme-toggle-option-light").click();
-    await expect(page.locator("html")).not.toHaveClass(/dark/);
+    await page.getByTestId("profile-cancel").click();
+    await expect(page.getByLabel("First name")).toHaveValue("");
   });
 
   test("fits every supported width with no horizontal overflow", async ({ page }) => {

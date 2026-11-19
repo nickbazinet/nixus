@@ -14,40 +14,32 @@
    generated. Point the scanner at the real source path. */
 @source "../../../../packages/shared/src/**/*.{ts,tsx}";
 
-/* The account app shares the marketing site's token layer so the two surfaces
-   read as one product. It ships no page-specific palette of its own.
-
-   "Warm Editorial" — the marketing-only light palette — is reproduced verbatim
-   from `apps/web/src/styles/main.css`. It overrides the VALUES of the shared
-   spine variables, never their names, so re-declaring `--bg` here reaches
-   `bg-page`, `bg-background`, every shared primitive, and hand-written
-   `var(--background)` in one step. `:root:not(.dark)` rather than `.light` for
-   the same three reasons it gives: `next-themes` writes `dark` onto `<html>`,
-   its 0-2-0 specificity clears `tokens.css`'s `:root` regardless of import
-   order, and `.dark` is untouched so this cannot leak into dark mode.
-
-   Colour only. No radius, no font, no type scale, no status/chart change —
-   the account app renders none of those families differently. */
-:root:not(.dark) {
+/* The account surface's own light palette: a cool near-white page with white
+   cards. It overrides the VALUES of the shared spine variables, never their
+   names, so re-declaring `--bg` here reaches `bg-page`, `bg-background`, every
+   shared primitive, and hand-written `var(--background)` in one step. The app
+   is light only, so `:root` is the whole story. Colour only. */
+:root {
   /* Surfaces */
-  --bg: #FAF8F5;
+  --bg: #F8FBFF;
   --card: #FFFFFF;
-  --chrome: #F5F2EC;
-  --hover: #FBF9F6;
+  --chrome: #FFFFFF;
+  --hover: #F4F7FD;
 
   /* Ink */
-  --ink: #1C1917;
-  --ink-dim: #655D54;
-  --ink-faint: #71685F;
+  --ink: #12122A;
+  --ink-dim: #545B70;
+  --ink-faint: #5F667A;
 
   /* Hairlines */
-  --line: #E8E3DA;
-  --line-strong: #D8D1C5;
+  --line: #E3E8F3;
+  --line-strong: #CDD5E6;
 
-  /* Brand and action. Nothing else. */
+  /* Brand and action */
   --brand: #5E78ED;
   --brand-ink: #3A4FB8;
-  --brand-soft: #EDF0FD;
+  --brand-on: #FFFFFF;
+  --brand-soft: #E9EDFD;
   --focus-ring: #5E78ED;
 }
 
@@ -80,6 +72,13 @@
 .mkt-container {
   margin-inline: auto;
   max-inline-size: var(--mkt-container);
+}
+
+/* The account page's own measure: narrower than the marketing container, so the
+   header, the page and the footer all line up on one column. */
+.account-container {
+  margin-inline: auto;
+  max-inline-size: 64rem;
 }
 
 /* The 44px phone/tablet touch floor.

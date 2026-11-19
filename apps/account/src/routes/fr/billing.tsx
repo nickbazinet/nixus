@@ -1,7 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { loadBillingView } from "@/actions/billing";
-import { BillingPanel } from "@/components/BillingPanel";
+import { loadAccountPage } from "@/actions/page";
+import { AccountPage } from "@/components/AccountPage";
 import { billingLoginLocation } from "@/server/destinations";
 
 /** `GET /fr/billing` — the French half of the billing page. See `routes/billing.tsx`. */
@@ -13,10 +13,13 @@ export const Route = createFileRoute("/fr/billing")({
   validateSearch: (search: Record<string, unknown>): { plan?: string } =>
     typeof search.plan === "string" ? { plan: search.plan } : {},
   loader: async () => {
-    const view = await loadBillingView();
-    if (!view.signedIn) throw redirect({ href: billingLoginLocation("fr") });
-    return view;
+    const data = await loadAccountPage("fr");
+    if (!data.account.signedIn || !data.billing.signedIn) {
+      throw redirect({ href: billingLoginLocation("fr") });
+    }
+    return data;
   },
+  staleTime: Infinity,
   head: () => ({
     meta: [
       { title: "Forfait et facturation — Compte Nixus Cloud" },
@@ -30,10 +33,13 @@ export const Route = createFileRoute("/fr/billing")({
 });
 
 function FrenchBilling() {
+  const { account, billing } = Route.useLoaderData();
   return (
-    <BillingPanel
-      view={Route.useLoaderData()}
+    <AccountPage
+      account={account}
+      billing={billing}
       locale="fr"
+      initialSection="subscription"
       planParam={Route.useSearch().plan ?? null}
     />
   );

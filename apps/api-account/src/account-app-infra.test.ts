@@ -65,9 +65,8 @@ describe("AD-10 the confidential web client", () => {
     ]);
   });
 
-  it("federates with Cognito only, because Google is deferred", () => {
-    expect(client.SupportedIdentityProviders).toEqual(["COGNITO"]);
-    expect(JSON.stringify(client)).not.toContain("Google");
+  it("offers the same sign-in options as the desktop: email and password, and Google", () => {
+    expect(client.SupportedIdentityProviders).toEqual(["COGNITO", "Google"]);
   });
 
   /* Revocation is what makes sign-out mean anything, and a 15-minute access token
