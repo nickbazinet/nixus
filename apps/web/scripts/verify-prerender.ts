@@ -3,7 +3,7 @@
  *
  * Reads `.output/public` from disk — no server, no network — and fails the
  * build when a route's HTML language, body locale, canonical URL, Open Graph
- * URL, hreflang alternates or JSON-LD disagree with each other, with the route,
+ * URL or JSON-LD disagree with each other, with the route,
  * or with the canonical origin.
  *
  * Run: pnpm --filter @nixus/web verify:prerender
@@ -75,13 +75,6 @@ function checkJsonLd(scope: string, html: string): void {
   }
 }
 
-/**
- * The hero backdrop is a CSS `::before` background, so the browser cannot
- * discover it from the markup. The preload is what makes it discoverable, and it
- * only helps if it reaches the prerendered HTML — which is what this checks,
- * along with the priority hint and the colour-scheme split that keeps exactly
- * one variant in flight. Heroless routes must ship none.
- */
 function checkRoute(route: ExpectedRoute): void {
   const scope = route.canonicalPath;
   const html = read(`.output/public/${route.htmlFile}`);
@@ -101,19 +94,7 @@ function checkRoute(route: ExpectedRoute): void {
   const ogUrl = metaContent(html, { property: "og:url" });
   check(scope, ogUrl === canonicalUrl, `og:url is ${ogUrl}, expected ${canonicalUrl}`);
 
-  const alternates = alternateHrefs(html);
-  for (const [hrefLang, path] of [
-    ["en", route.alternates.en],
-    ["fr", route.alternates.fr],
-    ["x-default", route.alternates.en],
-  ] as const) {
-    const expected = `${EXPECTED_ORIGIN}${path}`;
-    check(
-      scope,
-      alternates.get(hrefLang) === expected,
-      `hreflang="${hrefLang}" is ${alternates.get(hrefLang)}, expected ${expected}`,
-    );
-  }
+  check(scope, alternateHrefs(html).size === 0, "advertises hreflang alternates for a single-language site");
 
   for (const retired of RETIRED_ORIGINS) {
     check(scope, !html.includes(retired), `still references retired origin ${retired}`);
@@ -159,5 +140,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `verify:prerender — ${EXPECTED_ROUTES.length} routes on ${EXPECTED_ORIGIN}: language, canonical, og:url, hreflang and JSON-LD agree.`,
+  `verify:prerender — ${EXPECTED_ROUTES.length} routes on ${EXPECTED_ORIGIN}: language, canonical, og:url and JSON-LD agree.`,
 );

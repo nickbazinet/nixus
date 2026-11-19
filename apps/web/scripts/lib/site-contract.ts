@@ -12,7 +12,7 @@ export const EXPECTED_REPOSITORY_URL = "https://github.com/nickbazinet/nixus";
 /** Hostnames retired from the site's identity; must not appear in output. */
 export const RETIRED_ORIGINS = ["https://nixus.nicolasbazinet.net"] as const;
 
-export type ExpectedLocale = "en" | "fr";
+export type ExpectedLocale = "en";
 
 export type ExpectedRoute = {
   /** Canonical path, exactly as it must appear in canonical/og:url. */
@@ -20,125 +20,29 @@ export type ExpectedRoute = {
   locale: ExpectedLocale;
   /** Prerendered object, relative to the static output root. */
   htmlFile: string;
-  /** Distinctive body copy that only this locale's bundle produces. */
+  /** Distinctive body copy the shell always renders. */
   localeMarker: string;
-  /** hreflang alternates this route must advertise. */
-  alternates: Record<ExpectedLocale, string>;
 };
 
-const HOME_ALTERNATES: Record<ExpectedLocale, string> = { en: "/", fr: "/fr/" };
-const BETA_ALTERNATES: Record<ExpectedLocale, string> = {
-  en: "/beta",
-  fr: "/fr/beta",
-};
-const NOT_FOUND_ALTERNATES: Record<ExpectedLocale, string> = {
-  en: "/404",
-  fr: "/fr/404",
-};
-const TERMS_ALTERNATES: Record<ExpectedLocale, string> = {
-  en: "/terms",
-  fr: "/fr/terms",
-};
-const PRIVACY_ALTERNATES: Record<ExpectedLocale, string> = {
-  en: "/privacy",
-  fr: "/fr/privacy",
-};
-const PRICING_ALTERNATES: Record<ExpectedLocale, string> = {
-  en: "/pricing",
-  fr: "/fr/pricing",
-};
+const MARKER = "Skip to main content";
 
-const MARKER: Record<ExpectedLocale, string> = {
-  en: "Skip to main content",
-  fr: "Aller au contenu principal",
-};
+function route(canonicalPath: string): ExpectedRoute {
+  const htmlFile = canonicalPath === "/" ? "index.html" : `${canonicalPath.slice(1)}/index.html`;
+  return { canonicalPath, locale: "en", htmlFile, localeMarker: MARKER };
+}
 
 export const EXPECTED_ROUTES: readonly ExpectedRoute[] = [
-  {
-    canonicalPath: "/",
-    locale: "en",
-    htmlFile: "index.html",
-    localeMarker: MARKER.en,
-    alternates: HOME_ALTERNATES,
-  },
-  {
-    canonicalPath: "/fr/",
-    locale: "fr",
-    htmlFile: "fr/index.html",
-    localeMarker: MARKER.fr,
-    alternates: HOME_ALTERNATES,
-  },
-  {
-    canonicalPath: "/beta",
-    locale: "en",
-    htmlFile: "beta/index.html",
-    localeMarker: MARKER.en,
-    alternates: BETA_ALTERNATES,
-  },
-  {
-    canonicalPath: "/fr/beta",
-    locale: "fr",
-    htmlFile: "fr/beta/index.html",
-    localeMarker: MARKER.fr,
-    alternates: BETA_ALTERNATES,
-  },
-  {
-    canonicalPath: "/terms",
-    locale: "en",
-    htmlFile: "terms/index.html",
-    localeMarker: MARKER.en,
-    alternates: TERMS_ALTERNATES,
-  },
-  {
-    canonicalPath: "/fr/terms",
-    locale: "fr",
-    htmlFile: "fr/terms/index.html",
-    localeMarker: MARKER.fr,
-    alternates: TERMS_ALTERNATES,
-  },
-  {
-    canonicalPath: "/privacy",
-    locale: "en",
-    htmlFile: "privacy/index.html",
-    localeMarker: MARKER.en,
-    alternates: PRIVACY_ALTERNATES,
-  },
-  {
-    canonicalPath: "/fr/privacy",
-    locale: "fr",
-    htmlFile: "fr/privacy/index.html",
-    localeMarker: MARKER.fr,
-    alternates: PRIVACY_ALTERNATES,
-  },
-  {
-    canonicalPath: "/pricing",
-    locale: "en",
-    htmlFile: "pricing/index.html",
-    localeMarker: MARKER.en,
-    alternates: PRICING_ALTERNATES,
-  },
-  {
-    canonicalPath: "/fr/pricing",
-    locale: "fr",
-    htmlFile: "fr/pricing/index.html",
-    localeMarker: MARKER.fr,
-    alternates: PRICING_ALTERNATES,
-  },
-  {
-    canonicalPath: "/404",
-    locale: "en",
-    htmlFile: "404/index.html",
-    localeMarker: MARKER.en,
-    alternates: NOT_FOUND_ALTERNATES,
-  },
-  {
-    canonicalPath: "/fr/404",
-    locale: "fr",
-    htmlFile: "fr/404/index.html",
-    localeMarker: MARKER.fr,
-    alternates: NOT_FOUND_ALTERNATES,
-  },
-];
+  "/",
+  "/features",
+  "/pricing",
+  "/mission",
+  "/privacy",
+  "/founding-users",
+  "/download",
+  "/terms",
+  "/privacy-policy",
+  "/404",
+].map(route);
 
 /** Paths the sitemap is expected to advertise: indexable routes only. */
 export const SITEMAP_PATHS: readonly string[] = EXPECTED_ROUTES.filter(

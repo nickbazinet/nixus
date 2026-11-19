@@ -10,14 +10,13 @@
  */
 
 import { CONTACT_EMAIL } from "@/content/contact";
-import i18n from "@/lib/i18n";
-import { SITE, absoluteUrl, type Locale } from "@/lib/site";
+import { SITE, absoluteUrl } from "@/lib/site";
 
 const WEBSITE_ID = absoluteUrl("/#website");
 const ORGANIZATION_ID = absoluteUrl("/#organization");
 
-/** Both UI languages the site actually ships, as IETF tags. */
-const SITE_LANGUAGES = ["en-CA", "fr-CA"] as const;
+/** The UI language the site actually ships, as an IETF tag. */
+const SITE_LANGUAGES = ["en-CA"] as const;
 
 // public/icon-512.png, committed at these dimensions.
 const LOGO = {
@@ -57,17 +56,13 @@ export type SiteGraph = {
   "@graph": readonly [WebSiteNode, OrganizationNode];
 };
 
-function websiteNode(locale: Locale): WebSiteNode {
-  const t = i18n.getFixedT(locale);
-  const description =
-    (t("meta.home.description") as string) || SITE.defaultDescription;
-
+function websiteNode(): WebSiteNode {
   return {
     "@type": "WebSite",
     "@id": WEBSITE_ID,
     url: absoluteUrl("/"),
     name: SITE.name,
-    description,
+    description: SITE.defaultDescription,
     inLanguage: SITE_LANGUAGES,
     publisher: { "@id": ORGANIZATION_ID },
   };
@@ -91,11 +86,11 @@ function organizationNode(): OrganizationNode {
   };
 }
 
-/** The `WebSite` + `Organization` graph for a page in `locale`. */
-export function siteGraph(locale: Locale): SiteGraph {
+/** The `WebSite` + `Organization` graph shared by every page. */
+export function siteGraph(): SiteGraph {
   return {
     "@context": "https://schema.org",
-    "@graph": [websiteNode(locale), organizationNode()],
+    "@graph": [websiteNode(), organizationNode()],
   };
 }
 
@@ -110,12 +105,12 @@ export function serializeJsonLd(graph: SiteGraph): string {
 }
 
 /** Head-script descriptor consumed by TanStack Start's `head()`. */
-export function jsonLdScript(locale: Locale): {
+export function jsonLdScript(): {
   type: string;
   children: string;
 } {
   return {
     type: "application/ld+json",
-    children: serializeJsonLd(siteGraph(locale)),
+    children: serializeJsonLd(siteGraph()),
   };
 }

@@ -1,32 +1,16 @@
 import {
   HeadContent,
+  Link,
   Outlet,
   Scripts,
   createRootRoute,
-  useLocation,
   useRouterState,
 } from "@tanstack/react-router";
 import { useEffect } from "react";
-import { I18nextProvider, useTranslation } from "react-i18next";
-import { ThemeProvider } from "next-themes";
 
 import appCss from "../styles/main.css?url";
-import { PreAlphaBanner } from "../components/PreAlphaBanner";
 import { SiteFooter } from "../components/SiteFooter";
 import { SiteHeader } from "../components/SiteHeader";
-import { DownloadStateProvider } from "../features/download/DownloadStateContext";
-import { i18nForLocale } from "@/lib/i18n";
-import { localeFromPath } from "@/lib/localePaths";
-import { useRevealOnScroll } from "@/lib/useRevealOnScroll";
-import type { Locale } from "@/lib/site";
-
-// Inline script that runs synchronously before React hydrates so the
-// `dark` class is on `<html>` on first paint. Without this, returning
-// visitors with `localStorage.theme === 'dark'` see a brief light flash
-// while the React tree mounts and `next-themes` reads localStorage.
-// Also applies `data-pre-alpha-dismissed` so the pre-alpha banner stays
-// hidden via CSS for returning dismissed visitors (no flash).
-const FLASH_MITIGATION = `(function(){try{var t=localStorage.getItem('theme');var dark=t==='dark'||((t==='system'||!t)&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(dark){document.documentElement.classList.add('dark');}document.documentElement.style.colorScheme=dark?'dark':'light';}catch(e){}try{if(localStorage.getItem('nixus.preAlphaDismissed')==='1'){document.documentElement.setAttribute('data-pre-alpha-dismissed','1');}}catch(e){}try{if('IntersectionObserver' in window&&!window.matchMedia('(prefers-reduced-motion: reduce)').matches){document.documentElement.setAttribute('data-reveal','on');}}catch(e){}})();`;
 
 export const Route = createRootRoute({
   head: () => ({
@@ -39,10 +23,6 @@ export const Route = createRootRoute({
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
       { rel: "icon", type: "image/x-icon", href: "/favicon.ico" },
       { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" },
-    ],
-    scripts: [
-      // No `defer` / `async`: must run before React hydration.
-      { children: FLASH_MITIGATION },
     ],
   }),
   shellComponent: RootDocument,
@@ -63,66 +43,68 @@ function useCloudflareAnalytics(): void {
   }, []);
 }
 
-// Inner shell — split out so it can call `useTranslation()` from inside
-// the `<I18nextProvider>` tree. The provider must wrap any consumer.
-function ShellInner({ locale }: { locale: Locale }) {
-  const { t } = useTranslation();
-  const { pathname } = useLocation();
-  useCloudflareAnalytics();
-  // Re-swept per route: the reveal targets differ between pages, and a client
-  // navigation mounts a new set that the previous observer never saw.
-  useRevealOnScroll(pathname);
+/** Home-only strip above the header. */
+function AnnouncementBar() {
   return (
-    // `suppressHydrationWarning` covers the `class` and `style` that
-    // FLASH_MITIGATION writes onto this element before React hydrates. Without
-    // it every page logs an attribute mismatch React explicitly will not patch,
-    // which is the documented next-themes pattern rather than a workaround.
-    <html lang={locale} suppressHydrationWarning>
-      <head>
-        <HeadContent />
-      </head>
-      <body className="font-sans antialiased">
-        {/* ThemeProvider lives inside <body>, not around <html>. Wrapping the
-            document element put next-themes' synchronous pre-paint script
-            *outside* the document in the React tree, and React 19 refuses to
-            order a sync script there ("Cannot render a sync or defer <script>
-            outside the main document"). Inside body it is a normal in-document
-            script, and prepaint is unaffected: FLASH_MITIGATION in <head> has
-            already resolved the theme before any of this parses. */}
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <a
-            href="#main-content"
-            className="absolute left-2 top-2 z-[100] -translate-y-16 rounded-md bg-background px-3 py-2 text-sm font-medium text-foreground shadow outline-none focus-visible:translate-y-0 focus-visible:ring-3 focus-visible:ring-ring/50 motion-safe:transition-transform"
-          >
-            {t("skipToMain")}
-          </a>
-          <DownloadStateProvider>
-            <PreAlphaBanner />
-            <SiteHeader />
-            <main
-              id="main-content"
-              tabIndex={-1}
-              className="min-h-[calc(100dvh-4rem)] outline-none"
-            >
-              <Outlet />
-            </main>
-            <SiteFooter />
-          </DownloadStateProvider>
-        </ThemeProvider>
-        <Scripts />
-      </body>
-    </html>
+    <div className="bg-night px-4 py-2.5 text-center text-sm text-white/90">
+      Alpha: Founding Users get early access and a discounted price, forever.{" "}
+      <Link
+        to="/founding-users"
+        className="nx-focus rounded-sm font-bold text-white underline underline-offset-4"
+      >
+        See the program
+      </Link>
+    </div>
   );
 }
 
-// Concurrent prerendering mutates the i18n singleton's `language` across pages,
-// so locale is derived from the route path instead — never from that state.
+/** Gradient referenced by `.nx-icon-gradient` line icons. */
+function IconGradientDefs() {
+  return (
+    <svg width="0" height="0" aria-hidden="true" focusable="false" className="absolute">
+      <defs>
+        <linearGradient
+          id="nx-icon-gradient"
+          gradientUnits="userSpaceOnUse"
+          x1="2"
+          y1="2"
+          x2="22"
+          y2="22"
+        >
+          <stop offset="0%" stopColor="#5E78ED" />
+          <stop offset="55%" stopColor="#9978ED" />
+          <stop offset="100%" stopColor="#DE50A4" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
+
 function RootDocument() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const locale = localeFromPath(pathname);
+  useCloudflareAnalytics();
+
   return (
-    <I18nextProvider i18n={i18nForLocale(locale)}>
-      <ShellInner locale={locale} />
-    </I18nextProvider>
+    <html lang="en">
+      <head>
+        <HeadContent />
+      </head>
+      <body className="bg-page font-sans text-ink antialiased">
+        <IconGradientDefs />
+        <a
+          href="#main-content"
+          className="absolute left-2 top-2 z-[100] -translate-y-16 rounded-md bg-white px-3 py-2 text-sm font-bold text-ink shadow focus-visible:translate-y-0 motion-safe:transition-transform"
+        >
+          Skip to main content
+        </a>
+        {pathname === "/" ? <AnnouncementBar /> : null}
+        <SiteHeader />
+        <main id="main-content" tabIndex={-1} className="outline-none">
+          <Outlet />
+        </main>
+        <SiteFooter />
+        <Scripts />
+      </body>
+    </html>
   );
 }

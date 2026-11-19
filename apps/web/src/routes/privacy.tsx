@@ -1,20 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { PrivacyPage, PRIVACY_PAGE_PATHS } from "@/components/LegalPage";
-import i18n, { applyRouteLocale } from "@/lib/i18n";
+import { PrivacyPage } from "@/components/pages/PrivacyPage";
 import { buildMeta } from "@/lib/meta";
 
 export const Route = createFileRoute("/privacy")({
-  beforeLoad: () => applyRouteLocale("en"),
-  head: () => {
-    const t = i18n.getFixedT("en");
-    return buildMeta({
-      locale: "en",
-      path: PRIVACY_PAGE_PATHS.en,
-      title: t("privacyPage.meta.title"),
-      description: t("privacyPage.meta.description"),
-      alternates: PRIVACY_PAGE_PATHS,
-    });
-  },
-  component: () => <PrivacyPage locale="en" />,
+  head: () =>
+    buildMeta({
+      path: "/privacy",
+      title: "Privacy — Nixus",
+      description: "No bank logins. Your records live on your computer, and cloud features are off until you turn them on. Exactly what leaves your computer, and when.",
+    }),
+  component: PrivacyPage,
 });

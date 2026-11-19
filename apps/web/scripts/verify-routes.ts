@@ -70,7 +70,7 @@ function checkAssetsPassThrough(): void {
 }
 
 function checkUnknownRouteIsNotHomepage(): void {
-  for (const unknown of ["/does-not-exist", "/fr/does-not-exist"]) {
+  for (const unknown of ["/does-not-exist", "/beta"]) {
     const uri = rewriteUri(rewrite, unknown);
     check(`unknown ${unknown}`, uri !== "/index.html", "was mapped to the homepage");
     check(

@@ -1,38 +1,28 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useTranslation } from "react-i18next";
+import { createFileRoute } from "@tanstack/react-router";
 
-import i18n, { applyRouteLocale } from "@/lib/i18n";
-import { NOT_FOUND_PAGE_PATHS } from "@/lib/localePaths";
+import { ButtonLink } from "@/components/ui";
 import { buildMeta } from "@/lib/meta";
 
 export const Route = createFileRoute("/404")({
-  beforeLoad: () => applyRouteLocale("en"),
-  head: () => {
-    const t = i18n.getFixedT("en");
-    return buildMeta({
-      locale: "en",
-      path: NOT_FOUND_PAGE_PATHS.en,
-      title: t("meta.notFound.title"),
-      description: t("meta.notFound.description"),
-      alternates: NOT_FOUND_PAGE_PATHS,
+  head: () =>
+    buildMeta({
+      path: "/404",
+      title: "Page not found — Nixus",
+      description: "This page does not exist.",
       noindex: true,
-    });
-  },
+    }),
   component: NotFoundPage,
 });
 
 function NotFoundPage() {
-  const { t } = useTranslation();
   return (
-    <section className="mkt-page-x mkt-section-y mx-auto flex max-w-[1280px] flex-col items-center justify-center gap-4 text-center">
-      <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">404</h1>
-      <p className="text-lead text-muted-foreground">{t("notFound.heading")}</p>
-      <Link
-        to="/"
-        className="mkt-tap inline-flex items-center text-sm font-medium underline underline-offset-4"
-      >
-        {t("notFound.backHome")}
-      </Link>
+    <section className="nx-container nx-section flex min-h-[60vh] flex-col items-center justify-center text-center">
+      <p className="nx-gradient-text font-display text-7xl font-semibold">404</p>
+      <h1 className="mt-4 text-display-s font-semibold">This page went missing</h1>
+      <p className="mt-3 text-ink-soft">It may have moved when the site was redesigned.</p>
+      <ButtonLink to="/" className="mt-8">
+        Back to home
+      </ButtonLink>
     </section>
   );
 }
