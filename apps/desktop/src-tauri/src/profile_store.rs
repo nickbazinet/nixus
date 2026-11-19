@@ -544,7 +544,8 @@ pub fn probe_cloud_copy(dir: &Path, sub: &str) -> Result<CloudCopyState, AppErro
         return Ok(CloudCopyState::Unreadable);
     };
 
-    if members.get("schema_version").and_then(Value::as_u64) != Some(u64::from(PROFILE_SCHEMA_VERSION))
+    if members.get("schema_version").and_then(Value::as_u64)
+        != Some(u64::from(PROFILE_SCHEMA_VERSION))
     {
         return Ok(CloudCopyState::Unreadable);
     }
@@ -865,7 +866,9 @@ mod tests {
                 assert_eq!(message, REFUSED_MESSAGE);
                 assert!(recoverable, "a refused field is always fixable by the user");
                 let field = field.clone().expect("a validation refusal names its field");
-                let reason = reason.clone().expect("a validation refusal names its reason");
+                let reason = reason
+                    .clone()
+                    .expect("a validation refusal names its reason");
                 assert!(
                     crate::account_contract::VALIDATION_FIELDS.contains(&field.as_str()),
                     "{field} is not in the shared contract's field vocabulary"
@@ -944,8 +947,12 @@ mod tests {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(root.path());
 
-        let error = save_profile(&dir, SUB, &income_input(income_bracket, income_bracket_currency))
-            .expect_err("save rejects");
+        let error = save_profile(
+            &dir,
+            SUB,
+            &income_input(income_bracket, income_bracket_currency),
+        )
+        .expect_err("save rejects");
 
         assert_eq!(refusal(&error).0, expected_field);
         assert!(!profile_path(&dir, SUB).exists());
@@ -967,7 +974,10 @@ mod tests {
     }
 
     fn us_subs() -> Vec<Subdivision> {
-        vec![sub("US-NY", "New York", None), sub("US-CA", "California", None)]
+        vec![
+            sub("US-NY", "New York", None),
+            sub("US-CA", "California", None),
+        ]
     }
 
     fn assert_subdivision_rejected(
@@ -1026,14 +1036,27 @@ mod tests {
 
     #[test]
     fn a_malformed_birth_date_is_rejected() {
-        for candidate in ["not-a-date", "14/03/1985", "1985-3-14", "1985-13-01", "1985"] {
-            assert_eq!(assert_birth_date_rejected(candidate), "invalid_format", "{candidate}");
+        for candidate in [
+            "not-a-date",
+            "14/03/1985",
+            "1985-3-14",
+            "1985-13-01",
+            "1985",
+        ] {
+            assert_eq!(
+                assert_birth_date_rejected(candidate),
+                "invalid_format",
+                "{candidate}"
+            );
         }
     }
 
     #[test]
     fn a_cleared_birth_date_reads_as_unset() {
-        assert_eq!(validate_birth_date_at(None, pinned_today()).expect("accepted"), None);
+        assert_eq!(
+            validate_birth_date_at(None, pinned_today()).expect("accepted"),
+            None
+        );
         assert_eq!(
             validate_birth_date_at(Some(""), pinned_today()).expect("accepted"),
             None
@@ -1062,7 +1085,10 @@ mod tests {
         let day_before = NaiveDate::from_ymd_opt(2026, 2, 28).expect("valid date");
         let error = validate_birth_date_at(Some("2008-02-29"), day_before)
             .expect_err("still 17 the day before");
-        assert_eq!(refusal(&error), ("birth_date".to_string(), "too_young".to_string()));
+        assert_eq!(
+            refusal(&error),
+            ("birth_date".to_string(), "too_young".to_string())
+        );
 
         assert_eq!(
             validate_birth_date_at(
@@ -1079,8 +1105,8 @@ mod tests {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(root.path());
 
-        let saved = save_profile(&dir, SUB, &birth_date_input(Some("1985-03-14")))
-            .expect("save succeeds");
+        let saved =
+            save_profile(&dir, SUB, &birth_date_input(Some("1985-03-14"))).expect("save succeeds");
         assert_eq!(saved.birth_date.as_deref(), Some("1985-03-14"));
 
         let raw = std::fs::read_to_string(profile_path(&dir, SUB)).expect("file readable");
@@ -1155,8 +1181,14 @@ mod tests {
         assert_eq!(value["schema_version"], 1);
         assert_eq!(value["cognito_sub"], SUB);
         assert!(value.get("first_name").is_some(), "snake_case key expected");
-        assert!(value.get("firstName").is_none(), "camelCase key must not ship");
-        assert!(value["last_name"].is_null(), "unset field serializes as null");
+        assert!(
+            value.get("firstName").is_none(),
+            "camelCase key must not ship"
+        );
+        assert!(
+            value["last_name"].is_null(),
+            "unset field serializes as null"
+        );
     }
 
     #[test]
@@ -1166,8 +1198,7 @@ mod tests {
 
         save_profile(&dir, SUB, &named_input(Some("Ada"), Some("Lovelace")))
             .expect("first save succeeds");
-        save_profile(&dir, SUB, &named_input(None, Some("Byron")))
-            .expect("second save succeeds");
+        save_profile(&dir, SUB, &named_input(None, Some("Byron"))).expect("second save succeeds");
 
         let loaded = load_profile(&dir, SUB)
             .expect("load succeeds")
@@ -1197,8 +1228,8 @@ mod tests {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(root.path());
 
-        let first = save_profile(&dir, SUB, &named_input(Some("Ada"), None))
-            .expect("first save succeeds");
+        let first =
+            save_profile(&dir, SUB, &named_input(Some("Ada"), None)).expect("first save succeeds");
         let second = save_profile(&dir, SUB, &named_input(Some("Grace"), None))
             .expect("second save succeeds");
 
@@ -1220,7 +1251,10 @@ mod tests {
         );
 
         let quarantined = std::fs::read(corrupt_path(&dir, SUB)).expect("corrupt file exists");
-        assert_eq!(quarantined, b"{ not json", "original bytes must be preserved");
+        assert_eq!(
+            quarantined, b"{ not json",
+            "original bytes must be preserved"
+        );
     }
 
     #[test]
@@ -1251,7 +1285,10 @@ mod tests {
         .expect("file written");
 
         assert!(load_profile(&dir, SUB).expect("load succeeds").is_none());
-        assert!(profile_path(&dir, SUB).exists(), "a future version is not corrupt");
+        assert!(
+            profile_path(&dir, SUB).exists(),
+            "a future version is not corrupt"
+        );
         assert!(!corrupt_path(&dir, SUB).exists());
     }
 
@@ -1332,8 +1369,12 @@ mod tests {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(root.path());
         save_profile(&dir, SUB, &named_input(Some("Ada"), None)).expect("save succeeds");
-        save_profile(&dir, "99999999-8888-7777-6666-555555555555", &named_input(Some("Bob"), None))
-            .expect("save succeeds");
+        save_profile(
+            &dir,
+            "99999999-8888-7777-6666-555555555555",
+            &named_input(Some("Bob"), None),
+        )
+        .expect("save succeeds");
         std::fs::write(corrupt_path(&dir, SUB), b"quarantined pii").expect("file written");
         std::fs::write(dir.join(format!("{SUB}.json.tmp")), b"crashed-write pii")
             .expect("file written");
@@ -1402,8 +1443,7 @@ mod tests {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(root.path());
 
-        let error =
-            save_profile(&dir, SUB, &country_input(Some("ZZ"))).expect_err("save rejects");
+        let error = save_profile(&dir, SUB, &country_input(Some("ZZ"))).expect_err("save rejects");
 
         assert_eq!(
             refusal(&error),
@@ -1584,11 +1624,17 @@ mod tests {
             .expect_err("save rejects");
         assert_eq!(
             refusal(&error),
-            ("subdivision_code".to_string(), "requires_country".to_string())
+            (
+                "subdivision_code".to_string(),
+                "requires_country".to_string()
+            )
         );
 
         let after = std::fs::read_to_string(profile_path(&dir, SUB)).expect("file readable");
-        assert_eq!(before, after, "a rejected save must not modify the document");
+        assert_eq!(
+            before, after,
+            "a rejected save must not modify the document"
+        );
     }
 
     #[test]
@@ -1681,7 +1727,11 @@ mod tests {
     #[test]
     fn invalid_currency_code_is_rejected() {
         for candidate in ["ZZZ", "CA", "dollars", "CADX", "C$"] {
-            assert_income_rejected(Some("250k_plus"), Some(candidate), "income_bracket_currency");
+            assert_income_rejected(
+                Some("250k_plus"),
+                Some(candidate),
+                "income_bracket_currency",
+            );
         }
     }
 
@@ -1705,7 +1755,10 @@ mod tests {
 
         let raw = std::fs::read_to_string(profile_path(&dir, SUB)).expect("file readable");
         let value: serde_json::Value = serde_json::from_str(&raw).expect("valid json");
-        assert!(value["income_bracket"].is_null(), "absent is null, never \"\"");
+        assert!(
+            value["income_bracket"].is_null(),
+            "absent is null, never \"\""
+        );
         assert!(value["income_bracket_currency"].is_null());
 
         let loaded = load_profile(&dir, SUB)
@@ -1792,7 +1845,10 @@ mod tests {
 
         assert_eq!(loaded.schema_version, PROFILE_SCHEMA_VERSION);
         assert_eq!(loaded.cognito_sub, SUB);
-        assert_eq!(loaded.version, None, "a legacy document has no server version");
+        assert_eq!(
+            loaded.version, None,
+            "a legacy document has no server version"
+        );
         assert_eq!(loaded.upload_declined, None);
         assert_eq!(loaded.first_name.as_deref(), Some("Ada"));
         assert_eq!(loaded.birth_date.as_deref(), Some("1985-03-14"));
@@ -1817,7 +1873,8 @@ mod tests {
         let dir = profiles_dir(root.path());
         seed_legacy_document(&dir);
 
-        save_profile(&dir, SUB, &named_input(Some("Grace"), Some("Hopper"))).expect("save succeeds");
+        save_profile(&dir, SUB, &named_input(Some("Grace"), Some("Hopper")))
+            .expect("save succeeds");
 
         let raw = std::fs::read_to_string(profile_path(&dir, SUB)).expect("file readable");
         assert!(
@@ -1826,7 +1883,10 @@ mod tests {
         );
         assert!(!raw.contains(DECLINED_KEY));
         assert_eq!(key_order(&raw), key_order(LEGACY_V1_DOCUMENT));
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Legacy);
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Legacy
+        );
     }
 
     #[test]
@@ -1834,17 +1894,29 @@ mod tests {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(root.path());
 
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Absent);
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Absent
+        );
         assert!(!dir.exists(), "the probe must not create the directory");
 
         seed_legacy_document(&dir);
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Legacy);
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Legacy
+        );
 
         mark_upload_declined(&dir, SUB).expect("decline succeeds");
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Declined);
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Declined
+        );
 
         write_cloud_copy(&dir, SUB, &wire(7)).expect("write succeeds");
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Synced(7));
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Synced(7)
+        );
     }
 
     // The one case `load_profile` would destroy: an unparseable document is reported, NEVER
@@ -1856,7 +1928,11 @@ mod tests {
         let dir = profiles_dir(root.path());
         std::fs::create_dir_all(&dir).expect("dir created");
 
-        for body in ["{ not json", r#"{"schema_version":2,"cognito_sub":"x"}"#, "[]"] {
+        for body in [
+            "{ not json",
+            r#"{"schema_version":2,"cognito_sub":"x"}"#,
+            "[]",
+        ] {
             std::fs::write(profile_path(&dir, SUB), body).expect("file written");
 
             assert_eq!(
@@ -1885,7 +1961,10 @@ mod tests {
         load_profile(&dir, SUB)
             .expect("the launch load succeeds")
             .expect("document present");
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Legacy);
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Legacy
+        );
         mark_upload_declined(&dir, SUB).expect("the decline succeeds");
 
         let patched = std::fs::read_to_string(profile_path(&dir, SUB)).expect("file readable");
@@ -1912,8 +1991,14 @@ mod tests {
             key_order(LEGACY_V1_DOCUMENT)
         );
 
-        assert!(!corrupt_path(&dir, SUB).exists(), "nothing may be quarantined");
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Declined);
+        assert!(
+            !corrupt_path(&dir, SUB).exists(),
+            "nothing may be quarantined"
+        );
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Declined
+        );
     }
 
     #[test]
@@ -1944,7 +2029,10 @@ mod tests {
         mark_upload_declined(&dir, SUB).expect("decline succeeds");
 
         let patched = std::fs::read_to_string(profile_path(&dir, SUB)).expect("file readable");
-        assert_eq!(patched.replacen(",\"upload_declined\":true", "", 1), compact);
+        assert_eq!(
+            patched.replacen(",\"upload_declined\":true", "", 1),
+            compact
+        );
     }
 
     #[test]
@@ -2004,7 +2092,10 @@ mod tests {
 
         let raw = std::fs::read_to_string(profile_path(&dir, SUB)).expect("file readable");
         assert!(!raw.contains(DECLINED_KEY), "{raw}");
-        assert_eq!(probe_cloud_copy(&dir, SUB).expect("probe succeeds"), CloudCopyState::Synced(2));
+        assert_eq!(
+            probe_cloud_copy(&dir, SUB).expect("probe succeeds"),
+            CloudCopyState::Synced(2)
+        );
     }
 
     #[test]
@@ -2046,7 +2137,10 @@ mod tests {
         assert_eq!(value["dataset_id"], DATASET_ID);
         assert!(value.get("cognito_sub").is_none(), "{raw}");
         assert!(value.get("version").is_none());
-        assert!(value["last_name"].is_null(), "unset field serializes as null");
+        assert!(
+            value["last_name"].is_null(),
+            "unset field serializes as null"
+        );
     }
 
     #[test]
@@ -2057,7 +2151,10 @@ mod tests {
         for (input, field) in [
             (birth_date_input(Some("2015-06-01")), "birth_date"),
             (country_input(Some("ZZ")), "country_code"),
-            (income_input(Some("50k_99k"), None), "income_bracket_currency"),
+            (
+                income_input(Some("50k_99k"), None),
+                "income_bracket_currency",
+            ),
         ] {
             let error = save_local(&dir, DATASET_ID, &input).expect_err("save rejects");
             assert_eq!(refusal(&error).0, field);
@@ -2172,12 +2269,14 @@ mod tests {
         let orphan_tmp = local_profile_path(&dir, ORPHAN_ID).with_extension("json.tmp");
         std::fs::write(&orphan_tmp, b"crashed-write pii").expect("written");
 
-        let removed =
-            sweep_local_orphans(&dir, &[DATASET_ID.to_string()]).expect("sweep succeeds");
+        let removed = sweep_local_orphans(&dir, &[DATASET_ID.to_string()]).expect("sweep succeeds");
 
         assert_eq!(removed, vec![ORPHAN_ID.to_string()]);
         assert!(!local_profile_path(&dir, ORPHAN_ID).exists());
-        assert!(!orphan_tmp.exists(), "a crashed write must not outlive its document");
+        assert!(
+            !orphan_tmp.exists(),
+            "a crashed write must not outlive its document"
+        );
         assert!(local_profile_path(&dir, DATASET_ID).exists());
         assert!(
             sweep_local_orphans(&dir, &[DATASET_ID.to_string()])
@@ -2192,7 +2291,9 @@ mod tests {
         let root = TempDir::new().expect("temp dir");
         let dir = profiles_dir(root.path());
 
-        assert!(sweep_local_orphans(&dir, &[]).expect("sweep succeeds").is_empty());
+        assert!(sweep_local_orphans(&dir, &[])
+            .expect("sweep succeeds")
+            .is_empty());
         assert!(!local_profiles_dir(&dir).exists());
     }
 

@@ -54,9 +54,9 @@ pub(crate) mod sim_tables;
 #[cfg(test)]
 pub(crate) mod test_dataset;
 #[cfg(test)]
-pub(crate) mod tests_home_surface_fixtures;
-#[cfg(test)]
 mod tests_asset;
+#[cfg(test)]
+pub(crate) mod tests_home_surface_fixtures;
 #[cfg(test)]
 mod tests_migration_030;
 #[cfg(test)]
@@ -191,7 +191,10 @@ impl ActiveDataset {
             // committed in between. That error is NOT retried by any busy handler, because
             // retrying it would silently re-run the closure against a newer snapshot. Taking the
             // write lock up front turns the race into a wait `busy_timeout` can absorb.
-            tx: rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?,
+            tx: rusqlite::Transaction::new_unchecked(
+                conn,
+                rusqlite::TransactionBehavior::Immediate,
+            )?,
             capture: self.capture.as_ref(),
             depth: Cell::new(0),
         };
@@ -279,8 +282,7 @@ pub(crate) struct Savepoint<'a> {
 
 impl Savepoint<'_> {
     fn release(mut self) -> Result<(), AppError> {
-        self.conn
-            .execute_batch(&format!("RELEASE {}", self.name))?;
+        self.conn.execute_batch(&format!("RELEASE {}", self.name))?;
         self.settled = true;
 
         Ok(())
@@ -340,26 +342,65 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../../migrations/001_initial_schema.sql")),
     (2, include_str!("../../migrations/002_budget_tables.sql")),
     (3, include_str!("../../migrations/003_expenses_table.sql")),
-    (4, include_str!("../../migrations/004_recreate_expenses_table.sql")),
+    (
+        4,
+        include_str!("../../migrations/004_recreate_expenses_table.sql"),
+    ),
     (5, include_str!("../../migrations/005_accounts.sql")),
     (6, include_str!("../../migrations/006_audit_log.sql")),
     (7, include_str!("../../migrations/007_passive_assets.sql")),
-    (8, include_str!("../../migrations/008_net_worth_snapshots.sql")),
+    (
+        8,
+        include_str!("../../migrations/008_net_worth_snapshots.sql"),
+    ),
     (9, include_str!("../../migrations/009_chat_tables.sql")),
-    (10, include_str!("../../migrations/010_audit_log_indexes.sql")),
+    (
+        10,
+        include_str!("../../migrations/010_audit_log_indexes.sql"),
+    ),
     (11, include_str!("../../migrations/011_income_tables.sql")),
-    (12, include_str!("../../migrations/012_income_entry_date.sql")),
-    (13, include_str!("../../migrations/013_chat_message_type.sql")),
+    (
+        12,
+        include_str!("../../migrations/012_income_entry_date.sql"),
+    ),
+    (
+        13,
+        include_str!("../../migrations/013_chat_message_type.sql"),
+    ),
     (14, include_str!("../../migrations/014_config_table.sql")),
-    (15, include_str!("../../migrations/015_merchant_category_hints.sql")),
-    (16, include_str!("../../migrations/016_recurring_expenses.sql")),
+    (
+        15,
+        include_str!("../../migrations/015_merchant_category_hints.sql"),
+    ),
+    (
+        16,
+        include_str!("../../migrations/016_recurring_expenses.sql"),
+    ),
     (17, include_str!("../../migrations/017_chat_agent_id.sql")),
-    (18, include_str!("../../migrations/018_maintenance_tables.sql")),
-    (19, include_str!("../../migrations/019_custom_service_logs.sql")),
-    (20, include_str!("../../migrations/020_maintenance_custom_tasks.sql")),
-    (21, include_str!("../../migrations/021_expense_income_account_id.sql")),
-    (22, include_str!("../../migrations/022_budget_category_soft_delete.sql")),
-    (23, include_str!("../../migrations/023_recurring_income.sql")),
+    (
+        18,
+        include_str!("../../migrations/018_maintenance_tables.sql"),
+    ),
+    (
+        19,
+        include_str!("../../migrations/019_custom_service_logs.sql"),
+    ),
+    (
+        20,
+        include_str!("../../migrations/020_maintenance_custom_tasks.sql"),
+    ),
+    (
+        21,
+        include_str!("../../migrations/021_expense_income_account_id.sql"),
+    ),
+    (
+        22,
+        include_str!("../../migrations/022_budget_category_soft_delete.sql"),
+    ),
+    (
+        23,
+        include_str!("../../migrations/023_recurring_income.sql"),
+    ),
     (
         24,
         include_str!("../../migrations/024_income_entry_recurring_template.sql"),
@@ -379,7 +420,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
         30,
         include_str!("../../migrations/030_project_images_content_addressed.sql"),
     ),
-    (31, include_str!("../../migrations/031_sync_image_blobs.sql")),
+    (
+        31,
+        include_str!("../../migrations/031_sync_image_blobs.sql"),
+    ),
     (32, include_str!("../../migrations/032_sync_tables.sql")),
     (
         33,
@@ -393,14 +437,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
         35,
         include_str!("../../migrations/035_sync_join_marker.sql"),
     ),
-    (
-        36,
-        include_str!("../../migrations/036_stock_holdings.sql"),
-    ),
-    (
-        37,
-        include_str!("../../migrations/037_home_widgets.sql"),
-    ),
+    (36, include_str!("../../migrations/036_stock_holdings.sql")),
+    (37, include_str!("../../migrations/037_home_widgets.sql")),
     (
         38,
         include_str!("../../migrations/038_home_widget_presentation.sql"),
@@ -409,12 +447,18 @@ const MIGRATIONS: &[(i64, &str)] = &[
         39,
         include_str!("../../migrations/039_stock_holdings_account_id.sql"),
     ),
-    (40, include_str!("../../migrations/040_recurring_frequency.sql")),
+    (
+        40,
+        include_str!("../../migrations/040_recurring_frequency.sql"),
+    ),
     (
         41,
         include_str!("../../migrations/041_budget_category_project_link.sql"),
     ),
-    (42, include_str!("../../migrations/042_recurring_transfers.sql")),
+    (
+        42,
+        include_str!("../../migrations/042_recurring_transfers.sql"),
+    ),
 ];
 
 /// The scalar SQL function migration 030 backfills `project_images.image_sha256` with.
@@ -434,7 +478,9 @@ fn register_sha256_hex(conn: &Connection) -> Result<(), AppError> {
             | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let bytes = ctx.get_raw(0);
-            let bytes = bytes.as_bytes().or_else(|_| bytes.as_str().map(str::as_bytes))?;
+            let bytes = bytes
+                .as_bytes()
+                .or_else(|_| bytes.as_str().map(str::as_bytes))?;
             Ok(crate::projects::image::sha256_hex(bytes))
         },
     )?;
@@ -495,12 +541,11 @@ pub(crate) fn run_migrations(conn: &Connection) -> Result<(), AppError> {
         )",
     )?;
 
-    let current_version: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_version",
-            [],
-            |row| row.get(0),
-        )?;
+    let current_version: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+        [],
+        |row| row.get(0),
+    )?;
 
     register_sha256_hex(conn)?;
     // Removed before the failure is reported, so a migration that fails cannot leave the extra
@@ -616,7 +661,7 @@ mod tests {
             dir.path().join(crate::datasets::DB_FILE_NAME),
             b"not a sqlite file at all",
         )
-            .expect("garbage db written");
+        .expect("garbage db written");
 
         let error = init_db(dir.path()).expect_err("opening a non-database must fail");
 

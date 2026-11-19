@@ -52,9 +52,9 @@
 pub(crate) use crate::sync::balance;
 
 pub(crate) mod engine;
-pub(crate) mod real;
 pub(crate) mod model;
 pub(crate) mod oracle;
+pub(crate) mod real;
 pub(crate) mod reference;
 pub(crate) mod runner;
 mod tests;

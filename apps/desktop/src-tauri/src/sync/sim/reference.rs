@@ -244,7 +244,10 @@ impl ReferenceEngine {
         match self.mutation {
             Mutation::NoMessageDedup => {
                 self.unkeyed_ordinal += 1;
-                (crate::sync::sim::model::fresh_row_uuid(self.unkeyed_ordinal), cause.1)
+                (
+                    crate::sync::sim::model::fresh_row_uuid(self.unkeyed_ordinal),
+                    cause.1,
+                )
             }
             _ => cause,
         }
@@ -328,7 +331,10 @@ impl ReferenceEngine {
     }
 
     fn balance_of(&self, row: RowUuid) -> i64 {
-        self.balances.get(&row).map(BalanceLedger::value).unwrap_or(0)
+        self.balances
+            .get(&row)
+            .map(BalanceLedger::value)
+            .unwrap_or(0)
     }
 
     /// AD-5: a counter's value is the sum of its deltas, base zero — the row's creation emits the
@@ -350,7 +356,9 @@ impl ReferenceEngine {
 
         self.fields
             .iter()
-            .filter(|((stored_table, stored_row, _), _)| *stored_table == table && *stored_row == row)
+            .filter(|((stored_table, stored_row, _), _)| {
+                *stored_table == table && *stored_row == row
+            })
             .map(|(_, (hlc, _))| *hlc)
             .min()
     }
@@ -395,8 +403,9 @@ impl ReferenceEngine {
     /// WHICH replica had processed the delete before the revive, which is a divergence
     /// (seed 6251799010395204023: usage_count 2 against 1).
     fn forget(&mut self, table: Table, row: RowUuid) {
-        self.fields
-            .retain(|(stored_table, stored_row, _), _| *stored_table != table || *stored_row != row);
+        self.fields.retain(|(stored_table, stored_row, _), _| {
+            *stored_table != table || *stored_row != row
+        });
         self.parents.remove(&(table, row));
     }
 
@@ -439,8 +448,9 @@ impl ReplicaEngine for ReferenceEngine {
     /// on one engine only would make the two run different scenarios from that step on.
     fn clone_to(&mut self, db_path: &Path, install_id: &str) -> Result<Option<Self>, SimError> {
         self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
-        std::fs::copy(&self.db_path, db_path)
-            .map_err(|error| SimError::Model(format!("the dataset could not be copied: {error}")))?;
+        std::fs::copy(&self.db_path, db_path).map_err(|error| {
+            SimError::Model(format!("the dataset could not be copied: {error}"))
+        })?;
         let conn = migrated_dataset(db_path);
         conn.execute_batch("PRAGMA foreign_keys = ON")?;
 

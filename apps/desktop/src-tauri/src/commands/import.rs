@@ -522,8 +522,13 @@ fn normalize_date(raw: &str) -> Result<String, AppError> {
     // Slash formats: US (%m/%d/%Y) is tried before international (%d/%m/%Y).
     // Ambiguous dates like "03/04/2026" will be interpreted as US (March 4th).
     let formats_with_year = [
-        "%d %b %Y", "%b %d, %Y", "%d-%b-%Y", "%b-%d-%Y",
-        "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d",
+        "%d %b %Y",
+        "%b %d, %Y",
+        "%d-%b-%Y",
+        "%b-%d-%Y",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
     ];
     for fmt in &formats_with_year {
         if let Ok(d) = NaiveDate::parse_from_str(&title_cased, fmt) {
@@ -578,7 +583,13 @@ pub fn confirm_import(
     let income_rows: Vec<(ImportIncomeSource, i64, String)> = incomes
         .iter()
         .enumerate()
-        .map(|(row, t)| Ok((income_source_for(row, t)?, t.amount_cents, normalize_date(&t.date)?)))
+        .map(|(row, t)| {
+            Ok((
+                income_source_for(row, t)?,
+                t.amount_cents,
+                normalize_date(&t.date)?,
+            ))
+        })
         .collect::<Result<Vec<_>, AppError>>()?;
 
     let (count, created_sources) = active.write(|tx| {
@@ -588,7 +599,8 @@ pub fn confirm_import(
             let source_id = match source {
                 ImportIncomeSource::Existing(id) => *id,
                 ImportIncomeSource::Named(name) => {
-                    let (source, created) = income_db::find_or_create_income_source_by_name(tx, name)?;
+                    let (source, created) =
+                        income_db::find_or_create_income_source_by_name(tx, name)?;
                     if created {
                         created_sources.push(source.clone());
                     }
@@ -610,7 +622,14 @@ pub fn confirm_import(
 
     for source in &created_sources {
         let details = serde_json::to_string(source).unwrap_or_default();
-        audit_db::record(&active, "income_source", source.id, "create", None, Some(&details));
+        audit_db::record(
+            &active,
+            "income_source",
+            source.id,
+            "create",
+            None,
+            Some(&details),
+        );
     }
 
     // Record merchant-category hints for future imports
@@ -651,7 +670,8 @@ pub fn confirm_import(
         count,
         income_rows.len()
     );
-    active.write(|tx| audit_db::insert_audit_log(tx, "import", 0, "create", None, Some(&details)))?;
+    active
+        .write(|tx| audit_db::insert_audit_log(tx, "import", 0, "create", None, Some(&details)))?;
 
     info!(
         "Confirmed import: {} expenses and {} income entries saved",
@@ -811,7 +831,10 @@ mod tests {
             "kind": "income", "merchant": "ACME", "amount_cents": 100, "date": "2026-03-01",
             "income_source_id": 4, "income_source_name": "Ignored"
         }));
-        assert_eq!(income_source_for(0, &chosen).unwrap(), ImportIncomeSource::Existing(4));
+        assert_eq!(
+            income_source_for(0, &chosen).unwrap(),
+            ImportIncomeSource::Existing(4)
+        );
 
         let named = income_row(serde_json::json!({
             "kind": "income", "merchant": "ACME", "amount_cents": 100, "date": "2026-03-01",
@@ -850,28 +873,19 @@ mod tests {
     #[test]
     fn normalize_date_dd_mmm_yearless() {
         let year = Local::now().year();
-        assert_eq!(
-            normalize_date("14 MAR").unwrap(),
-            format!("{}-03-14", year)
-        );
+        assert_eq!(normalize_date("14 MAR").unwrap(), format!("{}-03-14", year));
     }
 
     #[test]
     fn normalize_date_dd_mmm_lowercase() {
         let year = Local::now().year();
-        assert_eq!(
-            normalize_date("14 mar").unwrap(),
-            format!("{}-03-14", year)
-        );
+        assert_eq!(normalize_date("14 mar").unwrap(), format!("{}-03-14", year));
     }
 
     #[test]
     fn normalize_date_mmm_dd_yearless() {
         let year = Local::now().year();
-        assert_eq!(
-            normalize_date("Mar 14").unwrap(),
-            format!("{}-03-14", year)
-        );
+        assert_eq!(normalize_date("Mar 14").unwrap(), format!("{}-03-14", year));
     }
 
     #[test]
@@ -907,10 +921,7 @@ mod tests {
     #[test]
     fn normalize_date_dd_hyphen_mmm_yearless() {
         let year = Local::now().year();
-        assert_eq!(
-            normalize_date("14-Mar").unwrap(),
-            format!("{}-03-14", year)
-        );
+        assert_eq!(normalize_date("14-Mar").unwrap(), format!("{}-03-14", year));
     }
 
     #[test]

@@ -175,7 +175,8 @@ pub fn apply_batch(
 
             for (offset, message) in batch.messages[start..end].iter().enumerate() {
                 let idx = (start + offset) as i64;
-                let outcome = apply_message(conn, clock, &batch.install, batch.seq, idx, message, true)?;
+                let outcome =
+                    apply_message(conn, clock, &batch.install, batch.seq, idx, message, true)?;
                 record(
                     &mut chunk_report,
                     conn,
@@ -250,7 +251,8 @@ fn replay_chunk(
         for (offset, message) in batch.messages[start..end].iter().enumerate() {
             let idx = (start + offset) as i64;
             let attempt = in_savepoint(conn, MESSAGE_SAVEPOINT, |conn| {
-                let outcome = apply_message(conn, clock, &batch.install, batch.seq, idx, message, true)?;
+                let outcome =
+                    apply_message(conn, clock, &batch.install, batch.seq, idx, message, true)?;
                 let mut single = ApplyReport::default();
                 record(
                     &mut single,
@@ -268,7 +270,10 @@ fn replay_chunk(
             match attempt {
                 Ok(single) => report.add(single),
                 Err(error) => {
-                    warn!("a sync message was quarantined after a failed replay: {}", error);
+                    warn!(
+                        "a sync message was quarantined after a failed replay: {}",
+                        error
+                    );
                     apply_db::quarantine(
                         conn,
                         &stored_message(&batch.install, batch.seq, idx, message),
@@ -382,7 +387,10 @@ fn apply_message(
     // the refusal costs the remote stamp is the right to move THIS clock, and `Clock` remembers it
     // so the actor can surface `clock_skew` (Story 24) and the user can fix the date and time.
     if let Err(error) = clock.observe(&hlc) {
-        warn!("a remote message carried a stamp this computer refused: {}", error);
+        warn!(
+            "a remote message carried a stamp this computer refused: {}",
+            error
+        );
     }
 
     let Some(rule) = registry::table(&message.table_name) else {
@@ -635,7 +643,10 @@ fn apply_field(
             // creating message is still on its way — so it waits for its own identity instead of
             // being quarantined.
             if let Err(error) = create_row(conn, table, &message.row_uuid, accepted) {
-                warn!("a remote row could not be created yet, parking its message: {}", error);
+                warn!(
+                    "a remote row could not be created yet, parking its message: {}",
+                    error
+                );
 
                 return Ok(Outcome::Parked {
                     table,
@@ -709,10 +720,7 @@ fn create_row(
 /// actions), and it is also the honest answer for an entity this computer does not hold — one that
 /// was deleted before the entry arrived, or that has not arrived yet. The entry still belongs to the
 /// shared action log; it just cannot be filed under a row that is not here.
-fn audit_entity_id(
-    conn: &Connection,
-    columns: &[(&'static str, Value)],
-) -> Result<i64, AppError> {
+fn audit_entity_id(conn: &Connection, columns: &[(&'static str, Value)]) -> Result<i64, AppError> {
     let entity_type = columns.iter().find_map(|(name, value)| match value {
         Value::Text(text) if *name == "entity_type" => Some(text.as_str()),
         _ => None,
@@ -1123,7 +1131,13 @@ fn row_as_json(conn: &Connection, table: &'static str, row_id: i64) -> Result<St
                     None => serde_json::Value::Null,
                 }
             }
-            _ if matches!(registry::merge_kind(table, column), Some(MergeKind::LocalId)) => continue,
+            _ if matches!(
+                registry::merge_kind(table, column),
+                Some(MergeKind::LocalId)
+            ) =>
+            {
+                continue
+            }
             _ => json_scalar(&value),
         };
         row.insert(column.to_string(), rendered);
@@ -1164,7 +1178,8 @@ fn restrict_blocker(
             // A child with no identity predates capture (Story 22's reconcile owns those). The
             // tombstone then waits on the zero uuid, which no row ever has, so it is re-driven by
             // the drain rounds of later batches rather than by that child's arrival.
-            let row_uuid = sync_identity::lookup(conn, edge.child_table, *child)?.unwrap_or([0; 16]);
+            let row_uuid =
+                sync_identity::lookup(conn, edge.child_table, *child)?.unwrap_or([0; 16]);
 
             return Ok(Some(Outcome::Parked {
                 table: edge.child_table,
@@ -1413,7 +1428,11 @@ pub(crate) fn counter_total(
 
 /// The fold AD-5 defines, over every balance message this computer holds for the row — its own and
 /// every other computer's.
-pub(crate) fn balance_value(conn: &Connection, table: &str, row_uuid: &[u8; 16]) -> Result<i64, AppError> {
+pub(crate) fn balance_value(
+    conn: &Connection,
+    table: &str,
+    row_uuid: &[u8; 16],
+) -> Result<i64, AppError> {
     Ok(balance_ledger(conn, table, row_uuid)?.value())
 }
 
@@ -1486,7 +1505,10 @@ fn in_transaction<T>(
         }
         Err(error) => {
             if let Err(rollback) = conn.execute_batch("ROLLBACK") {
-                warn!("an apply transaction could not be rolled back: {}", rollback);
+                warn!(
+                    "an apply transaction could not be rolled back: {}",
+                    rollback
+                );
             }
 
             Err(error)

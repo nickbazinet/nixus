@@ -230,7 +230,8 @@ async fn a_new_snapshot_is_written_only_once_the_tail_passes_a_threshold() {
 
         first.tick().await;
         assert_eq!(
-            first.diagnostics().uploads, after_enable,
+            first.diagnostics().uploads,
+            after_enable,
             "an empty tail writes no snapshot"
         );
 

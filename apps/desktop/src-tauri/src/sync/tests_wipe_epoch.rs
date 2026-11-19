@@ -171,9 +171,17 @@ async fn a_wipe_on_one_computer_empties_the_other_and_every_computer_after_it() 
     let mut first = relaunch(&a, NOW_MS + 100_000);
     first.enable(None).await.expect("A rejoins after its wipe");
 
-    assert_eq!(cloud_epoch(&cloud), 1, "the account moved to a new wipe epoch");
+    assert_eq!(
+        cloud_epoch(&cloud),
+        1,
+        "the account moved to a new wipe epoch"
+    );
     assert_eq!(local_epoch(&a), 1);
-    assert_eq!(pending(&a), None, "the event is registered, so nothing is owed");
+    assert_eq!(
+        pending(&a),
+        None,
+        "the event is registered, so nothing is owed"
+    );
 
     // B is online and learns about it on its very next cycle; the ones after that are the ordinary
     // join that follows, which is what makes it an EMPTY computer rather than a stopped one.
@@ -213,7 +221,10 @@ async fn a_new_computer_restores_only_the_post_wipe_snapshot() {
     settle(&mut first, &mut second).await;
 
     let pointer = cloud_pointer(&cloud).expect("a post-wipe pointer");
-    assert_eq!(pointer.wipe_epoch, 1, "the pointer is stamped with the new epoch");
+    assert_eq!(
+        pointer.wipe_epoch, 1,
+        "the pointer is stamped with the new epoch"
+    );
     assert_ne!(
         pointer.snap_id, pre_wipe_snapshot,
         "the account still points at the snapshot of the deleted data"
@@ -306,7 +317,9 @@ async fn a_stale_computer_cannot_publish_over_the_post_wipe_pointer() {
     second.tick().await;
 
     assert_eq!(
-        cloud_pointer(&cloud).expect("the account still has a pointer").wipe_epoch,
+        cloud_pointer(&cloud)
+            .expect("the account still has a pointer")
+            .wipe_epoch,
         1,
         "a stale computer moved `snap/LATEST` back to a pre-wipe snapshot"
     );
@@ -348,7 +361,11 @@ async fn a_re_bootstrap_refuses_a_pointer_that_predates_the_wipe() {
     b.captured(|tx| fixtures::insert_budget_group(tx, "Added-after-the-snapshot", 1))
         .expect("B's second row");
     only.tick().await;
-    assert_eq!(b.unshipped(), 0, "the second row must be shipped, not merely unsent");
+    assert_eq!(
+        b.unshipped(),
+        0,
+        "the second row must be shipped, not merely unsent"
+    );
     assert_eq!(groups(&b), 2);
 
     // The account is wiped by another computer and B has already adopted the epoch — but the
@@ -485,12 +502,19 @@ async fn wiping_twice_moves_the_account_to_the_second_epoch() {
 
     delete_everything(&a);
     let mut first = relaunch(&a, NOW_MS + 100_000);
-    first.enable(None).await.expect("A registers the first wipe");
+    first
+        .enable(None)
+        .await
+        .expect("A registers the first wipe");
     second.tick().await;
     let mut second = relaunch(&b, NOW_MS + 150_000);
     settle(&mut first, &mut second).await;
     assert_eq!(cloud_epoch(&cloud), 1);
-    assert_eq!(local_epoch(&b), 1, "B must have rejoined at the new epoch by itself");
+    assert_eq!(
+        local_epoch(&b),
+        1,
+        "B must have rejoined at the new epoch by itself"
+    );
 
     a.captured(|tx| fixtures::insert_budget_group(tx, "Between-the-wipes", 0))
         .expect("A writes again");
@@ -499,7 +523,10 @@ async fn wiping_twice_moves_the_account_to_the_second_epoch() {
 
     delete_everything(&a);
     let mut first = relaunch(&a, NOW_MS + 300_000);
-    first.enable(None).await.expect("A registers the second wipe");
+    first
+        .enable(None)
+        .await
+        .expect("A registers the second wipe");
 
     assert_eq!(cloud_epoch(&cloud), 2);
     assert_eq!(local_epoch(&a), 2);
@@ -545,7 +572,10 @@ async fn an_imported_backup_is_never_self_wiped() {
     );
     assert_eq!(local_epoch(&c), 0, "the imported file predates the wipe");
 
-    let outcome = imported.enable(None).await.expect("the imported file joins");
+    let outcome = imported
+        .enable(None)
+        .await
+        .expect("the imported file joins");
 
     assert_eq!(
         groups(&c),
@@ -604,14 +634,25 @@ async fn an_imported_backup_replaces_the_account_instead_of_being_asked_about() 
     let (mut imported, c) = computer("C", Arc::clone(&cloud), NOW_MS + 200_000);
     imported_file(&c, "From-my-backup");
 
-    let outcome = imported.enable(None).await.expect("the imported file joins");
+    let outcome = imported
+        .enable(None)
+        .await
+        .expect("the imported file joins");
 
     assert!(
         matches!(outcome, SyncEnableOutcome::Enabled { .. }),
         "an import must publish, not ask: {outcome:?}"
     );
-    assert_eq!(names(&c), vec!["From-my-backup".to_string()], "the import was lost");
-    assert_eq!(cloud_epoch(&cloud), 2, "the import must retire the post-wipe snapshot");
+    assert_eq!(
+        names(&c),
+        vec!["From-my-backup".to_string()],
+        "the import was lost"
+    );
+    assert_eq!(
+        cloud_epoch(&cloud),
+        2,
+        "the import must retire the post-wipe snapshot"
+    );
     assert_eq!(local_epoch(&c), 2);
     assert_eq!(cloud_pointer(&cloud).expect("a pointer").wipe_epoch, 2);
     assert_eq!(
@@ -640,7 +681,10 @@ async fn a_retried_import_publish_does_not_move_the_epoch_again() {
 
     delete_everything(&a);
     let mut first = relaunch(&a, NOW_MS + 100_000);
-    first.enable(None).await.expect("A registers and publishes its empty snapshot");
+    first
+        .enable(None)
+        .await
+        .expect("A registers and publishes its empty snapshot");
     assert_eq!(cloud_epoch(&cloud), 1);
 
     let (mut imported, c) = computer("C", Arc::clone(&cloud), NOW_MS + 200_000);
@@ -654,8 +698,15 @@ async fn a_retried_import_publish_does_not_move_the_epoch_again() {
 
     let outcome = imported.enable(None).await.expect("the retry joins");
 
-    assert!(matches!(outcome, SyncEnableOutcome::Enabled { .. }), "{outcome:?}");
-    assert_eq!(cloud_epoch(&cloud), 1, "the retry bumped the epoch a second time");
+    assert!(
+        matches!(outcome, SyncEnableOutcome::Enabled { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        cloud_epoch(&cloud),
+        1,
+        "the retry bumped the epoch a second time"
+    );
     assert_eq!(names(&c), vec!["From-my-backup".to_string()]);
 }
 
@@ -699,7 +750,11 @@ async fn a_fingerprint_drift_still_resumes_and_still_honours_the_wipe() {
     first.enable(None).await.expect("A registers the wipe");
     second.tick().await;
 
-    assert_eq!(groups(&b), 0, "a relinked-by-drift computer ignored the account's wipe");
+    assert_eq!(
+        groups(&b),
+        0,
+        "a relinked-by-drift computer ignored the account's wipe"
+    );
     assert_eq!(local_epoch(&b), 1);
 }
 
@@ -736,7 +791,11 @@ async fn edits_made_after_the_wipe_reach_every_computer() {
             names(probe)
         );
     }
-    assert_eq!(cloud_epoch(&cloud), 1, "ordinary sync must not move the epoch");
+    assert_eq!(
+        cloud_epoch(&cloud),
+        1,
+        "ordinary sync must not move the epoch"
+    );
 }
 
 /// S2: `fetch_latest_at` admits a pointer stamped at or ABOVE the cutoff, which includes one
@@ -761,7 +820,14 @@ async fn a_restore_adopts_the_epoch_its_pointer_was_stamped_at() {
     // A reader whose view of the MARKER lags the pointer: seeded directly, because the protocol
     // cannot move an epoch backwards and this is a state of one computer's knowledge, not of the
     // account. Everything below is then the ordinary join.
-    cloud.seed(WIPE_OBJECT_KEY, WipeEvent { epoch: 1, wiped_ms: NOW_MS }.body());
+    cloud.seed(
+        WIPE_OBJECT_KEY,
+        WipeEvent {
+            epoch: 1,
+            wiped_ms: NOW_MS,
+        }
+        .body(),
+    );
 
     let (mut third, c) = computer("C", Arc::clone(&cloud), NOW_MS + 400_000);
     third.enable(None).await.expect("C joins and restores");
@@ -775,7 +841,14 @@ async fn a_restore_adopts_the_epoch_its_pointer_was_stamped_at() {
 
     // The consequence, which is what makes the number above matter: with the true marker back,
     // C must NOT read the account as ahead and wipe what it has just restored.
-    cloud.seed(WIPE_OBJECT_KEY, WipeEvent { epoch: 2, wiped_ms: NOW_MS }.body());
+    cloud.seed(
+        WIPE_OBJECT_KEY,
+        WipeEvent {
+            epoch: 2,
+            wiped_ms: NOW_MS,
+        }
+        .body(),
+    );
     a.captured(|tx| fixtures::insert_budget_group(tx, "After-both-wipes", 0))
         .expect("A writes");
     let mut first = relaunch(&a, NOW_MS + 500_000);
@@ -820,12 +893,19 @@ async fn an_actor_that_becomes_unjoined_stops_instead_of_cycling_forever() {
         "an unjoined dataset must never be emptied automatically: it may hold data the account \
          has never seen"
     );
-    assert_eq!(local_epoch(&b), 0, "and it must not adopt the epoch without joining");
+    assert_eq!(
+        local_epoch(&b),
+        0,
+        "and it must not adopt the epoch without joining"
+    );
 
     // Once a post-wipe pointer exists, the stopped actor rejoins by itself and is ASKED.
     delete_everything(&a);
     let mut first_after = relaunch(&a, NOW_MS + 100_000);
-    first_after.enable(None).await.expect("A registers and publishes");
+    first_after
+        .enable(None)
+        .await
+        .expect("A registers and publishes");
     settle(&mut first_after, &mut second).await;
 
     assert_eq!(
@@ -833,7 +913,11 @@ async fn an_actor_that_becomes_unjoined_stops_instead_of_cycling_forever() {
         crate::sync::manager::SyncState::LinkChoiceRequired,
         "a stopped-and-unjoined computer holding rows must end up at CAP-5's question"
     );
-    assert_eq!(groups(&b), 1, "and its rows are still there while it waits for the answer");
+    assert_eq!(
+        groups(&b),
+        1,
+        "and its rows are still there while it waits for the answer"
+    );
 }
 
 /// The typed fault `upload`'s publish gate raises, which is deliberately neither retried nor

@@ -161,10 +161,7 @@ pub fn get_catalog_status(app_data_dir: &Path) -> VehicleCatalogStatus {
     let dir = catalog_dir(app_data_dir);
     let meta = read_meta(&dir);
     let makes = read_makes(&dir);
-    let available = makes
-        .as_ref()
-        .map(|m| !m.makes.is_empty())
-        .unwrap_or(false);
+    let available = makes.as_ref().map(|m| !m.makes.is_empty()).unwrap_or(false);
 
     let stale = match &meta {
         Some(m) => is_cache_stale(m),
@@ -180,9 +177,7 @@ pub fn get_catalog_status(app_data_dir: &Path) -> VehicleCatalogStatus {
 
 pub fn get_cached_makes(app_data_dir: &Path) -> Vec<VehicleMake> {
     let dir = catalog_dir(app_data_dir);
-    read_makes(&dir)
-        .map(|m| m.makes)
-        .unwrap_or_default()
+    read_makes(&dir).map(|m| m.makes).unwrap_or_default()
 }
 
 pub async fn fetch_makes_from_nhtsa() -> Result<Vec<VehicleMake>, AppError> {
@@ -413,7 +408,10 @@ mod tests {
         write_meta(
             &dir,
             &CatalogMeta {
-                cached_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap().to_rfc3339(),
+                cached_at: Utc
+                    .with_ymd_and_hms(2020, 1, 1, 0, 0, 0)
+                    .unwrap()
+                    .to_rfc3339(),
                 ttl_days: 180,
                 schema_version: 1,
             },

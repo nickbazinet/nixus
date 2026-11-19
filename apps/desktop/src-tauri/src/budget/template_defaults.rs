@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::db::budget_template::{SUPPORTED_TEMPLATE_FORMAT_VERSION, MAX_TEMPLATE_TARGET_CENTS};
+use crate::db::budget_template::{MAX_TEMPLATE_TARGET_CENTS, SUPPORTED_TEMPLATE_FORMAT_VERSION};
 use crate::error::AppError;
 use crate::models::{
     SystemBudgetTemplate, TemplateCategoryDef, TemplateGroupDef, TemplateTargetOverride,
@@ -11,34 +11,82 @@ use crate::models::{
 pub const CANADIAN_STARTER_ID: &str = "canadian-starter";
 
 const HOUSING: &[TemplateCategoryDef] = &[
-    TemplateCategoryDef { name: Cow::Borrowed("Rent / Mortgage"),               target_cents: Some(180_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("Utilities (Hydro, Gas, Water)"), target_cents: Some(20_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("Home & Tenant Insurance"),       target_cents: Some(5_000) },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Rent / Mortgage"),
+        target_cents: Some(180_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Utilities (Hydro, Gas, Water)"),
+        target_cents: Some(20_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Home & Tenant Insurance"),
+        target_cents: Some(5_000),
+    },
 ];
 
 const TRANSPORTATION: &[TemplateCategoryDef] = &[
-    TemplateCategoryDef { name: Cow::Borrowed("Car Payment & Insurance"), target_cents: Some(45_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("Gas & Transit"),           target_cents: Some(25_000) },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Car Payment & Insurance"),
+        target_cents: Some(45_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Gas & Transit"),
+        target_cents: Some(25_000),
+    },
 ];
 
 const LIVING: &[TemplateCategoryDef] = &[
-    TemplateCategoryDef { name: Cow::Borrowed("Groceries"),               target_cents: Some(60_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("Phone & Internet"),        target_cents: Some(15_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("Health & Pharmacy"),       target_cents: Some(10_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("Dining & Entertainment"),  target_cents: Some(25_000) },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Groceries"),
+        target_cents: Some(60_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Phone & Internet"),
+        target_cents: Some(15_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Health & Pharmacy"),
+        target_cents: Some(10_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Dining & Entertainment"),
+        target_cents: Some(25_000),
+    },
 ];
 
 const SAVINGS: &[TemplateCategoryDef] = &[
-    TemplateCategoryDef { name: Cow::Borrowed("TFSA Contribution"), target_cents: Some(50_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("RRSP Contribution"), target_cents: Some(40_000) },
-    TemplateCategoryDef { name: Cow::Borrowed("Emergency Fund"),    target_cents: Some(25_000) },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("TFSA Contribution"),
+        target_cents: Some(50_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("RRSP Contribution"),
+        target_cents: Some(40_000),
+    },
+    TemplateCategoryDef {
+        name: Cow::Borrowed("Emergency Fund"),
+        target_cents: Some(25_000),
+    },
 ];
 
 const CANADIAN_STARTER_GROUPS: &[TemplateGroupDef] = &[
-    TemplateGroupDef { name: Cow::Borrowed("Housing"),        categories: Cow::Borrowed(HOUSING) },
-    TemplateGroupDef { name: Cow::Borrowed("Transportation"), categories: Cow::Borrowed(TRANSPORTATION) },
-    TemplateGroupDef { name: Cow::Borrowed("Living"),         categories: Cow::Borrowed(LIVING) },
-    TemplateGroupDef { name: Cow::Borrowed("Savings"),        categories: Cow::Borrowed(SAVINGS) },
+    TemplateGroupDef {
+        name: Cow::Borrowed("Housing"),
+        categories: Cow::Borrowed(HOUSING),
+    },
+    TemplateGroupDef {
+        name: Cow::Borrowed("Transportation"),
+        categories: Cow::Borrowed(TRANSPORTATION),
+    },
+    TemplateGroupDef {
+        name: Cow::Borrowed("Living"),
+        categories: Cow::Borrowed(LIVING),
+    },
+    TemplateGroupDef {
+        name: Cow::Borrowed("Savings"),
+        categories: Cow::Borrowed(SAVINGS),
+    },
 ];
 
 const CANADIAN_STARTER: SystemBudgetTemplate = SystemBudgetTemplate {
@@ -56,7 +104,9 @@ const CANADIAN_STARTER: SystemBudgetTemplate = SystemBudgetTemplate {
 pub const SYSTEM_TEMPLATES: &[SystemBudgetTemplate] = &[CANADIAN_STARTER];
 
 pub fn find_system_template(id: &str) -> Option<&'static SystemBudgetTemplate> {
-    SYSTEM_TEMPLATES.iter().find(|t| t.id.as_deref() == Some(id))
+    SYSTEM_TEMPLATES
+        .iter()
+        .find(|t| t.id.as_deref() == Some(id))
 }
 
 /// Same rule the shared apply core uses for group-name collisions, so an edit
@@ -71,7 +121,8 @@ fn find_override<'a>(
     category_name: &str,
 ) -> Option<&'a TemplateTargetOverride> {
     overrides.iter().find(|entry| {
-        names_match(group_name, &entry.group_name) && names_match(category_name, &entry.category_name)
+        names_match(group_name, &entry.group_name)
+            && names_match(category_name, &entry.category_name)
     })
 }
 
@@ -286,7 +337,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(target_of(&merged, "Housing", "Rent / Mortgage"), Some(250_000));
+        assert_eq!(
+            target_of(&merged, "Housing", "Rent / Mortgage"),
+            Some(250_000)
+        );
         assert_eq!(
             target_of(&merged, "Housing", "Home & Tenant Insurance"),
             target_of(&CANADIAN_STARTER, "Housing", "Home & Tenant Insurance")
@@ -305,7 +359,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(target_of(&merged, "Housing", "Rent / Mortgage"), Some(1_234));
+        assert_eq!(
+            target_of(&merged, "Housing", "Rent / Mortgage"),
+            Some(1_234)
+        );
     }
 
     #[test]
@@ -320,9 +377,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(target_of(&merged, "Housing", "Rent / Mortgage"), Some(300_000));
+        assert_eq!(
+            target_of(&merged, "Housing", "Rent / Mortgage"),
+            Some(300_000)
+        );
         assert_eq!(target_of(&merged, "Living", "Groceries"), Some(75_000));
-        assert_eq!(target_of(&merged, "Savings", "Emergency Fund"), Some(10_000));
+        assert_eq!(
+            target_of(&merged, "Savings", "Emergency Fund"),
+            Some(10_000)
+        );
     }
 
     #[test]
@@ -380,7 +443,10 @@ mod tests {
             )
             .expect("the bound itself is valid input");
 
-            assert_eq!(target_of(&merged, "Housing", "Rent / Mortgage"), Some(cents));
+            assert_eq!(
+                target_of(&merged, "Housing", "Rent / Mortgage"),
+                Some(cents)
+            );
         }
     }
 
@@ -429,7 +495,11 @@ mod tests {
         // opaque "not a valid template" file error at apply time.
         let merged = merge_target_overrides(
             &CANADIAN_STARTER,
-            &[override_entry("Housing", "Rent / Mortgage", MAX_TEMPLATE_TARGET_CENTS)],
+            &[override_entry(
+                "Housing",
+                "Rent / Mortgage",
+                MAX_TEMPLATE_TARGET_CENTS,
+            )],
         )
         .unwrap();
 

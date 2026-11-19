@@ -337,7 +337,9 @@ fn byo_client() -> AiProvider {
 /// frontend, read here so a local or non-premium profile can unlock the composer through it.
 #[test]
 fn byo_configured_reads_the_provider_slot_directly() {
-    let configured = Mutex::new(AiState { provider: Some(byo_client()) });
+    let configured = Mutex::new(AiState {
+        provider: Some(byo_client()),
+    });
     assert!(byo_configured(&configured).unwrap());
 
     let cleared = Mutex::new(AiState { provider: None });

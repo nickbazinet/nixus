@@ -478,7 +478,10 @@ fn every_remaining_site_is_justified() {
 
 #[test]
 fn a_write_inside_a_comment_is_not_a_write_site() {
-    assert_eq!(writes_in("    // DELETE FROM accounts is what this does"), None);
+    assert_eq!(
+        writes_in("    // DELETE FROM accounts is what this does"),
+        None
+    );
     assert_eq!(
         writes_in("        \"DELETE FROM accounts WHERE id = ?1\","),
         Some(1)

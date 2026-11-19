@@ -67,9 +67,7 @@ pub fn evaluate_waterfall(input: &WaterfallEvalInput) -> WaterfallEvaluation {
         completed_steps.push(WaterfallStep::PayHighInterestDebt);
     }
 
-    let (current_step, reasoning_key) = if !input.data_sufficient
-        || !emergency_fund_complete
-    {
+    let (current_step, reasoning_key) = if !input.data_sufficient || !emergency_fund_complete {
         (WaterfallStep::BuildEmergencyFund, "build_emergency_fund")
     } else if !debt_complete {
         (WaterfallStep::PayHighInterestDebt, "pay_debt")
@@ -141,7 +139,10 @@ mod tests {
         let eval = evaluate_waterfall(&input);
         assert_eq!(eval.current_step, WaterfallStep::PayHighInterestDebt);
         assert_eq!(eval.reasoning_key, "pay_debt");
-        assert_eq!(eval.completed_steps, vec![WaterfallStep::BuildEmergencyFund]);
+        assert_eq!(
+            eval.completed_steps,
+            vec![WaterfallStep::BuildEmergencyFund]
+        );
     }
 
     #[test]
@@ -237,7 +238,10 @@ mod tests {
         };
         let eval = evaluate_waterfall(&input);
         assert_eq!(eval.current_step, WaterfallStep::PayHighInterestDebt);
-        assert_eq!(eval.completed_steps, vec![WaterfallStep::BuildEmergencyFund]);
+        assert_eq!(
+            eval.completed_steps,
+            vec![WaterfallStep::BuildEmergencyFund]
+        );
     }
 
     #[test]
@@ -292,12 +296,10 @@ mod tests {
             assert!(!key.contains("xeqt"));
             assert!(!key.contains("etf"));
             assert!(!key.contains("stock"));
-            assert!(
-                matches!(
-                    eval.reasoning_key.as_str(),
-                    "build_emergency_fund" | "pay_debt" | "contribute_registered" | "invest_surplus"
-                )
-            );
+            assert!(matches!(
+                eval.reasoning_key.as_str(),
+                "build_emergency_fund" | "pay_debt" | "contribute_registered" | "invest_surplus"
+            ));
         }
     }
 

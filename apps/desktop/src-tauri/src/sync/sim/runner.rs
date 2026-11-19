@@ -276,11 +276,7 @@ impl<E: ReplicaEngine> Driver<E> {
     /// generator's own live set is global — a natural-key row is shared the moment any replica
     /// creates it — so without this filter it would issue an op on a row whose segment has not
     /// arrived, which no real computer can do and which the real engine therefore cannot capture.
-    fn present(
-        &self,
-        replica: usize,
-        records: Vec<RowRecord>,
-    ) -> Result<Vec<RowRecord>, SimError> {
+    fn present(&self, replica: usize, records: Vec<RowRecord>) -> Result<Vec<RowRecord>, SimError> {
         let state = self.engines[replica].observable()?;
 
         Ok(records
@@ -346,9 +342,11 @@ impl<E: ReplicaEngine> Driver<E> {
                     .expect("the list is not empty")
                     .to_string(),
             ),
-            (Table::MerchantHints, "budget_category_id") => {
-                SimCell::Int(self.rng.choose(&SIM_CATEGORY_IDS).expect("the list is not empty"))
-            }
+            (Table::MerchantHints, "budget_category_id") => SimCell::Int(
+                self.rng
+                    .choose(&SIM_CATEGORY_IDS)
+                    .expect("the list is not empty"),
+            ),
             (table, column) => unreachable!("no generator for {}.{column}", table.sql()),
         }
     }
@@ -418,7 +416,15 @@ impl<E: ReplicaEngine> Driver<E> {
         // minting one identity from the same key, and it is a real message.
         if matches!(table, Table::MerchantHints)
             && !self
-                .present(replica, vec![RowRecord { table, row, owner, live: true }])?
+                .present(
+                    replica,
+                    vec![RowRecord {
+                        table,
+                        row,
+                        owner,
+                        live: true,
+                    }],
+                )?
                 .is_empty()
         {
             return Ok(None);
@@ -453,7 +459,14 @@ impl<E: ReplicaEngine> Driver<E> {
         // The real emitters do exactly this pair (Story 16): creating the row publishes its
         // balance as an absolute set, and its counter as the first delta from zero.
         if table.counter_column().is_some() {
-            self.write(replica, Change::CounterDelta { table, row, delta: 1 })?;
+            self.write(
+                replica,
+                Change::CounterDelta {
+                    table,
+                    row,
+                    delta: 1,
+                },
+            )?;
         }
 
         let record = RowRecord {
@@ -1029,8 +1042,8 @@ impl<E: ReplicaEngine> Driver<E> {
         }
 
         self.publish(replica)?;
-        let dir = tempfile::tempdir()
-            .map_err(|error| SimError::Model(format!("a temp dir: {error}")))?;
+        let dir =
+            tempfile::tempdir().map_err(|error| SimError::Model(format!("a temp dir: {error}")))?;
         let db_path = dir.path().join("nixus.db");
         let index = self.replicas();
         let install = install_id_for(self.config.seed, index);
@@ -1062,8 +1075,7 @@ impl<E: ReplicaEngine> Driver<E> {
             self.emitted_causes.insert((index, cause));
         }
         self.outcome.clones += 1;
-        self.trace
-            .push(format!("r{index} cloned from r{replica}"));
+        self.trace.push(format!("r{index} cloned from r{replica}"));
 
         Ok(())
     }
@@ -1158,7 +1170,10 @@ impl<E: ReplicaEngine> Driver<E> {
 
     fn assert_deletes_won(&self, state: &Observable) -> Result<(), String> {
         for (table, row) in self.oracle.deleted_rows() {
-            if state.get(table.sql()).is_some_and(|rows| rows.contains_key(&row)) {
+            if state
+                .get(table.sql())
+                .is_some_and(|rows| rows.contains_key(&row))
+            {
                 return Err(format!(
                     "{}#{} was deleted but survived",
                     table.sql(),

@@ -25,7 +25,14 @@ pub fn create_income_source(
     let result = active.write(|tx| income_db::insert_income_source(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "income_source", result.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "income_source",
+        result.id,
+        "create",
+        None,
+        Some(&details),
+    );
 
     Ok(result)
 }
@@ -60,7 +67,14 @@ pub fn update_income_source(
     let result = active.write(|tx| income_db::update_income_source(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "income_source", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        &active,
+        "income_source",
+        id,
+        "update",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
 
     Ok(result)
 }
@@ -76,7 +90,14 @@ pub fn delete_income_source(state: State<DbState>, id: i64) -> Result<(), AppErr
 
     active.write(|tx| income_db::delete_income_source(tx, id))?;
 
-    audit_db::record(&active, "income_source", id, "delete", old_json.as_deref(), None);
+    audit_db::record(
+        &active,
+        "income_source",
+        id,
+        "delete",
+        old_json.as_deref(),
+        None,
+    );
 
     Ok(())
 }
@@ -102,7 +123,14 @@ pub fn create_income_entry(
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "income_entry", result.id, "create", None, Some(&new_json));
+    audit_db::record(
+        &active,
+        "income_entry",
+        result.id,
+        "create",
+        None,
+        Some(&new_json),
+    );
     record_account_balance_changes(&active, &mutation.balance_changes);
 
     Ok(result)
@@ -124,12 +152,24 @@ pub fn update_income_entry(
 
     let old_json = get_entry_json(conn, id);
 
-    let input = UpdateIncomeEntryInput { source_id, amount_cents, date, account_id };
+    let input = UpdateIncomeEntryInput {
+        source_id,
+        amount_cents,
+        date,
+        account_id,
+    };
     let mutation = active.write(|tx| income_db::update_income_entry(tx, id, &input))?;
     let result = mutation.entry;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "income_entry", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        &active,
+        "income_entry",
+        id,
+        "update",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
     record_account_balance_changes(&active, &mutation.balance_changes);
 
     Ok(result)
@@ -146,7 +186,14 @@ pub fn delete_income_entry(state: State<DbState>, id: i64) -> Result<(), AppErro
 
     let balance_changes = active.write(|tx| income_db::delete_income_entry(tx, id))?;
 
-    audit_db::record(&active, "income_entry", id, "delete", old_json.as_deref(), None);
+    audit_db::record(
+        &active,
+        "income_entry",
+        id,
+        "delete",
+        old_json.as_deref(),
+        None,
+    );
     record_account_balance_changes(&active, &balance_changes);
 
     Ok(())

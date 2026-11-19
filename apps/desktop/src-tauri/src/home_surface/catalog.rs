@@ -128,15 +128,21 @@ pub fn component(name: &str) -> Option<&'static CatalogComponent> {
 /// small range, and text is matched against category names locally, never shown as a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {
-    Integer { min: i64, max: i64, default: i64 },
+    Integer {
+        min: i64,
+        max: i64,
+        default: i64,
+    },
     /// Optional: omitted means "no filter".
-    CategoryName { max_chars: usize },
+    CategoryName {
+        max_chars: usize,
+    },
     /// Optional: one of `ASSET_TYPES`; omitted means "every asset type".
     AssetType,
 }
 
 /// The net-worth asset types, spelled as stored in `passive_assets.asset_type`.
-pub const ASSET_TYPES: &[&str] = &["stock", "real_estate", "vehicle", "business", "other"]; 
+pub const ASSET_TYPES: &[&str] = &["stock", "real_estate", "vehicle", "business", "other"];
 
 #[derive(Debug, Clone, Copy)]
 pub struct ParamSpec {

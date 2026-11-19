@@ -133,9 +133,11 @@ pub fn strip_local_only(conn: &Connection, config_keys: &[&str]) -> Result<Strip
 /// duplicate, and a retention sweep could never drop the origin's own segments.
 fn claim_own_head(tx: &Connection) -> Result<Option<i64>, AppError> {
     let install: Option<String> = tx
-        .query_row("SELECT install_id FROM sync_state WHERE id = 1", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT install_id FROM sync_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
         .ok();
     let Some(install) = install else {
         return Ok(None);

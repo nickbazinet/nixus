@@ -19,9 +19,9 @@ use crate::ai::{self, AiState};
 use crate::commands::{recurring, recurring_income, recurring_transfer};
 use crate::datasets;
 use crate::db::{init_db, ActiveDataset, DbState};
-use crate::sync::capture::Capture;
 use crate::error::AppError;
 use crate::models::{Dataset, DatasetKind};
+use crate::sync::capture::Capture;
 
 #[derive(Serialize, Clone)]
 struct DatasetSwitchedPayload {
@@ -233,7 +233,10 @@ fn swap_active(
 ///
 /// Split out of `select_dataset_now` so the unknown-id branch is unit-testable
 /// without a running Tauri app, mirroring `datasets::resolve_active_dir`.
-pub(crate) fn find_registered(entries: Vec<Dataset>, dataset_id: &str) -> Result<Dataset, AppError> {
+pub(crate) fn find_registered(
+    entries: Vec<Dataset>,
+    dataset_id: &str,
+) -> Result<Dataset, AppError> {
     entries
         .into_iter()
         .find(|entry| entry.id == dataset_id)
@@ -578,7 +581,12 @@ mod tests {
         let active = lock.lock().expect("lock is not poisoned");
         assert_eq!(active.id.as_deref(), Some("next"));
         assert_eq!(
-            tag_of(active.conn.as_ref().expect("a swapped dataset is connected")),
+            tag_of(
+                active
+                    .conn
+                    .as_ref()
+                    .expect("a swapped dataset is connected")
+            ),
             "tag_next",
             "the id advanced but the connection is still the previous dataset's"
         );
@@ -592,13 +600,23 @@ mod tests {
             capture: None,
         });
 
-        swap_active(&lock, "default".to_string(), tagged_connection("default"), None)
-            .expect("swap succeeds");
+        swap_active(
+            &lock,
+            "default".to_string(),
+            tagged_connection("default"),
+            None,
+        )
+        .expect("swap succeeds");
 
         let active = lock.lock().expect("lock is not poisoned");
         assert_eq!(active.id.as_deref(), Some("default"));
         assert_eq!(
-            tag_of(active.conn.as_ref().expect("a swapped dataset is connected")),
+            tag_of(
+                active
+                    .conn
+                    .as_ref()
+                    .expect("a swapped dataset is connected")
+            ),
             "tag_default"
         );
     }
@@ -614,7 +632,7 @@ mod tests {
             dir.path().join(crate::datasets::DB_FILE_NAME),
             b"not a sqlite file at all",
         )
-            .expect("garbage db written");
+        .expect("garbage db written");
 
         let outcome = (|| -> Result<(), AppError> {
             let conn = init_db(dir.path())?;
@@ -761,7 +779,10 @@ mod tests {
             json,
             r#"{"dataset_id":"cloud-1","kind":"cloud-linked","label":"user@example.com","is_signed_in":true}"#
         );
-        assert!(!json.contains("cognito"), "the subject must never cross IPC");
+        assert!(
+            !json.contains("cognito"),
+            "the subject must never cross IPC"
+        );
     }
 
     // Deliberately ONE test rather than three: `PICKER_PASSED` is a process-global
@@ -844,7 +865,10 @@ mod tests {
             let error = authorize_selection(entry, subject)
                 .expect_err("an unauthorized cloud selection must be refused");
             match error {
-                AppError::Auth { recoverable, message } => {
+                AppError::Auth {
+                    recoverable,
+                    message,
+                } => {
                     assert!(recoverable, "signing in as that account is the remedy");
                     // The refusal must not echo back what the caller failed to prove
                     // it may know about this profile.

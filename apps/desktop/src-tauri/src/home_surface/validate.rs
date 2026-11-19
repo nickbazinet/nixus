@@ -272,12 +272,8 @@ fn validate_binding(
 /// a line item needs a ledger, and a flow needs the two nodes it runs between.
 fn exclusive_component(shape: catalog::SourceShape) -> Option<(&'static str, &'static str)> {
     match shape {
-        catalog::SourceShape::Transactions => {
-            Some(("lists individual transactions", "Table"))
-        }
-        catalog::SourceShape::Flow => {
-            Some(("describes flows between nodes", "SankeyChart"))
-        }
+        catalog::SourceShape::Transactions => Some(("lists individual transactions", "Table")),
+        catalog::SourceShape::Flow => Some(("describes flows between nodes", "SankeyChart")),
         catalog::SourceShape::Scalar => Some(("is a single fact, not a figure", "Date")),
         catalog::SourceShape::TimeSeries | catalog::SourceShape::Categorical => None,
     }

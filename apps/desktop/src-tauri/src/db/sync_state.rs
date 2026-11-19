@@ -146,9 +146,7 @@ fn parse_row(raw: StoredRow) -> Result<SyncState, AppError> {
 /// `None` is a normal answer, not a fault: a local-only dataset must never have a row
 /// at all (inherited AD-12), so every caller has to handle its absence anyway.
 pub fn load(conn: &Connection) -> Result<Option<SyncState>, AppError> {
-    let raw = conn
-        .query_row(SELECT_ROW, [], read_row)
-        .optional()?;
+    let raw = conn.query_row(SELECT_ROW, [], read_row).optional()?;
 
     raw.map(parse_row).transpose()
 }
@@ -375,8 +373,7 @@ mod tests {
         assert_eq!(created.owner_sub, None);
         assert_eq!(created.frozen_reason, None);
 
-        let again =
-            ensure(&conn, "fedcba9876543210", FINGERPRINT).expect("second ensure");
+        let again = ensure(&conn, "fedcba9876543210", FINGERPRINT).expect("second ensure");
         assert_eq!(
             again, created,
             "an existing install id must win over a fresh candidate"
@@ -535,7 +532,10 @@ mod tests {
         clear_joined_at(&conn).expect("the copy/restore verb forgets the join");
 
         let copied = load(&conn).expect("load").expect("row exists");
-        assert!(!copied.joined(), "a copied or restored file has joined nothing");
+        assert!(
+            !copied.joined(),
+            "a copied or restored file has joined nothing"
+        );
         assert_eq!(
             copied.install_id, "fedcba9876543210",
             "clearing the marker must change nothing else"
@@ -561,7 +561,8 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_stored_value_is_an_error_rather_than_a_panic() {        let conn = migrated_db();
+    fn an_unreadable_stored_value_is_an_error_rather_than_a_panic() {
+        let conn = migrated_db();
         ensure(&conn, INSTALL, FINGERPRINT).expect("ensure");
         // The CHECK constraints make this unreachable through the app; a hand-edited or
         // downgraded file is the case this guards, simulated by suspending the checks.
@@ -649,9 +650,15 @@ mod tests {
         run_migrations(&conn).expect("forward migrate");
 
         let state = load(&conn).expect("load").expect("row exists");
-        assert!(state.joined(), "a Milestone-1 linked dataset is already joined");
+        assert!(
+            state.joined(),
+            "a Milestone-1 linked dataset is already joined"
+        );
         assert!(!state.sync_disabled, "the upgrade must not opt anyone out");
-        assert_eq!(state.install_id, INSTALL, "the upgrade carries the install id");
+        assert_eq!(
+            state.install_id, INSTALL,
+            "the upgrade carries the install id"
+        );
         assert_eq!(state.owner_sub.as_deref(), Some("sub-1"));
     }
 

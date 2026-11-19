@@ -206,7 +206,11 @@ pub const TABLES: &[TableRule] = &[
 /// like any other.
 pub const COLUMNS: &[ColumnRule] = &[
     column("account_transfers", "id", LocalId),
-    column("account_transfers", "recurring_transfer_template_id", LocalId),
+    column(
+        "account_transfers",
+        "recurring_transfer_template_id",
+        LocalId,
+    ),
     column("account_transfers", "from_account_id", LocalId),
     column("account_transfers", "to_account_id", LocalId),
     column("account_transfers", "amount_cents", Lww),
@@ -431,30 +435,85 @@ pub const COLUMNS: &[ColumnRule] = &[
 
 /// Every foreign-key edge of the real schema, with AD-12's policy for it.
 pub const EDGES: &[EdgeRule] = &[
-    edge("account_transfers", "from_account_id", "accounts", FkPolicy::SetNull),
+    edge(
+        "account_transfers",
+        "from_account_id",
+        "accounts",
+        FkPolicy::SetNull,
+    ),
     edge(
         "account_transfers",
         "recurring_transfer_template_id",
         "recurring_transfer_templates",
         FkPolicy::SetNull,
     ),
-    edge("account_transfers", "to_account_id", "accounts", FkPolicy::SetNull),
-    edge("budget_categories", "group_id", "budget_groups", FkPolicy::NoAction),
-    edge("budget_categories", "project_id", "projects", FkPolicy::SetNull),
-    edge("chat_messages", "conversation_id", "chat_conversations", FkPolicy::NoAction),
+    edge(
+        "account_transfers",
+        "to_account_id",
+        "accounts",
+        FkPolicy::SetNull,
+    ),
+    edge(
+        "budget_categories",
+        "group_id",
+        "budget_groups",
+        FkPolicy::NoAction,
+    ),
+    edge(
+        "budget_categories",
+        "project_id",
+        "projects",
+        FkPolicy::SetNull,
+    ),
+    edge(
+        "chat_messages",
+        "conversation_id",
+        "chat_conversations",
+        FkPolicy::NoAction,
+    ),
     edge("expenses", "account_id", "accounts", FkPolicy::SetNull),
-    edge("expenses", "budget_category_id", "budget_categories", FkPolicy::NoAction),
-    edge("income_entries", "account_id", "accounts", FkPolicy::SetNull),
-    edge("income_entries", "source_id", "income_sources", FkPolicy::Cascade),
+    edge(
+        "expenses",
+        "budget_category_id",
+        "budget_categories",
+        FkPolicy::NoAction,
+    ),
+    edge(
+        "income_entries",
+        "account_id",
+        "accounts",
+        FkPolicy::SetNull,
+    ),
+    edge(
+        "income_entries",
+        "source_id",
+        "income_sources",
+        FkPolicy::Cascade,
+    ),
     edge(
         "income_entries",
         "recurring_income_template_id",
         "recurring_income_templates",
         FkPolicy::SetNull,
     ),
-    edge("maintenance_service_logs", "task_id", "maintenance_tasks", FkPolicy::Cascade),
-    edge("maintenance_service_logs", "vehicle_id", "vehicles", FkPolicy::Cascade),
-    edge("maintenance_tasks", "vehicle_id", "vehicles", FkPolicy::Cascade),
+    edge(
+        "maintenance_service_logs",
+        "task_id",
+        "maintenance_tasks",
+        FkPolicy::Cascade,
+    ),
+    edge(
+        "maintenance_service_logs",
+        "vehicle_id",
+        "vehicles",
+        FkPolicy::Cascade,
+    ),
+    edge(
+        "maintenance_tasks",
+        "vehicle_id",
+        "vehicles",
+        FkPolicy::Cascade,
+    ),
     edge(
         "merchant_category_hints",
         "budget_category_id",
@@ -462,28 +521,69 @@ pub const EDGES: &[EdgeRule] = &[
         FkPolicy::NoAction,
     ),
     // THE one restricted edge (AD-12): a live contribution beats an account tombstone.
-    edge("project_contributions", "account_id", "accounts", FkPolicy::Restrict),
-    edge("project_contributions", "project_id", "projects", FkPolicy::Cascade),
-    edge("project_images", "project_id", "projects", FkPolicy::Cascade),
+    edge(
+        "project_contributions",
+        "account_id",
+        "accounts",
+        FkPolicy::Restrict,
+    ),
+    edge(
+        "project_contributions",
+        "project_id",
+        "projects",
+        FkPolicy::Cascade,
+    ),
+    edge(
+        "project_images",
+        "project_id",
+        "projects",
+        FkPolicy::Cascade,
+    ),
     edge(
         "recurring_expense_templates",
         "budget_category_id",
         "budget_categories",
         FkPolicy::NoAction,
     ),
-    edge("recurring_income_templates", "account_id", "accounts", FkPolicy::SetNull),
-    edge("recurring_income_templates", "source_id", "income_sources", FkPolicy::Cascade),
-    edge("recurring_transfer_templates", "from_account_id", "accounts", FkPolicy::Cascade),
-    edge("recurring_transfer_templates", "to_account_id", "accounts", FkPolicy::Cascade),
-    edge("stock_holdings", "account_id", "accounts", FkPolicy::SetNull),
-    edge("stock_holdings", "passive_asset_id", "passive_assets", FkPolicy::Cascade),
+    edge(
+        "recurring_income_templates",
+        "account_id",
+        "accounts",
+        FkPolicy::SetNull,
+    ),
+    edge(
+        "recurring_income_templates",
+        "source_id",
+        "income_sources",
+        FkPolicy::Cascade,
+    ),
+    edge(
+        "recurring_transfer_templates",
+        "from_account_id",
+        "accounts",
+        FkPolicy::Cascade,
+    ),
+    edge(
+        "recurring_transfer_templates",
+        "to_account_id",
+        "accounts",
+        FkPolicy::Cascade,
+    ),
+    edge(
+        "stock_holdings",
+        "account_id",
+        "accounts",
+        FkPolicy::SetNull,
+    ),
+    edge(
+        "stock_holdings",
+        "passive_asset_id",
+        "passive_assets",
+        FkPolicy::Cascade,
+    ),
 ];
 
-const fn rule(
-    table: &'static str,
-    class: TableClass,
-    identity: Option<RowIdentity>,
-) -> TableRule {
+const fn rule(table: &'static str, class: TableClass, identity: Option<RowIdentity>) -> TableRule {
     TableRule {
         table,
         class,
@@ -629,14 +729,10 @@ mod tests {
         let mut found = HashMap::new();
         for table in live_tables(conn) {
             let mut statement = conn
-                .prepare(
-                    "SELECT \"from\", \"table\", on_delete FROM pragma_foreign_key_list(?1)",
-                )
+                .prepare("SELECT \"from\", \"table\", on_delete FROM pragma_foreign_key_list(?1)")
                 .expect("the edge list prepares");
             let edges: Vec<(String, String, String)> = statement
-                .query_map([&table], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-                })
+                .query_map([&table], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                 .expect("the edge list reads")
                 .collect::<Result<_, _>>()
                 .expect("the edge list collects");
@@ -655,7 +751,11 @@ mod tests {
         let live = live_tables(&conn);
         let declared: BTreeSet<String> = TABLES.iter().map(|rule| rule.table.to_string()).collect();
 
-        assert!(live.len() > 25, "the live schema must be there, got {}", live.len());
+        assert!(
+            live.len() > 25,
+            "the live schema must be there, got {}",
+            live.len()
+        );
         assert_eq!(
             live.difference(&declared).collect::<Vec<_>>(),
             Vec::<&String>::new(),
@@ -816,10 +916,7 @@ mod tests {
 
         for rule in EDGES {
             assert!(
-                live.contains_key(&(
-                    rule.child_table.to_string(),
-                    rule.child_column.to_string()
-                )),
+                live.contains_key(&(rule.child_table.to_string(), rule.child_column.to_string())),
                 "registry::EDGES names an edge the schema does not have: {}.{}",
                 rule.child_table,
                 rule.child_column
@@ -839,9 +936,18 @@ mod tests {
         );
         assert_eq!(merge_kind("project_images", "image_bytes"), Some(Excluded));
 
-        let balances = COLUMNS.iter().filter(|c| matches!(c.merge, Balance)).count();
-        let counters = COLUMNS.iter().filter(|c| matches!(c.merge, Counter)).count();
-        let excluded = COLUMNS.iter().filter(|c| matches!(c.merge, Excluded)).count();
+        let balances = COLUMNS
+            .iter()
+            .filter(|c| matches!(c.merge, Balance))
+            .count();
+        let counters = COLUMNS
+            .iter()
+            .filter(|c| matches!(c.merge, Counter))
+            .count();
+        let excluded = COLUMNS
+            .iter()
+            .filter(|c| matches!(c.merge, Excluded))
+            .count();
         assert_eq!((balances, counters, excluded), (1, 1, 1));
     }
 
@@ -854,7 +960,10 @@ mod tests {
         let edges = live_edges(&conn);
         let mut scanned: BTreeSet<(String, String)> = BTreeSet::new();
 
-        for rule in TABLES.iter().filter(|rule| !matches!(rule.class, LocalOnly)) {
+        for rule in TABLES
+            .iter()
+            .filter(|rule| !matches!(rule.class, LocalOnly))
+        {
             let mut statement = conn
                 .prepare("SELECT name, type, pk FROM pragma_table_info(?1)")
                 .expect("the column list prepares");
@@ -868,8 +977,7 @@ mod tests {
 
             for (name, declared_type, pk) in columns {
                 let is_integer_pk = pk > 0 && declared_type.eq_ignore_ascii_case("INTEGER");
-                let is_foreign_key =
-                    edges.contains_key(&(rule.table.to_string(), name.clone()));
+                let is_foreign_key = edges.contains_key(&(rule.table.to_string(), name.clone()));
                 if !is_integer_pk && !is_foreign_key {
                     continue;
                 }
@@ -914,9 +1022,15 @@ mod tests {
         assert!(config_key_is_local_only("aws_region"));
         assert!(!config_key_is_local_only("theme"));
         assert!(!config_key_is_local_only("onboarding_completed"));
-        assert!(config_key_is_local_only(crate::db::sync_wipe::WIPE_EPOCH_KEY));
-        assert!(config_key_is_local_only(crate::db::sync_wipe::WIPE_PENDING_KEY));
-        assert!(config_key_is_local_only(crate::db::sync_wipe::IMPORT_PENDING_KEY));
+        assert!(config_key_is_local_only(
+            crate::db::sync_wipe::WIPE_EPOCH_KEY
+        ));
+        assert!(config_key_is_local_only(
+            crate::db::sync_wipe::WIPE_PENDING_KEY
+        ));
+        assert!(config_key_is_local_only(
+            crate::db::sync_wipe::IMPORT_PENDING_KEY
+        ));
         assert_eq!(
             crate::db::config::LOCAL_ONLY_KEYS.len(),
             6,
@@ -999,7 +1113,10 @@ mod tests {
             "the column coverage check must notice a missing classification"
         );
 
-        assert_eq!(fk_policy("project_contributions", "account_id"), Some(FkPolicy::Restrict));
+        assert_eq!(
+            fk_policy("project_contributions", "account_id"),
+            Some(FkPolicy::Restrict)
+        );
         assert_eq!(fk_policy("project_contributions", "no_such_column"), None);
         assert!(table("accounts").is_some());
         assert!(table("no_such_table").is_none());

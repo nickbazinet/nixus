@@ -26,9 +26,7 @@ fn check_gate(categories: &[CategoryCompareRow]) -> Result<(), AppError> {
         });
     }
 
-    let has_target = categories
-        .iter()
-        .any(|c| c.target_cents.unwrap_or(0) > 0);
+    let has_target = categories.iter().any(|c| c.target_cents.unwrap_or(0) > 0);
 
     if !has_target {
         return Err(AppError::Validation {

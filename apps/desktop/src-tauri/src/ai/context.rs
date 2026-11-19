@@ -177,8 +177,8 @@ fn assets(conn: &Connection) -> String {
 }
 
 fn income_this_month(conn: &Connection, clock: &ProviderClock) -> String {
-    let entries = income_db::get_income_entries_by_month(conn, clock.year, clock.month)
-        .unwrap_or_default();
+    let entries =
+        income_db::get_income_entries_by_month(conn, clock.year, clock.month).unwrap_or_default();
     if entries.is_empty() {
         return "No income recorded for the current month.\n\n".to_string();
     }
@@ -388,7 +388,10 @@ mod tests {
             render(ContextProviderId::BudgetCategories, &conn, &c),
             "Budget Categories:\n\n"
         );
-        assert_eq!(render(ContextProviderId::Accounts, &conn, &c), "Accounts:\n\n");
+        assert_eq!(
+            render(ContextProviderId::Accounts, &conn, &c),
+            "Accounts:\n\n"
+        );
         assert_eq!(render(ContextProviderId::Assets, &conn, &c), "Assets:\n\n");
         assert_eq!(
             render(ContextProviderId::BudgetSummary, &conn, &c),
@@ -436,8 +439,11 @@ mod tests {
     #[test]
     fn budget_categories_truncates_at_its_cap() {
         let conn = empty_db();
-        conn.execute("INSERT INTO budget_groups (id, name, sort_order) VALUES (1, 'G', 0)", [])
-            .expect("insert group");
+        conn.execute(
+            "INSERT INTO budget_groups (id, name, sort_order) VALUES (1, 'G', 0)",
+            [],
+        )
+        .expect("insert group");
         let total = BUDGET_CATEGORIES_CAP + 1;
         for i in 0..total {
             conn.execute(
@@ -617,6 +623,9 @@ mod tests {
         // A migrated-away database stands in for any read failure: the turn must still proceed.
         let conn = Connection::open_in_memory().expect("in-memory database");
 
-        assert_eq!(assemble(ALL, &conn, &clock()), "Budget Groups: none yet.\n\nNo income recorded for the current month.\n\n");
+        assert_eq!(
+            assemble(ALL, &conn, &clock()),
+            "Budget Groups: none yet.\n\nNo income recorded for the current month.\n\n"
+        );
     }
 }

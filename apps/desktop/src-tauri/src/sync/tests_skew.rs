@@ -14,7 +14,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::sync::manager::{SyncActor, SyncState, SyncTuning};
-use crate::sync::test_support::{test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer};
+use crate::sync::test_support::{
+    test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer,
+};
 
 type Actor = SyncActor<TestComputer>;
 
@@ -92,7 +94,10 @@ async fn an_old_build_parks_a_newer_computers_segment_and_applies_it_after_the_u
     let diagnostics = second.diagnostics();
     assert_eq!(diagnostics.parked_segments, 1);
     assert_eq!(
-        (diagnostics.pending_messages, diagnostics.quarantined_messages),
+        (
+            diagnostics.pending_messages,
+            diagnostics.quarantined_messages
+        ),
         (0, 0),
         "parking is not quarantining and not the pending queue"
     );
@@ -231,7 +236,9 @@ async fn a_wrong_clock_never_blocks_a_local_write() {
     probe.report_clock_skew(20 * 60 * 1000);
     actor.tick().await;
 
-    assert!(probe.rows().contains(&"written-with-a-wrong-clock".to_string()));
+    assert!(probe
+        .rows()
+        .contains(&"written-with-a-wrong-clock".to_string()));
     assert_eq!(probe.unshipped(), 0, "the change left the computer");
 }
 

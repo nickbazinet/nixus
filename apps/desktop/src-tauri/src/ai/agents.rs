@@ -209,9 +209,14 @@ mod drift {
             let source = read_frontend(&format!("locales/{locale}.json"));
 
             for spec in all().iter().filter(|spec| spec.kind == AgentKind::Chat) {
-                let keys = [spec.name_key, spec.description_key, spec.ready_key, spec.scope_key]
-                    .into_iter()
-                    .chain(spec.starter_keys.iter().copied());
+                let keys = [
+                    spec.name_key,
+                    spec.description_key,
+                    spec.ready_key,
+                    spec.scope_key,
+                ]
+                .into_iter()
+                .chain(spec.starter_keys.iter().copied());
                 for key in keys {
                     assert!(
                         source.contains(&format!("\"{key}\"")),

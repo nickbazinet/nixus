@@ -515,9 +515,15 @@ async fn a_snapshot_whose_records_have_no_identity_is_settled_before_the_tail_is
     )
     .await
     .expect("the snapshot builds");
-    snapshot::upload_snapshot(&syncing_fake(Arc::clone(&cloud)), &unsettled, None, NOW_MS, 0)
-        .await
-        .expect("the snapshot publishes");
+    snapshot::upload_snapshot(
+        &syncing_fake(Arc::clone(&cloud)),
+        &unsettled,
+        None,
+        NOW_MS,
+        0,
+    )
+    .await
+    .expect("the snapshot publishes");
 
     // A, on this build, settles, describes every record in its log and ships it.
     first.auto_start_now().await;

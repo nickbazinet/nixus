@@ -66,7 +66,13 @@ fn computer(id: &str, store: Arc<FakeObjectStore>, clock: i64) -> (Actor, Comput
 
 /// Two computers on one account, A enabled first so it owns the snapshot the second bootstraps
 /// from.
-async fn two_computers() -> (Actor, ComputerProbe, Actor, ComputerProbe, Arc<FakeObjectStore>) {
+async fn two_computers() -> (
+    Actor,
+    ComputerProbe,
+    Actor,
+    ComputerProbe,
+    Arc<FakeObjectStore>,
+) {
     let cloud = Arc::new(FakeObjectStore::default());
     let (mut first, first_probe) = computer("A", Arc::clone(&cloud), 1_700_000_000_000);
     let (mut second, second_probe) = computer("B", Arc::clone(&cloud), 1_800_000_000_000);
@@ -92,7 +98,11 @@ async fn one_computers_captured_changes_reach_the_other_as_an_ordered_batch() {
 
     first_probe.write_captured("groceries");
     first_probe.write_captured("transport");
-    assert_eq!(first_probe.unshipped(), 2, "two captured rows, two messages");
+    assert_eq!(
+        first_probe.unshipped(),
+        2,
+        "two captured rows, two messages"
+    );
 
     first.tick().await;
 
@@ -130,7 +140,10 @@ async fn one_computers_captured_changes_reach_the_other_as_an_ordered_batch() {
                 && message.table_name == "budget_groups"),
         "the decoded messages are the rows A really wrote"
     );
-    let mut stamps: Vec<&str> = messages.iter().map(|message| message.hlc.as_str()).collect();
+    let mut stamps: Vec<&str> = messages
+        .iter()
+        .map(|message| message.hlc.as_str())
+        .collect();
     let sorted = {
         let mut copy = stamps.clone();
         copy.sort_unstable();
@@ -233,7 +246,11 @@ async fn a_crash_between_the_upload_and_the_mark_re_cuts_the_same_bytes_and_dedu
         1,
         "and no second segment was minted under a new seq"
     );
-    assert_eq!(probe.unshipped(), 0, "the mark completed what the crash cut short");
+    assert_eq!(
+        probe.unshipped(),
+        0,
+        "the mark completed what the crash cut short"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -341,7 +358,9 @@ async fn two_computers_racing_on_the_roster_both_end_up_in_it() {
     let gated = syncing_fake(Arc::clone(&cloud));
     let (first, second) = ("0123456789abcdef", "fedcba9876543210");
 
-    let mine = segment::join_roster(&gated, first, 0).await.expect("A joins");
+    let mine = segment::join_roster(&gated, first, 0)
+        .await
+        .expect("A joins");
     assert_eq!(mine.installs, vec![first.to_string()]);
 
     // B loses the compare-and-swap once, which is exactly what a concurrent writer looks like.
@@ -358,7 +377,9 @@ async fn two_computers_racing_on_the_roster_both_end_up_in_it() {
         "what is stored is the union, not one computer's view of it"
     );
 
-    let again = segment::join_roster(&gated, first, 0).await.expect("A re-joins");
+    let again = segment::join_roster(&gated, first, 0)
+        .await
+        .expect("A re-joins");
     assert_eq!(again, merged, "an install already listed writes nothing");
 }
 
@@ -472,7 +493,10 @@ async fn a_dataset_the_gate_refuses_runs_none_of_the_log_protocol() {
     let (host, probe) = test_computer("A", Arc::clone(&cloud), 1_700_000_000_000);
     let (mut local, _status, _events) = SyncActor::new(host.local_only(), tuning());
 
-    let fault = local.enable(None).await.expect_err("a local profile cannot sync");
+    let fault = local
+        .enable(None)
+        .await
+        .expect_err("a local profile cannot sync");
     assert_eq!(fault.code(), "local_only");
 
     local.tick().await;
@@ -489,7 +513,10 @@ async fn a_dataset_the_gate_refuses_runs_none_of_the_log_protocol() {
 
     frozen.tick().await;
 
-    assert_eq!(frozen.status().state, crate::sync::manager::SyncState::Frozen);
+    assert_eq!(
+        frozen.status().state,
+        crate::sync::manager::SyncState::Frozen
+    );
     assert_eq!(
         cloud.calls(),
         while_entitled,

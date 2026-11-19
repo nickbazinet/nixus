@@ -68,7 +68,10 @@ pub fn ensure(
     }
 
     if let Some(bound) = lookup(conn, table, row_id)? {
-        return Ok(Mapping { uuid: bound, row_id });
+        return Ok(Mapping {
+            uuid: bound,
+            row_id,
+        });
     }
 
     if let Some(owner) = row_id_for(conn, table, uuid)? {
@@ -210,7 +213,10 @@ mod tests {
         ensure(&conn, "accounts", 7, &A).expect("the mapping");
 
         assert_eq!(lookup(&conn, "accounts", 7).expect("the lookup"), Some(A));
-        assert_eq!(row_id_for(&conn, "accounts", &A).expect("the reverse"), Some(7));
+        assert_eq!(
+            row_id_for(&conn, "accounts", &A).expect("the reverse"),
+            Some(7)
+        );
     }
 
     /// Two tables may legitimately hold the same rowid, and `(table, row_id)` is the key precisely
@@ -244,7 +250,9 @@ mod tests {
         // SQLite names the COLUMNS of a violated UNIQUE index rather than the constraint, unlike
         // a CHECK; the columns are what identifies the rule here.
         assert!(
-            error.to_string().contains("sync_uuid.table_name, sync_uuid.uuid"),
+            error
+                .to_string()
+                .contains("sync_uuid.table_name, sync_uuid.uuid"),
             "the identity index must be what refuses it: {error}"
         );
     }
@@ -300,8 +308,8 @@ mod tests {
             ("tombstone", Some("name")),
             ("balance_set", Some("balance_cents")),
         ] {
-            let error = write(kind, column)
-                .expect_err("the named constraint must refuse this combination");
+            let error =
+                write(kind, column).expect_err("the named constraint must refuse this combination");
             assert!(
                 error
                     .to_string()

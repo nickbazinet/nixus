@@ -6,10 +6,7 @@ use crate::error::AppError;
 use crate::models::YearlySummaryData;
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn get_yearly_summary(
-    state: State<DbState>,
-    year: i32,
-) -> Result<YearlySummaryData, AppError> {
+pub fn get_yearly_summary(state: State<DbState>, year: i32) -> Result<YearlySummaryData, AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;

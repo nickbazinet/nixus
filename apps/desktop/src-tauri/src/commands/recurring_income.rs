@@ -113,20 +113,32 @@ pub fn delete_recurring_income_template(state: State<DbState>, id: i64) -> Resul
 
     active.write(|tx| recurring_income_db::delete_template(tx, id))?;
 
-    audit_db::record(&active, "recurring_income_template", id, "delete", old_json.as_deref(), None);
+    audit_db::record(
+        &active,
+        "recurring_income_template",
+        id,
+        "delete",
+        old_json.as_deref(),
+        None,
+    );
 
     Ok(())
 }
 
 /// Runs on app startup in the background to backfill missed recurring income.
-pub fn apply_due_recurring_income(
-    active: &ActiveDataset,
-) -> Result<Vec<IncomeEntry>, AppError> {
+pub fn apply_due_recurring_income(active: &ActiveDataset) -> Result<Vec<IncomeEntry>, AppError> {
     let applied = active.write(|tx| recurring_income_db::apply_due_recurring_income(tx))?;
 
     for entry in &applied.entries {
         let details = serde_json::to_string(entry).unwrap_or_default();
-        audit_db::record(active, "income_entry", entry.id, "create", None, Some(&details));
+        audit_db::record(
+            active,
+            "income_entry",
+            entry.id,
+            "create",
+            None,
+            Some(&details),
+        );
     }
 
     // Backfilled income moves linked account balances exactly like a manual entry, so it goes

@@ -149,7 +149,10 @@ fn no_refusal_this_gate_produces_tells_a_subscriber_they_need_premium() {
         other => panic!("expected a hosted error, got {other:?}"),
     };
     assert!(plan_limited.contains("Nixus Cloud AI"), "{plan_limited}");
-    assert!(plan_limited.to_lowercase().contains("upgrade"), "{plan_limited}");
+    assert!(
+        plan_limited.to_lowercase().contains("upgrade"),
+        "{plan_limited}"
+    );
 
     // And it must not read like the out-of-quota conversation, which is a different fact.
     let exhausted = match authorize(HostedEligibility::QuotaExhausted).expect_err("refused") {
@@ -334,13 +337,9 @@ async fn no_seeded_financial_value_appears_in_any_outbound_generation_request() 
         Ok(NET_WORTH_REPLY),
     ]);
 
-    generate_within(
-        generation,
-        GENERATION_BUDGET,
-        script.invoker(),
-    )
-    .await
-    .expect("generates");
+    generate_within(generation, GENERATION_BUDGET, script.invoker())
+        .await
+        .expect("generates");
 
     let seen = script.seen.borrow();
     assert_eq!(seen.len(), 2, "both attempts are inspected");
@@ -459,7 +458,10 @@ async fn a_category_filter_naming_no_category_gets_one_corrective_turn() {
     let seen = script.seen.borrow();
     let correction = &seen[1].turns.last().unwrap().text;
     assert!(correction.contains("\"car insurance\" matches none"));
-    assert!(!correction.contains("Groceries"), "the category list never reaches the model");
+    assert!(
+        !correction.contains("Groceries"),
+        "the category list never reaches the model"
+    );
     match &generated.outcome {
         GenerationOutcome::Proposal(SurfaceChange::Add { widget }) => {
             assert_eq!(widget["dataBinding"]["params"]["category"], "groceries");

@@ -311,7 +311,10 @@ fn the_rebuilt_table_accepts_an_absent_payload_and_leaves_the_table_shape_intact
             |row| row.get(0),
         )
         .expect("sqlite_master reads");
-    assert_eq!(leftovers, 0, "the rebuild must leave no scratch table behind");
+    assert_eq!(
+        leftovers, 0,
+        "the rebuild must leave no scratch table behind"
+    );
 }
 
 #[test]
@@ -375,9 +378,7 @@ fn each_storage_rule_of_the_rebuilt_table_refuses_by_name() {
         (
             "project_images_thumbnail_byte_ceiling",
             format!("{base}, thumbnail_bytes, thumbnail_mime"),
-            format!(
-                "100, 'image/png', 'c.png', 4, '{valid_hash}', zeroblob(65537), 'image/png'"
-            ),
+            format!("100, 'image/png', 'c.png', 4, '{valid_hash}', zeroblob(65537), 'image/png'"),
         ),
     ] {
         let error = refusal(&columns, &values);
@@ -482,7 +483,10 @@ fn the_one_time_rewrite_of_two_near_ceiling_images_is_measured_and_bounded() {
     let path = dir.path().join("nixus.db");
     let conn = open_at_schema_29(&path);
 
-    let large = [pseudo_random_image(81, 4_000_000), pseudo_random_image(82, 4_000_000)];
+    let large = [
+        pseudo_random_image(81, 4_000_000),
+        pseudo_random_image(82, 4_000_000),
+    ];
     for (index, bytes) in large.iter().enumerate() {
         let project_id = i64::try_from(index).unwrap() + 1;
         conn.execute(

@@ -20,11 +20,11 @@ use crate::error::AppError;
 use crate::models::ProjectImage;
 use crate::sync::bootstrap::LinkChoice;
 use crate::sync::host::DatasetHost;
-use crate::sync::restore::{self, RecentlyDeletedView, RestoreOutcome};
 use crate::sync::manager::{
     self, RemoteChoice, SyncDiagnostics, SyncEnableOutcome, SyncFault, SyncHandle, SyncPrompt,
     SyncState, SyncStatusPayload, SyncTuning,
 };
+use crate::sync::restore::{self, RecentlyDeletedView, RestoreOutcome};
 
 /// The actor for the active dataset, or `None` when that dataset cannot sync.
 #[derive(Default)]
@@ -101,7 +101,10 @@ pub(crate) async fn disable_and_stop(app: &AppHandle) {
         .and_then(|supervisor| supervisor.current())
     {
         if let Err(error) = handle.disable().await {
-            warn!("Sync could not be disabled before the dataset was unlinked: {}", error.code());
+            warn!(
+                "Sync could not be disabled before the dataset was unlinked: {}",
+                error.code()
+            );
         }
     }
 
@@ -209,8 +212,8 @@ pub async fn sync_disable(app: AppHandle) -> Result<(), AppError> {
 /// (`unlinked`) rather than a failure, and the UI renders it the same way either way.
 #[tauri::command(rename_all = "snake_case")]
 pub fn sync_status(app: AppHandle) -> Result<SyncStatusPayload, AppError> {
-    let dataset_id = crate::datasets::active_dataset_id(&app.state::<crate::db::DbState>())
-        .unwrap_or_default();
+    let dataset_id =
+        crate::datasets::active_dataset_id(&app.state::<crate::db::DbState>()).unwrap_or_default();
 
     Ok(app
         .try_state::<SyncSupervisor>()
@@ -271,7 +274,14 @@ pub fn restore_deleted(
     let outcome = restore::restore(&active, &key)?;
 
     let details = serde_json::to_string(&outcome).unwrap_or_default();
-    crate::db::audit::record(&active, "recently_deleted", 0, "restore", None, Some(&details));
+    crate::db::audit::record(
+        &active,
+        "recently_deleted",
+        0,
+        "restore",
+        None,
+        Some(&details),
+    );
 
     Ok(outcome)
 }
@@ -698,7 +708,10 @@ mod tests {
                  or a service message would arrive exactly this way"
             );
         }
-        assert!(found.len() >= 6, "the fixture must exercise every string field");
+        assert!(
+            found.len() >= 6,
+            "the fixture must exercise every string field"
+        );
     }
 
     #[test]
@@ -749,6 +762,9 @@ mod tests {
 
         write_document(&target, &rendered).expect("the write succeeds");
 
-        assert_eq!(std::fs::read_to_string(&target).expect("readable"), rendered);
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("readable"),
+            rendered
+        );
     }
 }

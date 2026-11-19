@@ -29,7 +29,12 @@ fn rejected(field: &str, message: &str) -> AppError {
 }
 
 pub fn kind_for_extension(extension: &str) -> Option<AttachmentKind> {
-    match extension.trim().trim_start_matches('.').to_lowercase().as_str() {
+    match extension
+        .trim()
+        .trim_start_matches('.')
+        .to_lowercase()
+        .as_str()
+    {
         "png" => Some(AttachmentKind::Image(AiImageFormat::Png)),
         "jpg" | "jpeg" => Some(AttachmentKind::Image(AiImageFormat::Jpeg)),
         "pdf" => Some(AttachmentKind::Document(AiDocumentFormat::Pdf)),
@@ -123,11 +128,8 @@ mod tests {
     }
 
     fn temp_file(name: &str, bytes: &[u8]) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "nixus-attachment-{}-{}",
-            std::process::id(),
-            name
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("nixus-attachment-{}-{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         let mut file = std::fs::File::create(&path).unwrap();
@@ -138,8 +140,7 @@ mod tests {
     /// The extensions the native picker offers. Kept here as the enforcement-side copy
     /// of `CHAT_ATTACHMENT_EXTENSIONS` in the desktop UI, so dropping one from this
     /// boundary while the picker still offers it fails the build.
-    const OFFERED_EXTENSIONS: &[&str] =
-        &["pdf", "png", "jpg", "jpeg", "csv", "txt", "xls", "xlsx"];
+    const OFFERED_EXTENSIONS: &[&str] = &["pdf", "png", "jpg", "jpeg", "csv", "txt", "xls", "xlsx"];
 
     #[test]
     fn every_advertised_extension_maps_to_a_format() {

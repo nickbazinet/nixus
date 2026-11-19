@@ -42,10 +42,10 @@ use super::bootstrap::{
     self, BootstrapError, BootstrapPlan, LinkChoice, LinkOutcome, ReplaceTarget, RestoreTarget,
     SeparateContext,
 };
+use super::clock::{self, Clock};
 use super::gate::{
     CapabilitySource, DatasetLink, GateStateSource, GatedError, GatedStore, SyncBlocked, SyncGate,
 };
-use super::clock::{self, Clock};
 use super::limits::{DatasetLimits, Oversize, RequestRateCap};
 use super::owner::{owner_object_body, owner_sub_from_body, OWNER_OBJECT_KEY};
 use tracing::{info, warn};
@@ -53,11 +53,11 @@ use tracing::{info, warn};
 use super::apply;
 use super::reconcile;
 use super::retention;
-use super::settle;
 use super::segment::{self, Applier, Head, PollReport, PullCursor, SegmentBatch, SegmentError};
+use super::settle;
 use super::snapshot::{self, LatestFetch, LatestSnapshot, SnapshotError, UploadOutcome};
-use super::wipe::{self, WipeError, WipeWatch};
 use super::store::{ETag, ObjectStore, StoreError};
+use super::wipe::{self, WipeError, WipeWatch};
 
 /// What the UI shows, and what `sync:status` carries (AD-16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -160,9 +160,14 @@ pub enum SyncFault {
     Segment(SegmentError),
     /// The guarded file swap failed. The dataset is rolled back unless `rolled_back` is
     /// false, which is reserved for a rollback that itself failed.
-    Swap { rolled_back: bool },
+    Swap {
+        rolled_back: bool,
+    },
     /// The cloud copy needs a schema this build does not have.
-    UpdateNeeded { found: u32, supported: u32 },
+    UpdateNeeded {
+        found: u32,
+        supported: u32,
+    },
     /// AD-18: an object this computer was about to write is larger than the cap for its
     /// namespace. Refused, never retried (the same bytes would be the same size) and never
     /// fatal: a segment candidate is split instead, and a refused snapshot or picture leaves
@@ -170,7 +175,9 @@ pub enum SyncFault {
     TooLarge(Oversize),
     /// A remote stamp was more than AD-4's drift limit ahead of this computer's wall clock, so it
     /// was refused the right to move this clock. Carries how far ahead, never a timestamp.
-    ClockSkew { ahead_ms: i64 },
+    ClockSkew {
+        ahead_ms: i64,
+    },
     OwnerMismatch,
     /// The *separate* profile could not be provisioned; nothing was restored.
     Registry,
@@ -1118,23 +1125,13 @@ impl<H: SyncHost> SyncActor<H> {
     /// event would hand the data straight back. A failure (offline, signed out, contended) is
     /// returned as a fault so the existing backoff retries it, and NOTHING is restored or
     /// uploaded on the way out.
-    async fn register_pending_wipe(
-        &mut self,
-        session: &HostSession<H>,
-    ) -> Result<(), SyncFault> {
-        let Some(owed_by) = self
-            .host
-            .with_dataset(crate::db::sync_wipe::pending_wipe)?
-        else {
+    async fn register_pending_wipe(&mut self, session: &HostSession<H>) -> Result<(), SyncFault> {
+        let Some(owed_by) = self.host.with_dataset(crate::db::sync_wipe::pending_wipe)? else {
             return Ok(());
         };
 
-        let adopted = wipe::register(
-            &session.store,
-            self.local_epoch()?,
-            self.host.now_ms(),
-        )
-        .await?;
+        let adopted =
+            wipe::register(&session.store, self.local_epoch()?, self.host.now_ms()).await?;
 
         // One transaction: the epoch and the cleared marker are two halves of "the event is
         // registered", and a crash between them would either re-register it (a second epoch every
@@ -1167,10 +1164,7 @@ impl<H: SyncHost> SyncActor<H> {
     ///
     /// Staged (`ImportStage`): once registered, a retry after an offline publish does not bump the
     /// epoch again, because that would make every other computer wipe itself a second time.
-    async fn register_pending_import(
-        &mut self,
-        session: &HostSession<H>,
-    ) -> Result<(), SyncFault> {
+    async fn register_pending_import(&mut self, session: &HostSession<H>) -> Result<(), SyncFault> {
         let Some(stage) = self
             .host
             .with_dataset(crate::db::sync_wipe::import_pending)?
@@ -1843,10 +1837,7 @@ impl<H: SyncHost> SyncActor<H> {
     /// REPLAYS its unsent log instead. Never fatal: the swap already succeeded, and the restored
     /// file is correct either way.
     fn discard_unsent_log(&self) {
-        match self
-            .host
-            .with_dataset(apply::discard_unsent_and_refold)
-        {
+        match self.host.with_dataset(apply::discard_unsent_and_refold) {
             Ok(dropped) if dropped > 0 => {
                 info!("{dropped} unsent change(s) dropped with this computer's replaced data");
             }
@@ -1947,10 +1938,9 @@ impl<H: SyncHost> SyncActor<H> {
         // `Ok(false)` is the picture having been replaced while the download was in flight: the
         // hash in the WHERE clause matched no row, nothing was overwritten, and the honest answer
         // is whatever the row holds now rather than a failure (`db::projects` documents it).
-        self.host
-            .with_dataset(|conn| {
-                crate::db::projects::set_project_image_bytes(conn, project_id, &hash, &bytes)
-            })?;
+        self.host.with_dataset(|conn| {
+            crate::db::projects::set_project_image_bytes(conn, project_id, &hash, &bytes)
+        })?;
 
         self.image_payload(project_id)
     }
@@ -2030,7 +2020,9 @@ impl<H: SyncHost> SyncActor<H> {
                 tracing::info!("Purged {} expired tombstone(s)", removed);
             }
             Ok(_) => {}
-            Err(fault) => tracing::warn!("Expired tombstones could not be purged: {}", fault.code()),
+            Err(fault) => {
+                tracing::warn!("Expired tombstones could not be purged: {}", fault.code())
+            }
         }
     }
 
@@ -2329,7 +2321,8 @@ impl<H: SyncHost> SyncActor<H> {
         self.stats.segments_fetched += report.segments_fetched;
         self.stats.messages_received += report.messages_applied;
         let unfillable = std::mem::take(&mut report.unfillable_gaps);
-        self.note_unfillable_gaps(session, &unfillable, epoch).await?;
+        self.note_unfillable_gaps(session, &unfillable, epoch)
+            .await?;
 
         Ok(())
     }
@@ -2508,11 +2501,7 @@ impl<H: SyncHost> SyncActor<H> {
     ///
     /// The dated backup is REQUIRED: this path displaces local data, and CAP-5's rule that nothing
     /// is replaced without a copy does not stop applying because the cause was retention.
-    async fn rebootstrap(
-        &mut self,
-        session: &HostSession<H>,
-        epoch: u64,
-    ) -> Result<(), SyncFault> {
+    async fn rebootstrap(&mut self, session: &HostSession<H>, epoch: u64) -> Result<(), SyncFault> {
         let (latest, etag) = match snapshot::fetch_latest_at(&session.store, epoch).await? {
             LatestFetch::Current(latest, etag) => (latest, etag),
             LatestFetch::Absent => {
@@ -2577,7 +2566,10 @@ impl<H: SyncHost> SyncActor<H> {
         }) {
             Ok(clock) => clock,
             Err(error) => {
-                warn!("the unsent log could not be replayed after a restore: {:?}", error);
+                warn!(
+                    "the unsent log could not be replayed after a restore: {:?}",
+                    error
+                );
                 return Ok(());
             }
         };
@@ -2971,10 +2963,7 @@ impl SyncHandle {
 /// Serves the mailbox and the poll tick until `Stop` or the last sender is dropped. The
 /// tick is the only driver, which is what makes a tight retry loop impossible: a fault sets
 /// a backoff and returns to this `select!`.
-async fn serve<H: SyncHost>(
-    mut actor: SyncActor<H>,
-    mut commands: mpsc::Receiver<SyncCommand>,
-) {
+async fn serve<H: SyncHost>(mut actor: SyncActor<H>, mut commands: mpsc::Receiver<SyncCommand>) {
     let poll = actor.tuning.poll_interval;
 
     loop {

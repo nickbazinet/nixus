@@ -144,8 +144,14 @@ mod tests {
     fn error_vocabularies_match_the_shared_contract() {
         let source = contract_source();
         assert_eq!(strs(&ERROR_CODES), ts_array(&source, "ACCOUNT_ERROR_CODES"));
-        assert_eq!(strs(&VALIDATION_REASONS), ts_array(&source, "VALIDATION_REASONS"));
-        assert_eq!(strs(&AVATAR_MIME_TYPES), ts_array(&source, "AVATAR_MIME_TYPES"));
+        assert_eq!(
+            strs(&VALIDATION_REASONS),
+            ts_array(&source, "VALIDATION_REASONS")
+        );
+        assert_eq!(
+            strs(&AVATAR_MIME_TYPES),
+            ts_array(&source, "AVATAR_MIME_TYPES")
+        );
 
         let mut fields = ts_array(&source, "PROFILE_FIELD_NAMES");
         fields.extend(ts_array(&source, "VALIDATION_FIELDS"));
@@ -157,7 +163,10 @@ mod tests {
     #[test]
     fn avatar_ceilings_match_the_shared_contract_and_the_derivation() {
         let source = contract_source();
-        assert_eq!(ts_number(&source, "AVATAR_MAX_EDGE_PX"), AVATAR_MAX_EDGE_PX.to_string());
+        assert_eq!(
+            ts_number(&source, "AVATAR_MAX_EDGE_PX"),
+            AVATAR_MAX_EDGE_PX.to_string()
+        );
         assert_eq!(ts_number(&source, "AVATAR_MAX_DECODED_BYTES"), "64 * 1024");
         assert_eq!(AVATAR_MAX_DECODED_BYTES, 65_536);
         assert_eq!(
@@ -205,14 +214,20 @@ mod tests {
         assert_eq!(avatar.version, 2);
         let put_avatar: PutAvatarRequestWire =
             serde_json::from_value(fixtures["put_avatar"].clone()).expect("put_avatar");
-        assert_eq!(serde_json::to_value(&put_avatar).unwrap(), fixtures["put_avatar"]);
+        assert_eq!(
+            serde_json::to_value(&put_avatar).unwrap(),
+            fixtures["put_avatar"]
+        );
 
         let errors = fixtures["errors"].as_array().expect("errors array");
         let mut seen: Vec<String> = Vec::new();
         for entry in errors {
             let envelope: AccountErrorEnvelopeWire =
                 serde_json::from_value(entry.clone()).expect("error envelope");
-            assert_eq!(normalize_error_code(&envelope.error.code), envelope.error.code);
+            assert_eq!(
+                normalize_error_code(&envelope.error.code),
+                envelope.error.code
+            );
             if envelope.error.code == "validation" {
                 let field = envelope.error.field.as_deref().expect("validation field");
                 let reason = envelope.error.reason.as_deref().expect("validation reason");

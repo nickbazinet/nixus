@@ -150,9 +150,8 @@ fn spawn_gateway_with(status: StatusReply, reply: InvokeReply) -> StubGateway {
                     // Cognito's refresh grant. The rotated access token is what lets
                     // the test prove the retry used a DIFFERENT credential.
                     let refreshed = refreshed_token_body();
-                    let _ = request.respond(
-                        Response::from_string(refreshed).with_header(json_header),
-                    );
+                    let _ =
+                        request.respond(Response::from_string(refreshed).with_header(json_header));
                     continue;
                 }
 
@@ -214,19 +213,18 @@ fn spawn_gateway_with(status: StatusReply, reply: InvokeReply) -> StubGateway {
                 match &effective {
                     InvokeReply::Scripted(_) => unreachable!("flattened above"),
                     InvokeReply::Ndjson(ndjson) => {
-                        let ndjson_header =
-                            "Content-Type: application/x-ndjson".parse::<Header>().unwrap();
+                        let ndjson_header = "Content-Type: application/x-ndjson"
+                            .parse::<Header>()
+                            .unwrap();
                         let bytes = ndjson.clone().into_bytes();
                         let length = bytes.len();
-                        let _ = request.respond(
-                            Response::new(
-                                tiny_http::StatusCode(200),
-                                vec![ndjson_header],
-                                Cursor::new(bytes),
-                                Some(length),
-                                None,
-                            ),
-                        );
+                        let _ = request.respond(Response::new(
+                            tiny_http::StatusCode(200),
+                            vec![ndjson_header],
+                            Cursor::new(bytes),
+                            Some(length),
+                            None,
+                        ));
                     }
                     InvokeReply::Error { status, code } => {
                         let envelope = format!(
@@ -412,7 +410,10 @@ fn the_request_carries_the_bearer_token_and_the_closed_wire_body() {
     run(chat_request(), &deltas).expect("succeeds");
 
     for auth in gateway.authorizations.lock().unwrap().iter() {
-        assert!(auth.starts_with("Bearer "), "every call is Bearer-authorized");
+        assert!(
+            auth.starts_with("Bearer "),
+            "every call is Bearer-authorized"
+        );
     }
 
     let body: serde_json::Value =
@@ -420,7 +421,10 @@ fn the_request_carries_the_bearer_token_and_the_closed_wire_body() {
 
     assert_eq!(body["operation"], "chat");
     assert_eq!(body["system"], "You are helpful.");
-    assert_eq!(body["messages"][0]["content"][0]["text"], "How is my budget?");
+    assert_eq!(
+        body["messages"][0]["content"][0]["text"],
+        "How is my budget?"
+    );
     assert!(body["client_request_id"].is_string());
     assert!(body.get("model_id").is_none());
     assert!(body.get("max_tokens").is_none());
@@ -506,7 +510,9 @@ fn a_quota_exhausted_response_surfaces_the_hosted_code_and_invalidates_the_cache
     let error = run(chat_request(), &deltas).expect_err("fails without a BYO provider");
 
     match error {
-        AppError::HostedAi { code, recoverable, .. } => {
+        AppError::HostedAi {
+            code, recoverable, ..
+        } => {
             assert_eq!(code, "quota_exhausted");
             assert!(recoverable);
         }
@@ -533,7 +539,9 @@ fn a_validation_rejection_is_terminal_and_unrecoverable() {
     let error = run(chat_request(), &deltas).expect_err("validation never falls back");
 
     match error {
-        AppError::HostedAi { code, recoverable, .. } => {
+        AppError::HostedAi {
+            code, recoverable, ..
+        } => {
             assert_eq!(code, "validation");
             assert!(!recoverable, "a validation failure is not retryable");
         }
@@ -662,12 +670,9 @@ fn statement_import_reports_the_hosted_reason_instead_of_degrading_to_openai() {
     let sink_deltas = Arc::clone(&deltas);
     let sink = move |text: &str| sink_deltas.lock().unwrap().push(text.to_string());
 
-    let error = tauri::async_runtime::block_on(backend::invoke(
-        Some(&openai),
-        statement_request(),
-        &sink,
-    ))
-    .expect_err("OpenAI is not a valid statement-import fallback");
+    let error =
+        tauri::async_runtime::block_on(backend::invoke(Some(&openai), statement_request(), &sink))
+            .expect_err("OpenAI is not a valid statement-import fallback");
 
     match error {
         AppError::HostedAi { code, .. } => assert_eq!(code, "quota_exhausted"),
@@ -1051,7 +1056,9 @@ fn an_attached_chat_turn_obeys_the_closed_fallback_table() {
     let error = run(chat_with_attachment(), &deltas).expect_err("413 never falls back");
 
     match error {
-        AppError::HostedAi { code, recoverable, .. } => {
+        AppError::HostedAi {
+            code, recoverable, ..
+        } => {
             assert_eq!(code, "payload_too_large");
             assert!(!recoverable);
         }

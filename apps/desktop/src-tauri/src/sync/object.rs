@@ -49,10 +49,14 @@ pub enum ObjectHeaderError {
     /// Fewer bytes than a header, so nothing about the object can be trusted.
     Truncated,
     NotAnObject,
-    UnknownFormatVersion { found: u8 },
+    UnknownFormatVersion {
+        found: u8,
+    },
     /// A scheme this build cannot decrypt. Refused rather than ignored: reading the payload anyway
     /// would hand ciphertext to a caller expecting an image.
-    UnknownEncScheme { found: u8 },
+    UnknownEncScheme {
+        found: u8,
+    },
 }
 
 impl fmt::Display for ObjectHeaderError {

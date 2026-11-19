@@ -232,7 +232,11 @@ mod tests {
                 ..six_months_out(100_000)
             };
 
-            assert_eq!(compute(&project).status, STATUS_NEUTRAL, "for {target_date:?}");
+            assert_eq!(
+                compute(&project).status,
+                STATUS_NEUTRAL,
+                "for {target_date:?}"
+            );
         }
     }
 

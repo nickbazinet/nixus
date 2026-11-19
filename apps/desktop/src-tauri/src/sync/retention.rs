@@ -236,10 +236,7 @@ where
     }
 
     let body = Roster::of(keep).body();
-    match store
-        .put_if_match(&key, &stored.meta.etag, body)
-        .await
-    {
+    match store.put_if_match(&key, &stored.meta.etag, body).await {
         Ok(_) => Ok(pruned),
         // Someone else moved the roster while this sweep was deciding. Pruning is pure maintenance,
         // so the loser does nothing and the next sweep re-reads: retrying here would race a

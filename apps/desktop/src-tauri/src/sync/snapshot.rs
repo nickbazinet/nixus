@@ -88,16 +88,24 @@ pub enum BuildStage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnapshotError {
-    Build { stage: BuildStage },
+    Build {
+        stage: BuildStage,
+    },
     /// The source database stayed locked for the whole budget. Retryable once the app settles.
     SourceBusy,
     Header(ObjectHeaderError),
     /// The compressed payload would not decompress, or decompressed past the ceiling.
     Corrupt,
     /// The payload's hash is not the hash the header claims: tampering, truncation or a bad mirror.
-    HashMismatch { expected: String, found: String },
+    HashMismatch {
+        expected: String,
+        found: String,
+    },
     /// Written by a newer build. Parked, never applied (AD-11, CAP-7).
-    SchemaTooNew { found: u32, supported: u32 },
+    SchemaTooNew {
+        found: u32,
+        supported: u32,
+    },
     /// `snap/LATEST` exists but is not a document this build can read.
     MalformedLatest,
     /// AD-18: the framed snapshot is larger than this client will upload. Refused at BUILD time
@@ -131,7 +139,10 @@ impl std::fmt::Display for SnapshotError {
                 write!(f, "snapshot {expected} holds content hashing to {found}")
             }
             SnapshotError::SchemaTooNew { found, supported } => {
-                write!(f, "snapshot schema version {found} is newer than {supported}")
+                write!(
+                    f,
+                    "snapshot schema version {found} is newer than {supported}"
+                )
             }
             SnapshotError::MalformedLatest => f.write_str("snap/LATEST is not readable"),
             SnapshotError::TooLarge(oversize) => write!(f, "snapshot refused: {oversize}"),
@@ -293,7 +304,10 @@ impl LatestSnapshot {
         // deletable and a bootstrap applies the whole tail.
         let mut watermark = BTreeMap::new();
         let carries_identities = document.get("watermark").is_some();
-        if let Some(entries) = document.get("watermark").and_then(|value| value.as_object()) {
+        if let Some(entries) = document
+            .get("watermark")
+            .and_then(|value| value.as_object())
+        {
             for (install, seq) in entries {
                 let seq = seq.as_i64().ok_or(SnapshotError::MalformedLatest)?;
                 if seq < 0 {
@@ -308,9 +322,7 @@ impl LatestSnapshot {
         // the honest reading of its absence.
         let wipe_epoch = match document.get("wipe_epoch") {
             None => 0,
-            Some(value) => value
-                .as_u64()
-                .ok_or(SnapshotError::MalformedLatest)?,
+            Some(value) => value.as_u64().ok_or(SnapshotError::MalformedLatest)?,
         };
 
         Ok(Self {
@@ -407,11 +419,12 @@ pub(crate) fn build_snapshot_blocking(
     })?;
     let (digest, payload_sha256) = identity(&payload);
 
-    let compressed = zstd::encode_all(payload.as_slice(), SNAPSHOT_COMPRESSION_LEVEL).map_err(
-        |_| SnapshotError::Build {
-            stage: BuildStage::Compress,
-        },
-    )?;
+    let compressed =
+        zstd::encode_all(payload.as_slice(), SNAPSHOT_COMPRESSION_LEVEL).map_err(|_| {
+            SnapshotError::Build {
+                stage: BuildStage::Compress,
+            }
+        })?;
 
     let object = within_size_cap(ObjectHeader::new(schema_version, digest).frame(&compressed))?;
 
@@ -736,7 +749,9 @@ pub enum LatestFetch {
     /// The pointer names a snapshot of data the account has since deleted. Never restored, never
     /// used to seed a watermark. The ETag travels so the computer that is about to publish ITS OWN
     /// post-wipe snapshot can compare-and-swap over it rather than racing a create-only put.
-    Stale { etag: ETag },
+    Stale {
+        etag: ETag,
+    },
     Current(LatestSnapshot, ETag),
 }
 
@@ -786,11 +801,9 @@ mod tests {
         CONFIG_DENY_LIST
             .iter()
             .filter(|key| {
-                conn.query_row(
-                    "SELECT COUNT(*) FROM config WHERE key = ?1",
-                    [key],
-                    |row| row.get::<_, i64>(0),
-                )
+                conn.query_row("SELECT COUNT(*) FROM config WHERE key = ?1", [key], |row| {
+                    row.get::<_, i64>(0)
+                })
                 .expect("the key counts")
                     > 0
             })
@@ -970,13 +983,18 @@ mod tests {
 
         let conn = Connection::open(&heavy.db_path).expect("the dataset opens");
         let count = |sql: &str| -> i64 {
-            conn.query_row(sql, [], |row| row.get(0)).expect("it counts")
+            conn.query_row(sql, [], |row| row.get(0))
+                .expect("it counts")
         };
         assert_eq!(
             count("SELECT COUNT(*) FROM project_images WHERE image_bytes IS NOT NULL"),
             heavy.project_images as i64
         );
-        assert_eq!(denied_keys_in(&conn), 3, "the live dataset keeps its own settings");
+        assert_eq!(
+            denied_keys_in(&conn),
+            3,
+            "the live dataset keeps its own settings"
+        );
         drop(conn);
 
         assert_eq!(
@@ -1052,7 +1070,9 @@ mod tests {
 
         let live = Connection::open(&db_path).expect("the live dataset opens");
         let kept: i64 = live
-            .query_row("SELECT COUNT(*) FROM sync_image_blobs", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM sync_image_blobs", [], |row| {
+                row.get(0)
+            })
             .expect("the count reads");
         assert_eq!(kept, 1, "the live file keeps knowing what it uploaded");
     }
@@ -1379,10 +1399,7 @@ mod tests {
         // order the vector was read in — and a Milestone-1 document with no watermark at all reads
         // as "nothing is claimed" rather than as malformed.
         let claimed = LatestSnapshot {
-            watermark: BTreeMap::from([
-                ("b".repeat(16), 7),
-                ("a".repeat(16), 3),
-            ]),
+            watermark: BTreeMap::from([("b".repeat(16), 7), ("a".repeat(16), 3)]),
             ..latest
         };
         let body = claimed.body();
@@ -1471,7 +1488,10 @@ mod tests {
         // hash, so whether it sorts before or after `snap/LATEST` is luck rather than a
         // property worth asserting.
         assert_eq!(fake.keys(), expected);
-        assert_eq!(fake.stored(&built.key()).as_deref(), Some(&built.object[..]));
+        assert_eq!(
+            fake.stored(&built.key()).as_deref(),
+            Some(&built.object[..])
+        );
 
         let (published, etag) = fetch_latest(&store)
             .await
@@ -1485,8 +1505,8 @@ mod tests {
                 hash: built.payload_sha256.clone(),
                 schema_version: built.schema_version,
                 created_ms: 1_760_000_000_000,
-            watermark: Default::default(),
-            carries_identities: true,
+                watermark: Default::default(),
+                carries_identities: true,
                 wipe_epoch: 0,
             }
         );

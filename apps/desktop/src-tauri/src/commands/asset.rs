@@ -25,7 +25,14 @@ pub fn create_asset(
     let result = active.write(|tx| asset_db::insert_asset(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "passive_asset", result.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "passive_asset",
+        result.id,
+        "create",
+        None,
+        Some(&details),
+    );
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
@@ -52,7 +59,8 @@ pub fn update_asset_value(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    let (old_value, asset) = active.write(|tx| asset_db::update_asset_value(tx, id, value_cents))?;
+    let (old_value, asset) =
+        active.write(|tx| asset_db::update_asset_value(tx, id, value_cents))?;
 
     audit_db::record(
         &active,
@@ -88,16 +96,20 @@ pub fn update_asset(
     let result = active.write(|tx| asset_db::update_asset(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "passive_asset", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        &active,
+        "passive_asset",
+        id,
+        "update",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
 
     Ok(result)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn delete_asset(
-    state: State<DbState>,
-    id: i64,
-) -> Result<(), AppError> {
+pub fn delete_asset(state: State<DbState>, id: i64) -> Result<(), AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
@@ -107,7 +119,14 @@ pub fn delete_asset(
 
     active.write(|tx| asset_db::delete_asset(tx, id))?;
 
-    audit_db::record(&active, "passive_asset", id, "delete", old_json.as_deref(), None);
+    audit_db::record(
+        &active,
+        "passive_asset",
+        id,
+        "delete",
+        old_json.as_deref(),
+        None,
+    );
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);

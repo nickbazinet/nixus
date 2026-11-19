@@ -86,9 +86,26 @@ impl Lcg {
     /// notes and AI answers do instead of like random noise.
     fn prose(&mut self, len: usize) -> String {
         const WORDS: &[&str] = &[
-            "budget", "category", "grocery", "transfer", "balance", "monthly", "projection",
-            "account", "statement", "recurring", "adjusted", "reviewed", "savings", "vehicle",
-            "maintenance", "contribution", "forecast", "remaining", "allocated", "reconciled",
+            "budget",
+            "category",
+            "grocery",
+            "transfer",
+            "balance",
+            "monthly",
+            "projection",
+            "account",
+            "statement",
+            "recurring",
+            "adjusted",
+            "reviewed",
+            "savings",
+            "vehicle",
+            "maintenance",
+            "contribution",
+            "forecast",
+            "remaining",
+            "allocated",
+            "reconciled",
         ];
 
         let mut text = String::with_capacity(len + 12);
@@ -134,7 +151,9 @@ const MERCHANTS: &[&str] = &[
 fn spread_date(day: u64) -> String {
     let start = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).expect("2026-01-01 is a date");
 
-    (start + chrono::Days::new(day)).format("%Y-%m-%d").to_string()
+    (start + chrono::Days::new(day))
+        .format("%Y-%m-%d")
+        .to_string()
 }
 
 /// Builds the dataset and returns the temp dir that owns it.
@@ -188,7 +207,8 @@ pub(crate) fn seed_heavy_year_into(db_path: &std::path::Path) -> HeavyYearShape 
 fn seed(conn: &Connection, heavy: &HeavyYearShape) {
     let mut rng = Lcg::new(0x5EED_0008);
 
-    conn.execute_batch("BEGIN").expect("the seed transaction opens");
+    conn.execute_batch("BEGIN")
+        .expect("the seed transaction opens");
     seed_reference_rows(conn, &mut rng);
     seed_expenses(conn, &mut rng, heavy.expenses);
     seed_income(conn, &mut rng);
@@ -196,7 +216,8 @@ fn seed(conn: &Connection, heavy: &HeavyYearShape) {
     seed_chat(conn, &mut rng, heavy.chat_messages);
     seed_projects(conn, &mut rng, heavy);
     seed_config(conn);
-    conn.execute_batch("COMMIT").expect("the seed transaction commits");
+    conn.execute_batch("COMMIT")
+        .expect("the seed transaction commits");
 }
 
 fn seed_reference_rows(conn: &Connection, rng: &mut Lcg) {
@@ -263,7 +284,11 @@ fn seed_expenses(conn: &Connection, rng: &mut Lcg, count: usize) {
                 199 + rng.below(40_000) as i64,
                 rng.below(CATEGORIES.len() as u64) as i64 + 1,
                 date,
-                if index % 3 == 0 { "statement" } else { "manual" },
+                if index % 3 == 0 {
+                    "statement"
+                } else {
+                    "manual"
+                },
                 rng.below(3) as i64 + 1,
                 format!("{date} 12:00:00"),
             ])
@@ -283,18 +308,20 @@ fn seed_income(conn: &Connection, rng: &mut Lcg) {
         conn.execute(
             "INSERT INTO income_entries (source_id, amount_cents, date, month, account_id)
              VALUES (1, ?1, ?2, ?3, 1)",
-            rusqlite::params![
-                400_000 + rng.below(50_000) as i64,
-                date,
-                &date[..7]
-            ],
+            rusqlite::params![400_000 + rng.below(50_000) as i64, date, &date[..7]],
         )
         .expect("an income entry inserts");
     }
 }
 
 fn seed_audit_log(conn: &Connection, rng: &mut Lcg, count: usize) {
-    const ENTITIES: &[&str] = &["expense", "account", "budget_category", "project", "vehicle"];
+    const ENTITIES: &[&str] = &[
+        "expense",
+        "account",
+        "budget_category",
+        "project",
+        "vehicle",
+    ];
     const ACTIONS: &[&str] = &["create", "update", "delete"];
 
     let mut insert = conn
@@ -343,7 +370,10 @@ fn seed_chat(conn: &Connection, rng: &mut Lcg, count: usize) {
                 (index as i64 % CONVERSATIONS) + 1,
                 if index % 2 == 0 { "user" } else { "assistant" },
                 rng.prose(if index % 2 == 0 { 120 } else { 900 }),
-                format!("{} 20:00:00", spread_date((index as u64 * 365) / count.max(1) as u64)),
+                format!(
+                    "{} 20:00:00",
+                    spread_date((index as u64 * 365) / count.max(1) as u64)
+                ),
             ])
             .expect("a chat message inserts");
     }
@@ -455,13 +485,22 @@ pub(crate) fn stamp_text_columns_with_sentinels(conn: &Connection) -> SentinelSt
     }
 
     for (key, value) in [
-        ("sentinel_jwt", format!("{SENTINEL_PREFIX}-eyJhbGciOiJIUzI1NiJ9.cGF5bG9hZA.c2ln")),
-        ("sentinel_access_key", format!("{SENTINEL_PREFIX}-AKIAIOSFODNN7EXAMPLE")),
+        (
+            "sentinel_jwt",
+            format!("{SENTINEL_PREFIX}-eyJhbGciOiJIUzI1NiJ9.cGF5bG9hZA.c2ln"),
+        ),
+        (
+            "sentinel_access_key",
+            format!("{SENTINEL_PREFIX}-AKIAIOSFODNN7EXAMPLE"),
+        ),
         (
             "sentinel_identity_id",
             format!("{SENTINEL_PREFIX}-us-east-1:11111111-2222-4333-8444-555555555555"),
         ),
-        ("sentinel_install_id", format!("{SENTINEL_PREFIX}-0a1b2c3d4e5f6071")),
+        (
+            "sentinel_install_id",
+            format!("{SENTINEL_PREFIX}-0a1b2c3d4e5f6071"),
+        ),
     ] {
         conn.execute(
             "INSERT OR REPLACE INTO config (key, value) VALUES (?1, ?2)",
@@ -664,8 +703,10 @@ mod tests {
         let conn = Connection::open(&heavy.db_path).expect("the dataset opens");
 
         let count = |table: &str| -> i64 {
-            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
-                .expect("the table counts")
+            conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .expect("the table counts")
         };
         assert_eq!(count("expenses") as usize, heavy.expenses);
         assert_eq!(count("audit_log") as usize, heavy.audit_rows);
@@ -682,12 +723,16 @@ mod tests {
         assert_eq!(violations, 0, "every generated row must have valid parents");
 
         let smallest: i64 = conn
-            .query_row("SELECT MIN(amount_cents) FROM expenses", [], |row| row.get(0))
+            .query_row("SELECT MIN(amount_cents) FROM expenses", [], |row| {
+                row.get(0)
+            })
             .expect("the minimum reads");
         assert!(smallest > 0, "money is positive i64 cents");
 
         let distinct_dates: i64 = conn
-            .query_row("SELECT COUNT(DISTINCT date) FROM expenses", [], |row| row.get(0))
+            .query_row("SELECT COUNT(DISTINCT date) FROM expenses", [], |row| {
+                row.get(0)
+            })
             .expect("the spread reads");
         assert!(
             distinct_dates > 300,

@@ -128,7 +128,12 @@ fn content_mismatch() -> AppError {
 }
 
 fn format_for_extension(extension: &str) -> Option<ProjectImageFormat> {
-    match extension.trim().trim_start_matches('.').to_lowercase().as_str() {
+    match extension
+        .trim()
+        .trim_start_matches('.')
+        .to_lowercase()
+        .as_str()
+    {
         "png" => Some(ProjectImageFormat::Png),
         "jpg" | "jpeg" => Some(ProjectImageFormat::Jpeg),
         _ => None,
@@ -712,10 +717,7 @@ mod tests {
         let cases: Vec<(&str, Vec<u8>)> = vec![
             ("a.txt", b"plain".to_vec()),
             ("b.png", Vec::new()),
-            (
-                "c.png",
-                vec![b'x'; (MAX_PROJECT_IMAGE_BYTES + 1) as usize],
-            ),
+            ("c.png", vec![b'x'; (MAX_PROJECT_IMAGE_BYTES + 1) as usize]),
             ("d.png", b"plain text, not an image".to_vec()),
             ("e.png", png_declaring(5000, 5000)),
             ("f.png", Vec::new()),

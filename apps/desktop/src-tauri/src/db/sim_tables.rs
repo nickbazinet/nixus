@@ -137,8 +137,9 @@ pub(crate) fn child_ids(
     foreign_key: &'static str,
     parent_id: i64,
 ) -> rusqlite::Result<Vec<i64>> {
-    let mut statement =
-        conn.prepare(&format!("SELECT id FROM {table} WHERE {foreign_key} = ?1 ORDER BY id"))?;
+    let mut statement = conn.prepare(&format!(
+        "SELECT id FROM {table} WHERE {foreign_key} = ?1 ORDER BY id"
+    ))?;
     let ids = statement
         .query_map([parent_id], |row| row.get::<_, i64>(0))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -216,8 +217,7 @@ pub(crate) fn dump_table(
     columns: &[&'static str],
 ) -> rusqlite::Result<Vec<(i64, BTreeMap<&'static str, SimCell>)>> {
     let selected = columns.join(", ");
-    let mut statement =
-        conn.prepare(&format!("SELECT id, {selected} FROM {table} ORDER BY id"))?;
+    let mut statement = conn.prepare(&format!("SELECT id, {selected} FROM {table} ORDER BY id"))?;
 
     let rows = statement
         .query_map([], |row| {

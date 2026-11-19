@@ -392,7 +392,8 @@ async fn the_actors_tuning_is_what_states_the_rate_so_a_whole_cycle_is_paced_by_
         "a cap stated in the tuning must reach the store the host hands out"
     );
     assert_eq!(
-        actor.diagnostics().oversize_refusals, 0,
+        actor.diagnostics().oversize_refusals,
+        0,
         "a delay is not a refusal: every request was still made"
     );
 }

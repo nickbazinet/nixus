@@ -112,9 +112,7 @@ use crate::models::{AuthState, CognitoSession};
 #[serde(tag = "kind")]
 pub enum LoginIntent {
     Login,
-    Migrate {
-        source_dataset_id: String,
-    },
+    Migrate { source_dataset_id: String },
 }
 
 /// Which Hosted UI page the browser lands on. Purely a path choice on the
@@ -318,8 +316,9 @@ fn parse_callback(url: &str) -> Result<CallbackParams, AppError> {
     match code {
         Some(code) if !code.is_empty() => Ok(CallbackParams { code, state }),
         _ => Err(AppError::Auth {
-            message: "The sign-in response was missing its authorization code. Please sign in again."
-                .to_string(),
+            message:
+                "The sign-in response was missing its authorization code. Please sign in again."
+                    .to_string(),
             recoverable: true,
         }),
     }
@@ -526,8 +525,9 @@ async fn exchange_code_for_tokens(
                 e.is_timeout()
             );
             AppError::Auth {
-                message: "Could not reach the sign-in service. Check your connection and try again."
-                    .to_string(),
+                message:
+                    "Could not reach the sign-in service. Check your connection and try again."
+                        .to_string(),
                 recoverable: true,
             }
         })?;
@@ -930,12 +930,7 @@ async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSess
 
     let form = refresh_form(&previous.refresh_token);
 
-    let response = match client
-        .post(token_endpoint())
-        .form(&form)
-        .send()
-        .await
-    {
+    let response = match client.post(token_endpoint()).form(&form).send().await {
         Ok(response) => response,
         Err(e) => {
             // Only a boolean is logged: reqwest's Display can carry request detail.
@@ -1029,9 +1024,7 @@ fn adopt_refreshed_session(
 ) -> Result<Option<CognitoSession>, AppError> {
     if narrows_granted_scopes(&previous.access_token, &refreshed.access_token) {
         // Only the fact is logged: the scope claim is read off a bearer credential.
-        tracing::error!(
-            "Refused a refreshed Cognito session that narrowed the granted scope set"
-        );
+        tracing::error!("Refused a refreshed Cognito session that narrowed the granted scope set");
         return Ok(None);
     }
 
@@ -1108,7 +1101,9 @@ pub async fn get_auth_session() -> Result<AuthState, AppError> {
 /// picker falls back to the ordinary browser sign-in.
 fn continuable_id_token(resolved: ResolvedSession) -> Result<String, AppError> {
     match resolved {
-        ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => Ok(session.id_token),
+        ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => {
+            Ok(session.id_token)
+        }
         ResolvedSession::None | ResolvedSession::Expired => Err(AppError::Auth {
             message: "Your Nixus Cloud session is no longer valid. Please sign in again."
                 .to_string(),
@@ -1283,9 +1278,7 @@ fn access_token_from_resolved(
 ) -> Result<AccessTokenAuth, AppError> {
     let session = match resolved {
         ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => session,
-        ResolvedSession::None | ResolvedSession::Expired => {
-            return Ok(AccessTokenAuth::SignedOut)
-        }
+        ResolvedSession::None | ResolvedSession::Expired => return Ok(AccessTokenAuth::SignedOut),
     };
 
     if !access_token_grants(&session.access_token, required_scope)? {
@@ -1627,7 +1620,10 @@ mod tests {
             assert!(!url.contains("client_secret"));
             assert!(!url.contains("nonce"));
             assert!(!url.contains("identity_provider"));
-            assert_eq!(url.contains("prompt=login"), entry == AuthorizeEntry::SignIn);
+            assert_eq!(
+                url.contains("prompt=login"),
+                entry == AuthorizeEntry::SignIn
+            );
             assert!(!url.contains("resource"));
         }
     }
@@ -2038,7 +2034,8 @@ mod tests {
         )
         .unwrap());
         assert!(
-            !access_token_grants(&access_token_with_scope("nixus-api/ai"), HOSTED_AI_SCOPE).unwrap()
+            !access_token_grants(&access_token_with_scope("nixus-api/ai"), HOSTED_AI_SCOPE)
+                .unwrap()
         );
         assert!(!access_token_grants(&access_token_with_scope("openid"), HOSTED_AI_SCOPE).unwrap());
 
@@ -2223,8 +2220,8 @@ mod tests {
 
     #[test]
     fn a_payload_that_decodes_but_is_not_json_is_rejected() {
-        let error = decode_id_token_claims(&id_token_with_payload("not json at all"))
-            .expect_err("rejects");
+        let error =
+            decode_id_token_claims(&id_token_with_payload("not json at all")).expect_err("rejects");
 
         assert!(recoverable_of(&error));
     }
@@ -2354,7 +2351,10 @@ mod tests {
             AppError::NotConfigured,
             AppError::Unavailable,
         ] {
-            assert_eq!(cloud_link_failure_message(&error), CLOUD_LINK_GENERIC_FAILURE);
+            assert_eq!(
+                cloud_link_failure_message(&error),
+                CLOUD_LINK_GENERIC_FAILURE
+            );
         }
 
         assert!(!CLOUD_LINK_GENERIC_FAILURE.contains("You are signed in"));
@@ -2372,8 +2372,9 @@ mod tests {
         );
         assert_eq!(
             cloud_link_failure_message(&AppError::Auth {
-                message: "Could not reach the sign-in service. Check your connection and try again."
-                    .to_string(),
+                message:
+                    "Could not reach the sign-in service. Check your connection and try again."
+                        .to_string(),
                 recoverable: true,
             }),
             "Could not reach the sign-in service. Check your connection and try again."
@@ -2402,7 +2403,10 @@ mod tests {
             || log("signal_success"),
         ));
 
-        (outcome, effects.into_inner().unwrap_or_else(|e| e.into_inner()))
+        (
+            outcome,
+            effects.into_inner().unwrap_or_else(|e| e.into_inner()),
+        )
     }
 
     /// The success half of the invariant: the sign-in is announced only once the
@@ -2680,14 +2684,10 @@ mod tests {
         let thread_server = std::sync::Arc::clone(&server);
         std::thread::spawn(move || {
             if let Ok(request) = thread_server.recv() {
-                let header = tiny_http::Header::from_bytes(
-                    &b"Content-Type"[..],
-                    &b"application/json"[..],
-                )
-                .expect("header");
-                let _ = request.respond(
-                    tiny_http::Response::from_string(body).with_header(header),
-                );
+                let header =
+                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+                        .expect("header");
+                let _ = request.respond(tiny_http::Response::from_string(body).with_header(header));
             }
         });
 

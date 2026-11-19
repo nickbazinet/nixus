@@ -31,7 +31,14 @@ pub fn create_expense(
     let expense = result.expense;
 
     let details = serde_json::to_string(&expense).unwrap_or_default();
-    audit_db::record(&active, "expense", expense.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "expense",
+        expense.id,
+        "create",
+        None,
+        Some(&details),
+    );
     record_account_balance_changes(&active, &result.balance_changes);
 
     Ok(expense)
@@ -90,17 +97,21 @@ pub fn update_expense(
     let expense = result.expense;
 
     let new_json = serde_json::to_string(&expense).unwrap_or_default();
-    audit_db::record(&active, "expense", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        &active,
+        "expense",
+        id,
+        "update",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
     record_account_balance_changes(&active, &result.balance_changes);
 
     Ok(expense)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn delete_expense(
-    state: State<DbState>,
-    id: i64,
-) -> Result<(), AppError> {
+pub fn delete_expense(state: State<DbState>, id: i64) -> Result<(), AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;

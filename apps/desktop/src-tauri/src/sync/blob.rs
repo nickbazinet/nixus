@@ -33,7 +33,10 @@ pub enum BlobError {
     InvalidHash,
     /// The bytes that came back do not hash to the key they were fetched from. The download is
     /// discarded: writing it into `image_bytes` would store one picture under another's identity.
-    ContentMismatch { expected: String, found: String },
+    ContentMismatch {
+        expected: String,
+        found: String,
+    },
     Header(ObjectHeaderError),
     /// AD-18: the picture is larger than this client will upload. Refused before it is hashed or
     /// framed, so the refusal costs no request, and never retried — the same file is the same
@@ -203,9 +206,7 @@ mod tests {
     use crate::sync::gate::{CapabilitySource, GateStateSource, SyncBlocked};
     use crate::sync::object::OBJECT_HEADER_LEN;
     use crate::sync::state::GateState;
-    use crate::sync::store::{
-        ConditionalGet, ETag, ObjectMeta, StoreError, StoredObject,
-    };
+    use crate::sync::store::{ConditionalGet, ETag, ObjectMeta, StoreError, StoredObject};
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -351,7 +352,9 @@ mod tests {
         let mut state = u64::from(seed).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
         (0..len)
             .map(|_| {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 (state >> 33) as u8
             })
             .collect()
@@ -361,7 +364,10 @@ mod tests {
     fn a_blob_key_is_the_hash_under_the_blob_prefix() {
         let hex = sha256_hex(b"picture");
 
-        assert_eq!(blob_key(&hex).expect("a digest is a key"), format!("blob/{hex}"));
+        assert_eq!(
+            blob_key(&hex).expect("a digest is a key"),
+            format!("blob/{hex}")
+        );
     }
 
     /// The db layer and the transport must agree on what an image's identity IS, or a row would
@@ -385,7 +391,11 @@ mod tests {
             &format!("{}/", "a".repeat(63)),
             &format!("{}z", "a".repeat(63)),
         ] {
-            assert_eq!(blob_key(refused), Err(BlobError::InvalidHash), "{refused:?}");
+            assert_eq!(
+                blob_key(refused),
+                Err(BlobError::InvalidHash),
+                "{refused:?}"
+            );
         }
     }
 
@@ -403,9 +413,14 @@ mod tests {
         let (again, second) = put_image_blob(&store, 30, &bytes)
             .await
             .expect("the retry succeeds");
-        assert_eq!((again, second), (hex.clone(), BlobUpload::AlreadyDeduplicated));
+        assert_eq!(
+            (again, second),
+            (hex.clone(), BlobUpload::AlreadyDeduplicated)
+        );
 
-        let fetched = fetch_image_blob(&store, &hex).await.expect("the fetch succeeds");
+        let fetched = fetch_image_blob(&store, &hex)
+            .await
+            .expect("the fetch succeeds");
         assert_eq!(fetched, bytes, "the payload must survive byte for byte");
     }
 
@@ -419,7 +434,10 @@ mod tests {
             .await
             .expect("the upload succeeds");
 
-        let stored = store.get(&blob_key(&hex).unwrap()).await.expect("the object is there");
+        let stored = store
+            .get(&blob_key(&hex).unwrap())
+            .await
+            .expect("the object is there");
         assert_eq!(stored.bytes.len(), OBJECT_HEADER_LEN + bytes.len());
         let (header, payload) = ObjectHeader::parse(&stored.bytes).expect("the header parses");
         assert_eq!(header.schema_version, 30);

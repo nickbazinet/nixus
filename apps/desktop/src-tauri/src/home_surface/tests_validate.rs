@@ -380,7 +380,11 @@ fn a_cash_flow_source_is_sankey_only_and_a_sankey_takes_nothing_else() {
         );
     }
 
-    for source in ["expenses_by_category", "net_worth_history", "recent_expenses"] {
+    for source in [
+        "expenses_by_category",
+        "net_worth_history",
+        "recent_expenses",
+    ] {
         let wrong_shape = json!({
             "component": "SankeyChart",
             "title": "x",
@@ -415,7 +419,11 @@ fn a_scalar_source_is_date_only_and_a_date_takes_nothing_else() {
         );
     }
 
-    for source in ["expenses_by_category", "net_worth_history", "recurring_expenses"] {
+    for source in [
+        "expenses_by_category",
+        "net_worth_history",
+        "recurring_expenses",
+    ] {
         let wrong_shape = json!({
             "component": "Date",
             "title": "x",
@@ -438,17 +446,30 @@ fn any_window_and_a_category_in_words_are_accepted_but_never_a_figure() {
         })
     };
 
-    let canonical = validate_widget(&widget(json!({ "months": 3, "months_ago": 1, "category": " groceries " })))
-        .expect("a past window narrowed to a category is valid");
+    let canonical = validate_widget(&widget(
+        json!({ "months": 3, "months_ago": 1, "category": " groceries " }),
+    ))
+    .expect("a past window narrowed to a category is valid");
     assert_eq!(canonical["dataBinding"]["params"]["months_ago"], 1);
     assert_eq!(canonical["dataBinding"]["params"]["category"], "groceries");
 
     let unfiltered = validate_widget(&widget(json!({}))).unwrap();
-    assert!(unfiltered["dataBinding"]["params"].get("category").is_none(), "omitted means all");
+    assert!(
+        unfiltered["dataBinding"]["params"]
+            .get("category")
+            .is_none(),
+        "omitted means all"
+    );
 
-    for smuggled in [json!("$4,210"), json!("groceries 4210"), json!(4210), json!("")] {
+    for smuggled in [
+        json!("$4,210"),
+        json!("groceries 4210"),
+        json!(4210),
+        json!(""),
+    ] {
         assert!(
-            errors_of(validate_widget(&widget(json!({ "category": smuggled })))).contains("no numbers"),
+            errors_of(validate_widget(&widget(json!({ "category": smuggled }))))
+                .contains("no numbers"),
             "{smuggled}"
         );
     }

@@ -5,12 +5,12 @@ use crate::db::account::BalanceChange;
 use crate::db::income as income_db;
 use crate::db::recurrence::{self, StoredSchedule};
 use crate::error::AppError;
+use crate::models::{
+    CreateIncomeEntryInput, CreateRecurringIncomeTemplateInput, IncomeEntry, RecurrenceFrequency,
+    RecurringIncomeTemplate, UpdateRecurringIncomeTemplateInput,
+};
 use crate::sync::capture;
 use crate::sync::identity;
-use crate::models::{
-    CreateIncomeEntryInput, CreateRecurringIncomeTemplateInput, IncomeEntry,
-    RecurrenceFrequency, RecurringIncomeTemplate, UpdateRecurringIncomeTemplateInput,
-};
 
 /// Entries created by a backfill run, with the account movements they caused so the caller can
 /// audit them the same way a manually entered income does.
@@ -200,8 +200,7 @@ fn try_apply_template(
         date,
         account_id: template.account_id,
     };
-    let mutation =
-        income_db::insert_income_entry_from_template(conn, &input, Some(template.id))?;
+    let mutation = income_db::insert_income_entry_from_template(conn, &input, Some(template.id))?;
     let period = recurrence::period_of(template.frequency, occurrence_date);
     bind_generated_entry_identity(conn, template.id, mutation.entry.id, &period)?;
 
@@ -273,10 +272,7 @@ fn get_active_templates(conn: &Connection) -> Result<Vec<RecurringIncomeTemplate
     Ok(templates)
 }
 
-pub fn get_template_by_id(
-    conn: &Connection,
-    id: i64,
-) -> rusqlite::Result<RecurringIncomeTemplate> {
+pub fn get_template_by_id(conn: &Connection, id: i64) -> rusqlite::Result<RecurringIncomeTemplate> {
     conn.query_row(
         &format!("{SELECT_TEMPLATE} WHERE t.id = ?1"),
         params![id],
@@ -377,7 +373,9 @@ mod tests {
     }
 
     fn apply_due(conn: &Connection, today: NaiveDate) -> Vec<IncomeEntry> {
-        apply_due_recurring_income_as_of(conn, today).unwrap().entries
+        apply_due_recurring_income_as_of(conn, today)
+            .unwrap()
+            .entries
     }
 
     fn template_count(conn: &Connection) -> i64 {

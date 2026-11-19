@@ -251,8 +251,14 @@ mod tests {
             hex(&maintenance_task(&VEHICLE, "oil_change")),
             "cb03aab2cab452a683877458655d9faa"
         );
-        assert_eq!(hex(&project_image(&PROJECT)), "cee1badd1b2d5f389951f98409f56132");
-        assert_eq!(hex(&config_key("theme")), "63fff85987455b5897512b5f954c5778");
+        assert_eq!(
+            hex(&project_image(&PROJECT)),
+            "cee1badd1b2d5f389951f98409f56132"
+        );
+        assert_eq!(
+            hex(&config_key("theme")),
+            "63fff85987455b5897512b5f954c5778"
+        );
         assert_eq!(
             hex(&stock_holding(&ASSET)),
             "94f1ee4c4cb45224b9f3389e20d22f5b"
@@ -477,7 +483,8 @@ mod tests {
         // whole scheme work: each database maps the one identity onto whatever rowid it used.
         let derived = recurring_expense(&TEMPLATE, "2026-10");
         let on_one = ensure_derived(&one, "expenses", 41, &derived).expect("one side maps it");
-        let on_two = ensure_derived(&two, "expenses", 907, &derived).expect("the other side maps it");
+        let on_two =
+            ensure_derived(&two, "expenses", 907, &derived).expect("the other side maps it");
         assert_eq!(on_one.uuid, on_two.uuid, "one identity, two local rows");
         assert_eq!((on_one.row_id, on_two.row_id), (41, 907));
         assert_eq!(
@@ -500,7 +507,10 @@ mod tests {
         ensure_derived(&conn, "expenses", 1, &october).expect("the first generation");
 
         let second = ensure_derived(&conn, "expenses", 2, &october).expect("a second generation");
-        assert_eq!(second.uuid, october, "the identity is a function of the facts");
+        assert_eq!(
+            second.uuid, october,
+            "the identity is a function of the facts"
+        );
         assert_eq!(
             second.row_id, 1,
             "the identity already belongs to row 1 and does not move"

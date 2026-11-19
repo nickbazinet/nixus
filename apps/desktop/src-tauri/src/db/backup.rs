@@ -449,7 +449,12 @@ fn swap_prepared_file_inner(
             Ok(path) => Some(path),
             Err(e) => {
                 error!("The dated backup could not be written: {}", e);
-                return Err(roll_back_swap(slot, db_path, safety, SwapStage::DatedBackup));
+                return Err(roll_back_swap(
+                    slot,
+                    db_path,
+                    safety,
+                    SwapStage::DatedBackup,
+                ));
             }
         },
         None => None,
@@ -463,7 +468,12 @@ fn swap_prepared_file_inner(
     remove_sidecars(db_path);
     if let Err(e) = std::fs::copy(incoming, db_path) {
         error!("The restored database could not be put in place: {}", e);
-        return Err(roll_back_swap(slot, db_path, safety, SwapStage::CopyOverLive));
+        return Err(roll_back_swap(
+            slot,
+            db_path,
+            safety,
+            SwapStage::CopyOverLive,
+        ));
     }
     remove_sidecars(db_path);
 
@@ -471,7 +481,12 @@ fn swap_prepared_file_inner(
         Ok(conn) => conn,
         Err(e) => {
             error!("The restored database did not open: {}", e);
-            return Err(roll_back_swap(slot, db_path, safety, SwapStage::OpenRestored));
+            return Err(roll_back_swap(
+                slot,
+                db_path,
+                safety,
+                SwapStage::OpenRestored,
+            ));
         }
     };
 
@@ -540,10 +555,7 @@ fn roll_back_swap(
         discard(safety);
     }
 
-    SwapFailed {
-        stage,
-        rolled_back,
-    }
+    SwapFailed { stage, rolled_back }
 }
 
 /// Launch-time repair for a bootstrap that was interrupted (AD-9).
@@ -631,7 +643,10 @@ fn restored_file_is_usable(db_path: &Path) -> bool {
             intact
         }
         Err(e) => {
-            warn!("An interrupted bootstrap left a database that does not open: {}", e);
+            warn!(
+                "An interrupted bootstrap left a database that does not open: {}",
+                e
+            );
             false
         }
     }
@@ -761,13 +776,19 @@ fn carry_local_only(target: &Connection, source_path: &Path) -> Result<CarryRepo
     // a lost edit. Everything the account knows about other installs travels in the snapshot, which
     // is the one place it is consistent with the tables beside it.
     let own_install: Option<String> = source
-        .query_row("SELECT install_id FROM sync_state WHERE id = 1", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT install_id FROM sync_state WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
         .optional()?;
     let carried: Vec<String> = sync_tables(&source)?
         .into_iter()
-        .filter(|name| sync_tables(target).map(|t| t.contains(name)).unwrap_or(false))
+        .filter(|name| {
+            sync_tables(target)
+                .map(|t| t.contains(name))
+                .unwrap_or(false)
+        })
         .collect();
 
     let tx = target.unchecked_transaction()?;
@@ -789,7 +810,9 @@ fn carry_local_only(target: &Connection, source_path: &Path) -> Result<CarryRepo
         if SNAPSHOT_OWNED_SYNC_TABLES.contains(&name.as_str()) {
             continue;
         }
-        let additive = (name == "sync_log").then_some(own_install.as_deref()).flatten();
+        let additive = (name == "sync_log")
+            .then_some(own_install.as_deref())
+            .flatten();
         report.rows += copy_table(&source, &tx, &name, additive)?;
         report.tables.push(name);
     }
@@ -1099,7 +1122,8 @@ mod tests {
                 .write(true)
                 .open(with_suffix(&db_path, "-shm"))
                 .expect("open shm");
-            shm.write_all(b"bogus shm contents").expect("write bogus shm");
+            shm.write_all(b"bogus shm contents")
+                .expect("write bogus shm");
         }
 
         restore_from_file(&mut slot, &db_path, &backup_path).expect("restore succeeds");
@@ -1143,8 +1167,8 @@ mod tests {
         let mut slot = open_live_db(&db_path);
         seed_marker(&slot, "live");
 
-        let err = restore_from_file(&mut slot, &db_path, &missing_path)
-            .expect_err("restore must fail");
+        let err =
+            restore_from_file(&mut slot, &db_path, &missing_path).expect_err("restore must fail");
         assert!(matches!(err, AppError::File { .. }), "got {:?}", err);
 
         assert_eq!(read_marker(&slot), "live");
@@ -1165,8 +1189,8 @@ mod tests {
         let mut slot = open_live_db(&db_path);
         seed_marker(&slot, "live");
 
-        let err = restore_from_file(&mut slot, &db_path, &garbage_path)
-            .expect_err("restore must fail");
+        let err =
+            restore_from_file(&mut slot, &db_path, &garbage_path).expect_err("restore must fail");
         assert!(matches!(err, AppError::Database { .. }), "got {:?}", err);
 
         assert_eq!(read_marker(&slot), "live");

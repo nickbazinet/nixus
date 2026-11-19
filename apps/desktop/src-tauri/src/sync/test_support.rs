@@ -238,7 +238,8 @@ impl ObjectStore for FakeObjectStore {
     /// `If-None-Match: *` with AD-6's refinement: an existing key holding the SAME content is a
     /// success (the upload is idempotent), and a different content is an install-id collision.
     async fn put_immutable(&self, key: &str, body: Vec<u8>) -> Result<ImmutablePut, StoreError> {
-        self.enter(FakeOp::PutImmutable, key, body.len() as u64).await?;
+        self.enter(FakeOp::PutImmutable, key, body.len() as u64)
+            .await?;
 
         let mut objects = self.objects.lock().expect("not poisoned");
         if let Some(stored) = objects.get(key) {
@@ -268,7 +269,8 @@ impl ObjectStore for FakeObjectStore {
     }
 
     async fn put_if_absent(&self, key: &str, body: Vec<u8>) -> Result<ETag, StoreError> {
-        self.enter(FakeOp::PutIfAbsent, key, body.len() as u64).await?;
+        self.enter(FakeOp::PutIfAbsent, key, body.len() as u64)
+            .await?;
 
         let mut objects = self.objects.lock().expect("not poisoned");
         if objects.contains_key(key) {
@@ -294,7 +296,8 @@ impl ObjectStore for FakeObjectStore {
         expected: &ETag,
         body: Vec<u8>,
     ) -> Result<ETag, StoreError> {
-        self.enter(FakeOp::PutIfMatch, key, body.len() as u64).await?;
+        self.enter(FakeOp::PutIfMatch, key, body.len() as u64)
+            .await?;
 
         let mut objects = self.objects.lock().expect("not poisoned");
         let Some(stored) = objects.get_mut(key) else {
@@ -347,9 +350,7 @@ impl ObjectStore for FakeObjectStore {
             .map(|stored| (stored.bytes.clone(), stored.etag.clone()));
 
         // A 304 carries no body, and AD-6 still bills it as a GET: counted, but no bytes moved.
-        let unchanged = found
-            .as_ref()
-            .is_some_and(|(_, etag)| etag == known);
+        let unchanged = found.as_ref().is_some_and(|(_, etag)| etag == known);
         let size = match (&found, unchanged) {
             (Some((bytes, _)), false) => bytes.len(),
             _ => 0,
@@ -385,11 +386,7 @@ impl ObjectStore for FakeObjectStore {
     async fn exists(&self, key: &str) -> Result<bool, StoreError> {
         self.enter(FakeOp::Exists, key, 0).await?;
 
-        Ok(self
-            .objects
-            .lock()
-            .expect("not poisoned")
-            .contains_key(key))
+        Ok(self.objects.lock().expect("not poisoned").contains_key(key))
     }
 
     async fn list(&self, prefix: &str) -> Result<Vec<ListedObject>, StoreError> {
@@ -578,7 +575,11 @@ impl Applier for RecordingApplier {
     }
 
     fn take_clock_skew(&mut self) -> Option<i64> {
-        self.0.lock().expect("the applier lock").clock_skew_ms.take()
+        self.0
+            .lock()
+            .expect("the applier lock")
+            .clock_skew_ms
+            .take()
     }
 }
 
@@ -926,10 +927,7 @@ impl ComputerProbe {
     /// attached capture hook — so a proof can drive a production entry point that takes one
     /// (`sync::restore::{list, restore}`, `ActiveDataset::write_uncaptured` for the wipe) instead
     /// of re-implementing what it does.
-    pub(crate) fn with_active<T>(
-        &self,
-        run: impl FnOnce(&crate::db::ActiveDataset) -> T,
-    ) -> T {
+    pub(crate) fn with_active<T>(&self, run: impl FnOnce(&crate::db::ActiveDataset) -> T) -> T {
         let mut guard = self.live.lock().expect("the live connection lock");
         if guard.is_none() {
             *guard = Some(crate::db::test_dataset::migrated_dataset(&self.db_path));
@@ -972,11 +970,19 @@ impl ComputerProbe {
 
     /// Every batch the applier was handed, as `(install, seq, message count)`.
     pub(crate) fn applied_batches(&self) -> Vec<(String, i64, usize)> {
-        self.applied.lock().expect("the applier lock").batches.clone()
+        self.applied
+            .lock()
+            .expect("the applier lock")
+            .batches
+            .clone()
     }
 
     pub(crate) fn applied_messages(&self) -> Vec<SegmentMessage> {
-        self.applied.lock().expect("the applier lock").messages.clone()
+        self.applied
+            .lock()
+            .expect("the applier lock")
+            .messages
+            .clone()
     }
 
     /// What this computer's build understands (AD-11). Lowering it makes it the old computer;
@@ -1045,9 +1051,7 @@ impl crate::sync::manager::SyncHost for TestComputer {
         self.with_own(crate::db::data_version)
     }
 
-    fn local_data(
-        &self,
-    ) -> Result<crate::db::backup::LocalData, crate::sync::manager::SyncFault> {
+    fn local_data(&self) -> Result<crate::db::backup::LocalData, crate::sync::manager::SyncFault> {
         self.with_own(crate::db::backup::local_data_summary)
     }
 
@@ -1099,9 +1103,7 @@ impl crate::sync::manager::SyncHost for TestComputer {
         *self.frozen.lock().expect("the frozen reason lock") = Some(reason);
     }
 
-    fn forget_credentials(
-        &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>> {
+    fn forget_credentials(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>> {
         Box::pin(std::future::ready(()))
     }
 
@@ -1233,7 +1235,8 @@ mod tests {
             Ok(ConditionalGet::NotModified)
         );
         assert!(matches!(
-            fake.get_if_none_match("roster", &ETag::new("\"other\"")).await,
+            fake.get_if_none_match("roster", &ETag::new("\"other\""))
+                .await,
             Ok(ConditionalGet::Modified(_))
         ));
         assert_eq!(

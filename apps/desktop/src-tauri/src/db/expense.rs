@@ -2,10 +2,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::account::{self as account_db, BalanceCauseRow, BalanceChange, CashFlowKind};
 use crate::db::budget as budget_db;
-use crate::sync::capture::{self as capture, BalanceCause};
-use crate::sync::identity;
 use crate::error::AppError;
 use crate::models::{CreateExpenseInput, Expense, MerchantHint, UpdateExpenseInput};
+use crate::sync::capture::{self as capture, BalanceCause};
+use crate::sync::identity;
 
 #[derive(Debug, Clone)]
 pub struct LinkedExpenseMutation {
@@ -136,9 +136,7 @@ pub fn get_expenses_by_month(
     )?;
 
     let expenses = stmt
-        .query_map(params![start_date, end_date], |row| {
-            row_to_expense(row)
-        })?
+        .query_map(params![start_date, end_date], row_to_expense)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(expenses)
@@ -262,7 +260,11 @@ pub fn bulk_insert_imported_expenses(
         )?;
         if !category_exists {
             return Err(AppError::Validation {
-                message: format!("Row {}: budget category not found (id={})", i + 1, category_id),
+                message: format!(
+                    "Row {}: budget category not found (id={})",
+                    i + 1,
+                    category_id
+                ),
                 field: Some("budget_category_id".to_string()),
             });
         }
@@ -388,7 +390,8 @@ pub fn search_expenses(
     sql.push_str(&format!(" LIMIT {}", filters.effective_limit()));
 
     let mut stmt = conn.prepare(&sql)?;
-    let params_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
     let results = stmt
         .query_map(params_refs.as_slice(), |row| {
             Ok(ExpenseSearchResult {
@@ -418,10 +421,8 @@ pub fn find_duplicate_indices(
     )?;
 
     for (i, (merchant, date, amount_cents)) in transactions.iter().enumerate() {
-        let exists: bool = stmt.query_row(
-            params![merchant, date, amount_cents],
-            |row| row.get(0),
-        )?;
+        let exists: bool =
+            stmt.query_row(params![merchant, date, amount_cents], |row| row.get(0))?;
         if exists {
             duplicates.push(i);
         }
@@ -666,7 +667,9 @@ mod tests {
 
         let err = insert_expense_with_balance_changes(&conn, &input).unwrap_err();
 
-        assert!(matches!(err, AppError::Validation { field: Some(field), .. } if field == "account_id"));
+        assert!(
+            matches!(err, AppError::Validation { field: Some(field), .. } if field == "account_id")
+        );
         assert_eq!(expense_count(&conn), 0);
         assert_eq!(account_balance(&conn, 1), 10_000);
     }

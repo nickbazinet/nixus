@@ -30,8 +30,7 @@ pub fn get_ai_config(db: State<'_, DbState>) -> Result<AiConfigResponse, AppErro
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
     let provider = config_db::get(conn, "ai_provider");
     let ai_configured = config_db::get(conn, "ai_configured");
-    let region = config_db::get(conn, "aws_region")
-        .unwrap_or_else(|| "us-east-1".to_string());
+    let region = config_db::get(conn, "aws_region").unwrap_or_else(|| "us-east-1".to_string());
 
     let configured = ai_configured.as_deref() == Some("true");
 
@@ -74,11 +73,12 @@ pub async fn save_aws_credentials(
         .map_err(|_| AppError::InvalidCredentials)?;
 
     // Store credentials in keyring
-    credentials::store_aws_credentials(&dataset_id, &access_key, &secret_key, &region)
-        .map_err(|e| AppError::AiService {
+    credentials::store_aws_credentials(&dataset_id, &access_key, &secret_key, &region).map_err(
+        |e| AppError::AiService {
             message: e.to_string(),
             recoverable: false,
-        })?;
+        },
+    )?;
 
     // Write config to DB
     {
@@ -109,7 +109,7 @@ pub async fn save_openai_credentials(
     db: State<'_, DbState>,
     ai_state: State<'_, Mutex<AiState>>,
 ) -> Result<(), AppError> {
-    use async_openai::{Client as OpenAIClient, config::OpenAIConfig};
+    use async_openai::{config::OpenAIConfig, Client as OpenAIClient};
 
     let dataset_id = datasets::active_dataset_id(&db)?;
 

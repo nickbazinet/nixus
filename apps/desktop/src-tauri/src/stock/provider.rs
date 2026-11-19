@@ -118,7 +118,10 @@ mod tests {
         assert_eq!((gbx.currency.as_str(), gbx.price_cents()), ("GBP", 7_250));
 
         let pounds = Quote::from_parts("GBP", 72.50).expect("a pound price");
-        assert_eq!((pounds.currency.as_str(), pounds.price_cents()), ("GBP", 7_250));
+        assert_eq!(
+            (pounds.currency.as_str(), pounds.price_cents()),
+            ("GBP", 7_250)
+        );
     }
 
     #[test]

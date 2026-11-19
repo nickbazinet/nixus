@@ -298,7 +298,9 @@ impl ObjectStore for S3ObjectStore {
                 )?;
                 self.stored_object(meta, output.body).await
             }
-            Err(error) => Err(self.resolve(StoreOp::Get, &absolute, classify(&error)).await),
+            Err(error) => Err(self
+                .resolve(StoreOp::Get, &absolute, classify(&error))
+                .await),
         }
     }
 
@@ -355,11 +357,9 @@ impl ObjectStore for S3ObjectStore {
                 output.metadata(),
                 output.checksum_sha256(),
             ),
-            Err(error) => {
-                Err(self
-                    .resolve(StoreOp::Head, &absolute, classify(&error))
-                    .await)
-            }
+            Err(error) => Err(self
+                .resolve(StoreOp::Head, &absolute, classify(&error))
+                .await),
         }
     }
 
@@ -487,7 +487,6 @@ fn object_meta(
     })
 }
 
-
 /// What the wire said, before any knowledge of which operation asked. `AccessDenied`
 /// is kept separate from `Forbidden` precisely because it is the ambiguous one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -540,7 +539,9 @@ fn classify<E>(error: &SdkError<E, HttpResponse>) -> Fault
 where
     E: ProvideErrorMetadata,
 {
-    let status = error.raw_response().map(|response| response.status().as_u16());
+    let status = error
+        .raw_response()
+        .map(|response| response.status().as_u16());
     let code = error.code().map(str::to_string);
 
     // Checked first and unconditionally: an expired token is a 4xx that would
@@ -730,7 +731,8 @@ mod tests {
         let body = b"payload".to_vec();
         let stored_hex = hex_lower(&Sha256::digest(&body));
 
-        let put = mock!(Client::put_object).then_http_response(fault_with_code(412, "PreconditionFailed"));
+        let put = mock!(Client::put_object)
+            .then_http_response(fault_with_code(412, "PreconditionFailed"));
         let head = mock!(Client::head_object).then_output(move || {
             HeadObjectOutput::builder()
                 .e_tag("\"etag-existing\"")
@@ -753,11 +755,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_412_on_an_immutable_put_is_a_collision_when_the_stored_hash_differs() {
-        let put = mock!(Client::put_object).then_http_response(fault_with_code(412, "PreconditionFailed"));
+        let put = mock!(Client::put_object)
+            .then_http_response(fault_with_code(412, "PreconditionFailed"));
         let head = mock!(Client::head_object).then_output(|| {
             HeadObjectOutput::builder()
                 .e_tag("\"etag-existing\"")
-                .metadata(CONTENT_SHA256_METADATA_KEY, hex_lower(&Sha256::digest(b"other bytes")))
+                .metadata(
+                    CONTENT_SHA256_METADATA_KEY,
+                    hex_lower(&Sha256::digest(b"other bytes")),
+                )
                 .build()
         });
 
@@ -771,9 +777,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_412_on_an_immutable_put_without_a_stored_hash_is_never_a_silent_success() {
-        let put = mock!(Client::put_object).then_http_response(fault_with_code(412, "PreconditionFailed"));
-        let head = mock!(Client::head_object)
-            .then_output(|| HeadObjectOutput::builder().e_tag("\"etag-existing\"").build());
+        let put = mock!(Client::put_object)
+            .then_http_response(fault_with_code(412, "PreconditionFailed"));
+        let head = mock!(Client::head_object).then_output(|| {
+            HeadObjectOutput::builder()
+                .e_tag("\"etag-existing\"")
+                .build()
+        });
 
         let failure = store(vec![&put, &head])
             .put_immutable("log/aabb/000001", b"payload".to_vec())
@@ -791,8 +801,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_key_that_vanishes_between_the_412_and_the_head_is_a_retryable_conflict() {
-        let put =
-            mock!(Client::put_object).then_http_response(fault_with_code(412, "PreconditionFailed"));
+        let put = mock!(Client::put_object)
+            .then_http_response(fault_with_code(412, "PreconditionFailed"));
         let head = mock!(Client::head_object).then_http_response(fault_with_code(404, "NotFound"));
         let list =
             mock!(Client::list_objects_v2).then_output(|| ListObjectsV2Output::builder().build());
@@ -811,7 +821,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_412_on_a_mutable_put_stays_a_precondition_failure() {
-        let put = mock!(Client::put_object).then_http_response(fault_with_code(412, "PreconditionFailed"));
+        let put = mock!(Client::put_object)
+            .then_http_response(fault_with_code(412, "PreconditionFailed"));
         let adapter = store(vec![&put]);
 
         assert_eq!(
@@ -875,8 +886,8 @@ mod tests {
                 .body(ByteStream::from_static(b"roster bytes"))
                 .build()
         });
-        let list = mock!(Client::list_objects_v2)
-            .then_output(|| ListObjectsV2Output::builder().build());
+        let list =
+            mock!(Client::list_objects_v2).then_output(|| ListObjectsV2Output::builder().build());
 
         let outcome = store(vec![&get, &list])
             .get_if_none_match("roster", &ETag::new("\"known\""))
@@ -899,8 +910,8 @@ mod tests {
     #[tokio::test]
     async fn a_404_is_not_found_without_a_probe() {
         let get = mock!(Client::get_object).then_http_response(fault_with_code(404, "NoSuchKey"));
-        let list = mock!(Client::list_objects_v2)
-            .then_output(|| ListObjectsV2Output::builder().build());
+        let list =
+            mock!(Client::list_objects_v2).then_output(|| ListObjectsV2Output::builder().build());
 
         let failure = store(vec![&get, &list])
             .get("snap/LATEST")
@@ -913,9 +924,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_403_on_a_missing_key_is_disambiguated_into_not_found() {
-        let get = mock!(Client::get_object).then_http_response(fault_with_code(403, "AccessDenied"));
-        let list = mock!(Client::list_objects_v2)
-            .then_output(|| ListObjectsV2Output::builder().build());
+        let get =
+            mock!(Client::get_object).then_http_response(fault_with_code(403, "AccessDenied"));
+        let list =
+            mock!(Client::list_objects_v2).then_output(|| ListObjectsV2Output::builder().build());
 
         let failure = store(vec![&get, &list])
             .get("head/aabb")
@@ -928,7 +940,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_403_on_an_existing_key_stays_forbidden() {
-        let get = mock!(Client::get_object).then_http_response(fault_with_code(403, "AccessDenied"));
+        let get =
+            mock!(Client::get_object).then_http_response(fault_with_code(403, "AccessDenied"));
         let list = mock!(Client::list_objects_v2).then_output(|| {
             ListObjectsV2Output::builder()
                 .contents(
@@ -949,7 +962,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_probe_that_only_matches_a_longer_key_still_reports_absence() {
-        let head = mock!(Client::head_object).then_http_response(fault_with_code(403, "AccessDenied"));
+        let head =
+            mock!(Client::head_object).then_http_response(fault_with_code(403, "AccessDenied"));
         let list = mock!(Client::list_objects_v2).then_output(|| {
             ListObjectsV2Output::builder()
                 .contents(
@@ -970,8 +984,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_denied_probe_is_forbidden_rather_than_absence() {
-        let get = mock!(Client::get_object).then_http_response(fault_with_code(403, "AccessDenied"));
-        let list = mock!(Client::list_objects_v2).then_http_response(fault_with_code(403, "AccessDenied"));
+        let get =
+            mock!(Client::get_object).then_http_response(fault_with_code(403, "AccessDenied"));
+        let list =
+            mock!(Client::list_objects_v2).then_http_response(fault_with_code(403, "AccessDenied"));
 
         let failure = store(vec![&get, &list])
             .get("head/aabb")
@@ -1004,7 +1020,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_unmapped_status_becomes_a_typed_transport_fault() {
-        let get = mock!(Client::get_object).then_http_response(fault_with_code(400, "InvalidRequest"));
+        let get =
+            mock!(Client::get_object).then_http_response(fault_with_code(400, "InvalidRequest"));
 
         let failure = store(vec![&get])
             .get("roster")
@@ -1057,4 +1074,3 @@ mod tests {
         assert_eq!(hex_lower(&[0x00, 0x0f, 0xa5, 0xff]), "000fa5ff");
     }
 }
-

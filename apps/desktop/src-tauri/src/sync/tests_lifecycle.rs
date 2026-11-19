@@ -79,7 +79,8 @@ impl Computer {
 
     fn cut(&mut self) -> Option<SegmentBatch> {
         let schema_version = u32::try_from(crate::db::latest_schema_version()).unwrap_or(u32::MAX);
-        let cut = segment::cut(self.conn(), &self.install, schema_version).expect("the cut reads")?;
+        let cut =
+            segment::cut(self.conn(), &self.install, schema_version).expect("the cut reads")?;
         segment::mark_shipped(self.conn(), &cut).expect("the rows are marked");
 
         let verified = segment::read_segment(&cut.object, &cut.install, cut.seq)
@@ -215,7 +216,10 @@ fn a_wipe_ships_no_message_so_no_tombstone_ever_deletes_another_computers_rows()
     wiped.write(|tx| fixtures::insert_income_source(tx, "Consulting"));
     let batch = wiped.cut().expect("there was something to ship");
     other.receive(&batch);
-    assert_eq!(other.applied_number("SELECT COUNT(*) FROM income_sources"), 2);
+    assert_eq!(
+        other.applied_number("SELECT COUNT(*) FROM income_sources"),
+        2
+    );
 
     wiped.wipe();
 
@@ -236,7 +240,10 @@ fn a_wipe_ships_no_message_so_no_tombstone_ever_deletes_another_computers_rows()
         2,
         "the other computer's rows were deleted by a replicated message rather than by the event"
     );
-    assert_eq!(other.applied_number("SELECT COUNT(*) FROM sync_tombstone"), 0);
+    assert_eq!(
+        other.applied_number("SELECT COUNT(*) FROM sync_tombstone"),
+        0
+    );
 }
 
 #[test]
@@ -332,7 +339,9 @@ fn attaching_the_hook_to_a_copied_database_relinks_it_before_the_first_write() {
     computer.write(|tx| fixtures::insert_income_source(tx, "Salary"));
     let stamped: String = computer
         .conn()
-        .query_row("SELECT DISTINCT install FROM sync_log", [], |row| row.get(0))
+        .query_row("SELECT DISTINCT install FROM sync_log", [], |row| {
+            row.get(0)
+        })
         .expect("a message was captured");
     assert_eq!(stamped, after.install_id);
 }
@@ -387,12 +396,18 @@ fn an_explicit_replace_drops_the_unsent_log_and_keeps_the_shipped_one() {
 
     computer.write(|tx| fixtures::insert_income_source(tx, "Consulting"));
     let unsent = computer.number("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL");
-    assert!(unsent > 0, "nothing is unsent, so the drop below proves nothing");
+    assert!(
+        unsent > 0,
+        "nothing is unsent, so the drop below proves nothing"
+    );
 
     let dropped = sync_capture::discard_unsent(computer.conn()).expect("the unsent rows are gone");
 
     assert_eq!(dropped as i64, unsent);
-    assert_eq!(computer.number("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL"), 0);
+    assert_eq!(
+        computer.number("SELECT COUNT(*) FROM sync_log WHERE seq IS NULL"),
+        0
+    );
     assert_eq!(
         computer.number("SELECT COUNT(*) FROM sync_log WHERE seq IS NOT NULL"),
         shipped,

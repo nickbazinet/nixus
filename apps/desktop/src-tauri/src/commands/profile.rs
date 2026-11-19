@@ -95,7 +95,8 @@ struct ActiveSource {
 
 async fn resolve_active_source(app: &AppHandle) -> Result<Option<ActiveSource>, AppError> {
     let active_id = datasets::active_dataset_id(&app.state::<DbState>())?;
-    let entry = crate::commands::datasets::find_registered(datasets::load_registry(app)?, &active_id)?;
+    let entry =
+        crate::commands::datasets::find_registered(datasets::load_registry(app)?, &active_id)?;
 
     // Resolved only for a cloud-linked dataset, matching `get_active_profile`: `current_subject`
     // can refresh an expired session over the network, and a local profile must never trigger that.
@@ -105,10 +106,12 @@ async fn resolve_active_source(app: &AppHandle) -> Result<Option<ActiveSource>, 
         None
     };
 
-    Ok(resolve_source(&entry, subject.as_deref()).map(|source| ActiveSource {
-        key: source_key_of(&source, &entry.id),
-        source,
-    }))
+    Ok(
+        resolve_source(&entry, subject.as_deref()).map(|source| ActiveSource {
+            key: source_key_of(&source, &entry.id),
+            source,
+        }),
+    )
 }
 
 fn no_source() -> AppError {
@@ -177,7 +180,12 @@ pub async fn get_profile_source(app: AppHandle) -> Result<ProfileSourceInfo, App
     })
 }
 
-fn view(source_key: &str, fields: ProfileFields, created_at: String, updated_at: String) -> ProfileView {
+fn view(
+    source_key: &str,
+    fields: ProfileFields,
+    created_at: String,
+    updated_at: String,
+) -> ProfileView {
     ProfileView {
         source_key: source_key.to_string(),
         fields,
@@ -307,15 +315,16 @@ pub async fn get_user_profile(
                 profile.updated_at,
             )
         }),
-        ProfileSource::Local { dataset_id } => profile_store::load_local(&dir, &dataset_id)?
-            .map(|profile| {
+        ProfileSource::Local { dataset_id } => {
+            profile_store::load_local(&dir, &dataset_id)?.map(|profile| {
                 view(
                     &source_key,
                     profile.fields,
                     profile.created_at,
                     profile.updated_at,
                 )
-            }),
+            })
+        }
     })
 }
 
@@ -418,7 +427,8 @@ pub async fn get_tfsa_accumulated_limit(
 
     let current_year = chrono::Local::now().date_naive().year();
 
-    let Some(limit) = tfsa::calculator::accumulated_limit_for_profile(fields.as_ref(), current_year)
+    let Some(limit) =
+        tfsa::calculator::accumulated_limit_for_profile(fields.as_ref(), current_year)
     else {
         return Ok(None);
     };
@@ -652,7 +662,10 @@ mod tests {
     fn the_source_refusals_carry_no_identity_and_no_value() {
         for error in [no_source(), source_mismatch(), avatar_requires_cloud()] {
             let serialized = serde_json::to_string(&error).expect("serializable");
-            assert!(serialized.contains(r#""type":"cloud_profile""#), "{serialized}");
+            assert!(
+                serialized.contains(r#""type":"cloud_profile""#),
+                "{serialized}"
+            );
             assert!(!serialized.contains(SUB_A));
             assert!(!serialized.contains(DATASET_ID));
         }

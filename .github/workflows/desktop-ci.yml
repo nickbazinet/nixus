@@ -154,7 +154,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.94.1
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       # rust-toolchain.toml is what cargo actually obeys, so a mismatch with the
       # version installed above would silently build on a toolchain this workflow
@@ -231,6 +231,15 @@ jobs:
         if: runner.os == 'macOS'
         working-directory: apps/desktop/src-tauri
         run: cargo build
+
+      # Formatting is platform-independent, so macOS proves it for both. This gate was
+      # unenforceable until the crate was brought to rustfmt: 992 pre-existing hunks across
+      # 163 files meant `--check` could only ever report the backlog, so every Rust change had
+      # to avoid bare `cargo fmt` by hand or produce an unreviewable 163-file diff.
+      - name: Rust formatting
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop/src-tauri
+        run: cargo fmt --check
 
       # The three suites given their own named steps below are skipped here so that each runs
       # once. On Windows the convergence simulator (`sync::sim`, minutes per test there, and

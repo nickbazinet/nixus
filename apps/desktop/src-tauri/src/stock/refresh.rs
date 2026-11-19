@@ -292,7 +292,9 @@ async fn run(
 
     let now = Utc::now();
     if !force && holdings.iter().all(|holding| is_fresh(holding, now)) {
-        tracing::info!("Every stock price is under {FRESH_WINDOW_MINUTES} minutes old; skipping refresh");
+        tracing::info!(
+            "Every stock price is under {FRESH_WINDOW_MINUTES} minutes old; skipping refresh"
+        );
         return Ok(RefreshSummary::skipped());
     }
 
@@ -326,9 +328,8 @@ async fn run(
             // `apply_price` then fails. Letting that error out would discard the prices of every
             // OTHER holding in the same pass, which is the partial-failure guarantee inverted.
             // `WriteTx::savepoint` rolls back its rows AND its captured messages together.
-            let written = tx.savepoint(|conn| {
-                stock_db::apply_price(conn, holding.passive_asset_id, &price)
-            });
+            let written =
+                tx.savepoint(|conn| stock_db::apply_price(conn, holding.passive_asset_id, &price));
 
             match written {
                 Ok((old_value_cents, asset)) => applied.push(Applied {

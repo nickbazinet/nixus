@@ -15,7 +15,8 @@ const BASE_CURRENCY: &str = "CAD";
 /// 1e-6: the scaling factor of both `quantity_micros` and `fx_rate_to_base_micros`.
 const MICROS: i128 = 1_000_000;
 
-const HOLDING_SELECT: &str = "SELECT passive_asset_id, symbol, exchange, currency, quantity_micros, \
+const HOLDING_SELECT: &str =
+    "SELECT passive_asset_id, symbol, exchange, currency, quantity_micros, \
      last_price_cents, last_price_at, fx_rate_to_base_micros, account_id, created_at, updated_at \
      FROM stock_holdings";
 
@@ -179,7 +180,11 @@ pub fn insert_stock_asset(
     let quantity_micros = validated_quantity(input.quantity_micros)?;
     let account_id = validated_account(conn, input.account_id)?;
     let name = input.name.trim();
-    let name = if name.is_empty() { symbol.as_str() } else { name };
+    let name = if name.is_empty() {
+        symbol.as_str()
+    } else {
+        name
+    };
 
     conn.execute(
         "INSERT INTO passive_assets (name, asset_type, value_cents) VALUES (?1, ?2, 0)",

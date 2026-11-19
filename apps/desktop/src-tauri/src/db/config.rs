@@ -53,10 +53,7 @@ pub fn set(conn: &Connection, key: &str, value: &str) -> Result<(), AppError> {
 /// no-op, which is what lets a "clear my override" command be safely retried.
 // CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
 pub fn delete(conn: &Connection, key: &str) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "DELETE FROM config WHERE key = ?1",
-        rusqlite::params![key],
-    )?;
+    conn.execute("DELETE FROM config WHERE key = ?1", rusqlite::params![key])?;
     Ok(())
 }
 

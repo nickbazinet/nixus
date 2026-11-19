@@ -132,10 +132,11 @@ impl<L: DatasetLink, C: CapabilitySource, S: GateStateSource> SyncGate<L, C, S> 
         }
 
         if let Some(observed) = observed {
-            verify_account_pin(state.pin.as_ref(), observed)
-                .map_err(|mismatch| SyncBlocked::PinMismatch {
+            verify_account_pin(state.pin.as_ref(), observed).map_err(|mismatch| {
+                SyncBlocked::PinMismatch {
                     field: mismatch.field,
-                })?;
+                }
+            })?;
         }
 
         Ok(())
@@ -256,7 +257,11 @@ where
         Ok(&self.store)
     }
 
-    pub async fn put_immutable(&self, key: &str, body: Vec<u8>) -> Result<ImmutablePut, GatedError> {
+    pub async fn put_immutable(
+        &self,
+        key: &str,
+        body: Vec<u8>,
+    ) -> Result<ImmutablePut, GatedError> {
         Ok(self
             .pass_write(key, &body)
             .await?
@@ -691,10 +696,7 @@ mod tests {
 
         let gate = SyncGate::new(DatasetKind::Local, PanickingCapabilities, PanickingState);
 
-        assert_eq!(
-            gate.check(None).await,
-            Err(SyncBlocked::LocalOnlyDataset)
-        );
+        assert_eq!(gate.check(None).await, Err(SyncBlocked::LocalOnlyDataset));
     }
 
     #[test]
@@ -762,11 +764,8 @@ mod tests {
         gate: SyncGate<DatasetKind, FixedCapabilities, FixedState>,
     ) -> (Result<VendedCredentials, GatedError>, usize) {
         let vends = Arc::new(AtomicUsize::new(0));
-        let credentials = SyncCredentials::new(
-            CountingVendor(Arc::clone(&vends)),
-            FixedProvider,
-            RealClock,
-        );
+        let credentials =
+            SyncCredentials::new(CountingVendor(Arc::clone(&vends)), FixedProvider, RealClock);
 
         let outcome = gate.vend(&credentials, &MemoryPins::default()).await;
 

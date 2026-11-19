@@ -86,7 +86,6 @@ pub fn production_bucket() -> Result<String, AuthError> {
 }
 
 impl IdentityPoolConfig {
-
     /// The `Logins` map key of the enhanced flow: the user pool's OIDC issuer without
     /// its scheme, which is the exact string the identity pool's trust configuration
     /// stores (`cognito-idp.<region>.amazonaws.com/<user pool id>`).

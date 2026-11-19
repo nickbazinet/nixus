@@ -400,7 +400,10 @@ impl PreSyncRecords {
             ("expenses", self.expenses),
             ("income_sources", self.income_sources),
             ("income_entries", self.income_entries),
-            ("recurring_income_templates", self.recurring_income_templates),
+            (
+                "recurring_income_templates",
+                self.recurring_income_templates,
+            ),
             ("vehicles", self.vehicles),
             ("maintenance_tasks", self.maintenance_tasks),
             ("projects", self.projects),
@@ -719,7 +722,10 @@ pub(crate) fn seed_pre_sync_audit_entries(conn: &Connection, count: usize) -> Re
 }
 
 /// How many audit entries of one type the dataset holds.
-pub(crate) fn count_audit_entries_of(conn: &Connection, entity_type: &str) -> Result<i64, AppError> {
+pub(crate) fn count_audit_entries_of(
+    conn: &Connection,
+    entity_type: &str,
+) -> Result<i64, AppError> {
     Ok(conn.query_row(
         "SELECT COUNT(*) FROM audit_log WHERE entity_type = ?1",
         params![entity_type],

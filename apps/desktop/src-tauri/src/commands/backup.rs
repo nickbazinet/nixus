@@ -272,8 +272,9 @@ mod tests {
         let conn = Connection::open(tmp.path()).unwrap();
         conn.execute_batch(
             "CREATE TABLE budget_groups (id INTEGER PRIMARY KEY, name TEXT);
-             CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT);"
-        ).unwrap();
+             CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT);",
+        )
+        .unwrap();
         tmp
     }
 
@@ -511,7 +512,7 @@ mod tests {
                 thumbnail: None,
             },
         )
-            .expect("the image is stored");
+        .expect("the image is stored");
 
         checkpoint_for_export(&conn).expect("the checkpoint succeeds");
         copy_db_to_path(&db_path, &backup_path).expect("the copy succeeds");

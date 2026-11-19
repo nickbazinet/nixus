@@ -4,8 +4,7 @@ use crate::db::aggregates;
 use crate::db::config;
 use crate::error::AppError;
 use crate::financial_health::constants::{
-    is_essential_group_name, DEFAULT_EMERGENCY_FUND_TARGET_MONTHS,
-    EMERGENCY_FUND_TARGET_CONFIG_KEY,
+    is_essential_group_name, DEFAULT_EMERGENCY_FUND_TARGET_MONTHS, EMERGENCY_FUND_TARGET_CONFIG_KEY,
 };
 use crate::financial_health::evaluator::{
     compute_coverage_months, evaluate_waterfall, WaterfallEvalInput, WaterfallEvaluation,
@@ -77,12 +76,10 @@ pub fn set_emergency_fund_target_months(conn: &Connection, months: i64) -> Resul
         });
     }
 
-    config::set(conn, EMERGENCY_FUND_TARGET_CONFIG_KEY, &months.to_string())}
+    config::set(conn, EMERGENCY_FUND_TARGET_CONFIG_KEY, &months.to_string())
+}
 
-fn emergency_fund_status(
-    coverage_months: Option<f64>,
-    target_months: i64,
-) -> EmergencyFundStatus {
+fn emergency_fund_status(coverage_months: Option<f64>, target_months: i64) -> EmergencyFundStatus {
     let Some(coverage) = coverage_months else {
         return EmergencyFundStatus::Underfunded;
     };
@@ -118,9 +115,7 @@ fn savings_rate_percent(
         return None;
     }
 
-    Some(
-        (avg_monthly_surplus_cents as f64 / avg_monthly_income_cents as f64) * 100.0,
-    )
+    Some((avg_monthly_surplus_cents as f64 / avg_monthly_income_cents as f64) * 100.0)
 }
 
 pub fn build_financial_health_summary(
@@ -514,7 +509,10 @@ mod tests {
         let emergency_fund = summary.emergency_fund.expect("expected emergency fund");
         assert_eq!(emergency_fund.status, EmergencyFundStatus::Approaching);
         assert_eq!(emergency_fund.progress_ratio, 0.5);
-        assert_eq!(summary.savings.unwrap().avg_monthly_surplus_cents, Some(40000));
+        assert_eq!(
+            summary.savings.unwrap().avg_monthly_surplus_cents,
+            Some(40000)
+        );
     }
 
     #[test]

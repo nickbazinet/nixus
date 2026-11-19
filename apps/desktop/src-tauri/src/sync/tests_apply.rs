@@ -14,7 +14,9 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::db::account::{self as account_db, BalanceCauseRow, CashFlowKind};
-use crate::db::{capture_fixtures as fixtures, sync_apply as apply_db, sync_identity, test_dataset};
+use crate::db::{
+    capture_fixtures as fixtures, sync_apply as apply_db, sync_identity, test_dataset,
+};
 use crate::db::{ActiveDataset, WriteTx};
 use crate::error::AppError;
 use crate::models::{CreateAccountInput, DatasetKind};
@@ -48,7 +50,9 @@ impl Computer {
         capture.attach(&conn).expect("the hook is installed");
 
         let apply = crate::db::open_configured(&db_path).expect("the apply connection opens");
-        let install = ensure_install_on(&conn).expect("the install row reads").install_id;
+        let install = ensure_install_on(&conn)
+            .expect("the install row reads")
+            .install_id;
 
         Self {
             _dir: dir,
@@ -65,11 +69,16 @@ impl Computer {
     }
 
     fn conn(&self) -> &Connection {
-        self.dataset.conn.as_ref().expect("a computer has a connection")
+        self.dataset
+            .conn
+            .as_ref()
+            .expect("a computer has a connection")
     }
 
     fn write<T>(&self, operation: impl FnOnce(&WriteTx<'_>) -> Result<T, AppError>) -> T {
-        self.dataset.write(operation).expect("the captured write succeeds")
+        self.dataset
+            .write(operation)
+            .expect("the captured write succeeds")
     }
 
     /// Everything captured since the last ship, as the batch the pull side would hand to apply.
@@ -112,7 +121,9 @@ impl Computer {
     }
 
     fn number(&self, sql: &str) -> i64 {
-        self.apply.query_row(sql, [], |row| row.get(0)).expect("the count reads")
+        self.apply
+            .query_row(sql, [], |row| row.get(0))
+            .expect("the count reads")
     }
 
     fn pragma(&self, name: &str) -> i64 {
@@ -213,7 +224,9 @@ fn two_writers_win_the_column_each_wrote_last() {
     let created = left.ship();
     right.receive(&created);
 
-    let right_row = right.row_id_of("budget_groups", &uuid).expect("the row arrived");
+    let right_row = right
+        .row_id_of("budget_groups", &uuid)
+        .expect("the row arrived");
 
     // `right` renames it, `left` moves it: different columns, so neither loses.
     right.write(|tx| fixtures::rename_budget_group(tx, right_row, "Renamed"));
@@ -375,7 +388,10 @@ fn a_child_before_its_parent_parks_and_applies_when_the_parent_arrives() {
 
     assert_eq!(report.parked, 1, "the child was not parked: {report:?}");
     assert_eq!(receiver.number("SELECT COUNT(*) FROM income_entries"), 0);
-    assert_eq!(apply_db::parked_count(&receiver.apply).expect("the queue reads"), 1);
+    assert_eq!(
+        apply_db::parked_count(&receiver.apply).expect("the queue reads"),
+        1
+    );
 
     receiver.receive(&parent_batch);
 
@@ -384,7 +400,10 @@ fn a_child_before_its_parent_parks_and_applies_when_the_parent_arrives() {
         1,
         "the parked child did not apply once its parent arrived"
     );
-    assert_eq!(apply_db::parked_count(&receiver.apply).expect("the queue reads"), 0);
+    assert_eq!(
+        apply_db::parked_count(&receiver.apply).expect("the queue reads"),
+        0
+    );
     assert_eq!(receiver.number("SELECT COUNT(*) FROM sync_quarantine"), 0);
 }
 
@@ -406,7 +425,10 @@ fn a_message_parked_past_its_give_up_window_is_quarantined() {
     let child_batch = middle.ship();
 
     receiver.receive(&child_batch);
-    assert_eq!(apply_db::parked_count(&receiver.apply).expect("the queue reads"), 1);
+    assert_eq!(
+        apply_db::parked_count(&receiver.apply).expect("the queue reads"),
+        1
+    );
 
     // Backdated rather than waited out: the window is measured in days.
     receiver
@@ -424,7 +446,10 @@ fn a_message_parked_past_its_give_up_window_is_quarantined() {
     };
     receiver.receive(&unrelated);
 
-    assert_eq!(apply_db::parked_count(&receiver.apply).expect("the queue reads"), 0);
+    assert_eq!(
+        apply_db::parked_count(&receiver.apply).expect("the queue reads"),
+        0
+    );
     assert_eq!(
         apply_db::quarantine_reasons(&receiver.apply).expect("the quarantine reads"),
         vec![("income_entries".to_string(), "apply_failed".to_string())]
@@ -470,7 +495,10 @@ fn a_poison_message_is_quarantined_and_the_rest_of_the_batch_applies() {
 
     let report = receiver.receive(&batch);
 
-    assert_eq!(report.quarantined, 1, "the poison message was not quarantined: {report:?}");
+    assert_eq!(
+        report.quarantined, 1,
+        "the poison message was not quarantined: {report:?}"
+    );
     assert_eq!(
         apply_db::quarantine_reasons(&receiver.apply).expect("the quarantine reads"),
         vec![(
@@ -526,7 +554,10 @@ fn a_batch_that_dies_midway_leaves_the_vector_and_the_rows_untouched() {
 
     let outcome = apply::apply_batch(&receiver.apply, &receiver.clock, &doomed);
 
-    assert!(outcome.is_err(), "the doomed batch reported success: {outcome:?}");
+    assert!(
+        outcome.is_err(),
+        "the doomed batch reported success: {outcome:?}"
+    );
     assert_eq!(
         receiver.text("SELECT name FROM budget_groups LIMIT 1"),
         before,
@@ -562,7 +593,10 @@ fn a_segment_that_skips_a_gap_is_refused_and_stays_owed() {
 
     let refused = apply::apply_batch(&receiver.apply, &receiver.clock, &third);
 
-    assert!(refused.is_err(), "a segment past a gap was applied: {refused:?}");
+    assert!(
+        refused.is_err(),
+        "a segment past a gap was applied: {refused:?}"
+    );
     assert_eq!(
         apply_db::applied_position(&receiver.apply, &third.install).expect("the vector reads"),
         Some((0, first.messages.len() as i64)),
@@ -683,8 +717,14 @@ fn a_cascaded_child_is_tombstoned_with_its_parent_and_a_late_edit_is_dropped() {
     };
     let report = receiver.receive(&late);
 
-    assert_eq!(report.dropped, 1, "a message for a cascaded child was not dropped: {report:?}");
-    assert_eq!(apply_db::parked_count(&receiver.apply).expect("the queue reads"), 0);
+    assert_eq!(
+        report.dropped, 1,
+        "a message for a cascaded child was not dropped: {report:?}"
+    );
+    assert_eq!(
+        apply_db::parked_count(&receiver.apply).expect("the queue reads"),
+        0
+    );
     assert_eq!(receiver.number("SELECT COUNT(*) FROM income_entries"), 0);
 }
 
@@ -772,7 +812,10 @@ fn the_same_cause_from_two_computers_is_counted_once() {
     let left_balance = left.number("SELECT balance_cents FROM accounts LIMIT 1");
     let right_balance = right.number("SELECT balance_cents FROM accounts LIMIT 1");
 
-    assert_eq!(left_balance, right_balance, "the two computers disagree about the balance");
+    assert_eq!(
+        left_balance, right_balance,
+        "the two computers disagree about the balance"
+    );
     assert_eq!(
         left_balance, 2_500,
         "one real-world deletion was counted twice (expected the 2,500 the expense had taken back)"
@@ -881,7 +924,9 @@ fn apply_writes_no_audit_row_and_no_message_of_its_own() {
         "apply wrote an audit row"
     );
     assert_eq!(
-        receiver.number("SELECT COUNT(*) FROM sync_log WHERE install = (SELECT install_id FROM sync_state)"),
+        receiver.number(
+            "SELECT COUNT(*) FROM sync_log WHERE install = (SELECT install_id FROM sync_state)"
+        ),
         0,
         "apply captured its own writes as new messages"
     );
@@ -958,7 +1003,10 @@ fn a_message_naming_an_unknown_table_or_column_is_quarantined() {
                 &stamp(0x1001, install),
                 "budget_groups",
                 [2; 16],
-                &[("a_column_from_a_newer_build", rusqlite::types::Value::Integer(1))],
+                &[(
+                    "a_column_from_a_newer_build",
+                    rusqlite::types::Value::Integer(1),
+                )],
             ),
             SegmentMessage {
                 hlc: stamp(0x1002, install),
@@ -976,11 +1024,17 @@ fn a_message_naming_an_unknown_table_or_column_is_quarantined() {
 
     let report = receiver.receive(&batch);
 
-    assert_eq!(report.quarantined, 3, "a message this build cannot place was not recorded: {report:?}");
+    assert_eq!(
+        report.quarantined, 3,
+        "a message this build cannot place was not recorded: {report:?}"
+    );
     assert_eq!(
         apply_db::quarantine_reasons(&receiver.apply).expect("the quarantine reads"),
         vec![
-            ("a_table_from_a_newer_build".to_string(), "unknown_table".to_string()),
+            (
+                "a_table_from_a_newer_build".to_string(),
+                "unknown_table".to_string()
+            ),
             ("budget_groups".to_string(), "unknown_column".to_string()),
             ("budget_groups".to_string(), "malformed_payload".to_string()),
         ]
@@ -1006,7 +1060,10 @@ fn a_message_naming_a_local_only_table_is_refused() {
             &stamp(0x1000, install),
             "sync_state",
             [4; 16],
-            &[("install_id", rusqlite::types::Value::Text("hijacked".into()))],
+            &[(
+                "install_id",
+                rusqlite::types::Value::Text("hijacked".into()),
+            )],
         )],
     });
 
@@ -1054,8 +1111,14 @@ fn a_batch_larger_than_one_transaction_applies_every_message_once() {
     };
     let report = receiver.receive(&batch);
 
-    assert_eq!(report.applied, count, "not every message applied: {report:?}");
-    assert_eq!(receiver.number("SELECT COUNT(*) FROM budget_groups"), count as i64);
+    assert_eq!(
+        report.applied, count,
+        "not every message applied: {report:?}"
+    );
+    assert_eq!(
+        receiver.number("SELECT COUNT(*) FROM budget_groups"),
+        count as i64
+    );
     assert_eq!(
         apply_db::applied_position(&receiver.apply, install).expect("the vector reads"),
         Some((0, count as i64))
@@ -1109,7 +1172,10 @@ fn a_live_child_on_the_restrict_edge_overrides_the_account_tombstone() {
 
     let report = receiver.receive(&deleted);
 
-    assert_eq!(report.parked, 1, "the blocked tombstone was not held: {report:?}");
+    assert_eq!(
+        report.parked, 1,
+        "the blocked tombstone was not held: {report:?}"
+    );
     assert_eq!(
         receiver.number("SELECT COUNT(*) FROM accounts"),
         1,
@@ -1136,7 +1202,10 @@ fn a_live_child_on_the_restrict_edge_overrides_the_account_tombstone() {
         0,
         "the held tombstone did not apply once the child was gone"
     );
-    assert_eq!(apply_db::parked_count(&receiver.apply).expect("the queue reads"), 0);
+    assert_eq!(
+        apply_db::parked_count(&receiver.apply).expect("the queue reads"),
+        0
+    );
 }
 
 /// AD-12: a delta addressed to an account that is already deleted is kept against the row retained

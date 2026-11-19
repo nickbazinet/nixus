@@ -6,9 +6,7 @@ use crate::error::AppError;
 use crate::models::{NetWorthChange, NetWorthCurrent, NetWorthSnapshot, NetWorthSnapshotSummary};
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn get_current_net_worth(
-    state: State<DbState>,
-) -> Result<NetWorthCurrent, AppError> {
+pub fn get_current_net_worth(state: State<DbState>) -> Result<NetWorthCurrent, AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
@@ -31,9 +29,7 @@ pub fn get_recent_net_worth_snapshots(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn record_net_worth_snapshot(
-    state: State<DbState>,
-) -> Result<NetWorthSnapshot, AppError> {
+pub fn record_net_worth_snapshot(state: State<DbState>) -> Result<NetWorthSnapshot, AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;

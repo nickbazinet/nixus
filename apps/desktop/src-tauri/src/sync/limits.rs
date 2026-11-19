@@ -297,10 +297,16 @@ mod tests {
             object_size_limit("snap/".to_string().as_str()),
             MAX_SNAPSHOT_OBJECT_BYTES
         );
-        assert_eq!(object_size_limit(&format!("{BLOB_KEY_PREFIX}abc")), MAX_BLOB_BYTES);
+        assert_eq!(
+            object_size_limit(&format!("{BLOB_KEY_PREFIX}abc")),
+            MAX_BLOB_BYTES
+        );
         // The three pointers, including the one that lives under the snapshot prefix.
         assert_eq!(object_size_limit(SNAP_LATEST_KEY), MAX_POINTER_BYTES);
-        assert_eq!(object_size_limit("head/0a1b2c3d4e5f6071"), MAX_POINTER_BYTES);
+        assert_eq!(
+            object_size_limit("head/0a1b2c3d4e5f6071"),
+            MAX_POINTER_BYTES
+        );
         assert_eq!(object_size_limit("roster"), MAX_POINTER_BYTES);
         assert_eq!(object_size_limit("owner"), MAX_POINTER_BYTES);
         // An unclassified namespace lands on the smallest cap, never on none.
@@ -312,7 +318,9 @@ mod tests {
         let limits = DatasetLimits::default();
         let key = "log/0a1b2c3d4e5f6071/0000000000000000";
 
-        assert!(limits.check_object_size(key, MAX_SEGMENT_OBJECT_BYTES).is_ok());
+        assert!(limits
+            .check_object_size(key, MAX_SEGMENT_OBJECT_BYTES)
+            .is_ok());
         assert_eq!(limits.oversize_refusals(), 0);
 
         assert_eq!(
@@ -336,7 +344,11 @@ mod tests {
         for _ in 0..3 {
             limits.acquire().await;
         }
-        assert_eq!(limits.delays(), 0, "a burst inside the cap is never delayed");
+        assert_eq!(
+            limits.delays(),
+            0,
+            "a burst inside the cap is never delayed"
+        );
         assert_eq!(Instant::now(), start, "and costs no time");
 
         limits.acquire().await;
@@ -351,7 +363,11 @@ mod tests {
         tokio::time::sleep(Duration::from_secs(2)).await;
         limits.acquire().await;
         limits.acquire().await;
-        assert_eq!(limits.delays(), 1, "a refilled bucket delays nothing further");
+        assert_eq!(
+            limits.delays(),
+            1,
+            "a refilled bucket delays nothing further"
+        );
     }
 
     #[tokio::test(start_paused = true)]

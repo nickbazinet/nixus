@@ -5,12 +5,12 @@ use crate::db::budget as budget_db;
 use crate::db::expense as expense_db;
 use crate::db::recurrence::{self, StoredSchedule};
 use crate::error::AppError;
-use crate::sync::capture;
-use crate::sync::identity;
 use crate::models::{
     CreateExpenseInput, CreateRecurringExpenseTemplateInput, Expense, RecurringExpenseTemplate,
     UpdateRecurringExpenseTemplateInput,
 };
+use crate::sync::capture;
+use crate::sync::identity;
 
 const SELECT_TEMPLATE: &str = "SELECT id, merchant, amount_cents, budget_category_id, day_of_month,
             frequency, start_date, is_active, created_at, updated_at
@@ -166,9 +166,12 @@ pub fn apply_recurring_for_month(
     let mut created = Vec::new();
 
     for template in templates {
-        for date in
-            recurrence::occurrences_in_month(&schedule_of(&template), &template.created_at, year, month)?
-        {
+        for date in recurrence::occurrences_in_month(
+            &schedule_of(&template),
+            &template.created_at,
+            year,
+            month,
+        )? {
             if let Some(expense) = try_apply_template(conn, &template, date)? {
                 created.push(expense);
             }
@@ -195,7 +198,8 @@ fn apply_due_recurring_expenses_as_of(
     for template in templates {
         // One unusable template must not stop the others, matching the income backfill.
         let dates =
-            match recurrence::due_occurrences(&schedule_of(&template), &template.created_at, today) {
+            match recurrence::due_occurrences(&schedule_of(&template), &template.created_at, today)
+            {
                 Ok(dates) => dates,
                 Err(e) => {
                     tracing::error!(
@@ -556,8 +560,11 @@ mod tests {
         )
         .unwrap();
 
-        let due = apply_due_recurring_expenses_as_of(&conn, NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())
-            .unwrap();
+        let due = apply_due_recurring_expenses_as_of(
+            &conn,
+            NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+        )
+        .unwrap();
         let dates: Vec<&str> = due.iter().map(|e| e.date.as_str()).collect();
         assert_eq!(dates, vec!["2026-11-05", "2026-11-12", "2026-11-19"]);
 

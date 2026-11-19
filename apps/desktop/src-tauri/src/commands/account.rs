@@ -28,7 +28,14 @@ pub fn create_account(
     let result = active.write(|tx| account_db::insert_account(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "account", result.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "account",
+        result.id,
+        "create",
+        None,
+        Some(&details),
+    );
 
     if let Err(e) = active.write(|tx| net_worth_db::record_net_worth_snapshot(tx)) {
         tracing::error!("Failed to record snapshot: {}", e);
@@ -99,16 +106,20 @@ pub fn update_account(
     let result = active.write(|tx| account_db::update_account(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "account", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        &active,
+        "account",
+        id,
+        "update",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
 
     Ok(result)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn delete_account(
-    state: State<DbState>,
-    id: i64,
-) -> Result<(), AppError> {
+pub fn delete_account(state: State<DbState>, id: i64) -> Result<(), AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;

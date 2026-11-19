@@ -43,7 +43,6 @@ const SAFE_TO_RECOMMEND_DIVISOR: i64 = 2;
 // user can go and see, and a longer window would average away the habit they'd have to change.
 const SLACK_TREND_MONTHS: i32 = 3;
 
-
 #[tauri::command(rename_all = "snake_case")]
 pub fn create_project(
     state: State<DbState>,
@@ -68,7 +67,14 @@ pub fn create_project(
     let result = active.write(|tx| projects_db::insert_project(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "project", result.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "project",
+        result.id,
+        "create",
+        None,
+        Some(&details),
+    );
 
     Ok(result)
 }
@@ -130,7 +136,14 @@ pub(crate) fn update_project_inner(
     })?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(active, "project", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        active,
+        "project",
+        id,
+        "update",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
 
     Ok(result)
 }
@@ -187,7 +200,14 @@ pub(crate) fn archive_project_inner(active: &ActiveDataset, id: i64) -> Result<P
     })?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(active, "project", id, "archive", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        active,
+        "project",
+        id,
+        "archive",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
     if !unlinked.is_empty() {
         record_budget_unlink(active, id, &unlinked);
     }
@@ -197,7 +217,14 @@ pub(crate) fn archive_project_inner(active: &ActiveDataset, id: i64) -> Result<P
 
 fn record_budget_unlink(active: &ActiveDataset, project_id: i64, category_ids: &[i64]) {
     let old_json = serde_json::json!({ "category_ids": category_ids }).to_string();
-    audit_db::record(active, "project", project_id, "budget_unlink", Some(&old_json), None);
+    audit_db::record(
+        active,
+        "project",
+        project_id,
+        "budget_unlink",
+        Some(&old_json),
+        None,
+    );
 }
 
 fn project_not_found() -> AppError {
@@ -222,7 +249,10 @@ pub(crate) fn project_budget_links_for(
 
     let mut by_project: std::collections::BTreeMap<i64, ProjectBudgetLink> =
         std::collections::BTreeMap::new();
-    for (category_id, figures) in figures.into_iter().filter(|(_, figures)| !figures.is_deleted) {
+    for (category_id, figures) in figures
+        .into_iter()
+        .filter(|(_, figures)| !figures.is_deleted)
+    {
         let link = ProjectBudgetLink {
             project_id: figures.project_id,
             category_id,
@@ -254,7 +284,8 @@ pub(crate) fn add_project_to_budget_inner(
     today: NaiveDate,
 ) -> Result<ProjectBudgetLink, AppError> {
     let link = active.write(|tx| {
-        let project = projects_db::get_project_by_id(tx, project_id).map_err(|_| project_not_found())?;
+        let project =
+            projects_db::get_project_by_id(tx, project_id).map_err(|_| project_not_found())?;
         if project.archived_at.is_some() {
             return Err(project_not_found());
         }
@@ -325,7 +356,14 @@ pub(crate) fn add_project_to_budget_inner(
     })?;
 
     let new_json = serde_json::to_string(&link).unwrap_or_default();
-    audit_db::record(active, "project", project_id, "budget_link", None, Some(&new_json));
+    audit_db::record(
+        active,
+        "project",
+        project_id,
+        "budget_link",
+        None,
+        Some(&new_json),
+    );
 
     Ok(link)
 }
@@ -415,7 +453,14 @@ pub fn create_project_contribution(
     let result = active.write(|tx| projects_db::insert_project_contribution(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "project_contribution", result.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "project_contribution",
+        result.id,
+        "create",
+        None,
+        Some(&details),
+    );
 
     Ok(result)
 }
@@ -449,7 +494,8 @@ pub fn confirm_project_allocations(
         total_cents,
     )?;
 
-    let created = active.write(|tx| projects_db::insert_suggested_contributions(tx, &allocations))?;
+    let created =
+        active.write(|tx| projects_db::insert_suggested_contributions(tx, &allocations))?;
 
     // One audit row per created contribution, not one summary row for the batch, so
     // `audit_log.entity_id` stays joinable back to the contribution it describes.
@@ -479,7 +525,14 @@ pub fn delete_project_contribution(
     let result = active.write(|tx| projects_db::delete_project_contribution(tx, id))?;
 
     let old_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "project_contribution", result.id, "delete", Some(&old_json), None);
+    audit_db::record(
+        &active,
+        "project_contribution",
+        result.id,
+        "delete",
+        Some(&old_json),
+        None,
+    );
 
     Ok(result)
 }
@@ -569,7 +622,9 @@ pub fn get_suggested_allocation(
 
     // An unrepresentable date (the 1st of the next month always exists) would still not justify
     // failing the whole read, so it degrades to today rather than erroring.
-    let next_suggestion_date = settlement::next_month_start(today).unwrap_or(today).to_string();
+    let next_suggestion_date = settlement::next_month_start(today)
+        .unwrap_or(today)
+        .to_string();
 
     Ok(SuggestedAllocationResponse {
         suggestions,
@@ -644,7 +699,9 @@ pub fn clear_suggested_allocation_skip(state: State<DbState>) -> Result<(), AppE
 // The budget half of the prompt is read here, never accepted from the caller: the frontend can only
 // send figures it was already given by `get_project_pace`, so there is no path by which a category
 // name or an over-amount the backend did not itself read can reach the model.
-fn over_target_categories(state: &State<'_, DbState>) -> Result<Vec<BudgetCategoryStatus>, AppError> {
+fn over_target_categories(
+    state: &State<'_, DbState>,
+) -> Result<Vec<BudgetCategoryStatus>, AppError> {
     let now = chrono::Local::now();
     let year = now.format("%Y").to_string().parse::<i32>().unwrap_or(0);
     let month = now.format("%m").to_string().parse::<i32>().unwrap_or(0);
@@ -863,7 +920,10 @@ pub(crate) fn get_project_image_inner(
         uploaded_at: row.uploaded_at,
         image_sha256: row.image_sha256,
         full_image_available: row.image_bytes.is_some(),
-        image_base64: row.image_bytes.as_deref().map(|bytes| STANDARD.encode(bytes)),
+        image_base64: row
+            .image_bytes
+            .as_deref()
+            .map(|bytes| STANDARD.encode(bytes)),
         thumbnail_base64: row
             .thumbnail_bytes
             .as_deref()
@@ -959,7 +1019,14 @@ pub(crate) fn set_project_image_inner(
     };
 
     let details = project_image_audit_value(&meta);
-    audit_db::record(active, PROJECT_IMAGE_ENTITY, project_id, "set", None, Some(&details));
+    audit_db::record(
+        active,
+        PROJECT_IMAGE_ENTITY,
+        project_id,
+        "set",
+        None,
+        Some(&details),
+    );
 
     Ok(meta)
 }
@@ -988,7 +1055,14 @@ pub(crate) fn remove_project_image_inner(
         byte_size: previous.byte_size,
         uploaded_at: previous.uploaded_at,
     });
-    audit_db::record(active, PROJECT_IMAGE_ENTITY, project_id, "remove", Some(&old_json), None);
+    audit_db::record(
+        active,
+        PROJECT_IMAGE_ENTITY,
+        project_id,
+        "remove",
+        Some(&old_json),
+        None,
+    );
 
     Ok(())
 }
@@ -1203,7 +1277,10 @@ mod tests {
         let safe = safe_to_recommend_headroom(&[headroom(1)]);
 
         assert_eq!(safe[0].unallocated_cents, 0);
-        assert_eq!(adjusted_required_monthly_cents(600_000, Some(6), &safe), None);
+        assert_eq!(
+            adjusted_required_monthly_cents(600_000, Some(6), &safe),
+            None
+        );
     }
 
     // ---------------------------------------------------------------------------
@@ -1643,8 +1720,7 @@ mod tests {
     fn an_image_stored_without_a_thumbnail_is_backfilled_by_one_batch_read() {
         let (_dir, active) = migrated_db_with_a_project();
         let conn = active.conn.as_ref().expect("the fixture dataset");
-        let source =
-            image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
+        let source = image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
         // Straight through the db layer with no derivative, which is exactly the row shape every
         // image written before migration 027 has.
         projects_db::upsert_project_image(
@@ -1769,8 +1845,7 @@ mod tests {
     fn replacing_a_picture_never_leaves_the_previous_thumbnail_behind() {
         let (_dir, active) = migrated_db_with_a_project();
         let conn = active.conn.as_ref().expect("the fixture dataset");
-        let decodable =
-            image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
+        let decodable = image::rendered_test_image(400, 300, false, image::ProjectImageFormat::Png);
         set_project_image_inner(&active, 1, "image/png", "first.png", &decodable)
             .expect("the first image is stored");
         assert!(persisted_thumbnail(conn, 1).is_some());

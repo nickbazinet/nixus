@@ -6,9 +6,7 @@ use crate::error::AppError;
 use crate::models::ProjectionInput;
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn get_projection_input(
-    state: State<DbState>,
-) -> Result<ProjectionInput, AppError> {
+pub fn get_projection_input(state: State<DbState>) -> Result<ProjectionInput, AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;

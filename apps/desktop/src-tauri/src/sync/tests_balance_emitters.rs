@@ -65,7 +65,10 @@ impl Replica {
     }
 
     fn conn(&self) -> &Connection {
-        self.dataset.conn.as_ref().expect("a replica has a connection")
+        self.dataset
+            .conn
+            .as_ref()
+            .expect("a replica has a connection")
     }
 
     fn messages(&self) -> Vec<StoredMessage> {
@@ -375,9 +378,10 @@ fn two_computers_deleting_the_same_expense_contribute_one_delta() {
         .expect("the arrived expense is stored");
     right.adopt_identity("expenses", right_expense, &expense_uuid);
 
-    for (replica, account_id, expense_id) in
-        [(&left, account, expense), (&right, right_account, right_expense)]
-    {
+    for (replica, account_id, expense_id) in [
+        (&left, account, expense),
+        (&right, right_account, right_expense),
+    ] {
         replica.reverse(
             account_id,
             CashFlowKind::Expense,
@@ -421,10 +425,11 @@ fn editing_the_same_expense_twice_is_two_events_and_not_a_duplicate() {
         replica.adjust(account, CashFlowKind::Expense, new, cause);
     }
 
-    let causes: std::collections::BTreeSet<Option<Vec<u8>>> = messages_of(&replica, "balance_delta")
-        .into_iter()
-        .map(|message| message.cause_uuid)
-        .collect();
+    let causes: std::collections::BTreeSet<Option<Vec<u8>>> =
+        messages_of(&replica, "balance_delta")
+            .into_iter()
+            .map(|message| message.cause_uuid)
+            .collect();
     assert_eq!(
         causes.len(),
         5,
@@ -535,7 +540,11 @@ fn counter_increments_from_two_computers_add_up_without_double_counting() {
         "AD-2: the hint's identity is derived from its natural key, so both computers agree on it"
     );
     assert_eq!(right.uuid_of("merchant_category_hints", 1), hint_uuid);
-    assert_eq!(left.usage_count_of(1), 2, "created with one use, then reinforced");
+    assert_eq!(
+        left.usage_count_of(1),
+        2,
+        "created with one use, then reinforced"
+    );
 
     let from_left = messages_of(&left, "counter_delta");
     let from_right = messages_of(&right, "counter_delta");
@@ -550,10 +559,7 @@ fn counter_increments_from_two_computers_add_up_without_double_counting() {
         2
     );
     assert_eq!(
-        fold(&[&from_left, &from_right, &from_left]).counter(
-            "merchant_category_hints",
-            &hint_uuid
-        ),
+        fold(&[&from_left, &from_right, &from_left]).counter("merchant_category_hints", &hint_uuid),
         4,
         "two computers, two uses each; the duplicated batch adds nothing"
     );
@@ -584,7 +590,10 @@ fn a_plain_update_of_balance_cents_inside_a_captured_write_emits_nothing_about_i
             .iter()
             .all(|message| message.kind == "field" && message.cause_uuid.is_none()),
         "no balance message may come from the generic hook, got {:?}",
-        added.iter().map(|message| &message.kind).collect::<Vec<_>>()
+        added
+            .iter()
+            .map(|message| &message.kind)
+            .collect::<Vec<_>>()
     );
 
     let columns: Vec<String> = added
@@ -670,7 +679,9 @@ fn a_local_only_profile_emits_no_balance_message_and_binds_no_identity() {
     let conn = dataset.conn.as_ref().expect("a connection");
     assert!(dataset.capture.is_none());
     assert_eq!(
-        sync_capture::all_messages(conn).expect("the log reads").len(),
+        sync_capture::all_messages(conn)
+            .expect("the log reads")
+            .len(),
         0
     );
     assert_eq!(sync_identity::count(conn).expect("the mappings count"), 0);

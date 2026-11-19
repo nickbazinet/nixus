@@ -29,6 +29,7 @@ use crate::db::{data_version, open_configured, DbState};
 use crate::error::AppError;
 use crate::models::DatasetKind;
 
+use super::apply::DatasetApplier;
 use super::auth::{
     CognitoIdentityVendor, CommandAuthIdTokenProvider, SyncCredentials, SystemClock,
 };
@@ -36,9 +37,8 @@ use super::config::{production_bucket, IdentityPoolConfig, SYNC_REGION};
 use super::gate::{AccountEntitlement, GatedStore, SyncGate};
 use super::limits::DatasetLimits;
 use super::manager::{SyncFault, SyncHost, SyncSession};
-use super::apply::DatasetApplier;
-use super::segment::{Applier, CountingApplier};
 use super::s3::S3ObjectStore;
+use super::segment::{Applier, CountingApplier};
 use super::state::SyncStateStore;
 
 type ProductionCredentials =
@@ -191,9 +191,9 @@ impl DatasetHost {
         // file — which is also what keeps a failed launch impossible (AD-16).
         self.with_conn(|_| Ok(()))?;
 
-        SyncStateStore::for_dataset(self.kind.clone(), Arc::clone(&self.conn)).ok_or(SyncFault::Blocked(
-            super::gate::SyncBlocked::LocalOnlyDataset,
-        ))
+        SyncStateStore::for_dataset(self.kind.clone(), Arc::clone(&self.conn)).ok_or(
+            SyncFault::Blocked(super::gate::SyncBlocked::LocalOnlyDataset),
+        )
     }
 
     fn gate(&self) -> Result<SyncGate<DatasetKind, AccountEntitlement, SyncStateStore>, SyncFault> {
@@ -332,7 +332,10 @@ impl SyncHost for DatasetHost {
     fn freeze(&self, reason: sync_state::FrozenReason) {
         if let Ok(pins) = self.pins() {
             if let Err(error) = pins.set_frozen_reason(Some(reason)) {
-                warn!("Sync could not record that transfers are stopped: {}", error);
+                warn!(
+                    "Sync could not record that transfers are stopped: {}",
+                    error
+                );
             }
         }
     }
@@ -355,8 +358,16 @@ impl SyncHost for DatasetHost {
 
     fn connect(
         &self,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<SyncSession<S3ObjectStore, DatasetKind, AccountEntitlement, SyncStateStore>, SyncFault>> + '_>>
-    {
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        SyncSession<S3ObjectStore, DatasetKind, AccountEntitlement, SyncStateStore>,
+                        SyncFault,
+                    >,
+                > + '_,
+        >,
+    > {
         Box::pin(async move {
             // AD-4: the install identity is minted here, and re-minted when the stored
             // machine fingerprint no longer describes this computer. It precedes the gate

@@ -14,9 +14,11 @@ use crate::sync::blob::{blob_key, BLOB_KEY_PREFIX};
 use crate::sync::limits::RequestRateCap;
 use crate::sync::manager::{SyncActor, SyncFault, SyncState, SyncTuning};
 use crate::sync::object::ObjectHeader;
-use crate::sync::store::{StoreError, StoreOp};
 use crate::sync::snapshot::SNAP_LATEST_KEY;
-use crate::sync::test_support::{test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer};
+use crate::sync::store::{StoreError, StoreOp};
+use crate::sync::test_support::{
+    test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer,
+};
 
 const SETTLE: Duration = Duration::from_secs(5);
 const MIN_UPLOAD: Duration = Duration::from_secs(60);
@@ -128,7 +130,9 @@ async fn the_first_cycle_uploads_every_local_picture_and_the_second_sends_nothin
 
     assert_eq!(blob_puts(&cloud), 1, "the full picture is uploaded once");
     assert!(
-        cloud.keys().contains(&blob_key(&hash).expect("a digest is a key")),
+        cloud
+            .keys()
+            .contains(&blob_key(&hash).expect("a digest is a key")),
         "the object must be at blob/<sha256 of the image bytes>, got {:?}",
         cloud.keys()
     );
@@ -227,12 +231,7 @@ async fn a_blocked_dataset_uploads_and_fetches_no_picture_at_all() {
     for (local_only, entitled, frozen, expected) in [
         (true, true, None, "local_only"),
         (false, false, None, "not_entitled"),
-        (
-            false,
-            true,
-            Some(FrozenReason::EntitlementLapsed),
-            "frozen",
-        ),
+        (false, true, Some(FrozenReason::EntitlementLapsed), "frozen"),
     ] {
         let cloud = Arc::new(FakeObjectStore::default());
         let (host, probe) = test_computer("A", Arc::clone(&cloud), 1_700_000_000_000);
@@ -264,7 +263,11 @@ async fn a_blocked_dataset_uploads_and_fetches_no_picture_at_all() {
             .expect_err("a blocked dataset cannot fetch");
 
         assert_eq!(fetch.code(), expected);
-        assert_eq!(blob_gets(&cloud), 0, "{expected}: no picture was downloaded");
+        assert_eq!(
+            blob_gets(&cloud),
+            0,
+            "{expected}: no picture was downloaded"
+        );
         assert!(
             !cloud
                 .keys()
@@ -296,10 +299,7 @@ async fn a_failed_blob_upload_leaves_the_snapshot_pointer_untouched() {
         cloud.keys()
     );
 
-    computer_a
-        .enable(None)
-        .await
-        .expect("the retry succeeds");
+    computer_a.enable(None).await.expect("the retry succeeds");
 
     assert_eq!(
         blob_puts(&cloud),
@@ -402,7 +402,10 @@ async fn a_tampered_blob_is_refused_and_the_row_keeps_its_placeholder() {
         .expect_err("the download must be refused");
 
     assert_eq!(fault.code(), "image_corrupt");
-    assert!(!fault.retryable(), "re-downloading the same object cannot help");
+    assert!(
+        !fault.retryable(),
+        "re-downloading the same object cannot help"
+    );
     assert_eq!(
         b.project_image(1).expect("the row reads").image_bytes,
         None,

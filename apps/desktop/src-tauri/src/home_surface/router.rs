@@ -541,7 +541,10 @@ mod tests {
     #[test]
     fn the_upkeep_vocabulary_is_derived_from_the_task_table_not_copied() {
         for task in defaults::DEFAULT_TASKS {
-            car(&format!("what about my {}", task.task_type_key.replace('_', " ")));
+            car(&format!(
+                "what about my {}",
+                task.task_type_key.replace('_', " ")
+            ));
         }
     }
 

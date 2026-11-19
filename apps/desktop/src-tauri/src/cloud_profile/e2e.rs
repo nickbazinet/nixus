@@ -21,10 +21,10 @@ use serde_json::{json, Value};
 use tempfile::TempDir;
 use tiny_http::{Header, Response, Server};
 
-use crate::avatar_store;
 use super::state::{
     OFFLINE_NO_COPY, OFFLINE_WITH_COPY, READY, REAUTHENTICATION_REQUIRED, SIGNED_OUT,
 };
+use crate::avatar_store;
 use crate::cloud_profile;
 use crate::credentials;
 use crate::error::AppError;
@@ -518,7 +518,10 @@ fn a_legacy_document_survives_the_launch_get_null_decline_cycle() {
 
     let refreshed = block(cloud_profile::refresh(&dir, SUBJECT));
     assert!(refreshed.consent_pending);
-    assert_eq!(copy_bytes(&dir, SUBJECT).as_deref(), Some(original.as_str()));
+    assert_eq!(
+        copy_bytes(&dir, SUBJECT).as_deref(),
+        Some(original.as_str())
+    );
 
     let declined = block(cloud_profile::answer_upload(&dir, SUBJECT, false))
         .expect("declining is always possible");
@@ -654,15 +657,23 @@ fn a_failed_save_leaves_the_copy_byte_identical() {
     let harness = Harness::start(FULL_SCOPES);
     let dir = harness.dir();
 
-    let saved = block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Ada"))))
-        .expect("the first save creates the profile");
+    let saved = block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Ada")),
+    ))
+    .expect("the first save creates the profile");
     assert_eq!(saved.version, Some(1));
 
     let before = copy_bytes(&dir, SUBJECT).expect("a copy exists");
 
     harness.go_offline();
-    let error = block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Grace"))))
-        .expect_err("an offline save cannot succeed");
+    let error = block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Grace")),
+    ))
+    .expect_err("an offline save cannot succeed");
 
     assert_eq!(code_of(&error), "unavailable");
     assert_eq!(
@@ -670,7 +681,10 @@ fn a_failed_save_leaves_the_copy_byte_identical() {
         Some(before.as_str()),
         "a refused save may not write a value the server never accepted"
     );
-    assert_eq!(cloud_profile::status(&dir, SUBJECT).state, OFFLINE_WITH_COPY);
+    assert_eq!(
+        cloud_profile::status(&dir, SUBJECT).state,
+        OFFLINE_WITH_COPY
+    );
 }
 
 /// The same rule on the refusal the server itself raises: a validation refusal writes nothing.
@@ -703,8 +717,12 @@ fn a_version_conflict_reloads_the_copy_and_reports_the_conflict() {
     let harness = Harness::start(FULL_SCOPES);
     let dir = harness.dir();
 
-    block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Ada"))))
-        .expect("the first save creates the profile");
+    block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Ada")),
+    ))
+    .expect("the first save creates the profile");
 
     // Another surface moved the server on, exactly as the account app would.
     harness.stub.with_store(|store| {
@@ -720,8 +738,12 @@ fn a_version_conflict_reloads_the_copy_and_reports_the_conflict() {
         store.profile_version = 9;
     });
 
-    let error = block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Hopper"))))
-        .expect_err("a stale expected_version is refused");
+    let error = block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Hopper")),
+    ))
+    .expect_err("a stale expected_version is refused");
 
     assert_eq!(code_of(&error), "version_conflict");
     assert_eq!(
@@ -757,8 +779,12 @@ fn an_unobserved_save_response_is_resolved_by_a_read_back_and_reported_as_succes
         .stub
         .with_store(|store| store.swallow_next_put_response = true);
 
-    let saved = block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Ada"))))
-        .expect("an applied-but-unobserved save reads back as a success");
+    let saved = block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Ada")),
+    ))
+    .expect("an applied-but-unobserved save reads back as a success");
 
     assert_eq!(saved.first_name.as_deref(), Some("Ada"));
     assert_eq!(saved.version, Some(1));
@@ -797,8 +823,12 @@ fn an_unobserved_response_whose_read_back_disagrees_is_reported_as_unavailable()
         store.swallow_next_put_response = true;
     });
 
-    let error = block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Ada"))))
-        .expect_err("a read-back that disagrees is not a success");
+    let error = block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Ada")),
+    ))
+    .expect_err("a read-back that disagrees is not a success");
 
     assert_eq!(code_of(&error), "unavailable");
     let copy = profile_store::load_profile(&dir, SUBJECT)
@@ -967,8 +997,12 @@ fn another_accounts_subject_is_never_refreshed_or_saved_under_this_session() {
     let harness = Harness::start(FULL_SCOPES);
     let dir = harness.dir();
 
-    block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Ada"))))
-        .expect("A's own save succeeds");
+    block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Ada")),
+    ))
+    .expect("A's own save succeeds");
     let mine = copy_bytes(&dir, SUBJECT).expect("A has a copy");
 
     let status = block(cloud_profile::refresh(&dir, OTHER_SUBJECT));
@@ -1032,8 +1066,12 @@ fn an_unreachable_api_keeps_the_copy_byte_identical_and_reports_offline() {
     let harness = Harness::start(FULL_SCOPES);
     let dir = harness.dir();
 
-    block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Ada"))))
-        .expect("the first save creates the profile");
+    block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Ada")),
+    ))
+    .expect("the first save creates the profile");
     let before = copy_bytes(&dir, SUBJECT).expect("a copy exists");
 
     harness.go_offline();
@@ -1075,8 +1113,12 @@ fn a_save_and_refresh_cycle_keeps_the_copy_at_the_servers_version() {
     let harness = Harness::start(FULL_SCOPES);
     let dir = harness.dir();
 
-    let created = block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Ada"))))
-        .expect("create succeeds");
+    let created = block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Ada")),
+    ))
+    .expect("create succeeds");
     assert_eq!(created.version, Some(1));
 
     let refreshed = block(cloud_profile::refresh(&dir, SUBJECT));
@@ -1084,8 +1126,12 @@ fn a_save_and_refresh_cycle_keeps_the_copy_at_the_servers_version() {
     assert!(refreshed.has_copy);
     assert!(!refreshed.consent_pending);
 
-    let replaced = block(cloud_profile::save(&dir, SUBJECT, &named_input(Some("Grace"))))
-        .expect("the update carries the copy's version");
+    let replaced = block(cloud_profile::save(
+        &dir,
+        SUBJECT,
+        &named_input(Some("Grace")),
+    ))
+    .expect("the update carries the copy's version");
     assert_eq!(replaced.version, Some(2));
     assert_eq!(replaced.first_name.as_deref(), Some("Grace"));
 

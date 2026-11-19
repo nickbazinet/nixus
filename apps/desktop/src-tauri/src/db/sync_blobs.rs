@@ -105,9 +105,7 @@ pub fn image_fetch_target(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::projects::{
-        set_project_image_bytes, upsert_project_image, ProjectImageWrite,
-    };
+    use crate::db::projects::{set_project_image_bytes, upsert_project_image, ProjectImageWrite};
     use crate::projects::image::sha256_hex;
     use rusqlite::Connection;
     use tempfile::TempDir;

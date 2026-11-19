@@ -143,8 +143,13 @@ fn decoded_fields(message: &StoredMessage) -> Vec<(String, Vec<u8>)> {
         "a field message carries the whole changed row under the row marker"
     );
 
-    payload::decode_row(message.payload.as_deref().expect("a field message has a payload"))
-        .expect("the row payload decodes")
+    payload::decode_row(
+        message
+            .payload
+            .as_deref()
+            .expect("a field message has a payload"),
+    )
+    .expect("the row payload decodes")
 }
 
 fn field_columns(messages: &[StoredMessage], table: &str) -> Vec<String> {
@@ -263,7 +268,10 @@ fn the_field_state_hash_follows_the_value_and_the_clock_moves_forward() {
         second.content_hash, first.content_hash,
         "a different value hashes differently"
     );
-    assert!(second.hlc > first.hlc, "the HLC of the newer write is greater");
+    assert!(
+        second.hlc > first.hlc,
+        "the HLC of the newer write is greater"
+    );
     assert_eq!(
         second.install(),
         first.install(),
@@ -813,11 +821,9 @@ fn a_naturally_identified_row_written_without_its_derived_identity_fails_the_who
     assert_eq!(
         harness
             .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM merchant_category_hints",
-                [],
-                |row| row.get::<_, i64>(0)
-            )
+            .query_row("SELECT COUNT(*) FROM merchant_category_hints", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .expect("the count reads"),
         0,
         "and it rolls the user's own row back with it"
@@ -844,7 +850,10 @@ fn a_rolled_back_write_leaves_neither_a_row_nor_a_message() {
         fixtures::count_budget_groups(harness.conn()).expect("the count reads"),
         0
     );
-    assert!(harness.messages().is_empty(), "AD-3: rollback discards the buffer");
+    assert!(
+        harness.messages().is_empty(),
+        "AD-3: rollback discards the buffer"
+    );
     assert_eq!(
         sync_identity::count(harness.conn()).expect("the mapping count reads"),
         0
@@ -1050,9 +1059,11 @@ fn a_second_connection_to_the_same_file_captures_nothing() {
     let harness = Harness::cloud_linked();
     let path: String = harness
         .conn()
-        .query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT file FROM pragma_database_list WHERE name = 'main'",
+            [],
+            |row| row.get(0),
+        )
         .expect("the path reads");
 
     let second = crate::db::open_configured(std::path::Path::new(&path)).expect("a second opener");
@@ -1216,10 +1227,9 @@ fn a_replace_whose_delete_cascades_is_still_collapsed() {
     assert_eq!(child[0].kind, "tombstone");
     assert_eq!(child[0].row_uuid, entry_uuid.to_vec());
 
-    let json: serde_json::Value = serde_json::from_slice(
-        &child[0].payload.as_ref().expect("the row travels")[1..],
-    )
-    .expect("valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_slice(&child[0].payload.as_ref().expect("the row travels")[1..])
+            .expect("valid JSON");
     assert_eq!(
         json["source_id"],
         serde_json::json!(hex(&source_uuid)),
@@ -1388,7 +1398,10 @@ fn a_row_payload_round_trips_and_is_deterministic() {
                 "name".to_string(),
                 payload::encode(&Value::Text("Housing".to_string()))
             ),
-            ("sort_order".to_string(), payload::encode(&Value::Integer(3))),
+            (
+                "sort_order".to_string(),
+                payload::encode(&Value::Integer(3))
+            ),
         ],
         "sorted by column name, so the same change always produces the same bytes"
     );

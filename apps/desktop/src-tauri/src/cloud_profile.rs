@@ -30,8 +30,8 @@ use crate::models::{
 use crate::profile_client::{self, ProfileClientError};
 use crate::profile_store::{self, CloudCopyState};
 
-pub(crate) use state::{status, CloudProfileStatus};
 use state::{copy_state, reachability_for, update_state, Reachability};
+pub(crate) use state::{status, CloudProfileStatus};
 
 #[cfg(test)]
 pub(crate) use state::forget_state;
@@ -107,7 +107,10 @@ pub(crate) async fn refresh(dir: &Path, sub: &str) -> CloudProfileStatus {
         Ok(Some(wire)) => {
             // The cloud wins over any legacy file, and the write is what replaces it (AD-8).
             if let Err(error) = profile_store::write_cloud_copy(dir, sub, &wire) {
-                warn!("The Nixus Cloud profile copy could not be written: {}", error);
+                warn!(
+                    "The Nixus Cloud profile copy could not be written: {}",
+                    error
+                );
             }
             update_state(sub, |state| {
                 state.reachability = Reachability::Ready;
@@ -189,11 +192,7 @@ fn validate_derivative(image_bytes: &[u8], mime_type: &str) -> Result<(), AppErr
     Ok(())
 }
 
-fn store_avatar(
-    dir: &Path,
-    sub: &str,
-    wire: &CloudAvatarWire,
-) -> Result<StoredAvatar, AppError> {
+fn store_avatar(dir: &Path, sub: &str, wire: &CloudAvatarWire) -> Result<StoredAvatar, AppError> {
     let image_bytes = STANDARD
         .decode(&wire.data)
         .map_err(|_| refusal("unsupported_media"))?;
@@ -302,7 +301,10 @@ async fn reload_profile(dir: &Path, sub: &str) {
     match profile_client::get_profile(sub).await {
         Ok(Some(wire)) => {
             if let Err(error) = profile_store::write_cloud_copy(dir, sub, &wire) {
-                warn!("The Nixus Cloud profile copy could not be written: {}", error);
+                warn!(
+                    "The Nixus Cloud profile copy could not be written: {}",
+                    error
+                );
             }
         }
         Ok(None) => {}
@@ -332,7 +334,9 @@ pub(crate) async fn save_avatar(
 
     match profile_client::put_avatar(sub, &request).await {
         Ok(wire) => store_avatar(dir, sub, &wire),
-        Err(ProfileClientError::VersionConflict { current_version, .. }) => {
+        Err(ProfileClientError::VersionConflict {
+            current_version, ..
+        }) => {
             info!(
                 "A Nixus Cloud avatar save conflicted (resource=avatar, current_version={})",
                 current_version
@@ -421,9 +425,6 @@ mod tests {
         }
     }
 
-
-
-
     // A legacy, declined or unreadable copy carries no server version, so the `PUT` must be
     // create-only rather than conditional on a number nobody has.
     #[test]
@@ -480,12 +481,14 @@ mod tests {
             "unavailable",
         ] {
             let serialized = serde_json::to_string(&refusal(code)).expect("serializable");
-            assert!(serialized.contains(r#""type":"cloud_profile""#), "{serialized}");
+            assert!(
+                serialized.contains(r#""type":"cloud_profile""#),
+                "{serialized}"
+            );
             assert!(!serialized.contains(SUB));
             for forbidden in ["://", "Bearer"] {
                 assert!(!serialized.contains(forbidden));
             }
         }
     }
-
 }

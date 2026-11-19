@@ -3,7 +3,6 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::config;
 use crate::error::AppError;
-use crate::sync::{capture, identity};
 use crate::models::{
     AccountEarmarkBreakdown, AccountEarmarkSegment, AccountHeadroom,
     CreateProjectContributionInput, CreateProjectInput, Project, ProjectAllocationInput,
@@ -16,6 +15,7 @@ use crate::projects::image::{
 };
 use crate::projects::pace::ProjectPaceRow;
 use crate::projects::settlement::ConfirmedSuggestionMonth;
+use crate::sync::{capture, identity};
 
 pub const SUGGESTION_SKIPPED_MONTH_CONFIG_KEY: &str = "projects_suggestion_skipped_month";
 
@@ -1032,9 +1032,7 @@ pub fn get_liquid_account_headroom(conn: &Connection) -> Result<Vec<AccountHeadr
 // from a correlated subquery because `SUM(p.target_cents)` over the joined set would multiply each
 // target by its contribution count. Archived projects are excluded everywhere: this answers "the
 // goals I am actively working on", unlike `get_account_earmark_breakdown`, which keeps them.
-pub fn get_savings_projects_summary(
-    conn: &Connection,
-) -> Result<SavingsProjectsSummary, AppError> {
+pub fn get_savings_projects_summary(conn: &Connection) -> Result<SavingsProjectsSummary, AppError> {
     conn.query_row(
         "SELECT COUNT(DISTINCT p.id),
                 COALESCE(SUM(c.amount_cents), 0),
@@ -1297,7 +1295,8 @@ pub fn get_suggestion_skipped_month(conn: &Connection) -> Option<String> {
 }
 
 pub fn set_suggestion_skipped_month(conn: &Connection, month: &str) -> Result<(), AppError> {
-    config::set(conn, SUGGESTION_SKIPPED_MONTH_CONFIG_KEY, month)}
+    config::set(conn, SUGGESTION_SKIPPED_MONTH_CONFIG_KEY, month)
+}
 
 // Cleared by writing an empty value rather than by deleting the row: `config` exposes `get`/`set`
 // only, an empty string is already "not a month" to `get_suggestion_skipped_month`, and this keeps
@@ -1781,9 +1780,11 @@ mod tests {
         let project = insert_project(&conn, &create_input("Sofa", 200_000)).unwrap();
 
         for amount in [0, -5_000] {
-            let error =
-                insert_project_contribution(&conn, &contribution_input(project.id, account_id, amount))
-                    .unwrap_err();
+            let error = insert_project_contribution(
+                &conn,
+                &contribution_input(project.id, account_id, amount),
+            )
+            .unwrap_err();
             expect_validation_field(error, "amount_cents");
         }
 
@@ -1976,8 +1977,11 @@ mod tests {
 
         insert_project_contribution(&conn, &contribution_input(project.id, account_id, 20_000))
             .unwrap();
-        insert_project_contribution(&conn, &contribution_input(project.id, other_account, 70_000))
-            .unwrap();
+        insert_project_contribution(
+            &conn,
+            &contribution_input(project.id, other_account, 70_000),
+        )
+        .unwrap();
 
         let breakdown = get_account_earmark_breakdown(&conn, account_id).unwrap();
 
@@ -2289,10 +2293,16 @@ mod tests {
         let second_account = insert_test_account(&conn, 500_000);
         let project = insert_project(&conn, &create_input("Shared goal", 900_000)).unwrap();
 
-        insert_project_contribution(&conn, &contribution_input(project.id, first_account, 20_000))
-            .unwrap();
-        insert_project_contribution(&conn, &contribution_input(project.id, second_account, 70_000))
-            .unwrap();
+        insert_project_contribution(
+            &conn,
+            &contribution_input(project.id, first_account, 20_000),
+        )
+        .unwrap();
+        insert_project_contribution(
+            &conn,
+            &contribution_input(project.id, second_account, 70_000),
+        )
+        .unwrap();
 
         let summary = get_savings_projects_summary(&conn).unwrap();
 
@@ -3618,8 +3628,12 @@ mod tests {
         let (_dir, conn) = migrated_db_with_a_project();
         let payload = vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff];
 
-        let meta =
-            upsert_project_image(&conn, 1, &image_write("image/png", "kitchen cover.png", &payload)).unwrap();
+        let meta = upsert_project_image(
+            &conn,
+            1,
+            &image_write("image/png", "kitchen cover.png", &payload),
+        )
+        .unwrap();
 
         assert_eq!(meta.project_id, 1);
         assert_eq!(meta.mime_type, "image/png");
@@ -3662,8 +3676,12 @@ mod tests {
         let (_dir, conn) = migrated_db_with_a_project();
         upsert_project_image(&conn, 1, &image_write("image/png", "first.png", &[1, 2, 3])).unwrap();
 
-        let replaced =
-            upsert_project_image(&conn, 1, &image_write("image/jpeg", "second.jpg", &[9, 8, 7, 6])).unwrap();
+        let replaced = upsert_project_image(
+            &conn,
+            1,
+            &image_write("image/jpeg", "second.jpg", &[9, 8, 7, 6]),
+        )
+        .unwrap();
 
         assert_eq!(
             image_row_count(&conn, 1),
@@ -3706,7 +3724,12 @@ mod tests {
         let (_dir, conn) = migrated_db_with_a_project();
 
         expect_validation_field(
-            upsert_project_image(&conn, 4_242, &image_write("image/png", "ghost.png", &[1, 2, 3])).unwrap_err(),
+            upsert_project_image(
+                &conn,
+                4_242,
+                &image_write("image/png", "ghost.png", &[1, 2, 3]),
+            )
+            .unwrap_err(),
             "project_id",
         );
 
@@ -3721,7 +3744,8 @@ mod tests {
         archive_project(&conn, 1).unwrap();
 
         expect_validation_field(
-            upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3])).unwrap_err(),
+            upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3]))
+                .unwrap_err(),
             "project_id",
         );
 
@@ -3780,7 +3804,11 @@ mod tests {
                 thumbnail.1
             );
         }
-        assert_eq!(image_row_count(&conn, 1), 0, "no partial row is left behind");
+        assert_eq!(
+            image_row_count(&conn, 1),
+            0,
+            "no partial row is left behind"
+        );
 
         upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &[1, 2, 3]))
             .expect("the picture itself is still storable without a derivative");
@@ -3828,7 +3856,9 @@ mod tests {
         assert_eq!(rows[0].thumbnail_mime, "image/jpeg");
         assert_eq!(rows[0].thumbnail_bytes, exact);
         assert!(
-            get_project_ids_needing_thumbnails(&conn).unwrap().is_empty(),
+            get_project_ids_needing_thumbnails(&conn)
+                .unwrap()
+                .is_empty(),
             "a row that has a thumbnail is not a backfill candidate"
         );
     }
@@ -3911,7 +3941,9 @@ mod tests {
         blank_project_image_bytes(&conn).unwrap();
 
         assert!(
-            get_project_ids_needing_thumbnails(&conn).unwrap().is_empty(),
+            get_project_ids_needing_thumbnails(&conn)
+                .unwrap()
+                .is_empty(),
             "there is nothing to derive a thumbnail from yet"
         );
     }
@@ -3931,7 +3963,10 @@ mod tests {
                 .unwrap(),
             "a stale download must not overwrite the current row"
         );
-        assert_eq!(get_project_image(&conn, 1).unwrap().unwrap().image_bytes, None);
+        assert_eq!(
+            get_project_image(&conn, 1).unwrap().unwrap().image_bytes,
+            None
+        );
 
         assert!(set_project_image_bytes(&conn, 1, &hash, &payload).unwrap());
 
@@ -3995,7 +4030,8 @@ mod tests {
 
         let mut after_first_cycle: Option<u64> = None;
         for cycle in 1..=5 {
-            upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &payload)).unwrap();
+            upsert_project_image(&conn, 1, &image_write("image/png", "cover.png", &payload))
+                .unwrap();
             assert!(
                 delete_project_image(&conn, 1).unwrap(),
                 "cycle {cycle}: the image must be removed"

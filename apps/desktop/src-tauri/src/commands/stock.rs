@@ -30,7 +30,9 @@ struct AccountLinkAudit {
     account_id: Option<i64>,
 }
 
-fn locked(state: &DbState) -> Result<std::sync::MutexGuard<'_, crate::db::ActiveDataset>, AppError> {
+fn locked(
+    state: &DbState,
+) -> Result<std::sync::MutexGuard<'_, crate::db::ActiveDataset>, AppError> {
     state.0.lock().map_err(|error| AppError::Database {
         message: error.to_string(),
     })
@@ -171,7 +173,8 @@ pub fn update_stock_quantity(
             .unwrap_or_default()
     };
 
-    let (old_value, asset) = active.write(|tx| stock_db::update_quantity(tx, id, quantity_micros))?;
+    let (old_value, asset) =
+        active.write(|tx| stock_db::update_quantity(tx, id, quantity_micros))?;
 
     // Quantity AND the value it derives, as JSON. The value alone would make "2 shares -> 4
     // shares" and "the price doubled" indistinguishable in the history, and the quantity is the

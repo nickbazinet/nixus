@@ -183,7 +183,6 @@ impl IdToken {
         }
         Ok(token)
     }
-
 }
 
 /// Bearer material: the token itself never appears in a formatted string.
@@ -432,7 +431,11 @@ fn map_get_credentials_error(error: SdkError<GetCredentialsForIdentityError>) ->
         | GetCredentialsForIdentityError::ExternalServiceException(_) => {
             unreachable_pool(VendOp::GetCredentials, VendorFault::ServiceError, true)
         }
-        _ => unreachable_pool(VendOp::GetCredentials, VendorFault::PoolMisconfigured, false),
+        _ => unreachable_pool(
+            VendOp::GetCredentials,
+            VendorFault::PoolMisconfigured,
+            false,
+        ),
     }
 }
 
@@ -1191,7 +1194,10 @@ mod tests {
     #[test]
     fn an_identical_observation_matches() {
         let pin = AccountPin::new(IDENTITY, SUB);
-        assert_eq!(verify_account_pin(Some(&pin), &pin), Ok(PinOutcome::Matches));
+        assert_eq!(
+            verify_account_pin(Some(&pin), &pin),
+            Ok(PinOutcome::Matches)
+        );
     }
 
     #[test]

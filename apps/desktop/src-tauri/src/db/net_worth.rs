@@ -3,7 +3,9 @@ use rusqlite::{params, Connection};
 
 use crate::db::account;
 use crate::error::AppError;
-use crate::models::{NetWorthBreakdown, NetWorthChange, NetWorthCurrent, NetWorthSnapshot, NetWorthSnapshotSummary};
+use crate::models::{
+    NetWorthBreakdown, NetWorthChange, NetWorthCurrent, NetWorthSnapshot, NetWorthSnapshotSummary,
+};
 
 pub fn get_current_net_worth(conn: &Connection) -> Result<NetWorthCurrent, AppError> {
     let cash_cents: i64 = conn.query_row(
@@ -274,7 +276,9 @@ fn read_history(
         Some(cutoff) => stmt
             .query_map(params![cutoff], map_row)?
             .collect::<Result<Vec<_>, _>>()?,
-        None => stmt.query_map([], map_row)?.collect::<Result<Vec<_>, _>>()?,
+        None => stmt
+            .query_map([], map_row)?
+            .collect::<Result<Vec<_>, _>>()?,
     };
 
     Ok(snapshots)
@@ -319,10 +323,7 @@ pub fn get_net_worth_history(
     read_history(conn, period, today(conn)?)
 }
 
-pub fn get_net_worth_change(
-    conn: &Connection,
-    period: &str,
-) -> Result<NetWorthChange, AppError> {
+pub fn get_net_worth_change(conn: &Connection, period: &str) -> Result<NetWorthChange, AppError> {
     Ok(compute_change(&get_net_worth_history(conn, period)?))
 }
 
@@ -376,7 +377,10 @@ mod tests {
         assert_eq!(map_account_type_to_category("tfsa"), "tfsa");
         assert_eq!(map_account_type_to_category("rrsp"), "rrsp");
         assert_eq!(map_account_type_to_category("fhsa"), "fhsa");
-        assert_eq!(map_account_type_to_category("non_registered"), "non_registered");
+        assert_eq!(
+            map_account_type_to_category("non_registered"),
+            "non_registered"
+        );
         assert_eq!(map_account_type_to_category("unknown"), "other");
     }
 
@@ -441,7 +445,11 @@ mod tests {
         let snap1 = record_net_worth_snapshot(&conn).unwrap();
 
         // Update balance and record again
-        conn.execute("UPDATE accounts SET balance_cents = 200000 WHERE id = 1", []).unwrap();
+        conn.execute(
+            "UPDATE accounts SET balance_cents = 200000 WHERE id = 1",
+            [],
+        )
+        .unwrap();
         let snap2 = record_net_worth_snapshot(&conn).unwrap();
 
         // Same ID = updated, not duplicated
@@ -449,7 +457,11 @@ mod tests {
         assert_eq!(snap2.total_cents, 200000);
 
         // Only one snapshot exists
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM net_worth_snapshots", [], |row| row.get(0)).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM net_worth_snapshots", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -631,7 +643,8 @@ mod tests {
         .unwrap();
 
         // When the change is computed over each window
-        let six_month = compute_change(&read_history(&conn, "6m", reference(SEPTEMBER_10)).unwrap());
+        let six_month =
+            compute_change(&read_history(&conn, "6m", reference(SEPTEMBER_10)).unwrap());
         let one_year = compute_change(&read_history(&conn, "1y", reference(SEPTEMBER_10)).unwrap());
 
         // Then 6M is measured from April, not from the excluded March snapshot

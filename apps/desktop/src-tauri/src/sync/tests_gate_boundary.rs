@@ -67,7 +67,9 @@ fn every_port_operation_has_a_gated_counterpart() {
     let gate = source("sync/gate.rs");
     // Only the production half: the test fakes in that file implement the same port, and
     // a guard satisfied by a test double would pass with no gated wrapper at all.
-    let gate = gate.split_once("#[cfg(test)]").map_or(gate.as_str(), |(before, _)| before);
+    let gate = gate
+        .split_once("#[cfg(test)]")
+        .map_or(gate.as_str(), |(before, _)| before);
     let missing: Vec<&String> = methods
         .iter()
         .filter(|method| !gate.contains(&format!("fn {method}(")))

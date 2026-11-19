@@ -12,9 +12,9 @@ pub mod hosted_state;
 pub mod project_advice;
 pub mod trends_insight;
 
+use async_openai::{config::OpenAIConfig, Client as OpenAIClient};
 use aws_config::BehaviorVersion;
 use aws_sdk_bedrockruntime::Client as BedrockClient;
-use async_openai::{Client as OpenAIClient, config::OpenAIConfig};
 use tracing::info;
 
 pub enum AiProvider {
@@ -50,10 +50,10 @@ pub struct AiConfigSnapshot {
 }
 
 pub fn read_ai_config(conn: &rusqlite::Connection) -> AiConfigSnapshot {
-    let configured = crate::db::config::get(conn, "ai_configured")
-        .unwrap_or_else(|| "false".to_string());
-    let provider = crate::db::config::get(conn, "ai_provider")
-        .unwrap_or_else(|| "bedrock".to_string());
+    let configured =
+        crate::db::config::get(conn, "ai_configured").unwrap_or_else(|| "false".to_string());
+    let provider =
+        crate::db::config::get(conn, "ai_provider").unwrap_or_else(|| "bedrock".to_string());
 
     AiConfigSnapshot {
         configured: configured == "true",
@@ -82,43 +82,39 @@ pub async fn init_ai_client(config: &AiConfigSnapshot, dataset_id: &str) -> AiSt
     }
 
     match config.provider.as_str() {
-        "bedrock" => {
-            match crate::credentials::load_aws_credentials(dataset_id) {
-                Some((access_key, secret_key, region)) => {
-                    info!("Initializing Bedrock client from keyring credentials");
-                    use aws_sdk_bedrockruntime::config::Credentials;
-                    let creds = Credentials::new(
-                        &access_key,
-                        &secret_key,
-                        None,
-                        None,
-                        "nixus-keyring",
-                    );
-                    let config = aws_config::defaults(BehaviorVersion::latest())
-                        .region(aws_config::Region::new(region))
-                        .credentials_provider(creds)
-                        .load()
-                        .await;
-                    let client = BedrockClient::new(&config);
-                    AiState { provider: Some(AiProvider::Bedrock(client)) }
-                }
-                None if ambient_fallback_allowed(dataset_id) => {
-                    info!("No keyring credentials, falling back to default AWS config");
-                    let region = std::env::var("AWS_REGION")
-                        .unwrap_or_else(|_| "us-east-1".to_string());
-                    let config = aws_config::defaults(BehaviorVersion::latest())
-                        .region(aws_config::Region::new(region))
-                        .load()
-                        .await;
-                    let client = BedrockClient::new(&config);
-                    AiState { provider: Some(AiProvider::Bedrock(client)) }
-                }
-                None => {
-                    info!("No Bedrock credentials for this profile, leaving AI unconfigured");
-                    AiState { provider: None }
+        "bedrock" => match crate::credentials::load_aws_credentials(dataset_id) {
+            Some((access_key, secret_key, region)) => {
+                info!("Initializing Bedrock client from keyring credentials");
+                use aws_sdk_bedrockruntime::config::Credentials;
+                let creds = Credentials::new(&access_key, &secret_key, None, None, "nixus-keyring");
+                let config = aws_config::defaults(BehaviorVersion::latest())
+                    .region(aws_config::Region::new(region))
+                    .credentials_provider(creds)
+                    .load()
+                    .await;
+                let client = BedrockClient::new(&config);
+                AiState {
+                    provider: Some(AiProvider::Bedrock(client)),
                 }
             }
-        }
+            None if ambient_fallback_allowed(dataset_id) => {
+                info!("No keyring credentials, falling back to default AWS config");
+                let region =
+                    std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+                let config = aws_config::defaults(BehaviorVersion::latest())
+                    .region(aws_config::Region::new(region))
+                    .load()
+                    .await;
+                let client = BedrockClient::new(&config);
+                AiState {
+                    provider: Some(AiProvider::Bedrock(client)),
+                }
+            }
+            None => {
+                info!("No Bedrock credentials for this profile, leaving AI unconfigured");
+                AiState { provider: None }
+            }
+        },
         "openai" => {
             let api_key = match crate::credentials::load_openai_key(dataset_id) {
                 Some(key) => key,
@@ -139,7 +135,9 @@ pub async fn init_ai_client(config: &AiConfigSnapshot, dataset_id: &str) -> AiSt
             info!("Initializing OpenAI client");
             let config = OpenAIConfig::new().with_api_key(api_key);
             let client = OpenAIClient::with_config(config);
-            AiState { provider: Some(AiProvider::OpenAI(client)) }
+            AiState {
+                provider: Some(AiProvider::OpenAI(client)),
+            }
         }
         other => {
             info!("Unknown AI provider: {}", other);

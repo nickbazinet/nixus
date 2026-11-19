@@ -55,10 +55,7 @@ impl SyncStateStore {
         &self,
         operation: impl FnOnce(&Connection) -> Result<T, crate::error::AppError>,
     ) -> Result<T, AuthError> {
-        let guard = self
-            .conn
-            .lock()
-            .map_err(|_| AuthError::StateUnavailable)?;
+        let guard = self.conn.lock().map_err(|_| AuthError::StateUnavailable)?;
         let conn = guard.as_ref().ok_or(AuthError::StateUnavailable)?;
 
         operation(conn).map_err(|_| AuthError::StateUnavailable)
@@ -437,7 +434,9 @@ mod tests {
     #[test]
     fn a_closed_connection_reports_the_state_as_unavailable_rather_than_as_absent() {
         let store = store();
-        store.ensure_install().expect("the install identity is minted");
+        store
+            .ensure_install()
+            .expect("the install identity is minted");
 
         // What AD-9 does before a file swap: the manager's own connection is released.
         *store.conn.lock().expect("lock") = None;
@@ -649,7 +648,10 @@ mod tests {
             .execute_batch("DROP TABLE sync_state")
             .expect("drop the table");
 
-        assert_eq!(store.load().expect_err("load must fail"), AuthError::StateUnavailable);
+        assert_eq!(
+            store.load().expect_err("load must fail"),
+            AuthError::StateUnavailable
+        );
         assert_eq!(
             store
                 .store(&AccountPin::new("us-east-1:abc", "sub-1"))

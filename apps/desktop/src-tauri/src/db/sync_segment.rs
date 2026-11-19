@@ -106,8 +106,9 @@ pub fn mark_shipped(
     let mut marked = 0;
 
     {
-        let mut stmt = grouped
-            .prepare_cached("UPDATE sync_log SET seq = ?1, idx = ?2 WHERE id = ?3 AND seq IS NULL")?;
+        let mut stmt = grouped.prepare_cached(
+            "UPDATE sync_log SET seq = ?1, idx = ?2 WHERE id = ?3 AND seq IS NULL",
+        )?;
         for (id, idx) in assignments {
             marked += stmt.execute(params![seq, idx, id])?;
         }
@@ -173,8 +174,8 @@ pub(crate) fn seed_log_messages_sized(
 /// assignment back; production never needs it.
 #[cfg(test)]
 pub(crate) fn shipped_positions(conn: &Connection) -> Result<Vec<(i64, i64, i64)>, AppError> {
-    let mut stmt = conn
-        .prepare("SELECT id, seq, idx FROM sync_log WHERE seq IS NOT NULL ORDER BY seq, idx")?;
+    let mut stmt =
+        conn.prepare("SELECT id, seq, idx FROM sync_log WHERE seq IS NOT NULL ORDER BY seq, idx")?;
 
     let rows = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?

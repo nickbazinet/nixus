@@ -11,8 +11,7 @@ use crate::projects::allocation::months_to_target;
 /// same degradation `allocation::months_to_target` applies, so the user-chosen amount stays in force
 /// and stays editable.
 pub(crate) fn is_dated(target_date: Option<&String>) -> bool {
-    target_date
-        .is_some_and(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok())
+    target_date.is_some_and(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok())
 }
 
 /// The budget target for `month_start`'s month.
@@ -61,14 +60,16 @@ mod tests {
     #[test]
     fn the_remainder_is_spread_over_the_months_left_and_rounded_up() {
         // 6 months from Nov 1 to May 1: 100_000 / 6 = 16_666.67, rounded up.
-        let target = monthly_commitment_cents(120_000, 20_000, date("2027-05-01").as_ref(), november(), 1);
+        let target =
+            monthly_commitment_cents(120_000, 20_000, date("2027-05-01").as_ref(), november(), 1);
 
         assert_eq!(target, 16_667);
     }
 
     #[test]
     fn an_even_split_is_not_rounded() {
-        let target = monthly_commitment_cents(120_000, 0, date("2027-05-01").as_ref(), november(), 1);
+        let target =
+            monthly_commitment_cents(120_000, 0, date("2027-05-01").as_ref(), november(), 1);
 
         assert_eq!(target, 20_000);
     }
@@ -76,8 +77,13 @@ mod tests {
     #[test]
     fn a_reached_goal_commits_nothing() {
         for saved in [120_000, 150_000] {
-            let target =
-                monthly_commitment_cents(120_000, saved, date("2027-05-01").as_ref(), november(), 9_999);
+            let target = monthly_commitment_cents(
+                120_000,
+                saved,
+                date("2027-05-01").as_ref(),
+                november(),
+                9_999,
+            );
 
             assert_eq!(target, 0, "saved {saved}");
         }
@@ -85,14 +91,16 @@ mod tests {
 
     #[test]
     fn a_past_due_project_asks_for_the_whole_remainder() {
-        let target = monthly_commitment_cents(120_000, 20_000, date("2026-08-01").as_ref(), november(), 1);
+        let target =
+            monthly_commitment_cents(120_000, 20_000, date("2026-08-01").as_ref(), november(), 1);
 
         assert_eq!(target, 100_000);
     }
 
     #[test]
     fn a_target_inside_the_month_asks_for_the_whole_remainder() {
-        let target = monthly_commitment_cents(120_000, 20_000, date("2026-11-20").as_ref(), november(), 1);
+        let target =
+            monthly_commitment_cents(120_000, 20_000, date("2026-11-20").as_ref(), november(), 1);
 
         assert_eq!(target, 100_000);
     }
@@ -106,7 +114,13 @@ mod tests {
 
     #[test]
     fn an_unparseable_date_uses_the_stored_amount() {
-        let target = monthly_commitment_cents(120_000, 20_000, date("next spring").as_ref(), november(), 7_500);
+        let target = monthly_commitment_cents(
+            120_000,
+            20_000,
+            date("next spring").as_ref(),
+            november(),
+            7_500,
+        );
 
         assert_eq!(target, 7_500);
         assert!(!is_dated(date("next spring").as_ref()));
@@ -114,8 +128,10 @@ mod tests {
 
     #[test]
     fn identical_inputs_give_identical_output() {
-        let first = monthly_commitment_cents(987_654, 12_345, date("2028-02-29").as_ref(), november(), 1);
-        let second = monthly_commitment_cents(987_654, 12_345, date("2028-02-29").as_ref(), november(), 1);
+        let first =
+            monthly_commitment_cents(987_654, 12_345, date("2028-02-29").as_ref(), november(), 1);
+        let second =
+            monthly_commitment_cents(987_654, 12_345, date("2028-02-29").as_ref(), november(), 1);
 
         assert_eq!(first, second);
     }

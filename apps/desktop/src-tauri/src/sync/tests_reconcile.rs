@@ -12,7 +12,9 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 
 use crate::db::sync_capture::{self, StoredMessage};
-use crate::db::{capture_fixtures as fixtures, sync_apply as apply_db, sync_identity, test_dataset};
+use crate::db::{
+    capture_fixtures as fixtures, sync_apply as apply_db, sync_identity, test_dataset,
+};
 use crate::db::{ActiveDataset, WriteTx};
 use crate::error::AppError;
 use crate::models::DatasetKind;
@@ -129,8 +131,8 @@ impl Computer {
 
     fn try_ship(&mut self) -> Option<SegmentBatch> {
         let schema_version = u32::try_from(crate::db::latest_schema_version()).unwrap_or(u32::MAX);
-        let cut = segment::cut(self.conn(), &self.install, schema_version)
-            .expect("the cut reads")?;
+        let cut =
+            segment::cut(self.conn(), &self.install, schema_version).expect("the cut reads")?;
         segment::mark_shipped(self.conn(), &cut).expect("the rows are marked");
 
         let verified = segment::read_segment(&cut.object, &cut.install, cut.seq)
@@ -223,11 +225,17 @@ fn an_unwrapped_update_of_a_synced_column_emits_the_missing_field() {
 
     // Only the column that actually moved travels: the others still hash to their recorded value.
     let cells = super::capture::payload::decode_row(
-        emitted[0].payload.as_deref().expect("a field message has a payload"),
+        emitted[0]
+            .payload
+            .as_deref()
+            .expect("a field message has a payload"),
     )
     .expect("the payload decodes");
     assert_eq!(
-        cells.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        cells
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
         vec!["name"]
     );
 }
@@ -250,14 +258,16 @@ fn an_unwrapped_insert_emits_a_creation_message_with_every_column() {
 
     let emitted = computer.messages_for("budget_groups");
     assert_eq!(emitted.len(), 1);
-    assert_eq!(emitted[0].row_uuid, computer.uuid_of("budget_groups", group));
+    assert_eq!(
+        emitted[0].row_uuid,
+        computer.uuid_of("budget_groups", group)
+    );
 
     // A creation message is the one a replica can build the row from, which is what
     // `apply::is_whole_row` asks of it: every column that travels in a field message.
-    let cells = super::capture::payload::decode_row(
-        emitted[0].payload.as_deref().expect("a payload"),
-    )
-    .expect("the payload decodes");
+    let cells =
+        super::capture::payload::decode_row(emitted[0].payload.as_deref().expect("a payload"))
+            .expect("the payload decodes");
     let expected: Vec<&str> = registry::columns_of("budget_groups")
         .filter(|column| !matches!(column.merge, registry::MergeKind::LocalId))
         .map(|column| column.column)
@@ -306,7 +316,9 @@ fn an_unwrapped_delete_emits_a_tombstone_that_names_itself_unrestorable() {
 
     let key = restore::TombstoneKey::parse(&format!(
         "budget_groups:{}",
-        uuid.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        uuid.iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     ))
     .expect("the handle parses");
     let refused = restore::restore(&computer.dataset, &key).expect_err("a restore must refuse");
@@ -330,7 +342,10 @@ fn an_unwrapped_balance_change_emits_a_balance_set_and_never_a_field() {
     assert_eq!((report.balances, report.fields), (1, 1), "{report:?}");
 
     let emitted = computer.messages_for("accounts");
-    let kinds: Vec<&str> = emitted.iter().map(|message| message.kind.as_str()).collect();
+    let kinds: Vec<&str> = emitted
+        .iter()
+        .map(|message| message.kind.as_str())
+        .collect();
     assert_eq!(
         kinds.iter().filter(|kind| **kind == "balance_set").count(),
         1,
@@ -370,12 +385,11 @@ fn an_unwrapped_counter_change_emits_the_difference_as_a_delta() {
             tx,
             "merchant_category_hints",
             hint,
-            &identity::merchant_category_hint("Metro", &sync_identity::lookup(
-                tx,
-                "budget_categories",
-                category,
-            )?
-            .expect("the category has an identity")),
+            &identity::merchant_category_hint(
+                "Metro",
+                &sync_identity::lookup(tx, "budget_categories", category)?
+                    .expect("the category has an identity"),
+            ),
         )?;
 
         Ok(hint)
@@ -399,8 +413,13 @@ fn an_unwrapped_counter_change_emits_the_difference_as_a_delta() {
     // fold over the log must now equal what the table holds.
     let uuid = computer.uuid_of("merchant_category_hints", hint);
     assert_eq!(
-        apply::counter_total(computer.conn(), "merchant_category_hints", &uuid, "usage_count")
-            .expect("the fold reads"),
+        apply::counter_total(
+            computer.conn(),
+            "merchant_category_hints",
+            &uuid,
+            "usage_count"
+        )
+        .expect("the fold reads"),
         5,
         "the row was created at 1 and bumped by 4"
     );
@@ -418,7 +437,11 @@ fn a_deny_listed_config_key_is_never_reconciled_and_every_other_one_is() {
     computer.reconcile();
 
     let emitted = computer.messages_for("config");
-    assert_eq!(emitted.len(), 1, "exactly the key that is allowed to travel");
+    assert_eq!(
+        emitted.len(),
+        1,
+        "exactly the key that is allowed to travel"
+    );
     assert_eq!(
         emitted[0].row_uuid,
         identity::config_key("theme"),
@@ -577,7 +600,10 @@ fn a_regenerated_recurring_occurrence_converges_after_it_was_deleted_elsewhere()
     // The second computer's backfill regenerates the same month from the same template, which is a
     // brand-new local row carrying the SAME derived uuid the tombstone claims.
     let two_category = two
-        .row_id_of("budget_categories", &one.uuid_of("budget_categories", category))
+        .row_id_of(
+            "budget_categories",
+            &one.uuid_of("budget_categories", category),
+        )
         .expect("the category arrived");
     let two_account = two
         .row_id_of("accounts", &one.uuid_of("accounts", account))
@@ -719,11 +745,10 @@ fn a_stock_holding_that_predates_capture_gets_the_identity_its_parent_derives() 
     let arrived = two
         .row_id_of("stock_holdings", &identity::stock_holding(&asset_uuid))
         .expect("the other computer recognises the holding");
-    let (symbol, quantity_micros) = two
-        .with_conn(|conn| {
-            let holding = crate::db::stock::get_holding(conn, arrived)?
-                .expect("the holding materialized");
-            Ok((holding.symbol, holding.quantity_micros))
-        });
+    let (symbol, quantity_micros) = two.with_conn(|conn| {
+        let holding =
+            crate::db::stock::get_holding(conn, arrived)?.expect("the holding materialized");
+        Ok((holding.symbol, holding.quantity_micros))
+    });
     assert_eq!((symbol.as_str(), quantity_micros), ("SHOP.TO", 2_500_000));
 }

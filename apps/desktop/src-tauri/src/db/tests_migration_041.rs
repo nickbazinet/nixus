@@ -51,7 +51,10 @@ fn a_category_written_before_the_column_reads_back_unlinked_with_its_target_inta
         .expect("the new column exists on the pre-existing row");
 
     assert_eq!(name, "Rent");
-    assert_eq!(target_cents, 150_000, "the upgrade must not disturb the target");
+    assert_eq!(
+        target_cents, 150_000,
+        "the upgrade must not disturb the target"
+    );
     assert_eq!(project_id, None, "an upgraded category starts unlinked");
 }
 
@@ -60,11 +63,17 @@ fn the_added_foreign_key_is_enforced_and_its_set_null_actually_fires() {
     let (_dir, path) = seeded_pre_041_database();
     let conn = open_configured(&path).expect("041 runs on open");
 
-    conn.execute("UPDATE budget_categories SET project_id = 404 WHERE id = 1", [])
-        .expect_err("the foreign key on the added column is enforced");
+    conn.execute(
+        "UPDATE budget_categories SET project_id = 404 WHERE id = 1",
+        [],
+    )
+    .expect_err("the foreign key on the added column is enforced");
 
-    conn.execute("UPDATE budget_categories SET project_id = 1 WHERE id = 1", [])
-        .expect("a real project links");
+    conn.execute(
+        "UPDATE budget_categories SET project_id = 1 WHERE id = 1",
+        [],
+    )
+    .expect("a real project links");
 
     conn.execute("DELETE FROM projects WHERE id = 1", [])
         .expect("deleting the project is allowed rather than restricted");
@@ -77,7 +86,10 @@ fn the_added_foreign_key_is_enforced_and_its_set_null_actually_fires() {
         )
         .expect("the category reads");
 
-    assert_eq!(categories, 1, "the category outlives the project it stood for");
+    assert_eq!(
+        categories, 1,
+        "the category outlives the project it stood for"
+    );
     assert_eq!(
         project_id, None,
         "ON DELETE SET NULL fired on a column added by ALTER TABLE"

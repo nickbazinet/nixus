@@ -10,7 +10,8 @@ pub const STOCK_ASSET_TYPE: &str = "stock";
 
 /// `passive_assets` columns followed by `stock_holdings` columns, LEFT JOINed so one read answers
 /// both "what assets are there" and "which of them are priced holdings".
-const ASSET_SELECT: &str = "SELECT a.id, a.name, a.asset_type, a.value_cents, a.created_at, a.updated_at, \
+const ASSET_SELECT: &str =
+    "SELECT a.id, a.name, a.asset_type, a.value_cents, a.created_at, a.updated_at, \
      h.passive_asset_id, h.symbol, h.exchange, h.currency, h.quantity_micros, \
      h.last_price_cents, h.last_price_at, h.fx_rate_to_base_micros, h.account_id, \
      h.created_at, h.updated_at \

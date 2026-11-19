@@ -18,7 +18,9 @@ use crate::sync::manager::{
 };
 use crate::sync::snapshot::{LatestSnapshot, SNAP_LATEST_KEY};
 use crate::sync::store::{StoreError, StoreOp};
-use crate::sync::test_support::{test_computer, ComputerProbe, FakeOp, FakeObjectStore, TestComputer};
+use crate::sync::test_support::{
+    test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer,
+};
 
 const SETTLE: Duration = Duration::from_secs(5);
 const MIN_UPLOAD: Duration = Duration::from_secs(60);
@@ -61,9 +63,7 @@ fn tuning() -> SyncTuning {
 
 type Actor = SyncActor<TestComputer>;
 
-fn actor_for(
-    host: TestComputer,
-) -> (Actor, UnboundedReceiver<SyncStatusPayload>) {
+fn actor_for(host: TestComputer) -> (Actor, UnboundedReceiver<SyncStatusPayload>) {
     let (actor, _status, events) = SyncActor::new(host, tuning());
 
     (actor, events)
@@ -114,13 +114,19 @@ async fn enabling_on_a_new_account_writes_the_owner_object_and_the_first_snapsho
     let outcome = actor.enable(None).await.expect("the first enable succeeds");
 
     assert!(matches!(outcome, SyncEnableOutcome::Enabled { .. }));
-    assert!(probe.store().stored("owner").is_some(), "AD-7 owner binding");
+    assert!(
+        probe.store().stored("owner").is_some(),
+        "AD-7 owner binding"
+    );
     assert!(probe.store().stored(SNAP_LATEST_KEY).is_some());
     assert_eq!(actor.diagnostics().uploads, 1);
     // The first publish of a new account is create-only: there is no LATEST to match.
     assert_eq!(probe.store().calls_of(FakeOp::PutIfAbsent), 2);
     assert_eq!(probe.store().calls_of(FakeOp::PutIfMatch), 0);
-    assert_eq!(states(&mut events), vec![SyncState::Syncing, SyncState::Idle]);
+    assert_eq!(
+        states(&mut events),
+        vec![SyncState::Syncing, SyncState::Idle]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -175,7 +181,11 @@ async fn the_minimum_interval_holds_back_a_settled_change() {
     probe.write_row("one");
     tokio::time::advance(SETTLE).await;
     actor.tick().await;
-    assert_eq!(actor.diagnostics().uploads, 1, "held by the minimum interval");
+    assert_eq!(
+        actor.diagnostics().uploads,
+        1,
+        "held by the minimum interval"
+    );
 
     tokio::time::advance(MIN_UPLOAD).await;
     actor.tick().await;
@@ -411,7 +421,10 @@ async fn a_local_only_dataset_reaches_neither_the_store_nor_a_credential() {
     let (host, probe) = test_computer("A", Arc::clone(&store), 1);
     let (mut actor, _events) = actor_for(host.local_only());
 
-    let fault = actor.enable(None).await.expect_err("a local profile cannot sync");
+    let fault = actor
+        .enable(None)
+        .await
+        .expect_err("a local profile cannot sync");
 
     assert_eq!(fault.code(), "local_only");
     assert_eq!(actor.status().state, SyncState::Unlinked);
@@ -428,7 +441,9 @@ async fn an_offline_fault_backs_off_instead_of_retrying_every_tick() {
     let (mut actor, probe, _events) = one_computer();
     actor.enable(None).await.expect("enable");
 
-    probe.store().fail_next(FakeOp::PutImmutable, offline_fault());
+    probe
+        .store()
+        .fail_next(FakeOp::PutImmutable, offline_fault());
     edit_then_settle(&mut actor, &probe, "one").await;
 
     assert_eq!(actor.status().state, SyncState::Offline);
@@ -467,7 +482,10 @@ async fn an_unreachable_cloud_at_enable_is_a_status_and_never_an_empty_dataset()
         vec!["mine".to_string()],
         "a failed enable touches no local data"
     );
-    assert_eq!(states(&mut events), vec![SyncState::Syncing, SyncState::Offline]);
+    assert_eq!(
+        states(&mut events),
+        vec![SyncState::Syncing, SyncState::Offline]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -575,7 +593,11 @@ async fn diagnostics_carry_counts_and_codes_but_no_value_from_the_dataset() {
             "AD-16: {sentinel} must never leave the backend in diagnostics"
         );
     }
-    assert_eq!(diagnostics.local_rows, Some(3), "counts are fine, values are not");
+    assert_eq!(
+        diagnostics.local_rows,
+        Some(3),
+        "counts are fine, values are not"
+    );
     assert_eq!(diagnostics.capability, "multi_device_sync");
     assert_eq!(diagnostics.uploads, 1);
     assert!(diagnostics.last_object_bytes.is_some_and(|bytes| bytes > 0));
@@ -626,7 +648,10 @@ async fn two_computers_one_account_end_to_end() {
     //    overwrites nothing (Story 23: in continuous sync there is no question to ask).
     a.write_row("from-a-again");
     let theirs = b.store().stored(SNAP_LATEST_KEY).expect("B's pointer");
-    computer_a.sync_now().await.expect("A's attempt is not a fault");
+    computer_a
+        .sync_now()
+        .await
+        .expect("A's attempt is not a fault");
 
     assert_eq!(computer_a.status().state, SyncState::Idle);
     assert_eq!(computer_a.diagnostics().conflicts, 1);
@@ -659,7 +684,10 @@ async fn the_spawned_actor_answers_immediately_and_stops_on_request() {
         "a status is readable before any network or database work"
     );
 
-    handle.enable(None).await.expect("enable through the mailbox");
+    handle
+        .enable(None)
+        .await
+        .expect("enable through the mailbox");
     assert_eq!(handle.status().state, SyncState::Idle);
     assert!(handle.diagnostics().await.expect("diagnostics").uploads >= 1);
 
@@ -717,7 +745,10 @@ async fn a_shut_down_actor_leaves_the_dataset_file_restorable() {
     }
 
     let (handle, _events) = manager::spawn(host, tuning()).expect("the actor thread starts");
-    handle.enable(None).await.expect("enable opens the actor's connections");
+    handle
+        .enable(None)
+        .await
+        .expect("enable opens the actor's connections");
 
     handle.shutdown().await.expect("the actor shuts down");
 
@@ -739,7 +770,10 @@ async fn a_wrong_account_is_recorded_so_it_is_not_retried_forever() {
         br#"{"created_ms":1,"identity_id":"us-east-1:0000","sub":"somebody-else","v":1}"#.to_vec(),
     );
 
-    let fault = actor.enable(None).await.expect_err("a foreign owner refuses");
+    let fault = actor
+        .enable(None)
+        .await
+        .expect_err("a foreign owner refuses");
 
     assert_eq!(fault.code(), "owner_mismatch");
     assert!(!fault.recoverable());

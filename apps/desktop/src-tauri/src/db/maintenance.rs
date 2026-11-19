@@ -2,7 +2,6 @@ use chrono::{Local, NaiveDate};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::AppError;
-use crate::sync::{capture, identity};
 use crate::maintenance::defaults::{baseline_for, DEFAULT_TASKS};
 use crate::maintenance::display::derive_vehicle_nickname;
 use crate::maintenance::evaluator::{
@@ -17,6 +16,7 @@ use crate::models::{
     UpdateServiceLogInput, UpdateServiceLogResult, UpdateVehicleInput, Vehicle, VehicleAlertRow,
     VehicleWithTasks,
 };
+use crate::sync::{capture, identity};
 
 fn validate_vehicle_fields(
     make: &Option<String>,
@@ -98,7 +98,13 @@ pub fn insert_vehicle(conn: &Connection, input: &CreateVehicleInput) -> Result<V
     tx.execute(
         "INSERT INTO vehicles (nickname, make, model, year, odometer_km)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![nickname, input.make, input.model, input.year, input.odometer_km],
+        params![
+            nickname,
+            input.make,
+            input.model,
+            input.year,
+            input.odometer_km
+        ],
     )?;
 
     let vehicle_id = tx.last_insert_rowid();
@@ -276,7 +282,10 @@ pub fn get_vehicle_by_id(conn: &Connection, id: i64) -> Result<Vehicle, AppError
     })
 }
 
-pub fn get_tasks_for_vehicle(conn: &Connection, vehicle_id: i64) -> Result<Vec<MaintenanceTask>, AppError> {
+pub fn get_tasks_for_vehicle(
+    conn: &Connection,
+    vehicle_id: i64,
+) -> Result<Vec<MaintenanceTask>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, vehicle_id, task_type_key, interval_km, interval_months,
                 last_service_date, last_service_odometer_km, custom_task_name, created_at, updated_at
@@ -292,10 +301,7 @@ pub fn get_tasks_for_vehicle(conn: &Connection, vehicle_id: i64) -> Result<Vec<M
     Ok(tasks)
 }
 
-pub fn attach_task_status(
-    task: &MaintenanceTask,
-    vehicle: &Vehicle,
-) -> MaintenanceTaskWithStatus {
+pub fn attach_task_status(task: &MaintenanceTask, vehicle: &Vehicle) -> MaintenanceTaskWithStatus {
     let today = Local::now().date_naive();
     let evaluation = evaluate_task(&TaskEvalInput {
         interval_km: task.interval_km,
@@ -307,7 +313,8 @@ pub fn attach_task_status(
         today,
     });
 
-    let (default_interval_km, default_interval_months) = if is_custom_task_key(&task.task_type_key) {
+    let (default_interval_km, default_interval_months) = if is_custom_task_key(&task.task_type_key)
+    {
         (task.interval_km, task.interval_months)
     } else {
         baseline_for(&task.task_type_key)
@@ -545,7 +552,8 @@ pub fn add_maintenance_task(
             }
             (Some(_), Some(_)) => {
                 return Err(AppError::Validation {
-                    message: "Provide either a catalog service or a custom service name".to_string(),
+                    message: "Provide either a catalog service or a custom service name"
+                        .to_string(),
                     field: Some("task_type_key".to_string()),
                 });
             }
@@ -608,10 +616,11 @@ fn validate_service_date(service_date: &str) -> Result<(), AppError> {
         });
     }
 
-    let parsed = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").map_err(|_| AppError::Validation {
-        message: "Invalid service date format".to_string(),
-        field: Some("service_date".to_string()),
-    })?;
+    let parsed =
+        NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").map_err(|_| AppError::Validation {
+            message: "Invalid service date format".to_string(),
+            field: Some("service_date".to_string()),
+        })?;
 
     let today = Local::now().date_naive();
     if parsed > today {
@@ -660,7 +669,9 @@ pub fn get_service_log_by_id(
     })
 }
 
-fn row_to_service_log_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MaintenanceServiceLogEntry> {
+fn row_to_service_log_entry(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<MaintenanceServiceLogEntry> {
     Ok(MaintenanceServiceLogEntry {
         id: row.get(0)?,
         vehicle_id: row.get(1)?,
@@ -754,11 +765,16 @@ fn is_more_urgent(candidate: &MostUrgentTask, current: &MostUrgentTask) -> bool 
 fn vehicle_alert_sort_key(row: &VehicleAlertRow) -> (u8, i64) {
     let task = &row.most_urgent_task;
     let rank = status_rank(&task.status);
-    let remaining = task.km_remaining.or(task.days_remaining).unwrap_or(i64::MAX);
+    let remaining = task
+        .km_remaining
+        .or(task.days_remaining)
+        .unwrap_or(i64::MAX);
     (rank, remaining)
 }
 
-pub fn get_maintenance_alert_summary(conn: &Connection) -> Result<MaintenanceAlertSummary, AppError> {
+pub fn get_maintenance_alert_summary(
+    conn: &Connection,
+) -> Result<MaintenanceAlertSummary, AppError> {
     let vehicles = get_all_vehicles(conn)?;
     let total_vehicles = vehicles.len() as i64;
     let mut total_alerts = 0i64;
@@ -799,9 +815,7 @@ pub fn get_maintenance_alert_summary(conn: &Connection) -> Result<MaintenanceAle
     alert_rows.sort_by(|a, b| {
         let (a_rank, a_rem) = vehicle_alert_sort_key(a);
         let (b_rank, b_rem) = vehicle_alert_sort_key(b);
-        b_rank
-            .cmp(&a_rank)
-            .then_with(|| a_rem.cmp(&b_rem))
+        b_rank.cmp(&a_rank).then_with(|| a_rem.cmp(&b_rem))
     });
 
     let vehicles_with_alerts = alert_rows.len() as i64;
@@ -890,7 +904,8 @@ pub fn query_maintenance_status(
         let tasks = get_tasks_for_vehicle(conn, vehicle.id)?;
         for task in &tasks {
             let with_status = attach_task_status(task, vehicle);
-            if status_filter != "all" && !matches_status_filter(&with_status.status, status_filter) {
+            if status_filter != "all" && !matches_status_filter(&with_status.status, status_filter)
+            {
                 continue;
             }
             rows.push(MaintenanceStatusRow {
@@ -924,9 +939,10 @@ pub fn query_maintenance_history(
     let rows = entries
         .into_iter()
         .filter(|entry| {
-            filters.task_type_key.as_ref().is_none_or(|key| {
-                entry.task_type_key.as_deref() == Some(key.as_str())
-            })
+            filters
+                .task_type_key
+                .as_ref()
+                .is_none_or(|key| entry.task_type_key.as_deref() == Some(key.as_str()))
         })
         .take(limit)
         .map(|entry| {
@@ -1320,8 +1336,10 @@ mod tests {
             .unwrap();
         conn.execute_batch(include_str!("../../migrations/019_custom_service_logs.sql"))
             .unwrap();
-        conn.execute_batch(include_str!("../../migrations/020_maintenance_custom_tasks.sql"))
-            .unwrap();
+        conn.execute_batch(include_str!(
+            "../../migrations/020_maintenance_custom_tasks.sql"
+        ))
+        .unwrap();
         conn
     }
 
@@ -1705,14 +1723,14 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM vehicles", [], |row| row.get(0))
             .unwrap();
         let task_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM maintenance_tasks", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM maintenance_tasks", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         let log_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM maintenance_service_logs",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM maintenance_service_logs", [], |row| {
+                row.get(0)
+            })
             .unwrap();
 
         assert_eq!(vehicle_count, 0);
@@ -1845,11 +1863,7 @@ mod tests {
             )
             .unwrap();
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        log_maintenance_service(
-            &conn,
-            &sample_log_input(oil_task_id, &today, 5_000),
-        )
-        .unwrap();
+        log_maintenance_service(&conn, &sample_log_input(oil_task_id, &today, 5_000)).unwrap();
 
         let before = get_vehicle_with_tasks(&conn, vehicle.id).unwrap();
         let oil_before = before
@@ -1870,7 +1884,11 @@ mod tests {
         assert_eq!(oil_after.km_remaining, Some(500));
     }
 
-    fn sample_log_input(task_id: i64, service_date: &str, odometer_km: i64) -> LogMaintenanceServiceInput {
+    fn sample_log_input(
+        task_id: i64,
+        service_date: &str,
+        odometer_km: i64,
+    ) -> LogMaintenanceServiceInput {
         LogMaintenanceServiceInput {
             task_id,
             service_date: service_date.to_string(),
@@ -1893,11 +1911,8 @@ mod tests {
             .unwrap();
 
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        let result = log_maintenance_service(
-            &conn,
-            &sample_log_input(oil_task_id, &today, 5_000),
-        )
-        .unwrap();
+        let result =
+            log_maintenance_service(&conn, &sample_log_input(oil_task_id, &today, 5_000)).unwrap();
 
         assert_eq!(result.log.vehicle_id, vehicle.id);
         assert_eq!(result.log.task_id, Some(oil_task_id));
@@ -1935,11 +1950,8 @@ mod tests {
             .unwrap();
 
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        let result = log_maintenance_service(
-            &conn,
-            &sample_log_input(task_id, &today, 52_300),
-        )
-        .unwrap();
+        let result =
+            log_maintenance_service(&conn, &sample_log_input(task_id, &today, 52_300)).unwrap();
 
         assert!(result.odometer_updated);
         assert_eq!(result.previous_odometer_km, Some(5_000));
@@ -1962,11 +1974,8 @@ mod tests {
             .unwrap();
 
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        let result = log_maintenance_service(
-            &conn,
-            &sample_log_input(task_id, &today, 8_000),
-        )
-        .unwrap();
+        let result =
+            log_maintenance_service(&conn, &sample_log_input(task_id, &today, 8_000)).unwrap();
 
         assert!(!result.odometer_updated);
         assert!(result.previous_odometer_km.is_none());
@@ -1997,11 +2006,9 @@ mod tests {
         assert_eq!(oil_before.status, TaskStatus::Overdue);
 
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        let result = log_maintenance_service(
-            &conn,
-            &sample_log_input(oil_before.id, &today, 10_000),
-        )
-        .unwrap();
+        let result =
+            log_maintenance_service(&conn, &sample_log_input(oil_before.id, &today, 10_000))
+                .unwrap();
 
         assert_eq!(result.task.status, TaskStatus::Ok);
         assert_eq!(result.task.km_remaining, Some(8_000));
@@ -2055,7 +2062,10 @@ mod tests {
         assert_eq!(history[0].service_date, "2026-03-20");
         assert_eq!(history[0].task_type_key.as_deref(), Some("brake_fluid"));
         assert_eq!(history[1].service_date, "2026-01-15");
-        assert_eq!(history[1].task_type_key.as_deref(), Some("engine_oil_filter"));
+        assert_eq!(
+            history[1].task_type_key.as_deref(),
+            Some("engine_oil_filter")
+        );
         assert_eq!(history[1].notes, Some("First oil change".to_string()));
     }
 
@@ -2090,11 +2100,8 @@ mod tests {
             )
             .unwrap();
 
-        let err = log_maintenance_service(
-            &conn,
-            &sample_log_input(task_id, "2099-01-01", 1_000),
-        )
-        .unwrap_err();
+        let err = log_maintenance_service(&conn, &sample_log_input(task_id, "2099-01-01", 1_000))
+            .unwrap_err();
 
         match err {
             AppError::Validation { field, .. } => {
@@ -2129,11 +2136,7 @@ mod tests {
             )
             .unwrap();
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        log_maintenance_service(
-            &conn,
-            &sample_log_input(oil_task_id, &today, 10_000),
-        )
-        .unwrap();
+        log_maintenance_service(&conn, &sample_log_input(oil_task_id, &today, 10_000)).unwrap();
         update_vehicle_odometer(&conn, vehicle.id, 17_600).unwrap();
 
         let summary = get_maintenance_alert_summary(&conn).unwrap();
@@ -2171,11 +2174,12 @@ mod tests {
                 .unwrap();
             conn.execute_batch(include_str!("../../migrations/019_custom_service_logs.sql"))
                 .unwrap();
-            conn.execute_batch(include_str!("../../migrations/020_maintenance_custom_tasks.sql"))
-                .unwrap();
+            conn.execute_batch(include_str!(
+                "../../migrations/020_maintenance_custom_tasks.sql"
+            ))
+            .unwrap();
 
-            let vehicle =
-                insert_vehicle(&conn, &sample_create_input(42_000)).unwrap();
+            let vehicle = insert_vehicle(&conn, &sample_create_input(42_000)).unwrap();
             vehicle_id = vehicle.id;
 
             let task_id: i64 = conn
@@ -2186,11 +2190,9 @@ mod tests {
                 )
                 .unwrap();
 
-            let log = log_maintenance_service(
-                &conn,
-                &sample_log_input(task_id, "2026-01-15", 42_000),
-            )
-            .unwrap();
+            let log =
+                log_maintenance_service(&conn, &sample_log_input(task_id, "2026-01-15", 42_000))
+                    .unwrap();
             logged_task_type_key = "engine_oil_filter".to_string();
             logged_odometer_km = log.log.odometer_km;
 
@@ -2209,16 +2211,16 @@ mod tests {
         assert_eq!(vehicle_count, 1);
 
         let task_count: i64 = restored
-            .query_row("SELECT COUNT(*) FROM maintenance_tasks", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM maintenance_tasks", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(task_count, DEFAULT_TASKS.len() as i64);
 
         let log_count: i64 = restored
-            .query_row(
-                "SELECT COUNT(*) FROM maintenance_service_logs",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM maintenance_service_logs", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(log_count, 1);
 
@@ -2294,10 +2296,7 @@ mod tests {
 
         assert!(!rows.is_empty());
         assert!(rows.iter().all(|r| r.status == "overdue"));
-        assert!(
-            rows.iter()
-                .any(|r| r.task_type_key == "engine_oil_filter")
-        );
+        assert!(rows.iter().any(|r| r.task_type_key == "engine_oil_filter"));
     }
 
     #[test]
@@ -2398,16 +2397,10 @@ mod tests {
             )
             .unwrap();
 
-        log_maintenance_service(
-            &conn,
-            &sample_log_input(oil_task_id, "2026-01-15", 5_000),
-        )
-        .unwrap();
-        log_maintenance_service(
-            &conn,
-            &sample_log_input(brake_task_id, "2026-03-20", 6_000),
-        )
-        .unwrap();
+        log_maintenance_service(&conn, &sample_log_input(oil_task_id, "2026-01-15", 5_000))
+            .unwrap();
+        log_maintenance_service(&conn, &sample_log_input(brake_task_id, "2026-03-20", 6_000))
+            .unwrap();
 
         let rows = query_maintenance_history(
             &conn,
@@ -2450,7 +2443,10 @@ mod tests {
 
         assert!(result.odometer_updated);
         assert_eq!(result.new_odometer_km, Some(12_500));
-        assert_eq!(result.log.custom_service_name.as_deref(), Some("AC recharge"));
+        assert_eq!(
+            result.log.custom_service_name.as_deref(),
+            Some("AC recharge")
+        );
         assert!(result.log.task_id.is_none());
 
         let oil_after: Option<String> = conn
@@ -2465,7 +2461,10 @@ mod tests {
 
         let history = get_service_history(&conn, vehicle.id).unwrap();
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0].custom_service_name.as_deref(), Some("AC recharge"));
+        assert_eq!(
+            history[0].custom_service_name.as_deref(),
+            Some("AC recharge")
+        );
         assert!(history[0].task_type_key.is_none());
     }
 
@@ -2951,9 +2950,7 @@ mod tests {
         }
 
         let mut stmt = conn
-            .prepare(
-                "SELECT id FROM maintenance_service_logs WHERE task_id = ?1 ORDER BY id ASC",
-            )
+            .prepare("SELECT id FROM maintenance_service_logs WHERE task_id = ?1 ORDER BY id ASC")
             .unwrap();
         let ids = stmt
             .query_map(params![oil_task_id], |row| row.get::<_, i64>(0))

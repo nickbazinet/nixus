@@ -465,12 +465,7 @@ fn reconcile_row(
             }
             MergeKind::Balance => {
                 report.add(reconcile_balance(
-                    conn,
-                    clock,
-                    install,
-                    rule.table,
-                    &row_uuid,
-                    value,
+                    conn, clock, install, rule.table, &row_uuid, value,
                 )?);
             }
             MergeKind::Excluded => {}
@@ -642,8 +637,7 @@ fn parent_reference(
         return Ok(None);
     }
 
-    Ok(identity_for(conn, parent, parent_row, &values)?
-        .map(|uuid| Value::Blob(uuid.to_vec())))
+    Ok(identity_for(conn, parent, parent_row, &values)?.map(|uuid| Value::Blob(uuid.to_vec())))
 }
 
 pub(crate) fn parent_values(
@@ -685,7 +679,9 @@ pub(crate) fn identity_for(
         // sync, or was written by a site that bypassed capture. It is given the identity every
         // computer gives it (`adopt`), never a random one — a random identity is what made two
         // computers holding the same records give each of them two.
-        Some(RowIdentity::Surrogate) => return adopt::legacy_identity(conn, table, row_id, None, None),
+        Some(RowIdentity::Surrogate) => {
+            return adopt::legacy_identity(conn, table, row_id, None, None)
+        }
         Some(RowIdentity::SurrogateOrTemplate) => match template_identity(conn, table, values)? {
             Some(derived) => derived,
             // A hand-entered row: adopted like any other record, from its creation facts (AD-2).
@@ -812,7 +808,10 @@ pub(crate) fn identity_of_existing(
             }
             // Another local row holds the identity this one derives to; this one is a record in its
             // own right and is named by its own facts instead.
-            warn!("a {} row derives an identity that already belongs to another local row", rule.table);
+            warn!(
+                "a {} row derives an identity that already belongs to another local row",
+                rule.table
+            );
         }
     }
 
@@ -883,7 +882,10 @@ fn template_identity(
     });
     let frequency: Option<String> = conn
         .query_row(
-            &format!("SELECT frequency FROM {} WHERE id = ?1", link.template_table),
+            &format!(
+                "SELECT frequency FROM {} WHERE id = ?1",
+                link.template_table
+            ),
             [template_row],
             |row| row.get(0),
         )

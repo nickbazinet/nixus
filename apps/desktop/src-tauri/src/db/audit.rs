@@ -24,7 +24,10 @@ const AUDITED_TABLES: &[(&str, &str)] = &[
     ("project_contribution", "project_contributions"),
     ("recurring_income_template", "recurring_income_templates"),
     ("recurring_template", "recurring_expense_templates"),
-    ("recurring_transfer_template", "recurring_transfer_templates"),
+    (
+        "recurring_transfer_template",
+        "recurring_transfer_templates",
+    ),
     ("vehicle", "vehicles"),
 ];
 
@@ -50,9 +53,9 @@ pub fn record(
     old_value: Option<&str>,
     new_value: Option<&str>,
 ) {
-    if let Err(error) = active.write(|tx| {
-        insert_audit_log(tx, entity_type, entity_id, action, old_value, new_value)
-    }) {
+    if let Err(error) = active
+        .write(|tx| insert_audit_log(tx, entity_type, entity_id, action, old_value, new_value))
+    {
         tracing::error!("Failed to write audit log: {}", error);
     }
 }
@@ -106,7 +109,10 @@ mod tests {
         }
 
         assert_eq!(entity_table("account"), Some("accounts"));
-        assert_eq!(entity_table("recurring_template"), Some("recurring_expense_templates"));
+        assert_eq!(
+            entity_table("recurring_template"),
+            Some("recurring_expense_templates")
+        );
     }
 
     /// The mapping is a claim about the SCHEMA, so it is checked against the registry rather than

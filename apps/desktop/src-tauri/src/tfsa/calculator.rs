@@ -289,9 +289,7 @@ mod tests {
 
         let undeducted_sum: i64 = ANNUAL_LIMITS_CENTS
             .iter()
-            .filter(|(year, _)| {
-                *year >= result.eligible_from_year && *year <= KNOWN_THROUGH_YEAR
-            })
+            .filter(|(year, _)| *year >= result.eligible_from_year && *year <= KNOWN_THROUGH_YEAR)
             .map(|(_, cents)| *cents)
             .sum();
 

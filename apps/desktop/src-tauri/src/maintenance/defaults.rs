@@ -8,22 +8,72 @@ pub struct TaskBaseline {
 }
 
 pub const DEFAULT_TASKS: &[TaskBaseline] = &[
-    TaskBaseline { task_type_key: "engine_oil_filter",    interval_km: 8000,   interval_months: 6  },
-    TaskBaseline { task_type_key: "transmission_fluid",   interval_km: 60000,  interval_months: 48 },
-    TaskBaseline { task_type_key: "brake_fluid",           interval_km: 40000,  interval_months: 24 },
-    TaskBaseline { task_type_key: "coolant",              interval_km: 80000,  interval_months: 48 },
-    TaskBaseline { task_type_key: "power_steering_fluid", interval_km: 80000,  interval_months: 48 },
-    TaskBaseline { task_type_key: "brake_pads",           interval_km: 50000,  interval_months: 36 },
-    TaskBaseline { task_type_key: "brake_discs",          interval_km: 90000,  interval_months: 60 },
-    TaskBaseline { task_type_key: "engine_air_filter",    interval_km: 24000,  interval_months: 12 },
-    TaskBaseline { task_type_key: "cabin_air_filter",     interval_km: 24000,  interval_months: 12 },
-    TaskBaseline { task_type_key: "spark_plugs",          interval_km: 100000, interval_months: 60 },
-    TaskBaseline { task_type_key: "shock_absorbers",      interval_km: 80000,  interval_months: 48 },
-    TaskBaseline { task_type_key: "battery_replacement",  interval_km: 0,      interval_months: 48 },
+    TaskBaseline {
+        task_type_key: "engine_oil_filter",
+        interval_km: 8000,
+        interval_months: 6,
+    },
+    TaskBaseline {
+        task_type_key: "transmission_fluid",
+        interval_km: 60000,
+        interval_months: 48,
+    },
+    TaskBaseline {
+        task_type_key: "brake_fluid",
+        interval_km: 40000,
+        interval_months: 24,
+    },
+    TaskBaseline {
+        task_type_key: "coolant",
+        interval_km: 80000,
+        interval_months: 48,
+    },
+    TaskBaseline {
+        task_type_key: "power_steering_fluid",
+        interval_km: 80000,
+        interval_months: 48,
+    },
+    TaskBaseline {
+        task_type_key: "brake_pads",
+        interval_km: 50000,
+        interval_months: 36,
+    },
+    TaskBaseline {
+        task_type_key: "brake_discs",
+        interval_km: 90000,
+        interval_months: 60,
+    },
+    TaskBaseline {
+        task_type_key: "engine_air_filter",
+        interval_km: 24000,
+        interval_months: 12,
+    },
+    TaskBaseline {
+        task_type_key: "cabin_air_filter",
+        interval_km: 24000,
+        interval_months: 12,
+    },
+    TaskBaseline {
+        task_type_key: "spark_plugs",
+        interval_km: 100000,
+        interval_months: 60,
+    },
+    TaskBaseline {
+        task_type_key: "shock_absorbers",
+        interval_km: 80000,
+        interval_months: 48,
+    },
+    TaskBaseline {
+        task_type_key: "battery_replacement",
+        interval_km: 0,
+        interval_months: 48,
+    },
 ];
 
 pub fn baseline_for(task_type_key: &str) -> Option<&'static TaskBaseline> {
-    DEFAULT_TASKS.iter().find(|t| t.task_type_key == task_type_key)
+    DEFAULT_TASKS
+        .iter()
+        .find(|t| t.task_type_key == task_type_key)
 }
 
 #[cfg(test)]
@@ -40,7 +90,11 @@ mod tests {
         let mut keys: Vec<&str> = DEFAULT_TASKS.iter().map(|t| t.task_type_key).collect();
         keys.sort_unstable();
         keys.dedup();
-        assert_eq!(keys.len(), DEFAULT_TASKS.len(), "duplicate task_type_key found");
+        assert_eq!(
+            keys.len(),
+            DEFAULT_TASKS.len(),
+            "duplicate task_type_key found"
+        );
     }
 
     #[test]

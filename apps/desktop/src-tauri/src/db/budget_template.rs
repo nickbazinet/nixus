@@ -565,7 +565,11 @@ mod tests {
     }
 
     fn category_names(group: &TemplateGroupDef) -> Vec<String> {
-        group.categories.iter().map(|c| c.name.to_string()).collect()
+        group
+            .categories
+            .iter()
+            .map(|c| c.name.to_string())
+            .collect()
     }
 
     fn expect_file_error<T: std::fmt::Debug>(result: Result<T, AppError>, expected: &str) {
@@ -587,7 +591,10 @@ mod tests {
         f
     }
 
-    fn import_file(conn: &Connection, contents: &str) -> Result<ApplyBudgetTemplateResult, AppError> {
+    fn import_file(
+        conn: &Connection,
+        contents: &str,
+    ) -> Result<ApplyBudgetTemplateResult, AppError> {
         let file = write_template_file(contents);
         import_budget_template_from_path(conn, file.path())
     }
@@ -632,10 +639,7 @@ mod tests {
                 let cats: Vec<String> = (0..*n)
                     .map(|c| format!(r#"{{"name":"G{g}C{c}"}}"#))
                     .collect();
-                format!(
-                    r#"{{"name":"Group{g}","categories":[{}]}}"#,
-                    cats.join(",")
-                )
+                format!(r#"{{"name":"Group{g}","categories":[{}]}}"#, cats.join(","))
             })
             .collect();
         format!(
@@ -851,11 +855,13 @@ mod tests {
         expect_file_error(apply_budget_template_json(&conn, zero), MSG_INVALID_FILE);
 
         let negative = r#"{"format_version":-1,"name":"X","groups":[{"name":"G","categories":[{"name":"C","target_cents":100}]}]}"#;
-        expect_file_error(apply_budget_template_json(&conn, negative), MSG_INVALID_FILE);
+        expect_file_error(
+            apply_budget_template_json(&conn, negative),
+            MSG_INVALID_FILE,
+        );
 
         // `format_version` has no serde default — a missing field must fail.
-        let missing_version =
-            r#"{"name":"X","groups":[{"name":"G","categories":[{"name":"C"}]}]}"#;
+        let missing_version = r#"{"name":"X","groups":[{"name":"G","categories":[{"name":"C"}]}]}"#;
         expect_file_error(
             apply_budget_template_json(&conn, missing_version),
             MSG_INVALID_FILE,
@@ -1462,7 +1468,10 @@ mod tests {
         assert!(!json.contains("987654"), "raw amount leaked into {json}");
         // Present-and-null, not omitted: guards against a future
         // `skip_serializing_if` on the shared schema hiding a real value.
-        assert!(json.contains("\"target_cents\": null"), "unexpected: {json}");
+        assert!(
+            json.contains("\"target_cents\": null"),
+            "unexpected: {json}"
+        );
         assert!(!json.contains("\"target_cents\": 1"), "unexpected: {json}");
     }
 

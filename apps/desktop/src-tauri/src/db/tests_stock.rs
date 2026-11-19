@@ -1,9 +1,9 @@
 use rusqlite::Connection;
 
 use crate::db::stock::*;
+use crate::db::test_dataset::migrated_dataset;
 use crate::error::AppError;
 use crate::models::CreateStockAssetInput;
-use crate::db::test_dataset::migrated_dataset;
 use tempfile::TempDir;
 
 fn dataset() -> (TempDir, Connection) {
@@ -35,7 +35,10 @@ fn insert_account(conn: &Connection, id: i64, account_type: &str, currency: &str
 #[test]
 fn the_value_is_quantity_times_price_times_fx_in_cents() {
     // 2.5 shares at CAD 123.45, no conversion.
-    assert_eq!(compute_value_cents(2_500_000, 12_345, UNIT_FX_MICROS), 30_863);
+    assert_eq!(
+        compute_value_cents(2_500_000, 12_345, UNIT_FX_MICROS),
+        30_863
+    );
     // The same holding in USD at 1.37 CAD/USD.
     assert_eq!(compute_value_cents(2_500_000, 12_345, 1_370_000), 42_282);
     assert_eq!(compute_value_cents(1_000_000, 0, UNIT_FX_MICROS), 0);
@@ -149,8 +152,16 @@ fn applying_a_price_derives_the_value_and_a_quantity_change_re_derives_it() {
     let (_dir, conn) = dataset();
     let asset = insert_stock_asset(&conn, &create("SHOP.TO", 2_500_000)).expect("insert");
 
-    let (old, priced) =
-        apply_price(&conn, asset.id, &PriceWrite { last_price_cents: 12_345, currency: "CAD", fx_rate_to_base_micros: UNIT_FX_MICROS }).expect("price applies");
+    let (old, priced) = apply_price(
+        &conn,
+        asset.id,
+        &PriceWrite {
+            last_price_cents: 12_345,
+            currency: "CAD",
+            fx_rate_to_base_micros: UNIT_FX_MICROS,
+        },
+    )
+    .expect("price applies");
     assert_eq!((old, priced.value_cents), (0, 30_863));
     let holding = priced.stock.expect("holding");
     assert_eq!(holding.currency.as_deref(), Some("CAD"));
@@ -189,7 +200,15 @@ fn the_quantity_and_price_paths_refuse_an_asset_that_is_not_a_holding() {
         Err(AppError::Validation { .. })
     ));
     assert!(matches!(
-        apply_price(&conn, plain, &PriceWrite { last_price_cents: 1, currency: "CAD", fx_rate_to_base_micros: UNIT_FX_MICROS }),
+        apply_price(
+            &conn,
+            plain,
+            &PriceWrite {
+                last_price_cents: 1,
+                currency: "CAD",
+                fx_rate_to_base_micros: UNIT_FX_MICROS
+            }
+        ),
         Err(AppError::Validation { .. })
     ));
 }

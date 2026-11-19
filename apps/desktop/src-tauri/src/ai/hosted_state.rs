@@ -272,7 +272,11 @@ mod tests {
         let expired_at = Instant::now() + CACHE_TTL;
 
         assert_eq!(get_fresh_at(SUB_A, expired_at), None);
-        assert_eq!(get_fresh(SUB_A), None, "the stale entry is evicted, not kept");
+        assert_eq!(
+            get_fresh(SUB_A),
+            None,
+            "the stale entry is evicted, not kept"
+        );
     }
 
     #[test]

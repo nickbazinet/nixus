@@ -348,10 +348,7 @@ fn the_maintenance_write_sites_are_captured() {
     // Creating a vehicle seeds its default schedule, so one write touches both tables.
     assert_eq!(
         replica.touched_tables(),
-        BTreeSet::from([
-            "vehicles".to_string(),
-            "maintenance_tasks".to_string()
-        ])
+        BTreeSet::from(["vehicles".to_string(), "maintenance_tasks".to_string()])
     );
 
     replica.clear_log();
@@ -644,7 +641,9 @@ fn the_audit_log_is_captured_on_insert_and_never_on_an_edit_or_a_delete() {
     replica.clear_log();
 
     replica
-        .write(|tx| audit_db::insert_audit_log(tx, "project", project_id, "create", None, Some("{}")))
+        .write(|tx| {
+            audit_db::insert_audit_log(tx, "project", project_id, "create", None, Some("{}"))
+        })
         .expect("the audit row is written");
     assert_eq!(replica.kinds_for("audit_log"), vec!["field"]);
 
@@ -915,7 +914,17 @@ fn a_stock_holding_and_the_price_refresh_that_revalues_it_are_both_captured() {
 
     replica.clear_log();
     replica
-        .write(|tx| stock_db::apply_price(tx, asset.id, &stock_db::PriceWrite { last_price_cents: 12_345, currency: "CAD", fx_rate_to_base_micros: stock_db::UNIT_FX_MICROS }))
+        .write(|tx| {
+            stock_db::apply_price(
+                tx,
+                asset.id,
+                &stock_db::PriceWrite {
+                    last_price_cents: 12_345,
+                    currency: "CAD",
+                    fx_rate_to_base_micros: stock_db::UNIT_FX_MICROS,
+                },
+            )
+        })
         .expect("the price applies");
 
     assert_eq!(replica.kinds_for("stock_holdings"), vec!["field"]);

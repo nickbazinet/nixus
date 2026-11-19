@@ -30,12 +30,12 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 
+use crate::db::account::CashFlowKind;
 use crate::db::capture_fixtures as fixtures;
 use crate::db::test_dataset::{
     seed_heavy_year_into, stamp_text_columns_with_sentinels, SENTINEL_PREFIX,
 };
 use crate::db::{sim_tables, sync_identity};
-use crate::db::account::CashFlowKind;
 use crate::sync::bootstrap::{measure_link, LinkBudget, CAP2_BUDGET, CAP2_BYTES_PER_SECOND};
 use crate::sync::manager::{SyncActor, SyncState, SyncTuning};
 use crate::sync::registry::{self, MergeKind, TableClass};
@@ -189,22 +189,20 @@ fn synced_dump(conn: &Connection) -> Dump {
                 let value = match registry::merge_kind(rule.table, column) {
                     // A local integer is meaningless across computers: a foreign key is compared as
                     // the parent's identity and a bare local id is not compared at all.
-                    Some(MergeKind::LocalId) => {
-                        match registry::fk_parent(rule.table, column) {
-                            None => continue,
-                            Some(parent) => {
-                                let sim_tables::SimCell::Int(parent_id) = cell else {
-                                    continue;
-                                };
-                                match sync_identity::lookup(conn, parent, parent_id)
-                                    .expect("the parent identity reads")
-                                {
-                                    Some(parent_uuid) => hex(&parent_uuid),
-                                    None => "<unmapped parent>".to_string(),
-                                }
+                    Some(MergeKind::LocalId) => match registry::fk_parent(rule.table, column) {
+                        None => continue,
+                        Some(parent) => {
+                            let sim_tables::SimCell::Int(parent_id) = cell else {
+                                continue;
+                            };
+                            match sync_identity::lookup(conn, parent, parent_id)
+                                .expect("the parent identity reads")
+                            {
+                                Some(parent_uuid) => hex(&parent_uuid),
+                                None => "<unmapped parent>".to_string(),
                             }
                         }
-                    }
+                    },
                     _ => match cell {
                         sim_tables::SimCell::Int(number) => number.to_string(),
                         sim_tables::SimCell::Text(text) => text,
@@ -275,7 +273,9 @@ async fn sync_m2_e2e_a_two_computers_converge_on_every_change_kind() {
     // exactly as they would with no network, while A keeps publishing.
     let (offline_category, offline_account) = (local_category_on(&b), local_account_on(&b));
     let offline_expense = b
-        .captured(|tx| fixtures::insert_expense_row(tx, offline_category, offline_account, OFFLINE_CENTS))
+        .captured(|tx| {
+            fixtures::insert_expense_row(tx, offline_category, offline_account, OFFLINE_CENTS)
+        })
         .expect("B writes while offline");
     a.captured(|tx| fixtures::rename_budget_group(tx, shared_group, "Housing-renamed-on-a"))
         .expect("A edits while B is away");
@@ -444,7 +444,10 @@ async fn sync_m2_e2e_b_a_restore_travels_and_an_expired_window_is_refused() {
     );
 
     let view = a.with_active(restore::list).expect("the list reads");
-    assert!(view.sync_available, "a cloud-linked dataset retains deletes");
+    assert!(
+        view.sync_available,
+        "a cloud-linked dataset retains deletes"
+    );
     let item = view
         .items
         .first()
@@ -491,8 +494,7 @@ async fn sync_m2_e2e_b_a_restore_travels_and_an_expired_window_is_refused() {
     report(format!(
         "(2) delete on A restored on A (group {group}, {} rows, {} days left) and the restore \
          reached B; a delete aged 31 days was refused with {refused}",
-        outcome.restored_rows,
-        item.days_left,
+        outcome.restored_rows, item.days_left,
     ));
 }
 
@@ -611,7 +613,10 @@ async fn sync_m2_e2e_d_a_new_computer_is_usable_inside_the_cap2_budget() {
             .expect("the bootstrapped dataset answers a real query")
         });
 
-        assert_eq!(rows, shape.expenses as i64, "usable means it answers queries");
+        assert_eq!(
+            rows, shape.expenses as i64,
+            "usable means it answers queries"
+        );
 
         budgets.push(budget);
     }
@@ -708,7 +713,8 @@ async fn sync_m2_e2e_e_a_wipe_ships_nothing_and_tells_the_account_out_of_band() 
          as a flood of tombstones (the still-true half of AD-15)"
     );
     assert_eq!(
-        a.read(crate::db::sync_wipe::pending_wipe).expect("the marker reads"),
+        a.read(crate::db::sync_wipe::pending_wipe)
+            .expect("the marker reads"),
         None,
         "this wipe went through `write_uncaptured(wipe_all)` only, exactly as the M2 proof did; \
          the pending marker is `delete_all_data`'s own step and `tests_wipe_epoch.rs` drives it"
@@ -811,12 +817,13 @@ async fn sync_m2_e2e_g_a_local_only_dataset_runs_no_sync_code() {
     assert_eq!(fault.code(), "local_only");
 
     assert!(
-        probe.read(|conn| crate::sync::capture::Capture::for_dataset(
-            crate::models::DatasetKind::Local,
-            conn
-        ))
-        .expect("the capture decision is made")
-        .is_none(),
+        probe
+            .read(|conn| crate::sync::capture::Capture::for_dataset(
+                crate::models::DatasetKind::Local,
+                conn
+            ))
+            .expect("the capture decision is made")
+            .is_none(),
         "a local-only dataset installs no hook at all"
     );
 
@@ -830,7 +837,12 @@ async fn sync_m2_e2e_g_a_local_only_dataset_runs_no_sync_code() {
 
     let sync_rows: i64 = probe.read(|conn| {
         let mut total = 0;
-        for table in ["sync_log", "sync_uuid", "sync_field_state", "sync_tombstone"] {
+        for table in [
+            "sync_log",
+            "sync_uuid",
+            "sync_field_state",
+            "sync_tombstone",
+        ] {
             total += conn
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                     row.get::<_, i64>(0)
@@ -1071,16 +1083,20 @@ fn local_category_on(probe: &ComputerProbe) -> i64 {
 
 fn local_account_on(probe: &ComputerProbe) -> i64 {
     probe.read(|conn| {
-        conn.query_row("SELECT id FROM accounts WHERE name = 'Chequing'", [], |row| {
-            row.get(0)
-        })
+        conn.query_row(
+            "SELECT id FROM accounts WHERE name = 'Chequing'",
+            [],
+            |row| row.get(0),
+        )
         .expect("the shared account is there")
     })
 }
 
 fn local_income_on(probe: &ComputerProbe) -> i64 {
     probe.read(|conn| {
-        conn.query_row("SELECT id FROM income_sources LIMIT 1", [], |row| row.get(0))
-            .expect("the shared income source is there")
+        conn.query_row("SELECT id FROM income_sources LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .expect("the shared income source is there")
     })
 }

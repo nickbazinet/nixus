@@ -23,10 +23,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use rusqlite::hooks::{Action, PreUpdateCase, PreUpdateNewValueAccessor, PreUpdateOldValueAccessor};
-use sha2::{Digest, Sha256};
+use rusqlite::hooks::{
+    Action, PreUpdateCase, PreUpdateNewValueAccessor, PreUpdateOldValueAccessor,
+};
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::Connection;
+use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use crate::db::sync_apply;
@@ -143,7 +145,9 @@ pub mod payload {
 
         for _ in 0..count {
             let name = take_slice(encoded, &mut cursor)?;
-            let name = std::str::from_utf8(name).map_err(|_| malformed())?.to_string();
+            let name = std::str::from_utf8(name)
+                .map_err(|_| malformed())?
+                .to_string();
             let value = take_slice(encoded, &mut cursor)?.to_vec();
             fields.push((name, value));
         }
@@ -175,7 +179,9 @@ pub mod payload {
             TAG_INTEGER => Ok(Value::Integer(i64::from_be_bytes(fixed(8)?))),
             TAG_REAL => Ok(Value::Real(f64::from_bits(u64::from_be_bytes(fixed(8)?)))),
             TAG_TEXT => Ok(Value::Text(
-                std::str::from_utf8(body).map_err(|_| malformed())?.to_string(),
+                std::str::from_utf8(body)
+                    .map_err(|_| malformed())?
+                    .to_string(),
             )),
             TAG_BLOB => Ok(Value::Blob(body.to_vec())),
             _ => Err(malformed()),
@@ -264,7 +270,12 @@ pub fn is_capturing() -> bool {
 
 /// AD-5's absolute set: the user typed a balance, or an account was created with one.
 pub fn emit_balance_set(account_id: i64, balance_cents: i64) {
-    buffer_balance(account_id, BalanceEmission::Set { cents: balance_cents });
+    buffer_balance(
+        account_id,
+        BalanceEmission::Set {
+            cents: balance_cents,
+        },
+    );
 }
 
 /// AD-5's cause-keyed delta: the signed amount that was added to the account locally, computed
@@ -335,7 +346,10 @@ struct BufferedChange {
 
 enum ChangeOp {
     Insert(Vec<Value>),
-    Update { old: Vec<Value>, new: Vec<Value> },
+    Update {
+        old: Vec<Value>,
+        new: Vec<Value>,
+    },
     Delete(Vec<Value>),
     /// AD-5's balance emitters. The hook cannot produce either of these: it sees
     /// `balance_cents` move and has no way to know whether the move was an absolute set by the
@@ -700,8 +714,8 @@ impl Capture {
     pub(crate) fn begin(&self) -> ActiveWrite {
         self.discard();
 
-        let restore = ACTIVE_WRITE
-            .with(|active| active.borrow_mut().replace(Arc::clone(&self.inner)));
+        let restore =
+            ACTIVE_WRITE.with(|active| active.borrow_mut().replace(Arc::clone(&self.inner)));
 
         ActiveWrite { restore }
     }
@@ -1019,7 +1033,9 @@ impl Capture {
 /// the poison flag carries no information worth propagating, and honouring it would turn an
 /// unrelated panic elsewhere into permanently uncapturable writes.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Re-reads the balance column of every account this flush emitted a message for, as the FOLD of
@@ -1435,7 +1451,10 @@ fn row_json(
     }
 
     serde_json::to_string(&serde_json::Value::Object(row)).map_err(|error| AppError::Database {
-        message: format!("a deleted {} row could not be recorded: {error}", shape.table),
+        message: format!(
+            "a deleted {} row could not be recorded: {error}",
+            shape.table
+        ),
     })
 }
 

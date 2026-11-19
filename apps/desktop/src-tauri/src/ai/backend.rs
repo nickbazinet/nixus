@@ -1,9 +1,3 @@
-use aws_sdk_bedrockruntime::types::{
-    ContentBlock, ConversationRole, DocumentBlock, DocumentFormat, DocumentSource, ImageBlock,
-    ImageFormat, ImageSource, Message, SystemContentBlock,
-};
-use aws_sdk_bedrockruntime::Client as BedrockClient;
-use aws_sdk_bedrockruntime::primitives::Blob;
 use async_openai::{
     config::OpenAIConfig,
     types::{
@@ -13,6 +7,12 @@ use async_openai::{
     },
     Client as OpenAIClient,
 };
+use aws_sdk_bedrockruntime::primitives::Blob;
+use aws_sdk_bedrockruntime::types::{
+    ContentBlock, ConversationRole, DocumentBlock, DocumentFormat, DocumentSource, ImageBlock,
+    ImageFormat, ImageSource, Message, SystemContentBlock,
+};
+use aws_sdk_bedrockruntime::Client as BedrockClient;
 use tracing::info;
 
 use crate::ai::hosted_bedrock::{self, HostedOutcome};
@@ -551,7 +551,9 @@ async fn invoke_byo_openai(
             ChatCompletionRequestSystemMessageArgs::default()
                 .content(request.system.as_str())
                 .build()
-                .map_err(|e| build_error(format!("Failed to build OpenAI system message: {}", e)))?,
+                .map_err(|e| {
+                    build_error(format!("Failed to build OpenAI system message: {}", e))
+                })?,
         )];
 
     for turn in &request.turns {
@@ -654,8 +656,14 @@ mod tests {
 
     #[test]
     fn premium_quota_and_outage_failures_fall_back_to_the_configured_provider() {
-        assert_eq!(fallback_for("premium_required"), FallbackDecision::FallBackToByo);
-        assert_eq!(fallback_for("quota_exhausted"), FallbackDecision::FallBackToByo);
+        assert_eq!(
+            fallback_for("premium_required"),
+            FallbackDecision::FallBackToByo
+        );
+        assert_eq!(
+            fallback_for("quota_exhausted"),
+            FallbackDecision::FallBackToByo
+        );
         assert_eq!(
             fallback_for("hosted_unavailable"),
             FallbackDecision::FallBackToByo
@@ -750,7 +758,10 @@ mod tests {
     /// back rather than refresh again, or an expired grant becomes an infinite loop.
     #[test]
     fn a_spent_refresh_budget_turns_an_unauthorized_into_a_fallback() {
-        assert_eq!(route_pre_output("unauthorized", true), PreOutputRoute::Refresh);
+        assert_eq!(
+            route_pre_output("unauthorized", true),
+            PreOutputRoute::Refresh
+        );
         assert_eq!(route_pre_output("unauthorized", false), PreOutputRoute::Byo);
     }
 
@@ -759,7 +770,11 @@ mod tests {
     fn the_no_fallback_classes_stay_terminal_regardless_of_the_refresh_budget() {
         for code in ["validation", "unsupported_encoding", "payload_too_large"] {
             assert_eq!(route_pre_output(code, true), PreOutputRoute::Fail, "{code}");
-            assert_eq!(route_pre_output(code, false), PreOutputRoute::Fail, "{code}");
+            assert_eq!(
+                route_pre_output(code, false),
+                PreOutputRoute::Fail,
+                "{code}"
+            );
         }
     }
 
@@ -798,9 +813,7 @@ mod tests {
 
         match error {
             AppError::HostedAi {
-                code,
-                recoverable,
-                ..
+                code, recoverable, ..
             } => {
                 assert_eq!(code, "quota_exhausted");
                 assert!(recoverable);
@@ -839,10 +852,7 @@ mod tests {
     #[test]
     fn operation_wire_names_match_the_shared_contract() {
         assert_eq!(AiOperation::Chat.wire_name(), "chat");
-        assert_eq!(
-            AiOperation::StatementImport.wire_name(),
-            "statement_import"
-        );
+        assert_eq!(AiOperation::StatementImport.wire_name(), "statement_import");
         assert_eq!(AiOperation::ProjectAdvice.wire_name(), "project_advice");
         assert_eq!(AiOperation::TrendsInsight.wire_name(), "trends_insight");
     }
@@ -869,7 +879,11 @@ mod tests {
 
         let messages = byo_bedrock_messages(&request).expect("messages build");
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].content().len(), 2, "media block plus text block");
+        assert_eq!(
+            messages[0].content().len(),
+            2,
+            "media block plus text block"
+        );
     }
 
     fn document_request(turns: Vec<AiTurn>, format: AiDocumentFormat) -> AiRequest {
@@ -904,9 +918,17 @@ mod tests {
         let messages = byo_bedrock_messages(&request).expect("messages build");
 
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0].content().len(), 1, "the oldest turn stays text-only");
+        assert_eq!(
+            messages[0].content().len(),
+            1,
+            "the oldest turn stays text-only"
+        );
         assert_eq!(messages[1].content().len(), 1);
-        assert_eq!(messages[2].content().len(), 2, "media rides the newest user turn");
+        assert_eq!(
+            messages[2].content().len(),
+            2,
+            "media rides the newest user turn"
+        );
         assert!(messages[2].content()[0].as_document().is_ok());
     }
 
@@ -1160,10 +1182,22 @@ mod tests {
     #[test]
     fn the_port_admits_every_legal_operation_and_attachment_pairing() {
         let cases = [
-            (AiOperation::StatementImport, document(AiDocumentFormat::Pdf)),
-            (AiOperation::StatementImport, document(AiDocumentFormat::Csv)),
-            (AiOperation::StatementImport, document(AiDocumentFormat::Xlsx)),
-            (AiOperation::StatementImport, document(AiDocumentFormat::Txt)),
+            (
+                AiOperation::StatementImport,
+                document(AiDocumentFormat::Pdf),
+            ),
+            (
+                AiOperation::StatementImport,
+                document(AiDocumentFormat::Csv),
+            ),
+            (
+                AiOperation::StatementImport,
+                document(AiDocumentFormat::Xlsx),
+            ),
+            (
+                AiOperation::StatementImport,
+                document(AiDocumentFormat::Txt),
+            ),
             (AiOperation::Chat, document(AiDocumentFormat::Xlsx)),
             (
                 AiOperation::StatementImport,
@@ -1276,7 +1310,9 @@ mod boundary_guards {
             .lines()
             .filter(|line| {
                 let trimmed = line.trim_start();
-                !(trimmed.starts_with("//") || trimmed.starts_with("*") || trimmed.starts_with("/*"))
+                !(trimmed.starts_with("//")
+                    || trimmed.starts_with("*")
+                    || trimmed.starts_with("/*"))
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -1332,7 +1368,11 @@ mod boundary_guards {
     /// second, richer status read behind them.
     #[test]
     fn hosted_status_exposes_no_ipc_surface_beyond_the_entitlement_command() {
-        for module in ["ai/hosted_state.rs", "ai/hosted_bedrock.rs", "ai/backend.rs"] {
+        for module in [
+            "ai/hosted_state.rs",
+            "ai/hosted_bedrock.rs",
+            "ai/backend.rs",
+        ] {
             let source = production_source(module);
             assert!(
                 !source.contains("#[tauri::command"),
@@ -1590,7 +1630,8 @@ mod boundary_guards {
             // Precise: `extract_json(&output_text)` is legitimate, so only an error
             // *message* interpolating the output is a violation.
             for line in source.lines() {
-                let mentions_output = line.contains("output_text") || line.contains("full_response");
+                let mentions_output =
+                    line.contains("output_text") || line.contains("full_response");
                 let is_error_message = line.contains("message:") || line.contains("message,");
                 assert!(
                     !(mentions_output && is_error_message),
@@ -1637,8 +1678,16 @@ mod boundary_guards {
     #[test]
     fn the_home_surface_never_leaks_hosted_figures_across_ipc() {
         let command = production_source("commands/home.rs");
-        for figure in ["monthly_request_limit", "charged_count", "HostedAiStatus", "hosted_state"] {
-            assert!(!command.contains(figure), "{figure} must never cross IPC (AD-9)");
+        for figure in [
+            "monthly_request_limit",
+            "charged_count",
+            "HostedAiStatus",
+            "hosted_state",
+        ] {
+            assert!(
+                !command.contains(figure),
+                "{figure} must never cross IPC (AD-9)"
+            );
         }
     }
 
@@ -1654,7 +1703,9 @@ mod boundary_guards {
             "expected the first call and the post-tool-call follow-up to be routed separately"
         );
         assert_eq!(
-            source.matches("build_history_turns(&db_state, conv_id)").count(),
+            source
+                .matches("build_history_turns(&db_state, conv_id)")
+                .count(),
             2,
             "each invocation must rebuild history rather than reuse a stale routing decision"
         );

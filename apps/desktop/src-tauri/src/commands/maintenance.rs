@@ -53,7 +53,14 @@ pub fn create_vehicle(
     let result = active.write(|tx| maintenance_db::insert_vehicle(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "vehicle", result.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "vehicle",
+        result.id,
+        "create",
+        None,
+        Some(&details),
+    );
 
     Ok(result)
 }
@@ -93,15 +100,18 @@ pub fn update_vehicle(
 
     let old_json = get_vehicle_json(conn, id);
 
-    let input = UpdateVehicleInput {
-        make,
-        model,
-        year,
-    };
+    let input = UpdateVehicleInput { make, model, year };
     let result = active.write(|tx| maintenance_db::update_vehicle(tx, id, &input))?;
 
     let new_json = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "vehicle", id, "update", old_json.as_deref(), Some(&new_json));
+    audit_db::record(
+        &active,
+        "vehicle",
+        id,
+        "update",
+        old_json.as_deref(),
+        Some(&new_json),
+    );
 
     Ok(result)
 }

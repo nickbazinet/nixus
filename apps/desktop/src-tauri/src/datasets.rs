@@ -154,9 +154,7 @@ fn registry_path(root: &Path) -> PathBuf {
 // Also the authority `app_migration` filters its filesystem walk by, so a
 // directory the picker can never open is a directory the migration never touches.
 pub(crate) fn is_valid_dataset_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 fn default_dataset_entry() -> Dataset {
@@ -350,10 +348,7 @@ fn recorded_label_high_water(root: &Path) -> u32 {
 /// self-heals one whose file was lost or hand-edited; the file half is what
 /// survives the deletion of the entry holding the highest label, which is exactly
 /// what the registry alone cannot answer.
-fn effective_label_high_water<'a>(
-    root: &Path,
-    entries: impl Iterator<Item = &'a Dataset>,
-) -> u32 {
+fn effective_label_high_water<'a>(root: &Path, entries: impl Iterator<Item = &'a Dataset>) -> u32 {
     recorded_label_high_water(root).max(highest_local_label(entries))
 }
 
@@ -546,13 +541,11 @@ fn provision_dataset(
         message: format!("Failed to create dataset directory: {}", e),
     })?;
 
-    let provisioned = seed(&dir)
-        .and_then(|()| init_db(&dir))
-        .and_then(|conn| {
-            drop(conn);
-            entries.push(dataset.clone());
-            write_json_atomic(&registry_path(root), &entries)
-        });
+    let provisioned = seed(&dir).and_then(|()| init_db(&dir)).and_then(|conn| {
+        drop(conn);
+        entries.push(dataset.clone());
+        write_json_atomic(&registry_path(root), &entries)
+    });
 
     if let Err(error) = provisioned {
         let _ = std::fs::remove_dir_all(&dir);
@@ -922,7 +915,8 @@ pub(crate) fn delete_dataset_at(
     // Best-effort, unlike the registry write: the launch sweep removes any document whose dataset
     // is absent from `datasets.json`, so a failure here is corrected rather than permanent — and
     // failing the deletion the user asked for, over a file that is already unreachable, is worse.
-    if let Err(e) = crate::profile_store::delete_local(&crate::profile_store::profiles_dir(root), id)
+    if let Err(e) =
+        crate::profile_store::delete_local(&crate::profile_store::profiles_dir(root), id)
     {
         warn!(
             "A deleted profile's demographics could not be removed and will be swept on the next launch ({})",
@@ -1004,7 +998,10 @@ mod tests {
     fn registry_path_is_datasets_json_at_the_root() {
         let root = TempDir::new().expect("temp dir");
 
-        assert_eq!(registry_path(root.path()), root.path().join("datasets.json"));
+        assert_eq!(
+            registry_path(root.path()),
+            root.path().join("datasets.json")
+        );
     }
 
     #[test]
@@ -1188,8 +1185,7 @@ mod tests {
     fn loading_an_absent_registry_is_a_file_error() {
         let root = TempDir::new().expect("temp dir");
 
-        let error =
-            load_registry_entries(&registry_path(root.path())).expect_err("load must fail");
+        let error = load_registry_entries(&registry_path(root.path())).expect_err("load must fail");
 
         assert!(matches!(error, AppError::File { .. }));
     }
@@ -1216,7 +1212,10 @@ mod tests {
             "café",
             &"x".repeat(129),
         ] {
-            assert!(!is_valid_dataset_id(rejected), "{rejected} must be rejected");
+            assert!(
+                !is_valid_dataset_id(rejected),
+                "{rejected} must be rejected"
+            );
         }
     }
 
@@ -1445,8 +1444,7 @@ mod tests {
     #[test]
     fn a_failure_before_the_directory_is_provisioned_leaves_the_registry_intact() {
         let root = bootstrapped_root();
-        std::fs::write(root.path().join("datasets"), b"not a directory")
-            .expect("blocker written");
+        std::fs::write(root.path().join("datasets"), b"not a directory").expect("blocker written");
         let before = std::fs::read(registry_path(root.path())).expect("file readable");
 
         let error = create_dataset_at(root.path()).expect_err("create must fail");
@@ -1484,8 +1482,8 @@ mod tests {
 
         // Read unfiltered: the whole point is that the entry is still *on disk*, even
         // though `load_registry_entries` will go on hiding it from the picker.
-        let on_disk = read_registry_for_update(&registry_path(root.path()))
-            .expect("registry still parses");
+        let on_disk =
+            read_registry_for_update(&registry_path(root.path())).expect("registry still parses");
         assert_eq!(on_disk.len(), seeded.len() + 1);
         assert_eq!(
             on_disk[..seeded.len()],
@@ -1670,7 +1668,10 @@ mod tests {
 
         let entries = recorded(root.path());
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].id, DEFAULT_DATASET_ID, "Default still comes first");
+        assert_eq!(
+            entries[0].id, DEFAULT_DATASET_ID,
+            "Default still comes first"
+        );
         assert_eq!(entries[1], created);
     }
 
@@ -1682,7 +1683,10 @@ mod tests {
         let first = find_or_create_cloud_dataset_at(root.path(), SUB, EMAIL).expect("first");
         let second = find_or_create_cloud_dataset_at(root.path(), SUB, EMAIL).expect("second");
 
-        assert_eq!(first, second, "a repeat sign-in must not mint a new profile");
+        assert_eq!(
+            first, second,
+            "a repeat sign-in must not mint a new profile"
+        );
         assert_eq!(
             recorded(root.path()).len(),
             2,
@@ -1831,11 +1835,10 @@ mod tests {
     fn migrating_from_an_unregistered_source_is_a_validation_error_naming_the_field() {
         let root = bootstrapped_root();
 
-        let error =
-            migrate_to_cloud_dataset_at(root.path(), "does-not-exist", SUB, EMAIL, || {
-                panic!("the source must be validated before it is prepared")
-            })
-            .expect_err("migration must fail");
+        let error = migrate_to_cloud_dataset_at(root.path(), "does-not-exist", SUB, EMAIL, || {
+            panic!("the source must be validated before it is prepared")
+        })
+        .expect_err("migration must fail");
 
         match error {
             AppError::Validation { field, .. } => {
@@ -1855,7 +1858,11 @@ mod tests {
         let _keyring = crate::credentials::test_keyring_guard();
         let root = bootstrapped_root();
         let source_dir = dataset_dir_from_root(root.path(), DEFAULT_DATASET_ID);
-        assert_eq!(source_dir, root.path(), "Default's directory is the root itself");
+        assert_eq!(
+            source_dir,
+            root.path(),
+            "Default's directory is the root itself"
+        );
 
         seed_db(&source_dir, "default");
         std::fs::create_dir_all(root.path().join("profiles")).expect("profiles directory");
@@ -2272,9 +2279,11 @@ mod tests {
     // create a label a surviving profile already owns.
     #[test]
     fn the_sequence_reads_the_highest_suffix_rather_than_the_count() {
-        let entries = [default_dataset_entry(),
+        let entries = [
+            default_dataset_entry(),
             local_entry(DOOMED_ID, "Local Profile 3"),
-            entry("cloud-1")];
+            entry("cloud-1"),
+        ];
 
         assert_eq!(
             highest_local_label(entries.iter()),
@@ -2285,9 +2294,11 @@ mod tests {
 
     #[test]
     fn a_renamed_profile_holds_no_number_in_the_sequence() {
-        let renamed_only = [default_dataset_entry(),
+        let renamed_only = [
+            default_dataset_entry(),
             local_entry(DOOMED_ID, "Work"),
-            local_entry(SIBLING_ID, "Personal")];
+            local_entry(SIBLING_ID, "Personal"),
+        ];
 
         assert_eq!(
             highest_local_label(renamed_only.iter()),
@@ -2295,9 +2306,11 @@ mod tests {
             "no generated label is in the way"
         );
 
-        let mixed = [default_dataset_entry(),
+        let mixed = [
+            default_dataset_entry(),
             local_entry(DOOMED_ID, "Work"),
-            local_entry(SIBLING_ID, "Local Profile 2")];
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ];
 
         assert_eq!(highest_local_label(mixed.iter()), 2);
     }
@@ -2390,8 +2403,7 @@ mod tests {
             default_dataset_entry(),
             local_entry(SIBLING_ID, "Local Profile 2"),
         ]);
-        std::fs::create_dir_all(dataset_dir_from_root(root.path(), SIBLING_ID))
-            .expect("directory");
+        std::fs::create_dir_all(dataset_dir_from_root(root.path(), SIBLING_ID)).expect("directory");
         assert!(
             !label_sequence_path(root.path()).exists(),
             "the fixture must start with no sequence file at all"
@@ -2457,8 +2469,10 @@ mod tests {
         ]);
         write_label_high_water(root.path(), 9).expect("high-water written");
 
-        let behind = [default_dataset_entry(),
-            local_entry(SIBLING_ID, "Local Profile 2")];
+        let behind = [
+            default_dataset_entry(),
+            local_entry(SIBLING_ID, "Local Profile 2"),
+        ];
         assert_eq!(effective_label_high_water(root.path(), behind.iter()), 9);
 
         let next = create_dataset_at(root.path()).expect("create succeeds");
@@ -2486,8 +2500,7 @@ mod tests {
     #[test]
     fn a_failed_create_burns_its_number_rather_than_freeing_it() {
         let root = bootstrapped_root();
-        std::fs::write(root.path().join("datasets"), b"not a directory")
-            .expect("blocker written");
+        std::fs::write(root.path().join("datasets"), b"not a directory").expect("blocker written");
 
         create_dataset_at(root.path()).expect_err("create must fail");
 
@@ -2517,8 +2530,7 @@ mod tests {
         let raw = std::fs::read_to_string(label_sequence_path(root.path()))
             .expect("sequence file readable");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&raw).expect("valid json")
-                ["highest_issued"],
+            serde_json::from_str::<serde_json::Value>(&raw).expect("valid json")["highest_issued"],
             1
         );
         assert!(
@@ -2562,7 +2574,11 @@ mod tests {
             .iter()
             .map(|entry| local_label_suffix(&entry.label).expect("a generated label"))
             .collect();
-        assert_eq!(suffixes.len(), CREATES, "every create must reserve its own number");
+        assert_eq!(
+            suffixes.len(),
+            CREATES,
+            "every create must reserve its own number"
+        );
         assert_eq!(
             recorded_label_high_water(root.path()),
             CREATES as u32,
@@ -2631,8 +2647,7 @@ mod tests {
         let survivor = create_dataset_at(root.path()).expect("survivor created");
         crate::credentials::store_openai_key(&doomed.id, "sk-doomed").expect("key stored");
         crate::credentials::store_openai_key(&survivor.id, "sk-survivor").expect("key stored");
-        crate::credentials::store_openai_key(DEFAULT_DATASET_ID, "sk-default")
-            .expect("key stored");
+        crate::credentials::store_openai_key(DEFAULT_DATASET_ID, "sk-default").expect("key stored");
 
         delete_dataset_at(root.path(), &doomed.id, Some(DEFAULT_DATASET_ID))
             .expect("delete succeeds");

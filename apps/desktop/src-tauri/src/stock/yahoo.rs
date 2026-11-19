@@ -310,7 +310,10 @@ mod tests {
 
         let quote = parse_chart(&body).expect("a usable quote");
 
-        assert_eq!((quote.currency.as_str(), quote.price_cents()), ("GBP", 7_250));
+        assert_eq!(
+            (quote.currency.as_str(), quote.price_cents()),
+            ("GBP", 7_250)
+        );
     }
 
     #[test]
@@ -349,8 +352,16 @@ mod tests {
     async fn a_search_under_two_characters_never_reaches_the_network() {
         let provider = YahooProvider::new().expect("a client builds");
 
-        assert!(provider.search("a").await.expect("no request is made").is_empty());
-        assert!(provider.search("  ").await.expect("no request is made").is_empty());
+        assert!(provider
+            .search("a")
+            .await
+            .expect("no request is made")
+            .is_empty());
+        assert!(provider
+            .search("  ")
+            .await
+            .expect("no request is made")
+            .is_empty());
     }
 
     /// The canary for the whole provider: Yahoo is unofficial, and the day its fingerprinting
@@ -374,7 +385,10 @@ mod tests {
         }
 
         let fx = crate::stock::provider::fx_symbol("USD", "CAD");
-        let rates = provider.quote(std::slice::from_ref(&fx)).await.expect("the FX call completes");
+        let rates = provider
+            .quote(std::slice::from_ref(&fx))
+            .await
+            .expect("the FX call completes");
         assert!(
             rates.get(&fx).is_some_and(|rate| rate.price_micros > 0),
             "the USDCAD=X pair must price through the same endpoint"

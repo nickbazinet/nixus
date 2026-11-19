@@ -1,8 +1,10 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::AppError;
+use crate::models::{
+    BudgetCategory, BudgetCategoryStatus, BudgetGroup, CreateBudgetCategory, CreateBudgetGroup,
+};
 use crate::projects::budget_link::is_dated;
-use crate::models::{BudgetCategory, BudgetCategoryStatus, BudgetGroup, CreateBudgetCategory, CreateBudgetGroup};
 
 /// CAPTURE-SANCTIONED (AD-3): reached only through `ActiveDataset::write`, so its writes are
 /// recorded in `sync_log` by the pre-update hook in the same transaction.
@@ -402,7 +404,10 @@ pub fn move_budget_category(
 
     let tx = super::grouped(conn)?;
 
-    for (group_id, ids) in [(target_group_id, &target_ids), (source_group_id, &source_ids)] {
+    for (group_id, ids) in [
+        (target_group_id, &target_ids),
+        (source_group_id, &source_ids),
+    ] {
         for (index, category_id) in ids.iter().enumerate() {
             let sort_order = i32::try_from(index).map_err(|_| {
                 invalid_category_ids("The group contains more categories than supported")
@@ -735,7 +740,10 @@ pub fn get_budget_status(
 
     if statuses.iter().any(|status| status.project_id.is_some()) {
         let figures = super::projects::get_linked_category_figures(conn, year, month)?;
-        for status in statuses.iter_mut().filter(|status| status.project_id.is_some()) {
+        for status in statuses
+            .iter_mut()
+            .filter(|status| status.project_id.is_some())
+        {
             let linked = figures.get(&status.id);
             status.target_cents = linked.map_or(0, |figures| figures.month_target_cents);
             status.spent_cents = linked.map_or(0, |figures| figures.set_aside_cents);
@@ -815,10 +823,7 @@ pub enum GroupNameMatch {
 
 /// The group counterpart of `resolve_active_category_id_by_name`.
 // SQLite `LOWER` folds ASCII only: accented or non-Latin names must match stored case.
-pub fn resolve_group_id_by_name(
-    conn: &Connection,
-    name: &str,
-) -> Result<GroupNameMatch, AppError> {
+pub fn resolve_group_id_by_name(conn: &Connection, name: &str) -> Result<GroupNameMatch, AppError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Ok(GroupNameMatch::Missing);
@@ -1017,11 +1022,9 @@ mod tests {
             )
             .unwrap();
         let hint_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM merchant_category_hints",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM merchant_category_hints", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert!(deleted_at.is_some());
         assert_eq!(hint_count, 0);
@@ -1477,8 +1480,11 @@ mod tests {
             [],
         )
         .unwrap();
-        conn.execute("UPDATE budget_categories SET sort_order = id - 1 WHERE id IN (1, 2)", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE budget_categories SET sort_order = id - 1 WHERE id IN (1, 2)",
+            [],
+        )
+        .unwrap();
         conn
     }
 
@@ -1510,7 +1516,11 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(source_orders, vec![0], "the source group has no gap left behind");
+        assert_eq!(
+            source_orders,
+            vec![0],
+            "the source group has no gap left behind"
+        );
     }
 
     #[test]
@@ -1558,7 +1568,11 @@ mod tests {
 
         move_budget_category(&conn, 1, 2, 0).unwrap();
 
-        for table in ["expenses", "recurring_expense_templates", "merchant_category_hints"] {
+        for table in [
+            "expenses",
+            "recurring_expense_templates",
+            "merchant_category_hints",
+        ] {
             let count: i64 = conn
                 .query_row(
                     &format!("SELECT COUNT(*) FROM {table} WHERE budget_category_id = 1"),
@@ -1591,8 +1605,11 @@ mod tests {
     #[test]
     fn move_budget_category_rejects_unknown_soft_deleted_or_archived_targets() {
         let conn = two_group_db();
-        conn.execute("UPDATE budget_groups SET deleted_at = datetime('now') WHERE id = 2", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE budget_groups SET deleted_at = datetime('now') WHERE id = 2",
+            [],
+        )
+        .unwrap();
 
         assert!(matches!(
             move_budget_category(&conn, 1, 2, 0),
@@ -1606,10 +1623,17 @@ mod tests {
             move_budget_category(&conn, 404, 1, 0),
             Err(AppError::Database { .. })
         ));
-        assert_eq!(ids_in_group(&conn, 1), vec![1, 2], "a rejected move changes nothing");
+        assert_eq!(
+            ids_in_group(&conn, 1),
+            vec![1, 2],
+            "a rejected move changes nothing"
+        );
 
-        conn.execute("UPDATE budget_groups SET deleted_at = NULL WHERE id = 2", [])
-            .unwrap();
+        conn.execute(
+            "UPDATE budget_groups SET deleted_at = NULL WHERE id = 2",
+            [],
+        )
+        .unwrap();
         delete_budget_category(&conn, 1).unwrap();
         assert!(matches!(
             move_budget_category(&conn, 1, 2, 0),

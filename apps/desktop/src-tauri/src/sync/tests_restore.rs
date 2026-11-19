@@ -266,10 +266,7 @@ fn a_natural_key_re_created_since_the_delete_restores_nothing_at_all() {
     let category = computer.write(|tx| fixtures::insert_budget_category(tx, group, "Groceries"));
     let (uuid, hint) = insert_hint(&computer, "Metro", category);
     computer.write(|tx| {
-        tx.execute(
-            "DELETE FROM merchant_category_hints WHERE id = ?1",
-            [hint],
-        )?;
+        tx.execute("DELETE FROM merchant_category_hints WHERE id = ?1", [hint])?;
 
         Ok(())
     });
@@ -302,7 +299,8 @@ fn a_restore_whose_parent_is_no_longer_retained_is_refused() {
     let computer = Computer::open();
 
     let source = computer.write(|tx| fixtures::insert_income_source(tx, "Salary"));
-    let entry = computer.write(|tx| fixtures::insert_income_entry(tx, source, 250_000, "2026-03-01"));
+    let entry =
+        computer.write(|tx| fixtures::insert_income_entry(tx, source, 250_000, "2026-03-01"));
     let entry_uuid = computer.uuid_of("income_entries", entry);
     let source_uuid = computer.uuid_of("income_sources", source);
 
@@ -529,8 +527,7 @@ fn an_expired_tombstone_is_purged_and_the_delete_message_is_untouched() {
         .expect("the tombstone ages");
 
     let messages = computer.number("SELECT COUNT(*) FROM sync_log WHERE kind = 'tombstone'");
-    let removed =
-        apply_db::purge_expired_tombstones(computer.conn()).expect("the sweep runs");
+    let removed = apply_db::purge_expired_tombstones(computer.conn()).expect("the sweep runs");
 
     assert_eq!(removed, 1);
     assert_eq!(computer.number("SELECT COUNT(*) FROM sync_tombstone"), 1);

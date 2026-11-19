@@ -141,7 +141,10 @@ fn message_for(code: &str) -> &'static str {
 /// Whether re-sending the same request unchanged could plausibly succeed. A refused value
 /// and a refused file will be refused again; a sign-in, a reload or a wait can all repair.
 fn recoverable_for(code: &str) -> bool {
-    !matches!(code, "validation" | "payload_too_large" | "unsupported_media")
+    !matches!(
+        code,
+        "validation" | "payload_too_large" | "unsupported_media"
+    )
 }
 
 fn cloud_profile_error(code: &str, field: Option<String>, reason: Option<String>) -> AppError {
@@ -382,8 +385,10 @@ async fn send<T: DeserializeOwned>(
     .await;
 
     if matches!(outcome, Attempted::Unauthorized) {
-        let refreshed =
-            credential_for(auth::refresh_access_token(PROFILE_SCOPE).await, expected_sub)?;
+        let refreshed = credential_for(
+            auth::refresh_access_token(PROFILE_SCOPE).await,
+            expected_sub,
+        )?;
         outcome = attempt(Attempt {
             client: &client,
             url: &url,
@@ -695,7 +700,8 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} is declared"));
             let preceding = production[..declaration].trim_end();
             assert!(
-                preceding.ends_with("#[cfg(debug_assertions)]") || preceding.ends_with("#[cfg(test)]"),
+                preceding.ends_with("#[cfg(debug_assertions)]")
+                    || preceding.ends_with("#[cfg(test)]"),
                 "{name} must be declared under a cfg gate"
             );
         }
@@ -853,7 +859,10 @@ mod tests {
                 "reauthentication_required"
             );
         }
-        assert_eq!(code_of(&error_from_status(403)), "reauthentication_required");
+        assert_eq!(
+            code_of(&error_from_status(403)),
+            "reauthentication_required"
+        );
     }
 
     #[test]

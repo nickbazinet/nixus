@@ -56,8 +56,7 @@ pub fn get_db_status(app: AppHandle, state: State<DbState>) -> Result<DbStatus, 
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    let journal_mode: String =
-        conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
+    let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |row| row.get(0))?;
 
     let schema_version: i64 = conn.query_row(
         "SELECT COALESCE(MAX(version), 0) FROM schema_version",
@@ -65,11 +64,8 @@ pub fn get_db_status(app: AppHandle, state: State<DbState>) -> Result<DbStatus, 
         |row| row.get(0),
     )?;
 
-    let migrations_applied: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM schema_version",
-        [],
-        |row| row.get(0),
-    )?;
+    let migrations_applied: i64 =
+        conn.query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))?;
 
     Ok(DbStatus {
         db_path: db_path.to_string_lossy().to_string(),

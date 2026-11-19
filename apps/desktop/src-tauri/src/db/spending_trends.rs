@@ -178,11 +178,7 @@ mod tests {
     fn compute_delta_pct_rounds_to_nearest_whole_percent() {
         let mut targets = HashMap::new();
         targets.insert(1, 10000);
-        let rows = compute_category_compare(
-            &[sample_row(1, "Food", 66600)],
-            6,
-            &targets,
-        );
+        let rows = compute_category_compare(&[sample_row(1, "Food", 66600)], 6, &targets);
         assert_eq!(rows[0].avg_cents, 11100);
         assert_eq!(rows[0].delta_pct, Some(11));
     }
@@ -191,11 +187,7 @@ mod tests {
     fn sparse_months_use_window_divisor_not_months_with_data() {
         let mut targets = HashMap::new();
         targets.insert(1, 100000);
-        let rows = compute_category_compare(
-            &[sample_row(1, "Food", 60000)],
-            6,
-            &targets,
-        );
+        let rows = compute_category_compare(&[sample_row(1, "Food", 60000)], 6, &targets);
         assert_eq!(rows[0].avg_cents, 10000);
         assert_eq!(rows[0].status, "under");
     }

@@ -113,10 +113,7 @@ mod tests {
     fn a_confirmation_outranks_a_skip_marker_for_the_same_month() {
         let settlement = resolve_settlement("2026-08", Some(confirmed()), Some("2026-08")).unwrap();
 
-        assert!(matches!(
-            settlement,
-            SuggestionSettlement::Confirm { .. }
-        ));
+        assert!(matches!(settlement, SuggestionSettlement::Confirm { .. }));
     }
 
     // An empty config value is how the skip marker is cleared, so it must not read as a month.

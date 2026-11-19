@@ -33,7 +33,14 @@ pub fn create_recurring_template(
     let result = active.write(|tx| recurring_db::insert_template(tx, &input))?;
 
     let details = serde_json::to_string(&result).unwrap_or_default();
-    audit_db::record(&active, "recurring_template", result.id, "create", None, Some(&details));
+    audit_db::record(
+        &active,
+        "recurring_template",
+        result.id,
+        "create",
+        None,
+        Some(&details),
+    );
 
     Ok(result)
 }
@@ -105,7 +112,14 @@ pub fn delete_recurring_template(state: State<DbState>, id: i64) -> Result<(), A
 
     active.write(|tx| recurring_db::delete_template(tx, id))?;
 
-    audit_db::record(&active, "recurring_template", id, "delete", old_json.as_deref(), None);
+    audit_db::record(
+        &active,
+        "recurring_template",
+        id,
+        "delete",
+        old_json.as_deref(),
+        None,
+    );
 
     Ok(())
 }
@@ -137,7 +151,14 @@ pub fn apply_due_recurring_expenses(active: &ActiveDataset) -> Result<Vec<Expens
 fn audit_created_expenses(active: &ActiveDataset, created: &[Expense]) {
     for expense in created {
         let details = serde_json::to_string(expense).unwrap_or_default();
-        audit_db::record(active, "expense", expense.id, "create", None, Some(&details));
+        audit_db::record(
+            active,
+            "expense",
+            expense.id,
+            "create",
+            None,
+            Some(&details),
+        );
     }
 }
 

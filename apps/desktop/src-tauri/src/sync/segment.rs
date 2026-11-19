@@ -223,15 +223,23 @@ pub enum SegmentError {
     Header(ObjectHeaderError),
     /// A payload layout this build does not know. Refused cleanly so a newer computer's object
     /// parks instead of being half-decoded (AD-11, CAP-7).
-    UnknownPayloadVersion { found: u16 },
+    UnknownPayloadVersion {
+        found: u16,
+    },
     /// Truncated, trailing bytes, an unknown kind tag, or text that is not UTF-8.
     Malformed,
     /// The payload does not hash to what its own header claims.
-    HashMismatch { expected: String, found: String },
+    HashMismatch {
+        expected: String,
+        found: String,
+    },
     /// Not decompressible, or larger than the read ceiling.
     Corrupt,
     /// Written by a build with a newer dataset schema.
-    SchemaTooNew { found: u32, supported: u32 },
+    SchemaTooNew {
+        found: u32,
+        supported: u32,
+    },
     /// The payload names a different install or seq than the key it was fetched from, which would
     /// let one install's object be applied as another's.
     Misaddressed,
@@ -411,7 +419,10 @@ struct Reader<'a> {
 impl<'a> Reader<'a> {
     fn take(&mut self, len: usize) -> Result<&'a [u8], SegmentError> {
         let end = self.at.checked_add(len).ok_or(SegmentError::Malformed)?;
-        let slice = self.bytes.get(self.at..end).ok_or(SegmentError::Malformed)?;
+        let slice = self
+            .bytes
+            .get(self.at..end)
+            .ok_or(SegmentError::Malformed)?;
         self.at = end;
 
         Ok(slice)
@@ -560,7 +571,6 @@ impl CutSegment {
     pub fn key(&self) -> String {
         segment_key(&self.install, self.seq)
     }
-
 }
 
 /// Builds the next segment of `install` from the unshipped tail, or `None` when there is nothing to
@@ -878,7 +888,10 @@ impl Roster {
     }
 
     fn normalized(installs: impl IntoIterator<Item = String>) -> Self {
-        let unique: BTreeSet<String> = installs.into_iter().filter(|id| is_install_id(id)).collect();
+        let unique: BTreeSet<String> = installs
+            .into_iter()
+            .filter(|id| is_install_id(id))
+            .collect();
 
         Self {
             installs: unique.into_iter().collect(),
@@ -903,7 +916,8 @@ impl Roster {
         let document: serde_json::Value =
             serde_json::from_slice(bytes).map_err(|_| SegmentError::Malformed)?;
 
-        if document.get("v").and_then(serde_json::Value::as_u64) != Some(u64::from(ROSTER_VERSION)) {
+        if document.get("v").and_then(serde_json::Value::as_u64) != Some(u64::from(ROSTER_VERSION))
+        {
             return Err(SegmentError::Malformed);
         }
 
@@ -968,10 +982,7 @@ where
             }
             None => {
                 let mine = Roster::normalized([install.to_string()]);
-                store
-                    .put_if_absent(&key, mine.body())
-                    .await
-                    .map(|_| mine)
+                store.put_if_absent(&key, mine.body()).await.map(|_| mine)
             }
         };
 

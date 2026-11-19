@@ -82,11 +82,7 @@ pub fn mapped_rows(
 }
 
 /// Whether the row an identity names is still there.
-pub fn row_exists(
-    conn: &Connection,
-    table: &'static str,
-    row_id: i64,
-) -> Result<bool, AppError> {
+pub fn row_exists(conn: &Connection, table: &'static str, row_id: i64) -> Result<bool, AppError> {
     Ok(conn
         .prepare_cached(&format!("SELECT 1 FROM {table} WHERE _rowid_ = ?1"))?
         .query_row([row_id], |_| Ok(()))

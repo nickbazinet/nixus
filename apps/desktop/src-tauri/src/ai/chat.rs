@@ -25,11 +25,7 @@ pub struct ToolCallRequest {
 /// Both failure modes are errors rather than fallbacks, which is the point: the previous
 /// catch-all handed any unrecognized id the budget-helper prompt — and therefore budget context —
 /// under a conversation row labelled something else.
-pub fn build_system_prompt(
-    agent_id: &str,
-    today: &str,
-    context: &str,
-) -> Result<String, AppError> {
+pub fn build_system_prompt(agent_id: &str, today: &str, context: &str) -> Result<String, AppError> {
     let spec = agents::spec(agent_id)?;
 
     match spec.prompt {
@@ -368,11 +364,7 @@ When the user asks you to PERFORM AN ACTION (add expense, update balance, create
 /// The data-model paragraph and the user-phrase mapping are not authored here: they are the
 /// fragments `render_tool_section` already emits for the maintenance tools, so they live in one
 /// place and reach exactly the agents holding those tools.
-pub(crate) fn build_car_maintenance_prompt(
-    spec: &AgentSpec,
-    today: &str,
-    context: &str,
-) -> String {
+pub(crate) fn build_car_maintenance_prompt(spec: &AgentSpec, today: &str, context: &str) -> String {
     format!(
         r#"You are a vehicle maintenance assistant for a personal upkeep app. Answer the user's questions about their vehicles, service schedules and service history using the context provided below.
 
@@ -511,7 +503,10 @@ pub fn format_tool_result(
     for r in results {
         out.push_str(&format!(
             "| {} | {} | ${:.2} | {} |\n",
-            r.date, r.merchant, r.amount_cents as f64 / 100.0, r.category_name
+            r.date,
+            r.merchant,
+            r.amount_cents as f64 / 100.0,
+            r.category_name
         ));
     }
     out
@@ -764,7 +759,8 @@ mod tests {
         assert!(out.contains("query_expenses"));
     }
 
-    const EXPENSE_TOOL_CALL: &str = "```tool_call\n{\"tool\": \"query_expenses\", \"params\": {}}\n```";
+    const EXPENSE_TOOL_CALL: &str =
+        "```tool_call\n{\"tool\": \"query_expenses\", \"params\": {}}\n```";
 
     #[test]
     fn a_tool_on_the_allowlist_is_parsed_as_runnable() {
@@ -838,10 +834,7 @@ mod tests {
     #[test]
     fn every_tool_and_action_in_the_registry_has_prompt_text() {
         // Surface agents render no chat prompt at all, so their allowlists have no prose to carry.
-        for agent in agents::all()
-            .iter()
-            .filter(|agent| agent.prompt.is_some())
-        {
+        for agent in agents::all().iter().filter(|agent| agent.prompt.is_some()) {
             for tool in agent.tools {
                 assert!(
                     !tool_fragment(tool).is_empty(),
@@ -1080,9 +1073,7 @@ mod tests {
 
         assert!(example.contains("{ \"field\": \"Category\", \"value\": \"House\" }"));
         assert!(example.contains("{ \"field\": \"Group\", \"value\": \"Needs\" }"));
-        assert!(
-            example.contains("{ \"field\": \"Target\", \"value\": \"$1.00 (placeholder)\" }")
-        );
+        assert!(example.contains("{ \"field\": \"Target\", \"value\": \"$1.00 (placeholder)\" }"));
     }
 
     /// The visible placeholder wording, pinned separately: a card that shows a bare "$1.00" reads
@@ -1170,7 +1161,9 @@ mod tests {
         let prompt = budget_prompt();
 
         assert!(prompt.contains("do not propose them one card at a time"));
-        assert!(prompt.contains("no matter how many items there are or what type of action they are"));
+        assert!(
+            prompt.contains("no matter how many items there are or what type of action they are")
+        );
     }
 
     /// Ids are guessable and stale; the backend ignores them, and the prompt must not invite one.
@@ -1246,7 +1239,10 @@ mod tests {
             vec![AiRole::User, AiRole::Assistant, AiRole::User]
         );
         assert_eq!(
-            turns.iter().map(|turn| turn.text.as_str()).collect::<Vec<_>>(),
+            turns
+                .iter()
+                .map(|turn| turn.text.as_str())
+                .collect::<Vec<_>>(),
             vec!["first", "second", "third"]
         );
     }

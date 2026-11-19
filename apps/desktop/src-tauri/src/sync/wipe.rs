@@ -302,7 +302,9 @@ where
             Err(error) => return Err(WipeError::Store(error)),
         };
 
-        let cloud_epoch = current.as_ref().map_or(EPOCH_NEVER_WIPED, |(event, _)| event.epoch);
+        let cloud_epoch = current
+            .as_ref()
+            .map_or(EPOCH_NEVER_WIPED, |(event, _)| event.epoch);
         if cloud_epoch > local_epoch {
             return Ok(cloud_epoch);
         }
@@ -313,11 +315,7 @@ where
         };
 
         let written = match &current {
-            Some((_, etag)) => {
-                store
-                    .put_if_match(WIPE_OBJECT_KEY, etag, ours.body())
-                    .await
-            }
+            Some((_, etag)) => store.put_if_match(WIPE_OBJECT_KEY, etag, ours.body()).await,
             None => store.put_if_absent(WIPE_OBJECT_KEY, ours.body()).await,
         };
 
@@ -441,7 +439,11 @@ mod tests {
         // Once it exists the recheck is irrelevant: the read is conditional and answers 304.
         let after_found = fake.calls();
         assert_eq!(watch.read(&store, recheck).await, Ok(1));
-        assert_eq!(fake.calls(), after_found + 1, "one conditional GET, no body");
+        assert_eq!(
+            fake.calls(),
+            after_found + 1,
+            "one conditional GET, no body"
+        );
     }
 
     /// A marker that DISAPPEARS must not reset the epoch this dataset already adopted: the epoch is
@@ -489,14 +491,22 @@ mod tests {
 
         assert_eq!(register(&store, 0, 10).await, Ok(1));
         assert_eq!(
-            WipeEvent::parse(&fake.stored(WIPE_OBJECT_KEY).expect("the marker is published")),
+            WipeEvent::parse(
+                &fake
+                    .stored(WIPE_OBJECT_KEY)
+                    .expect("the marker is published")
+            ),
             Ok(WipeEvent {
                 epoch: 1,
                 wiped_ms: 10
             })
         );
 
-        assert_eq!(register(&store, 1, 20).await, Ok(2), "a second wipe increments again");
+        assert_eq!(
+            register(&store, 1, 20).await,
+            Ok(2),
+            "a second wipe increments again"
+        );
         assert_eq!(read_now(&store).await, Ok(2));
     }
 

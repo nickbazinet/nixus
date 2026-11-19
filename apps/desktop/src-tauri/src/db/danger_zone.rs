@@ -234,7 +234,11 @@ mod tests {
             .iter()
             .map(|table| count(&conn, table) as u64)
             .sum();
-        assert_eq!(seeded, WIPE_TABLES.len() as u64 + 1, "the seed shape changed");
+        assert_eq!(
+            seeded,
+            WIPE_TABLES.len() as u64 + 1,
+            "the seed shape changed"
+        );
 
         let deleted = wipe_all(&conn).expect("wipe succeeds");
         assert_eq!(deleted, seeded);
@@ -305,7 +309,11 @@ mod tests {
         );
 
         let stale: Vec<&&str> = WIPE_TABLES.iter().filter(|t| !live.contains(**t)).collect();
-        assert!(stale.is_empty(), "WIPE_TABLES lists missing tables: {:?}", stale);
+        assert!(
+            stale.is_empty(),
+            "WIPE_TABLES lists missing tables: {:?}",
+            stale
+        );
     }
 
     #[test]
@@ -319,11 +327,9 @@ mod tests {
 
         // The transaction is the caller's, exactly as in production: dropping it without a
         // commit is what `write_uncaptured` does for an `Err` from the closure.
-        let tx = rusqlite::Transaction::new_unchecked(
-            &conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )
-        .expect("begin");
+        let tx =
+            rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)
+                .expect("begin");
         let err = wipe_all(&tx).expect_err("wipe must fail");
         drop(tx);
         assert!(matches!(err, AppError::Database { .. }));

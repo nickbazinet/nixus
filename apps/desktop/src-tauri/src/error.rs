@@ -3,10 +3,21 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum AppError {
-    Validation { message: String, field: Option<String> },
-    Database { message: String },
-    AiService { message: String, recoverable: bool },
-    Auth { message: String, recoverable: bool },
+    Validation {
+        message: String,
+        field: Option<String>,
+    },
+    Database {
+        message: String,
+    },
+    AiService {
+        message: String,
+        recoverable: bool,
+    },
+    Auth {
+        message: String,
+        recoverable: bool,
+    },
     /// A hosted-AI (Nixus Cloud Bedrock) failure. `code` is a `CloudAiErrorCode`
     /// from the shared wire contract, kept as the discriminator the frontend
     /// switches on; the raw upstream Bedrock error string is never carried here.
@@ -37,10 +48,14 @@ pub enum AppError {
         reason: Option<String>,
         recoverable: bool,
     },
-    File { message: String },
+    File {
+        message: String,
+    },
     /// A market-data provider failure. Distinct from `Unavailable`, whose serialized message is
     /// worded for the AI surfaces ("AI service unreachable") and would be a lie on a price refresh.
-    MarketData { message: String },
+    MarketData {
+        message: String,
+    },
     NotConfigured,
     InvalidCredentials,
     Unavailable,
@@ -97,14 +112,20 @@ impl Serialize for AppError {
                 map.serialize_entry("message", message)?;
                 map.end()
             }
-            AppError::AiService { message, recoverable } => {
+            AppError::AiService {
+                message,
+                recoverable,
+            } => {
                 let mut map = serializer.serialize_map(Some(3))?;
                 map.serialize_entry("type", "ai_service")?;
                 map.serialize_entry("message", message)?;
                 map.serialize_entry("recoverable", recoverable)?;
                 map.end()
             }
-            AppError::Auth { message, recoverable } => {
+            AppError::Auth {
+                message,
+                recoverable,
+            } => {
                 let mut map = serializer.serialize_map(Some(3))?;
                 map.serialize_entry("type", "auth")?;
                 map.serialize_entry("message", message)?;

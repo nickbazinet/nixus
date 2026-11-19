@@ -445,9 +445,10 @@ fn the_cash_flow_averages_the_window_into_one_graph_of_links() {
     );
 
     // The seed spends more than it earns, so there is nothing left to draw as unspent.
-    assert!(flow.rows.iter().all(|row| row.key != format!(
-        "{INCOME_NODE_KEY}>{UNSPENT_NODE_KEY}"
-    )));
+    assert!(flow
+        .rows
+        .iter()
+        .all(|row| row.key != format!("{INCOME_NODE_KEY}>{UNSPENT_NODE_KEY}")));
 
     // An income source is the user's own record, so its label travels; the hub is named by the
     // renderer and travels empty.
@@ -489,17 +490,33 @@ fn a_window_can_end_in_any_past_month() {
         json!({ "months": 2, "months_ago": 1 }),
     );
     assert_eq!(
-        two_months_back.rows.iter().map(|r| r.values[0]).collect::<Vec<_>>(),
+        two_months_back
+            .rows
+            .iter()
+            .map(|r| r.values[0])
+            .collect::<Vec<_>>(),
         vec![147_389, 618_253],
         "the window ends last month and excludes this month"
     );
 
-    let net_worth = resolve_one(&conn, "net_worth_history", json!({ "months": 1, "months_ago": 2 }));
+    let net_worth = resolve_one(
+        &conn,
+        "net_worth_history",
+        json!({ "months": 1, "months_ago": 2 }),
+    );
     assert_eq!(net_worth.rows.len(), 1);
     assert_eq!(net_worth.rows[0].values, vec![63_017_291]);
 
-    let flow = resolve_one(&conn, "income_vs_expense_by_month", json!({ "months": 1, "months_ago": 1 }));
-    assert_eq!(flow.rows[0].values, vec![0, 618_253], "this month's income stays out");
+    let flow = resolve_one(
+        &conn,
+        "income_vs_expense_by_month",
+        json!({ "months": 1, "months_ago": 1 }),
+    );
+    assert_eq!(
+        flow.rows[0].values,
+        vec![0, 618_253],
+        "this month's income stays out"
+    );
 }
 
 #[test]
@@ -513,7 +530,11 @@ fn spending_and_transactions_can_be_narrowed_to_one_category_in_the_users_words(
         json!({ "months": 3, "category": "groceries" }),
     );
     assert_eq!(
-        groceries.rows.iter().map(|r| r.values[0]).collect::<Vec<_>>(),
+        groceries
+            .rows
+            .iter()
+            .map(|r| r.values[0])
+            .collect::<Vec<_>>(),
         vec![0, 618_253, 873_419]
     );
 
@@ -526,7 +547,11 @@ fn spending_and_transactions_can_be_narrowed_to_one_category_in_the_users_words(
     assert_eq!(dining.rows[0].label, "Bellwether Bistro");
 
     // A term that names no category shows nothing rather than everything under the wrong title.
-    let nothing = resolve_one(&conn, "recent_expenses", json!({ "category": "car insurance" }));
+    let nothing = resolve_one(
+        &conn,
+        "recent_expenses",
+        json!({ "category": "car insurance" }),
+    );
     assert!(nothing.rows.is_empty());
 }
 
@@ -545,14 +570,26 @@ fn net_worth_assets_can_be_filtered_by_type_and_totalled_per_type() {
 
     let portfolio = resolve_one(&conn, "asset_values", json!({ "asset_type": "stock" }));
     assert_eq!(
-        portfolio.rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(),
+        portfolio
+            .rows
+            .iter()
+            .map(|r| r.label.as_str())
+            .collect::<Vec<_>>(),
         vec!["Acme Corp", "Globex"]
     );
 
     let by_type = resolve_one(&conn, "asset_values_by_type", json!({}));
     assert_eq!(
-        by_type.rows.iter().map(|r| (r.label.as_str(), r.values[0])).collect::<Vec<_>>(),
-        vec![("Real estate", 20_000_000), ("Vehicles", 1_500_000), ("Stocks", 800_000)]
+        by_type
+            .rows
+            .iter()
+            .map(|r| (r.label.as_str(), r.values[0]))
+            .collect::<Vec<_>>(),
+        vec![
+            ("Real estate", 20_000_000),
+            ("Vehicles", 1_500_000),
+            ("Stocks", 800_000)
+        ]
     );
 }
 

@@ -35,10 +35,7 @@ pub fn get_financial_health_detail(
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn set_emergency_fund_target(
-    state: State<DbState>,
-    months: i64,
-) -> Result<(), AppError> {
+pub fn set_emergency_fund_target(state: State<DbState>, months: i64) -> Result<(), AppError> {
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;

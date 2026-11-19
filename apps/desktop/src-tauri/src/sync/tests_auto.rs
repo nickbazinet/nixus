@@ -14,7 +14,9 @@ use crate::sync::manager::{
 };
 use crate::sync::snapshot::{LatestSnapshot, SNAP_LATEST_KEY};
 use crate::sync::store::{StoreError, StoreOp};
-use crate::sync::test_support::{test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer};
+use crate::sync::test_support::{
+    test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer,
+};
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -142,20 +144,30 @@ async fn two_entitled_computers_sync_both_ways_with_no_prompt_and_nothing_turned
     );
 
     probe_b.write_captured("fuel");
-    probe_b.captured(|tx| {
-        crate::db::test_dataset::rename_marker_row(tx, "groceries", "food");
-        crate::db::test_dataset::delete_marker_row(tx, "rent");
-        Ok(())
-    })
-    .expect("B's edits commit");
+    probe_b
+        .captured(|tx| {
+            crate::db::test_dataset::rename_marker_row(tx, "groceries", "food");
+            crate::db::test_dataset::delete_marker_row(tx, "rent");
+            Ok(())
+        })
+        .expect("B's edits commit");
 
     b.tick().await;
     a.tick().await;
 
     let on_a = probe_a.rows();
-    assert!(on_a.contains(&"fuel".to_string()), "A received B's new row: {on_a:?}");
-    assert!(on_a.contains(&"food".to_string()), "A received B's rename: {on_a:?}");
-    assert!(!on_a.contains(&"rent".to_string()), "A received B's delete: {on_a:?}");
+    assert!(
+        on_a.contains(&"fuel".to_string()),
+        "A received B's new row: {on_a:?}"
+    );
+    assert!(
+        on_a.contains(&"food".to_string()),
+        "A received B's rename: {on_a:?}"
+    );
+    assert!(
+        !on_a.contains(&"rent".to_string()),
+        "A received B's delete: {on_a:?}"
+    );
 
     probe_a.write_captured("insurance");
     a.tick().await;
@@ -236,7 +248,9 @@ async fn both_computers_relaunch_and_still_exchange_their_tails() {
     a2.tick().await;
 
     assert!(
-        probe_a.rows().contains(&"from-b-after-relaunch".to_string()),
+        probe_a
+            .rows()
+            .contains(&"from-b-after-relaunch".to_string()),
         "a relaunched A still applies B's tail: {:?}",
         probe_a.rows()
     );
@@ -269,7 +283,8 @@ async fn a_legacy_linked_dataset_resumes_silently_and_replaces_the_identity_less
     // as joined, over a cloud that still holds an identity-less snapshot.
     a.auto_start_now().await;
     seed_milestone_one_pointer(&cloud, &"a".repeat(64));
-    let (mut a2, mut events2) = relaunched_with(&probe_a, NOW_MS + 600_000, tuning_with_reconcile());
+    let (mut a2, mut events2) =
+        relaunched_with(&probe_a, NOW_MS + 600_000, tuning_with_reconcile());
     a2.auto_start_now().await;
 
     assert_never_asked("a legacy computer", &events.states());
@@ -300,7 +315,11 @@ async fn a_legacy_linked_dataset_resumes_silently_and_replaces_the_identity_less
         "a computer that bootstraps after the upgrade holds each row exactly once"
     );
     b.tick().await;
-    assert_eq!(probe_b.rows().len(), 2, "applying the tail may not duplicate a row");
+    assert_eq!(
+        probe_b.rows().len(),
+        2,
+        "applying the tail may not duplicate a row"
+    );
     assert_never_asked("B", &events_b.states());
 }
 
@@ -341,7 +360,11 @@ async fn an_account_without_the_capability_is_a_silent_no_op_until_it_gains_it()
     a.tick().await;
     a.tick().await;
 
-    assert_eq!(cloud.calls(), 0, "the gate refuses before any request is made");
+    assert_eq!(
+        cloud.calls(),
+        0,
+        "the gate refuses before any request is made"
+    );
     assert_eq!(a.status().state, SyncState::Unlinked);
     assert_eq!(a.status().error_code.as_deref(), Some("not_entitled"));
     assert_eq!(a.status().prompt, None);
@@ -385,8 +408,15 @@ async fn a_join_that_could_not_run_at_launch_starts_by_itself_once_the_network_i
     );
 
     a.auto_start_now().await;
-    assert!(!joined(&probe_a), "the launch attempt could not reach the cloud");
-    assert_eq!(a.status().state, SyncState::Offline, "and says so, without failing");
+    assert!(
+        !joined(&probe_a),
+        "the launch attempt could not reach the cloud"
+    );
+    assert_eq!(
+        a.status().state,
+        SyncState::Offline,
+        "and says so, without failing"
+    );
 
     tokio::time::advance(Duration::from_secs(600)).await;
     a.tick().await;
@@ -502,7 +532,10 @@ async fn only_two_independent_histories_are_still_asked_about() {
 
     assert_eq!(b.status().state, SyncState::LinkChoiceRequired);
     assert!(
-        matches!(b.status().prompt, Some(crate::sync::manager::SyncPrompt::LinkChoice { .. })),
+        matches!(
+            b.status().prompt,
+            Some(crate::sync::manager::SyncPrompt::LinkChoice { .. })
+        ),
         "two histories that share no row identities is the one case the user must settle"
     );
     assert!(!joined(&probe_b), "an unanswered question joins nothing");
@@ -511,7 +544,11 @@ async fn only_two_independent_histories_are_still_asked_about() {
     let before = cloud.calls();
     b.tick().await;
     b.tick().await;
-    assert_eq!(cloud.calls(), before, "sync stays paused while the question is open");
+    assert_eq!(
+        cloud.calls(),
+        before,
+        "sync stays paused while the question is open"
+    );
     assert!(!joined(&probe_b));
 
     // A relaunch re-asks, and still marks nothing.
@@ -606,4 +643,3 @@ fn the_join_marker_and_the_switch_are_this_computers_own_state() {
         "AD-15: deleting the row IS the unlinked state"
     );
 }
-

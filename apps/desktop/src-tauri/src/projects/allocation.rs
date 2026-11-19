@@ -53,7 +53,10 @@ pub(crate) fn whole_months(today: NaiveDate, target: NaiveDate) -> i64 {
 // dividing `remaining` by zero or a negative month count. An absent or unparseable date degrades to
 // "no deadline" rather than failing the whole suggestion: `target_date` is a nullable free-text ISO
 // column with no CHECK constraint, so bad data is representable.
-pub(crate) fn months_to_target(today: Option<NaiveDate>, target_date: Option<&String>) -> Option<i64> {
+pub(crate) fn months_to_target(
+    today: Option<NaiveDate>,
+    target_date: Option<&String>,
+) -> Option<i64> {
     let target = NaiveDate::parse_from_str(target_date?, "%Y-%m-%d").ok()?;
     Some(whole_months(today?, target).max(1))
 }
@@ -133,8 +136,7 @@ fn assign_weights(entries: &mut [AllocationEntry<'_>]) {
     let max_required_cents = required_monthly.iter().copied().max().unwrap_or(0);
 
     for (entry, required_cents) in entries.iter_mut().zip(required_monthly) {
-        let priority_weight =
-            (PRIORITY_WEIGHT_SCALE / (1 + i64::from(entry.priority_rank))).max(1);
+        let priority_weight = (PRIORITY_WEIGHT_SCALE / (1 + i64::from(entry.priority_rank))).max(1);
 
         let urgency_weight = if max_required_cents == 0 {
             0
@@ -177,9 +179,7 @@ fn distribute(entries: &mut [AllocationEntry<'_>], allocatable_cents: i64) {
     }
 }
 
-pub fn compute_suggested_allocation(
-    input: &AllocationInput,
-) -> Vec<ProjectAllocationSuggestion> {
+pub fn compute_suggested_allocation(input: &AllocationInput) -> Vec<ProjectAllocationSuggestion> {
     if !is_allocation_step(&input.current_step) {
         return Vec::new();
     }
@@ -357,7 +357,10 @@ mod tests {
     }
 
     fn weights(suggestions: &[ProjectAllocationSuggestion]) -> Vec<i64> {
-        suggestions.iter().map(|suggestion| suggestion.weight).collect()
+        suggestions
+            .iter()
+            .map(|suggestion| suggestion.weight)
+            .collect()
     }
 
     fn amount_for(suggestions: &[ProjectAllocationSuggestion], project_id: i64) -> i64 {
@@ -606,7 +609,10 @@ mod tests {
     #[test]
     fn fully_funded_project_is_excluded() {
         let input = AllocationInput {
-            projects: vec![project(1, 0, 1_000_000), funded_project(2, 500_000, 500_000)],
+            projects: vec![
+                project(1, 0, 1_000_000),
+                funded_project(2, 500_000, 500_000),
+            ],
             ..base_input()
         };
 
@@ -624,7 +630,10 @@ mod tests {
     #[test]
     fn overfunded_project_is_excluded() {
         let input = AllocationInput {
-            projects: vec![project(1, 0, 1_000_000), funded_project(2, 500_000, 900_000)],
+            projects: vec![
+                project(1, 0, 1_000_000),
+                funded_project(2, 500_000, 900_000),
+            ],
             ..base_input()
         };
 
@@ -671,7 +680,10 @@ mod tests {
             projects: vec![project(1, 0, 40_000)],
             ..input
         };
-        assert_eq!(amounts(&compute_suggested_allocation(&capped)), vec![40_000]);
+        assert_eq!(
+            amounts(&compute_suggested_allocation(&capped)),
+            vec![40_000]
+        );
     }
 
     // Story 32.3 renders and edits every active project, so a project whose share floors to zero must
@@ -829,10 +841,12 @@ mod tests {
 
     #[test]
     fn guard_allows_a_total_below_the_surplus_on_an_allowed_step() {
-        assert!(
-            guard_confirmable(&WaterfallStep::ContributeRegisteredAccounts, 100_000, 99_999)
-                .is_ok()
-        );
+        assert!(guard_confirmable(
+            &WaterfallStep::ContributeRegisteredAccounts,
+            100_000,
+            99_999
+        )
+        .is_ok());
         assert!(guard_confirmable(&WaterfallStep::InvestSurplus, 100_000, 1).is_ok());
     }
 
@@ -840,16 +854,22 @@ mod tests {
     // surplus is allowed, one cent over is not. Drift here enables a confirm the backend refuses.
     #[test]
     fn guard_allows_a_total_exactly_equal_to_the_surplus() {
-        assert!(
-            guard_confirmable(&WaterfallStep::ContributeRegisteredAccounts, 100_000, 100_000)
-                .is_ok()
-        );
+        assert!(guard_confirmable(
+            &WaterfallStep::ContributeRegisteredAccounts,
+            100_000,
+            100_000
+        )
+        .is_ok());
     }
 
     #[test]
     fn guard_rejects_a_total_one_cent_over_the_surplus() {
-        match guard_confirmable(&WaterfallStep::ContributeRegisteredAccounts, 100_000, 100_001)
-            .unwrap_err()
+        match guard_confirmable(
+            &WaterfallStep::ContributeRegisteredAccounts,
+            100_000,
+            100_001,
+        )
+        .unwrap_err()
         {
             AppError::Validation { field, .. } => {
                 assert_eq!(field, Some("amount_cents".to_string()));

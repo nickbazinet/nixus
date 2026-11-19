@@ -57,7 +57,10 @@ pub enum BootstrapError {
     OwnerMismatch,
     Snapshot(SnapshotError),
     /// The snapshot was written by a newer build. Refused, never applied (AD-11, CAP-7).
-    SnapshotTooNew { found: u32, supported: u32 },
+    SnapshotTooNew {
+        found: u32,
+        supported: u32,
+    },
     /// The guarded swap failed. Carries the stage and whether the dataset was rolled back.
     Swap(SwapFailed),
     /// The separate dataset could not be provisioned, so nothing was restored and the
@@ -107,7 +110,10 @@ impl std::fmt::Display for BootstrapError {
             }
             BootstrapError::Snapshot(error) => write!(f, "bootstrap snapshot: {error}"),
             BootstrapError::SnapshotTooNew { found, supported } => {
-                write!(f, "the cloud copy needs schema {found}, this build has {supported}")
+                write!(
+                    f,
+                    "the cloud copy needs schema {found}, this build has {supported}"
+                )
             }
             BootstrapError::Swap(failure) => write!(f, "bootstrap restore: {failure}"),
             BootstrapError::Registry => f.write_str("the separate profile could not be created"),

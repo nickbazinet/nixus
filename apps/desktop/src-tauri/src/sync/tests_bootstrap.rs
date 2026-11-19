@@ -23,15 +23,16 @@ use crate::models::DatasetKind;
 use crate::sync::auth::{AccountPin, AuthError};
 use crate::sync::bootstrap::{
     apply_choice, assess, measure_link, restore_latest, BootstrapError, BootstrapPlan, LinkChoice,
-    LinkOutcome, ReplaceTarget, RestoreTarget, SeparateContext, CAP2_BUDGET,
-    CAP2_BYTES_PER_SECOND,
+    LinkOutcome, ReplaceTarget, RestoreTarget, SeparateContext, CAP2_BUDGET, CAP2_BYTES_PER_SECOND,
 };
 use crate::sync::owner::{owner_object_body, OWNER_OBJECT_KEY};
 use crate::sync::snapshot::{
     build_snapshot, BuiltSnapshot, LatestSnapshot, SnapshotError, SNAP_LATEST_KEY,
 };
 use crate::sync::store::StoreError;
-use crate::sync::test_support::{gated_fake, syncing_fake, FakeGatedStore, FakeObjectStore, FakeOp};
+use crate::sync::test_support::{
+    gated_fake, syncing_fake, FakeGatedStore, FakeObjectStore, FakeOp,
+};
 
 /// The identity the Story-8 fake answers for, and the account the heavy-year fixture's
 /// `sync_state` row is pinned to.
@@ -56,9 +57,7 @@ struct HeldDataset {
 impl HeldDataset {
     fn opening(db_path: &Path) -> Self {
         Self {
-            held: Mutex::new(Some(
-                open_configured(db_path).expect("the dataset opens"),
-            )),
+            held: Mutex::new(Some(open_configured(db_path).expect("the dataset opens"))),
             closes: std::sync::atomic::AtomicUsize::new(0),
         }
     }
@@ -112,7 +111,10 @@ async fn published_cloud(source: &Path) -> (Arc<FakeObjectStore>, FakeGatedStore
         .await
         .expect("the snapshot builds");
 
-    store.seed(OWNER_OBJECT_KEY, owner_object_body(&pin(), 1_760_000_000_000));
+    store.seed(
+        OWNER_OBJECT_KEY,
+        owner_object_body(&pin(), 1_760_000_000_000),
+    );
     store.seed(&built.key(), built.object.clone());
     store.seed(
         SNAP_LATEST_KEY,
@@ -139,8 +141,8 @@ fn latest_of(built: &BuiltSnapshot) -> LatestSnapshot {
         hash: built.payload_sha256.clone(),
         schema_version: built.schema_version,
         created_ms: 1_760_000_000_000,
-            watermark: Default::default(),
-            carries_identities: true,
+        watermark: Default::default(),
+        carries_identities: true,
         wipe_epoch: 0,
     }
 }
@@ -219,7 +221,11 @@ async fn a_local_only_dataset_runs_no_bootstrap_code_and_reaches_no_network() {
         refused,
         BootstrapError::Blocked(crate::sync::gate::SyncBlocked::LocalOnlyDataset)
     ));
-    assert_eq!(store.calls(), 0, "a local-only dataset must make no request");
+    assert_eq!(
+        store.calls(),
+        0,
+        "a local-only dataset must make no request"
+    );
 }
 
 #[tokio::test]
@@ -230,7 +236,12 @@ async fn a_frozen_or_unentitled_account_transfers_nothing() {
         (true, Some(FrozenReason::OwnerMismatch)),
     ] {
         let store = Arc::new(FakeObjectStore::default());
-        let gated = gated_fake(Arc::clone(&store), DatasetKind::CloudLinked, entitled, frozen);
+        let gated = gated_fake(
+            Arc::clone(&store),
+            DatasetKind::CloudLinked,
+            entitled,
+            frozen,
+        );
 
         assert!(matches!(
             assess(&gated, &pin(), &empty_summary(), 0).await,
@@ -573,8 +584,11 @@ async fn an_older_snapshot_is_migrated_on_the_way_in() {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .expect("pragmas");
         run_migrations_up_to(&conn, 18).expect("an older schema");
-        conn.execute("INSERT INTO budget_groups (id, name) VALUES (1, 'older')", [])
-            .expect("a row");
+        conn.execute(
+            "INSERT INTO budget_groups (id, name) VALUES (1, 'older')",
+            [],
+        )
+        .expect("a row");
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
             .expect("checkpoint");
     }
@@ -596,8 +610,8 @@ async fn an_older_snapshot_is_migrated_on_the_way_in() {
         hash: crate::sync::object::hex_lower(&digest),
         schema_version: 18,
         created_ms: 1,
-            watermark: Default::default(),
-            carries_identities: true,
+        watermark: Default::default(),
+        carries_identities: true,
         wipe_epoch: 0,
     };
 
@@ -704,7 +718,10 @@ async fn replace_loads_the_cloud_copy_and_keeps_the_old_file_as_a_dated_backup()
         let expenses: i64 = conn
             .query_row("SELECT COUNT(*) FROM expenses", [], |row| row.get(0))
             .expect("count");
-        assert_eq!(expenses, heavy.expenses as i64, "the cloud copy is now live");
+        assert_eq!(
+            expenses, heavy.expenses as i64,
+            "the cloud copy is now live"
+        );
 
         // The restored dataset keeps its identity link: same install id, same account.
         let state = crate::db::sync_state::load(conn)
@@ -785,11 +802,8 @@ async fn separate_leaves_the_existing_file_byte_identical_and_links_a_new_profil
         dataset.id
     );
 
-    let separated = open_configured(&crate::datasets::dataset_db_path(
-        root.path(),
-        &dataset.id,
-    ))
-    .expect("the separated dataset opens");
+    let separated = open_configured(&crate::datasets::dataset_db_path(root.path(), &dataset.id))
+        .expect("the separated dataset opens");
     let expenses: i64 = separated
         .query_row("SELECT COUNT(*) FROM expenses", [], |row| row.get(0))
         .expect("count");

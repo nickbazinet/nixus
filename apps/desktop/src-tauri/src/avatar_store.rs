@@ -293,7 +293,8 @@ mod tests {
     }
 
     fn temp_source(name: &str, bytes: &[u8]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("nixus-avatar-{}-{}", std::process::id(), name));
+        let dir =
+            std::env::temp_dir().join(format!("nixus-avatar-{}-{}", std::process::id(), name));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         let mut file = std::fs::File::create(&path).unwrap();
@@ -350,7 +351,10 @@ mod tests {
         let saved = save_avatar(&dir, SUB, &payload, "image/png").expect("save succeeds");
         assert_eq!(saved.image_bytes, payload);
         assert_eq!(saved.mime_type, "image/png");
-        assert!(!saved.uploaded_at.is_empty(), "SQLite's clock fills this in");
+        assert!(
+            !saved.uploaded_at.is_empty(),
+            "SQLite's clock fills this in"
+        );
 
         let loaded = load_avatar(&dir, SUB)
             .expect("load succeeds")
@@ -367,7 +371,10 @@ mod tests {
         let dir = profiles_dir(&root);
         let first = derivative(64);
         let second = image::rendered_test_image(48, 32, false, image::ProjectImageFormat::Jpeg);
-        assert_ne!(first, second, "the fixtures must differ or this proves nothing");
+        assert_ne!(
+            first, second,
+            "the fixtures must differ or this proves nothing"
+        );
 
         save_avatar(&dir, SUB, &first, "image/png").expect("first save succeeds");
         let replaced = save_avatar(&dir, SUB, &second, "image/jpeg").expect("second save succeeds");
@@ -397,7 +404,10 @@ mod tests {
         save_avatar(&dir, OTHER_SUB, &theirs, "image/png").expect("save succeeds");
 
         assert_eq!(
-            load_avatar(&dir, SUB).expect("load").expect("row").image_bytes,
+            load_avatar(&dir, SUB)
+                .expect("load")
+                .expect("row")
+                .image_bytes,
             mine
         );
         assert_eq!(
@@ -533,13 +543,18 @@ mod tests {
         let dir = profiles_dir(&root);
         save_avatar(&dir, SUB, &derivative(64), "image/png").expect("save succeeds");
         save_avatar(&dir, OTHER_SUB, &derivative(48), "image/png").expect("save succeeds");
-        assert!(avatars_db_path(&dir).exists(), "the fixture must exist first");
+        assert!(
+            avatars_db_path(&dir).exists(),
+            "the fixture must exist first"
+        );
 
         delete_all_avatars(&dir).expect("the wipe succeeds");
 
         assert!(!avatars_db_path(&dir).exists());
         assert!(load_avatar(&dir, SUB).expect("load succeeds").is_none());
-        assert!(load_avatar(&dir, OTHER_SUB).expect("load succeeds").is_none());
+        assert!(load_avatar(&dir, OTHER_SUB)
+            .expect("load succeeds")
+            .is_none());
         delete_all_avatars(&dir).expect("the wipe is idempotent");
     }
 
@@ -562,7 +577,11 @@ mod tests {
         .expect("legacy schema created");
         conn.execute(
             "INSERT INTO user_avatars (cognito_sub, image_bytes, mime_type) VALUES (?1, ?2, ?3)",
-            params![SUB, image::rendered_test_image(32, 32, false, image::ProjectImageFormat::Png), "image/png"],
+            params![
+                SUB,
+                image::rendered_test_image(32, 32, false, image::ProjectImageFormat::Png),
+                "image/png"
+            ],
         )
         .expect("legacy row inserted");
     }
@@ -679,7 +698,11 @@ mod tests {
     #[test]
     fn the_inherited_source_refusals_keep_their_contracted_fields() {
         let cases: Vec<(&str, Vec<u8>, &str)> = vec![
-            ("notes.txt", b"plain text".to_vec(), "project_image_unsupported_type"),
+            (
+                "notes.txt",
+                b"plain text".to_vec(),
+                "project_image_unsupported_type",
+            ),
             ("blank.png", Vec::new(), "project_image_empty"),
             (
                 "prose.png",

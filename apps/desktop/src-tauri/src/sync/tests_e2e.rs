@@ -33,23 +33,23 @@ use crate::db::test_dataset::{
     seed_heavy_year_into, stamp_text_columns_with_sentinels, HeavyYearShape, SENTINEL_PREFIX,
 };
 use crate::db::{config::LOCAL_ONLY_KEYS, open_configured};
+use crate::entitlements::AccountCapabilities;
 use crate::models::DatasetKind;
+use crate::sync::auth::{AccountPin, AuthError};
 use crate::sync::blob::{blob_key, BLOB_KEY_PREFIX};
 use crate::sync::bootstrap::{
     measure_link, LinkBudget, LinkChoice, CAP2_BUDGET, CAP2_BYTES_PER_SECOND,
 };
+use crate::sync::gate::{CapabilitySource, GateStateSource, SyncBlocked, SyncGate};
 use crate::sync::limits::RequestRateCap;
 use crate::sync::manager::{
     SyncActor, SyncEnableOutcome, SyncState, SyncStatusPayload, SyncTuning,
 };
 use crate::sync::snapshot::SNAP_LATEST_KEY;
-use crate::entitlements::AccountCapabilities;
-use crate::sync::auth::{AccountPin, AuthError};
-use crate::sync::gate::{CapabilitySource, GateStateSource, SyncBlocked, SyncGate};
 use crate::sync::state::GateState;
 use crate::sync::test_support::{
-    test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer,
-    FAKE_IDENTITY_ID, FAKE_OWNER_SUB,
+    test_computer, ComputerProbe, FakeObjectStore, FakeOp, TestComputer, FAKE_IDENTITY_ID,
+    FAKE_OWNER_SUB,
 };
 use crate::sync::tests_bootstrap::{config_map, dump, tables};
 
@@ -160,7 +160,10 @@ async fn edit_then_settle(actor: &mut Actor, probe: &ComputerProbe, name: &str) 
 /// tuning's windows are bypassed by asking for the upload explicitly instead of sleeping.
 async fn edit_then_settle_real(actor: &mut Actor, probe: &ComputerProbe) {
     probe.write_row("later");
-    actor.sync_now().await.expect("the explicit upload succeeds");
+    actor
+        .sync_now()
+        .await
+        .expect("the explicit upload succeeds");
 }
 
 fn schema_version() -> u32 {
@@ -380,7 +383,10 @@ async fn sync_e2e_c_a_new_computer_is_usable_inside_the_cap2_budget() {
             .expect("the restored dataset answers a real query")
         });
 
-        assert_eq!(rows, shape.expenses as i64, "usable means it answers queries");
+        assert_eq!(
+            rows, shape.expenses as i64,
+            "usable means it answers queries"
+        );
         assert_eq!(
             cloud.calls_of_prefix(FakeOp::Get, BLOB_KEY_PREFIX),
             0,
@@ -433,9 +439,15 @@ async fn sync_e2e_d_replace_keeps_a_dated_backup_and_separate_keeps_the_old_file
     computer_a.enable(None).await.expect("A enables");
 
     b.write_row("only-on-b");
-    let asked = computer_b.enable(None).await.expect("the choice is not a fault");
+    let asked = computer_b
+        .enable(None)
+        .await
+        .expect("the choice is not a fault");
     assert!(
-        matches!(asked, SyncEnableOutcome::LinkChoiceRequired { local_rows: 1, .. }),
+        matches!(
+            asked,
+            SyncEnableOutcome::LinkChoiceRequired { local_rows: 1, .. }
+        ),
         "a computer with data is asked first, got {asked:?}"
     );
     assert_eq!(b.rows(), vec!["only-on-b".to_string()], "nothing moved yet");
@@ -445,7 +457,11 @@ async fn sync_e2e_d_replace_keeps_a_dated_backup_and_separate_keeps_the_old_file
         .await
         .expect("replace succeeds");
 
-    assert_eq!(b.rows(), vec!["from-a".to_string()], "the cloud copy is live");
+    assert_eq!(
+        b.rows(),
+        vec!["from-a".to_string()],
+        "the cloud copy is live"
+    );
     let backups = b.dated_backups();
     assert_eq!(backups.len(), 1, "CAP-5: the displaced file is kept");
     let kept = opened(&backups[0]);
@@ -501,7 +517,10 @@ async fn sync_e2e_e_frozen_stops_every_transfer_and_leaving_it_resumes() {
     let cloud = Arc::new(FakeObjectStore::default());
     let (mut computer_a, a, _computer_b, _b) = two_computers(&cloud);
     a.write_row("before");
-    computer_a.enable(None).await.expect("enable while entitled");
+    computer_a
+        .enable(None)
+        .await
+        .expect("enable while entitled");
     let while_entitled = cloud.calls();
 
     a.set_entitled(false);
@@ -564,7 +583,10 @@ async fn sync_e2e_f_a_conflicting_upload_never_overwrites_the_cloud_copy() {
     let theirs = cloud.stored(SNAP_LATEST_KEY).expect("B published");
 
     a.write_row("later-on-a");
-    computer_a.sync_now().await.expect("A's attempt is not a fault");
+    computer_a
+        .sync_now()
+        .await
+        .expect("A's attempt is not a fault");
 
     assert_eq!(computer_a.status().state, SyncState::Idle);
     assert!(
@@ -641,7 +663,10 @@ async fn sync_e2e_h_a_local_only_dataset_runs_no_sync_code() {
     let (host, probe) = test_computer("A", Arc::clone(&cloud), 1_700_000_000_000);
     let mut actor = actor_for(host.local_only());
 
-    let fault = actor.enable(None).await.expect_err("a local profile cannot sync");
+    let fault = actor
+        .enable(None)
+        .await
+        .expect_err("a local profile cannot sync");
 
     assert_eq!(fault.code(), "local_only");
     assert_eq!(actor.status().state, SyncState::Unlinked);
@@ -653,7 +678,11 @@ async fn sync_e2e_h_a_local_only_dataset_runs_no_sync_code() {
 
     assert_eq!(cloud.calls(), 0, "and no tick ever changes that");
     assert_eq!(actor.diagnostics().uploads, 0);
-    assert_eq!(probe.rows().len(), 2, "the local app works as it always did");
+    assert_eq!(
+        probe.rows().len(),
+        2,
+        "the local app works as it always did"
+    );
     report(
         "(h) a local-only dataset refused with local_only and made 0 requests across 2 \
          edits and 4 ticks"

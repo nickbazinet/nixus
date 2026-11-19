@@ -144,13 +144,17 @@ mod packed {
             let name = encoded
                 .get(cursor..cursor + name_len)
                 .ok_or_else(malformed)?;
-            let name = std::str::from_utf8(name).map_err(|_| malformed())?.to_string();
+            let name = std::str::from_utf8(name)
+                .map_err(|_| malformed())?
+                .to_string();
             cursor += name_len;
 
             let hlc = encoded
                 .get(cursor..cursor + HLC_LEN)
                 .ok_or_else(malformed)?;
-            let hlc = std::str::from_utf8(hlc).map_err(|_| malformed())?.to_string();
+            let hlc = std::str::from_utf8(hlc)
+                .map_err(|_| malformed())?
+                .to_string();
             cursor += HLC_LEN;
 
             let content_hash: [u8; CONTENT_HASH_LEN] = encoded
@@ -263,12 +267,14 @@ pub fn field_state(
     row_uuid: &[u8],
     column_name: &str,
 ) -> Result<Option<ColumnState>, AppError> {
-    Ok(read_columns(conn, table_name, row_uuid)?.and_then(|columns| {
-        columns
-            .into_iter()
-            .find(|(name, _)| name == column_name)
-            .map(|(_, state)| state)
-    }))
+    Ok(
+        read_columns(conn, table_name, row_uuid)?.and_then(|columns| {
+            columns
+                .into_iter()
+                .find(|(name, _)| name == column_name)
+                .map(|(_, state)| state)
+        }),
+    )
 }
 
 /// AD-5's gate, as one call: does `hlc` beat whatever currently owns the column?
@@ -421,7 +427,10 @@ fn keep_greater(greatest: &mut Option<String>, candidate: Option<&str>) {
         return;
     };
 
-    if greatest.as_deref().is_none_or(|current| candidate > current) {
+    if greatest
+        .as_deref()
+        .is_none_or(|current| candidate > current)
+    {
         *greatest = Some(candidate.to_string());
     }
 }
@@ -455,7 +464,11 @@ pub fn discard_unsent(conn: &Connection) -> Result<usize, AppError> {
 
 #[cfg(test)]
 pub(crate) fn field_state_row_count(conn: &Connection) -> Result<i64, AppError> {
-    Ok(conn.query_row("SELECT COUNT(*) FROM sync_field_state", [], |row| row.get(0))?)
+    Ok(
+        conn.query_row("SELECT COUNT(*) FROM sync_field_state", [], |row| {
+            row.get(0)
+        })?,
+    )
 }
 
 /// How many COLUMNS have state across the whole database, which is what the per-column tests
@@ -513,8 +526,14 @@ mod tests {
     #[test]
     fn the_packed_map_round_trips_and_is_deterministic() {
         let columns = vec![
-            ("sort_order".to_string(), state("0000000000000002-0123456789abcdef", 2)),
-            ("name".to_string(), state("0000000000000001-0123456789abcdef", 1)),
+            (
+                "sort_order".to_string(),
+                state("0000000000000002-0123456789abcdef", 2),
+            ),
+            (
+                "name".to_string(),
+                state("0000000000000001-0123456789abcdef", 1),
+            ),
         ];
         let encoded = packed::encode(&columns);
 
@@ -538,7 +557,10 @@ mod tests {
 
     #[test]
     fn a_truncated_map_is_refused_rather_than_read_past_its_end() {
-        let encoded = packed::encode(&[("name".to_string(), state("0000000000000001-0123456789abcdef", 1))]);
+        let encoded = packed::encode(&[(
+            "name".to_string(),
+            state("0000000000000001-0123456789abcdef", 1),
+        )]);
 
         for cut in 1..encoded.len() {
             assert!(

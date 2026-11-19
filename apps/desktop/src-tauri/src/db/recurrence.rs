@@ -404,9 +404,11 @@ mod tests {
             ]
         );
         // Nothing before the anchor's own month.
-        assert!(occurrences_in_month(&schedule, "2026-10-01 00:00:00", 2026, 9)
-            .unwrap()
-            .is_empty());
+        assert!(
+            occurrences_in_month(&schedule, "2026-10-01 00:00:00", 2026, 9)
+                .unwrap()
+                .is_empty()
+        );
 
         let every_four = weekly(EveryFourWeeks, "2026-10-01");
         assert_eq!(
@@ -424,9 +426,11 @@ mod tests {
         };
         // Created in November: October (before creation) has none, November (creation month) and
         // December (after) each have their occurrence.
-        assert!(occurrences_in_month(&schedule, "2026-11-10 00:00:00", 2026, 10)
-            .unwrap()
-            .is_empty());
+        assert!(
+            occurrences_in_month(&schedule, "2026-11-10 00:00:00", 2026, 10)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             occurrences_in_month(&schedule, "2026-11-10 00:00:00", 2026, 11).unwrap(),
             vec![d(2026, 11, 15)]

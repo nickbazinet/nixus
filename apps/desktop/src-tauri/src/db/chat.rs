@@ -23,7 +23,11 @@ pub struct ChatMessage {
 }
 
 // CAPTURE-SANCTIONED (AD-3): every caller reaches this through `ActiveDataset::write`.
-pub fn create_conversation(conn: &Connection, title: Option<&str>, agent_id: &str) -> Result<ChatConversation, AppError> {
+pub fn create_conversation(
+    conn: &Connection,
+    title: Option<&str>,
+    agent_id: &str,
+) -> Result<ChatConversation, AppError> {
     conn.execute(
         "INSERT INTO chat_conversations (title, agent_id) VALUES (?1, ?2)",
         params![title, agent_id],
@@ -158,7 +162,10 @@ pub fn get_conversation_messages_for_display(
 }
 
 /// The agent a conversation belongs to, or `None` when there is no such conversation.
-pub fn conversation_agent(conn: &Connection, conversation_id: i64) -> Result<Option<String>, AppError> {
+pub fn conversation_agent(
+    conn: &Connection,
+    conversation_id: i64,
+) -> Result<Option<String>, AppError> {
     use rusqlite::OptionalExtension;
     Ok(conn
         .query_row(
@@ -291,7 +298,10 @@ mod tests {
         let title = title.trim().to_string();
         let conv = create_conversation(&conn, Some(&title), "budget-helper").unwrap();
         // First 40 chars: "This is a very long message that should " -> trimmed removes trailing space
-        assert_eq!(conv.title, Some("This is a very long message that should".to_string()));
+        assert_eq!(
+            conv.title,
+            Some("This is a very long message that should".to_string())
+        );
     }
 
     #[test]

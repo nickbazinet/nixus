@@ -113,10 +113,12 @@ pub fn clear_pending_wipe(conn: &Connection) -> Result<(), AppError> {
 /// An unrecognised value reads as `Unregistered`: the safe direction, since it re-asserts the
 /// import rather than silently dropping it and letting the cloud's older snapshot win.
 pub fn import_pending(conn: &Connection) -> Result<Option<ImportStage>, AppError> {
-    Ok(config::get(conn, IMPORT_PENDING_KEY).map(|raw| match raw.as_str() {
-        "registered" => ImportStage::Registered,
-        _ => ImportStage::Unregistered,
-    }))
+    Ok(
+        config::get(conn, IMPORT_PENDING_KEY).map(|raw| match raw.as_str() {
+            "registered" => ImportStage::Registered,
+            _ => ImportStage::Unregistered,
+        }),
+    )
 }
 
 /// Records that an import happened here and owes the account its event.
@@ -214,11 +216,9 @@ mod tests {
     #[test]
     fn the_epoch_and_the_pending_marker_survive_a_wipe() {
         let conn = migrated_db();
-        let tx = rusqlite::Transaction::new_unchecked(
-            &conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )
-        .expect("begin");
+        let tx =
+            rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)
+                .expect("begin");
         crate::db::danger_zone::wipe_all(&tx).expect("the wipe succeeds");
         set_local_epoch(&tx, 2).expect("the epoch stores inside the wipe transaction");
         set_pending_wipe(&tx, "0123456789abcdef").expect("the marker stores with it");

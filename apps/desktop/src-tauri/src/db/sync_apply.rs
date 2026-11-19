@@ -74,12 +74,7 @@ pub fn record_applied(conn: &Connection, message: &AppliedMessage<'_>) -> Result
 ///
 /// All three count: re-folding an applied delta would double it, and re-parking a parked message
 /// would either fail its UNIQUE or queue it twice.
-pub fn is_recorded(
-    conn: &Connection,
-    install: &str,
-    seq: i64,
-    idx: i64,
-) -> Result<bool, AppError> {
+pub fn is_recorded(conn: &Connection, install: &str, seq: i64, idx: i64) -> Result<bool, AppError> {
     let found: Option<i64> = conn
         .prepare_cached(
             "SELECT 1 FROM sync_log WHERE install = ?1 AND seq = ?2 AND idx = ?3 \
@@ -599,7 +594,9 @@ fn execute_insert(
         .collect();
 
     let executed = conn
-        .prepare_cached(&format!("INSERT INTO {table} ({names}) VALUES ({placeholders})"))?
+        .prepare_cached(&format!(
+            "INSERT INTO {table} ({names}) VALUES ({placeholders})"
+        ))?
         .execute(values.as_slice());
 
     Ok(executed.map(|_| conn.last_insert_rowid()))
@@ -708,7 +705,9 @@ pub fn read_columns(
 
     let selected = columns.join(", ");
     let row = conn
-        .prepare_cached(&format!("SELECT {selected} FROM {table} WHERE _rowid_ = ?1"))?
+        .prepare_cached(&format!(
+            "SELECT {selected} FROM {table} WHERE _rowid_ = ?1"
+        ))?
         .query_row([row_id], |row| {
             let mut values = Vec::with_capacity(columns.len());
             for (offset, column) in columns.iter().enumerate() {

@@ -1,13 +1,13 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::account::{self as account_db, BalanceCauseRow, BalanceChange, CashFlowKind};
-use crate::sync::capture::BalanceCause;
 use crate::error::AppError;
 use crate::models::{
     CreateIncomeEntryInput, CreateIncomeSourceInput, IncomeEntry, IncomeSource,
     IncomeSourceWithLastEntry, IncomeSourceYearTotal, IncomeTotal, UpdateIncomeEntryInput,
     UpdateIncomeSourceInput,
 };
+use crate::sync::capture::BalanceCause;
 
 const VALID_INCOME_TYPES: &[&str] = &["employment", "freelance", "investment", "other"];
 
@@ -301,9 +301,8 @@ pub fn get_income_entries(
     conn: &Connection,
     source_id: Option<i64>,
 ) -> Result<Vec<IncomeEntry>, AppError> {
-    let row_mapper = |row: &rusqlite::Row| -> rusqlite::Result<IncomeEntry> {
-        row_to_income_entry(row)
-    };
+    let row_mapper =
+        |row: &rusqlite::Row| -> rusqlite::Result<IncomeEntry> { row_to_income_entry(row) };
 
     let entries = if let Some(sid) = source_id {
         let mut stmt = conn.prepare(
@@ -313,7 +312,8 @@ pub fn get_income_entries(
              WHERE e.source_id = ?1
              ORDER BY e.date DESC, e.id DESC",
         )?;
-        let result = stmt.query_map(params![sid], row_mapper)?
+        let result = stmt
+            .query_map(params![sid], row_mapper)?
             .collect::<Result<Vec<_>, _>>()?;
         result
     } else {
@@ -323,7 +323,8 @@ pub fn get_income_entries(
              JOIN income_sources s ON s.id = e.source_id
              ORDER BY e.date DESC, e.id DESC",
         )?;
-        let result = stmt.query_map([], row_mapper)?
+        let result = stmt
+            .query_map([], row_mapper)?
             .collect::<Result<Vec<_>, _>>()?;
         result
     };
@@ -370,12 +371,11 @@ pub fn get_income_total(conn: &Connection, year: i32, month: u32) -> Result<Inco
     };
     let end_date = format!("{:04}-{:02}-01", next_year, next_month);
 
-    let total: i64 = conn
-        .query_row(
-            "SELECT COALESCE(SUM(amount_cents), 0) FROM income_entries WHERE date >= ?1 AND date < ?2",
-            params![start_date, end_date],
-            |row| row.get(0),
-        )?;
+    let total: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(amount_cents), 0) FROM income_entries WHERE date >= ?1 AND date < ?2",
+        params![start_date, end_date],
+        |row| row.get(0),
+    )?;
 
     Ok(IncomeTotal {
         total_cents: total,
@@ -454,7 +454,10 @@ fn row_to_income_entry(row: &rusqlite::Row) -> rusqlite::Result<IncomeEntry> {
     })
 }
 
-pub(crate) fn validate_account_id(conn: &Connection, account_id: Option<i64>) -> Result<(), AppError> {
+pub(crate) fn validate_account_id(
+    conn: &Connection,
+    account_id: Option<i64>,
+) -> Result<(), AppError> {
     let Some(account_id) = account_id else {
         return Ok(());
     };

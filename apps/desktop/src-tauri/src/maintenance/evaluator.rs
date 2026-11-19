@@ -58,8 +58,12 @@ pub fn evaluate_task(input: &TaskEvalInput) -> TaskEvaluation {
         None
     };
 
-    let km_status = km_eval.as_ref().map(|(_, rem)| classify(*rem, ALERT_KM_THRESHOLD));
-    let time_status = time_eval.as_ref().map(|(_, rem)| classify(*rem, ALERT_DAYS_THRESHOLD));
+    let km_status = km_eval
+        .as_ref()
+        .map(|(_, rem)| classify(*rem, ALERT_KM_THRESHOLD));
+    let time_status = time_eval
+        .as_ref()
+        .map(|(_, rem)| classify(*rem, ALERT_DAYS_THRESHOLD));
     let status = worst_of(km_status, time_status);
 
     TaskEvaluation {
@@ -79,9 +83,8 @@ fn parse_anchor_date(last_service_date: &Option<String>, vehicle_created_at: &st
     }
     // Fall back to vehicle creation date (first 10 chars of datetime string)
     let date_str = vehicle_created_at.get(..10).unwrap_or("1970-01-01");
-    NaiveDate::parse_from_str(date_str, "%Y-%m-%d").unwrap_or_else(|_| {
-        NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()
-    })
+    NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+        .unwrap_or_else(|_| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
 }
 
 fn classify(remaining: i64, alert_threshold: i64) -> TaskStatus {
@@ -152,7 +155,11 @@ fn worst_of(a: Option<TaskStatus>, b: Option<TaskStatus>) -> TaskStatus {
         (None, None) => TaskStatus::Ok,
         (Some(s), None) | (None, Some(s)) => s,
         (Some(a), Some(b)) => {
-            if status_rank(&a) >= status_rank(&b) { a } else { b }
+            if status_rank(&a) >= status_rank(&b) {
+                a
+            } else {
+                b
+            }
         }
     }
 }
@@ -288,7 +295,11 @@ mod tests {
         let eval = evaluate_task(&input);
         assert_eq!(eval.status, TaskStatus::Upcoming);
         let days = eval.days_remaining.unwrap();
-        assert!(days > 0 && days <= 14, "expected 0 < days <= 14, got {}", days);
+        assert!(
+            days > 0 && days <= 14,
+            "expected 0 < days <= 14, got {}",
+            days
+        );
     }
 
     #[test]
@@ -337,7 +348,9 @@ mod tests {
             current_odometer_km: 103_000,
             // Time: ~10 days remaining → Upcoming
             last_service_date: Some(
-                (today() - chrono::Duration::days(172)).format("%Y-%m-%d").to_string()
+                (today() - chrono::Duration::days(172))
+                    .format("%Y-%m-%d")
+                    .to_string(),
             ),
             vehicle_created_at: created_at(),
             today: today(),

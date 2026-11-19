@@ -6,9 +6,9 @@ use tracing::{error, info};
 
 use crate::ai::agents::{self, AgentKind};
 use crate::ai::attachment as chat_attachment;
+use crate::ai::backend::{AiAttachment, AiTurn};
 use crate::ai::chat as chat_ai;
 use crate::ai::context;
-use crate::ai::backend::{AiAttachment, AiTurn};
 use crate::ai::{clone_provider, AiState};
 use crate::commands::home;
 use crate::db::account as account_db;
@@ -83,10 +83,7 @@ fn alternating_turns(db_messages: &[chat_db::ChatMessage]) -> Vec<(ConversationR
     turns
 }
 
-fn build_history_turns(
-    db_state: &State<DbState>,
-    conv_id: i64,
-) -> Result<Vec<AiTurn>, AppError> {
+fn build_history_turns(db_state: &State<DbState>, conv_id: i64) -> Result<Vec<AiTurn>, AppError> {
     let active = db_state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
@@ -215,65 +212,65 @@ pub async fn send_chat_message(
 
     // Check for tool call. The allowlist decision is made inside `parse_model_block`, so this
     // site never sees a tool the agent is not entitled to run.
-    let final_response = if let Some(block) = chat_ai::parse_model_block(&first_response, spec.tools)
-    {
-        // Save tool-call assistant message. Before executing, deliberately: the history has to
-        // show what the model asked for even when running it then fails.
-        {
-            let active = db_state.0.lock().map_err(|e| AppError::Database {
-                message: e.to_string(),
-            })?;
-            active.write(|tx| {
-                chat_db::insert_message(tx, conv_id, "assistant", &first_response, "tool_call")
-            })?;
-        }
+    let final_response =
+        if let Some(block) = chat_ai::parse_model_block(&first_response, spec.tools) {
+            // Save tool-call assistant message. Before executing, deliberately: the history has to
+            // show what the model asked for even when running it then fails.
+            {
+                let active = db_state.0.lock().map_err(|e| AppError::Database {
+                    message: e.to_string(),
+                })?;
+                active.write(|tx| {
+                    chat_db::insert_message(tx, conv_id, "assistant", &first_response, "tool_call")
+                })?;
+            }
 
-        let tool_result = match block {
-            chat_ai::ModelBlock::Tool(tool_call) => {
-                info!("Tool call detected: {}", tool_call.tool);
-                let _ = app.emit("chat:tool-executing", &tool_call.tool);
-                execute_tool_call(&db_state, &tool_call)?
+            let tool_result = match block {
+                chat_ai::ModelBlock::Tool(tool_call) => {
+                    info!("Tool call detected: {}", tool_call.tool);
+                    let _ = app.emit("chat:tool-executing", &tool_call.tool);
+                    execute_tool_call(&db_state, &tool_call)?
+                }
+                // The tool NAME only. Its params are model-authored text derived from user data and
+                // must not reach a log (AD-11).
+                chat_ai::ModelBlock::ToolNotAllowed(tool) => {
+                    info!("Tool call refused, not in this agent's allowlist: {}", tool);
+                    chat_ai::tool_not_allowed_result(&tool)
+                }
+            };
+
+            // Save tool-result user message
+            {
+                let active = db_state.0.lock().map_err(|e| AppError::Database {
+                    message: e.to_string(),
+                })?;
+                active.write(|tx| {
+                    chat_db::insert_message(tx, conv_id, "user", &tool_result, "tool_result")
+                })?;
             }
-            // The tool NAME only. Its params are model-authored text derived from user data and
-            // must not reach a log (AD-11).
-            chat_ai::ModelBlock::ToolNotAllowed(tool) => {
-                info!("Tool call refused, not in this agent's allowlist: {}", tool);
-                chat_ai::tool_not_allowed_result(&tool)
-            }
+
+            // Reload full history (now includes tool-call and tool-result saved above)
+            let history2 = build_history_turns(&db_state, conv_id)?;
+
+            // A second, fully independent routing decision: quota may have changed
+            // between the two Bedrock invocations of this one visible turn.
+            chat_ai::stream_chat_response(
+                byo.as_ref(),
+                &app,
+                chat_ai::ChatInvocation {
+                    turns: history2,
+                    system_prompt,
+                    attachment,
+                },
+            )
+            .await
+            .map_err(|e| {
+                error!("Chat AI error (tool follow-up): {}", e);
+                e
+            })?
+        } else {
+            first_response
         };
-
-        // Save tool-result user message
-        {
-            let active = db_state.0.lock().map_err(|e| AppError::Database {
-                message: e.to_string(),
-            })?;
-            active.write(|tx| {
-                chat_db::insert_message(tx, conv_id, "user", &tool_result, "tool_result")
-            })?;
-        }
-
-        // Reload full history (now includes tool-call and tool-result saved above)
-        let history2 = build_history_turns(&db_state, conv_id)?;
-
-        // A second, fully independent routing decision: quota may have changed
-        // between the two Bedrock invocations of this one visible turn.
-        chat_ai::stream_chat_response(
-            byo.as_ref(),
-            &app,
-            chat_ai::ChatInvocation {
-                turns: history2,
-                system_prompt,
-                attachment,
-            },
-        )
-        .await
-        .map_err(|e| {
-            error!("Chat AI error (tool follow-up): {}", e);
-            e
-        })?
-    } else {
-        first_response
-    };
 
     // Strip any residual tool_call blocks from final response (1-round limit)
     let final_response = regex::Regex::new(r"```tool_call\s*\n[\s\S]*?```")
@@ -558,10 +555,10 @@ fn execute_tool_call(
         }
         "query_maintenance_status" => {
             let filters = maintenance_db::MaintenanceStatusFilters {
-                vehicle_id: tool_call
-                    .params
-                    .get("vehicle_id")
-                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
+                vehicle_id: tool_call.params.get("vehicle_id").and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                }),
                 status_filter: tool_call
                     .params
                     .get("status_filter")
@@ -583,7 +580,10 @@ fn execute_tool_call(
             let vehicle_id = tool_call
                 .params
                 .get("vehicle_id")
-                .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
                 .ok_or_else(|| AppError::Validation {
                     message: "vehicle_id is required for query_maintenance_history".to_string(),
                     field: Some("vehicle_id".to_string()),
@@ -595,10 +595,10 @@ fn execute_tool_call(
                     .get("task_type_key")
                     .and_then(|v| v.as_str())
                     .map(String::from),
-                limit: tool_call
-                    .params
-                    .get("limit")
-                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))),
+                limit: tool_call.params.get("limit").and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                }),
             };
             let active = db_state.0.lock().map_err(|e| AppError::Database {
                 message: e.to_string(),
@@ -672,7 +672,11 @@ pub fn list_agents() -> Vec<AgentInfo> {
             kind: spec.kind.wire_name().to_string(),
             ready_key: spec.ready_key.to_string(),
             scope_key: spec.scope_key.to_string(),
-            starter_keys: spec.starter_keys.iter().map(|key| key.to_string()).collect(),
+            starter_keys: spec
+                .starter_keys
+                .iter()
+                .map(|key| key.to_string())
+                .collect(),
             routable: spec.routable,
         })
         .collect()
@@ -807,14 +811,19 @@ fn run_single_action(
             field: Some("action_type".to_string()),
         }),
         "update_balance" => {
-            let account_id = params["account_id"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "account_id is required".to_string(),
-                field: Some("account_id".to_string()),
-            })?;
-            let balance_cents = params["balance_cents"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "balance_cents is required".to_string(),
-                field: Some("balance_cents".to_string()),
-            })?;
+            let account_id = params["account_id"]
+                .as_i64()
+                .ok_or_else(|| AppError::Validation {
+                    message: "account_id is required".to_string(),
+                    field: Some("account_id".to_string()),
+                })?;
+            let balance_cents =
+                params["balance_cents"]
+                    .as_i64()
+                    .ok_or_else(|| AppError::Validation {
+                        message: "balance_cents is required".to_string(),
+                        field: Some("balance_cents".to_string()),
+                    })?;
             let (_, account) = account_db::update_account_balance(conn, account_id, balance_cents)?;
             Ok(format!(
                 "Done. {} balance updated to ${:.2}.",
@@ -826,21 +835,29 @@ fn run_single_action(
             let input = CreateAccountInput {
                 name: params["name"].as_str().unwrap_or("").to_string(),
                 institution: params["institution"].as_str().unwrap_or("").to_string(),
-                account_type: params["account_type"].as_str().unwrap_or("chequing").to_string(),
+                account_type: params["account_type"]
+                    .as_str()
+                    .unwrap_or("chequing")
+                    .to_string(),
                 currency: params["currency"].as_str().unwrap_or("CAD").to_string(),
             };
             let account = account_db::insert_account(conn, &input)?;
             Ok(format!("Done. Account \"{}\" created.", account.name))
         }
         "update_asset_value" => {
-            let asset_id = params["asset_id"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "asset_id is required".to_string(),
-                field: Some("asset_id".to_string()),
-            })?;
-            let value_cents = params["value_cents"].as_i64().ok_or_else(|| AppError::Validation {
-                message: "value_cents is required".to_string(),
-                field: Some("value_cents".to_string()),
-            })?;
+            let asset_id = params["asset_id"]
+                .as_i64()
+                .ok_or_else(|| AppError::Validation {
+                    message: "asset_id is required".to_string(),
+                    field: Some("asset_id".to_string()),
+                })?;
+            let value_cents =
+                params["value_cents"]
+                    .as_i64()
+                    .ok_or_else(|| AppError::Validation {
+                        message: "value_cents is required".to_string(),
+                        field: Some("value_cents".to_string()),
+                    })?;
             let (_, asset) = asset_db::update_asset_value(conn, asset_id, value_cents)?;
             Ok(format!(
                 "Done. {} value updated to ${:.2}.",
@@ -865,10 +882,7 @@ const MAX_BATCH_ACTIONS: usize = 200;
 /// list, this batch can mix independent records (expenses, accounts...) where one bad row (an
 /// unknown category, say) must not erase the rest that were fine. Every item's own outcome is
 /// reported so the model can see exactly what to fix and re-propose only the failures.
-fn batch_actions_action(
-    tx: &WriteTx<'_>,
-    params: &serde_json::Value,
-) -> Result<String, AppError> {
+fn batch_actions_action(tx: &WriteTx<'_>, params: &serde_json::Value) -> Result<String, AppError> {
     let items = params
         .get("actions")
         .and_then(|v| v.as_array())
@@ -890,18 +904,27 @@ fn batch_actions_action(
 
     for (index, item) in items.iter().enumerate() {
         let position = index + 1;
-        let item_type = item.get("action_type").and_then(|v| v.as_str()).unwrap_or("");
+        let item_type = item
+            .get("action_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         if item_type.is_empty() {
             failed.push(format!("#{}: action_type is required", position));
             continue;
         }
         if item_type == "batch_actions" {
-            failed.push(format!("#{}: a batch cannot contain another batch", position));
+            failed.push(format!(
+                "#{}: a batch cannot contain another batch",
+                position
+            ));
             continue;
         }
 
-        let item_params = item.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        let item_params = item
+            .get("params")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
 
         // One SAVEPOINT per item, which is what keeps "best effort" honest now that the whole
         // batch is one captured transaction (AD-3): rolling the savepoint back discards the failed
@@ -1216,7 +1239,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(category_rows(&conn), vec![("House".to_string(), 2, 250_000)]);
+        assert_eq!(
+            category_rows(&conn),
+            vec![("House".to_string(), 2, 250_000)]
+        );
         assert!(message.contains("House"));
         assert!(message.contains("$2500.00"));
     }
@@ -1476,7 +1502,11 @@ mod tests {
         assert_eq!(
             category_rows(conn),
             vec![
-                ("House Related".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS),
+                (
+                    "House Related".to_string(),
+                    1,
+                    DEFAULT_CATEGORY_TARGET_CENTS
+                ),
                 ("Car".to_string(), 2, DEFAULT_CATEGORY_TARGET_CENTS),
             ]
         );
@@ -1488,7 +1518,11 @@ mod tests {
         let active = local_dataset(budget_action_test_db());
         let conn = active.conn.as_ref().expect("the fixture dataset");
 
-        for params in [json!({}), json!({ "actions": [] }), json!({ "actions": "House" })] {
+        for params in [
+            json!({}),
+            json!({ "actions": [] }),
+            json!({ "actions": "House" }),
+        ] {
             let err = active
                 .write(|tx| batch_actions_action(tx, &params))
                 .unwrap_err();
@@ -1516,7 +1550,14 @@ mod tests {
         ))
         .unwrap();
 
-        assert_eq!(category_rows(conn), vec![("House Related".to_string(), 1, DEFAULT_CATEGORY_TARGET_CENTS)]);
+        assert_eq!(
+            category_rows(conn),
+            vec![(
+                "House Related".to_string(),
+                1,
+                DEFAULT_CATEGORY_TARGET_CENTS
+            )]
+        );
         assert!(message.contains("1 of 2"));
         assert!(message.contains("Failed"));
     }
@@ -2071,8 +2112,8 @@ mod tests {
     #[test]
     fn the_home_surface_owns_its_action_and_no_financial_writes() {
         let conn = conversations_db();
-        let conv = chat_db::create_conversation(&conn, Some("t"), home::HOME_AGENT_ID)
-            .expect("create");
+        let conv =
+            chat_db::create_conversation(&conn, Some("t"), home::HOME_AGENT_ID).expect("create");
 
         assert!(
             conversation_allows_action(&conn, conv.id, home::HOME_SURFACE_ACTION)

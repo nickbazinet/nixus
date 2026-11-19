@@ -11,9 +11,9 @@ use tempfile::TempDir;
 
 use crate::db::sim_tables::SimCell;
 use crate::sync::clock::{Hlc, WallClock};
-use crate::sync::sim::oracle::Oracle;
 use crate::sync::sim::engine::{ReplicaEngine, SimError};
 use crate::sync::sim::model::{fresh_row_uuid, natural_key_uuid, Change, RowUuid, Table};
+use crate::sync::sim::oracle::Oracle;
 use crate::sync::sim::reference::{Mutation, ReferenceEngine};
 use crate::sync::sim::runner::{self, SimConfig, SimOutcome};
 
@@ -46,7 +46,11 @@ fn config_for(seed: u64) -> SimConfig {
 
 fn proptest_config() -> ProptestConfig {
     ProptestConfig {
-        cases: if pinned_seed().is_some() { 1 } else { seed_count() },
+        cases: if pinned_seed().is_some() {
+            1
+        } else {
+            seed_count()
+        },
         // No regression file: this crate's source tree must stay clean, and a seed is already
         // printed and archived on failure.
         failure_persistence: None,
@@ -168,7 +172,13 @@ fn the_oracle_keeps_a_surrogate_row_and_a_later_edit_dead() {
     let account = fresh_row_uuid(1);
     let mut surrogate = Oracle::default();
     surrogate.record(stamp(1), create_account(account));
-    surrogate.record(stamp(2), Change::Tombstone { table: accounts, row: account });
+    surrogate.record(
+        stamp(2),
+        Change::Tombstone {
+            table: accounts,
+            row: account,
+        },
+    );
     surrogate.record(stamp(3), create_account(account));
     assert!(
         !surrogate
@@ -197,7 +207,13 @@ fn the_oracle_keeps_a_surrogate_row_and_a_later_edit_dead() {
             ],
         },
     );
-    edited.record(stamp(3), Change::Tombstone { table: entries, row: entry });
+    edited.record(
+        stamp(3),
+        Change::Tombstone {
+            table: entries,
+            row: entry,
+        },
+    );
     edited.record(
         stamp(4),
         Change::Upsert {
@@ -426,7 +442,9 @@ fn an_engine_that_ignores_tombstones_keeps_a_deleted_row() {
         })
         .expect("the delete is issued");
     let segment = replicas.flush(0);
-    replicas.engines[1].deliver(&segment).expect("it is delivered");
+    replicas.engines[1]
+        .deliver(&segment)
+        .expect("it is delivered");
 
     assert_eq!(
         replicas.rows_in(1, Table::Accounts),
@@ -445,7 +463,9 @@ fn an_engine_that_lets_arrival_order_win_diverges() {
         .local_write(&new_account(row, "Original"))
         .expect("the account is created");
     let creation = replicas.flush(0);
-    replicas.engines[1].deliver(&creation).expect("both replicas hold it");
+    replicas.engines[1]
+        .deliver(&creation)
+        .expect("both replicas hold it");
 
     replicas.tick();
     replicas.engines[0]
@@ -458,8 +478,12 @@ fn an_engine_that_lets_arrival_order_win_diverges() {
 
     let from_zero = replicas.flush(0);
     let from_one = replicas.flush(1);
-    replicas.engines[0].deliver(&from_one).expect("r0 folds r1's rename");
-    replicas.engines[1].deliver(&from_zero).expect("r1 folds r0's rename");
+    replicas.engines[0]
+        .deliver(&from_one)
+        .expect("r0 folds r1's rename");
+    replicas.engines[1]
+        .deliver(&from_zero)
+        .expect("r1 folds r0's rename");
 
     assert_eq!(
         replicas.name_of(0, Table::Accounts, row),
@@ -504,7 +528,10 @@ fn the_fault_model_actually_fires() {
         ("offline periods", totals.offline_periods),
         ("deletes", totals.deletes),
         ("double deletes", totals.double_deletes),
-        ("concurrent edit-and-delete pairs", totals.concurrent_edit_deletes),
+        (
+            "concurrent edit-and-delete pairs",
+            totals.concurrent_edit_deletes,
+        ),
         ("double absolute balance sets", totals.double_balance_sets),
         ("surviving rows", totals.live_rows),
     ] {
@@ -515,13 +542,16 @@ fn the_fault_model_actually_fires() {
     // memory and declines the file swap), so their non-vacuity has to be measured there.
     let mut lifecycle = SimOutcome::default();
     for seed in 0..6u64 {
-        let outcome = runner::run_real(&config_for(seed * 0xD1B5_4A32))
-            .expect("the real pipeline converges");
+        let outcome =
+            runner::run_real(&config_for(seed * 0xD1B5_4A32)).expect("the real pipeline converges");
         lifecycle.restores += outcome.restores;
         lifecycle.clones += outcome.clones;
     }
 
-    for (what, count) in [("restores", lifecycle.restores), ("clones", lifecycle.clones)] {
+    for (what, count) in [
+        ("restores", lifecycle.restores),
+        ("clones", lifecycle.clones),
+    ] {
         assert!(count > 0, "6 real-pipeline seeds produced no {what}");
     }
 }
@@ -662,7 +692,9 @@ fn a_replica_missing_a_segment_converges_once_it_arrives() {
         .expect("the account is renamed");
     let rename = replicas.flush(0);
 
-    replicas.engines[1].deliver(&rename).expect("the rename is delivered first");
+    replicas.engines[1]
+        .deliver(&rename)
+        .expect("the rename is delivered first");
     assert_eq!(replicas.engines[1].pending_count(), 1);
     assert_eq!(replicas.rows_in(1, Table::Accounts), 0);
 
@@ -691,7 +723,9 @@ fn a_delete_beats_a_concurrent_edit_on_both_replicas() {
         .local_write(&new_account(row, "Shared"))
         .expect("the account is created");
     let creation = replicas.flush(0);
-    replicas.engines[1].deliver(&creation).expect("both replicas hold it");
+    replicas.engines[1]
+        .deliver(&creation)
+        .expect("both replicas hold it");
 
     replicas.tick();
     replicas.engines[1]
@@ -707,7 +741,9 @@ fn a_delete_beats_a_concurrent_edit_on_both_replicas() {
 
     let edit = replicas.flush(1);
     let tombstone = replicas.flush(0);
-    replicas.engines[0].deliver(&edit).expect("the edit arrives after the delete");
+    replicas.engines[0]
+        .deliver(&edit)
+        .expect("the edit arrives after the delete");
     replicas.engines[1]
         .deliver(&tombstone)
         .expect("the delete arrives after the edit");
@@ -730,7 +766,9 @@ fn deleting_the_same_row_twice_is_one_delete() {
         .local_write(&new_account(row, "Doomed"))
         .expect("the account is created");
     let creation = replicas.flush(0);
-    replicas.engines[1].deliver(&creation).expect("both replicas hold it");
+    replicas.engines[1]
+        .deliver(&creation)
+        .expect("both replicas hold it");
 
     for replica in 0..2 {
         replicas.tick();
@@ -744,8 +782,12 @@ fn deleting_the_same_row_twice_is_one_delete() {
 
     let first = replicas.flush(0);
     let second = replicas.flush(1);
-    replicas.engines[0].deliver(&second).expect("r0 sees r1's delete");
-    replicas.engines[1].deliver(&first).expect("r1 sees r0's delete");
+    replicas.engines[0]
+        .deliver(&second)
+        .expect("r0 sees r1's delete");
+    replicas.engines[1]
+        .deliver(&first)
+        .expect("r1 sees r0's delete");
 
     assert_eq!(replicas.rows_in(0, Table::Accounts), 0);
     assert_eq!(
@@ -799,7 +841,9 @@ fn a_duplicated_segment_does_not_double_count_a_delta_or_a_counter() {
 
     let segment = replicas.flush(0);
     for _ in 0..3 {
-        replicas.engines[1].deliver(&segment).expect("the duplicate is harmless");
+        replicas.engines[1]
+            .deliver(&segment)
+            .expect("the duplicate is harmless");
     }
 
     assert_eq!(
@@ -844,8 +888,12 @@ fn two_replicas_creating_the_same_natural_key_row_converge_on_one_row() {
 
     let from_zero = replicas.flush(0);
     let from_one = replicas.flush(1);
-    replicas.engines[0].deliver(&from_one).expect("r0 folds r1's insert");
-    replicas.engines[1].deliver(&from_zero).expect("r1 folds r0's insert");
+    replicas.engines[0]
+        .deliver(&from_one)
+        .expect("r0 folds r1's insert");
+    replicas.engines[1]
+        .deliver(&from_zero)
+        .expect("r1 folds r0's insert");
 
     for replica in 0..2 {
         assert_eq!(
@@ -880,7 +928,9 @@ fn a_parent_delete_cascades_and_a_late_child_is_dropped() {
         })
         .expect("the source is created");
     let creation = replicas.flush(0);
-    replicas.engines[1].deliver(&creation).expect("both replicas hold it");
+    replicas.engines[1]
+        .deliver(&creation)
+        .expect("both replicas hold it");
 
     replicas.tick();
     replicas.engines[1]
@@ -905,7 +955,9 @@ fn a_parent_delete_cascades_and_a_late_child_is_dropped() {
 
     let child = replicas.flush(1);
     let tombstone = replicas.flush(0);
-    replicas.engines[0].deliver(&child).expect("the child arrives after the delete");
+    replicas.engines[0]
+        .deliver(&child)
+        .expect("the child arrives after the delete");
     replicas.engines[1]
         .deliver(&tombstone)
         .expect("the delete arrives after the child");

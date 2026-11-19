@@ -271,7 +271,10 @@ pub fn alternate(turns: Vec<AiTurn>) -> Vec<AiTurn> {
 }
 
 fn collect_category_terms(node: &Value, terms: &mut Vec<String>) {
-    if let Some(term) = node.pointer("/dataBinding/params/category").and_then(Value::as_str) {
+    if let Some(term) = node
+        .pointer("/dataBinding/params/category")
+        .and_then(Value::as_str)
+    {
         terms.push(term.to_string());
     }
     if let Some(children) = node.get("children").and_then(Value::as_array) {

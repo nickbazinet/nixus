@@ -47,9 +47,6 @@ mod tests {
 
     #[test]
     fn falls_back_to_vehicle_when_empty() {
-        assert_eq!(
-            derive_vehicle_nickname(&None, &None, &None),
-            "Vehicle"
-        );
+        assert_eq!(derive_vehicle_nickname(&None, &None, &None), "Vehicle");
     }
 }

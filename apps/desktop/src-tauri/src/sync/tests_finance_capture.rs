@@ -24,10 +24,9 @@ use crate::models::{
     CreateAccountInput, CreateAssetInput, CreateBudgetCategory, CreateBudgetGroup,
     CreateExpenseInput, CreateIncomeEntryInput, CreateIncomeSourceInput,
     CreateRecurringExpenseTemplateInput, CreateRecurringIncomeTemplateInput,
-    CreateRecurringTransferTemplateInput, DatasetKind,
-    UpdateAccountInput, UpdateAssetInput, UpdateExpenseInput, UpdateIncomeEntryInput,
-    UpdateIncomeSourceInput, UpdateRecurringExpenseTemplateInput,
-    UpdateRecurringIncomeTemplateInput,
+    CreateRecurringTransferTemplateInput, DatasetKind, UpdateAccountInput, UpdateAssetInput,
+    UpdateExpenseInput, UpdateIncomeEntryInput, UpdateIncomeSourceInput,
+    UpdateRecurringExpenseTemplateInput, UpdateRecurringIncomeTemplateInput,
 };
 
 use super::capture::{payload, Capture};
@@ -885,7 +884,10 @@ fn a_backfilled_recurring_transfer_takes_its_derived_identity_and_shared_causes(
         identity::recurring_transfer(&[0xC3; 16], PERIOD).to_vec(),
         "the generated transfer takes (template uuid, period)"
     );
-    assert_eq!(one_transfer, two_transfer, "two computers agree on the transfer");
+    assert_eq!(
+        one_transfer, two_transfer,
+        "two computers agree on the transfer"
+    );
     assert_eq!(
         one_causes, two_causes,
         "and on the causes of its balance movements, so each is applied once"

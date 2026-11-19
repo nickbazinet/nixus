@@ -63,7 +63,10 @@ impl FakeProvider {
 }
 
 impl PriceProvider for FakeProvider {
-    fn search<'a>(&'a self, _query: &'a str) -> ProviderFuture<'a, Vec<crate::models::StockSearchResult>> {
+    fn search<'a>(
+        &'a self,
+        _query: &'a str,
+    ) -> ProviderFuture<'a, Vec<crate::models::StockSearchResult>> {
         Box::pin(async move { Ok(Vec::new()) })
     }
 
@@ -241,10 +244,8 @@ async fn a_base_currency_holding_is_priced_without_any_fx_request() {
 async fn a_usd_holding_is_converted_through_the_fx_pair_and_the_rate_is_stored() {
     let (_dir, state) = state();
     let asset_id = add_holding(&state, "AAPL", 1_000_000);
-    let provider = FakeProvider::new(&[
-        ("AAPL", 200_000_000, "USD"),
-        ("USDCAD=X", 1_370_000, "CAD"),
-    ]);
+    let provider =
+        FakeProvider::new(&[("AAPL", 200_000_000, "USD"), ("USDCAD=X", 1_370_000, "CAD")]);
 
     let summary = refresh_holdings(&state, &provider, false)
         .await
@@ -258,10 +259,7 @@ async fn a_usd_holding_is_converted_through_the_fx_pair_and_the_rate_is_stored()
     assert_eq!(value_cents(&state, asset_id), 27_400);
     assert_eq!(
         provider.requests(),
-        vec![
-            vec!["AAPL".to_string()],
-            vec![fx_symbol("USD", "CAD")]
-        ]
+        vec![vec!["AAPL".to_string()], vec![fx_symbol("USD", "CAD")]]
     );
 }
 
@@ -313,10 +311,7 @@ async fn one_dead_symbol_does_not_stop_the_others_and_keeps_its_own_cached_value
 async fn a_missing_fx_leg_leaves_the_holding_exactly_as_it_was() {
     let (_dir, state) = state();
     let asset_id = add_holding(&state, "AAPL", 1_000_000);
-    let full = FakeProvider::new(&[
-        ("AAPL", 200_000_000, "USD"),
-        ("USDCAD=X", 1_370_000, "CAD"),
-    ]);
+    let full = FakeProvider::new(&[("AAPL", 200_000_000, "USD"), ("USDCAD=X", 1_370_000, "CAD")]);
     refresh_holdings(&state, &full, true)
         .await
         .expect("the first pass prices it");
@@ -409,15 +404,10 @@ async fn results_are_discarded_when_the_dataset_changes_during_the_fetch() {
     let asset_id = add_holding(&state, "SHOP.TO", 1_000_000);
 
     let switcher = Arc::clone(&state);
-    let provider = FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]).with_hook(Box::new(
-        move || {
-            switcher
-                .0
-                .lock()
-                .expect("the dataset lock")
-                .id = Some("another-profile".to_string());
-        },
-    ));
+    let provider =
+        FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]).with_hook(Box::new(move || {
+            switcher.0.lock().expect("the dataset lock").id = Some("another-profile".to_string());
+        }));
 
     let summary = refresh_holdings(&state, &provider, true)
         .await
@@ -667,7 +657,10 @@ async fn refresh_one_prices_the_new_holding_and_leaves_every_other_alone() {
     let stored = holding(&state, created);
     assert_eq!(stored.last_price_cents, Some(12_345));
     assert_eq!(stored.currency.as_deref(), Some("CAD"));
-    assert_eq!(stored.fx_rate_to_base_micros, Some(stock_db::UNIT_FX_MICROS));
+    assert_eq!(
+        stored.fx_rate_to_base_micros,
+        Some(stock_db::UNIT_FX_MICROS)
+    );
     assert!(stored.last_price_at.is_some());
     assert_eq!(value_cents(&state, created), 30_863);
 
@@ -695,9 +688,13 @@ async fn refresh_one_ignores_the_fresh_window() {
     let (_dir, state) = state();
     let created = add_holding(&state, "SHOP.TO", 1_000_000);
 
-    refresh_one(&state, &FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]), created)
-        .await
-        .expect("the first pass");
+    refresh_one(
+        &state,
+        &FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]),
+        created,
+    )
+    .await
+    .expect("the first pass");
     assert_eq!(value_cents(&state, created), 10_000);
 
     let again = FakeProvider::new(&[("SHOP.TO", 120_000_000, "CAD")]);
@@ -705,7 +702,11 @@ async fn refresh_one_ignores_the_fresh_window() {
         .await
         .expect("the second pass");
 
-    assert_eq!(again.requests().len(), 1, "the throttle must not apply here");
+    assert_eq!(
+        again.requests().len(),
+        1,
+        "the throttle must not apply here"
+    );
     assert_eq!(value_cents(&state, created), 12_000);
 }
 
@@ -738,7 +739,11 @@ async fn refresh_one_offline_keeps_the_new_holding_saved_and_unpriced() {
         "nothing may be invented for a holding that never priced"
     );
     assert_eq!(value_cents(&state, created), 0);
-    assert_eq!(snapshots(&state).0, 0, "no value moved, so no history point");
+    assert_eq!(
+        snapshots(&state).0,
+        0,
+        "no value moved, so no history point"
+    );
     assert!(price_refresh_audit(&state).is_empty());
 }
 
@@ -809,10 +814,8 @@ async fn an_fx_quote_that_is_not_in_the_base_currency_is_discarded() {
     let (_dir, state) = state();
     let asset_id = add_holding(&state, "AAPL", 1_000_000);
     // `USDCAD=X` priced in EUR: the right symbol, the wrong instrument.
-    let provider = FakeProvider::new(&[
-        ("AAPL", 200_000_000, "USD"),
-        ("USDCAD=X", 1_370_000, "EUR"),
-    ]);
+    let provider =
+        FakeProvider::new(&[("AAPL", 200_000_000, "USD"), ("USDCAD=X", 1_370_000, "EUR")]);
 
     let summary = refresh_holdings(&state, &provider, true)
         .await
@@ -830,9 +833,13 @@ async fn an_fx_quote_that_is_not_in_the_base_currency_is_discarded() {
 async fn a_zero_quote_leaves_the_cached_price_and_value_untouched() {
     let (_dir, state) = state();
     let asset_id = add_holding(&state, "SHOP.TO", 1_000_000);
-    refresh_holdings(&state, &FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]), true)
-        .await
-        .expect("the first pass prices it");
+    refresh_holdings(
+        &state,
+        &FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]),
+        true,
+    )
+    .await
+    .expect("the first pass prices it");
 
     let halted = FakeProvider::new(&[("SHOP.TO", 0, "CAD")]);
     let summary = refresh_holdings(&state, &halted, true)
@@ -876,8 +883,8 @@ async fn an_overlapping_pass_is_skipped_rather_than_run_twice() {
     let asset_id = add_holding(&state, "SHOP.TO", 1_000_000);
 
     // The first pass yields inside its fetch, which is the window the second one arrives in.
-    let slow = FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")])
-        .with_delay(Duration::from_millis(50));
+    let slow =
+        FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]).with_delay(Duration::from_millis(50));
     let fast = FakeProvider::new(&[("SHOP.TO", 999_000_000, "CAD")]);
 
     let (first, second) = tokio::join!(
@@ -917,15 +924,23 @@ async fn the_in_flight_guard_is_released_after_every_pass_including_a_skipped_on
         .expect("the empty pass");
 
     let asset_id = add_holding(&state, "SHOP.TO", 1_000_000);
-    refresh_holdings(&state, &FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]), true)
-        .await
-        .expect("a later pass still runs");
+    refresh_holdings(
+        &state,
+        &FakeProvider::new(&[("SHOP.TO", 100_000_000, "CAD")]),
+        true,
+    )
+    .await
+    .expect("a later pass still runs");
     assert_eq!(value_cents(&state, asset_id), 10_000);
 
     // And after the throttled early return too.
-    refresh_holdings(&state, &FakeProvider::new(&[("SHOP.TO", 110_000_000, "CAD")]), false)
-        .await
-        .expect("the throttled pass");
+    refresh_holdings(
+        &state,
+        &FakeProvider::new(&[("SHOP.TO", 110_000_000, "CAD")]),
+        false,
+    )
+    .await
+    .expect("the throttled pass");
     let forced = FakeProvider::new(&[("SHOP.TO", 120_000_000, "CAD")]);
     refresh_holdings(&state, &forced, true)
         .await

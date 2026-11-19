@@ -400,7 +400,10 @@ fn a_restore_keeps_the_snapshots_merge_state_and_this_computers_log() {
     let carried_state = crate::db::sync_state::load(conn)
         .expect("the row reads")
         .expect("the restore carried this computer's own sync state");
-    assert!(carried_state.joined(), "a restore does not un-join this computer");
+    assert!(
+        carried_state.joined(),
+        "a restore does not un-join this computer"
+    );
     assert!(
         carried_state.sync_disabled,
         "a restore does not undo the user's switch"
@@ -457,7 +460,9 @@ fn a_restore_keeps_the_snapshots_merge_state_and_this_computers_log() {
         "the fixture's foreign-install log rows are the snapshot's business, not the old file's"
     );
     assert_eq!(
-        count("SELECT COUNT(*) FROM sync_log WHERE install = '0123456789abcdef' AND seq IS NOT NULL"),
+        count(
+            "SELECT COUNT(*) FROM sync_log WHERE install = '0123456789abcdef' AND seq IS NOT NULL"
+        ),
         1,
         "its shipped rows came back too, so `next_seq` cannot rewind (Story 19)"
     );
@@ -738,8 +743,11 @@ fn an_interrupted_swap_is_rolled_back_at_the_next_launch() {
 fn an_interrupted_swap_whose_copy_had_finished_keeps_the_restored_file() {
     let (dir, db_path) = live_dataset("from the cloud", |_| {});
     let safety = with_suffix(&db_path, BOOTSTRAP_SAFETY_SUFFIX);
-    std::fs::write(&safety, database_bytes("the data this computer had", |_| {}))
-        .expect("the safety copy exists");
+    std::fs::write(
+        &safety,
+        database_bytes("the data this computer had", |_| {}),
+    )
+    .expect("the safety copy exists");
     {
         let conn = open_configured(&db_path).expect("open");
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")

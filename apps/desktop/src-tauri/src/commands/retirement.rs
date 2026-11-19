@@ -34,10 +34,7 @@ pub fn get_retirement_pension_cents(state: State<DbState>) -> Result<Option<i64>
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn set_retirement_pension_cents(
-    state: State<DbState>,
-    cents: i64,
-) -> Result<(), AppError> {
+pub fn set_retirement_pension_cents(state: State<DbState>, cents: i64) -> Result<(), AppError> {
     if cents < 0 {
         return Err(AppError::Validation {
             message: "Pension amount cannot be negative".to_string(),
@@ -79,7 +76,13 @@ pub fn set_retirement_employer_pension_cents(
     let active = state.0.lock().map_err(|e| AppError::Database {
         message: e.to_string(),
     })?;
-    active.write(|tx| config::set(tx, RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY, &cents.to_string()))
+    active.write(|tx| {
+        config::set(
+            tx,
+            RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY,
+            &cents.to_string(),
+        )
+    })
 }
 
 /// Extracted from the command body because a `#[tauri::command]` needs a `State<DbState>` that no
@@ -116,8 +119,10 @@ pub fn get_retirement_employer_pension_start_age(
     })?;
     let conn = active.conn.as_ref().ok_or(AppError::NotConfigured)?;
 
-    Ok(config::get(conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY)
-        .and_then(|v| v.parse::<i64>().ok()))
+    Ok(
+        config::get(conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY)
+            .and_then(|v| v.parse::<i64>().ok()),
+    )
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -163,7 +168,11 @@ pub fn set_retirement_pension_tax_rate_percent(
         message: e.to_string(),
     })?;
     active.write(|tx| {
-        config::set(tx, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY, &percent.to_string())
+        config::set(
+            tx,
+            RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY,
+            &percent.to_string(),
+        )
     })
 }
 
@@ -291,7 +300,12 @@ mod tests {
     #[test]
     fn employer_pension_start_age_round_trips_through_config() {
         let conn = setup_test_db();
-        config::set(&conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY, "65").unwrap();
+        config::set(
+            &conn,
+            RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY,
+            "65",
+        )
+        .unwrap();
         assert_eq!(
             config::get(&conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY),
             Some("65".to_string())
@@ -321,7 +335,10 @@ mod tests {
     #[test]
     fn pension_tax_rate_defaults_to_none_when_unset() {
         let conn = setup_test_db();
-        assert_eq!(config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY), None);
+        assert_eq!(
+            config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY),
+            None
+        );
     }
 
     #[test]
@@ -360,7 +377,12 @@ mod tests {
         config::set(&conn, RETIREMENT_PENSION_CONFIG_KEY, "1954800").unwrap();
         config::set(&conn, RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY, "3600000").unwrap();
         config::set(&conn, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY, "47").unwrap();
-        config::set(&conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY, "65").unwrap();
+        config::set(
+            &conn,
+            RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY,
+            "65",
+        )
+        .unwrap();
         config::set(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY, "20").unwrap();
 
         assert_eq!(
@@ -392,14 +414,20 @@ mod tests {
         config::delete(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY).unwrap();
 
         // Not "0" — the client tells auto-estimate apart from a deliberate 0% by absence alone.
-        assert_eq!(config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY), None);
+        assert_eq!(
+            config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY),
+            None
+        );
     }
 
     #[test]
     fn clearing_an_unset_pension_tax_rate_is_a_no_op() {
         let conn = setup_test_db();
         assert!(config::delete(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY).is_ok());
-        assert_eq!(config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY), None);
+        assert_eq!(
+            config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY),
+            None
+        );
     }
 
     #[test]
@@ -408,12 +436,20 @@ mod tests {
         config::set(&conn, RETIREMENT_PENSION_CONFIG_KEY, "1954800").unwrap();
         config::set(&conn, RETIREMENT_EMPLOYER_PENSION_CONFIG_KEY, "3600000").unwrap();
         config::set(&conn, RETIREMENT_AGE_OVERRIDE_CONFIG_KEY, "47").unwrap();
-        config::set(&conn, RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY, "65").unwrap();
+        config::set(
+            &conn,
+            RETIREMENT_EMPLOYER_PENSION_START_AGE_CONFIG_KEY,
+            "65",
+        )
+        .unwrap();
         config::set(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY, "20").unwrap();
 
         config::delete(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY).unwrap();
 
-        assert_eq!(config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY), None);
+        assert_eq!(
+            config::get(&conn, RETIREMENT_PENSION_TAX_RATE_CONFIG_KEY),
+            None
+        );
         assert_eq!(
             config::get(&conn, RETIREMENT_PENSION_CONFIG_KEY),
             Some("1954800".to_string())

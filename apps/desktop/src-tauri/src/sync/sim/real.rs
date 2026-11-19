@@ -36,7 +36,9 @@ use rusqlite::Connection;
 use crate::db::backup::{self, DatasetSlot};
 use crate::db::sim_tables::{self, SimCell};
 use crate::db::sync_apply as apply_db;
-use crate::db::{snapshot_strip, sync_identity, sync_segment, sync_state, test_dataset, ActiveDataset};
+use crate::db::{
+    snapshot_strip, sync_identity, sync_segment, sync_state, test_dataset, ActiveDataset,
+};
 use crate::models::DatasetKind;
 use crate::sync::apply;
 use crate::sync::capture::{BalanceCause, Capture};
@@ -134,7 +136,10 @@ impl RealEngine {
     /// Everything `open` does to a blank file (migrate, seed the shared base, mint an install id,
     /// bind the base identities) is already in this file, and re-doing any of it would either
     /// duplicate the base rows or split the `(install, seq)` space.
-    fn attach_existing(db_path: &Path, conn: Connection) -> Result<(ActiveDataset, Connection, String, Arc<Clock>), SimError> {
+    fn attach_existing(
+        db_path: &Path,
+        conn: Connection,
+    ) -> Result<(ActiveDataset, Connection, String, Arc<Clock>), SimError> {
         let install = sync_state::load(&conn)
             .map_err(sql)?
             .ok_or_else(|| SimError::Model("an adopted dataset has no sync_state row".into()))?
@@ -168,7 +173,8 @@ impl RealEngine {
     fn fold_wal(&self) -> Result<(), SimError> {
         self.conn()?
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
-        self.apply.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
+        self.apply
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")?;
 
         Ok(())
     }
@@ -289,7 +295,9 @@ impl RealEngine {
     ) -> Result<(), SimError> {
         let existing = self.row_id_of(table, row)?;
         let parent_id = match (table.parent(), parent) {
-            (Some((parent_table, _)), Some(parent_row)) => self.row_id_of(parent_table, parent_row)?,
+            (Some((parent_table, _)), Some(parent_row)) => {
+                self.row_id_of(parent_table, parent_row)?
+            }
             _ => None,
         };
         let table_sql = table.sql();
@@ -312,9 +320,10 @@ impl RealEngine {
                         columns.push((counter, SimCell::Int(0)));
                     }
                     if let Some((_, foreign_key)) = table.parent() {
-                        let parent_id = parent_id.ok_or_else(|| crate::error::AppError::Database {
-                            message: format!("a {table_sql} row was written before its parent"),
-                        })?;
+                        let parent_id =
+                            parent_id.ok_or_else(|| crate::error::AppError::Database {
+                                message: format!("a {table_sql} row was written before its parent"),
+                            })?;
                         columns.push((foreign_key, SimCell::Int(parent_id)));
                     }
 
@@ -399,8 +408,13 @@ impl RealEngine {
 /// locally and random, and the other replica would park it forever — the "rows that predate
 /// capture" gap Story 15 recorded and Story 22's reconcile owns in production.
 fn bind_base_identities(conn: &Connection) -> Result<(), SimError> {
-    sync_identity::ensure(conn, "budget_groups", 1, &model::base_row_uuid("budget_groups", 1))
-        .map_err(sql)?;
+    sync_identity::ensure(
+        conn,
+        "budget_groups",
+        1,
+        &model::base_row_uuid("budget_groups", 1),
+    )
+    .map_err(sql)?;
 
     for id in crate::db::sim_tables::SIM_CATEGORY_IDS {
         sync_identity::ensure(
@@ -504,9 +518,9 @@ impl ReplicaEngine for RealEngine {
                 let Some(row_id) = self.row_id_of(*table, *row)? else {
                     return Err(SimError::Model("a counter delta before its row".into()));
                 };
-                let column = table
-                    .counter_column()
-                    .ok_or_else(|| SimError::Model("a counter delta on a counterless table".into()))?;
+                let column = table.counter_column().ok_or_else(|| {
+                    SimError::Model("a counter delta on a counterless table".into())
+                })?;
                 let table_sql = table.sql();
                 let delta = *delta;
                 self.dataset
@@ -673,11 +687,10 @@ impl ReplicaEngine for RealEngine {
         backup::restore_snapshot_file(&slot, &self.db_path, &verified.payload, None)
             .map_err(|error| SimError::Model(format!("the guarded swap failed: {error}")))?;
 
-        let restored = slot
-            .restored
-            .borrow_mut()
-            .take()
-            .ok_or_else(|| SimError::Model("the guarded swap published no connection".into()))?;
+        let restored =
+            slot.restored.borrow_mut().take().ok_or_else(|| {
+                SimError::Model("the guarded swap published no connection".into())
+            })?;
         let (dataset, apply, install, clock) = Self::attach_existing(&self.db_path, restored)?;
         self.dataset = dataset;
         self.apply = apply;
@@ -704,8 +717,9 @@ impl ReplicaEngine for RealEngine {
     /// itself, so nothing is lost, while keeping them would ship one increment from two computers.
     fn clone_to(&mut self, db_path: &Path, install_id: &str) -> Result<Option<Self>, SimError> {
         self.fold_wal()?;
-        std::fs::copy(&self.db_path, db_path)
-            .map_err(|error| SimError::Model(format!("the dataset could not be copied: {error}")))?;
+        std::fs::copy(&self.db_path, db_path).map_err(|error| {
+            SimError::Model(format!("the dataset could not be copied: {error}"))
+        })?;
 
         let conn = crate::db::open_configured(db_path).map_err(sql)?;
         if remint_install_on(&conn).map_err(sql)? != InstallOutcome::Relinked {

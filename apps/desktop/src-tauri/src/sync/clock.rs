@@ -96,7 +96,10 @@ impl InstallBytes {
         let mut bytes = [0u8; 8];
         for (byte, pair) in bytes.iter_mut().zip(install_id.as_bytes().chunks(2)) {
             let pair = std::str::from_utf8(pair).map_err(|_| ClockError::MalformedInstallId)?;
-            if pair.chars().any(|c| !c.is_ascii_hexdigit() || c.is_ascii_uppercase()) {
+            if pair
+                .chars()
+                .any(|c| !c.is_ascii_hexdigit() || c.is_ascii_uppercase())
+            {
                 return Err(ClockError::MalformedInstallId);
             }
             *byte = u8::from_str_radix(pair, 16).map_err(|_| ClockError::MalformedInstallId)?;
@@ -125,7 +128,9 @@ impl InstallBytes {
 pub enum ClockError {
     /// A remote timestamp more than [`MAX_FORWARD_DRIFT`] ahead of local wall time. The
     /// local clock is left untouched: adopting it is exactly what AD-4 forbids.
-    Skew { ahead_ms: i64 },
+    Skew {
+        ahead_ms: i64,
+    },
     MalformedInstallId,
     MalformedTimestamp,
 }
@@ -138,7 +143,9 @@ impl std::fmt::Display for ClockError {
                 "a remote timestamp {ahead_ms} ms ahead of this computer exceeds the {} ms limit",
                 MAX_FORWARD_DRIFT.as_millis()
             ),
-            Self::MalformedInstallId => write!(f, "an install id is not 16 lowercase hex characters"),
+            Self::MalformedInstallId => {
+                write!(f, "an install id is not 16 lowercase hex characters")
+            }
             Self::MalformedTimestamp => write!(f, "an encoded hybrid logical clock is malformed"),
         }
     }
@@ -224,7 +231,10 @@ impl Hlc {
         let install = rest
             .strip_prefix(HLC_SEPARATOR)
             .ok_or(ClockError::MalformedTimestamp)?;
-        if time.chars().any(|c| !c.is_ascii_hexdigit() || c.is_ascii_uppercase()) {
+        if time
+            .chars()
+            .any(|c| !c.is_ascii_hexdigit() || c.is_ascii_uppercase())
+        {
             return Err(ClockError::MalformedTimestamp);
         }
 
@@ -347,7 +357,9 @@ fn dataset_key(conn: &rusqlite::Connection) -> String {
 
 pub fn shared(conn: &rusqlite::Connection, install_id: &str) -> Result<Arc<Clock>, AppError> {
     let key = (install_id.to_string(), dataset_key(conn));
-    let mut registry = CLOCKS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut registry = CLOCKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let clocks = registry.get_or_insert_with(ClockRegistry::new);
 
     if let Some(clock) = clocks.get(&key) {
@@ -496,8 +508,7 @@ impl Clock {
     }
 
     fn install_wall_clock(&self) -> WallClockGuard {
-        let previous =
-            SCOPED_WALL_CLOCK.with(|slot| slot.replace(Some(Arc::clone(&self.wall))));
+        let previous = SCOPED_WALL_CLOCK.with(|slot| slot.replace(Some(Arc::clone(&self.wall))));
 
         WallClockGuard(previous)
     }
@@ -676,7 +687,13 @@ mod tests {
 
     #[test]
     fn a_malformed_install_id_is_refused_rather_than_truncated() {
-        for bad in ["", "0a1b", "0A1B2C3D4E5F6071", "0a1b2c3d4e5f607z", "0a1b2c3d4e5f60711"] {
+        for bad in [
+            "",
+            "0a1b",
+            "0A1B2C3D4E5F6071",
+            "0a1b2c3d4e5f607z",
+            "0a1b2c3d4e5f60711",
+        ] {
             assert_eq!(
                 InstallBytes::parse(bad),
                 Err(ClockError::MalformedInstallId),
@@ -714,7 +731,11 @@ mod tests {
         let from_a = earlier.now();
         let from_b = later.now();
 
-        assert_eq!(from_a.wall_ms(), from_b.wall_ms(), "the same physical instant");
+        assert_eq!(
+            from_a.wall_ms(),
+            from_b.wall_ms(),
+            "the same physical instant"
+        );
         assert!(from_b > from_a, "ff... must win the tie against 0a...");
         assert_ne!(from_a, from_b);
     }
@@ -725,7 +746,9 @@ mod tests {
         let local = fixed_clock(A, 1_700_000_000_000);
 
         let remote_stamp = remote.now();
-        local.observe(&remote_stamp).expect("one minute ahead is inside the limit");
+        local
+            .observe(&remote_stamp)
+            .expect("one minute ahead is inside the limit");
 
         assert!(local.now() > remote_stamp);
     }
@@ -735,7 +758,10 @@ mod tests {
         let local = fixed_clock(A, 1_700_000_000_000);
         let ours_before = local.now();
 
-        let skewed = fixed_clock(B, 1_700_000_000_000 + MAX_FORWARD_DRIFT.as_millis() as i64 + 60_000);
+        let skewed = fixed_clock(
+            B,
+            1_700_000_000_000 + MAX_FORWARD_DRIFT.as_millis() as i64 + 60_000,
+        );
         let their_stamp = skewed.now();
 
         let refused = local.observe(&their_stamp).expect_err("beyond the limit");
@@ -749,7 +775,10 @@ mod tests {
             ours_after.wall_ms() <= ours_before.wall_ms() + 1,
             "the local clock adopted the skewed time: {ours_after:?}"
         );
-        assert!(ours_after < their_stamp, "the refused stamp must still be ahead of us");
+        assert!(
+            ours_after < their_stamp,
+            "the refused stamp must still be ahead of us"
+        );
     }
 
     /// The drift high-water mark is what the `clock_skew` state is built on: it reports the
@@ -789,7 +818,10 @@ mod tests {
     #[test]
     fn a_remote_timestamp_just_inside_the_drift_limit_is_still_accepted() {
         let local = fixed_clock(A, 1_700_000_000_000);
-        let edge = fixed_clock(B, 1_700_000_000_000 + MAX_FORWARD_DRIFT.as_millis() as i64 - 1_000);
+        let edge = fixed_clock(
+            B,
+            1_700_000_000_000 + MAX_FORWARD_DRIFT.as_millis() as i64 - 1_000,
+        );
 
         assert!(local.observe(&edge.now()).is_ok());
     }
@@ -800,7 +832,9 @@ mod tests {
         let ours = local.now();
         let ancient = fixed_clock(B, 1_600_000_000_000);
 
-        local.observe(&ancient.now()).expect("the past is never a drift fault");
+        local
+            .observe(&ancient.now())
+            .expect("the past is never a drift fault");
 
         assert!(local.now() > ours);
     }
@@ -821,7 +855,10 @@ mod tests {
 
     #[test]
     fn the_encoding_sorts_exactly_like_the_clock() {
-        let clocks = [fixed_clock(A, 1_700_000_000_000), fixed_clock(B, 1_700_000_000_000)];
+        let clocks = [
+            fixed_clock(A, 1_700_000_000_000),
+            fixed_clock(B, 1_700_000_000_000),
+        ];
         let mut stamps: Vec<Hlc> = (0..200)
             .map(|index| clocks[index % clocks.len()].now())
             .collect();
@@ -870,7 +907,11 @@ mod tests {
             "123456789abcdef\u{00e9}0a1b2c3d4e5f6071",
             "123456789abcdef0-0a1b2c3\u{1f600}f6071",
         ] {
-            assert_eq!(bad.len(), HLC_ENCODED_LEN, "{bad} must be 33 bytes to be the case");
+            assert_eq!(
+                bad.len(),
+                HLC_ENCODED_LEN,
+                "{bad} must be 33 bytes to be the case"
+            );
             assert!(!bad.is_char_boundary(16) || !bad.is_ascii());
             assert_eq!(
                 Hlc::decode(bad),

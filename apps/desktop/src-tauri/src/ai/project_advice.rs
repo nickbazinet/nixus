@@ -161,9 +161,8 @@ fn build_user_prompt(
                 .to_string(),
         );
     } else {
-        lines.push(
-            "Accounts with idle cash the user could log toward this goal today:".to_string(),
-        );
+        lines
+            .push("Accounts with idle cash the user could log toward this goal today:".to_string());
         lines.extend(headroom_lines);
     }
 
@@ -510,8 +509,10 @@ mod tests {
         assert!(prompt.contains("Required contribution rate: 100000 cents per month"));
         assert!(prompt.contains("Recent actual contribution rate: 50000 cents per month"));
         assert!(prompt.contains("Whole months left until the target date: 6"));
-        assert!(prompt.contains("Groceries: target 40000 cents, spent 55000 cents, over by 15000 cents"));
-        assert!(prompt.contains("Dining out: target 20000 cents, spent 32000 cents, over by 12000 cents"));
+        assert!(prompt
+            .contains("Groceries: target 40000 cents, spent 55000 cents, over by 15000 cents"));
+        assert!(prompt
+            .contains("Dining out: target 20000 cents, spent 32000 cents, over by 12000 cents"));
     }
 
     #[test]
@@ -545,7 +546,9 @@ mod tests {
             ],
         );
 
-        assert!(prompt.contains("Accounts with idle cash the user could log toward this goal today:"));
+        assert!(
+            prompt.contains("Accounts with idle cash the user could log toward this goal today:")
+        );
         assert!(prompt.contains("- Rainy day (savings): 900000 cents not assigned to any goal"));
         assert!(prompt.contains("- Everyday (chequing): 400000 cents not assigned to any goal"));
     }
@@ -594,8 +597,9 @@ mod tests {
             &[],
         );
 
-        assert!(prompt
-            .contains("Budget categories with room to spare that could be redirected toward this goal:"));
+        assert!(prompt.contains(
+            "Budget categories with room to spare that could be redirected toward this goal:"
+        ));
         assert!(prompt.contains(
             "- Transport: target 50000 cents, recent average spend 32000 cents, room to spare 18000 cents"
         ));
@@ -711,11 +715,13 @@ mod tests {
     fn the_system_prompt_states_the_safety_margin_is_already_built_into_every_figure() {
         let system_prompt = build_system_prompt("en");
 
-        assert!(system_prompt
-            .contains("Every idle-cash figure you are given already has a safety margin built into it"));
+        assert!(system_prompt.contains(
+            "Every idle-cash figure you are given already has a safety margin built into it"
+        ));
         assert!(system_prompt.contains("It is NOT the account's full balance"));
-        assert!(system_prompt
-            .contains("recommending LESS is always acceptable and never discouraged"));
+        assert!(
+            system_prompt.contains("recommending LESS is always acceptable and never discouraged")
+        );
     }
 
     #[test]
@@ -726,8 +732,7 @@ mod tests {
         assert!(system_prompt.contains(
             "The user's financial safety and stability always take priority over reaching this goal faster."
         ));
-        assert!(system_prompt
-            .contains("An emptied or thinned-out account is never good advice"));
+        assert!(system_prompt.contains("An emptied or thinned-out account is never good advice"));
     }
 
     // The example exists to shape prose, not to supply data; without the disclaimer its placeholder

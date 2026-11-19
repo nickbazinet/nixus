@@ -119,7 +119,12 @@ fn build_system_prompt(
     } else {
         let source_list: Vec<String> = income_sources
             .iter()
-            .map(|s| format!("  - id: {}, name: \"{}\", type: {}", s.id, s.name, s.income_type))
+            .map(|s| {
+                format!(
+                    "  - id: {}, name: \"{}\", type: {}",
+                    s.id, s.name, s.income_type
+                )
+            })
             .collect();
         format!("\nAvailable income sources:\n{}\n", source_list.join("\n"))
     };
@@ -216,7 +221,10 @@ fn parse_proposed_category(value: Option<serde_json::Value>) -> Option<ProposedC
 }
 
 fn parse_kind(value: Option<&serde_json::Value>) -> TransactionKind {
-    match value.and_then(|v| v.as_str()).map(|s| s.trim().to_lowercase()) {
+    match value
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_lowercase())
+    {
         Some(kind) if kind == "income" => TransactionKind::Income,
         _ => TransactionKind::Expense,
     }
@@ -235,7 +243,11 @@ fn to_parsed_transaction(t: AiTransaction, income_source_ids: &[i64]) -> ParsedT
     match kind {
         TransactionKind::Expense => {
             let propose_category = parse_proposed_category(t.propose_category);
-            let confidence = if propose_category.is_some() { 0.0 } else { t.confidence };
+            let confidence = if propose_category.is_some() {
+                0.0
+            } else {
+                t.confidence
+            };
             ParsedTransaction {
                 merchant: t.merchant,
                 amount_cents,
@@ -263,7 +275,11 @@ fn to_parsed_transaction(t: AiTransaction, income_source_ids: &[i64]) -> ParsedT
                     .filter(|s| !s.is_empty())
             };
             // Without a matched source the row always lands in "needs review".
-            let confidence = if suggested_income_source_id.is_some() { t.confidence } else { 0.0 };
+            let confidence = if suggested_income_source_id.is_some() {
+                t.confidence
+            } else {
+                0.0
+            };
             ParsedTransaction {
                 merchant: t.merchant,
                 amount_cents,

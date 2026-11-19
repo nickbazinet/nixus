@@ -97,8 +97,7 @@ fn get_monthly_totals_for_year(
         .query_map(params![start, end], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut totals_by_month: std::collections::HashMap<String, i64> =
-        rows.into_iter().collect();
+    let mut totals_by_month: std::collections::HashMap<String, i64> = rows.into_iter().collect();
 
     let mut monthly_totals = Vec::with_capacity(12);
     for month in 1..=12 {
@@ -179,7 +178,11 @@ fn get_net_worth_gain_for_year(
 }
 
 fn get_available_years(conn: &Connection) -> Result<Vec<i32>, AppError> {
-    let current_year: i32 = Local::now().format("%Y").to_string().parse().unwrap_or(2026);
+    let current_year: i32 = Local::now()
+        .format("%Y")
+        .to_string()
+        .parse()
+        .unwrap_or(2026);
 
     let mut stmt = conn.prepare(
         "SELECT DISTINCT year FROM (
@@ -209,7 +212,11 @@ fn get_available_years(conn: &Connection) -> Result<Vec<i32>, AppError> {
 }
 
 pub fn get_yearly_summary(conn: &Connection, year: i32) -> Result<YearlySummaryData, AppError> {
-    let current_year: i32 = Local::now().format("%Y").to_string().parse().unwrap_or(2026);
+    let current_year: i32 = Local::now()
+        .format("%Y")
+        .to_string()
+        .parse()
+        .unwrap_or(2026);
     let is_current_year = year == current_year;
     let (start, end) = year_bounds(year, is_current_year);
 

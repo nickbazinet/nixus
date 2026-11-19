@@ -221,7 +221,10 @@ pub fn validate_relative_key(key: &str) -> Result<(), StoreError> {
             reason: InvalidKey::Absolute,
         });
     }
-    if key.split('/').any(|segment| segment == "." || segment == "..") {
+    if key
+        .split('/')
+        .any(|segment| segment == "." || segment == "..")
+    {
         return Err(StoreError::InvalidKey {
             reason: InvalidKey::Traversal,
         });

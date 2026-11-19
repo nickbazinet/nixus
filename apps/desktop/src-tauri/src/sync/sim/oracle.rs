@@ -70,7 +70,10 @@ impl Oracle {
                     row: written_row,
                     fields,
                     ..
-                } if *written == table && *written_row == row && names_every_column(table, fields) => {
+                } if *written == table
+                    && *written_row == row
+                    && names_every_column(table, fields) =>
+                {
                     Some(*hlc)
                 }
                 _ => None,
@@ -145,7 +148,12 @@ impl Oracle {
         }
 
         let mut balances = HashMap::new();
-        for row in sets.keys().chain(deltas.keys()).copied().collect::<HashSet<_>>() {
+        for row in sets
+            .keys()
+            .chain(deltas.keys())
+            .copied()
+            .collect::<HashSet<_>>()
+        {
             let set = sets.get(&row);
             let base = set.map(|(_, cents)| *cents).unwrap_or(0);
             let later: i64 = deltas

@@ -161,9 +161,9 @@ pub fn apply_system_template(
 
     // Merged before locking for the same reason, and kept alive for the borrow below.
     let edited = match overrides.as_deref() {
-        Some(entries) if !entries.is_empty() => {
-            Some(template_defaults::merge_target_overrides(template, entries)?)
-        }
+        Some(entries) if !entries.is_empty() => Some(template_defaults::merge_target_overrides(
+            template, entries,
+        )?),
         _ => None,
     };
 

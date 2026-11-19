@@ -259,11 +259,10 @@ fn restore_row(
     apply_db::delete_tombstone(conn, table, row_uuid)?;
 
     for child in cascaded_children(tombstones, table, row_uuid) {
-        let child_uuid = <[u8; 16]>::try_from(child.row_uuid.as_slice()).map_err(|_| {
-            AppError::Database {
+        let child_uuid =
+            <[u8; 16]>::try_from(child.row_uuid.as_slice()).map_err(|_| AppError::Database {
                 message: "a retained deleted row carried an unusable identity".to_string(),
-            }
-        })?;
+            })?;
         let Some(child_rule) = registry::table(&child.table_name) else {
             continue;
         };

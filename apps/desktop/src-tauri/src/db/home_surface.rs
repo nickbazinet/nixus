@@ -380,7 +380,10 @@ pub fn category_names(conn: &Connection) -> Result<Vec<(i64, String)>, AppError>
 /// The category filter as SQL wants it: `None` for "all categories", otherwise the matched ids as
 /// a JSON array for `json_each`. A term that matches nothing filters to nothing — an empty widget is
 /// honest, while silently showing every category under a "Groceries" title is not.
-fn category_filter(conn: &Connection, params: &Map<String, Value>) -> Result<Option<String>, AppError> {
+fn category_filter(
+    conn: &Connection,
+    params: &Map<String, Value>,
+) -> Result<Option<String>, AppError> {
     let Some(term) = params.get("category").and_then(Value::as_str) else {
         return Ok(None);
     };
@@ -408,13 +411,18 @@ fn monthly_expense_sums(
     Ok(sums)
 }
 
-fn monthly_income_sums(conn: &Connection, window: &Window) -> Result<HashMap<String, i64>, AppError> {
+fn monthly_income_sums(
+    conn: &Connection,
+    window: &Window,
+) -> Result<HashMap<String, i64>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT strftime('%Y-%m', date), SUM(amount_cents) FROM income_entries
          WHERE date >= ?1 AND date < ?2 GROUP BY 1",
     )?;
     let sums = stmt
-        .query_map(params![window.since, window.until], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .query_map(params![window.since, window.until], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
         .collect::<Result<HashMap<String, i64>, _>>()?;
     Ok(sums)
 }
@@ -618,7 +626,11 @@ fn average_monthly_cash_flow(
     let rest: i64 = ranked.iter().skip(limit).map(|(_, _, spent)| spent).sum();
     spent_total += rest;
     if rest / span > 0 {
-        rows.push(flow_row(&income, &FlowNode::app(OTHER_ROW_KEY), rest / span));
+        rows.push(flow_row(
+            &income,
+            &FlowNode::app(OTHER_ROW_KEY),
+            rest / span,
+        ));
     }
 
     // Only ever drawn when the window genuinely took in more than it paid out; overspending leaves
@@ -702,14 +714,17 @@ fn recent_expenses(
         CATEGORY_CLAUSE.replace("budget_category_id", "e.budget_category_id")
     ))?;
     let rows = stmt
-        .query_map(params![window.since, window.until, categories, limit], |row| {
-            Ok(HomeDatasetRow {
-                key: format!("expense:{}", row.get::<_, i64>(0)?),
-                label: row.get(1)?,
-                details: vec![row.get(2)?, row.get(3)?],
-                values: vec![row.get(4)?],
-            })
-        })?
+        .query_map(
+            params![window.since, window.until, categories, limit],
+            |row| {
+                Ok(HomeDatasetRow {
+                    key: format!("expense:{}", row.get::<_, i64>(0)?),
+                    label: row.get(1)?,
+                    details: vec![row.get(2)?, row.get(3)?],
+                    values: vec![row.get(4)?],
+                })
+            },
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(HomeDataset {
         dimension: "expense".to_string(),
@@ -784,7 +799,8 @@ fn asset_values_by_type(conn: &Connection) -> Result<HomeDataset, AppError> {
 /// A single row holding today's date as an ISO string in its `label`, with no series: there is
 /// nothing to sum or chart about a date, only to show.
 fn current_date(conn: &Connection) -> Result<HomeDataset, AppError> {
-    let today: String = conn.query_row("SELECT strftime('%Y-%m-%d', 'now')", [], |row| row.get(0))?;
+    let today: String =
+        conn.query_row("SELECT strftime('%Y-%m-%d', 'now')", [], |row| row.get(0))?;
     Ok(HomeDataset {
         dimension: "date".to_string(),
         detail_columns: Vec::new(),

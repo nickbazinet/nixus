@@ -1,9 +1,9 @@
 use rusqlite::Connection;
 
 use crate::db::asset::*;
+use crate::db::test_dataset::migrated_dataset;
 use crate::error::AppError;
 use crate::models::{CreateAssetInput, UpdateAssetInput};
-use crate::db::test_dataset::migrated_dataset;
 use tempfile::TempDir;
 
 fn dataset() -> (TempDir, Connection) {
@@ -67,7 +67,8 @@ fn update_asset_value_refuses_a_stock_and_still_accepts_a_plain_asset() {
         AppError::Validation { field: Some(ref f), .. } if f == "value_cents"
     ));
 
-    let (old, updated) = update_asset_value(&conn, plain.id, 999).expect("a plain asset still updates");
+    let (old, updated) =
+        update_asset_value(&conn, plain.id, 999).expect("a plain asset still updates");
     assert_eq!((old, updated.value_cents), (100, 999));
 }
 
