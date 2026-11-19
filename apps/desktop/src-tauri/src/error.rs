@@ -26,6 +26,21 @@ pub enum AppError {
         message: String,
         recoverable: bool,
     },
+    /// A Nixus Cloud **billing** refusal (billing AD-12). `code` is a `BillingErrorCode` from
+    /// `packages/shared/src/types/billing.ts`, kept as the discriminator the frontend switches
+    /// on; `message` is a fixed English sentence per code and never carries a submitted value,
+    /// a URL, a customer id or a subscription id.
+    ///
+    /// Its own variant rather than a reuse of `HostedAi`: a refused Checkout is not a hosted-AI
+    /// failure, and borrowing that discriminator would make the webview render hosted-AI copy
+    /// ("Nixus Cloud AI is unavailable") for an upgrade click that never involved a model. The
+    /// two unions also differ — `client_too_old`, `version_conflict`, `promotion_invalid` and
+    /// `checkout_in_progress` have no `CloudAiErrorCode` counterpart at all.
+    Billing {
+        code: String,
+        message: String,
+        recoverable: bool,
+    },
     /// A multi-device sync failure (AD-16). `code` is the stable discriminator the
     /// frontend switches on and support reads in diagnostics; `message` is a fixed
     /// sentence per code and never carries a row value, a key, an account identifier
@@ -70,6 +85,9 @@ impl fmt::Display for AppError {
             AppError::Auth { message, .. } => write!(f, "Authentication error: {}", message),
             AppError::HostedAi { code, message, .. } => {
                 write!(f, "Hosted AI error ({}): {}", code, message)
+            }
+            AppError::Billing { code, message, .. } => {
+                write!(f, "Billing error ({}): {}", code, message)
             }
             AppError::Sync { code, message, .. } => {
                 write!(f, "Sync error ({}): {}", code, message)
@@ -163,6 +181,18 @@ impl Serialize for AppError {
             } => {
                 let mut map = serializer.serialize_map(Some(4))?;
                 map.serialize_entry("type", "sync")?;
+                map.serialize_entry("code", code)?;
+                map.serialize_entry("message", message)?;
+                map.serialize_entry("recoverable", recoverable)?;
+                map.end()
+            }
+            AppError::Billing {
+                code,
+                message,
+                recoverable,
+            } => {
+                let mut map = serializer.serialize_map(Some(4))?;
+                map.serialize_entry("type", "billing")?;
                 map.serialize_entry("code", code)?;
                 map.serialize_entry("message", message)?;
                 map.serialize_entry("recoverable", recoverable)?;
@@ -392,5 +422,52 @@ mod tests {
             recoverable: true,
         };
         assert_eq!(error.to_string(), "Sync error (frozen): Sync is paused.");
+    }
+
+    #[test]
+    fn billing_error_serializes_with_its_own_type_rather_than_borrowing_hosted_ai() {
+        let json = serde_json::to_string(&AppError::Billing {
+            code: "premium_required".to_string(),
+            message: "This plan does not include that capability.".to_string(),
+            recoverable: true,
+        })
+        .unwrap();
+
+        assert_eq!(
+            json,
+            r#"{"type":"billing","code":"premium_required","message":"This plan does not include that capability.","recoverable":true}"#
+        );
+        assert!(
+            !json.contains("hosted_ai"),
+            "an upgrade click that never involved a model must not arrive as a hosted-AI failure"
+        );
+    }
+
+    #[test]
+    fn billing_error_preserves_a_non_recoverable_code() {
+        let json = serde_json::to_string(&AppError::Billing {
+            code: "client_too_old".to_string(),
+            message: "This version of Nixus is too old to manage a plan.".to_string(),
+            recoverable: false,
+        })
+        .unwrap();
+
+        assert!(json.contains(r#""type":"billing""#));
+        assert!(json.contains(r#""code":"client_too_old""#));
+        assert!(json.contains(r#""recoverable":false"#));
+    }
+
+    #[test]
+    fn billing_display_names_the_code() {
+        let error = AppError::Billing {
+            code: "unavailable".to_string(),
+            message: "Nixus Cloud could not be reached.".to_string(),
+            recoverable: true,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "Billing error (unavailable): Nixus Cloud could not be reached."
+        );
     }
 }

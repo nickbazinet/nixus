@@ -426,8 +426,6 @@ struct CheckoutRequestWire<'a> {
 /// Returning `()` is the enforcement, not a convenience: the URL never leaves this module, so
 /// there is no value a caller could hand to the webview even by mistake. Nixus renders no card
 /// field on any surface, and this is the only path by which commerce is reached at all.
-#[allow(dead_code)] // The account/settings surface that calls this is its own story; the
-                    // billing stack is not deployed yet, so there is nothing to open.
 pub(crate) async fn open_checkout(
     app: &AppHandle,
     expected_sub: &str,
@@ -445,7 +443,6 @@ pub(crate) async fn open_checkout(
 
 /// Opens the Stripe-hosted Customer Portal in the **system browser** (AD-8). Same enforcement,
 /// same reason as `open_checkout`.
-#[allow(dead_code)] // Same: the surface that calls this is its own story.
 pub(crate) async fn open_portal(app: &AppHandle, expected_sub: &str) -> Result<(), BillingRefusal> {
     let wire: CommerceUrlWire = send(
         Call::post(Route::Portal, &serde_json::json!({}))?,

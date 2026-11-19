@@ -2,7 +2,9 @@ import {
   VALIDATION_FIELDS,
   VALIDATION_REASONS,
   toAccountErrorCode,
+  toBillingErrorCode,
   type AccountErrorCode,
+  type BillingErrorCode,
   type ValidationField,
   type ValidationReason,
 } from "@nixus/shared";
@@ -244,6 +246,22 @@ function oneOf<T extends string>(allowed: readonly T[], value: unknown): T | nul
   return allowed.find((member) => member === value) ?? null;
 }
 
+/**
+ * `AppError::Billing` (billing AD-12). `code` is a `BillingErrorCode` from the shared contract,
+ * and the whole reason this is not folded into `HostedAiError` is that a refused upgrade click
+ * never involved a model: rendering "Nixus Cloud AI is unavailable" for it would be a confident
+ * wrong diagnosis, and four of the billing codes have no hosted-AI counterpart at all.
+ *
+ * `message` is a fixed English support sentence carrying no submitted value and no URL; the UI
+ * resolves its EN/FR copy from `code` and never renders it.
+ */
+export interface BillingError {
+  readonly type: "billing";
+  readonly code: BillingErrorCode;
+  readonly message: string;
+  readonly recoverable: boolean;
+}
+
 export interface GenericAppError {
   readonly type: string | undefined;
   readonly message: string | undefined;
@@ -252,6 +270,7 @@ export interface GenericAppError {
 export type ParsedAppError =
   | HostedAiError
   | SyncError
+  | BillingError
   | CloudProfileError
   | GenericAppError;
 
@@ -265,6 +284,10 @@ export function isHostedAiError(error: ParsedAppError): error is HostedAiError {
 
 export function isSyncError(error: ParsedAppError): error is SyncError {
   return error.type === "sync";
+}
+
+export function isBillingError(error: ParsedAppError): error is BillingError {
+  return error.type === "billing";
 }
 
 export function isCloudProfileError(
@@ -316,6 +339,18 @@ export function parseAppError(error: unknown): ParsedAppError {
     return {
       type: "sync",
       code,
+      message: message ?? "",
+      recoverable: error.recoverable !== false,
+    };
+  }
+
+  if (type === "billing") {
+    // `toBillingErrorCode` is the shared contract's own degradation: an unrecognized code
+    // becomes `unavailable`, which is the only honest reading of a refusal this build cannot
+    // name — a wait might repair it, and nothing about the account's plan is claimed.
+    return {
+      type: "billing",
+      code: toBillingErrorCode(error.code),
       message: message ?? "",
       recoverable: error.recoverable !== false,
     };

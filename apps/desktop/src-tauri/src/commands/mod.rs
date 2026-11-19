@@ -3,6 +3,7 @@ pub mod asset;
 pub mod auth;
 pub mod auth_listener;
 pub mod backup;
+pub mod billing;
 pub mod budget;
 pub mod budget_template;
 pub mod chat;

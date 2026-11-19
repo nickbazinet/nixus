@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { Lock } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle, Button } from "@nixus/shared";
+import { BillingUpgradeAction } from "@/components/billing/BillingUpgradeAction";
 import type { HomeComposerAccess } from "@/lib/types";
 
 /** FR-11 states: AI is locked, with a reason that is not "try again". */
@@ -16,11 +17,35 @@ export const HOME_ACCESS_LOCKED: Partial<
 };
 
 /**
+ * The states whose only remaining fix is a paid capability, and therefore the only ones that may
+ * offer to sell one (AD-12).
+ *
+ * Deliberately one member, and every exclusion is a different reason rather than an oversight:
+ *
+ * - `available` and `available_byo` are not refusals at all. A user who configured their own AI
+ *   key already has the capability by another route and must never be pushed to pay for it.
+ * - `local_profile` and `signed_out` have no Nixus Cloud account to attach a plan to, so the
+ *   first step is a profile or a sign-in, not a purchase. Checkout resolves the subject from the
+ *   session and would refuse anyway.
+ * - `quota_exhausted` and `reauthentication_required` only happen to an account that already
+ *   holds the capability. Selling it again is the exact defect AD-12 names.
+ */
+const HOME_ACCESS_UPGRADE: ReadonlySet<HomeComposerAccess> = new Set(["not_premium"]);
+
+export function homeAccessOffersUpgrade(state: HomeComposerAccess): boolean {
+  return HOME_ACCESS_UPGRADE.has(state);
+}
+
+/**
  * The inline, non-modal notice shared by the composer panel and the hero prompt: a locked
  * reason names the actual cause instead of a generic lock icon, and every reason here — including
  * the transient hosted problem below — is one a BYO key in Settings would unlock just as well as
- * premium would, so the same action sits under all of them. Never blocks anything else on the
+ * a paid plan would, so the same action sits under all of them. Never blocks anything else on the
  * page — it only replaces the prompt the notice sits beside.
+ *
+ * Where a plan is the other way in, the upgrade sits BESIDE that Settings action rather than
+ * replacing it: both routes are equally valid, and hiding the key advice behind a purchase would
+ * charge a user for something they can already do for free.
  */
 export function HomeAccessNotice({
   state,
@@ -38,14 +63,17 @@ export function HomeAccessNotice({
       <Alert variant="info" icon={<Lock className="size-4" />} data-state={state} {...props}>
         <AlertTitle>{t(locked.title)}</AlertTitle>
         <AlertDescription>{t(locked.body)}</AlertDescription>
-        <Button
-          variant="outline"
-          size="sm"
-          className="mt-2"
-          render={<Link to="/settings" />}
-        >
-          {t("home.locked.setupAction")}
-        </Button>
+        <div className="mt-2 flex flex-wrap items-start gap-2">
+          {homeAccessOffersUpgrade(state) ? (
+            <BillingUpgradeAction
+              labelKey="home.locked.upgradeAction"
+              testId="home-locked-upgrade"
+            />
+          ) : null}
+          <Button variant="outline" size="sm" render={<Link to="/settings" />}>
+            {t("home.locked.setupAction")}
+          </Button>
+        </div>
       </Alert>
     );
   }

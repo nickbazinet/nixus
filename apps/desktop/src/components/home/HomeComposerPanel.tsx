@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Send, X } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle, Button, Input, Label, Skeleton } from "@nixus/shared";
 import { ChatMessageBubble } from "@/components/chat/ChatMessageBubble";
+import { BillingUpgradeAction } from "@/components/billing/BillingUpgradeAction";
 import { HOME_STARTER_KEYS } from "@/components/home/starters";
 import { HOME_ACCESS_LOCKED, HomeAccessNotice } from "@/components/home/HomeAccessNotice";
 import { useHomeComposerAccess, type useHomeComposer } from "@/hooks/useHome";
@@ -22,6 +23,9 @@ function ComposerError({ error, onDismiss }: { error: ParsedAppError; onDismiss:
   const { t } = useTranslation();
   const hosted = isHostedAiError(error);
   const retryable = hosted ? hostedAiIsRetryable(error.code) : true;
+  // The one hosted code that is a plan limitation rather than a failure (AD-12): the sentence
+  // above already promises an upgrade, so this is the thing it promises.
+  const offersUpgrade = hosted && error.code === "premium_required";
 
   return (
     <Alert variant="caution" data-testid="home-composer-error">
@@ -32,6 +36,13 @@ function ComposerError({ error, onDismiss }: { error: ParsedAppError; onDismiss:
           {t("home.composer.dismiss")}
         </button>
       </AlertDescription>
+      {offersUpgrade ? (
+        <BillingUpgradeAction
+          className="mt-2"
+          labelKey="home.locked.upgradeAction"
+          testId="home-composer-upgrade"
+        />
+      ) : null}
     </Alert>
   );
 }

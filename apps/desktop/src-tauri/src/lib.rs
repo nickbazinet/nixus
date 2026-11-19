@@ -427,6 +427,8 @@ pub fn run() {
             commands::auth::continue_cloud_session,
             commands::auth::sign_out,
             commands::cloud_ai::get_cloud_ai_premium,
+            commands::billing::open_billing_checkout,
+            commands::billing::open_billing_portal,
             commands::profile::get_profile_source,
             commands::profile::get_cloud_profile_status,
             commands::profile::refresh_cloud_profile_now,

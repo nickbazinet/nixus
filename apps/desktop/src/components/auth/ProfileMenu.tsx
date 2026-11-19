@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { ArrowLeftRight, LogIn, LogOut, User } from "lucide-react";
+import { ArrowLeftRight, CreditCard, LogIn, LogOut, User } from "lucide-react";
 import {
   Badge,
   Button,
@@ -25,6 +26,13 @@ import { useUserAvatar } from "@/hooks/useProfile";
 import { AccountAvatar } from "@/components/auth/AccountAvatar";
 import { useActiveProfile } from "@/hooks/useDatasets";
 import { deriveProfileSource } from "@/lib/profileSource";
+import { queryKeys } from "@/lib/constants";
+import { isBillingError, parseAppError } from "@/lib/appError";
+import {
+  billingMessageKey,
+  billingNeedsSignIn,
+  useOpenBillingPortal,
+} from "@/lib/billing";
 
 type SessionState =
   | "loading"
@@ -86,9 +94,11 @@ function deriveState(
 export function ProfileMenu() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const activeProfile = useActiveProfile();
   const signIn = useSignIn();
   const signOut = useSignOut();
+  const portal = useOpenBillingPortal();
   const [open, setOpen] = useState(false);
   const expiredNotifiedRef = useRef(false);
 
@@ -129,6 +139,35 @@ export function ProfileMenu() {
       { intent: { kind: "Login" }, entry: "SignIn" },
       { onError: () => toast.error(t("datasets.cloudFailed")) },
     );
+  };
+
+  /* Opens the Stripe-hosted Customer Portal in the system browser. The menu is deliberately held
+   * open across the round trip (`closeOnClick={false}` below): launching a browser is slow enough
+   * to invite a second click, and a closed menu would have nowhere to show that the first one was
+   * accepted.
+   *
+   * A sign-in refusal is routed back into the account layer rather than toasted: `resetQueries`
+   * drops the identity this menu is drawing from, so it re-derives into the state where signing
+   * back in is the offered action — which is the recovery that actually works. Every other code
+   * is a real refusal of this request and is reported as one. `client_too_old` deliberately
+   * lands here and NOT in the sign-in branch: it means install a newer Nixus, and signing the
+   * user out over it is the confusion AD-12 forbids. */
+  const openPortal = () => {
+    if (portal.isPending) return;
+    portal.mutate(undefined, {
+      onError: (error: unknown) => {
+        const parsed = parseAppError(error);
+        if (isBillingError(parsed) && billingNeedsSignIn(parsed.code)) {
+          void queryClient.resetQueries({ queryKey: queryKeys.auth.session });
+          return;
+        }
+        toast.error(
+          isBillingError(parsed)
+            ? t(billingMessageKey(parsed.code))
+            : t("billing.errorUnavailable"),
+        );
+      },
+    });
   };
 
   // Keyed on the derived status rather than on the query result: a refetch that returns the same
@@ -258,6 +297,23 @@ export function ProfileMenu() {
             >
               <User aria-hidden="true" />
               {t("profile.menuItem")}
+            </DropdownMenuItem>
+          ) : null}
+
+          {/* Gated on the CAPABILITY answer this menu already holds, never on a tier: an account
+            * that holds nothing has no plan to manage, and the Portal would refuse it. That is
+            * also why this adds no `invoke()` on load — `isPremium` is the same cached entitlement
+            * read the gold trigger icon is already drawn from (D11). */}
+          {account !== null && isPremium ? (
+            <DropdownMenuItem
+              closeOnClick={false}
+              disabled={portal.isPending}
+              onClick={openPortal}
+              data-testid="profile-menu-manage-plan"
+              data-pending={portal.isPending ? "true" : undefined}
+            >
+              <CreditCard aria-hidden="true" />
+              {portal.isPending ? t("billing.opening") : t("billing.managePlan")}
             </DropdownMenuItem>
           ) : null}
 

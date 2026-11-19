@@ -9,6 +9,9 @@ const fr = frLocale as Record<string, string>;
 const homeKeys = (locale: Record<string, string>) =>
   Object.keys(locale).filter((key) => key.startsWith("home.")).sort();
 
+const billingKeys = (locale: Record<string, string>) =>
+  Object.keys(locale).filter((key) => key.startsWith("billing.")).sort();
+
 describe("home i18n", () => {
   it("has the same Home keys in English and French, all non-empty", () => {
     expect(homeKeys(fr)).toEqual(homeKeys(en));
@@ -88,5 +91,62 @@ describe("home i18n", () => {
     expect(fr["home.locked.quotaBody"].toLowerCase()).not.toContain(
       "passez à un forfait",
     );
+  });
+
+  /* Epic F: the refusal copy promises an upgrade, so there has to be a labelled action to
+   * click. It names the CAPABILITY, so it cannot read as a tier, and "Nixus Cloud" stays
+   * untranslated in French (AD-16). */
+  it("labels the upgrade action after the capability rather than a plan", () => {
+    for (const locale of [en, fr]) {
+      for (const key of ["home.locked.upgradeAction", "settings.readingUpgradeAction"]) {
+        expect(locale[key].trim(), key).not.toBe("");
+        expect(locale[key], key).toContain("Nixus Cloud AI");
+        expect(locale[key].toLowerCase(), key).not.toContain("premium");
+        expect(locale[key].toLowerCase(), key).not.toContain("advance");
+        expect(locale[key].toLowerCase(), key).not.toContain("classic");
+      }
+    }
+
+    expect(en["home.locked.upgradeAction"]).not.toEqual(en["home.locked.setupAction"]);
+    expect(fr["home.locked.upgradeAction"]).not.toEqual(fr["home.locked.setupAction"]);
+  });
+
+  /* The statement-import refusal is the same conversation on another surface, so it carries the
+   * same two routes — a plan, or the user's own key — and names neither tier. */
+  it("invites an upgrade on the statement-reading surface without naming a tier", () => {
+    for (const locale of [en, fr]) {
+      for (const key of ["settings.readingUpgradeTitle", "settings.readingUpgradeBody"]) {
+        expect(locale[key].trim(), key).not.toBe("");
+        expect(locale[key].toLowerCase(), key).not.toContain("premium");
+        expect(locale[key].toLowerCase(), key).not.toContain("advance");
+      }
+      expect(locale["settings.readingUpgradeBody"]).toContain("Nixus Cloud AI");
+    }
+
+    /* It must not read like the banner shown to an account that already has it. */
+    expect(en["settings.readingUpgradeTitle"]).not.toEqual(
+      en["settings.readingPremiumTitle"],
+    );
+    expect(fr["settings.readingUpgradeTitle"]).not.toEqual(
+      fr["settings.readingPremiumTitle"],
+    );
+  });
+
+  /* Every billing refusal is rendered from `code`, so a key present in one language only is a
+   * raw key on screen in the other. No value may name a tier or carry a URL. */
+  it("has the same billing keys in English and French, naming no tier and no URL", () => {
+    expect(billingKeys(fr)).toEqual(billingKeys(en));
+    expect(billingKeys(en).length).toBeGreaterThan(0);
+
+    for (const locale of [en, fr]) {
+      for (const key of billingKeys(en)) {
+        expect(locale[key].trim(), key).not.toBe("");
+        expect(locale[key].toLowerCase(), key).not.toContain("premium");
+        expect(locale[key].toLowerCase(), key).not.toContain("advance");
+        expect(locale[key].toLowerCase(), key).not.toContain("classic");
+        expect(locale[key].toLowerCase(), key).not.toContain("http");
+        expect(locale[key].toLowerCase(), key).not.toContain("stripe");
+      }
+    }
   });
 });
