@@ -8,16 +8,13 @@ import {
   getGlobalChargedCount,
   getGlobalConfig,
   getUserChargedCount,
-  getUserConfig,
   globalConfigKey,
   globalUsageKey,
   parseGlobalConfig,
-  parseUserConfig,
   periodKeyFor,
   remainingQuota,
   setDocumentClientForTesting,
   tableName,
-  userConfigKey,
   userPartitionKey,
   userUsageKey,
 } from "./table.ts";
@@ -28,10 +25,6 @@ const SUB = "b7f1c2d3-0000-4000-8000-abcdef123456";
 describe("key builders", () => {
   it("partitions users by Cognito sub and global state under GLOBAL", () => {
     expect(userPartitionKey(SUB)).toBe(`USER#${SUB}`);
-    expect(userConfigKey(SUB)).toEqual({
-      pk: `USER#${SUB}`,
-      sk: CONFIG_SORT_KEY,
-    });
     expect(globalConfigKey()).toEqual({
       pk: GLOBAL_PARTITION_KEY,
       sk: CONFIG_SORT_KEY,
@@ -64,30 +57,6 @@ describe("periodKeyFor", () => {
   it("does not shift the period for a local-time offset that crosses the boundary", () => {
     // 2026-09-01T00:30Z is still August in UTC-05:00, but the period key is UTC.
     expect(periodKeyFor(new Date("2026-09-01T00:30:00Z"))).toBe("2026-09");
-  });
-});
-
-describe("parseUserConfig fails closed", () => {
-  it("accepts only an explicitly premium record with a positive integer limit", () => {
-    expect(parseUserConfig({ premium: true, monthly_request_limit: 250 })).toEqual(
-      { premium: true, monthly_request_limit: 250 }
-    );
-  });
-
-  it("rejects a missing, non-premium, or truthy-but-not-true record", () => {
-    expect(parseUserConfig(undefined)).toBeUndefined();
-    expect(parseUserConfig({})).toBeUndefined();
-    expect(parseUserConfig({ premium: false, monthly_request_limit: 5 })).toBeUndefined();
-    expect(parseUserConfig({ premium: "true", monthly_request_limit: 5 })).toBeUndefined();
-    expect(parseUserConfig({ premium: 1, monthly_request_limit: 5 })).toBeUndefined();
-  });
-
-  it("rejects a non-positive, fractional, or non-numeric limit", () => {
-    expect(parseUserConfig({ premium: true, monthly_request_limit: 0 })).toBeUndefined();
-    expect(parseUserConfig({ premium: true, monthly_request_limit: -1 })).toBeUndefined();
-    expect(parseUserConfig({ premium: true, monthly_request_limit: 1.5 })).toBeUndefined();
-    expect(parseUserConfig({ premium: true, monthly_request_limit: "10" })).toBeUndefined();
-    expect(parseUserConfig({ premium: true })).toBeUndefined();
   });
 });
 
@@ -144,22 +113,6 @@ describe("consistent config reads", () => {
   afterEach(() => {
     setDocumentClientForTesting(undefined);
     delete process.env.TABLE_NAME;
-  });
-
-  it("reads the user config strongly consistently from the configured table", async () => {
-    client.queueItem({ premium: true, monthly_request_limit: 42 });
-
-    await expect(getUserConfig(SUB)).resolves.toEqual({
-      premium: true,
-      monthly_request_limit: 42,
-    });
-
-    expect(client.gets).toHaveLength(1);
-    expect(client.gets[0]!.input).toEqual({
-      TableName: "nixus-hosted-ai",
-      Key: { pk: `USER#${SUB}`, sk: "CONFIG" },
-      ConsistentRead: true,
-    });
   });
 
   it("reads the global config strongly consistently", async () => {

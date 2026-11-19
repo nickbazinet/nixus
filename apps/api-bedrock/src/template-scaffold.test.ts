@@ -653,10 +653,10 @@ describe("IAM grants exact actions only", () => {
   const actions = statements.flatMap((statement) => statement.Action).sort();
 
   /* Asserted as a sorted, de-duplicated list rather than by absence, so ADDING an
-   * action is a deliberate edit to this test and never an accident. The one
-   * duplicate is dynamodb:GetItem: it is granted on the hosted-AI table and again
-   * on the billing table, and the two statements have different resources and
-   * must stay separate. */
+   * action is a deliberate edit to this test and never an accident. Two actions
+   * are duplicated - dynamodb:GetItem and dynamodb:ConditionCheckItem - each
+   * granted once on the hosted-AI table and again on the billing table, and the
+   * two statements have different resources and must stay separate. */
   it("grants only the seven distinct actions the service actually requires", () => {
     expect([...new Set(actions)].sort()).toEqual([
       "bedrock:InvokeModelWithResponseStream",
@@ -672,6 +672,7 @@ describe("IAM grants exact actions only", () => {
     // unnoticed behind the de-duplication above.
     expect(actions).toEqual([
       "bedrock:InvokeModelWithResponseStream",
+      "dynamodb:ConditionCheckItem",
       "dynamodb:ConditionCheckItem",
       "dynamodb:GetItem",
       "dynamodb:GetItem",
@@ -707,7 +708,7 @@ describe("IAM grants exact actions only", () => {
  * are the Stripe webhook and the admin override, both in the billing stack. A
  * single write action here would make this a third writer of entitlement.
  */
-describe("the billing entitlement grant is one read action on one table", () => {
+describe("the billing entitlement grant is two read-only actions on one table", () => {
   const role = singleResourceOfType("AWS::IAM::Role");
 
   function billingPolicy(): {
@@ -725,14 +726,17 @@ describe("the billing entitlement grant is one read action on one table", () => 
     return found!;
   }
 
-  it("grants dynamodb:GetItem and nothing else", () => {
+  it("grants dynamodb:GetItem and dynamodb:ConditionCheckItem, and nothing else", () => {
     const statements = billingPolicy().PolicyDocument.Statement;
 
     expect(statements).toHaveLength(1);
-    expect(statements[0]!.Action).toEqual(["dynamodb:GetItem"]);
+    expect(statements[0]!.Action).toEqual([
+      "dynamodb:GetItem",
+      "dynamodb:ConditionCheckItem",
+    ]);
   });
 
-  it("grants no write, no query, and no scan on the authority's table", () => {
+  it("grants no write, query, or scan on the authority's table", () => {
     const actions = billingPolicy().PolicyDocument.Statement.flatMap(
       (statement) => statement.Action
     );
@@ -743,7 +747,6 @@ describe("the billing entitlement grant is one read action on one table", () => 
       "dynamodb:DeleteItem",
       "dynamodb:BatchWriteItem",
       "dynamodb:TransactWriteItems",
-      "dynamodb:ConditionCheckItem",
       "dynamodb:Query",
       "dynamodb:Scan",
       "dynamodb:PartiQLUpdate",

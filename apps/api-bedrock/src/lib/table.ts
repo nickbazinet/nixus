@@ -11,9 +11,16 @@ import { toBillingCapabilities, type BillingCapability } from "@nixus/shared";
  * It is also the READ-ONLY boundary onto the billing table's `ENTITLEMENT`
  * record, which billing AD-2 makes the sole entitlement authority and billing
  * AD-4 makes this service's canonical server-side read. This service holds
- * `dynamodb:GetItem` on that table and nothing else: no write action of any
- * kind, and it learns the table's name from a deploy-time parameter rather than
- * a CloudFormation export or a committed physical name (billing AD-17).
+ * `dynamodb:GetItem` and `dynamodb:ConditionCheckItem` on that table and no
+ * write action of any kind - the second grant lets `quota.ts` re-verify the
+ * entitlement's `version` inside its own reservation transaction (Epic H) - and
+ * it learns the table's name from a deploy-time parameter rather than a
+ * CloudFormation export or a committed physical name (billing AD-17).
+ *
+ * `HostedAiTable.premium` is RETIRED (Epic H). The billing `ENTITLEMENT` record
+ * is the only entitlement authority this service reads; there is no second
+ * shape and no fallback. `HostedAiTable` itself keeps counted usage and the
+ * GLOBAL kill switch only - no per-user CONFIG item exists here anymore.
  */
 
 export const CONFIG_SORT_KEY = "CONFIG";
@@ -36,10 +43,6 @@ export function userPartitionKey(sub: string): string {
 
 export function usageSortKey(periodKey: string): string {
   return `USAGE#${periodKey}`;
-}
-
-export function userConfigKey(sub: string): TableKey {
-  return { pk: userPartitionKey(sub), sk: CONFIG_SORT_KEY };
 }
 
 export function userUsageKey(sub: string, periodKey: string): TableKey {
@@ -69,11 +72,6 @@ export function periodKeyFor(date: Date): string {
   return `${year}-${month}`;
 }
 
-export interface UserConfig {
-  readonly premium: boolean;
-  readonly monthly_request_limit: number;
-}
-
 export interface GlobalConfig {
   readonly enabled: boolean;
   readonly monthly_request_limit: number;
@@ -81,14 +79,19 @@ export interface GlobalConfig {
 
 /**
  * The billing `ENTITLEMENT` record as this service reads it (billing AD-4's
- * canonical server-side read). Only the two attributes a gate or a quota bound
- * may consult are carried: `tier` is deliberately absent, because no code
+ * canonical server-side read). `tier` is deliberately absent, because no code
  * anywhere may compare one (billing AD-1), and the signed statement is
  * deliberately absent, because a server-side consumer never parses one.
+ *
+ * `version` is carried because `quota.ts`'s reservation re-verifies it with its
+ * own `ConditionCheck` against this same item (Epic H): the limit this service
+ * meters against must be the limit that was actually read, not a value that
+ * changed underneath the request.
  */
 export interface BillingEntitlement {
   readonly capabilities: readonly BillingCapability[];
   readonly monthly_request_limit: number | null;
+  readonly version: number | null;
 }
 
 export function tableName(): string {
@@ -127,20 +130,6 @@ export function setDocumentClientForTesting(
 
 function isPositiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
-}
-
-/**
- * A malformed record is indistinguishable from an absent one on the enforcement
- * path: both mean "not entitled" (AD-6 fail-closed), so this returns undefined
- * rather than throwing and never treats a partial item as premium.
- */
-export function parseUserConfig(
-  item: Record<string, unknown> | undefined
-): UserConfig | undefined {
-  if (!item) return undefined;
-  if (item.premium !== true) return undefined;
-  if (!isPositiveInteger(item.monthly_request_limit)) return undefined;
-  return { premium: true, monthly_request_limit: item.monthly_request_limit };
 }
 
 /**
@@ -185,10 +174,6 @@ async function getItemConsistently(
   return result.Item;
 }
 
-export async function getUserConfig(sub: string): Promise<UserConfig | undefined> {
-  return parseUserConfig(await getItemConsistently(userConfigKey(sub)));
-}
-
 export async function getGlobalConfig(): Promise<GlobalConfig | undefined> {
   return parseGlobalConfig(await getItemConsistently(globalConfigKey()));
 }
@@ -205,11 +190,10 @@ export async function getGlobalChargedCount(periodKey: string): Promise<number> 
 }
 
 /**
- * Fail-closed exactly as `parseUserConfig` is: `undefined` means NO RECORD, and
- * a record this cannot read is normalised to a record that GRANTS NOTHING -
- * indistinguishable from an absent grant on the enforcement path, while staying
- * distinguishable from an absent record, which is what lets the old `premium`
- * attribute remain the fallback during the AD-17 window.
+ * Fail-closed: `undefined` means NO RECORD, which this release treats
+ * identically to "denied" - there is no second shape to fall back to (Epic H).
+ * A record this cannot read is normalised to a record that GRANTS NOTHING,
+ * which is indistinguishable from an absent grant on the enforcement path.
  *
  * Unknown capability names are dropped rather than rejected, because
  * `toBillingCapabilities` is the shared contract's own normaliser and billing
@@ -226,23 +210,26 @@ export function parseBillingEntitlement(
     ? toBillingCapabilities(item.capabilities)
     : [];
   const limit = item.monthly_request_limit;
+  const version = item.version;
 
   return {
     capabilities,
     monthly_request_limit: isPositiveInteger(limit) ? limit : null,
+    version: isPositiveInteger(version) ? version : null,
   };
 }
 
 /**
  * ONE `GetItem` against the billing table, strongly consistent for the same
- * reason every other read here is: an entitlement that was just written must not
- * be read back as absent and silently fall through to the old `premium`
- * attribute.
+ * reason every other read here is: an entitlement that was just written must
+ * not be read back as absent and silently deny a caller whose grant just
+ * converged.
  *
- * Deliberately NOT folded into `quota.ts`'s transaction. That array's
- * `CancellationReasons` are mapped POSITIONALLY, so inserting a condition check
- * would shift every later index and make a quota failure report itself as a
- * config change.
+ * Deliberately a separate call from `quota.ts`'s reservation transaction, which
+ * re-verifies this same item's `version` with its own `ConditionCheck`. That
+ * array's `CancellationReasons` are mapped POSITIONALLY, so folding this read
+ * into it would shift every later index and make a quota failure report itself
+ * as an entitlement change.
  */
 export async function getBillingEntitlement(
   sub: string

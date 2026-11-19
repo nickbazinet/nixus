@@ -5,12 +5,12 @@ import type { CloudAiOperation } from "@nixus/shared";
 
 import {
   type GlobalConfig,
-  type UserConfig,
+  billingEntitlementKey,
+  billingTableName,
   getDocumentClient,
   globalConfigKey,
   globalUsageKey,
   tableName,
-  userConfigKey,
   userUsageKey,
 } from "./table.ts";
 
@@ -66,7 +66,7 @@ export function createQuotaRequestContext(
 
 export type ReserveOutcome =
   | "reserved"
-  | "config_changed"
+  | "entitlement_changed"
   | "user_quota_exhausted"
   | "global_quota_exhausted";
 
@@ -92,22 +92,25 @@ function failedAt(reasons: CancellationReason[], index: number): boolean {
 
 /*
  * TransactItems order is load-bearing: DynamoDB returns CancellationReasons
- * positionally, and that positional mapping is the only way to tell "an admin
- * changed the config mid-request" apart from "this user is out of quota" apart
- * from "the whole service is at its global cap".
+ * positionally, and that positional mapping is the only way to tell "the
+ * entitlement changed mid-request" apart from "this user is out of quota"
+ * apart from "the whole service is at its global cap".
  */
-const USER_CONFIG_INDEX = 0;
+const ENTITLEMENT_INDEX = 0;
 const GLOBAL_CONFIG_INDEX = 1;
 const USER_USAGE_INDEX = 2;
 const GLOBAL_USAGE_INDEX = 3;
 
 export async function reserveQuotaUnit(args: {
   readonly context: QuotaRequestContext;
-  readonly userConfig: UserConfig;
+  readonly entitlement: {
+    readonly monthlyRequestLimit: number;
+    readonly version: number;
+  };
   readonly globalConfig: GlobalConfig;
   readonly now: Date;
 }): Promise<ReserveOutcome> {
-  const { context, userConfig, globalConfig, now } = args;
+  const { context, entitlement, globalConfig, now } = args;
   const updatedAt = now.toISOString();
 
   const reserveUsage = (key: { pk: string; sk: string }, limit: number) => ({
@@ -140,18 +143,20 @@ export async function reserveQuotaUnit(args: {
         ClientRequestToken: context.reserveToken,
         TransactItems: [
           {
+            // The entitlement authority's OWN item, re-verified by its
+            // version (Epic H): the limit this reservation meters against
+            // must be the limit that was actually read, not a value a
+            // converging webhook or admin override changed underneath this
+            // request.
             ConditionCheck: {
-              TableName: tableName(),
-              Key: userConfigKey(context.sub),
-              ConditionExpression:
-                "#premium = :premium AND #monthly_request_limit = :monthly_request_limit",
+              TableName: billingTableName(),
+              Key: billingEntitlementKey(context.sub),
+              ConditionExpression: "#version = :version",
               ExpressionAttributeNames: {
-                "#premium": "premium",
-                "#monthly_request_limit": "monthly_request_limit",
+                "#version": "version",
               },
               ExpressionAttributeValues: {
-                ":premium": true,
-                ":monthly_request_limit": userConfig.monthly_request_limit,
+                ":version": entitlement.version,
               },
             },
           },
@@ -173,7 +178,7 @@ export async function reserveQuotaUnit(args: {
           },
           reserveUsage(
             userUsageKey(context.sub, context.periodKey),
-            userConfig.monthly_request_limit
+            entitlement.monthlyRequestLimit
           ),
           reserveUsage(
             globalUsageKey(context.periodKey),
@@ -188,10 +193,10 @@ export async function reserveQuotaUnit(args: {
     if (!reasons) throw error;
 
     if (
-      failedAt(reasons, USER_CONFIG_INDEX) ||
+      failedAt(reasons, ENTITLEMENT_INDEX) ||
       failedAt(reasons, GLOBAL_CONFIG_INDEX)
     ) {
-      return "config_changed";
+      return "entitlement_changed";
     }
     if (failedAt(reasons, USER_USAGE_INDEX)) return "user_quota_exhausted";
     if (failedAt(reasons, GLOBAL_USAGE_INDEX)) return "global_quota_exhausted";

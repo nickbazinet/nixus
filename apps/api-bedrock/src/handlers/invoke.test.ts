@@ -106,13 +106,13 @@ function fakeBedrock(options: FakeBedrockOptions = {}) {
 let client: FakeDocumentClient;
 let sink: RecordingSink;
 
-/* classifyEligibility fires five consistent reads concurrently in this order.
- * The billing ENTITLEMENT record is read LAST, and omitting it models the
- * pre-backfill state: no record exists, so the legacy `premium` attribute still
- * decides (AD-17). */
+/* classifyEligibility fires four consistent reads concurrently in this order:
+ * GLOBAL config, the user's charged count, the GLOBAL charged count, and the
+ * billing ENTITLEMENT record. `HostedAiTable.premium` is retired (Epic H): the
+ * entitlement is the only shape, so a default entitled grant is queued unless
+ * a case overrides it. */
 function queueEligible(
   overrides: {
-    user?: Record<string, unknown> | undefined;
     global?: Record<string, unknown> | undefined;
     userCharged?: number;
     globalCharged?: number;
@@ -121,18 +121,15 @@ function queueEligible(
 ): void {
   client
     .queueItem(
-      "user" in overrides
-        ? overrides.user
-        : { premium: true, monthly_request_limit: 100 }
-    )
-    .queueItem(
       "global" in overrides
         ? overrides.global
         : { enabled: true, monthly_request_limit: 1000 }
     )
     .queueItem({ charged_count: overrides.userCharged ?? 0 })
     .queueItem({ charged_count: overrides.globalCharged ?? 0 })
-    .queueItem(overrides.entitlement);
+    .queueItem(
+      "entitlement" in overrides ? overrides.entitlement : advanceEntitlement()
+    );
 }
 
 function advanceEntitlement(
@@ -305,25 +302,14 @@ describe("an ineligible caller never reaches Bedrock at all", () => {
     expect(bedrock.streamed).toHaveLength(0);
   });
 
-  it("returns 403 for a missing, non-premium, or malformed user config", async () => {
-    for (const user of [
-      undefined,
-      { premium: false, monthly_request_limit: 100 },
-      { premium: true },
-      { premium: true, monthly_request_limit: 0 },
-    ]) {
-      client = new FakeDocumentClient();
-      setDocumentClientForTesting(client.asDocumentClient());
-      sink = new RecordingSink();
+  it("returns 403 for a caller with no entitlement record", async () => {
+    queueEligible({ entitlement: undefined });
+    const { promise, bedrock } = run();
+    await promise;
 
-      queueEligible({ user });
-      const { promise, bedrock } = run();
-      await promise;
-
-      expect(sink.status, JSON.stringify(user)).toBe(403);
-      expect(sink.json.error).toMatchObject({ code: "premium_required" });
-      expect(bedrock.streamed).toHaveLength(0);
-    }
+    expect(sink.status).toBe(403);
+    expect(sink.json.error).toMatchObject({ code: "premium_required" });
+    expect(bedrock.streamed).toHaveLength(0);
   });
 
   it("returns 429 once the user's own quota is exhausted", async () => {
@@ -339,7 +325,7 @@ describe("an ineligible caller never reaches Bedrock at all", () => {
 
   it("prefers the global 503 over a per-user 403 so the kill switch is unambiguous", async () => {
     queueEligible({
-      user: undefined,
+      entitlement: undefined,
       global: { enabled: false, monthly_request_limit: 1000 },
     });
     const { promise } = run();
@@ -350,15 +336,12 @@ describe("an ineligible caller never reaches Bedrock at all", () => {
 });
 
 /*
- * AD-17 step 3 and AD-12. The entitlement authority decides, the legacy
- * `premium` attribute is only the fallback, and a refusal names the capability
- * rather than accusing a paying subscriber of not being premium.
+ * AD-17 step 3 and AD-12. The entitlement authority decides, full stop - there
+ * is no legacy attribute left to fall back to - and a refusal names the
+ * capability rather than accusing a paying subscriber of not being premium.
  */
 describe("the entitlement authority is what grants hosted AI", () => {
-  /* The post-backfill grandfathered state: the authority now holds the grant,
-   * and the legacy CONFIG item survives only as the thing `quota.ts` reserves
-   * against until Epic H. */
-  it("serves a request the authority granted and the legacy item can still meter", async () => {
+  it("serves a request the authority granted", async () => {
     queueEligible({ entitlement: advanceEntitlement() });
     client.queueOk().queueOk();
 
@@ -373,7 +356,6 @@ describe("the entitlement authority is what grants hosted AI", () => {
    * global switch is on, so the entitlement is the ONLY thing that can refuse. */
   it("refuses a Classic-shaped entitlement with 403 premium_required on full quota", async () => {
     queueEligible({
-      user: { premium: true, monthly_request_limit: 100 },
       userCharged: 0,
       globalCharged: 0,
       entitlement: advanceEntitlement({
@@ -432,11 +414,9 @@ describe("the entitlement authority is what grants hosted AI", () => {
     }
   });
 
-  /* AD-2: the authority's limit is the per-tier policy; `HostedAiTable` holds
-   * none once it serves every request. */
-  it("meters against the authority's limit, not the legacy CONFIG item's", async () => {
+  /* AD-2: the authority's limit is the per-tier policy. */
+  it("meters against the authority's limit", async () => {
     queueEligible({
-      user: { premium: true, monthly_request_limit: 100 },
       userCharged: 40,
       entitlement: advanceEntitlement({ monthly_request_limit: 40 }),
     });
@@ -444,36 +424,34 @@ describe("the entitlement authority is what grants hosted AI", () => {
     const { promise, bedrock } = run();
     await promise;
 
-    // 40 charged against the authority's 40 is exhausted, even though the legacy
-    // item would still have allowed 60 more.
     expect(sink.status).toBe(429);
     expect(sink.json.error).toMatchObject({ code: "quota_exhausted" });
     expect(bedrock.streamed).toHaveLength(0);
   });
 
-  it("falls back to the CONFIG item's limit when the record records none", async () => {
+  /*
+   * A record with no usable limit, or no usable version, has no reservation
+   * `quota.ts` can make. That is a SERVICE limitation, so it answers 503 -
+   * which the desktop handles by falling back to BYO - and never
+   * `premium_required`, which would blame an entitled caller's plan.
+   */
+  it("answers 503, not 403, for a grant with no usable limit", async () => {
     queueEligible({
-      user: { premium: true, monthly_request_limit: 100 },
-      userCharged: 100,
       entitlement: advanceEntitlement({ monthly_request_limit: null }),
     });
 
-    const { promise } = run();
+    const { promise, bedrock } = run();
     await promise;
 
-    expect(sink.status).toBe(429);
+    expect(sink.status).toBe(503);
+    expect(sink.json.error).toMatchObject({ code: "hosted_unavailable" });
+    expect(bedrock.streamed).toHaveLength(0);
+    expect(client.transactions).toHaveLength(0);
   });
 
-  /*
-   * The authority grants but `quota.ts`'s untouched `premium = true` condition
-   * check means there is no reservation to make. That is a SERVICE limitation,
-   * so it answers 503 - which the desktop handles by falling back to BYO - and
-   * never `premium_required`, which would blame an entitled caller's plan.
-   */
-  it("answers 503, not 403, for a grant this release cannot yet meter", async () => {
+  it("answers 503, not 403, for a grant with no usable version", async () => {
     queueEligible({
-      user: undefined,
-      entitlement: advanceEntitlement({ monthly_request_limit: null }),
+      entitlement: advanceEntitlement({ version: 0 }),
     });
 
     const { promise, bedrock } = run();
@@ -519,11 +497,11 @@ describe("the entitlement authority is what grants hosted AI", () => {
   });
 
   /*
-   * A config race is not a plan limitation. The code and status stay pinned
-   * (AD-12) so no existing client reclassifies the failure, but the message must
-   * not accuse the caller's plan of anything.
+   * An entitlement race is not a plan limitation. The code and status stay
+   * pinned (AD-12) so no existing client reclassifies the failure, but the
+   * message must not accuse the caller's plan of anything.
    */
-  it("keeps a config race at 403 premium_required with a cause-specific message", async () => {
+  it("keeps an entitlement race at 403 premium_required with a cause-specific message", async () => {
     queueEligible({ entitlement: advanceEntitlement() });
     client.queueError(
       transactionCanceled("ConditionalCheckFailed", "None", "None", "None")
@@ -660,7 +638,7 @@ describe("AD-8 step 4 reservation", () => {
     expect(client.transactions).toHaveLength(2);
   });
 
-  it("rereads and retries exactly once when config changed mid-request", async () => {
+  it("rereads and retries exactly once when the entitlement changed mid-request", async () => {
     queueEligible();
     client.queueError(
       transactionCanceled("ConditionalCheckFailed", "None", "None", "None")
@@ -672,13 +650,13 @@ describe("AD-8 step 4 reservation", () => {
     await promise;
 
     expect(sink.status).toBe(200);
-    // Two eligibility passes (5 reads each) plus reserve+finalize transactions.
-    expect(client.gets).toHaveLength(10);
+    // Two eligibility passes (4 reads each) plus reserve+finalize transactions.
+    expect(client.gets).toHaveLength(8);
     // One reservation, one model call: the retry must not double-charge.
     expect(bedrock.streamed).toHaveLength(1);
   });
 
-  it("fails closed rather than looping when config changes twice", async () => {
+  it("fails closed rather than looping when the entitlement changes twice", async () => {
     queueEligible();
     client.queueError(
       transactionCanceled("ConditionalCheckFailed", "None", "None", "None")

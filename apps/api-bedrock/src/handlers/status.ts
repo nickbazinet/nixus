@@ -8,7 +8,6 @@ import {
   getBillingEntitlement,
   getGlobalConfig,
   getUserChargedCount,
-  getUserConfig,
 } from "../lib/table.ts";
 
 /*
@@ -19,10 +18,10 @@ import {
  * desktop can distinguish "not premium" from "gateway broken" without treating a
  * cold user record as an error.
  *
- * The wire shape keeps its `premium` boolean for one deprecation window
- * (billing AD-17 step 4) so a desktop release that predates the signed statement
- * still works - but the boolean is now SOURCED from the entitlement authority
- * rather than from `HostedAiTable.premium`.
+ * The wire shape keeps its `premium` boolean (AD-17 step 4, for an older
+ * desktop still reading it), sourced entirely from the entitlement authority -
+ * `HostedAiTable.premium` is retired (Epic H) and no longer exists anywhere in
+ * this decision.
  */
 
 const NON_PREMIUM: Omit<CloudAiStatusResponse, "period"> = {
@@ -37,14 +36,13 @@ export async function handleStatus(args: {
 }): Promise<CloudAiStatusResponse> {
   const { sub, periodKey } = args;
 
-  const [userConfig, globalConfig, entitlement] = await Promise.all([
-    getUserConfig(sub),
+  const [globalConfig, entitlement] = await Promise.all([
     getGlobalConfig(),
     getBillingEntitlement(sub),
   ]);
 
-  const hostedAi = resolveHostedAiEntitlement({ entitlement, userConfig });
-  const service = hostedAiServiceability({ hostedAi, userConfig });
+  const hostedAi = resolveHostedAiEntitlement({ entitlement });
+  const service = hostedAiServiceability({ hostedAi });
 
   // The global kill switch hides premium capability from status too: reporting
   // premium:true while every invoke returns 503 would make the desktop cache a

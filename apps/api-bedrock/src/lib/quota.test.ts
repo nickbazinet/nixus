@@ -18,7 +18,7 @@ import { FakeDocumentClient, transactionCanceled } from "./testing/fake-dynamo.t
 
 const SUB = "b7f1c2d3-0000-4000-8000-abcdef123456";
 const NOW = new Date("2026-08-26T10:00:00Z");
-const USER_CONFIG = { premium: true as const, monthly_request_limit: 100 };
+const ENTITLEMENT = { monthlyRequestLimit: 100, version: 1 };
 const GLOBAL_CONFIG = { enabled: true, monthly_request_limit: 1000 };
 
 let client: FakeDocumentClient;
@@ -33,12 +33,14 @@ beforeEach(() => {
   client = new FakeDocumentClient();
   setDocumentClientForTesting(client.asDocumentClient());
   process.env.TABLE_NAME = "nixus-hosted-ai";
+  process.env.BILLING_TABLE_NAME = "nixus-billing-billing";
   context = createQuotaRequestContext(SUB, "2026-08", sequentialIds());
 });
 
 afterEach(() => {
   setDocumentClientForTesting(undefined);
   delete process.env.TABLE_NAME;
+  delete process.env.BILLING_TABLE_NAME;
 });
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -88,12 +90,12 @@ describe("request context is computed once", () => {
   });
 });
 
-describe("reserve is one atomic transaction over user and GLOBAL", () => {
+describe("reserve is one atomic transaction over the entitlement and GLOBAL", () => {
   it("issues exactly one TransactWriteItems call carrying the reserve token", async () => {
     client.queueOk();
 
     await expect(
-      reserveQuotaUnit({ context, userConfig: USER_CONFIG, globalConfig: GLOBAL_CONFIG, now: NOW })
+      reserveQuotaUnit({ context, entitlement: ENTITLEMENT, globalConfig: GLOBAL_CONFIG, now: NOW })
     ).resolves.toBe("reserved");
 
     expect(client.transactions).toHaveLength(1);
@@ -102,19 +104,20 @@ describe("reserve is one atomic transaction over user and GLOBAL", () => {
     );
   });
 
-  it("condition-checks both configs and updates both usage items in that one call", async () => {
+  it("condition-checks the entitlement and GLOBAL and updates both usage items in that one call", async () => {
     client.queueOk();
-    await reserveQuotaUnit({ context, userConfig: USER_CONFIG, globalConfig: GLOBAL_CONFIG, now: NOW });
+    await reserveQuotaUnit({ context, entitlement: ENTITLEMENT, globalConfig: GLOBAL_CONFIG, now: NOW });
 
     const items = transactItems();
     expect(items).toHaveLength(4);
 
-    expect(items[0].ConditionCheck.Key).toEqual({ pk: `USER#${SUB}`, sk: "CONFIG" });
+    expect(items[0].ConditionCheck.TableName).toBe("nixus-billing-billing");
+    expect(items[0].ConditionCheck.Key).toEqual({ pk: `USER#${SUB}`, sk: "ENTITLEMENT" });
     expect(items[0].ConditionCheck.ExpressionAttributeValues).toEqual({
-      ":premium": true,
-      ":monthly_request_limit": 100,
+      ":version": 1,
     });
 
+    expect(items[1].ConditionCheck.TableName).toBe("nixus-hosted-ai");
     expect(items[1].ConditionCheck.Key).toEqual({ pk: "GLOBAL", sk: "CONFIG" });
     expect(items[1].ConditionCheck.ExpressionAttributeValues).toEqual({
       ":enabled": true,
@@ -127,7 +130,7 @@ describe("reserve is one atomic transaction over user and GLOBAL", () => {
 
   it("gates each usage item against its own configured limit", async () => {
     client.queueOk();
-    await reserveQuotaUnit({ context, userConfig: USER_CONFIG, globalConfig: GLOBAL_CONFIG, now: NOW });
+    await reserveQuotaUnit({ context, entitlement: ENTITLEMENT, globalConfig: GLOBAL_CONFIG, now: NOW });
 
     const items = transactItems();
     const userUsage = updateFor(items, "USAGE#2026-08");
@@ -140,7 +143,7 @@ describe("reserve is one atomic transaction over user and GLOBAL", () => {
 
   it("increments charged_count and reservation_count together, and nothing else", async () => {
     client.queueOk();
-    await reserveQuotaUnit({ context, userConfig: USER_CONFIG, globalConfig: GLOBAL_CONFIG, now: NOW });
+    await reserveQuotaUnit({ context, entitlement: ENTITLEMENT, globalConfig: GLOBAL_CONFIG, now: NOW });
 
     for (const item of transactItems().slice(2)) {
       expect(item.Update.UpdateExpression).toContain(`ADD #${CHARGED_COUNT} :one`);
@@ -154,20 +157,20 @@ describe("reserve is one atomic transaction over user and GLOBAL", () => {
 
 describe("reserve classifies a cancelled transaction by position", () => {
   const reserve = () =>
-    reserveQuotaUnit({ context, userConfig: USER_CONFIG, globalConfig: GLOBAL_CONFIG, now: NOW });
+    reserveQuotaUnit({ context, entitlement: ENTITLEMENT, globalConfig: GLOBAL_CONFIG, now: NOW });
 
-  it("reports a changed user config so the caller can reread once", async () => {
+  it("reports a changed entitlement so the caller can reread once", async () => {
     client.queueError(
       transactionCanceled("ConditionalCheckFailed", "None", "None", "None")
     );
-    await expect(reserve()).resolves.toBe("config_changed");
+    await expect(reserve()).resolves.toBe("entitlement_changed");
   });
 
   it("reports a changed global config the same way", async () => {
     client.queueError(
       transactionCanceled("None", "ConditionalCheckFailed", "None", "None")
     );
-    await expect(reserve()).resolves.toBe("config_changed");
+    await expect(reserve()).resolves.toBe("entitlement_changed");
   });
 
   it("reports user quota exhaustion when only the user usage gate fails", async () => {
@@ -184,11 +187,11 @@ describe("reserve classifies a cancelled transaction by position", () => {
     await expect(reserve()).resolves.toBe("global_quota_exhausted");
   });
 
-  it("prefers the config-changed classification when both a config and a usage gate fail", async () => {
+  it("prefers the entitlement-changed classification when both a config and a usage gate fail", async () => {
     client.queueError(
       transactionCanceled("ConditionalCheckFailed", "None", "ConditionalCheckFailed", "None")
     );
-    await expect(reserve()).resolves.toBe("config_changed");
+    await expect(reserve()).resolves.toBe("entitlement_changed");
   });
 
   it("never swallows a non-cancellation failure as an eligibility decision", async () => {
@@ -234,7 +237,7 @@ describe("refund is idempotent and cannot go negative", () => {
 
   it("uses a token distinct from reserve so a retry cannot collide across kinds", async () => {
     client.queueOk().queueOk();
-    await reserveQuotaUnit({ context, userConfig: USER_CONFIG, globalConfig: GLOBAL_CONFIG, now: NOW });
+    await reserveQuotaUnit({ context, entitlement: ENTITLEMENT, globalConfig: GLOBAL_CONFIG, now: NOW });
     await refundQuotaUnit({ context, now: NOW });
 
     const tokens = client.transactions.map(
@@ -361,7 +364,7 @@ describe("all three transaction kinds address the same period", () => {
 
     await reserveQuotaUnit({
       context: boundaryContext,
-      userConfig: USER_CONFIG,
+      entitlement: ENTITLEMENT,
       globalConfig: GLOBAL_CONFIG,
       now: new Date("2026-09-01T00:00:01Z"),
     });
@@ -399,23 +402,22 @@ describe("all three transaction kinds address the same period", () => {
  * The positional-index guard.
  *
  * DynamoDB returns `CancellationReasons` POSITIONALLY, and reserveQuotaUnit's
- * USER_CONFIG_INDEX=0 / GLOBAL_CONFIG_INDEX=1 / USER_USAGE_INDEX=2 /
- * GLOBAL_USAGE_INDEX=3 mapping is the only way it can tell "an admin changed the
- * config" from "this user is out of quota" from "the service is at its global
- * cap". Inserting ANY item - an entitlement condition check being the obvious
- * temptation while the billing authority is being adopted - shifts every later
- * index and makes `failedAt` misattribute failures silently: a quota exhaustion
- * reported as a config change, and a config change reported as quota exhaustion.
+ * ENTITLEMENT_INDEX=0 / GLOBAL_CONFIG_INDEX=1 / USER_USAGE_INDEX=2 /
+ * GLOBAL_USAGE_INDEX=3 mapping is the only way it can tell "the entitlement
+ * changed" from "this user is out of quota" from "the service is at its global
+ * cap". Inserting ANY item shifts every later index and makes `failedAt`
+ * misattribute failures silently: a quota exhaustion reported as an
+ * entitlement change, and an entitlement change reported as quota exhaustion.
  *
  * This asserts the array's length AND the identity of each position, so neither
  * an insertion nor a reordering can pass.
  */
 describe("reserve's TransactItems array keeps exactly four items in order", () => {
-  it("is four items: user config check, global config check, user usage, global usage", async () => {
+  it("is four items: entitlement check, global config check, user usage, global usage", async () => {
     client.queueOk();
     await reserveQuotaUnit({
       context,
-      userConfig: USER_CONFIG,
+      entitlement: ENTITLEMENT,
       globalConfig: GLOBAL_CONFIG,
       now: NOW,
     });
@@ -424,49 +426,55 @@ describe("reserve's TransactItems array keeps exactly four items in order", () =
     expect(items).toHaveLength(4);
 
     expect(Object.keys(items[0]!)).toEqual(["ConditionCheck"]);
+    expect(items[0]!.ConditionCheck.TableName).toBe("nixus-billing-billing");
     expect(items[0]!.ConditionCheck.Key).toEqual({
       pk: `USER#${SUB}`,
-      sk: "CONFIG",
+      sk: "ENTITLEMENT",
     });
-    expect(items[0]!.ConditionCheck.ExpressionAttributeNames["#premium"]).toBe(
-      "premium"
+    expect(items[0]!.ConditionCheck.ExpressionAttributeNames["#version"]).toBe(
+      "version"
     );
 
     expect(Object.keys(items[1]!)).toEqual(["ConditionCheck"]);
+    expect(items[1]!.ConditionCheck.TableName).toBe("nixus-hosted-ai");
     expect(items[1]!.ConditionCheck.Key).toEqual({ pk: "GLOBAL", sk: "CONFIG" });
     expect(items[1]!.ConditionCheck.ExpressionAttributeNames["#enabled"]).toBe(
       "enabled"
     );
 
     expect(Object.keys(items[2]!)).toEqual(["Update"]);
+    expect(items[2]!.Update.TableName).toBe("nixus-hosted-ai");
     expect(items[2]!.Update.Key).toEqual({
       pk: `USER#${SUB}`,
       sk: "USAGE#2026-08",
     });
 
     expect(Object.keys(items[3]!)).toEqual(["Update"]);
+    expect(items[3]!.Update.TableName).toBe("nixus-hosted-ai");
     expect(items[3]!.Update.Key).toEqual({ pk: "GLOBAL", sk: "USAGE#2026-08" });
   });
 
-  /* Nothing may reach into the billing table from inside the transaction: the
-   * hosted-AI role holds `dynamodb:GetItem` on it and no write action at all, and
-   * the entitlement read is a separate GetCommand for the index reason above. */
-  it("names only the hosted-AI table and no entitlement item", async () => {
+  /* Exactly one item in the transaction may name the billing table, and it must
+   * be the entitlement ConditionCheck - never a second entitlement item, and
+   * never anything that looks like a write against it. */
+  it("names the billing table only for the entitlement condition check", async () => {
     client.queueOk();
     await reserveQuotaUnit({
       context,
-      userConfig: USER_CONFIG,
+      entitlement: ENTITLEMENT,
       globalConfig: GLOBAL_CONFIG,
       now: NOW,
     });
 
-    const serialized = JSON.stringify(transactItems());
-    expect(serialized).not.toContain("ENTITLEMENT");
-    expect(serialized).not.toContain("capabilities");
+    const items = transactItems();
+    const billingItems = items.filter(
+      (item) =>
+        (item.ConditionCheck ?? item.Update)?.TableName === "nixus-billing-billing"
+    );
+    expect(billingItems).toHaveLength(1);
+    expect(billingItems[0]).toHaveProperty("ConditionCheck");
 
-    for (const item of transactItems()) {
-      const operation = item.ConditionCheck ?? item.Update;
-      expect(operation.TableName).toBe("nixus-hosted-ai");
-    }
+    const serialized = JSON.stringify(items);
+    expect(serialized).not.toContain("capabilities");
   });
 });

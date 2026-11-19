@@ -1,16 +1,14 @@
 import { grantsCapability, type BillingCapability } from "@nixus/shared";
 
-import type { BillingEntitlement, UserConfig } from "./table.ts";
+import type { BillingEntitlement } from "./table.ts";
 
 /*
- * The entitlement decision, and the only place it is made (billing AD-17 step 3).
- *
- * Two shapes carry hosted-AI entitlement during the cutover window: the billing
- * table's `ENTITLEMENT` record, which billing AD-2 makes the sole authority, and
- * `HostedAiTable`'s original `USER#<sub>/CONFIG.premium` boolean, which Epic H
- * retires in a LATER release. Precedence between them is resolved here, once, by
- * a named function - never by an inline fallback in a handler, where the two
- * routes could drift into disagreeing about who is entitled.
+ * The entitlement decision, and the only place it is made (billing AD-17 step
+ * 3). The billing table's `ENTITLEMENT` record, which billing AD-2 makes the
+ * sole authority, is the ONLY shape consulted here. `HostedAiTable.premium`
+ * and its `CONFIG` item are retired (Epic H): there is no second shape and no
+ * fallback, so a caller the authority has never heard of is denied, not
+ * grandfathered.
  */
 
 /**
@@ -21,110 +19,78 @@ import type { BillingEntitlement, UserConfig } from "./table.ts";
  */
 export const HOSTED_AI_CAPABILITY: BillingCapability = "hosted_ai";
 
-/** Which shape decided. Recorded for operations; never branched on by a caller. */
-export type EntitlementAuthority =
-  | "billing_entitlement"
-  | "hosted_ai_premium_attribute";
-
 export type HostedAiEntitlement =
   | {
       readonly granted: true;
-      readonly authority: EntitlementAuthority;
       /**
-       * `null` when neither shape records a usable limit. A grant with no limit
-       * cannot be metered by `quota.ts`, which is a service limitation and never
-       * a plan limitation.
+       * `null` when the record carries no usable limit. A grant with no limit
+       * cannot be metered by `quota.ts`, which is a service limitation and
+       * never a plan limitation.
        */
       readonly monthlyRequestLimit: number | null;
+      /**
+       * The record's own optimistic-concurrency token, carried through so
+       * `quota.ts` can re-verify it inside the reservation transaction.
+       * `null` only when the record itself is unreadable, which already
+       * denies above - see `hostedAiServiceability`.
+       */
+      readonly version: number | null;
     }
-  | { readonly granted: false; readonly authority: EntitlementAuthority };
+  | { readonly granted: false };
 
 /**
- * Precedence, in full:
- *
- * | billing `ENTITLEMENT`        | `CONFIG.premium` | decision            | limit            |
- * |------------------------------|------------------|---------------------|------------------|
- * | present, grants `hosted_ai`  | anything         | GRANTED (authority) | entitlement's, else CONFIG's |
- * | present, grants nothing      | `true`           | DENIED (authority)  | -                |
- * | present, unreadable          | `true`           | DENIED (fail closed)| -                |
- * | absent                       | `true` + limit   | GRANTED (attribute) | CONFIG's         |
- * | absent                       | absent/false/bad | DENIED              | -                |
- *
- * The third and fourth rows are the whole point of the cutover. Row three is why
- * a release can deploy BEFORE the backfill completes - a user the authority has
- * never heard of keeps the access they were hand-granted - and row two is why the
- * backfill can then run with no second deploy: the moment a record exists it
- * decides, including when it decides to deny.
+ * No record, or a record that does not grant `hosted_ai`, is DENIED. There is
+ * no second shape to consult: an absent `ENTITLEMENT` means this account has
+ * never converged a Stripe subscription or an admin grant, full stop.
  */
 export function resolveHostedAiEntitlement(args: {
   readonly entitlement: BillingEntitlement | undefined;
-  readonly userConfig: UserConfig | undefined;
 }): HostedAiEntitlement {
-  const { entitlement, userConfig } = args;
+  const { entitlement } = args;
 
-  if (entitlement !== undefined) {
-    const authority = "billing_entitlement" as const;
-    if (!grantsCapability(entitlement.capabilities, HOSTED_AI_CAPABILITY)) {
-      return { granted: false, authority };
-    }
-    return {
-      granted: true,
-      authority,
-      // The authority's limit wins; the legacy CONFIG item's is the fallback
-      // while both shapes exist. `HostedAiTable` holds no per-user policy once
-      // the authority serves every request (billing AD-2).
-      monthlyRequestLimit:
-        entitlement.monthly_request_limit ??
-        userConfig?.monthly_request_limit ??
-        null,
-    };
+  if (entitlement === undefined) {
+    return { granted: false };
   }
-
-  const authority = "hosted_ai_premium_attribute" as const;
-  return userConfig === undefined
-    ? { granted: false, authority }
-    : {
-        granted: true,
-        authority,
-        monthlyRequestLimit: userConfig.monthly_request_limit,
-      };
+  if (!grantsCapability(entitlement.capabilities, HOSTED_AI_CAPABILITY)) {
+    return { granted: false };
+  }
+  return {
+    granted: true,
+    monthlyRequestLimit: entitlement.monthly_request_limit,
+    version: entitlement.version,
+  };
 }
 
 export type HostedAiServiceability =
   | {
       readonly serviceable: true;
       readonly monthlyRequestLimit: number;
-      /** Carried through because `quota.ts` reserves against this exact item. */
-      readonly userConfig: UserConfig;
+      /** Carried through because `quota.ts` reserves against this exact version. */
+      readonly entitlementVersion: number;
     }
   | { readonly serviceable: false };
 
 /**
  * Whether a GRANT can actually be served by this release, which is a separate
- * question from whether it was granted.
- *
- * `quota.ts` reserves against the legacy `USER#<sub>/CONFIG` item: its
- * `ConditionCheck` still requires `premium = true` and the item's own limit, and
- * that transaction is deliberately untouched here (Epic H removes it). So an
- * entitlement the authority grants with no parseable CONFIG item behind it, or
- * with no usable limit on either shape, has no reservation to make.
+ * question from whether it was granted. A record with no usable limit, or no
+ * usable version, has no reservation `quota.ts` can make - a service
+ * limitation, never a plan limitation.
  *
  * Both routes consult THIS function rather than deciding for themselves, so
  * `GET /status` can never advertise a capability every `POST /invoke` refuses.
  */
 export function hostedAiServiceability(args: {
   readonly hostedAi: HostedAiEntitlement;
-  readonly userConfig: UserConfig | undefined;
 }): HostedAiServiceability {
-  const { hostedAi, userConfig } = args;
+  const { hostedAi } = args;
 
   if (!hostedAi.granted) return { serviceable: false };
   if (hostedAi.monthlyRequestLimit === null) return { serviceable: false };
-  if (userConfig === undefined) return { serviceable: false };
+  if (hostedAi.version === null) return { serviceable: false };
 
   return {
     serviceable: true,
     monthlyRequestLimit: hostedAi.monthlyRequestLimit,
-    userConfig,
+    entitlementVersion: hostedAi.version,
   };
 }

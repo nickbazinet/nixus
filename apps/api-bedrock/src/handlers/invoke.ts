@@ -15,12 +15,10 @@ import {
 } from "../lib/quota.ts";
 import {
   type GlobalConfig,
-  type UserConfig,
   getBillingEntitlement,
   getGlobalChargedCount,
   getGlobalConfig,
   getUserChargedCount,
-  getUserConfig,
 } from "../lib/table.ts";
 import {
   type PreOutputFailure,
@@ -76,7 +74,10 @@ export interface InvokeInput {
 type Eligibility =
   | {
       readonly ok: true;
-      readonly userConfig: UserConfig;
+      readonly entitlement: {
+        readonly monthlyRequestLimit: number;
+        readonly version: number;
+      };
       readonly globalConfig: GlobalConfig;
     }
   | { readonly ok: false; readonly failure: PreOutputFailure };
@@ -103,9 +104,9 @@ const PREMIUM_REQUIRED: PreOutputFailure = {
 /**
  * Also `premium_required`, because the status and the code are pinned (AD-12)
  * and a 503 here would tell the desktop to back off and retry a request that
- * will fail identically. Its message is separate because the cause is: an
- * administrator moved the config underneath this request, which says nothing
- * about the caller's plan.
+ * will fail identically. Its message is separate because the cause is: the
+ * entitlement changed underneath this request (a webhook converged or an
+ * admin override landed), which says nothing about the caller's plan.
  */
 const ENTITLEMENT_UNCONFIRMED: PreOutputFailure = {
   code: "premium_required",
@@ -201,9 +202,8 @@ async function classifyEligibility(
   sub: string,
   periodKey: string
 ): Promise<Eligibility> {
-  const [userConfig, globalConfig, userCharged, globalCharged, entitlement] =
+  const [globalConfig, userCharged, globalCharged, entitlement] =
     await Promise.all([
-      getUserConfig(sub),
       getGlobalConfig(),
       getUserChargedCount(sub, periodKey),
       getGlobalChargedCount(periodKey),
@@ -221,21 +221,20 @@ async function classifyEligibility(
     return { ok: false, failure: HOSTED_UNAVAILABLE };
   }
 
-  const hostedAi = resolveHostedAiEntitlement({ entitlement, userConfig });
+  const hostedAi = resolveHostedAiEntitlement({ entitlement });
   if (!hostedAi.granted) {
     return { ok: false, failure: PREMIUM_REQUIRED };
   }
 
   /*
-   * The authority grants, but this release cannot meter or reserve the request:
-   * `quota.ts` still condition-checks `premium = true` and the CONFIG item's own
-   * limit, and that transaction is deliberately untouched here (billing AD-17
-   * removes it in a later release). The honest answer is 503 - a SERVICE
+   * The authority grants, but this release cannot meter or reserve the
+   * request: a record with no usable limit or no usable version has no
+   * reservation `quota.ts` can make. The honest answer is 503 - a SERVICE
    * limitation, which the desktop handles by backing off and falling back to
    * BYO - and never `premium_required`, which would tell an entitled caller
    * their plan is wrong.
    */
-  const service = hostedAiServiceability({ hostedAi, userConfig });
+  const service = hostedAiServiceability({ hostedAi });
   if (!service.serviceable) {
     return { ok: false, failure: HOSTED_UNAVAILABLE };
   }
@@ -243,20 +242,27 @@ async function classifyEligibility(
   if (userCharged >= service.monthlyRequestLimit) {
     return { ok: false, failure: QUOTA_EXHAUSTED };
   }
-  return { ok: true, userConfig: service.userConfig, globalConfig };
+  return {
+    ok: true,
+    entitlement: {
+      monthlyRequestLimit: service.monthlyRequestLimit,
+      version: service.entitlementVersion,
+    },
+    globalConfig,
+  };
 }
 
 function reserveFailure(
-  outcome: "config_changed" | "user_quota_exhausted" | "global_quota_exhausted"
+  outcome: "entitlement_changed" | "user_quota_exhausted" | "global_quota_exhausted"
 ): PreOutputFailure {
   switch (outcome) {
     case "user_quota_exhausted":
       return QUOTA_EXHAUSTED;
     case "global_quota_exhausted":
       return HOSTED_UNAVAILABLE;
-    case "config_changed":
-      // A second mismatch means an admin is actively editing config; fail closed
-      // rather than loop (AD-6).
+    case "entitlement_changed":
+      // A second mismatch means the entitlement is actively changing; fail
+      // closed rather than loop (AD-6).
       return ENTITLEMENT_UNCONFIRMED;
   }
 }
@@ -337,7 +343,7 @@ export async function handleInvoke(
 
       const outcome = await reserveQuotaUnit({
         context,
-        userConfig: eligibility.userConfig,
+        entitlement: eligibility.entitlement,
         globalConfig: eligibility.globalConfig,
         now: now(),
       });
@@ -346,7 +352,7 @@ export async function handleInvoke(
         reserved = true;
         break;
       }
-      if (outcome === "config_changed" && attempt === 0) {
+      if (outcome === "entitlement_changed" && attempt === 0) {
         continue;
       }
 

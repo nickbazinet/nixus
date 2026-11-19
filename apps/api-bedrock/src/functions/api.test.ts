@@ -200,7 +200,6 @@ describe("identity comes only from the authorizer", () => {
 
   it("ignores a body-supplied identity entirely", async () => {
     client
-      .queueItem(undefined)
       .queueItem({ enabled: true, monthly_request_limit: 1000 })
       .queueItem(undefined);
 
@@ -215,7 +214,7 @@ describe("identity comes only from the authorizer", () => {
     );
 
     const readKeys = client.gets.map((command) => command.input.Key);
-    expect(readKeys).toContainEqual({ pk: `USER#${SUB}`, sk: "CONFIG" });
+    expect(readKeys).toContainEqual({ pk: `USER#${SUB}`, sk: "ENTITLEMENT" });
     expect(JSON.stringify(readKeys)).not.toContain("attacker");
   });
 });
@@ -223,9 +222,15 @@ describe("identity comes only from the authorizer", () => {
 describe("routing", () => {
   it("serves GET /v1/ai/status as JSON with a 200 prelude", async () => {
     client
-      .queueItem({ premium: true, monthly_request_limit: 250 })
       .queueItem({ enabled: true, monthly_request_limit: 1000 })
-      .queueItem(undefined)
+      .queueItem({
+        pk: `USER#${SUB}`,
+        sk: "ENTITLEMENT",
+        tier: "advance",
+        capabilities: ["hosted_ai"],
+        monthly_request_limit: 250,
+        version: 1,
+      })
       .queueItem({ charged_count: 3 });
 
     const sink = createResponseSink(stream);
@@ -246,7 +251,6 @@ describe("routing", () => {
 
   it("routes POST /v1/ai/invoke through the invoke handler", async () => {
     client
-      .queueItem(undefined)
       .queueItem({ enabled: true, monthly_request_limit: 1000 })
       .queueItem({ charged_count: 0 })
       .queueItem({ charged_count: 0 })
@@ -316,7 +320,6 @@ describe("routing", () => {
 
   it("matches the method case-insensitively", async () => {
     client
-      .queueItem(undefined)
       .queueItem({ enabled: true, monthly_request_limit: 1000 })
       .queueItem(undefined);
 

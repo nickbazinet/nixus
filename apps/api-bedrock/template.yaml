@@ -352,14 +352,18 @@ Resources:
             Version: '2012-10-17'
             Statement:
               # The entitlement authority lives in another stack's table, and this
-              # service is a READER of it and nothing more (billing AD-4). One
-              # action, GetItem, on one table named by the deploy-time parameter.
-              # No PutItem, no UpdateItem, no TransactWriteItems, no Query, no
-              # Scan: the two writers AD-2 permits are the Stripe webhook and the
-              # admin override, both in the billing stack.
+              # service is a READER of it and nothing more (billing AD-4). Two
+              # read-only actions, on one table named by the deploy-time parameter:
+              # GetItem for the status/invoke entitlement read, and
+              # ConditionCheckItem so quota.ts's reservation transaction (Epic H)
+              # can re-verify the entitlement's `version` without granting any
+              # write. No PutItem, no UpdateItem, no TransactWriteItems, no Query,
+              # no Scan: the two writers AD-2 permits are the Stripe webhook and
+              # the admin override, both in the billing stack.
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
+                  - dynamodb:ConditionCheckItem
                 Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${BillingTableName}'
         - PolicyName: hosted-ai-bedrock
           PolicyDocument:
