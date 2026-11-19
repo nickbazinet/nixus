@@ -529,6 +529,34 @@ describe("every response and every log line", () => {
     );
   });
 
+  /* AD-6's advertised-price path crosses an origin boundary: the marketing site is
+     nixusapp.com and this API is api.nixusapp.com, so without the header the browser
+     refuses the read and the pricing page is pinned to its baked fallback forever -
+     which is exactly what happened against the deployed stack. The same test pins the
+     other half: no AUTHORIZED route may carry it, because none is browser-reachable
+     and a wildcard there would be a real hole. */
+  it("lets a browser read the public catalog and no authorized route", async () => {
+    const plans = await dispatch(
+      unauthenticatedApiEvent({ route: "/plans", method: "GET" }),
+      () => NOW,
+    );
+
+    expect(plans.headers?.["Access-Control-Allow-Origin"]).toBe("*");
+
+    for (const [route, method] of [
+      ["/entitlement", "GET"],
+      ["/checkout", "POST"],
+      ["/portal", "POST"],
+      ["/admin/override", "POST"],
+    ] as const) {
+      const response = await call({ route, method, sub: SUB_A });
+      expect(
+        response.headers?.["Access-Control-Allow-Origin"],
+        `${method} ${route} must not be browser-readable`,
+      ).toBeUndefined();
+    }
+  });
+
   it("logs the allow-listed fields and nothing else", async () => {
     await call({ route: "/portal", method: "POST", sub: SUB_A });
 

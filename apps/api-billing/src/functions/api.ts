@@ -171,6 +171,14 @@ async function runUnauthenticatedRoute(args: {
     return ok(catalog, {
       // Derived from THE single cache bound, never a second one (AD-6).
       "Cache-Control": `public, max-age=${catalog.cache_ttl_seconds}`,
+      // AD-6 requires a price change in the Dashboard to move the ADVERTISED price
+      // with no deploy, and the marketing site is a different origin from this API -
+      // so without this the browser blocks the read and the page is pinned to its
+      // baked fallback forever. `*` rather than an allow-list because the catalog
+      // carries no user data, takes no credentials and is CloudFront-cached: an
+      // origin-dependent value would need `Vary: Origin` and fragment that cache.
+      // Scoped to this route only; no authorized route is reachable from a browser.
+      "Access-Control-Allow-Origin": "*",
     });
   }
   if (routeKey === `POST ${WEBHOOK_ROUTE}`) {
