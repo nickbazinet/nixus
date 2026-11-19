@@ -29,19 +29,28 @@ answers "is this account entitled" from this one place.
 
 ## 1. Stripe Customer Portal configuration — OWNER ACTION, Dashboard only
 
-**Status: ONE of three items outstanding.** Read back from the sandbox on
-2026-11-19 (`billingPortal.configurations.list`, configuration
-`bpc_1UdNTSDiCdBE8Cwu...`, the account default):
+**Status: one item outstanding, and it is narrower than it looks.** Read back
+from the sandbox on 2026-11-19 (configuration `bpc_1UdNTSDiCdBE8Cwu...`, the
+account default):
 
-| Feature | State |
-| --- | --- |
-| Cancel subscription | **already enabled** (Stripe default) |
-| Payment-method update | **already enabled** (Stripe default) |
-| Plan switching | **DISABLED**, 0 products, proration `none` |
+| Feature | State | How |
+| --- | --- | --- |
+| Cancel subscription | **enabled** | Stripe default, untouched |
+| Payment-method update | **enabled** | Stripe default, untouched |
+| Plan switching — the feature | **enabled** | set by `stripe-sandbox-setup.ts`, with `default_allowed_updates: ["price"]` and `proration_behavior: create_prorations` |
+| Plan switching — **which products** | **NOT SET** | **cannot be set by API; Dashboard only** |
 
-So the only Dashboard work left is **plan switching** — and it is also what
-gates the open tax question below, because a plan switch is the only operation
-that can recalculate tax. Re-read the current state before touching anything:
+> **Measured limitation, 2026-11-19.**
+> `features.subscription_update.products` is **silently dropped**. Stripe accepts
+> the array with no error and returns a configuration in which the field is
+> absent entirely — not `[]`, not `null` — and a fresh retrieve agrees. So the
+> API can turn plan switching on and set its proration behaviour, but it cannot
+> restrict which products a customer may move between. **That is the one piece
+> of Dashboard work left**, and it is why `stripe-sandbox-setup.ts` deliberately
+> does not check `products` when deciding whether the configuration is already
+> correct: a field that can never be set would make every run re-apply forever.
+
+Re-read the current state before touching anything:
 
 ```bash
 set -euo pipefail
@@ -77,14 +86,26 @@ A past-due subscription keeps whatever access Stripe reports as live; when
 Stripe calls the subscription `canceled`, the entitlement follows at the next
 convergence.
 
-> **AD-16 requires verifying, in the SANDBOX, that switching between `classic`
-> and `advance` recalculates tax correctly under Managed Payments.** Stripe's
-> own documentation never affirmatively confirms this for a plan-switch flow.
-> Portal **session creation** is already confirmed working against the sandbox
-> (`POST /portal` returns a usable URL) — the only open question is narrowly
-> whether the tax line on a switch is recalculated, not whether the portal
-> itself works. Do not claim this verified without running an actual plan
-> switch in the sandbox and reading the resulting invoice's tax line.
+> **AD-16's switch-plan tax question: VERIFIED 2026-11-19, under Managed
+> Payments, in the sandbox.** Stripe's documentation never affirmatively
+> confirms it, so it was measured against a real `classic` subscription created
+> through Checkout and a preview of the switch to `advance`:
+>
+> | | subtotal | tax | total |
+> | --- | --- | --- | --- |
+> | Live `classic` invoice | 999 | **150** | 1149 CAD |
+> | Preview of switch to `advance` | 2999 | **449** | 3448 CAD |
+>
+> Tax **is** recalculated. The preview carries two tax components (150 + 299)
+> rather than carrying the original forward, the rates match Quebec GST+QST
+> (150/999 = 15.0%, 299/1999 = 14.96%), and the proration lines are correct:
+> −999 credit for unused `classic`, +1999 for remaining `advance`, +1999 for the
+> next period. Portal **session creation** was separately confirmed working
+> (`POST /portal` returns a usable URL).
+>
+> The portal UI is a surface over the same `subscriptions.update` call this
+> preview exercised, so enabling plan switching in the Dashboard does not
+> reopen the tax question. Re-measure only if the Stripe API version moves.
 
 ---
 

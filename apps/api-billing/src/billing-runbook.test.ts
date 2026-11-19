@@ -261,33 +261,54 @@ describe("signing-key rotation is documented as three ordered releases", () => {
   });
 });
 
-describe("the portal and tax-recalculation gate are stated as open, never confirmed", () => {
+describe("the portal status and the tax finding are both stated with evidence", () => {
+  const portal = () =>
+    sectionOf("## 1. Stripe Customer Portal", "## 2. Changing a price");
+
   /*
-   * Pins the INVARIANT, not a literal status word. A read-back on 2026-11-19
-   * showed cancel and payment-method update are already on by Stripe default
-   * and only plan switching is outstanding, so "UNDONE" became inaccurate - but
-   * the property that must never drift is that plan switching is still owed and
-   * that nothing here claims the portal is finished.
+   * Pins the INVARIANT, not a status word. Read-backs on 2026-11-19 moved this
+   * twice: cancel and payment-method update turned out to be on by Stripe
+   * default, and then the feature itself was enabled by script - so "UNDONE"
+   * and then "DISABLED" each became inaccurate in turn. What must never drift
+   * is that the switchable-PRODUCT list is still owed as a Dashboard action and
+   * that nothing here reads as "the portal is finished".
    */
-  it("still owes plan switching and never claims the portal is configured", () => {
-    const section = sectionOf("## 1. Stripe Customer Portal", "## 2. Changing a price");
-    expect(section).toMatch(/plan switching/i);
-    expect(section).toMatch(/DISABLED/);
-    expect(section).toMatch(/OWNER ACTION|Dashboard only/i);
-    expect(section).not.toMatch(/portal is (now |fully )?configured/i);
-    expect(section).not.toMatch(/\*\*Status: (DONE|COMPLETE)\b/i);
+  it("still owes the switchable-product list and never claims the portal is finished", () => {
+    expect(portal()).toMatch(/plan switching/i);
+    expect(portal()).toMatch(/Dashboard only|OWNER ACTION/i);
+    expect(portal()).toMatch(/NOT SET|cannot be set by API/i);
+    expect(portal()).not.toMatch(/portal is (now |fully )?configured/i);
+    expect(portal()).not.toMatch(/\*\*Status: (DONE|COMPLETE)\b/i);
   });
 
-  it("states AD-16's switch-plan tax recalculation as unverified, not confirmed", () => {
-    const section = sectionOf("## 1. Stripe Customer Portal", "## 2. Changing a price");
-    expect(section).toMatch(/AD-16 requires verifying, in the SANDBOX/i);
-    expect(section).toMatch(/never affirmatively confirms/i);
-    expect(section).not.toMatch(/tax recalculation.{0,40}verified\b(?!.{0,80}never)/i);
+  /*
+   * The `products` field is accepted and silently dropped by Stripe. Recording
+   * it is what stops the next operator spending an afternoon on an API call
+   * that reports success and changes nothing, and what justifies the setup
+   * script not checking that field for idempotency.
+   */
+  it("records that the switchable-product list is silently dropped by the API", () => {
+    expect(portal()).toMatch(/silently dropped/i);
+    expect(portal()).toMatch(/not `\[\]`, not `null`/i);
   });
 
-  it("states portal session creation is confirmed working, distinct from the open tax question", () => {
-    const section = sectionOf("## 1. Stripe Customer Portal", "## 2. Changing a price");
-    expect(section).toMatch(/session creation\*\* is already confirmed working/i);
+  /*
+   * AD-16's open question is now closed, but only a claim backed by the measured
+   * numbers may stand - an unevidenced "verified" is exactly what the earlier
+   * version of this test existed to prevent.
+   */
+  it("closes AD-16's tax question with the measured figures, not an assertion", () => {
+    expect(portal()).toMatch(/VERIFIED 2026-11-19/);
+    // Wrap-tolerant: markdown hard-wraps this phrase across a blockquote marker.
+    expect(portal()).toMatch(/never affirmatively[\s>]+confirms/i);
+    for (const figure of ["999", "150", "1149", "2999", "449", "3448"]) {
+      expect(portal(), `tax evidence omits ${figure}`).toContain(figure);
+    }
+    expect(portal()).toMatch(/Tax \*\*is\*\* recalculated/);
+  });
+
+  it("states portal session creation was confirmed separately from the tax question", () => {
+    expect(portal()).toMatch(/session creation\*\* was separately confirmed/i);
   });
 
   it("never claims live mode is enabled", () => {

@@ -402,6 +402,77 @@ async function convergeWebhookEndpoint(
   );
 }
 
+/**
+ * Turns plan switching ON for the SANDBOX portal configuration.
+ *
+ * `proration_behavior: "create_prorations"` because an upgrade takes effect
+ * immediately (billing AD-11), and an immediate change the customer is neither
+ * charged nor credited for would be a silent price change.
+ *
+ * MEASURED LIMITATION, 2026-11-19: `features.subscription_update.products` is
+ * **silently dropped**. Stripe accepts the array with no error and returns a
+ * configuration where the field is absent entirely - not `[]`, not `null` - and
+ * a fresh retrieve agrees. So this call can enable the feature and set the
+ * proration and allowed-update behaviour, but it CANNOT restrict which products
+ * a customer may switch between. That half stays a Dashboard action, which is
+ * why the idempotency check below deliberately does not look at `products`: a
+ * field that can never be set would make every run re-apply forever.
+ *
+ * SANDBOX only. The live-mode portal remains an owner action in full.
+ */
+async function convergePortalConfiguration(stripe: Stripe): Promise<void> {
+  const prices = await stripe.prices.list({
+    lookup_keys: PLANS.map((plan) => plan.lookupKey),
+    active: true,
+    expand: ["data.product"],
+  });
+
+  const switchable = prices.data.flatMap((price) => {
+    const product = price.product;
+    if (typeof product === "string" || product.deleted === true) return [];
+    return [{ product: product.id, prices: [price.id] }];
+  });
+
+  const configurations = await stripe.billingPortal.configurations.list({ limit: 10 });
+  const target = configurations.data.find((entry) => entry.is_default);
+  if (target === undefined) {
+    log("would", "skip portal: the account has no default configuration");
+    return;
+  }
+
+  const update = target.features.subscription_update;
+  const alreadyCorrect =
+    update?.enabled === true &&
+    update.default_allowed_updates.includes("price") &&
+    update.proration_behavior === "create_prorations";
+
+  if (alreadyCorrect) {
+    log(APPLY ? "did" : "would", `portal ${target.id} already allows plan switching`);
+    return;
+  }
+  if (!APPLY) {
+    log("would", `enable plan switching on portal ${target.id} for ${PLANS.length} tiers`);
+    return;
+  }
+
+  await stripe.billingPortal.configurations.update(target.id, {
+    features: {
+      subscription_update: {
+        enabled: true,
+        default_allowed_updates: ["price"],
+        // Sent even though Stripe drops it, so the intent is on the wire and a
+        // future API that honours it needs no change here.
+        products: switchable,
+        proration_behavior: "create_prorations",
+      },
+    },
+  });
+  log(
+    "did",
+    `enabled plan switching on portal ${target.id}; the switchable-product list is NOT settable by API and remains a Dashboard action`,
+  );
+}
+
 async function main(): Promise<void> {
   const secretKey = requireEnv("STRIPE_SECRET_KEY");
   assertSandboxKey(secretKey);
@@ -427,11 +498,12 @@ async function main(): Promise<void> {
   }
   await convergePromotionCode(stripe);
   await convergeWebhookEndpoint(stripe, webhookUrl);
+  await convergePortalConfiguration(stripe);
 
   process.stdout.write(
     "\nDone. Dashboard-only items this script deliberately does not touch:\n" +
       "  - Managed Payments enablement and the business location\n" +
-      "  - the Customer Portal configuration (cancel, payment-method update, plan switching)\n" +
+      "  - the LIVE Customer Portal configuration (the sandbox one is set above)\n" +
       "  - the dunning / smart-retry schedule, which is the ONLY grace period in the system (AD-11)\n" +
       "  - live mode\n",
   );
