@@ -132,6 +132,34 @@ export function checkoutSessionEventObject(args: {
   };
 }
 
+/**
+ * Stripe rejects an `expand` path deeper than FOUR levels, and a list endpoint
+ * prefixes every path with `data.` - so a path that is legal on `retrieve`
+ * becomes illegal on `list`. The real API answers with a hard error and the
+ * whole call fails; a fake that ignores `expand` lets that ship green, which is
+ * exactly how a 5-level list path reached production once.
+ */
+const STRIPE_MAX_EXPAND_DEPTH = 4;
+
+function assertExpandDepth(
+  params: unknown,
+  call: string,
+  prefix = "",
+): void {
+  if (typeof params !== "object" || params === null) return;
+  const expand = (params as { expand?: unknown }).expand;
+  if (!Array.isArray(expand)) return;
+  for (const path of expand) {
+    if (typeof path !== "string") continue;
+    const depth = `${prefix}${path}`.split(".").length;
+    if (depth > STRIPE_MAX_EXPAND_DEPTH) {
+      throw new Error(
+        `You cannot expand more than ${STRIPE_MAX_EXPAND_DEPTH} levels of a property. Property: ${prefix}${path} (${call})`,
+      );
+    }
+  }
+}
+
 export class FakeStripe {
   readonly calls: FakeStripeCall[] = [];
 
@@ -242,6 +270,7 @@ export class FakeStripe {
           params: unknown,
         ): Promise<Stripe.Subscription> => {
           this.record("subscriptions.retrieve", { id, params });
+          assertExpandDepth(params, "subscriptions.retrieve");
           const found = this.subscriptions.find(
             (subscription) => subscription.id === id,
           );
@@ -254,6 +283,7 @@ export class FakeStripe {
           customer?: string;
         }): Promise<{ data: Stripe.Subscription[] }> => {
           this.record("subscriptions.list", params);
+          assertExpandDepth(params, "subscriptions.list", "data.");
           return {
             data: this.subscriptions.filter(
               (subscription) => subscription.customer === params.customer,

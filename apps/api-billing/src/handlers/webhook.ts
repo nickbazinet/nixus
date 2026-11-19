@@ -98,6 +98,14 @@ function readStoredString(
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * The tier and the capability list live in Product metadata, and
+ * `current_period_end` is on the items, so both have to be expanded. Four
+ * levels exactly - Stripe rejects a fifth, so this is the deepest legal path
+ * and it is declared once rather than repeated at each call site.
+ */
+const SUBSCRIPTION_EXPAND: string[] = ["items.data.price.product"];
+
 function idOf(value: string | { readonly id: string } | null): string | null {
   if (value === null) return null;
   return typeof value === "string" ? value : value.id;
@@ -186,6 +194,13 @@ async function resolveSubFromSubscription(
  * `expand` carries `items.data.price.product` because the tier and the
  * capability list live in Product metadata, and because `current_period_end` is
  * on the ITEMS rather than on the subscription.
+ *
+ * The LIST call cannot carry that path. Stripe prefixes a list's expand with
+ * `data.`, which would make it `data.items.data.price.product` - five levels,
+ * past the documented four-level cap, and the whole call is rejected. So the
+ * list discovers ids only and each extra subscription is retrieved on its own,
+ * where the same path is four levels and legal. The extra read costs nothing in
+ * the normal case because there IS no second subscription.
  */
 async function fetchSubscriptions(args: {
   readonly stripe: Stripe;
@@ -194,7 +209,7 @@ async function fetchSubscriptions(args: {
   const { stripe, subscriptionId } = args;
 
   const named = await stripe.subscriptions.retrieve(subscriptionId, {
-    expand: ["items.data.price.product"],
+    expand: SUBSCRIPTION_EXPAND,
   });
 
   const customerId = idOf(named.customer);
@@ -203,12 +218,19 @@ async function fetchSubscriptions(args: {
   const all = await stripe.subscriptions.list({
     customer: customerId,
     status: "all",
-    expand: ["data.items.data.price.product"],
   });
+
+  const others = await Promise.all(
+    all.data
+      .filter((entry) => entry.id !== named.id)
+      .map((entry) =>
+        stripe.subscriptions.retrieve(entry.id, { expand: SUBSCRIPTION_EXPAND }),
+      ),
+  );
 
   // The named subscription is authoritative for itself: the list is a second
   // read and may not yet reflect a just-created subscription.
-  return [named, ...all.data.filter((entry) => entry.id !== named.id)];
+  return [named, ...others];
 }
 
 /**
