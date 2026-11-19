@@ -602,6 +602,14 @@ Resources:
           COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
           SESSION_TABLE_NAME: !Ref SessionTable
           PROFILE_API_BASE_URL: !Sub 'https://${ApiDomainName}/v1/profile'
+          # The billing API lives in stack nixus-billing and attaches to the SAME
+          # shared domain by an API mapping on the key v1/billing (billing AD-3),
+          # so this is derived from ApiDomainName exactly as the profile base url
+          # is - no export, no import, and no second parameter to keep in step.
+          # The account app holds no Stripe credential and no access to the
+          # billing table; this url is its entire relationship with billing
+          # (billing AD-7).
+          BILLING_API_BASE_URL: !Sub 'https://${ApiDomainName}/v1/billing'
           CLIENT_SECRET_PARAMETER_NAME: !Sub '/${AWS::StackName}/web-client-secret'
 
   AccountWebFunctionEndpoint:
@@ -658,6 +666,11 @@ Resources:
         - email
         - profile
         - nixus-api/profile
+        # Granted from the first release that asks for it, and NEVER removed:
+        # UpdateUserPoolClient is a full replace, and a client that no longer
+        # allows a scope its stored sessions were minted with cannot have those
+        # sessions widened by a refresh (profile AD-9, billing AD-17).
+        - nixus-api/billing
       # Sole callback. A second one is a second thing to validate on the callback.
       CallbackURLs:
         - !Sub 'https://${AccountDomainName}/auth/callback'

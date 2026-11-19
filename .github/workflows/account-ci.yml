@@ -212,7 +212,11 @@ jobs:
       BEDROCK_STACK_NAME: nixus-bedrock-api
       API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
       COGNITO_RESOURCE_SERVER_IDENTIFIER: nixus-api
-      REQUIRED_COGNITO_SCOPES: ai.invoke profile
+      # UpdateResourceServer is a FULL REPLACE, so every scope any Nixus client
+      # depends on is asserted here: ai.invoke for the desktop's hosted AI, profile
+      # for this stack, and billing for the account app's /billing surfaces
+      # (billing AD-3, AD-17).
+      REQUIRED_COGNITO_SCOPES: ai.invoke billing profile
       # Epic F. The code bucket is an environment variable for the same reason
       # SAM_ARTIFACT_BUCKET is: its name embeds the account id, which is topology
       # rather than something to commit. It must start with `nixus-account-`, which
@@ -288,10 +292,11 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
 
       # UpdateResourceServer is a FULL REPLACE, not a merge: any scripted path that
-      # submits only `profile` deletes `ai.invoke` and takes hosted AI down for
-      # every user. This asserts both scopes are present before deploying, so that
+      # submits only `profile` deletes `ai.invoke` and `billing`, taking hosted AI
+      # down for every desktop user and the account app's billing pages down with
+      # it. This asserts every required scope is present before deploying, so that
       # failure is caught here rather than by a user.
-      - name: Assert the nixus-api resource server holds both scopes
+      - name: Assert the nixus-api resource server holds every required scope
         run: |
           set -euo pipefail
           scopes="$(aws cognito-idp describe-resource-server \
@@ -304,7 +309,8 @@ jobs:
             printf '%s\n' "${scopes}" | grep -Fxq "${required}" || {
               echo "Scope ${required} is missing from the resource server." >&2
               echo "Merge it back per docs/runbooks/account-rollout.md: a scope" >&2
-              echo "list submitted without ai.invoke disables hosted AI." >&2
+              echo "list submitted without ai.invoke disables hosted AI, and one" >&2
+              echo "without billing breaks the account app's /billing pages." >&2
               exit 1
             }
           done

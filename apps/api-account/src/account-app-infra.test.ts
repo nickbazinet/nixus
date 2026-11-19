@@ -44,9 +44,10 @@ describe("AD-10 the confidential web client", () => {
     expect(JSON.stringify(client.AllowedOAuthFlows)).not.toContain("implicit");
   });
 
-  it("asks for exactly the four scopes the app is built for", () => {
+  it("asks for exactly the five scopes the app is built for", () => {
     expect([...client.AllowedOAuthScopes].sort()).toEqual([
       "email",
+      "nixus-api/billing",
       "nixus-api/profile",
       "openid",
       "profile",
@@ -210,6 +211,7 @@ describe("AD-14 the Lambda Web Function", () => {
     >;
 
     expect(Object.keys(environment).sort()).toEqual([
+      "BILLING_API_BASE_URL",
       "CLIENT_SECRET_PARAMETER_NAME",
       "COGNITO_CLIENT_ID",
       "COGNITO_DOMAIN",
@@ -239,6 +241,28 @@ describe("AD-14 the Lambda Web Function", () => {
       __cfn: "Sub",
       value: "https://${AccountDomainName}",
     });
+  });
+
+  /* billing AD-3 / AD-7: the billing API attaches to the same shared domain by
+   * an API mapping on `v1/billing`, so this is derived from ApiDomainName rather
+   * than imported from the nixus-billing stack - and it is the ONLY billing
+   * configuration the account app gets. A Stripe credential here would make the
+   * app a second key holder, which is the thing AD-7 forbids. */
+  it("points at the billing API through the shared domain, with no Stripe secret", () => {
+    const environment = revision.ServiceConfig.EnvironmentVariables as Record<
+      string,
+      unknown
+    >;
+
+    expect(environment.BILLING_API_BASE_URL).toEqual({
+      __cfn: "Sub",
+      value: "https://${ApiDomainName}/v1/billing",
+    });
+    for (const forbidden of ["STRIPE", "stripe", "sk_live", "sk_test", "whsec_"]) {
+      expect(JSON.stringify(environment), `environment names ${forbidden}`).not.toContain(
+        forbidden,
+      );
+    }
   });
 
   it("logs to the 14-day group this stack created, not an implicit one", () => {

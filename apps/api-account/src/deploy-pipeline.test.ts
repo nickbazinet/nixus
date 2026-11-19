@@ -219,7 +219,7 @@ describe("pre-deploy assertions all run, in order, before the deploy", () => {
   const ORDERED = [
     "aws-actions/configure-aws-credentials",
     "Assert the shared domain still accepts API mappings",
-    "Assert the nixus-api resource server holds both scopes",
+    "Assert the nixus-api resource server holds every required scope",
     "Assert the Bedrock stack that owns the domain exists",
     "Deploy stack",
   ];
@@ -242,20 +242,39 @@ describe("pre-deploy assertions all run, in order, before the deploy", () => {
   });
 
   /* UpdateResourceServer is a full replace: a scripted path that submits only
-   * `profile` deletes `ai.invoke` and takes hosted AI down for every user. The
-   * assertion is what makes that visible before this stack goes out. */
-  it("asserts BOTH resource-server scopes, naming ai.invoke explicitly", () => {
-    const script = step(DEPLOY, "resource server holds both scopes")
+   * `profile` deletes `ai.invoke` AND `billing`, taking hosted AI down for every
+   * desktop user and the account app's billing pages with it. The assertion is
+   * what makes that visible before this stack goes out. */
+  it("asserts ALL THREE resource-server scopes, naming each explicitly", () => {
+    const script = step(DEPLOY, "resource server holds every required scope")
       .run as string;
 
     expect(script).toContain("cognito-idp describe-resource-server");
     expect(script).toContain("--identifier");
     expect(script).toContain("grep -Fxq");
     expect(script).toContain("exit 1");
-    expect(DEPLOY.env.REQUIRED_COGNITO_SCOPES).toBe("ai.invoke profile");
+    // Sorted so the assertion does not depend on the order they were added in.
+    expect(String(DEPLOY.env.REQUIRED_COGNITO_SCOPES).split(" ").sort()).toEqual([
+      "ai.invoke",
+      "billing",
+      "profile",
+    ]);
     expect(DEPLOY.env.COGNITO_RESOURCE_SERVER_IDENTIFIER).toBe("nixus-api");
     // The pool id is an input, never a committed literal.
     expect(WORKFLOW_DIRECTIVES).not.toContain("us-east-1_");
+  });
+
+  /* billing AD-17: the resource server gains `nixus-api/billing` BEFORE any
+   * client requests it, and the account app requests the full scope set on every
+   * authorization so a stored session is never replaced by a narrower one. If
+   * this assertion were dropped, a deploy could ship the app asking for a scope
+   * the pool does not publish, and every sign-in would fail with
+   * `invalid_scope`. */
+  it("asserts the billing scope before the app that depends on it is deployed", () => {
+    expect(String(DEPLOY.env.REQUIRED_COGNITO_SCOPES)).toContain("billing");
+    expect(
+      stepIndex(DEPLOY, "resource server holds every required scope"),
+    ).toBeLessThan(stepIndex(DEPLOY, "Deploy stack"));
   });
 
   it("asserts the stack that owns the domain is deployed and steady", () => {
