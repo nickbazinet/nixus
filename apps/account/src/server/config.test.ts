@@ -18,6 +18,7 @@ const ENV = {
   AWS_REGION: "us-east-1",
   SESSION_TABLE_NAME: "nixus-account-sessions",
   PROFILE_API_BASE_URL: "https://api.nixusapp.com/v1/profile",
+  BILLING_API_BASE_URL: "https://api.nixusapp.com/v1/billing",
   CLIENT_SECRET_PARAMETER_NAME: "/nixus-account/web-client-secret",
 } satisfies NodeJS.ProcessEnv;
 
@@ -31,6 +32,7 @@ describe("readConfig", () => {
       region: "us-east-1",
       sessionTableName: "nixus-account-sessions",
       profileApiBaseUrl: "https://api.nixusapp.com/v1/profile",
+      billingApiBaseUrl: "https://api.nixusapp.com/v1/billing",
       clientSecretParameterName: "/nixus-account/web-client-secret",
       issuerOverride: null,
     });
@@ -54,6 +56,7 @@ describe("readConfig", () => {
       PUBLIC_ORIGIN: "http://127.0.0.1:3100",
       COGNITO_DOMAIN: "http://127.0.0.1:3101",
       PROFILE_API_BASE_URL: "http://127.0.0.1:3102/v1/profile",
+      BILLING_API_BASE_URL: "http://127.0.0.1:3103/v1/billing",
       OIDC_ISSUER_FOR_LOCAL_RUN: "http://127.0.0.1:3101/issuer",
     });
 
@@ -65,18 +68,47 @@ describe("readConfig", () => {
     expect(config.publicOrigin).toBe("https://account.nixusapp.com");
   });
 
-  it.each(["PUBLIC_ORIGIN", "COGNITO_CLIENT_ID", "SESSION_TABLE_NAME", "AWS_REGION"])(
-    "refuses to start without %s",
-    (name) => {
-      expect(() => readConfig({ ...ENV, [name]: undefined })).toThrow(name);
-    },
-  );
+  it.each([
+    "PUBLIC_ORIGIN",
+    "COGNITO_CLIENT_ID",
+    "SESSION_TABLE_NAME",
+    "AWS_REGION",
+    "BILLING_API_BASE_URL",
+  ])("refuses to start without %s", (name) => {
+    expect(() => readConfig({ ...ENV, [name]: undefined })).toThrow(name);
+  });
 
   it.each([
     "http://account.nixusapp.com",
     "ftp://account.nixusapp.com",
   ])("refuses the insecure origin %s", (origin) => {
     expect(() => readConfig({ ...ENV, PUBLIC_ORIGIN: origin })).toThrow();
+  });
+
+  /* The billing base url is validated exactly like the profile one: a non-https,
+   * non-loopback billing origin would send the session's own access token over
+   * plaintext, which is the one thing the BFF model cannot tolerate. */
+  it.each([
+    "http://api.nixusapp.com/v1/billing",
+    "ftp://api.nixusapp.com/v1/billing",
+  ])("refuses the insecure billing origin %s", (origin) => {
+    expect(() => readConfig({ ...ENV, BILLING_API_BASE_URL: origin })).toThrow(
+      "BILLING_API_BASE_URL",
+    );
+  });
+
+  it("allows a loopback billing origin, which is what the local harness runs", () => {
+    expect(
+      readConfig({ ...ENV, BILLING_API_BASE_URL: "http://127.0.0.1:3103/v1/billing" })
+        .billingApiBaseUrl,
+    ).toBe("http://127.0.0.1:3103/v1/billing");
+  });
+
+  it("strips a trailing slash from the billing base url too", () => {
+    expect(
+      readConfig({ ...ENV, BILLING_API_BASE_URL: "https://api.nixusapp.com/v1/billing/" })
+        .billingApiBaseUrl,
+    ).toBe("https://api.nixusapp.com/v1/billing");
   });
 
   it("carries no client secret member at all", () => {
@@ -110,9 +142,10 @@ describe("deriveEndpoints", () => {
 });
 
 describe("OAUTH_SCOPES", () => {
-  it("asks for exactly the four scopes the web client is configured for", () => {
+  it("asks for exactly the five scopes the web client is configured for", () => {
     expect(OAUTH_SCOPES.split(" ").sort()).toEqual([
       "email",
+      "nixus-api/billing",
       "nixus-api/profile",
       "openid",
       "profile",
@@ -121,5 +154,13 @@ describe("OAUTH_SCOPES", () => {
 
   it("never asks for the hosted-AI scope the desktop depends on", () => {
     expect(OAUTH_SCOPES).not.toContain("ai.invoke");
+  });
+
+  /* profile AD-9 / billing AD-17: a session minted without the billing scope
+   * could not be widened by a refresh, so every authorization request asks for
+   * the FULL set rather than the set the page in hand happens to need. */
+  it("asks for the billing scope unconditionally, so a session is never narrowed", () => {
+    expect(OAUTH_SCOPES).toContain("nixus-api/billing");
+    expect(OAUTH_SCOPES).toContain("nixus-api/profile");
   });
 });

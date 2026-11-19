@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { startBillingApi, type RunningBillingApi } from "./billing-api";
 import { startDynamo, type RunningDynamo } from "./dynamo";
 import { startEdge, type RunningEdge } from "./edge";
 import { startIdp, type RunningIdp } from "./idp";
@@ -10,7 +11,7 @@ import { startProfileApi, type RunningProfileApi } from "./profile-api";
 /**
  * Boots the REAL packaged server — the same `.deploy/bundle` CI uploads, started
  * through the same `srvx` entry wrapper and the same `AWS_LAMBDA_HTTP_ENDPOINT`
- * contract Lambda uses — against three local fakes. What the browser drives here
+ * contract Lambda uses — against four local fakes. What the browser drives here
  * is the artifact that gets deployed, not a dev server.
  */
 
@@ -27,6 +28,7 @@ export interface Harness {
   readonly origin: string;
   readonly idp: RunningIdp;
   readonly api: RunningProfileApi;
+  readonly billing: RunningBillingApi;
   readonly dynamo: RunningDynamo;
   stop: () => Promise<void>;
 }
@@ -67,7 +69,7 @@ export async function startHarness(): Promise<Harness> {
     throw new Error("run `pnpm build && pnpm package` before the E2E suite");
   }
 
-  const [idp, api, dynamo, edgePort, serverPort] = await Promise.all([
+  const [idp, api, billing, dynamo, edgePort, serverPort] = await Promise.all([
     startIdp({
       clientId: WEB_CLIENT_ID,
       clientSecret: WEB_CLIENT_SECRET,
@@ -75,6 +77,7 @@ export async function startHarness(): Promise<Harness> {
       email: EMAIL,
     }),
     startProfileApi(),
+    startBillingApi(),
     startDynamo(),
     freePort(),
     freePort(),
@@ -96,6 +99,7 @@ export async function startHarness(): Promise<Harness> {
       AWS_REGION: "us-east-1",
       SESSION_TABLE_NAME: "nixus-account-sessions",
       PROFILE_API_BASE_URL: `${api.origin}/v1/profile`,
+      BILLING_API_BASE_URL: `${billing.origin}/v1/billing`,
       CLIENT_SECRET_PARAMETER_NAME: "/nixus-account/web-client-secret",
       OIDC_ISSUER_FOR_LOCAL_RUN: idp.issuer,
       // The real SSM and DynamoDB clients, pointed at the local fakes.
@@ -128,10 +132,17 @@ export async function startHarness(): Promise<Harness> {
     origin,
     idp,
     api,
+    billing,
     dynamo,
     stop: async () => {
       child.kill("SIGKILL");
-      await Promise.all([edge.close(), idp.close(), api.close(), dynamo.close()]);
+      await Promise.all([
+        edge.close(),
+        idp.close(),
+        api.close(),
+        billing.close(),
+        dynamo.close(),
+      ]);
     },
   };
 }

@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   DESTINATIONS,
   DEFAULT_DESTINATION,
+  billingDestination,
+  billingLoginLocation,
+  checkoutCompleteDestination,
   destinationPath,
   isDestinationKey,
   loginLocation,
+  loginLocationFor,
   profileDestination,
   profileLocation,
   resolveDestinationKey,
@@ -107,13 +111,69 @@ describe("the entry redirect locations", () => {
   });
 
   it.each(["en", "fr"] as const)("stays same-origin and absolute for %s", (locale) => {
-    for (const location of [profileLocation(locale), loginLocation(locale)]) {
+    for (const location of [
+      profileLocation(locale),
+      loginLocation(locale),
+      billingLoginLocation(locale),
+    ]) {
       expect(location.startsWith("/")).toBe(true);
       expect(location.startsWith("//")).toBe(false);
       expect(location).not.toContain("\\");
       expect(location).not.toContain("..");
       // No scheme, no authority: a browser can only read these as this origin.
       expect(location).not.toMatch(/^[a-z][a-z0-9+.-]*:/i);
+    }
+  });
+});
+
+/*
+ * The billing surfaces (billing AD-8). Stripe sends a visitor back to
+ * `/checkout/complete` after a hosted Checkout, and the pricing page sends them
+ * to `/billing?plan=…`, so both have to be reachable by KEY after a sign-in
+ * round trip — a `next=` that could name a path is the thing the whole map
+ * exists to prevent.
+ */
+describe("the billing destinations", () => {
+  it("names the four billing paths by key, in both locales", () => {
+    expect(billingDestination("en")).toBe("billing");
+    expect(billingDestination("fr")).toBe("billing-fr");
+    expect(checkoutCompleteDestination("en")).toBe("checkout-complete");
+    expect(checkoutCompleteDestination("fr")).toBe("checkout-complete-fr");
+
+    expect(destinationPath("billing")).toBe("/billing");
+    expect(destinationPath("billing-fr")).toBe("/fr/billing");
+    expect(destinationPath("checkout-complete")).toBe("/checkout/complete");
+    expect(destinationPath("checkout-complete-fr")).toBe("/fr/checkout/complete");
+  });
+
+  it("sends a signed-out billing visitor back to billing, not to the profile", () => {
+    expect(billingLoginLocation("en")).toBe("/auth/login?next=billing&lang=en");
+    expect(billingLoginLocation("fr")).toBe("/auth/login?next=billing-fr&lang=fr");
+  });
+
+  it("resolves its own `next` value back to the key it meant", () => {
+    for (const locale of ["en", "fr"] as const) {
+      const next = new URL(
+        billingLoginLocation(locale),
+        "https://account.invalid",
+      ).searchParams.get("next");
+      expect(resolveDestinationKey(next)).toBe(billingDestination(locale));
+    }
+  });
+
+  it("carries no plan, promotion code or other query value into the login url", () => {
+    for (const locale of ["en", "fr"] as const) {
+      expect(billingLoginLocation(locale)).toBe(
+        `/auth/login?next=${billingDestination(locale)}&lang=${locale}`,
+      );
+    }
+  });
+
+  it("builds every login location from a key in the closed map", () => {
+    for (const key of Object.keys(DESTINATIONS)) {
+      const location = loginLocationFor(key as keyof typeof DESTINATIONS, "en");
+      const next = new URL(location, "https://account.invalid").searchParams.get("next");
+      expect(isDestinationKey(next)).toBe(true);
     }
   });
 });

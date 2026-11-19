@@ -1,4 +1,5 @@
 import { accountConfig, type AccountConfig, type DerivedEndpoints } from "./config.ts";
+import { createBillingApi, type BillingApi } from "./billing-client.ts";
 import type { AccessDeps } from "./current-session.ts";
 import { createDynamoSessionStore } from "./dynamo-store.ts";
 import { createOidcClient, type OidcClient } from "./oidc.ts";
@@ -45,4 +46,15 @@ export function runtime(): AccountRuntime {
 /** A profile client bound to one session's own access token (AD-11). */
 export function profileApiFor(accessToken: string): ProfileApi {
   return createProfileApi(runtime().config.profileApiBaseUrl, accessToken);
+}
+
+/**
+ * A billing client bound to one session's own access token (billing AD-3, AD-7).
+ *
+ * The same shape as `profileApiFor` for the same reason: the token IS the
+ * authorization, so there is no subject or customer parameter a caller could get
+ * wrong, and the app holds no Stripe credential on either side of this call.
+ */
+export function billingApiFor(accessToken: string): BillingApi {
+  return createBillingApi(runtime().config.billingApiBaseUrl, accessToken);
 }

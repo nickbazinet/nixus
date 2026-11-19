@@ -11,6 +11,7 @@ import {
 } from "@/actions/account";
 import type { AccountView } from "@/actions/gate";
 import { profileDestinationKey, type Locale } from "@/lib/i18n";
+import { billingDestination, destinationPath } from "@/server/destinations";
 import { refusalText } from "@/lib/messages";
 import type { AvatarDerivative } from "@/lib/avatar";
 import { AvatarField } from "./AvatarField";
@@ -180,6 +181,18 @@ export function ProfilePanel({ view, locale }: { view: AccountView; locale: Loca
               </div>
             </CardContent>
           </Card>
+
+          {/* The only in-app way to reach billing. The header bar is deliberately
+              not it: its own comment records that the French sign-out label
+              already does not fit a 320px bar beside both toggles, so a third
+              control there would overflow the geometry both origins share. */}
+          <a
+            data-testid="billing-link"
+            href={destinationPath(billingDestination(locale))}
+            className="mkt-tap inline-flex min-h-target-min items-center text-sm font-medium text-muted-foreground underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            {t("profile.billingLink")}
+          </a>
 
           {/* A session can end between the server render and a click, and the
               status banner then says so. This is the way back from there. */}

@@ -15,8 +15,18 @@
  *     than a visible failure.
  */
 
-/** Exactly the scopes the web client is configured for (AD-10). Never narrowed. */
-export const OAUTH_SCOPES = "openid email profile nixus-api/profile" as const;
+/**
+ * Exactly the scopes the web client is configured for (AD-10). Never narrowed.
+ *
+ * `nixus-api/billing` is requested on EVERY authorization request, not only when
+ * a visitor is on their way to `/billing`: a stored session must never be
+ * replaced by a narrower one (profile AD-9, billing AD-17). A session minted
+ * without the billing scope could not be widened by a refresh — the only remedy
+ * would be sending the user back through Managed Login from a page that was
+ * working a moment earlier.
+ */
+export const OAUTH_SCOPES =
+  "openid email profile nixus-api/profile nixus-api/billing" as const;
 
 export interface AccountConfig {
   /** `https://account.nixusapp.com`, with no trailing slash. */
@@ -29,6 +39,14 @@ export interface AccountConfig {
   readonly sessionTableName: string;
   /** `https://api.nixusapp.com/v1/profile`, with no trailing slash (AD-11). */
   readonly profileApiBaseUrl: string;
+  /**
+   * `https://api.nixusapp.com/v1/billing`, with no trailing slash (billing AD-3).
+   *
+   * Configured for the same reason the profile base url is: it is the ONLY way
+   * this app reaches billing, and it holds no Stripe credential and no access to
+   * the billing table either way (billing AD-7).
+   */
+  readonly billingApiBaseUrl: string;
   /** SSM parameter path holding the confidential client's secret. */
   readonly clientSecretParameterName: string;
   /**
@@ -92,6 +110,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): AccountConfig 
     region: required(env, "AWS_REGION"),
     sessionTableName: required(env, "SESSION_TABLE_NAME"),
     profileApiBaseUrl: requireHttpsOrigin(env, "PROFILE_API_BASE_URL"),
+    billingApiBaseUrl: requireHttpsOrigin(env, "BILLING_API_BASE_URL"),
     clientSecretParameterName: required(env, "CLIENT_SECRET_PARAMETER_NAME"),
     issuerOverride: isLoopbackOrigin(publicOrigin)
       ? (env.OIDC_ISSUER_FOR_LOCAL_RUN?.trim() ?? null)

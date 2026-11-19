@@ -27,6 +27,11 @@ export function profileDestinationKey(locale: Locale): string {
   return locale === "fr" ? "profile-fr" : "profile";
 }
 
+/** The same, for the billing surfaces. A key, never a path. */
+export function billingDestinationKey(locale: Locale): string {
+  return locale === "fr" ? "billing-fr" : "billing";
+}
+
 i18next.use(initReactI18next).init({
   resources: { en: { translation: en }, fr: { translation: fr } },
   lng: "en",
