@@ -326,6 +326,14 @@ async fn invoke_with_auth(
         Err(outcome) => return outcome,
     };
 
+    // AD-12: the entitlement is the offline-verified statement's, and it is checked before any
+    // network call, so an account whose plan does not include hosted AI spends no round trip on
+    // usage figures it may not use. Not selected, so the surface uses its configured provider:
+    // precedence, not fallback.
+    if !hosted_ai_entitled().await {
+        return HostedOutcome::Skipped;
+    }
+
     // Client-side courtesy backoff after a recent 503. Never a substitute for a
     // real check: the window is at most 60 seconds and the server stays
     // authoritative once it elapses.
@@ -335,8 +343,8 @@ async fn invoke_with_auth(
 
     match ensure_status(&base, &access_token, &subject_sub).await {
         Some(status) if status.has_remaining_quota() => {}
-        // Not premium, or out of quota: hosted is not selected, so the surface
-        // uses its configured provider. Precedence, not fallback.
+        // Out of quota: hosted is not selected either, for the same reason and with the same
+        // precedence. The two refusals stay distinguishable one level up, in `eligibility`.
         Some(_) => return HostedOutcome::Skipped,
         None => return unavailable("Hosted AI status could not be read."),
     }
@@ -344,66 +352,58 @@ async fn invoke_with_auth(
     post_invoke(&base, &access_token, &subject_sub, request, on_delta).await
 }
 
-/// The one hosted-AI fact outside this crate may know: whether the signed-in
-/// account carries premium access.
+/// The one hosted-AI fact outside this crate may know: whether the signed-in account's
+/// entitlement grants `hosted_ai`.
 ///
-/// Fail-closed and infallible on purpose. A refused transport override, no session,
-/// a missing resource-server scope, a live `503` courtesy window, and a status read
-/// that rejected or returned an unparseable body all answer `false` — the caller's
-/// contract is to make no premium claim, not to report a problem, so there is no
-/// error channel here for a toast to reach.
+/// **Capability-derived, never tier-derived and never a boolean the quota route carries**
+/// (billing AD-12). The answer is `entitlements::account_capabilities`'s, which is the offline
+/// verification of the server-signed statement — so hosted AI and sync are gated by one authority
+/// and neither can branch on a plan label. Under two paid tiers that is not a refinement but a
+/// correctness requirement: a Classic subscriber is a paying premium customer who is not granted
+/// hosted AI, and a `premium` bit cannot say so.
 ///
-/// Deliberately `premium`, never `has_remaining_quota()`: an exhausted month does not
-/// revoke the entitlement, and the limit, charged count and period stay in this crate
-/// (AD-9). Reading through the shared cache is what keeps this answer from ever
-/// disagreeing with the one an invocation is routed against.
-pub async fn premium_entitlement() -> bool {
-    let Some(base) = base_url() else {
-        return false;
-    };
-
-    let Ok((access_token, subject_sub)) = resolve_hosted_auth(hosted_auth(false).await) else {
-        return false;
-    };
-
-    if hosted_state::is_unavailable(&subject_sub) {
-        return false;
-    }
-
-    if let Some(cached) = hosted_state::get_fresh(&subject_sub) {
-        return cached.premium;
-    }
-
-    match fetch_status(&base, &access_token, &subject_sub).await {
-        StatusRead::Ready(status) => status.premium,
-        // The closed table's single refresh (AD-10). A `401` on the status read means the
-        // server rejected a token this device still considers live, which no local expiry
-        // check can detect, so the one repair available is a fresh grant.
-        StatusRead::Unauthorized => premium_after_refresh().await,
-        StatusRead::Failed => false,
-    }
+/// Fail-closed and infallible on purpose. No statement, an unverifiable one, no session and an
+/// unreachable billing API all answer `false` — the caller's contract is to make no claim, not to
+/// report a problem, so there is no error channel here for a toast to reach.
+///
+/// Deliberately the entitlement, never the quota: an exhausted period does not revoke what the
+/// account holds, and the limit, charged count and period key stay in this crate (AD-9).
+pub async fn hosted_ai_entitled() -> bool {
+    crate::entitlements::account_capabilities()
+        .await
+        .grants(crate::entitlements::HOSTED_AI)
 }
 
 /// Whether the signed-in account may use a hosted-ONLY surface right now (Home, PRD FR-11).
 ///
-/// Richer than `premium_entitlement` by exactly one distinction the Home surface must message on
-/// its own — premium but out of this period's quota — and still carries no figure: the limit, the
+/// Richer than `hosted_ai_entitled` by exactly one distinction the Home surface must message on
+/// its own — entitled but out of this period's quota — and still carries no figure: the limit, the
 /// charged count and the period never leave this crate (AD-9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostedEligibility {
     Eligible,
     SignedOut,
     ReauthenticationRequired,
+    /// The entitlement does not grant `hosted_ai` (billing AD-12).
+    ///
+    /// The variant name is kept because `commands::home` maps it onto the `not_premium` wire
+    /// string the frontend already switches on, and that union evolves additively — but its
+    /// MEANING is narrowed to "your plan does not include this capability", which is equally
+    /// true of a free account and of a paying Classic subscriber. Nothing rendered from it may
+    /// say the word premium.
     NotPremium,
     QuotaExhausted,
     /// A transient hosted problem (status unreadable, recent `503`): FR-7, not FR-11.
     Unavailable,
 }
 
-/// The same arithmetic routing uses (`has_remaining_quota`), split so "not premium" and "premium
-/// but exhausted" can be told apart.
-pub fn classify_status(status: &HostedAiStatus) -> HostedEligibility {
-    if !status.premium {
+/// The two halves of eligibility, combined in the one place that may combine them.
+///
+/// `entitled` is the capability answer and `status` is this period's arithmetic. Keeping them as
+/// separate inputs is what makes "your plan does not include hosted AI" and "your plan does, and
+/// this period's requests are used up" structurally unable to collapse into one sentence (AD-12).
+pub fn classify_status(entitled: bool, status: &HostedAiStatus) -> HostedEligibility {
+    if !entitled {
         HostedEligibility::NotPremium
     } else if !status.has_remaining_quota() {
         HostedEligibility::QuotaExhausted
@@ -416,8 +416,9 @@ pub async fn eligibility() -> HostedEligibility {
     eligibility_with(false).await
 }
 
-/// Reads through the shared status cache, so the answer cannot disagree with the one the
-/// invocation is then routed against. Spends the closed table's single refresh on a `401`.
+/// Reads the entitlement from the statement and the quota through the shared status cache, so the
+/// answer cannot disagree with the one the invocation is then routed against. Spends the closed
+/// table's single refresh on a `401` from the quota read.
 async fn eligibility_with(refreshed: bool) -> HostedEligibility {
     let Some(base) = base_url() else {
         return HostedEligibility::Unavailable;
@@ -429,37 +430,37 @@ async fn eligibility_with(refreshed: bool) -> HostedEligibility {
         Err(_) => return HostedEligibility::ReauthenticationRequired,
     };
 
+    let entitled = match crate::entitlements::entitlement_answer().await {
+        crate::entitlements::EntitlementAnswer::Verified(capabilities) => {
+            capabilities.grants(crate::entitlements::HOSTED_AI)
+        }
+        // No entitlement this device can act on. Reported as the TRANSIENT state, not as a plan
+        // limitation (FR-7, not FR-11): a surface must not invite an upgrade it cannot know is
+        // needed, which is the whole reason a free account receives a verifiable statement of
+        // its own (AD-9).
+        crate::entitlements::EntitlementAnswer::Unestablished => {
+            return HostedEligibility::Unavailable
+        }
+    };
+    if !entitled {
+        // Answered with no quota read at all: a plan that does not include hosted AI needs no
+        // usage figures to be refused, and fetching them would spend a round trip per check.
+        return HostedEligibility::NotPremium;
+    }
+
     if hosted_state::is_unavailable(&subject_sub) {
         return HostedEligibility::Unavailable;
     }
     if let Some(cached) = hosted_state::get_fresh(&subject_sub) {
-        return classify_status(&cached);
+        return classify_status(entitled, &cached);
     }
 
     match fetch_status(&base, &access_token, &subject_sub).await {
-        StatusRead::Ready(status) => classify_status(&status),
+        StatusRead::Ready(status) => classify_status(entitled, &status),
         StatusRead::Unauthorized if !refreshed => Box::pin(eligibility_with(true)).await,
         StatusRead::Unauthorized => HostedEligibility::ReauthenticationRequired,
         StatusRead::Failed => HostedEligibility::Unavailable,
     }
-}
-
-/// Exactly one retry, and only after a forced refresh. A second `401` carrying a token
-/// minted seconds earlier is not a staleness problem, so retrying again would spend
-/// another refresh and another round-trip on the same answer.
-async fn premium_after_refresh() -> bool {
-    let Some(base) = base_url() else {
-        return false;
-    };
-
-    let Ok((access_token, subject_sub)) = resolve_hosted_auth(hosted_auth(true).await) else {
-        return false;
-    };
-
-    matches!(
-        fetch_status(&base, &access_token, &subject_sub).await,
-        StatusRead::Ready(status) if status.premium
-    )
 }
 
 /// Outcome of one `/v1/ai/status` read. `Unauthorized` is split out from `Failed`
@@ -1084,6 +1085,9 @@ mod tests {
     /// clear an AI cache when it is a *profile* call that lacks its scope.
     #[test]
     fn a_signed_out_session_clears_the_hosted_status_cache() {
+        // The status cache is process-global and these three share one key, so they take the
+        // same guard every other cache-touching test in the crate does.
+        let _guard = crate::credentials::test_keyring_guard();
         seed_status_cache();
 
         let outcome = resolve_hosted_auth(Ok(AccessTokenAuth::SignedOut));
@@ -1094,6 +1098,9 @@ mod tests {
 
     #[test]
     fn a_missing_hosted_scope_also_clears_the_hosted_status_cache() {
+        // The status cache is process-global and these three share one key, so they take the
+        // same guard every other cache-touching test in the crate does.
+        let _guard = crate::credentials::test_keyring_guard();
         seed_status_cache();
 
         let outcome = resolve_hosted_auth(Ok(AccessTokenAuth::ReauthenticationRequired));
@@ -1109,6 +1116,9 @@ mod tests {
     /// answer survives it — the one asymmetry between the `Err` and `Ok` refusals.
     #[test]
     fn a_secure_storage_error_leaves_the_hosted_status_cache_intact() {
+        // The status cache is process-global and these three share one key, so they take the
+        // same guard every other cache-touching test in the crate does.
+        let _guard = crate::credentials::test_keyring_guard();
         seed_status_cache();
 
         resolve_hosted_auth(Err(AppError::Auth {
@@ -1171,10 +1181,11 @@ mod tests {
         );
     }
 
-    /// FR-11: premium-with-quota is the only eligible state, and exhaustion is told apart from a
-    /// missing entitlement so the Home surface can name the right reason.
+    /// FR-11 and billing AD-12: entitled-with-quota is the only eligible state, exhaustion is told
+    /// apart from a plan that does not include the capability, and the entitlement half comes in
+    /// as the capability answer rather than being read off the quota body.
     #[test]
-    fn eligibility_separates_not_premium_from_an_exhausted_period() {
+    fn eligibility_separates_an_unentitled_plan_from_an_exhausted_period() {
         let status = |premium, limit, charged| HostedAiStatus {
             premium,
             monthly_request_limit: limit,
@@ -1182,10 +1193,49 @@ mod tests {
             period: "2026-11".to_string(),
         };
 
-        assert_eq!(classify_status(&status(true, 200, 3)), HostedEligibility::Eligible);
-        assert_eq!(classify_status(&status(true, 200, 200)), HostedEligibility::QuotaExhausted);
-        assert_eq!(classify_status(&status(false, 200, 0)), HostedEligibility::NotPremium);
-        assert_eq!(classify_status(&status(false, 0, 0)), HostedEligibility::NotPremium);
+        assert_eq!(
+            classify_status(true, &status(true, 200, 3)),
+            HostedEligibility::Eligible
+        );
+        assert_eq!(
+            classify_status(true, &status(true, 200, 200)),
+            HostedEligibility::QuotaExhausted
+        );
+        assert_eq!(
+            classify_status(false, &status(true, 200, 0)),
+            HostedEligibility::NotPremium
+        );
+        assert_eq!(
+            classify_status(false, &status(false, 0, 0)),
+            HostedEligibility::NotPremium
+        );
+    }
+
+    /// The defect the tier split creates, closed as a property rather than as copy review: the
+    /// quota body's `premium` field may not change the answer in either direction, so a Classic
+    /// subscriber (entitled to sync, not to AI, and served `premium: true` by the deprecated
+    /// route) is refused, and an Advance subscriber is not refused by a stale `premium: false`.
+    #[test]
+    fn the_quota_bodys_premium_field_cannot_decide_eligibility() {
+        let status = |premium| HostedAiStatus {
+            premium,
+            monthly_request_limit: 200,
+            charged_count: 0,
+            period: "2026-11".to_string(),
+        };
+
+        for premium in [true, false] {
+            assert_eq!(
+                classify_status(false, &status(premium)),
+                HostedEligibility::NotPremium,
+                "an unentitled plan is refused whatever the quota route says"
+            );
+            assert_eq!(
+                classify_status(true, &status(premium)),
+                HostedEligibility::Eligible,
+                "an entitled plan is eligible whatever the quota route says"
+            );
+        }
     }
 
     #[test]

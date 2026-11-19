@@ -41,10 +41,52 @@ describe("home i18n", () => {
     }
   });
 
-  /* FR-7 and FR-11 must read differently: a transient outage is not "you need premium". */
+  /* FR-7 and FR-11 must read differently: a transient outage is not a plan limitation. */
   it("keeps the transient-unavailable copy distinct from the locked setup prompt", () => {
     expect(en["home.unavailable.title"]).not.toEqual(en["home.locked.setupTitle"]);
-    expect(en["home.locked.premiumBody"]).toContain("premium");
-    expect(en["home.unavailable.title"]).not.toContain("premium");
+    expect(en["home.locked.quotaBody"]).not.toEqual(en["home.locked.premiumBody"]);
+  });
+
+  /* Billing AD-12: under two paid tiers, "you need premium" is wrong for a paying Classic
+   * subscriber, so no refusal may say it in either language. The copy names the capability and
+   * routes to an upgrade instead. Asserted over every Home key rather than the three that read
+   * that way today, so a new locked state cannot reintroduce the sentence. */
+  it("never tells a subscriber they need premium, and names the capability instead", () => {
+    for (const locale of [en, fr]) {
+      for (const key of homeKeys(en)) {
+        expect(locale[key].toLowerCase(), key).not.toContain("premium");
+      }
+    }
+
+    for (const locale of [en, fr]) {
+      for (const key of [
+        "home.locked.premiumBody",
+        "home.locked.localBody",
+      ]) {
+        expect(locale[key], key).toContain("Nixus Cloud AI");
+      }
+    }
+
+    /* "Nixus Cloud" stays untranslated in French (AD-16). */
+    expect(fr["home.locked.premiumBody"]).toContain("Nixus Cloud AI");
+  });
+
+  /* "Not entitled" and "out of quota" stay two conversations: one invites an upgrade, the other
+   * says to wait. Conflating them sells a plan to someone who already has it. */
+  it("keeps the unentitled and out-of-quota refusals distinct", () => {
+    for (const locale of [en, fr]) {
+      expect(locale["home.locked.premiumBody"]).not.toEqual(
+        locale["home.locked.quotaBody"],
+      );
+      expect(locale["home.locked.quotaTitle"]).not.toEqual(
+        locale["home.locked.setupTitle"],
+      );
+    }
+    expect(en["home.locked.premiumBody"].toLowerCase()).toContain("upgrade");
+    expect(fr["home.locked.premiumBody"].toLowerCase()).toContain("forfait");
+    expect(en["home.locked.quotaBody"].toLowerCase()).not.toContain("upgrade");
+    expect(fr["home.locked.quotaBody"].toLowerCase()).not.toContain(
+      "passez à un forfait",
+    );
   });
 });

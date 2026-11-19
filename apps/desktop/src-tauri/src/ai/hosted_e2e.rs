@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use tiny_http::{Header, Response, Server};
 
 use crate::ai::backend::{self, AiOperation, AiRequest, AiTurn};
+use crate::ai::hosted_bedrock::HostedEligibility;
 use crate::ai::hosted_state;
 use crate::credentials;
 use crate::error::AppError;
@@ -264,10 +265,6 @@ fn premium_status() -> String {
         .to_string()
 }
 
-fn non_premium_status() -> String {
-    r#"{"premium":false,"monthly_request_limit":0,"charged_count":0,"period":"2026-08"}"#.to_string()
-}
-
 fn chat_ndjson() -> String {
     [
         r#"{"type":"meta","operation":"chat","request_id":"r"}"#,
@@ -286,13 +283,35 @@ struct Harness {
 }
 
 impl Harness {
+    /// An account whose entitlement grants `hosted_ai` (billing AD-12).
+    ///
+    /// Stated through the capability seam rather than through the gateway's `premium` field,
+    /// because that field is no longer an entitlement anywhere in the desktop. It has to be
+    /// stated at all because `TRUSTED_STATEMENT_KEYS` ships empty: with no trusted key, no
+    /// statement can verify, so without this seam the entitled half of every routing behaviour
+    /// below would be unreachable.
     fn new(gateway: &StubGateway) -> Self {
+        Self::with_entitlement(gateway, true)
+    }
+
+    /// An account whose plan does not include hosted AI — a free account or, equally, a paying
+    /// Classic subscriber. Hosted is not selected for either, by capability and not by tier.
+    fn unentitled(gateway: &StubGateway) -> Self {
+        Self::with_entitlement(gateway, false)
+    }
+
+    fn with_entitlement(gateway: &StubGateway, entitled: bool) -> Self {
         let guard = credentials::test_keyring_guard();
         let previous_url = std::env::var(BASE_URL_ENV).ok();
 
         hosted_state::clear();
         let _ = credentials::clear_cognito_session();
         install_session();
+        crate::entitlements::set_test_capabilities(Some(if entitled {
+            &[crate::entitlements::HOSTED_AI]
+        } else {
+            &[]
+        }));
         std::env::set_var(BASE_URL_ENV, &gateway.base_url);
         std::env::set_var(TOKEN_BASE_URL_ENV, &gateway.base_url);
 
@@ -311,6 +330,7 @@ impl Drop for Harness {
         }
         std::env::remove_var(TOKEN_BASE_URL_ENV);
         hosted_state::clear();
+        crate::entitlements::set_test_capabilities(None);
         let _ = credentials::clear_cognito_session();
     }
 }
@@ -449,10 +469,13 @@ fn the_status_read_populates_the_subject_scoped_cache() {
     assert!(hosted_state::get_fresh("someone-else").is_none());
 }
 
+/// A plan that does not include hosted AI is refused by the capability alone (billing AD-12):
+/// the gateway here answers with full quota, so nothing but the entitlement can be doing the
+/// refusing — which is what makes this a test of the entitlement rather than of the cap.
 #[test]
-fn a_non_premium_user_never_reaches_the_invoke_route() {
-    let gateway = spawn_gateway(non_premium_status(), InvokeReply::Ndjson(chat_ndjson()));
-    let _harness = Harness::new(&gateway);
+fn an_account_whose_plan_excludes_hosted_ai_never_reaches_the_invoke_route() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::unentitled(&gateway);
 
     let deltas = Arc::new(Mutex::new(Vec::new()));
     let error = run(chat_request(), &deltas).expect_err("no BYO provider is configured");
@@ -461,6 +484,11 @@ fn a_non_premium_user_never_reaches_the_invoke_route() {
     // the honest answer is "not configured".
     assert!(matches!(error, AppError::NotConfigured), "got {error:?}");
     assert_eq!(gateway.invoke_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        0,
+        "an unentitled plan is refused before any usage figure is fetched"
+    );
 }
 
 #[test]
@@ -657,8 +685,8 @@ fn statement_import_reports_the_hosted_reason_instead_of_degrading_to_openai() {
 /// they pin that a personal key is required only where hosted was never in play.
 #[test]
 fn a_statement_import_with_neither_hosted_eligibility_nor_byo_reports_not_configured() {
-    let gateway = spawn_gateway(non_premium_status(), InvokeReply::Ndjson(chat_ndjson()));
-    let _harness = Harness::new(&gateway);
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::unentitled(&gateway);
 
     let deltas = Arc::new(Mutex::new(Vec::new()));
     let error = run(statement_request(), &deltas).expect_err("nothing can serve this surface");
@@ -1080,48 +1108,58 @@ fn a_csv_is_accepted_on_a_chat_turn() {
     assert_eq!(gateway.invoke_calls.load(Ordering::SeqCst), 1);
 }
 
-/// The narrow read the account menu consumes. Driven through the same stub gateway as
-/// the routing tests above, because the whole point of the extraction is that the two
-/// share one `/v1/ai/status` path and one cache — a second HTTP path would be able to
-/// answer `true` for an account the router would skip.
+/// The narrow read the account menu consumes, and the one every IPC consumer of the entitlement
+/// goes through.
+///
+/// Its authority is the offline-verified statement, NOT `/v1/ai/status` (billing AD-12), which is
+/// what the `status_calls` assertions below are really about: the quota route cannot be what
+/// decides whether a plan includes hosted AI, because under two paid tiers its single boolean
+/// cannot express the answer.
 fn entitlement() -> bool {
-    tauri::async_runtime::block_on(crate::ai::hosted_bedrock::premium_entitlement())
+    tauri::async_runtime::block_on(crate::ai::hosted_bedrock::hosted_ai_entitled())
+}
+
+/// The richer read the Home composer consumes: the entitlement, plus the one quota distinction
+/// it must message on its own. This is the reader that still talks to `/v1/ai/status`.
+fn eligibility() -> HostedEligibility {
+    tauri::async_runtime::block_on(crate::ai::hosted_bedrock::eligibility())
 }
 
 #[test]
-fn an_eligible_account_reports_the_entitlement_from_the_authenticated_status_read() {
+fn an_entitled_account_reports_the_entitlement_without_reading_the_quota_route() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
     let _harness = Harness::new(&gateway);
 
     assert!(entitlement());
-    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        0,
+        "the entitlement is the statement's answer, so no usage figures are fetched for it"
+    );
     assert_eq!(
         gateway.invoke_calls.load(Ordering::SeqCst),
         0,
         "reading the entitlement must never invoke the model"
     );
-
-    let bearers = gateway.authorizations.lock().unwrap().clone();
-    assert!(
-        bearers.iter().any(|value| value.starts_with("Bearer ")),
-        "the status read must be authenticated"
-    );
 }
 
 #[test]
 fn an_ineligible_account_reports_no_entitlement() {
-    let gateway = spawn_gateway(non_premium_status(), InvokeReply::Ndjson(chat_ndjson()));
-    let _harness = Harness::new(&gateway);
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::unentitled(&gateway);
 
-    assert!(!entitlement());
-    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        !entitlement(),
+        "full quota on the deprecated route must not grant what the plan does not include"
+    );
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 0);
 }
 
-/// The entitlement is what the account holds, so an exhausted month still reports it.
-/// Routing would skip hosted here — that divergence is deliberate, and asserting both
-/// in one test is what stops someone "fixing" the read to use `has_remaining_quota`.
+/// The entitlement is what the account holds, so an exhausted period still reports it.
+/// Routing skips hosted here — that divergence is deliberate, and asserting both in one test is
+/// what stops someone "fixing" the read to use `has_remaining_quota`.
 #[test]
-fn an_exhausted_month_still_reports_the_entitlement_while_routing_skips_hosted() {
+fn an_exhausted_period_still_reports_the_entitlement_while_routing_skips_hosted() {
     let exhausted =
         r#"{"premium":true,"monthly_request_limit":5,"charged_count":5,"period":"2026-08"}"#
             .to_string();
@@ -1135,10 +1173,52 @@ fn an_exhausted_month_still_reports_the_entitlement_while_routing_skips_hosted()
     assert_eq!(
         gateway.invoke_calls.load(Ordering::SeqCst),
         0,
-        "an exhausted month must still not be routed to hosted"
+        "an exhausted period must still not be routed to hosted"
     );
 }
 
+/// A BYO-credentials user reaches every AI surface on every plan, including a plan that grants
+/// nothing at all (billing AD-12). Driven through the real port, so what is proven is that the
+/// capability gate is never consulted for a surface a configured provider can serve.
+#[test]
+fn a_byo_provider_reaches_the_ai_surfaces_on_a_plan_that_grants_nothing() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::unentitled(&gateway);
+
+    let byo = crate::ai::AiProvider::OpenAI(async_openai::Client::with_config(
+        async_openai::config::OpenAIConfig::new().with_api_base(gateway.base_url.clone()),
+    ));
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let sink_deltas = Arc::clone(&deltas);
+    let sink = move |text: &str| sink_deltas.lock().unwrap().push(text.to_string());
+
+    let outcome = tauri::async_runtime::block_on(backend::invoke(
+        Some(&byo),
+        AiRequest {
+            operation: AiOperation::ProjectAdvice,
+            system: "Advise.".to_string(),
+            turns: vec![AiTurn::user("What should I save for?")],
+            attachment: None,
+        },
+        &sink,
+    ));
+
+    // The stub gateway is not an OpenAI server, so the call itself fails — but it must fail as a
+    // provider error, never as `NotConfigured`: reaching the provider at all is the property.
+    assert!(
+        !matches!(outcome, Err(AppError::NotConfigured)),
+        "an unentitled plan must not lock a configured BYO provider out, got {outcome:?}"
+    );
+    assert_eq!(
+        gateway.invoke_calls.load(Ordering::SeqCst),
+        0,
+        "hosted was never selected, so the hosted route was never called"
+    );
+}
+
+/// A quota read this build cannot complete leaves the surface in the TRANSIENT state, never in
+/// a plan limitation: `Unavailable` is FR-7 and must not be mistaken for FR-11's `NotPremium`,
+/// or an entitled subscriber is told to upgrade because the gateway had a bad minute.
 #[test]
 fn a_rejected_status_read_fails_closed() {
     let gateway = spawn_gateway_with(
@@ -1147,7 +1227,7 @@ fn a_rejected_status_read_fails_closed() {
     );
     let _harness = Harness::new(&gateway);
 
-    assert!(!entitlement());
+    assert_eq!(eligibility(), HostedEligibility::Unavailable);
     assert_eq!(
         gateway.status_calls.load(Ordering::SeqCst),
         1,
@@ -1155,8 +1235,8 @@ fn a_rejected_status_read_fails_closed() {
     );
 }
 
-/// A 200 carrying a body this build cannot parse is the shape a server-side contract
-/// change would take, and it must not be read as premium.
+/// A 200 carrying a body this build cannot parse is the shape a server-side contract change
+/// would take, and it must not be read as eligible.
 #[test]
 fn a_malformed_status_body_fails_closed() {
     let gateway = spawn_gateway_with(
@@ -1165,47 +1245,50 @@ fn a_malformed_status_body_fails_closed() {
     );
     let _harness = Harness::new(&gateway);
 
-    assert!(!entitlement());
+    assert_eq!(eligibility(), HostedEligibility::Unavailable);
 }
 
-/// A `503` opens the courtesy window, and the entitlement must respect it rather than
+/// A `503` opens the courtesy window, and the eligibility read must respect it rather than
 /// re-reading a gateway that just said it was unavailable.
 #[test]
-fn a_503_backoff_window_reports_no_entitlement_without_a_second_read() {
+fn a_503_backoff_window_reports_unavailable_without_a_second_read() {
     let gateway = spawn_gateway_with(
         StatusReply::Error { status: 503 },
         InvokeReply::Ndjson(chat_ndjson()),
     );
     let _harness = Harness::new(&gateway);
 
-    assert!(!entitlement());
+    assert_eq!(eligibility(), HostedEligibility::Unavailable);
     assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
 
-    assert!(!entitlement());
+    assert_eq!(eligibility(), HostedEligibility::Unavailable);
     assert_eq!(
         gateway.status_calls.load(Ordering::SeqCst),
         1,
         "the backoff window must suppress the second read"
     );
+
+    // And the entitlement is unaffected by any of it: it never asked the gateway.
+    assert!(entitlement());
 }
 
-/// The matrix's "no authenticated cloud account" row: no request may leave the machine
-/// at all, so a signed-out process cannot even be observed asking.
+/// The matrix's "no authenticated cloud account" row: no request may leave the machine at all,
+/// so a signed-out process cannot even be observed asking.
 #[test]
-fn a_signed_out_process_makes_no_entitlement_request() {
+fn a_signed_out_process_makes_no_hosted_request() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
     let _harness = Harness::new(&gateway);
     let _ = credentials::clear_cognito_session();
 
-    assert!(!entitlement());
+    assert_eq!(eligibility(), HostedEligibility::SignedOut);
     assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 0);
 }
 
-/// A session whose grant structurally lacks `nixus-api/ai.invoke` can never be
-/// repaired by a refresh, so it must fail closed without a network call rather than
-/// spending one on a request the authorizer would reject.
+/// A session whose grant structurally lacks `nixus-api/ai.invoke` can never be repaired by a
+/// refresh, so it must fail closed without a network call rather than spending one on a request
+/// the authorizer would reject.
 #[test]
-fn a_session_without_the_hosted_scope_makes_no_entitlement_request() {
+fn a_session_without_the_hosted_scope_makes_no_hosted_request() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
     let _harness = Harness::new(&gateway);
 
@@ -1219,18 +1302,18 @@ fn a_session_without_the_hosted_scope_makes_no_entitlement_request() {
     })
     .expect("session stored");
 
-    assert!(!entitlement());
+    assert_eq!(eligibility(), HostedEligibility::ReauthenticationRequired);
     assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 0);
 }
 
-/// One cache, one answer: a read taken for the menu is the one an invocation is routed
-/// against, so opening the menu cannot cost a second status round-trip.
+/// One cache, one answer: the quota read taken for the Home composer is the one an invocation is
+/// routed against, so drawing the composer cannot cost a second status round-trip.
 #[test]
-fn the_entitlement_and_the_routing_path_share_one_status_read() {
+fn the_eligibility_and_the_routing_path_share_one_status_read() {
     let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
     let _harness = Harness::new(&gateway);
 
-    assert!(entitlement());
+    assert_eq!(eligibility(), HostedEligibility::Eligible);
 
     let deltas = Arc::new(Mutex::new(Vec::new()));
     let text = run(chat_request(), &deltas).expect("hosted invocation succeeds");
@@ -1243,13 +1326,14 @@ fn the_entitlement_and_the_routing_path_share_one_status_read() {
     );
 }
 
-/// The subject guard the cache already enforces, exercised through the entitlement:
-/// signing in as someone else must re-derive the answer rather than serve the previous
-/// account's cached `true`.
+/// Signing in as someone else must never inherit the previous account's answer. Two guards hold
+/// this, and this test pins the second: the quota cache is subject-bound (`ai::hosted_state`'s own
+/// suite), and the ENTITLEMENT does not read that cache at all, so another subject's `premium:
+/// true` is not merely ignored — it is structurally unreachable from the entitlement.
 #[test]
 fn a_different_subject_never_inherits_the_previous_accounts_entitlement() {
-    let gateway = spawn_gateway(non_premium_status(), InvokeReply::Ndjson(chat_ndjson()));
-    let _harness = Harness::new(&gateway);
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let _harness = Harness::unentitled(&gateway);
 
     hosted_state::store(
         "some-other-subject",
@@ -1263,17 +1347,24 @@ fn a_different_subject_never_inherits_the_previous_accounts_entitlement() {
 
     assert!(
         !entitlement(),
-        "the cached entry belongs to another subject and must not be read"
+        "another subject's cached quota must not reach this account's entitlement"
     );
-    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        gateway.status_calls.load(Ordering::SeqCst),
+        0,
+        "and no quota read may be issued for an entitlement question at all"
+    );
 }
 
-/// The closed table's single refresh, on the status read this time: a `401` means the
-/// server rejected a token this device still considers live, and the one repair is a
-/// fresh grant. Both halves matter — without the retry an entitled account silently
-/// stops showing as premium, and without the ceiling a rejected grant loops.
+/// The closed table's single refresh, on the quota read this time: a `401` means the server
+/// rejected a token this device still considers live, and the one repair is a fresh grant. Both
+/// halves matter — without the retry an entitled account silently reads as ineligible, and
+/// without the ceiling a rejected grant loops.
+///
+/// Driven through `eligibility`, which is the reader that spends this refresh: the entitlement
+/// read issues no quota request at all (billing AD-12), so it has none to retry.
 #[test]
-fn a_401_status_read_refreshes_once_and_then_reports_the_entitlement() {
+fn a_401_status_read_refreshes_once_and_then_reports_eligibility() {
     let gateway = spawn_gateway_with(
         StatusReply::Scripted(vec![
             StatusReply::Error { status: 401 },
@@ -1283,7 +1374,7 @@ fn a_401_status_read_refreshes_once_and_then_reports_the_entitlement() {
     );
     let _harness = Harness::new(&gateway);
 
-    assert!(entitlement());
+    assert_eq!(eligibility(), HostedEligibility::Eligible);
     assert_eq!(
         gateway.status_calls.load(Ordering::SeqCst),
         2,
@@ -1307,7 +1398,7 @@ fn a_401_status_read_refreshes_once_and_then_reports_the_entitlement() {
     assert_eq!(
         gateway.invoke_calls.load(Ordering::SeqCst),
         0,
-        "reading the entitlement must never invoke the model, refresh or not"
+        "reading eligibility must never invoke the model, refresh or not"
     );
 }
 
@@ -1319,7 +1410,7 @@ fn a_persistent_401_status_read_refreshes_only_once_and_fails_closed() {
     );
     let _harness = Harness::new(&gateway);
 
-    assert!(!entitlement());
+    assert_eq!(eligibility(), HostedEligibility::ReauthenticationRequired);
     assert_eq!(
         gateway.status_calls.load(Ordering::SeqCst),
         2,

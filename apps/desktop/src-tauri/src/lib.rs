@@ -2,6 +2,7 @@ mod account_contract;
 mod ai;
 mod app_migration;
 mod avatar_store;
+mod billing_client;
 mod budget;
 mod cloud_profile;
 mod commands;
@@ -18,6 +19,7 @@ mod models;
 mod profile_client;
 mod profile_store;
 mod projects;
+mod statement_cache;
 mod stock;
 mod sync;
 mod tfsa;
@@ -156,6 +158,13 @@ pub fn run() {
             // so `tauri dev` rebuilds do not re-trigger macOS Keychain prompts.
             credentials::install_store(&app_data_dir)
                 .expect("failed to initialize the credential store");
+
+            // Where the entitlement statement cache lives, recorded before the first capability
+            // check. `entitlements::account_capabilities` has no `AppHandle` to resolve it from —
+            // `sync/gate.rs`'s `CapabilitySource` gives it no arguments — so an uninstalled root
+            // is a gate that grants nothing, which is the correct fail-closed answer but a
+            // permanent one. Non-fatal and infallible: the directory is created on first write.
+            statement_cache::install_root(&app_data_dir);
 
             // After the keychain store above and before `init_ai_client` below, which
             // is the first reader: a credential still under the legacy service would

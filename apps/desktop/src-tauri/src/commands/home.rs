@@ -303,7 +303,7 @@ fn authorize_access(access: ComposerAccess) -> Result<(), AppError> {
     match access {
         ComposerAccess::LocalProfile => Err(crate::ai::backend::hosted_error(
             "premium_required",
-            "Building your Home dashboard with AI needs an AI provider — add one in Settings, or switch to a Nixus Cloud premium profile.",
+            "Building your Home dashboard with AI needs an AI provider — add one in Settings, or open this profile with a Nixus Cloud account on a plan that includes Nixus Cloud AI.",
         )),
         ComposerAccess::Hosted(eligibility) => home_ai::authorize(eligibility),
     }
@@ -318,6 +318,12 @@ fn byo_configured(ai_state: &Mutex<AiState>) -> Result<bool, AppError> {
     Ok(ai.provider.is_some())
 }
 
+/// The closed wire union the frontend switches on, unchanged by billing E2 (AD-13's additive
+/// evolution): `not_premium` keeps its name and narrows to "this plan does not include
+/// `hosted_ai`". No member is added, so `src/lib/types.ts`, `homeSurface.ts`'s
+/// `CONFIRMED_NOT_PREMIUM` and `useHome.ts`'s `LOCKING_CODES` are untouched — the forced-upgrade
+/// case the billing client can report never reaches here, because it is a statement about this
+/// build rather than about the account and leaves the cached entitlement as it was.
 fn access_state(access: ComposerAccess) -> &'static str {
     let ComposerAccess::Hosted(eligibility) = access else {
         return "local_profile";

@@ -113,6 +113,53 @@ fn authorize_names_each_non_eligible_reason_with_its_own_code() {
     assert!(authorize(HostedEligibility::Eligible).is_ok());
 }
 
+/// Billing AD-12, as a property of every message this gate can produce: a Classic subscriber
+/// refused hosted AI is a paying premium customer, so no refusal may say the word — and the one
+/// that explains a plan limitation must name the capability and point at an upgrade instead.
+#[test]
+fn no_refusal_this_gate_produces_tells_a_subscriber_they_need_premium() {
+    for eligibility in [
+        HostedEligibility::SignedOut,
+        HostedEligibility::NotPremium,
+        HostedEligibility::QuotaExhausted,
+        HostedEligibility::ReauthenticationRequired,
+        HostedEligibility::Unavailable,
+    ] {
+        let error = authorize(eligibility).expect_err("refused");
+        let message = match &error {
+            AppError::HostedAi { message, .. } => message.clone(),
+            other => panic!("expected a hosted error, got {other:?}"),
+        };
+
+        assert!(
+            !message.to_lowercase().contains("premium"),
+            "{eligibility:?} says premium: {message}"
+        );
+        // No provider and no region reaches in-app copy either (AD-12).
+        for forbidden in ["Bedrock", "AWS", "Amazon", "us-east", "OpenAI"] {
+            assert!(
+                !message.contains(forbidden),
+                "{eligibility:?} names {forbidden}: {message}"
+            );
+        }
+    }
+
+    let plan_limited = match authorize(HostedEligibility::NotPremium).expect_err("refused") {
+        AppError::HostedAi { message, .. } => message,
+        other => panic!("expected a hosted error, got {other:?}"),
+    };
+    assert!(plan_limited.contains("Nixus Cloud AI"), "{plan_limited}");
+    assert!(plan_limited.to_lowercase().contains("upgrade"), "{plan_limited}");
+
+    // And it must not read like the out-of-quota conversation, which is a different fact.
+    let exhausted = match authorize(HostedEligibility::QuotaExhausted).expect_err("refused") {
+        AppError::HostedAi { message, .. } => message,
+        other => panic!("expected a hosted error, got {other:?}"),
+    };
+    assert_ne!(plan_limited, exhausted);
+    assert!(!exhausted.to_lowercase().contains("upgrade"), "{exhausted}");
+}
+
 /// FR-5: the validation error goes back to the model for exactly one corrective attempt.
 #[tokio::test]
 async fn an_invalid_first_reply_gets_one_corrective_turn_with_the_specific_error() {

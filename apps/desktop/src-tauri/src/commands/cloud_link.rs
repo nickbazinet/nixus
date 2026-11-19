@@ -165,8 +165,14 @@ mod tests {
     /// `profile_client.rs` is the sole Nixus Cloud profile client (AD-9), and this entry is
     /// that rule: a second module reaching for the profile API fails this test rather than
     /// quietly becoming a second place a Cognito access token can be sent.
-    const NETWORKED_MODULES: [&str; 5] = [
+    ///
+    /// `billing_client.rs` is the sole Nixus Cloud billing client (billing AD-7), and carries
+    /// the same rule for the billing API: it is the only module that may obtain a statement,
+    /// a Checkout URL or a Portal URL, so a second one fails here instead of becoming a second
+    /// place a Cognito access token — or a commerce redirect — can originate.
+    const NETWORKED_MODULES: [&str; 6] = [
         "ai/hosted_bedrock.rs",
+        "billing_client.rs",
         "commands/auth.rs",
         "maintenance/catalog.rs",
         "profile_client.rs",

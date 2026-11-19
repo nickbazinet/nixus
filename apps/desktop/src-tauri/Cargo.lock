@@ -4549,6 +4549,7 @@ dependencies = [
  "image",
  "keyring",
  "keyring-core",
+ "p256",
  "proptest",
  "rand 0.9.4",
  "regex",

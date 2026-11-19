@@ -59,11 +59,20 @@ pub const HOSTED_AI_SCOPE: &str = "nixus-api/ai.invoke";
 /// and its absence is `reauthentication_required` rather than a retry.
 pub(crate) const PROFILE_SCOPE: &str = "nixus-api/profile";
 
+/// Resource-server scope required by every `apps/api-billing` authorized route
+/// (billing AD-3, AD-7). Classified exactly like the two above: the refresh grant replays
+/// the originally granted scopes, so a session granted before this scope existed can never
+/// acquire it and its absence is `reauthentication_required` rather than a retry.
+pub(crate) const BILLING_SCOPE: &str = "nixus-api/billing";
+
 /// The one scope set every authorize request asks for. A caller's required scope is
 /// only ever *verified* against the granted claim (AD-9) — narrowing a request to a
 /// single scope would hand back a token that no longer satisfies the other callers.
+///
+/// Every scope is a member of this one set, billing included (billing AD-17): a client always
+/// asks for the whole set, so no caller's grant can leave another caller unable to be served.
 pub const COGNITO_SCOPES: &str =
-    "openid email profile nixus-api/ai.invoke nixus-api/profile";
+    "openid email profile nixus-api/ai.invoke nixus-api/profile nixus-api/billing";
 
 /// Proactive refresh margin for call-time tokens (AD-10). Deliberately non-zero:
 /// a token that passes an expiry check and then expires in flight would surface to
@@ -1421,13 +1430,23 @@ mod tests {
         assert_eq!(PROFILE_SCOPE, "nixus-api/profile");
     }
 
-    /// Both resource-server scopes travel on one grant, so neither caller can be
-    /// served by a token the other cannot use (AD-9's "never narrows").
+    /// Same reasoning again, for the billing API (billing AD-3). The statement the desktop
+    /// gates every paid capability on is unreachable without it, and a session granted
+    /// before it existed cannot acquire it through a refresh — only a fresh sign-in can.
+    #[test]
+    fn scopes_include_the_billing_resource_server_scope() {
+        let scopes: Vec<&str> = COGNITO_SCOPES.split(' ').collect();
+        assert!(scopes.contains(&BILLING_SCOPE));
+        assert_eq!(BILLING_SCOPE, "nixus-api/billing");
+    }
+
+    /// Every resource-server scope travels on one grant, so no caller can be served by a
+    /// token another cannot use (AD-9's "never narrows", billing AD-17's scope rollout).
     #[test]
     fn the_requested_scope_set_is_byte_exact() {
         assert_eq!(
             COGNITO_SCOPES,
-            "openid email profile nixus-api/ai.invoke nixus-api/profile"
+            "openid email profile nixus-api/ai.invoke nixus-api/profile nixus-api/billing"
         );
     }
 
@@ -1525,6 +1544,7 @@ mod tests {
              &client_id=6525109r95las7odvuesf13joj\
              &redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback\
              &scope=openid%20email%20profile%20nixus-api%2Fai.invoke%20nixus-api%2Fprofile\
+             %20nixus-api%2Fbilling\
              &code_challenge=CHALLENGE\
              &code_challenge_method=S256\
              &state=STATE\
@@ -1544,6 +1564,7 @@ mod tests {
              &client_id=6525109r95las7odvuesf13joj\
              &redirect_uri=http%3A%2F%2F127.0.0.1%3A52847%2Fcallback\
              &scope=openid%20email%20profile%20nixus-api%2Fai.invoke%20nixus-api%2Fprofile\
+             %20nixus-api%2Fbilling\
              &code_challenge=CHALLENGE\
              &code_challenge_method=S256\
              &state=STATE"

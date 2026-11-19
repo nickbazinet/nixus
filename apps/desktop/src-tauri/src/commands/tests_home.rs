@@ -271,13 +271,59 @@ fn a_local_profile_is_locked_whatever_the_account_session_says() {
 }
 
 /// A send from a local profile is refused before any write or AI call, as a lock, not an outage.
+///
+/// Billing AD-12 applies to this message too: the code stays `premium_required`, and the sentence
+/// may not say the word — a user reading it may well be a paying subscriber who simply opened a
+/// local profile.
 #[test]
 fn a_send_from_a_local_profile_is_refused_as_premium_required() {
     match authorize_access(ComposerAccess::LocalProfile) {
-        Err(AppError::HostedAi { code, .. }) => assert_eq!(code, "premium_required"),
-        other => panic!("expected a premium lock, got {other:?}"),
+        Err(AppError::HostedAi { code, message, .. }) => {
+            assert_eq!(code, "premium_required");
+            assert!(
+                !message.to_lowercase().contains("premium"),
+                "a plan lock must not be worded as a premium lock: {message}"
+            );
+            assert!(message.contains("Nixus Cloud AI"), "{message}");
+        }
+        other => panic!("expected a plan lock, got {other:?}"),
     }
     assert!(authorize_access(ComposerAccess::Hosted(HostedEligibility::Eligible)).is_ok());
+}
+
+/// The closed wire union the frontend switches on, asserted as closed: billing E2 adds no member,
+/// so `src/lib/types.ts`'s `HomeComposerAccess`, `homeSurface.ts`'s `CONFIRMED_NOT_PREMIUM` and
+/// `useHome.ts`'s `LOCKING_CODES` need no change. A new member here without updating those four
+/// files would render a raw key or silently unlock a locked composer.
+#[test]
+fn the_composer_access_union_is_closed_at_the_members_the_frontend_knows() {
+    let mut states: Vec<&str> = [
+        HostedEligibility::Eligible,
+        HostedEligibility::SignedOut,
+        HostedEligibility::NotPremium,
+        HostedEligibility::QuotaExhausted,
+        HostedEligibility::ReauthenticationRequired,
+        HostedEligibility::Unavailable,
+    ]
+    .into_iter()
+    .map(|eligibility| access_state(ComposerAccess::Hosted(eligibility)))
+    .collect();
+    states.push(access_state(ComposerAccess::LocalProfile));
+    states.sort_unstable();
+
+    assert_eq!(
+        states,
+        [
+            "available",
+            "local_profile",
+            "not_premium",
+            "quota_exhausted",
+            "reauthentication_required",
+            "signed_out",
+            "unavailable",
+        ],
+        "the wire union the frontend switches on changed"
+    );
 }
 
 fn byo_client() -> AiProvider {

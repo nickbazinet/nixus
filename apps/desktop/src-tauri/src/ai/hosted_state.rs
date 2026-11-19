@@ -1,8 +1,14 @@
-//! Process-local hosted-AI status cache (AD-9 / architecture Conventions).
+//! Process-local hosted-AI **quota** cache (AD-9 / architecture Conventions).
 //!
 //! Deliberately has no Tauri command, no frontend hook, and no TanStack Query key:
 //! v1 renders nothing from this, and exposing it would create a status surface the
 //! architecture defers. It is read and invalidated only by `ai::hosted_bedrock`.
+//!
+//! What this cache is and is not, since the entitlement moved out from under it (billing AD-12):
+//! it holds this period's usage figures, which only `/v1/ai/status` knows. It does **not** hold
+//! the entitlement — that is the offline-verified statement's answer, read through
+//! `entitlements::account_capabilities`. The two are cached separately because they come from
+//! different authorities and are refused differently.
 //!
 //! Every entry is bound to the `subject_sub` it was fetched for. A desktop process
 //! can outlive a sign-out/sign-in-as-someone-else cycle, so a cache keyed only by
@@ -22,6 +28,15 @@ const UNAVAILABLE_BACKOFF: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct HostedAiStatus {
+    /// `GET /v1/ai/status`'s `premium` field, kept for ONE purpose: during AD-17's deprecation
+    /// window that route still serves a `premium`-shaped answer derived from the entitlement
+    /// authority, and a desktop that predates the statement reads it.
+    ///
+    /// **It is not an entitlement here and may never be used as one** (AD-12). The entitlement is
+    /// the offline-verified statement's answer, obtained through
+    /// `entitlements::account_capabilities().grants(HOSTED_AI)`; under two paid tiers a boolean
+    /// cannot express it, because a Classic subscriber is a paying premium customer who is not
+    /// granted hosted AI. What this struct contributes to a decision is the QUOTA, and only that.
     pub premium: bool,
     pub monthly_request_limit: i64,
     pub charged_count: i64,
@@ -29,10 +44,14 @@ pub struct HostedAiStatus {
 }
 
 impl HostedAiStatus {
-    /// `charged_count` is the sole net authority server-side; this mirrors that
-    /// arithmetic rather than inventing a second notion of "has quota".
+    /// Whether this period has quota left. `charged_count` is the sole net authority
+    /// server-side; this mirrors that arithmetic rather than inventing a second notion.
+    ///
+    /// Quota ONLY, and deliberately blind to `premium`: the split is what lets "your plan does
+    /// not include this" and "you are out of requests this period" stay two different
+    /// conversations (AD-12). A caller that needs both asks the capability and then asks this.
     pub fn has_remaining_quota(&self) -> bool {
-        self.premium && self.monthly_request_limit - self.charged_count > 0
+        self.monthly_request_limit - self.charged_count > 0
     }
 }
 
@@ -185,8 +204,25 @@ mod tests {
         assert!(status(true, 100, 99).has_remaining_quota());
         assert!(!status(true, 100, 100).has_remaining_quota());
         assert!(!status(true, 100, 101).has_remaining_quota());
-        assert!(!status(false, 100, 0).has_remaining_quota());
         assert!(!status(true, 0, 0).has_remaining_quota());
+    }
+
+    /// Updated with billing AD-12, and the reason is the whole point of the tier split: this
+    /// previously asserted that `premium: false` meant no quota, which conflated two facts a
+    /// two-tier product must keep apart. Quota is arithmetic over the usage figures; whether the
+    /// plan includes hosted AI is the statement's answer and is not in this struct at all. A
+    /// Classic subscriber reads as "has quota" here and is still refused by the capability gate.
+    #[test]
+    fn quota_is_arithmetic_alone_and_never_an_entitlement_claim() {
+        assert!(
+            status(false, 100, 0).has_remaining_quota(),
+            "the quota figures do not decide entitlement, and must not pretend to"
+        );
+        assert_eq!(
+            status(false, 100, 0).has_remaining_quota(),
+            status(true, 100, 0).has_remaining_quota(),
+            "the premium flag may not change the quota answer in either direction"
+        );
     }
 
     #[test]

@@ -58,12 +58,21 @@ pub struct GenerationInput {
 /// The hosted-reason gate: called by `commands::home` only when the user has configured no BYO
 /// provider at all, to name why the composer is locked. A configured BYO key skips this entirely
 /// (same precedence every other AI surface uses) and reaches `generate` below regardless of it.
+///
+/// `premium_required` keeps its wire name — the union evolves additively (AD-13) — and its
+/// MEANING is narrowed to "your plan does not include this capability" (billing AD-12). The
+/// sentence it carries must therefore name the capability and route to an upgrade, never claim the
+/// caller lacks premium: under two paid tiers a Classic subscriber reaching here is a paying
+/// premium customer whose plan simply does not include hosted AI, and telling them otherwise is
+/// the one defect the tier split creates. The UI resolves its own EN/FR copy from `code`; this
+/// sentence is the fixed English one logs and support read.
 pub fn authorize(eligibility: HostedEligibility) -> Result<(), AppError> {
     let (code, message) = match eligibility {
         HostedEligibility::Eligible => return Ok(()),
         HostedEligibility::SignedOut | HostedEligibility::NotPremium => (
             "premium_required",
-            "The Home dashboard composer requires Nixus Cloud premium.",
+            "Your plan does not include Nixus Cloud AI, which the Home dashboard composer builds \
+             widgets with. Upgrade to a plan that includes it, or add your own AI provider key.",
         ),
         HostedEligibility::QuotaExhausted => (
             "quota_exhausted",

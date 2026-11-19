@@ -55,6 +55,14 @@ async-openai = "0.27"
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
 urlencoding = "2"
 sha2 = "0.10"
+# Offline verification of the signed entitlement statement (billing AD-9): ECDSA over NIST
+# P-256 with SHA-256 and a DER signature, which is exactly what KMS `ECC_NIST_P256` /
+# `ECDSA_SHA_256` emits. Deliberately NOT a JWT/JOSE stack — the format has no negotiable
+# `alg`, so there is no algorithm-confusion surface to defend. `ecdsa` is named explicitly so
+# the verify path cannot be lost if someone later turns defaults off; the default `pkcs8` is
+# what decodes the embedded SPKI public keys. 0.13 is the current release line and was already
+# in Cargo.lock transitively, so this adds a direct edge and no new crate.
+p256 = { version = "0.13", features = ["ecdsa"] }
 rand = "0.9"
 tiny_http = "0.12.0"
 # Needed for reqwest's bytes_stream() when reading the hosted-AI NDJSON response.
