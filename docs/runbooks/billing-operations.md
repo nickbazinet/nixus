@@ -29,16 +29,45 @@ answers "is this account entitled" from this one place.
 
 ## 1. Stripe Customer Portal configuration — OWNER ACTION, Dashboard only
 
-**Status: UNDONE.** This blocks nothing technically today — checkout, webhooks,
-and the admin override all work without it — but it is required before a
-customer can self-manage their subscription.
+**Status: ONE of three items outstanding.** Read back from the sandbox on
+2026-11-19 (`billingPortal.configurations.list`, configuration
+`bpc_1UdNTSDiCdBE8Cwu...`, the account default):
+
+| Feature | State |
+| --- | --- |
+| Cancel subscription | **already enabled** (Stripe default) |
+| Payment-method update | **already enabled** (Stripe default) |
+| Plan switching | **DISABLED**, 0 products, proration `none` |
+
+So the only Dashboard work left is **plan switching** — and it is also what
+gates the open tax question below, because a plan switch is the only operation
+that can recalculate tax. Re-read the current state before touching anything:
+
+```bash
+set -euo pipefail
+# Prints the three feature flags. Reads only; never writes.
+node --experimental-strip-types - <<'NODE'
+import Stripe from "stripe";
+const s = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2026-10-28.endive" });
+for (const c of (await s.billingPortal.configurations.list({ limit: 10 })).data) {
+  const f = c.features;
+  console.log(c.id, "default=" + c.is_default,
+    "cancel=" + f.subscription_cancel?.enabled,
+    "payment_method=" + f.payment_method_update?.enabled,
+    "switch=" + f.subscription_update?.enabled);
+}
+NODE
+```
 
 Dashboard path: **Settings → Billing → Customer portal.**
 
-Enable exactly three things:
+The three items, for completeness:
 
-1. **Cancel subscription.**
-2. **Payment-method update.**
+1. **Cancel subscription.** Already on.
+2. **Payment-method update.** Already on. This is the ONLY route by which a
+   Managed Payments customer can change their card — Stripe does not permit
+   updating `subscription.default_payment_method` through the API, which is why
+   no such path exists anywhere in this codebase.
 3. **Plan switching**, limited to the two tiers this catalog publishes:
    `classic` ⟷ `advance`.
 
@@ -333,6 +362,40 @@ immediate correction pending the Dashboard cancellation.
   Stripe-derived state untouched, and a re-run is a true no-op rather than a
   version bump.
 
+### What the first production run actually found, 2026-11-19
+
+Recorded because the numbers do not match and the mismatch is the point:
+
+| Counter | Value |
+| --- | --- |
+| scanned | 27 |
+| matched premium filter | **11** |
+| eligible | **8** |
+| migrated | 8 |
+| skipped (unusable key) | **3** |
+
+All 8 genuinely-entitled users migrated, so AD-17's gate holds. The 3 skipped
+records carry partition keys the billing table cannot compose, and in every
+case the key was **already unreadable by the hosted-AI service itself**, which
+composes `USER#<sub>` from the verified token:
+
+- `USER#047834f8-...-074f515d0388··` — two **trailing spaces**, left by a manual
+  `put-item`. `getUserConfig` has always missed it, so that user has **never**
+  had hosted AI despite someone intending to grant it. This is a pre-existing
+  data defect, not a billing regression. **Granting them access is a product
+  decision, so the backfill does not make it** — write a correctly-keyed
+  `CONFIG` item (or an admin override, §5) if they should have it.
+- `USER#google_114853562067966268394` and `USER#google_101186694495260286749` —
+  keyed by the **provider username** rather than the Cognito `sub`. Their real
+  subs are `34f844d8-...` and `f4a80428-...`, **both already migrated**, so
+  these are stale duplicate rows. Safe to delete; nothing reads them.
+
+The first run printed `failed 0` while skipping all three, which read as a
+clean migration. The script now counts and prints every unusable key, and
+`backfill-script.test.ts` pins these three exact shapes so the silence cannot
+return. **If `matched` exceeds `eligible`, reconcile the difference by hand
+before trusting the migration.**
+
 **This must run BEFORE `premium` is retired** in `nixus-bedrock-api`'s
 `quota.ts`. The fixed deploy order is: `nixus-billing` deployed with no
 traffic → backfill run → `nixus-bedrock-api` cut over to read the billing
@@ -340,6 +403,33 @@ authority → desktop release → `premium` attribute and its `ConditionCheck`
 retired. Skipping the backfill before the read cutover would mean no bedrock
 request that depended on it had an equivalent `ENTITLEMENT` record to fall back
 on.
+
+### Retiring `premium` is NOT an attribute deletion — measured 2026-11-19
+
+Do not treat the last step of that order as "remove the attribute". It was
+tested against the deployed stack with a throwaway account and the result is
+unambiguous:
+
+| State of the account | `GET /v1/ai/status` |
+| --- | --- |
+| legacy `premium = true`, **no** `ENTITLEMENT` | `premium: true`, limit **200** (the legacy value) |
+| both present, authority limit set to 777 | `premium: true`, limit **777** — the authority wins |
+| `ENTITLEMENT` granting `hosted_ai` with limit 777, legacy `CONFIG` **deleted** | **`premium: false`, limit 0** |
+
+The third row is the blocker. The grant is present and valid, but
+`hostedAiServiceability` reports it unservable because `quota.ts` still
+reserves against the legacy `CONFIG` item — both its `ConditionCheck` on
+`premium = true` and the `monthly_request_limit` the reservation is gated on
+come from there. Status deliberately refuses to advertise what invoke would
+reject, so it answers `premium: false`.
+
+**Consequence:** deleting `premium`, or deleting the `CONFIG` item, removes
+hosted AI from an entitled user. Epic H must therefore move the reservation off
+`CONFIG` in the SAME change that removes the attribute — the quota transaction
+has to take its limit from the authority and drop the `premium` condition
+together. The first two rows are what make the current release safe to sit on
+indefinitely: both shapes work, and reverting the bedrock read restores
+previous behaviour with no data loss.
 
 ---
 

@@ -337,33 +337,73 @@ describe("the run refuses the wrong environment and reports what it did", () => 
     const summary = emptySummary();
     expect(summary).toEqual({
       scanned: 0,
+      matched: 0,
       eligible: 0,
       migrated: 0,
       alreadyMigrated: 0,
       skippedStripeOwned: 0,
+      skippedUnusableKey: 0,
       failed: 0,
     });
 
     const rendered = formatSummary({
       scanned: 9,
+      matched: 5,
       eligible: 3,
       migrated: 1,
       alreadyMigrated: 1,
       skippedStripeOwned: 1,
+      skippedUnusableKey: 2,
       failed: 0,
     });
 
     for (const label of [
       "scanned",
+      "matched premium filter",
       "eligible",
       "migrated",
       "already migrated",
       "skipped (stripe-owned)",
+      "skipped (unusable key)",
       "failed",
     ]) {
       expect(rendered, `summary omits ${label}`).toContain(label);
     }
     expect(rendered).toMatch(/scanned\s+9/);
     expect(rendered).toMatch(/skipped \(stripe-owned\)\s+1/);
+  });
+});
+
+/*
+ * The three shapes the FIRST production run skipped while printing `failed 0`.
+ * Pinned verbatim because they are real data, not hypotheticals, and because a
+ * grandfathered user silently left behind is precisely what AD-17's gate exists
+ * to catch. The service composes `USER#<sub>` from the verified token, so none of
+ * these keys was ever being read - refusing to propagate them is correct, and
+ * reporting them is what was missing.
+ */
+describe("partition keys the billing table cannot compose", () => {
+  const unusable = [
+    // A manual put-item left two trailing spaces on the key. `getUserConfig`
+    // composes the clean `USER#<sub>`, so this record has never been read and
+    // that user has never actually had hosted AI.
+    ["trailing whitespace", "USER#047834f8-0071-702b-0045-074f515d0388  "],
+    // Federated identities whose OWN Cognito `sub` is a UUID that was migrated
+    // separately; these are stale duplicate rows under the provider username.
+    ["a federated provider username", "USER#google_114853562067966268394"],
+    ["a second federated username", "USER#google_101186694495260286749"],
+  ] as const;
+
+  it.each(unusable)("refuses %s and never migrates it", (_label, pk) => {
+    expect(subFromUserPartitionKey(pk)).toBeNull();
+    expect(isEligibleHostedAiConfig(configItem({ pk }))).toBe(false);
+  });
+
+  it("accepts the clean key the same user signs in with", () => {
+    const clean = "047834f8-0071-702b-0045-074f515d0388";
+    expect(subFromUserPartitionKey(`USER#${clean}`)).toBe(clean);
+    expect(isEligibleHostedAiConfig(configItem({ pk: `USER#${clean}` }))).toBe(
+      true,
+    );
   });
 });

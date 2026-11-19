@@ -331,20 +331,32 @@ export function parseAdminExpiryDays(argv: readonly string[]): number {
 
 export interface BackfillSummary {
   scanned: number;
+  /** Matched the premium filter, whether or not the key was usable. */
+  matched: number;
   eligible: number;
   migrated: number;
   alreadyMigrated: number;
   skippedStripeOwned: number;
+  /**
+   * Matched the premium filter but carried a partition key the billing table
+   * cannot compose. Reported as its own number because the first production run
+   * skipped three such records while printing `failed 0`, which reads as a clean
+   * migration. A grandfathered user silently left behind is exactly what AD-17's
+   * gate exists to catch, so this can never be inferred from a difference again.
+   */
+  skippedUnusableKey: number;
   failed: number;
 }
 
 export function emptySummary(): BackfillSummary {
   return {
     scanned: 0,
+    matched: 0,
     eligible: 0,
     migrated: 0,
     alreadyMigrated: 0,
     skippedStripeOwned: 0,
+    skippedUnusableKey: 0,
     failed: 0,
   };
 }
@@ -354,10 +366,12 @@ export function formatSummary(summary: BackfillSummary): string {
     "",
     "Summary",
     `  scanned                 ${summary.scanned}`,
+    `  matched premium filter  ${summary.matched}`,
     `  eligible                ${summary.eligible}`,
     `  migrated                ${summary.migrated}`,
     `  already migrated        ${summary.alreadyMigrated}`,
     `  skipped (stripe-owned)  ${summary.skippedStripeOwned}`,
+    `  skipped (unusable key)  ${summary.skippedUnusableKey}`,
     `  failed                  ${summary.failed}`,
     "",
   ].join("\n");
@@ -449,9 +463,20 @@ async function scanEligibleUsers(
     summary.scanned += page.ScannedCount ?? 0;
 
     for (const item of page.Items ?? []) {
-      if (!isEligibleHostedAiConfig(item)) continue;
+      summary.matched += 1;
       const sub = subFromUserPartitionKey(item.pk);
-      if (sub === null) continue;
+      if (sub === null || !isEligibleHostedAiConfig(item)) {
+        // Loud, not silent. The key is printed quoted so a trailing space or a
+        // non-UUID federated identity is visible rather than inferred - both
+        // occurred in production, and the service composes `USER#<sub>` from the
+        // token, so neither record was ever being read in the first place.
+        summary.skippedUnusableKey += 1;
+        log(
+          "note",
+          `SKIPPED, unusable partition key: ${JSON.stringify(item.pk)} - the billing table cannot compose it, so this record is NOT migrated. Reconcile it by hand.`,
+        );
+        continue;
+      }
       eligible.push({ sub, monthlyRequestLimit: monthlyRequestLimitOf(item) });
     }
 

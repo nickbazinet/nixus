@@ -262,9 +262,20 @@ describe("signing-key rotation is documented as three ordered releases", () => {
 });
 
 describe("the portal and tax-recalculation gate are stated as open, never confirmed", () => {
-  it("states the Customer Portal configuration is undone", () => {
+  /*
+   * Pins the INVARIANT, not a literal status word. A read-back on 2026-11-19
+   * showed cancel and payment-method update are already on by Stripe default
+   * and only plan switching is outstanding, so "UNDONE" became inaccurate - but
+   * the property that must never drift is that plan switching is still owed and
+   * that nothing here claims the portal is finished.
+   */
+  it("still owes plan switching and never claims the portal is configured", () => {
     const section = sectionOf("## 1. Stripe Customer Portal", "## 2. Changing a price");
-    expect(section).toMatch(/\*\*Status: UNDONE\.\*\*/);
+    expect(section).toMatch(/plan switching/i);
+    expect(section).toMatch(/DISABLED/);
+    expect(section).toMatch(/OWNER ACTION|Dashboard only/i);
+    expect(section).not.toMatch(/portal is (now |fully )?configured/i);
+    expect(section).not.toMatch(/\*\*Status: (DONE|COMPLETE)\b/i);
   });
 
   it("states AD-16's switch-plan tax recalculation as unverified, not confirmed", () => {
