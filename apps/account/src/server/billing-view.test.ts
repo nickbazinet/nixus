@@ -19,6 +19,9 @@ import FIXTURES from "../../../../packages/shared/src/types/billing.fixtures.jso
 
 const PAID = FIXTURES.entitlement_paid as EntitlementResponse;
 const FREE = FIXTURES.entitlement_free as EntitlementResponse;
+const OVERRIDE_OVER_PAID =
+  FIXTURES.entitlement_admin_override_over_paid as EntitlementResponse;
+const GRANT_ONLY = FIXTURES.admin_override_response as EntitlementResponse;
 
 interface Scripted {
   entitlement?: () => Promise<BillingResult<EntitlementResponse>>;
@@ -57,6 +60,11 @@ describe("toEntitlementView", () => {
       capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
       monthlyRequestLimit: 1000,
       source: "stripe",
+      stripeState: {
+        tier: "advance",
+        status: "active",
+        currentPeriodEnd: 1796083200,
+      },
     });
   });
 
@@ -75,6 +83,7 @@ describe("toEntitlementView", () => {
       capabilities: [],
       monthlyRequestLimit: null,
       source: "stripe",
+      stripeState: null,
     });
   });
 
@@ -160,6 +169,54 @@ describe("loadBillingSnapshot", () => {
       "classic_monthly_cad",
       "advance_monthly_cad",
     ]);
+  });
+
+  it("offers the portal to an overridden payer whose effective status is none", async () => {
+    const view = await loadBillingSnapshot(
+      api({
+        entitlement: ok(OVERRIDE_OVER_PAID),
+        plans: ok(FIXTURES.plan_catalog),
+      }),
+    );
+
+    // The regression: a live override pins the effective status to `none`, and
+    // gating the portal on it left a PAYING customer with no way to cancel.
+    expect(view.entitlement?.status).toBe("none");
+    expect(view.portalAvailable).toBe(true);
+    expect(view.subscriptionLive).toBe(true);
+  });
+
+  it("offers no portal to a grant-only account that never had a subscription", async () => {
+    const view = await loadBillingSnapshot(
+      api({
+        entitlement: ok(GRANT_ONLY),
+        plans: ok(FIXTURES.plan_catalog),
+      }),
+    );
+
+    // The mirror-image dead end: these accounts have no Stripe customer at all,
+    // so `POST /portal` would refuse and the button must not be offered.
+    expect(view.entitlement?.stripeState).toBeNull();
+    expect(view.portalAvailable).toBe(false);
+    expect(view.subscriptionLive).toBe(false);
+  });
+
+  it("keeps the portal reachable for a finished subscription but reports no live one", async () => {
+    const view = await loadBillingSnapshot(
+      api({
+        entitlement: ok({
+          ...OVERRIDE_OVER_PAID,
+          stripe_state: {
+            ...OVERRIDE_OVER_PAID.stripe_state,
+            status: "canceled",
+          },
+        } as EntitlementResponse),
+        plans: ok(FIXTURES.plan_catalog),
+      }),
+    );
+
+    expect(view.portalAvailable).toBe(true);
+    expect(view.subscriptionLive).toBe(false);
   });
 
   it("sorts the catalog by the operator-controlled display order", async () => {

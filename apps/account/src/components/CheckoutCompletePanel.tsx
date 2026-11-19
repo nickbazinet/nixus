@@ -44,7 +44,14 @@ export function CheckoutCompletePanel({
   // `none` is the free entitlement a signed-in account has before the webhook
   // converges, so it is the one status that means "keep waiting". Read from
   // `status`, never from `tier` (AD-1).
-  const settled = entitlement !== null && entitlement.status !== "none";
+  //
+  // The recorded Stripe state counts too: a live override pins the effective
+  // status to `none` permanently (AD-2), which left a customer who had just paid
+  // watching "updating" forever. Pre-convergence it is null, so this still waits.
+  const settled =
+    entitlement !== null &&
+    (entitlement.status !== "none" ||
+      (entitlement.stripeState !== null && entitlement.stripeState.status !== "none"));
   const exhausted = attempts >= CHECKOUT_POLL_ATTEMPTS;
 
   useEffect(() => {

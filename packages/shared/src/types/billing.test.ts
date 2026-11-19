@@ -52,6 +52,7 @@ import {
   type CheckoutResponse,
   type EntitlementResponse,
   type EntitlementStatementClaims,
+  type EntitlementStripeState,
   type PlanCatalogEntry,
   type PlanCatalogResponse,
   type PortalResponse,
@@ -112,6 +113,13 @@ const ENTITLEMENT_RESPONSE_KEYS = keysOf<EntitlementResponse>({
   statement: true,
   statement_exp: true,
   version: true,
+  stripe_state: true,
+});
+
+const ENTITLEMENT_STRIPE_STATE_KEYS = keysOf<EntitlementStripeState>({
+  tier: true,
+  status: true,
+  current_period_end: true,
 });
 
 const STATEMENT_CLAIMS_KEYS = keysOf<EntitlementStatementClaims>({
@@ -351,6 +359,25 @@ function readPlanCatalogResponse(value: RawRecord): PlanCatalogResponse {
   };
 }
 
+function readStripeState(
+  label: string,
+  value: RawRecord,
+): EntitlementStripeState | null {
+  if (value.stripe_state === null) return null;
+  const nested = record(value, "stripe_state");
+  requireKeys(`${label}.stripe_state`, nested, ENTITLEMENT_STRIPE_STATE_KEYS);
+  return {
+    tier: text(nested, "tier"),
+    status: member(
+      nested,
+      "status",
+      ENTITLEMENT_STATUSES,
+      "an ENTITLEMENT_STATUSES member",
+    ),
+    current_period_end: nullableInteger(nested, "current_period_end"),
+  };
+}
+
 function readEntitlementResponse(
   label: string,
   value: RawRecord,
@@ -376,6 +403,7 @@ function readEntitlementResponse(
     statement: text(value, "statement"),
     statement_exp: integer(value, "statement_exp"),
     version: nullableInteger(value, "version"),
+    stripe_state: readStripeState(label, value),
   };
 }
 
@@ -513,6 +541,7 @@ type BillingFixtures = {
   readonly plan_catalog: PlanCatalogResponse;
   readonly entitlement_paid: EntitlementResponse;
   readonly entitlement_free: EntitlementResponse;
+  readonly entitlement_admin_override_over_paid: EntitlementResponse;
   readonly statement_claims_paid: EntitlementStatementClaims;
   readonly statement_claims_free: EntitlementStatementClaims;
   readonly checkout_request_with_promotion: CheckoutRequest;
@@ -541,6 +570,10 @@ const FIXTURES: BillingFixtures = {
   entitlement_free: readEntitlementResponse(
     "entitlement_free",
     record(RAW, "entitlement_free"),
+  ),
+  entitlement_admin_override_over_paid: readEntitlementResponse(
+    "entitlement_admin_override_over_paid",
+    record(RAW, "entitlement_admin_override_over_paid"),
   ),
   statement_claims_paid: readStatementClaims(
     "statement_claims_paid",
@@ -1100,6 +1133,42 @@ describe("billing contract: checkout, portal and override fixtures", () => {
         FIXTURES.plan_catalog.plans.map((plan) => plan.lookup_key),
       ).toContain(request.plan_lookup_key);
     }
+  });
+
+  it("keeps the Stripe state to three members so it can never become a second grant", () => {
+    // AD-1: `capabilities[]` is the ONLY grant on this contract. Adding either
+    // `capabilities` or `monthly_request_limit` here would create a parallel one
+    // that a consumer could gate on, which is why the key set is pinned.
+    expect([...ENTITLEMENT_STRIPE_STATE_KEYS].sort()).toEqual([
+      "current_period_end",
+      "status",
+      "tier",
+    ]);
+  });
+
+  it("distinguishes never-converged from converged-and-dead", () => {
+    // The three states that must stay apart: no Stripe relationship at all,
+    // a relationship Stripe reports as finished, and a live one.
+    expect(FIXTURES.entitlement_free.stripe_state).toBeNull();
+    expect(FIXTURES.admin_override_response.stripe_state).toBeNull();
+    expect(
+      FIXTURES.entitlement_admin_override_over_paid.stripe_state,
+    ).not.toBeNull();
+  });
+
+  it("pins an override out-ranking a live paid subscription", () => {
+    const overridden = FIXTURES.entitlement_admin_override_over_paid;
+
+    expect(overridden.source).toBe("admin");
+    // The effective grant says no paid plan while Stripe is actively billing:
+    // the shape that let a paying account be charged twice and shown nothing.
+    expect(overridden.status).toBe("none");
+    expect(overridden.current_period_end).toBeNull();
+    expect(overridden.stripe_state?.status).toBe("active");
+    expect(overridden.stripe_state?.current_period_end).not.toBeNull();
+    // The grant is the override's, NOT the cheaper thing Stripe is billing.
+    expect(overridden.tier).not.toBe(overridden.stripe_state?.tier);
+    expect(grantsCapability(overridden.capabilities, "hosted_ai")).toBe(true);
   });
 
   it("time-boxes the admin override and keeps its reason within the audit ceiling", () => {

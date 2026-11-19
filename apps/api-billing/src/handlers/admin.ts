@@ -106,5 +106,6 @@ export async function handleAdminOverride(args: {
     statement: signed.statement,
     statementExp: signed.claims.exp,
     version,
+    stripeState: record?.stripe_state ?? null,
   });
 }

@@ -201,6 +201,7 @@ async function freeStatementResponse(args: {
     statementExp: signed.claims.exp,
     // `null` because no record exists, which is itself the information.
     version: null,
+    stripeState: null,
   });
 }
 
@@ -282,6 +283,7 @@ export async function handleEntitlement(args: {
       statement: record.statement,
       statementExp: record.statement_exp,
       version: record.version,
+      stripeState: record.stripe_state,
     });
   }
 
@@ -309,5 +311,6 @@ export async function handleEntitlement(args: {
     statement: signed.statement,
     statementExp: signed.claims.exp,
     version: record.version,
+    stripeState: record.stripe_state,
   });
 }

@@ -184,9 +184,29 @@ export interface EntitlementStatementClaims {
  * `capabilities` array — that is what lets a client tell *verified free* apart from *could not reach
  * the server* (billing AD-9).
  */
+/**
+ * The Stripe-derived state as the authority last converged it (billing AD-2, AD-5).
+ *
+ * Carries NO `capabilities` and no `monthly_request_limit`, and that absence is the
+ * design: `EntitlementResponse.capabilities` stays the only grant in this contract,
+ * and this field must be structurally incapable of becoming a second one (AD-1).
+ */
+export interface EntitlementStripeState {
+  /** Opaque tier code of the subscribed Product. Display only, never compared. */
+  readonly tier: string;
+  readonly status: EntitlementStatus;
+  /** Epoch seconds. `null` when Stripe reported no period. */
+  readonly current_period_end: number | null;
+}
+
 export interface EntitlementResponse {
   readonly tier: string;
   readonly capabilities: readonly BillingCapability[];
+  /**
+   * The EFFECTIVE grant's status, under AD-2 precedence. NOT evidence that a Stripe
+   * relationship exists — a live admin override pins this to `none` while Stripe is
+   * still billing the account. Read `stripe_state` for that question.
+   */
   readonly status: EntitlementStatus;
   /** Epoch seconds, or `null` on a free entitlement, which has no period. */
   readonly current_period_end: number | null;
@@ -198,6 +218,12 @@ export interface EntitlementResponse {
   readonly statement_exp: number;
   /** Server-owned. `null` on a free entitlement derived with no stored record. */
   readonly version: number | null;
+  /**
+   * `null` when the authority has never converged a Stripe state for this account,
+   * which is distinct from "Stripe says free". Non-null is the only evidence in this
+   * contract that a commercial relationship exists.
+   */
+  readonly stripe_state: EntitlementStripeState | null;
 }
 
 export const CHECKOUT_DESTINATIONS = ["checkout", "portal"] as const;
@@ -506,4 +532,26 @@ export function grantsCapability(
   capability: BillingCapability,
 ): boolean {
   return capabilities.includes(capability);
+}
+
+/**
+ * THE predicate, and deliberately the only one: which statuses grant capabilities is
+ * decided here and may not be re-derived anywhere else.
+ *
+ * `past_due` GRANTS. Dunning grace is Stripe's, configured in the Dashboard (AD-11),
+ * so Nixus keeps granting for exactly as long as Stripe reports the subscription live
+ * and hard-codes no retry window of its own. The alternative - revoking on the first
+ * failed charge - would cut off a customer whose smart retry was going to succeed.
+ *
+ * Every other member grants NOTHING: `canceled`, `unpaid`, `incomplete`,
+ * `incomplete_expired`, `paused` and `none`.
+ */
+export const GRANTING_ENTITLEMENT_STATUSES: readonly EntitlementStatus[] = [
+  "active",
+  "trialing",
+  "past_due",
+];
+
+export function grantsCapabilities(status: EntitlementStatus): boolean {
+  return GRANTING_ENTITLEMENT_STATUSES.includes(status);
 }

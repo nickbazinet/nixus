@@ -28,6 +28,12 @@ export interface StubAccount {
   monthly_request_limit: number | null;
   source: string;
   version: number | null;
+  /** What Stripe is billing. `null` when no Stripe state ever converged. */
+  stripe_state: {
+    tier: string;
+    status: string;
+    current_period_end: number | null;
+  } | null;
 }
 
 export type BillingRefusal =
@@ -59,6 +65,8 @@ export interface RunningBillingApi extends RunningFake {
   refuseCheckoutNext: BillingRefusal | null;
   /** Forces the next `POST /portal` to answer with this refusal. */
   refusePortalNext: BillingRefusal | null;
+  /** Forces every `GET /entitlement` to answer with this refusal. */
+  refuseEntitlement: BillingRefusal | null;
   /** Forces `GET /plans` to answer `unavailable`. */
   plansUnavailable: boolean;
   /** Promotes a token's account on the Nth `GET /entitlement`, modelling AD-5's lag. */
@@ -73,6 +81,7 @@ export const FREE_ACCOUNT: StubAccount = {
   monthly_request_limit: null,
   source: "stripe",
   version: null,
+  stripe_state: null,
 };
 
 export const ADVANCE_ACCOUNT: StubAccount = {
@@ -83,6 +92,11 @@ export const ADVANCE_ACCOUNT: StubAccount = {
   monthly_request_limit: 1000,
   source: "stripe",
   version: 7,
+  stripe_state: {
+    tier: "advance",
+    status: "active",
+    current_period_end: 1796083200,
+  },
 };
 
 export const CLASSIC_ACCOUNT: StubAccount = {
@@ -93,6 +107,34 @@ export const CLASSIC_ACCOUNT: StubAccount = {
   monthly_request_limit: null,
   source: "stripe",
   version: 3,
+  stripe_state: {
+    tier: "classic",
+    status: "active",
+    current_period_end: 1796083200,
+  },
+};
+
+/** Hand-granted by an operator, with no Stripe customer behind it (AD-17 backfill). */
+export const GRANT_ONLY_ACCOUNT: StubAccount = {
+  tier: "advance",
+  status: "none",
+  current_period_end: null,
+  capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+  monthly_request_limit: 2000,
+  source: "admin",
+  version: 1,
+  stripe_state: null,
+};
+
+/** The state that caused this: a grant out-ranking a subscription Stripe is billing. */
+export const OVERRIDE_OVER_PAID_ACCOUNT: StubAccount = {
+  ...GRANT_ONLY_ACCOUNT,
+  version: 3,
+  stripe_state: {
+    tier: "classic",
+    status: "active",
+    current_period_end: 1797680175,
+  },
 };
 
 const PLANS = {
@@ -161,6 +203,7 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
   const state = {
     refuseCheckoutNext: null as BillingRefusal | null,
     refusePortalNext: null as BillingRefusal | null,
+    refuseEntitlement: null as BillingRefusal | null,
     plansUnavailable: false,
     convergeEntitlementAfter: null as number | null,
   };
@@ -202,6 +245,15 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     });
 
     if (path === "/entitlement" && request.method === "GET") {
+      const entitlementRefusal = state.refuseEntitlement;
+      if (entitlementRefusal !== null) {
+        const status =
+          "status" in entitlementRefusal
+            ? entitlementRefusal.status
+            : STATUS_FOR[entitlementRefusal.code];
+        return sendJson(response, status ?? 503, envelope(entitlementRefusal));
+      }
+
       const reads = (entitlementReads.get(token) ?? 0) + 1;
       entitlementReads.set(token, reads);
 
@@ -286,6 +338,12 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     },
     set refusePortalNext(value: BillingRefusal | null) {
       state.refusePortalNext = value;
+    },
+    get refuseEntitlement() {
+      return state.refuseEntitlement;
+    },
+    set refuseEntitlement(value: BillingRefusal | null) {
+      state.refuseEntitlement = value;
     },
     get plansUnavailable() {
       return state.plansUnavailable;

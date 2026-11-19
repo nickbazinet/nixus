@@ -318,6 +318,55 @@ describe("AD-18: a live subscriber is routed to the portal", () => {
     },
   );
 
+  // A live admin override pins the EFFECTIVE status to `none` (AD-2), so a gate
+  // reading it handed an account that had already paid a second checkout session
+  // per attempt, with no ceiling. Observed live, not reasoned about.
+  it("routes an admin-overridden account whose Stripe state is live to the portal", async () => {
+    dynamo
+      .seed({
+        pk: partitionKey(SUB_A),
+        sk: "ENTITLEMENT",
+        tier: "advance",
+        capabilities: [
+          "hosted_ai",
+          "household_net_worth",
+          "multi_device_sync",
+        ],
+        status: "none",
+        source: "admin",
+        admin_expires_at: NOW_SECONDS + 86_400,
+        stripe_tier: "classic",
+        stripe_capabilities: ["household_net_worth", "multi_device_sync"],
+        stripe_status: "active",
+        statement: "NXS1.a.b",
+        version: 3,
+      })
+      .seed({
+        pk: partitionKey(SUB_A),
+        sk: "BILLING_CUSTOMER",
+        stripe_customer_id: "cus_existing",
+      });
+
+    expect((await call()).destination).toBe("portal");
+    expect(stripe.countOf("checkout.sessions.create")).toBe(0);
+  });
+
+  it("still lets an admin-overridden account with no Stripe state buy its first plan", async () => {
+    dynamo.seed({
+      pk: partitionKey(SUB_A),
+      sk: "ENTITLEMENT",
+      tier: "advance",
+      capabilities: ["hosted_ai"],
+      status: "none",
+      source: "admin",
+      admin_expires_at: NOW_SECONDS + 86_400,
+      statement: "NXS1.a.b",
+      version: 1,
+    });
+
+    expect((await call()).destination).toBe("checkout");
+  });
+
   it("refuses cleanly when a live entitlement has no recorded customer", async () => {
     dynamo.seed({
       pk: partitionKey(SUB_A),

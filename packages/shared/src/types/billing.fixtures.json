@@ -37,7 +37,12 @@
     "source": "stripe",
     "statement": "NXS1.cGFpZF9zdGF0ZW1lbnRfcGF5bG9hZA.MEUCIQCpYWlkX3NpZ25hdHVyZV9ieXRlc19wYWlk",
     "statement_exp": 1795089600,
-    "version": 7
+    "version": 7,
+    "stripe_state": {
+      "tier": "advance",
+      "status": "active",
+      "current_period_end": 1796083200
+    }
   },
   "entitlement_free": {
     "tier": "free",
@@ -48,7 +53,24 @@
     "source": "stripe",
     "statement": "NXS1.ZnJlZV9zdGF0ZW1lbnRfcGF5bG9hZA.MEUCIQCmZnJlZV9zaWduYXR1cmVfYnl0ZXNfZnJlZQ",
     "statement_exp": 1795089600,
-    "version": null
+    "version": null,
+    "stripe_state": null
+  },
+  "entitlement_admin_override_over_paid": {
+    "tier": "advance",
+    "capabilities": ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    "status": "none",
+    "current_period_end": null,
+    "monthly_request_limit": 2000,
+    "source": "admin",
+    "statement": "NXS1.b3ZlcnJpZGVfb3Zlcl9wYWlkX3BheWxvYWQ.MEUCIQCzb3ZlcnJpZGVfc2lnbmF0dXJlX2J5dGVz",
+    "statement_exp": 1795089600,
+    "version": 3,
+    "stripe_state": {
+      "tier": "classic",
+      "status": "active",
+      "current_period_end": 1797680175
+    }
   },
   "statement_claims_paid": {
     "sub": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
@@ -105,7 +127,8 @@
     "source": "admin",
     "statement": "NXS1.YWRtaW5fc3RhdGVtZW50X3BheWxvYWQ.MEUCIQCzYWRtaW5fc2lnbmF0dXJlX2J5dGVzX2E",
     "statement_exp": 1795089600,
-    "version": 8
+    "version": 8,
+    "stripe_state": null
   },
   "errors": [
     {

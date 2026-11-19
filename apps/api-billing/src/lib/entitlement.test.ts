@@ -460,6 +460,7 @@ describe("the stored record and the wire projection", () => {
         statement: "NXS1.a.b",
         statementExp: 2,
         version: null,
+        stripeState: null,
       }),
     ).toEqual({
       tier: "free",
@@ -471,7 +472,62 @@ describe("the stored record and the wire projection", () => {
       statement: "NXS1.a.b",
       statement_exp: 2,
       version: null,
+      stripe_state: null,
     });
+  });
+
+  it("projects the recorded Stripe state as exactly three members", () => {
+    const response = toEntitlementResponse({
+      state: FREE_ENTITLEMENT,
+      source: "admin",
+      statement: "NXS1.a.b",
+      statementExp: 2,
+      version: 4,
+      stripeState: {
+        tier: "classic",
+        capabilities: ["multi_device_sync"],
+        status: "active",
+        current_period_end: PERIOD_END,
+        monthly_request_limit: 25,
+        malformed: false,
+      },
+    });
+
+    // `capabilities` and the request limit must NOT survive the projection:
+    // carrying them would make this a second grant alongside the top-level one.
+    expect(response.stripe_state).toEqual({
+      tier: "classic",
+      status: "active",
+      current_period_end: PERIOD_END,
+    });
+  });
+
+  it("keeps an override's effective grant separable from what Stripe is billing", () => {
+    const response = toEntitlementResponse({
+      state: {
+        tier: "advance",
+        capabilities: ["hosted_ai"],
+        status: "none",
+        current_period_end: null,
+        monthly_request_limit: 2000,
+        malformed: false,
+      },
+      source: "admin",
+      statement: "NXS1.a.b",
+      statementExp: 2,
+      version: 4,
+      stripeState: {
+        tier: "classic",
+        capabilities: ["multi_device_sync"],
+        status: "active",
+        current_period_end: PERIOD_END,
+        monthly_request_limit: null,
+        malformed: false,
+      },
+    });
+
+    expect(response.status).toBe("none");
+    expect(response.stripe_state?.status).toBe("active");
   });
 });
 

@@ -640,6 +640,11 @@ mod tests {
             "statement": statement,
             "statement_exp": 1_800_086_400_i64,
             "version": 3,
+            "stripe_state": {
+                "tier": "advance",
+                "status": "active",
+                "current_period_end": 1_800_086_400_i64,
+            },
         })
         .to_string()
     }

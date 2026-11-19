@@ -39,7 +39,26 @@ import { billingRefusalText } from "@/lib/messages";
 type Status =
   | { readonly kind: "idle" }
   | { readonly kind: "busy" }
-  | { readonly kind: "message"; readonly tone: "ok" | "warn"; readonly text: string };
+  | {
+      readonly kind: "message";
+      readonly tone: "ok" | "warn";
+      readonly text: string;
+      readonly needsSignIn: boolean;
+    };
+
+// Widening a token's scope needs a FULL re-authentication (AD-9), so a session
+// issued before `nixus-api/billing` existed reads back 403 here forever. Carried
+// as a flag because the initial-load and mid-session sentences differ, and
+// matching on either text left the other a banner with no way out.
+const REAUTH_CODES: readonly string[] = ["unauthorized", "reauthentication_required"];
+
+function isReauthCode(code: string | null): boolean {
+  return code !== null && REAUTH_CODES.includes(code);
+}
+
+function warn(text: string, needsSignIn = false): Status {
+  return { kind: "message", tone: "warn", text, needsSignIn };
+}
 
 function intervalKey(plan: PlanCatalogEntry): string {
   return plan.interval === "year" ? "billing.perYear" : "billing.perMonth";
@@ -59,11 +78,10 @@ export function BillingPanel({
   const [status, setStatus] = useState<Status>(
     view.error === null
       ? { kind: "idle" }
-      : {
-          kind: "message",
-          tone: "warn",
-          text: billingRefusalText(t, { code: view.error, field: null, reason: null }),
-        },
+      : warn(
+          billingRefusalText(t, { code: view.error, field: null, reason: null }),
+          isReauthCode(view.error),
+        ),
   );
   // Separate from `status`, because an invalid code belongs beside the field
   // rather than in a banner — and the submitted value is never put back.
@@ -79,21 +97,21 @@ export function BillingPanel({
           window.location.assign(response.url);
           return;
         case "checkout_in_progress":
-          setStatus({ kind: "message", tone: "warn", text: t("billing.checkoutInProgress") });
+          setStatus(warn(t("billing.checkoutInProgress")));
           return;
         case "promotion_invalid":
           setPromotionRefused(true);
-          setStatus({ kind: "message", tone: "warn", text: t("billing.promotionInvalid") });
+          setStatus(warn(t("billing.promotionInvalid")));
           return;
         case "rejected":
           if (response.field === "promotion_code") setPromotionRefused(true);
-          setStatus({ kind: "message", tone: "warn", text: billingRefusalText(t, response) });
+          setStatus(warn(billingRefusalText(t, response), isReauthCode(response.code)));
           return;
         case "indeterminate":
-          setStatus({ kind: "message", tone: "warn", text: t("billing.indeterminate") });
+          setStatus(warn(t("billing.indeterminate")));
           return;
         case "signed_out":
-          setStatus({ kind: "message", tone: "warn", text: t("billing.signedOut") });
+          setStatus(warn(t("billing.signedOut"), true));
           return;
       }
     },
@@ -141,17 +159,18 @@ export function BillingPanel({
         window.location.assign(response.url);
         return;
       case "rejected":
-        setStatus({
-          kind: "message",
-          tone: "warn",
-          text: billingRefusalText(t, { code: response.code, field: null, reason: null }),
-        });
+        setStatus(
+          warn(
+            billingRefusalText(t, { code: response.code, field: null, reason: null }),
+            isReauthCode(response.code),
+          ),
+        );
         return;
       case "indeterminate":
-        setStatus({ kind: "message", tone: "warn", text: t("billing.indeterminate") });
+        setStatus(warn(t("billing.indeterminate")));
         return;
       case "signed_out":
-        setStatus({ kind: "message", tone: "warn", text: t("billing.signedOut") });
+        setStatus(warn(t("billing.signedOut"), true));
         return;
     }
   }
@@ -163,8 +182,16 @@ export function BillingPanel({
 
   const busy = status.kind === "busy";
   const entitlement = view.entitlement;
-  const periodEnd = formatPeriodEnd(entitlement?.currentPeriodEnd ?? null, locale);
-  const ending = entitlement?.status === "canceled" || entitlement?.status === "unpaid";
+  const subscription = entitlement?.stripeState ?? null;
+  // The period and the ending notice describe the SUBSCRIPTION, so both read the
+  // recorded Stripe state: a live override nulls the effective period (AD-2) and
+  // would otherwise hide the renewal date from a customer who is being charged.
+  const periodEnd = formatPeriodEnd(
+    subscription?.currentPeriodEnd ?? entitlement?.currentPeriodEnd ?? null,
+    locale,
+  );
+  const subscriptionStatus = subscription?.status ?? entitlement?.status;
+  const ending = subscriptionStatus === "canceled" || subscriptionStatus === "unpaid";
 
   return (
     <main id="main" tabIndex={-1} className="mkt-page-x mkt-container py-10 outline-none md:py-14">
@@ -201,9 +228,25 @@ export function BillingPanel({
                   <div className="mt-4 space-y-1">
                     <p className="text-caption text-ink-dim">{t("billing.statusLabel")}</p>
                     <p data-testid="billing-plan-status" className="text-body text-ink">
-                      {statusLabel(t, entitlement.status)}
+                      {entitlement.source === "admin"
+                        ? t("billing.grantedByNixus")
+                        : statusLabel(t, entitlement.status)}
                     </p>
                   </div>
+
+                  {/* Shown only where the grant and the charge can disagree, which
+                      is decided from `source` - comparing the two tiers would be
+                      exactly the branch AD-1 forbids. */}
+                  {entitlement.source === "admin" && subscription !== null ? (
+                    <div className="mt-4 space-y-1">
+                      <p className="text-caption text-ink-dim">
+                        {t("billing.yourSubscription")}
+                      </p>
+                      <p data-testid="billing-subscription" className="text-body text-ink">
+                        {`${tierDisplayName(t, subscription.tier)} — ${statusLabel(t, subscription.status)}`}
+                      </p>
+                    </div>
+                  ) : null}
 
                   {periodEnd === null ? null : (
                     <div className="mt-4 space-y-1">
@@ -268,6 +311,15 @@ export function BillingPanel({
                 </p>
               ) : (
                 <>
+                  {view.subscriptionLive ? (
+                    <p
+                      data-testid="billing-switch-hint"
+                      className="mt-3 text-caption text-ink-dim"
+                    >
+                      {t("billing.switchHint")}
+                    </p>
+                  ) : null}
+
                   <div className="mt-4 space-y-1">
                     <Label htmlFor="billing-promotion">{t("billing.promotionLabel")}</Label>
                     <Input
@@ -304,7 +356,11 @@ export function BillingPanel({
                           disabled={busy}
                           onClick={() => void beginCheckout(plan.lookup_key)}
                         >
-                          {busy ? t("billing.opening") : t("billing.choosePlan")}
+                          {busy
+                            ? t("billing.opening")
+                            : view.subscriptionLive
+                              ? t("billing.switchPlan")
+                              : t("billing.choosePlan")}
                         </Button>
                       </li>
                     ))}
@@ -322,7 +378,7 @@ export function BillingPanel({
             </CardContent>
           </Card>
 
-          {status.kind === "message" && status.text === t("billing.signedOut") ? (
+          {status.kind === "message" && status.needsSignIn ? (
             <Button
               size="sm"
               className="mkt-tap"

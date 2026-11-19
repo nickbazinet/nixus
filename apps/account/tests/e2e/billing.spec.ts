@@ -4,6 +4,8 @@ import {
   ADVANCE_ACCOUNT,
   CLASSIC_ACCOUNT,
   FREE_ACCOUNT,
+  GRANT_ONLY_ACCOUNT,
+  OVERRIDE_OVER_PAID_ACCOUNT,
 } from "./support/billing-api";
 import { startHarness, type Harness } from "./support/harness";
 
@@ -167,6 +169,64 @@ test.describe("the billing page", () => {
     // Nothing to manage yet, so no dead-end button.
     await expect(page.getByTestId("billing-portal")).toHaveCount(0);
     await expect(page.getByTestId("billing-status")).toHaveCount(0);
+  });
+
+  test("offers the way back when the entitlement read needs a fresh sign-in", async ({
+    page,
+  }) => {
+    harness.billing.refuseEntitlement = { code: "unauthorized", status: 403 };
+    await signedInBilling(page);
+
+    await expect(page.getByTestId("billing-status")).toBeVisible();
+    // A refresh cannot widen scope (AD-9), so a banner alone was terminal.
+    await expect(page.getByTestId("sign-in-again")).toBeVisible();
+  });
+
+  test("shows an overridden payer the subscription they are being charged for", async ({
+    page,
+  }) => {
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), OVERRIDE_OVER_PAID_ACCOUNT);
+    await signedInBilling(page);
+
+    // The grant is what they hold; the subscription is what they pay for. Before
+    // this, the page showed the grant and claimed there was no paid plan at all.
+    await expect(page.getByTestId("billing-tier")).toHaveText("Advance");
+    await expect(page.getByTestId("billing-plan-status")).toHaveText("Granted by Nixus");
+    await expect(page.getByTestId("billing-subscription")).toContainText("Classic");
+    await expect(page.getByTestId("billing-subscription")).toContainText("Active");
+    // A renewal date, which the override had nulled out of the effective state.
+    await expect(page.getByTestId("billing-period-end")).toHaveText("December 19, 2026");
+    // And the way to cancel it, which was never rendered at all.
+    await expect(page.getByTestId("billing-portal")).toBeVisible();
+  });
+
+  test("tells an active subscriber a plan click is a switch, not a second purchase", async ({
+    page,
+  }) => {
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), OVERRIDE_OVER_PAID_ACCOUNT);
+    await signedInBilling(page);
+
+    await expect(page.getByTestId("billing-plan-classic_monthly_cad")).toHaveText(
+      "Switch to this plan",
+    );
+    await expect(page.getByTestId("billing-plan-advance_monthly_cad")).toHaveText(
+      "Switch to this plan",
+    );
+    await expect(page.getByTestId("billing-switch-hint")).toBeVisible();
+  });
+
+  test("offers a grant-only account no portal it cannot open", async ({ page }) => {
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), GRANT_ONLY_ACCOUNT);
+    await signedInBilling(page);
+
+    await expect(page.getByTestId("billing-plan-status")).toHaveText("Granted by Nixus");
+    // No Stripe customer exists, so the portal would refuse: no dead-end button,
+    // and nothing claiming a subscription they do not have.
+    await expect(page.getByTestId("billing-portal")).toHaveCount(0);
+    await expect(page.getByTestId("billing-subscription")).toHaveCount(0);
+    await expect(page.getByTestId("billing-plan-classic_monthly_cad")).toHaveText(
+      "Choose this plan",
+    );
   });
 
   test("lists both plans in display order, with CAD prices and the tax rule", async ({

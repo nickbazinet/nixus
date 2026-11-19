@@ -8,7 +8,7 @@ import {
   portalReturnUrl,
 } from "../lib/destinations.ts";
 import {
-  grantsCapabilities,
+  hasLiveStripeSubscription,
   toEntitlementRecord,
 } from "../lib/entitlement.ts";
 import { fail, failValidation } from "../lib/errors.ts";
@@ -143,9 +143,10 @@ export async function createPortalSessionUrl(args: {
 async function hasLiveSubscription(sub: string): Promise<boolean> {
   const stored = await getItem(entitlementKey(sub));
   if (stored === undefined) return false;
-  // The authority's own record, not a second Stripe read: the entitlement IS
-  // what "already has a live subscription" means here (AD-2, AD-4).
-  return grantsCapabilities(toEntitlementRecord(stored).status);
+  // The authority's own record, not a second Stripe read (AD-4) - and the
+  // RECORDED STRIPE state, not the effective one, because a live admin override
+  // pins effective status to `none` (AD-2) and double-charged whoever had paid.
+  return hasLiveStripeSubscription(toEntitlementRecord(stored));
 }
 
 function storedCustomerId(

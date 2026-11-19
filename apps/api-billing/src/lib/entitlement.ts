@@ -1,5 +1,7 @@
 import {
   ENTITLEMENT_STATUSES,
+  GRANTING_ENTITLEMENT_STATUSES,
+  grantsCapabilities,
   isEntitlementStatus,
   toBillingCapabilities,
   toEntitlementStatus,
@@ -7,6 +9,7 @@ import {
   type EntitlementResponse,
   type EntitlementSource,
   type EntitlementStatus,
+  type EntitlementStripeState,
 } from "@nixus/shared";
 import type Stripe from "stripe";
 
@@ -25,26 +28,20 @@ import { emitBillingMetric } from "./metrics.ts";
 export const FREE_TIER = "free";
 
 /**
- * THE predicate, and deliberately the only one: which statuses grant
- * capabilities is decided here and may not be re-derived anywhere else.
- *
- * `past_due` GRANTS. Dunning grace is Stripe's, configured in the Dashboard
- * (AD-11), so Nixus keeps granting for exactly as long as Stripe reports the
- * subscription live and hard-codes no retry window of its own. The alternative -
- * revoking on the first failed charge - would cut off a customer whose smart
- * retry was going to succeed.
- *
- * Every other member grants NOTHING: `canceled`, `unpaid`, `incomplete`,
- * `incomplete_expired`, `paused` and `none`.
+ * Re-exported, not re-declared: the predicate now lives in the shared contract so
+ * the account BFF reads the SAME list rather than deriving a parallel one, and every
+ * existing import of it here keeps compiling.
  */
-export const GRANTING_ENTITLEMENT_STATUSES: readonly EntitlementStatus[] = [
-  "active",
-  "trialing",
-  "past_due",
-];
+export { GRANTING_ENTITLEMENT_STATUSES, grantsCapabilities };
 
-export function grantsCapabilities(status: EntitlementStatus): boolean {
-  return GRANTING_ENTITLEMENT_STATUSES.includes(status);
+/** What Stripe last said, regardless of what out-ranks it (AD-2). */
+export function recordedStripeStatus(record: EntitlementRecord): EntitlementStatus {
+  return record.stripe_state === null ? record.status : record.stripe_state.status;
+}
+
+/** Whether money is flowing, which is NOT the same question as what is granted. */
+export function hasLiveStripeSubscription(record: EntitlementRecord): boolean {
+  return grantsCapabilities(recordedStripeStatus(record));
 }
 
 /**
@@ -367,12 +364,25 @@ export function isAdminOverrideLive(args: {
 
 /** The wire projection (AD-13). `version` is `null` only on a free entitlement
  * derived with no stored record. */
+function toStripeStateProjection(
+  state: DerivedEntitlement | null,
+): EntitlementStripeState | null {
+  return state === null
+    ? null
+    : {
+        tier: state.tier,
+        status: state.status,
+        current_period_end: state.current_period_end,
+      };
+}
+
 export function toEntitlementResponse(args: {
   readonly state: DerivedEntitlement;
   readonly source: EntitlementSource;
   readonly statement: string;
   readonly statementExp: number;
   readonly version: number | null;
+  readonly stripeState: DerivedEntitlement | null;
 }): EntitlementResponse {
   return {
     tier: args.state.tier,
@@ -384,6 +394,7 @@ export function toEntitlementResponse(args: {
     statement: args.statement,
     statement_exp: args.statementExp,
     version: args.version,
+    stripe_state: toStripeStateProjection(args.stripeState),
   };
 }
 
