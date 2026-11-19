@@ -1,0 +1,682 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  ONE-TIME bootstrap for the Nixus Cloud billing delivery pipeline. Creates the
+  single GitHub OIDC deploy role billing-ci.yml assumes, scoped to the
+  nixus-billing CloudFormation stack and to resources named nixus-billing-*, plus
+  the artifact bucket that stack's packages are uploaded to. Applied by hand from
+  a workstation with no static AWS keys.
+
+# Deliberately NOT part of apps/api-billing/template.yaml: billing AD-15 forbids
+# the application stack from defining the role that deploys it. This stack is the
+# separately reviewed out-of-band step that requirement refers to, and no workflow
+# applies it - so no static AWS key is involved at any point.
+#
+# Structured after infra/bootstrap/account-oidc-deploy.yaml, including its two
+# defining choices:
+#
+#   - It does NOT create the GitHub OIDC identity provider. An AWS account may
+#     hold only one provider per issuer URL, the hosted-AI bootstrap already
+#     created this one with `DeletionPolicy: Retain`, and an IAM OIDC provider's
+#     ARN is fully determined by the account id and the issuer host - so the ARN is
+#     derived below rather than created or passed in.
+#
+#   - It creates ONE role rather than a deploy/execution pair, because
+#     billing-ci.yml runs `sam deploy` without `--role-arn`: this role drives
+#     CloudFormation AND creates the stack's resources. Two guards keep that from
+#     being self-escalating - the IAM grant reaches only the application's own
+#     role-name prefix, and an explicit Deny, which no later Allow can override,
+#     forbids this role from touching its own policies or trust. Splitting it in
+#     two later needs no change to the application template.
+#
+# One deliberate difference from the account bootstrap: this stack OWNS its
+# artifact bucket rather than reusing the hosted-AI one. The billing pipeline is
+# the only one that uploads a package containing the sole Stripe credential
+# holder, and a bucket this stack creates is a bucket whose encryption,
+# versioning, TLS-only policy and retention are reviewed together with the role
+# that writes to it.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: nickbazinet
+    Description: GitHub account that owns the repository.
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9-]*$'
+  GitHubRepo:
+    Type: String
+    Default: nixus
+    Description: Repository name.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  GitHubEnvironment:
+    Type: String
+    Default: production
+    Description: >-
+      GitHub environment whose deployments may assume this role. The trust policy
+      matches it exactly, so a workflow running outside this environment cannot
+      assume the role even from the default branch.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  ApplicationStackName:
+    Type: String
+    Default: nixus-billing
+    Description: >-
+      The single application stack this role may act on. Every CloudFormation
+      permission below is scoped to this name, and every application resource
+      permission to the `<stack name>-` naming prefix CloudFormation derives from
+      it, so the role cannot touch another stack in the account.
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+  ApiDomainName:
+    Type: String
+    Default: api.nixusapp.com
+    Description: >-
+      The shared custom domain the application stack adds its `v1/billing` API
+      mapping under. The role may READ this domain and manage mappings on it; it
+      holds no permission to update or delete the domain itself, which belongs to
+      stack nixus-bedrock-api.
+    AllowedPattern: '^[a-z0-9.-]+$'
+  CognitoUserPoolId:
+    Type: String
+    Default: us-east-1_7gfGQ0emg
+    Description: >-
+      The console-managed user pool. The role READS its `nixus-api` resource
+      server before deploying, to prove the `billing` scope exists alongside
+      `ai.invoke` and `profile` (AD-17). It holds no write permission on the pool,
+      its resource server or any client: UpdateResourceServer is a full replace,
+      so a pipeline that could call it could delete `nixus-api/ai.invoke` and take
+      hosted AI down.
+    AllowedPattern: '^[\w-]+_[0-9a-zA-Z]+$'
+  StripeSecretKeyParameterName:
+    Type: String
+    Default: /nixus-billing/stripe-secret-key
+    Description: >-
+      Path of the Stripe secret key SecureString. The role is granted NO read of
+      the VALUE at either path - see the ProveTheStripeSecretsExist statement for
+      why only a metadata listing is needed, and why granting `ssm:GetParameter`
+      here would hand the pipeline the live Stripe key (AD-15).
+    AllowedPattern: '^/[A-Za-z0-9._/-]+$'
+  StripeWebhookSecretParameterName:
+    Type: String
+    Default: /nixus-billing/stripe-webhook-secret
+    Description: Path of the Stripe webhook signing secret SecureString.
+    AllowedPattern: '^/[A-Za-z0-9._/-]+$'
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # The artifact bucket `sam deploy` uploads this stack's package to.
+  # ---------------------------------------------------------------------------
+  SamArtifactBucket:
+    Type: AWS::S3::Bucket
+    # Retained: a deleted artifact bucket breaks rollback to any previously
+    # deployed version, because CloudFormation fetches the old package from here.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub '${ApplicationStackName}-artifacts-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          # Superseded packages are only needed for rollback, so old versions are
+          # aged out rather than kept forever.
+          - Id: expire-noncurrent-packages
+            Status: Enabled
+            NoncurrentVersionExpirationInDays: 90
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  SamArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SamArtifactBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Lambda packages are private build artifacts; plaintext transport is
+          # refused outright rather than merely discouraged.
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt SamArtifactBucket.Arn
+              - !Sub '${SamArtifactBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+
+  BillingDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ApplicationStackName}-github-deploy'
+      Description: >-
+        Assumed by GitHub Actions via OIDC to deploy the Nixus Cloud billing
+        stack. Scoped to one CloudFormation stack and to resources named after it.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              # Derived, not created: an account holds one provider per issuer URL
+              # and this one already exists, retained, from the hosted-AI
+              # bootstrap. The ARN of an IAM OIDC provider is exactly
+              # `oidc-provider/<issuer host>` in the account, so deriving it
+              # cannot drift from the real provider.
+              Federated: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                # Audience and subject are both EXACT matches. A loose subject is
+                # account-wide escalation reachable from any fork, branch or pull
+                # request. This repository has immutable subject claims disabled,
+                # so the plain `repo:owner/name` form is what GitHub emits.
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:${GitHubEnvironment}'
+      Policies:
+        # -------------------------------------------------------------------
+        # Denies first. A Deny cannot be overridden by any later Allow, in this
+        # policy or any other.
+        # -------------------------------------------------------------------
+        - PolicyName: billing-deny-self-escalation-and-data-loss
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # This role's name starts with the same prefix the application's own
+              # role does, so without this it could rewrite its own policies or
+              # trust policy and grant itself anything.
+              - Sid: NeverModifyThisRole
+                Effect: Deny
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:UpdateRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-github-deploy'
+              # The billing table is retained by policy in the application
+              # template; this makes it structural rather than a matter of
+              # remembering to omit the action from an Allow. It holds the only
+              # record of who is entitled to what, and it is reconstructible from
+              # Stripe only for subscribers - never for an AD-2 admin override.
+              - Sid: NeverDeleteTheBillingTableOrItsBackups
+                Effect: Deny
+                Action:
+                  - dynamodb:DeleteTable
+                  - dynamodb:DeleteBackup
+                  - dynamodb:DisableKinesisStreamingDestination
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-*'
+              # Scheduling the signing key for deletion, or disabling it, would
+              # invalidate every entitlement statement in the field and every one
+              # a deployed desktop has cached - with no recovery, because the
+              # public half is embedded in released binaries. Neither is ever a
+              # deploy operation.
+              - Sid: NeverDestroyTheStatementSigningKey
+                Effect: Deny
+                Action:
+                  - kms:ScheduleKeyDeletion
+                  - kms:DisableKey
+                  - kms:DisableKeyRotation
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+              # The domain belongs to nixus-bedrock-api. Mappings under it are
+              # this stack's business; the domain itself never is.
+              - Sid: NeverChangeTheSharedDomainItself
+                Effect: Deny
+                Action:
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}'
+              # RESIDUAL EXPOSURE, stated rather than papered over: the account
+              # stack's `v1/profile` mapping and the Bedrock catch-all live under
+              # the same domain, and API Gateway offers no way to scope a mapping
+              # grant to one KEY - a mapping is created against the collection
+              # resource, and an existing one is addressed by a
+              # service-generated id. A condition on a request parameter would be
+              # worse than nothing here: an absent condition key makes
+              # StringNotEquals match, so a wrong guess would deny the
+              # `v1/billing` create itself and read as a broken pipeline.
+              #
+              # What actually bounds it is the same control account-ci.yml uses
+              # for its half of the problem: billing-ci.yml asserts AFTER every
+              # deploy that the empty-key and `v1/profile` mappings are unchanged
+              # and that both routes still answer from their own stacks (AD-16).
+
+        # -------------------------------------------------------------------
+        # CloudFormation: one stack, plus the SAM transform and the reads the
+        # pipeline's routing assertions need.
+        # -------------------------------------------------------------------
+        - PolicyName: billing-cloudformation-one-stack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DriveTheApplicationStackOnly
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResource
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ListStackResources
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:ListChangeSets
+                  - cloudformation:TagResource
+                  - cloudformation:UntagResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ApplicationStackName}/*'
+              # The pipeline asserts, after deploying, that the stack owning
+              # api.nixusapp.com still maps the catch-all to its own API and that
+              # the account stack still owns `v1/profile`. Read-only: no
+              # change-set or update action reaches either.
+              - Sid: ReadTheStacksThatShareTheDomain
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/nixus-bedrock-api/*'
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/nixus-account/*'
+              - Sid: TemplateValidationIsNotStackScoped
+                Effect: Allow
+                Action:
+                  # Neither call carries a resource to scope to; SAM makes both
+                  # during `deploy`.
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource: '*'
+              - Sid: SamTransformNeedsTheServerlessRepo
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+
+        # -------------------------------------------------------------------
+        # IAM: the application's own execution role, and nothing else.
+        # -------------------------------------------------------------------
+        - PolicyName: billing-application-roles
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # CloudFormation derives a role name from the stack name and the
+              # logical id, so this one prefix covers BillingExecutionRole without
+              # covering this role, whose name ends `-github-deploy`.
+              # iam:AttachRolePolicy, iam:CreatePolicy and every user/group action
+              # are deliberately absent: an inline policy on a stack-owned role is
+              # the only IAM shape the application template declares.
+              - Sid: ApplicationExecutionRole
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:UpdateRole
+                  - iam:UpdateRoleDescription
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Billing*'
+              # Two PassRole statements, each conditioned on a single service, for
+              # two different callers of the same grant:
+              #
+              #   - `lambda:CreateFunction` requires PassRole to
+              #     lambda.amazonaws.com, and that is the call THIS role makes
+              #     today because `sam deploy` runs without `--role-arn`; and
+              #   - cloudformation.amazonaws.com is what a later split into a
+              #     deploy/execution pair would pass through, so granting it now
+              #     means that split needs no bootstrap change.
+              #
+              # Both are scoped to exactly the one application role prefix, and
+              # the un-conditioned form is never granted: PassRole without a
+              # PassedToService condition is how a deploy role hands its own
+              # permissions to a service of the caller's choosing.
+              - Sid: PassTheExecutionRoleToLambdaOnly
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Billing*'
+                Condition:
+                  StringEquals:
+                    'iam:PassedToService': lambda.amazonaws.com
+              - Sid: PassTheExecutionRoleToCloudFormationOnly
+                Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ApplicationStackName}-Billing*'
+                Condition:
+                  StringEquals:
+                    'iam:PassedToService': cloudformation.amazonaws.com
+
+        # -------------------------------------------------------------------
+        # Compute: the one billing Lambda, including its reserved concurrency.
+        # -------------------------------------------------------------------
+        - PolicyName: billing-lambda
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: TheBillingFunction
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:GetPolicy
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                  - lambda:PutRuntimeManagementConfig
+                  # AD-15's reservation is a separate API from the function
+                  # configuration. Without these three the function deploys with
+                  # NO reservation and nothing fails, which is exactly the silent
+                  # outcome the reservation exists to prevent.
+                  - lambda:GetFunctionConcurrency
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ApplicationStackName}-*'
+
+        # -------------------------------------------------------------------
+        # Edge: the REST API, its stage, and the one mapping under the shared
+        # domain.
+        # -------------------------------------------------------------------
+        - PolicyName: billing-api-gateway
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # API Gateway authorizes by HTTP verb, so this is the complete
+              # explicit set rather than a wildcard. `/restapis/*` covers the
+              # stage, deployment, resources, methods, authorizer, method settings
+              # and gateway responses the SAM transform creates.
+              - Sid: RestApiAndItsStage
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/*'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/tags/*'
+              # The mappings under the shared domain, and a read of the domain
+              # itself for the routing assertions. The two Denies above keep every
+              # other verb off the domain resource and off another stack's
+              # mapping.
+              - Sid: ApiMappingsOnTheSharedDomain
+                Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}/apimappings'
+                  - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/${ApiDomainName}/apimappings/*'
+
+        # -------------------------------------------------------------------
+        # Storage: the billing table and its GSI. No DeleteTable at all, which is
+        # why the table carries `DeletionPolicy: Retain` - CloudFormation then
+        # skips deleting it on a rollback instead of stalling on an authorization
+        # failure.
+        # -------------------------------------------------------------------
+        - PolicyName: billing-dynamodb
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: TheBillingTableWithoutDeletion
+                Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DescribeTable
+                  # The GSI is created and altered through UpdateTable rather than
+                  # through an API of its own.
+                  - dynamodb:UpdateTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-*'
+                  - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ApplicationStackName}-*/index/*'
+
+        # -------------------------------------------------------------------
+        # Cognito: a read for the pre-deploy scope assertion, and nothing else.
+        # -------------------------------------------------------------------
+        - PolicyName: billing-cognito
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadTheResourceServerBeforeDeploying
+                Effect: Allow
+                Action:
+                  - cognito-idp:DescribeResourceServer
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}'
+
+  # Customer-managed rather than inline: IAM caps a role's inline policies at
+  # 10,240 bytes in aggregate, and the full grant set exceeds it. Each is attached
+  # only to the deploy role, which holds no IAM permission on managed policies, so
+  # it cannot change them either.
+  #
+  # Observability and cost.
+  BillingDeployObservabilityPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ApplicationStackName}-github-deploy-observability'
+      Roles:
+        - !Ref BillingDeployRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ExplicitLogGroups
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:DeleteLogGroup
+              - logs:PutRetentionPolicy
+              - logs:DeleteRetentionPolicy
+              - logs:TagResource
+              - logs:UntagResource
+              - logs:ListTagsForResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*'
+              - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ApplicationStackName}-*:*'
+          - Sid: FindExplicitLogGroups
+            Effect: Allow
+            Action:
+              - logs:DescribeLogGroups
+            Resource: '*'
+          - Sid: ErrorRateAlarms
+            Effect: Allow
+            Action:
+              - cloudwatch:PutMetricAlarm
+              - cloudwatch:DeleteAlarms
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:TagResource
+              - cloudwatch:UntagResource
+              - cloudwatch:ListTagsForResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:${ApplicationStackName}-*'
+          - Sid: AlarmTopicAndSubscription
+            Effect: Allow
+            Action:
+              - sns:CreateTopic
+              - sns:DeleteTopic
+              - sns:GetTopicAttributes
+              - sns:SetTopicAttributes
+              - sns:Subscribe
+              - sns:Unsubscribe
+              - sns:GetSubscriptionAttributes
+              - sns:ListSubscriptionsByTopic
+              - sns:TagResource
+              - sns:UntagResource
+              - sns:ListTagsForResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${ApplicationStackName}-*'
+          - Sid: MonthlySpendBudget
+            Effect: Allow
+            Action:
+              # AWS Budgets authorizes create, modify and delete through the
+              # single ModifyBudget action; there is no CreateBudget. Budget
+              # ARNs carry no stack name, so this is the account namespace.
+              - budgets:ModifyBudget
+              - budgets:ViewBudget
+              - budgets:TagResource
+              - budgets:UntagResource
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/*'
+
+  # The signing key, the artifact bucket, and the one Parameter Store call the
+  # pipeline is allowed to make.
+  BillingDeployCryptoAndArtifactsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${ApplicationStackName}-github-deploy-crypto-artifacts'
+      Roles:
+        - !Ref BillingDeployRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # CreateKey carries no resource to scope to - the key does not exist
+          # yet and its id is generated by KMS - so `*` plus an enumerated single
+          # action is the only available bound. ScheduleKeyDeletion and DisableKey
+          # are DENIED outright above, so the worst this grants is an extra key.
+          - Sid: CreateTheStatementSigningKey
+            Effect: Allow
+            Action:
+              - kms:CreateKey
+            Resource: '*'
+          - Sid: ManageTheStatementSigningKey
+            Effect: Allow
+            Action:
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:PutKeyPolicy
+              - kms:GetKeyRotationStatus
+              - kms:ListResourceTags
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:EnableKey
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+          - Sid: ManageTheStatementSigningKeyAlias
+            Effect: Allow
+            Action:
+              - kms:CreateAlias
+              - kms:UpdateAlias
+              - kms:DeleteAlias
+              - kms:ListAliases
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/nixus-billing-*'
+              - !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+          # AD-15 forbids any CI step that prints or compares key material, and
+          # this is what makes that structural rather than a review habit: the
+          # pipeline asserts the two SecureStrings EXIST, and `DescribeParameters`
+          # returns metadata only - name, type, last-modified - and never a value.
+          # `ssm:GetParameter` and `ssm:GetParameters` are deliberately NOT
+          # granted at either path: either one would hand a workflow run the live
+          # Stripe secret key. Only the Lambda's own execution role may read the
+          # values, and only at cold start (AD-7).
+          #
+          # The action takes no resource ARN at all - it is an account-level
+          # listing filtered by the caller - so `*` is the only form IAM accepts,
+          # and the bound is the action's own inability to return a value.
+          - Sid: ProveTheStripeSecretsExist
+            Effect: Allow
+            Action:
+              - ssm:DescribeParameters
+            Resource: '*'
+          # The bucket this stack owns. `sam deploy` uploads under the
+          # `nixus-billing` prefix.
+          - Sid: UploadPackagesOnly
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:AbortMultipartUpload
+              - s3:ListMultipartUploadParts
+            Resource:
+              - !Sub '${SamArtifactBucket.Arn}/*'
+          - Sid: LocateTheArtifactBucket
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetBucketLocation
+              - s3:ListBucketMultipartUploads
+            Resource:
+              - !GetAtt SamArtifactBucket.Arn
+
+Outputs:
+  DeployRoleArn:
+    Description: >-
+      Set as the AWS_BILLING_DEPLOY_ROLE_ARN secret on the production environment.
+    Value: !GetAtt BillingDeployRole.Arn
+  TrustedSubject:
+    Description: >-
+      The exact `sub` claim this role accepts. Compare it against the claim a
+      failing workflow run reports before changing anything.
+    Value: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:${GitHubEnvironment}'
+  OidcProviderArn:
+    Description: >-
+      The provider this role trusts. Created and retained by the hosted-AI
+      bootstrap; this stack only derives its ARN.
+    Value: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+  SamArtifactBucketName:
+    Description: >-
+      Set as the BILLING_SAM_ARTIFACT_BUCKET variable on the production
+      environment. Retained, private, encrypted, versioned and TLS-only.
+    Value: !Ref SamArtifactBucket
+  StripeSecretParameterPaths:
+    Description: >-
+      The two SecureString paths the owner creates by hand. Echoed so a rollout
+      can confirm the pipeline asserts on the same paths the stack reads, and NOT
+      so anything reads their values.
+    Value: !Sub '${StripeSecretKeyParameterName} ${StripeWebhookSecretParameterName}'

@@ -1,0 +1,43 @@
+version = 0.1
+
+# One production stack, no staging (billing AD-15). The stack name and region are
+# pinned here so a local `sam deploy` and the CI deploy job cannot drift apart.
+[default.global.parameters]
+stack_name = "nixus-billing"
+region = "us-east-1"
+
+[default.validate.parameters]
+lint = true
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+# CAPABILITY_IAM only: the stack creates the billing Lambda's execution role, never
+# the OIDC deploy role that assumes it (billing AD-15), and never a named IAM
+# resource.
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+# Off deliberately, as in api-bedrock and api-account: SAM's managed bucket would be
+# created outside the bootstrap stack, so it would fall outside the deploy role's S3
+# policy and outside the artifact bucket's encryption, versioning, and retention
+# guarantees. The workflow passes --s3-bucket.
+resolve_s3 = false
+disable_rollback = false
+tags = "app=nixus service=billing managed-by=sam"
+
+# Account-specific inputs (Cognito pool ARN and id, alert email, the deployed git
+# revision) are deliberately absent: they are passed at deploy time via
+# --parameter-overrides from the protected `production` GitHub environment.
+# Committing them here would either leak account topology or silently deploy
+# against the wrong user pool.
+#
+# `ApiDomainName` is NOT account-specific and carries a template default of
+# api.nixusapp.com: the domain is owned by stack `nixus-bedrock-api` and referenced
+# here by name only, with no CloudFormation export or import (billing AD-3).
+#
+# `StripeMode` carries a template default of `test`, because test mode is the
+# default for every non-production path (billing AD-15). Promoting a stack to live
+# mode is an explicit override, never an omission.

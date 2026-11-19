@@ -1,0 +1,900 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Nixus Cloud billing and entitlement stack (stack nixus-billing): one Regional
+  REST API mapped onto the existing api.nixusapp.com domain at the key v1/billing,
+  one Node.js 24 ARM64 Lambda serving all six billing routes, one retained
+  on-demand DynamoDB table holding USER#<sub>/{ENTITLEMENT, BILLING_CUSTOMER,
+  EVENT#<id>}, and one retained KMS asymmetric key that signs the entitlement
+  statement. See the comments below for the binding rules.
+
+# The domain belongs to stack nixus-bedrock-api and is referenced here BY NAME
+# only - no CloudFormation export, no import, and nothing in this stack ever edits
+# the domain or another stack's mapping (billing AD-3).
+#
+# The Cognito user pool and its nixus-api resource server are console-managed and
+# are likewise only referenced; the nixus-api/billing scope is added out-of-band
+# before this stack is deployed, and billing-ci.yml asserts it exists (AD-17).
+#
+# Billing storage is its OWN table, a declared departure from the profile spine's
+# reservation of the ENTITLEMENT and BILLING_CUSTOMER sort keys in the profile
+# table: DynamoDB exposes no IAM condition key for a sort key - only
+# dynamodb:LeadingKeys, which addresses the partition key - so sort-key isolation
+# is achievable by code construction alone. A separate table makes the isolation
+# real and bidirectional (AD-4).
+
+Parameters:
+  CognitoUserPoolArn:
+    Type: String
+    Description: >-
+      ARN of the EXISTING Cognito user pool from architecture-login.md. This
+      stack never creates, imports, or owns the pool or its resource server.
+    AllowedPattern: '^arn:aws[a-zA-Z-]*:cognito-idp:[a-z0-9-]+:\d{12}:userpool/.+$'
+  CognitoUserPoolId:
+    Type: String
+    Description: ID of the same existing Cognito user pool, for operator traceability.
+    AllowedPattern: '^[\w-]+_[0-9a-zA-Z]+$'
+  ApiDomainName:
+    Type: String
+    Default: api.nixusapp.com
+    Description: >-
+      Custom domain owned by stack nixus-bedrock-api. Referenced by name because
+      an export/import would couple two stacks' lifecycles: this stack only adds
+      a mapping under it, and neither the Bedrock catch-all nor the account
+      stack's v1/profile mapping is touched. Longest-prefix match sends
+      /v1/billing/* here and everything else where it already goes.
+    AllowedPattern: '^[a-z0-9.-]+$'
+  AlertEmail:
+    Type: String
+    Description: Operator address subscribed to the CloudWatch alarms and the AWS Budget.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+
+  StripeMode:
+    Type: String
+    Default: test
+    AllowedValues:
+      - test
+      - live
+    Description: >-
+      The Stripe mode this stack is configured for. Test mode is the DEFAULT for
+      every non-production path (AD-15), so promoting a stack to live mode is an
+      explicit override and never an omission. The Lambda refuses to start if the
+      loaded secret key's own mode does not match this value (AD-7), and AD-5
+      rejects any event whose `livemode` disagrees with it.
+  StripeSecretKeyParameterName:
+    Type: String
+    Default: /nixus-billing/stripe-secret-key
+    Description: >-
+      SSM Parameter Store path of the Stripe secret key, stored as a SecureString
+      by the owner and read at cold start. Only the NAME crosses the template and
+      the environment; the value never does (AD-7).
+    AllowedPattern: '^/[A-Za-z0-9._/-]+$'
+  StripeWebhookSecretParameterName:
+    Type: String
+    Default: /nixus-billing/stripe-webhook-secret
+    Description: >-
+      SSM Parameter Store path of the Stripe webhook signing secret, stored as a
+      SecureString by the owner and read at cold start. Only the NAME crosses the
+      template and the environment; the value never does (AD-7).
+    AllowedPattern: '^/[A-Za-z0-9._/-]+$'
+
+  CatalogCacheTtlSeconds:
+    Type: Number
+    Default: 300
+    MinValue: 30
+    MaxValue: 3600
+    Description: >-
+      THE single cache bound in the system (AD-6). It is declared once, here, and
+      surfaced to clients through PlanCatalogResponse.cache_ttl_seconds; CloudFront
+      and every client cache derive from it rather than adding their own, so the
+      advertised-versus-charged drift window is exactly this value and no other
+      layer may widen it.
+  CatalogLookupKeys:
+    Type: String
+    Default: classic_monthly_cad,advance_monthly_cad
+    AllowedPattern: '^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*){0,9}$'
+    Description: >-
+      Comma-separated Stripe Price `lookup_key`s the public catalog publishes
+      (AD-6). It is CONFIGURATION rather than a list in a handler, so adding a
+      tier whose capabilities already exist is a parameter change plus a Stripe
+      Dashboard change and never a code deploy. No amount, currency amount or
+      `price_id` appears here or anywhere else - only lookup keys. Order is
+      significant: it is the fallback for a plan whose Product carries no
+      nixus_display_order. At most ten keys, because `prices.list` accepts ten
+      lookup keys per call and the catalog is read in ONE call.
+  AccountAppOrigin:
+    Type: String
+    Default: https://account.nixusapp.com
+    AllowedPattern: '^https://[a-z0-9.-]+$'
+    Description: >-
+      Origin of the account app, and the ONLY origin a Stripe success, cancel or
+      portal return URL is ever composed from (AD-8). The paths themselves are
+      server-side constants in src/lib/destinations.ts; no request-supplied URL
+      is ever accepted or echoed. The pattern pins it to an https origin with no
+      path, so a mis-set value cannot turn a fixed path into an arbitrary URL.
+  MinimumClientVersion:
+    Type: String
+    Default: 0.0.0
+    Description: >-
+      Server-side floor below which GET /entitlement refuses to serve a statement
+      (AD-9's revocation path). The default of 0.0.0 refuses nothing at launch; a
+      leaked signing key is revoked by raising this value, which is a parameter
+      change rather than a release.
+    AllowedPattern: '^\d+\.\d+\.\d+$'
+  BillingFunctionReservedConcurrency:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 100
+    Description: >-
+      REQUIRED by AD-15. Lambda concurrency is an account-wide pool shared with
+      nixus-bedrock-api and nixus-account, and this stack publishes two
+      unauthenticated routes - so without a ceiling, signature-rejection traffic
+      could starve hosted AI and the profile API. The reservation bounds this
+      stack's share in BOTH directions. MinValue is 1 deliberately: a reservation
+      of 0 would make the function inert rather than bounded. Note that
+      nixus-bedrock-api carries no reservation at all, by an explicit decision of
+      its own; billing deliberately does, and src/template-scaffold.test.ts
+      asserts the difference.
+  DeploymentRevision:
+    Type: String
+    AllowedPattern: '^[0-9a-f]{40}$'
+    Description: >-
+      Git commit deployed by the GitHub OIDC workflow, used to reconcile Lambda
+      configuration drift - the same mechanism api-bedrock uses.
+
+Globals:
+  Function:
+    # Node.js 24 ARM64 (AD-15), matching apps/api-account.
+    Runtime: nodejs24.x
+    Architectures:
+      - arm64
+    MemorySize: 512
+    Timeout: 29
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # AD-3 - Regional REST edge. Two route classes: a Cognito authorizer requiring
+  # nixus-api/billing by default, and exactly two routes that opt out.
+  # ---------------------------------------------------------------------------
+  BillingApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      # A literal stage name, because the API mapping below must name one and
+      # DependsOn has to reference the stage resource SAM generates from it.
+      StageName: v1
+      EndpointConfiguration: REGIONAL
+      # The default execute-api host is not a production fallback: the shared
+      # custom domain is the only reachable endpoint.
+      DisableExecuteApiEndpoint: true
+      # No Domain property: the domain belongs to nixus-bedrock-api (AD-3). SAM
+      # would otherwise try to own the domain, its certificate and its DNS record.
+      #
+      # RAW BODY, AD-5: BinaryMediaTypes is deliberately NOT set. API Gateway's
+      # Lambda proxy integration passes the request body through without
+      # re-serialising it, and the Lambda derives the signed bytes with
+      # `Buffer.from(event.body, event.isBase64Encoded ? "base64" : "utf8")`,
+      # which is correct under either configuration - so the handler needs no
+      # change if this switch is ever flipped (see src/functions/api.ts's
+      # rawBodyOf). AD-16 nevertheless requires a signature-verification test
+      # through the DEPLOYED stack rather than only a unit test; if that live test
+      # fails, the remedy is to add `application/json` to BinaryMediaTypes here
+      # and base64-encode every response body, and nothing else.
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !Ref CognitoUserPoolArn
+            # Billing scope only. nixus-api/ai.invoke authorizes the Bedrock API
+            # and nixus-api/profile the account API; neither may ever authorize a
+            # billing route, in any direction.
+            AuthorizationScopes:
+              - nixus-api/billing
+      # The plan catalog is small but highly cacheable JSON, and an entitlement
+      # response carries a signed statement; both compress well for clients that
+      # ask.
+      MinimumCompressionSize: 1024
+      MethodSettings:
+        # DataTraceEnabled=false is explicit: request and response bodies carry
+        # raw webhook payloads, signed statements and access tokens, none of which
+        # may ever reach CloudWatch (AD-14). LoggingLevel and AccessLogSetting are
+        # deliberately unset because both require an account-level API Gateway
+        # CloudWatch role this stack does not own.
+        - HttpMethod: '*'
+          ResourcePath: '/*'
+          # The authorized routes' bound. Generous relative to real traffic - a
+          # subscriber hits checkout once and revalidates an entitlement a few
+          # times a day - but it is the ceiling the two entries below exist to
+          # keep unauthenticated traffic from consuming.
+          ThrottlingRateLimit: 20
+          ThrottlingBurstLimit: 40
+          DataTraceEnabled: false
+          MetricsEnabled: true
+        # AD-15's method-level throttles on the two unauthenticated routes. The
+        # stage-wide entry above is shared, so without these a flood of forged
+        # signatures or catalog reads would consume the whole stage allowance and
+        # throttle POST /checkout and GET /entitlement for paying users.
+        #
+        # 5 rps / burst 10 on the webhook is well above Stripe's real delivery
+        # rate for a single account (events arrive in ones, retried with backoff)
+        # and well below anything that could amplify: AD-5 verifies the signature
+        # before any Stripe or DynamoDB call, so a rejected request costs one
+        # timing-safe comparison.
+        - HttpMethod: POST
+          ResourcePath: /webhook
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
+          DataTraceEnabled: false
+          MetricsEnabled: true
+        # 5 rps / burst 10 on the public catalog. It is cacheable for
+        # CatalogCacheTtlSeconds (AD-6), so one request per TTL per edge location
+        # is the steady state and a higher ceiling would only buy an amplification
+        # path into the Stripe API.
+        - HttpMethod: GET
+          ResourcePath: /plans
+          ThrottlingRateLimit: 5
+          ThrottlingBurstLimit: 10
+          DataTraceEnabled: false
+          MetricsEnabled: true
+      GatewayResponses:
+        # Exactly the types BILLING_GATEWAY_RESPONSES enumerates (AD-13). Left to
+        # its default body, API Gateway answers `{"message":"..."}`, which carries
+        # no code in the closed union - so a client falls back to guessing from the
+        # HTTP status, which is how a stage throttle gets read as a validation
+        # failure.
+        UNAUTHORIZED:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        # Insufficient scope. It stays `unauthorized` on the wire: a client
+        # reclassifies this one as reauthentication_required, because a token
+        # refresh cannot add a scope (AD-13).
+        ACCESS_DENIED:
+          StatusCode: 403
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        EXPIRED_TOKEN:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        MISSING_AUTHENTICATION_TOKEN:
+          StatusCode: 401
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unauthorized","message":"Authentication required.","request_id":"$context.requestId"}}'
+        THROTTLED:
+          StatusCode: 429
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"rate_limited","message":"Too many requests.","request_id":"$context.requestId"}}'
+        # `validation`, not a code of its own: the billing error union is closed,
+        # an oversized body is a malformed request, and BILLING_BODY_MAX_BYTES is
+        # the documented bound a caller is expected to respect.
+        REQUEST_TOO_LARGE:
+          StatusCode: 413
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"validation","message":"The request is too large.","request_id":"$context.requestId"}}'
+        # No StatusCode: an unclassified 4xx keeps the gateway's own status, which
+        # is the one piece of information it does carry (contract: status null).
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unavailable","message":"The billing service is unavailable.","request_id":"$context.requestId"}}'
+        DEFAULT_5XX:
+          StatusCode: 503
+          ResponseParameters:
+            Headers:
+              Content-Type: "'application/json'"
+          ResponseTemplates:
+            application/json: '{"error":{"code":"unavailable","message":"The billing service is unavailable.","request_id":"$context.requestId"}}'
+
+  # ---------------------------------------------------------------------------
+  # AD-3 - attach to the shared domain by mapping only. ApiMappingKey `v1/billing`
+  # wins over the Bedrock stack's empty-key catch-all by longest match, sits beside
+  # the account stack's `v1/profile`, and API Gateway strips the base path before
+  # invoking this API - which is why the REST resources below are `/checkout`,
+  # `/portal`, `/entitlement`, `/admin/override`, `/webhook` and `/plans`.
+  # ---------------------------------------------------------------------------
+  BillingApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    # The stage must exist before the mapping can name it. This is the stage
+    # resource the SAM transform generates from BillingApi's StageName.
+    DependsOn: BillingApiv1Stage
+    Properties:
+      ApiId: !Ref BillingApi
+      DomainName: !Ref ApiDomainName
+      ApiMappingKey: v1/billing
+      # A literal, never a Ref to a stage resource: this property takes a stage
+      # NAME.
+      Stage: v1
+
+  # ---------------------------------------------------------------------------
+  # AD-14 / AD-15 - explicit log group, 14-day retention, no logs:* grant
+  # ---------------------------------------------------------------------------
+  BillingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-api'
+      RetentionInDays: 14
+
+  # ---------------------------------------------------------------------------
+  # AD-4 - the billing table. Retained, PITR-enabled, on-demand.
+  #
+  #   sk = ENTITLEMENT        the sole entitlement authority
+  #   sk = BILLING_CUSTOMER   stripe_customer_id, stripe_subscription_id, lock
+  #   sk = EVENT#<id>         webhook dedupe marker, reclaimed by TTL
+  #
+  # The GSI resolves a Stripe customer back to a `sub`, because webhooks arrive
+  # keyed by Stripe customer and never by `sub`. KEYS_ONLY is the whole of what
+  # that lookup needs: the handler re-reads the ENTITLEMENT item strongly
+  # consistent afterwards, and an index projection would be a second, eventually
+  # consistent copy of payment state.
+  # ---------------------------------------------------------------------------
+  BillingTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub '${AWS::StackName}-billing'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: stripe_customer_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: stripe-customer-index
+          KeySchema:
+            - AttributeName: stripe_customer_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+      # The EVENT# dedupe markers only. TTL reclaims storage; it is never the
+      # dedupe window itself, because DynamoDB deletes expired items "within a few
+      # days" - the attribute is written with a horizon covering Stripe's own
+      # retry schedule so a replay inside that window still finds its marker.
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  # ---------------------------------------------------------------------------
+  # AD-9 / AD-15 - the entitlement statement signing key. Asymmetric so the
+  # desktop can verify offline with an embedded public key and no secret of its
+  # own; the billing role's grant is SIGN-ONLY.
+  # ---------------------------------------------------------------------------
+  StatementSigningKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: >-
+        Signs the Nixus entitlement statement (NXS1, ECDSA_SHA_256). The public
+        half is exported once by an operator and embedded in the desktop binary.
+      KeySpec: ECC_NIST_P256
+      KeyUsage: SIGN_VERIFY
+      Enabled: true
+      # Rotation is by NEW KEY, not by KMS automatic rotation, which KMS does not
+      # offer for asymmetric keys at all: AD-9's `key_id` claim plus the desktop's
+      # trusted-key set is what makes an ordered rotation possible.
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: nixus-billing-statement-signing
+        Statement:
+          # The ONE wildcard action in this template, and it is deliberate. A KMS
+          # key policy that does not grant the account root full control cannot be
+          # repaired afterwards - not by an administrator, not by AWS - and this
+          # key is `Retain` with no recovery path, so an enumerated admin list
+          # that turned out to be missing one action would permanently orphan every
+          # statement ever signed with it. The principal is the account itself, so
+          # this is not an escalation: it is what enables IAM policies in this
+          # account to work at all, which is how BillingExecutionRole's sign-only
+          # grant below takes effect.
+          - Sid: AccountRootAdministersTheKey
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  StatementSigningKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/nixus-billing-statement
+      TargetKeyId: !Ref StatementSigningKey
+
+  # ---------------------------------------------------------------------------
+  # Execution role - exact actions only, no wildcards.
+  #
+  # AD-4's isolation is a RELEASE GATE: this role has no access to the profile
+  # table, the account app's session table, or the hosted-AI table, in either
+  # direction. src/iam-isolation.test.ts asserts it.
+  # ---------------------------------------------------------------------------
+  BillingExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      # No ManagedPolicyArns: AWSLambdaBasicExecutionRole would grant logs:* on
+      # an implicit group, which AD-14's logging boundary forbids.
+      Policies:
+        - PolicyName: billing-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: WriteToTheExplicitLogGroupOnly
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub '${BillingLogGroup.Arn}:*'
+        - PolicyName: billing-table
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Exactly the six actions the service makes. No Scan, no DeleteItem,
+              # no DeleteTable: nothing in the entitlement model ever removes a
+              # record (AD-11 deletes nothing on tier loss), and an enumeration
+              # primitive over payment state has no use here.
+              #
+              # dynamodb:LeadingKeys bounds the PARTITION key to this service's own
+              # USER# namespace. DynamoDB's fine-grained access control has no
+              # condition key for the SORT key, which is precisely why billing gets
+              # its own table (AD-4): the isolation that IAM cannot express as a
+              # sort-key bound is expressed as a table boundary instead.
+              - Sid: BillingItemsInThisServicesOwnPartitions
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:ConditionCheckItem
+                Resource: !GetAtt BillingTable.Arn
+                Condition:
+                  ForAllValues:StringLike:
+                    'dynamodb:LeadingKeys':
+                      - 'USER#*'
+              # A separate statement because the action list is different, not
+              # merely the resource: the index is read-only and Query is the only
+              # operation it supports. The LeadingKeys condition is deliberately
+              # absent here - the index's hash key is stripe_customer_id, so a
+              # USER# bound would match nothing and silently deny every lookup.
+              - Sid: ResolveAStripeCustomerToASubscriber
+                Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource: !Sub '${BillingTable.Arn}/index/*'
+        - PolicyName: billing-kms
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # SIGN-ONLY (AD-9). Not kms:Verify - verification happens on the
+              # device against an embedded public key, never here. Not
+              # kms:GetPublicKey - the public half is exported ONCE by an operator
+              # and embedded in the binary, so a runtime read would be a second
+              # source of truth for the trusted key. Not kms:Decrypt - this key
+              # cannot decrypt anything, and asking for the permission would
+              # suggest otherwise.
+              - Sid: SignEntitlementStatementsOnly
+                Effect: Allow
+                Action:
+                  - kms:Sign
+                Resource: !GetAtt StatementSigningKey.Arn
+        - PolicyName: billing-ssm
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The two parameters by exact ARN, built from the two parameter-name
+              # parameters. The owner creates both SecureStrings by hand; nothing
+              # in this stack writes either, and no ssm:PutParameter is granted.
+              - Sid: ReadTheTwoStripeSecretsAtColdStart
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${StripeSecretKeyParameterName}'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${StripeWebhookSecretParameterName}'
+              # WithDecryption on a SecureString calls kms:Decrypt against the
+              # AWS-MANAGED `aws/ssm` key, whose Resource for a Decrypt call is the
+              # KEY ARN - `arn:...:alias/aws/ssm` is an alias ARN and would match
+              # nothing, silently denying every cold start. The managed key's id is
+              # account-generated and unknowable at template time, so the bound here
+              # is the ViaService condition rather than the resource: this grant is
+              # unusable for anything but a Parameter Store read in this Region, and
+              # `*` without the condition would be the actual over-grant.
+              - Sid: DecryptOnlyThroughParameterStoreInThisRegion
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'kms:ViaService': !Sub 'ssm.${AWS::Region}.amazonaws.com'
+        - PolicyName: billing-metrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # PutMetricData takes no resource ARN at all, so the namespace
+              # condition is the only available bound - and it is a real one: this
+              # grant cannot write to AWS/Lambda, AWS/ApiGateway, or any other
+              # stack's namespace, only to the one the two custom alarms below
+              # read.
+              - Sid: PublishOnlyThisStacksCustomMetrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'cloudwatch:namespace': Nixus/Billing
+
+  # ---------------------------------------------------------------------------
+  # AD-3 - one Lambda, one entry point, all six routes. Two of them carry no
+  # authorizer, and that set is CLOSED: adding to it is an amendment to AD-3.
+  # ---------------------------------------------------------------------------
+  BillingFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      # See Makefile for why this is `makefile` and not SAM's `esbuild` builder.
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      CodeUri: ./
+      Handler: api.handler
+      Role: !GetAtt BillingExecutionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref BillingLogGroup
+      ReservedConcurrentExecutions: !Ref BillingFunctionReservedConcurrency
+      Environment:
+        Variables:
+          BILLING_TABLE_NAME: !Ref BillingTable
+          BILLING_TABLE_CUSTOMER_INDEX_NAME: stripe-customer-index
+          STRIPE_MODE: !Ref StripeMode
+          # NAMES only. The Stripe secret key and the webhook signing secret are
+          # never environment variables, never template values and never log
+          # lines (AD-7); they are read from Parameter Store at cold start.
+          STRIPE_SECRET_KEY_PARAMETER_NAME: !Ref StripeSecretKeyParameterName
+          STRIPE_WEBHOOK_SECRET_PARAMETER_NAME: !Ref StripeWebhookSecretParameterName
+          STATEMENT_SIGNING_KEY_ID: !Ref StatementSigningKey
+          STATEMENT_SIGNING_KEY_ARN: !GetAtt StatementSigningKey.Arn
+          CATALOG_CACHE_TTL_SECONDS: !Ref CatalogCacheTtlSeconds
+          CATALOG_LOOKUP_KEYS: !Ref CatalogLookupKeys
+          ACCOUNT_APP_ORIGIN: !Ref AccountAppOrigin
+          MINIMUM_CLIENT_VERSION: !Ref MinimumClientVersion
+          METRIC_NAMESPACE: Nixus/Billing
+          DEPLOYMENT_REVISION: !Ref DeploymentRevision
+      Events:
+        PostCheckout:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BillingApi
+            Path: /checkout
+            Method: post
+        PostPortal:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BillingApi
+            Path: /portal
+            Method: post
+        GetEntitlement:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BillingApi
+            Path: /entitlement
+            Method: get
+        PostAdminOverride:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BillingApi
+            Path: /admin/override
+            Method: post
+        # The complete, closed set of unauthenticated routes (AD-3). The webhook
+        # is authenticated by the Stripe signature inside the Lambda; the catalog
+        # carries no user data. Both are method-level throttled above.
+        PostWebhook:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BillingApi
+            Path: /webhook
+            Method: post
+            Auth:
+              Authorizer: NONE
+        GetPlans:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BillingApi
+            Path: /plans
+            Method: get
+            Auth:
+              Authorizer: NONE
+
+  # ---------------------------------------------------------------------------
+  # AD-15 - alerting and budget. They notify; they never stop traffic.
+  # ---------------------------------------------------------------------------
+  BillingAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Nixus billing alerts
+
+  BillingAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref BillingAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  BillingApiServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-api-5xx'
+      AlarmDescription: API Gateway 5XX rate on the billing stage.
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub '${AWS::StackName}-api'
+        - Name: Stage
+          Value: v1
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+
+  BillingFunctionErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-function-errors'
+      AlarmDescription: Lambda invocation errors on the billing function.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BillingFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+
+  BillingFunctionThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-function-throttles'
+      AlarmDescription: >-
+        Concurrency throttling on the billing function. Unlike the profile API,
+        this function HAS a reservation (AD-15), so this alarm means this stack
+        exhausted its OWN bounded share rather than the account's shared pool -
+        which is the signal that the reservation needs raising, or that
+        unauthenticated traffic is being thrown at the webhook.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BillingFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+
+  # A DEDICATED alarm rather than a share of the Lambda error rate: a webhook that
+  # fails is a subscription whose entitlement never converged, and Stripe stops
+  # retrying eventually. It has to be distinguishable from an ordinary 5xx.
+  BillingWebhookFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-webhook-failures'
+      AlarmDescription: >-
+        A Stripe webhook event failed to converge (AD-5). Stripe retries, but a
+        persistent failure leaves an entitlement stale, so this is paged on its
+        own rather than folded into the function error rate.
+      Namespace: Nixus/Billing
+      MetricName: WebhookFailure
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+
+  # AD-6's malformed-metadata alarm. A Product with absent, empty or unparseable
+  # nixus_tier or capability metadata yields a paid-but-capability-less
+  # entitlement: the subscription is recorded and NO capability is granted. That
+  # is the correct fail-closed behaviour, and it is also exactly how a metadata
+  # typo silently revokes a paying customer's access - so it must never happen
+  # without raising an alert. Threshold 1: the first occurrence is the signal.
+  BillingCatalogMetadataMalformedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-catalog-metadata-malformed'
+      AlarmDescription: >-
+        Stripe Product metadata could not be parsed into a tier and a capability
+        list (AD-6). The affected subscription is recorded with no capability, so
+        a paying customer may be losing access right now.
+      Namespace: Nixus/Billing
+      MetricName: CatalogMetadataMalformed
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+
+  # AD-18's duplicate-subscription alarm. Two live subscriptions for one account
+  # is a DEFECT, not a state the model has: the authority grants the union so
+  # nobody loses access, and an operator reconciles. Without its own alarm that
+  # union is invisible - the customer is served correctly and billed twice.
+  # Threshold 1: the first occurrence is the signal.
+  BillingDuplicateSubscriptionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-duplicate-subscription'
+      AlarmDescription: >-
+        One Nixus account holds more than one LIVE Stripe subscription (AD-18).
+        The entitlement grants the union of their capabilities; the customer is
+        probably paying twice, so this needs a human reconciliation.
+      Namespace: Nixus/Billing
+      MetricName: DuplicateSubscription
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref BillingAlertTopic
+
+  BillingMonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-monthly'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: 10
+          Unit: USD
+        # Account-wide spend on the four services this stack uses. Isolating cost
+        # to this one stack is not claimed here; it would need verified
+        # cost-allocation tags, so the other stacks' API, Lambda and tables count
+        # toward this ceiling too. Parameter Store standard parameters and SNS
+        # email notifications are not billed, so neither appears.
+        CostFilters:
+          Service:
+            - Amazon DynamoDB
+            - Amazon API Gateway
+            - AWS Lambda
+            - AWS Key Management Service
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  ApiEndpoint:
+    Description: Base URL every surface calls, through the shared custom domain.
+    Value: !Sub 'https://${ApiDomainName}/v1/billing'
+  BillingApiId:
+    Description: >-
+      REST API id the v1/billing mapping points at, so a deploy can assert the
+      Bedrock catch-all and the account stack's v1/profile mapping still point
+      somewhere else.
+    Value: !Ref BillingApi
+  BillingTableName:
+    Description: Retained billing table holding ENTITLEMENT, BILLING_CUSTOMER and EVENT# items.
+    Value: !Ref BillingTable
+  BillingTableArn:
+    Description: >-
+      Read by an operator so nixus-bedrock-api can take it as a DEPLOY-TIME
+      PARAMETER when it cuts over to the canonical entitlement read (AD-17).
+      Deliberately NOT exported: a CloudFormation export would make the two
+      stacks' lifecycles mutually blocking, and AD-4 names a deploy-time
+      parameter as the mechanism.
+    Value: !GetAtt BillingTable.Arn
+  BillingTableCustomerIndexName:
+    Description: GSI resolving a Stripe customer back to a subscriber (AD-4).
+    Value: stripe-customer-index
+  StatementSigningKeyId:
+    Description: >-
+      Becomes the statement's `key_id` claim (AD-9). The desktop embeds the
+      matching public key against this id, so rotation needs no format change.
+    Value: !Ref StatementSigningKey
+  StatementSigningKeyArn:
+    Description: >-
+      Target of the operator's one-time `kms get-public-key` export. The Lambda
+      holds no GetPublicKey permission, by design.
+    Value: !GetAtt StatementSigningKey.Arn
+  FunctionName:
+    Description: Sole billing Lambda.
+    Value: !Ref BillingFunction
+  AlertTopicArn:
+    Description: SNS topic backing the six CloudWatch alarms.
+    Value: !Ref BillingAlertTopic
+  CognitoUserPoolIdEcho:
+    Description: >-
+      Echo of the external user pool this stack authorizes against, so an operator
+      can confirm the nixus-api/billing scope was added to the right pool.
+    Value: !Ref CognitoUserPoolId
+  StripeModeEcho:
+    Description: >-
+      Echo of the configured Stripe mode, so an operator can see at a glance
+      whether a stack is on test or live keys (AD-15).
+    Value: !Ref StripeMode
+  CatalogLookupKeysEcho:
+    Description: >-
+      Echo of the published lookup-key set (AD-6), so an operator can confirm
+      which Stripe Prices this stack reads without opening the Lambda's
+      configuration.
+    Value: !Ref CatalogLookupKeys
+  AccountAppOriginEcho:
+    Description: >-
+      Echo of the ONE origin every Stripe return URL is composed from (AD-8).
+    Value: !Ref AccountAppOrigin
+  CatalogCacheTtlSecondsEcho:
+    Description: >-
+      Echo of THE single cache bound (AD-6). Every other layer derives from it; it
+      is published here so a drift investigation has one number to read.
+    Value: !Ref CatalogCacheTtlSeconds

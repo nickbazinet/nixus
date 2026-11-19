@@ -1,0 +1,534 @@
+name: Billing CI
+
+# Nixus Cloud billing CI for the nixus-billing stack (billing AD-15).
+#
+# Structured after account-ci.yml, including its two defining properties: there is
+# no long-lived AWS key anywhere - the deploy job federates via GitHub OIDC into a
+# role created out-of-band by infra/bootstrap/billing-oidc-deploy.yaml - and
+# default-branch-only deployment is enforced by TWO independent controls, because
+# an IAM trust policy `sub` claim cannot encode both a repository/environment and
+# a branch at once:
+#   1. this workflow's own `push: branches` trigger plus the job-level `if`, and
+#   2. the `production` GitHub environment's deployment branch policy.
+#
+# AD-15 forbids any step that prints or compares Stripe key material. Nothing here
+# calls `ssm get-parameter`, nothing passes `--with-decryption`, and the only
+# Parameter Store call is a metadata listing that cannot return a value. The
+# secrets are read by the Lambda's own execution role at cold start and nowhere
+# else (AD-7).
+
+on:
+  pull_request:
+    paths:
+      - "apps/api-billing/**"
+      - "packages/shared/**"
+      - "infra/bootstrap/billing-oidc-deploy.yaml"
+      - ".github/workflows/billing-ci.yml"
+      - "pnpm-lock.yaml"
+  # Deliberately NOT symmetric with pull_request: the bootstrap template is absent
+  # here. That stack grants the deploy role the permissions this workflow's
+  # pre-deploy assertions need, and it is applied by hand. If merging a bootstrap
+  # change also triggered the deploy job, the application would deploy against a
+  # role that does not yet hold the grant - failing closed on authorization, which
+  # reads as a broken check rather than a missing re-apply. Bootstrap changes are
+  # verified on the pull request and applied by the owner first, then the
+  # application is deployed by a dispatch or a later application-side push.
+  push:
+    branches: [master, main]
+    paths:
+      - "apps/api-billing/**"
+      - "packages/shared/**"
+      - ".github/workflows/billing-ci.yml"
+      - "pnpm-lock.yaml"
+  # Lets an operator deploy an already-merged commit without an empty push - the
+  # normal case for the first deployment, and for re-running one that failed on an
+  # account-side problem rather than a code problem.
+  workflow_dispatch:
+
+# Verification is cancellable: superseding a PR run wastes nothing. The deploy job
+# overrides this with a non-cancelling group of its own, because cancelling
+# `sam deploy` mid-flight abandons a CloudFormation stack in UPDATE_IN_PROGRESS,
+# which then blocks every later deployment until an operator intervenes by hand.
+concurrency:
+  group: billing-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default; the deploy job opts into id-token itself.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (lint, typecheck, test, cfn-lint, sam validate, sam build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck shared contract
+        run: pnpm --filter @nixus/shared typecheck
+
+      # The billing wire contract and the closed capability union live here, so a
+      # change to either is verified before the service that depends on it.
+      - name: Shared contract tests
+        run: pnpm --filter @nixus/shared test
+
+      - name: Lint service
+        run: pnpm --filter @nixus/api-billing lint
+
+      - name: Typecheck service
+        run: pnpm --filter @nixus/api-billing typecheck
+
+      # Includes the infrastructure, IAM-isolation, bootstrap and pipeline
+      # contract specs, and AD-14's forbidden-field log-serializer test.
+      - name: Unit and infrastructure contract tests
+        run: pnpm --filter @nixus/api-billing test
+
+      # The bootstrap stack is plain CloudFormation, so `sam validate` never sees
+      # it. Without this it is a deployable template whose syntax is checked by
+      # nothing, while holding the IAM grants that bound the whole pipeline.
+      - name: Lint the bootstrap template
+        run: pipx run cfn-lint infra/bootstrap/billing-oidc-deploy.yaml
+
+      # Offline gates: cfn-lint through SAM, and an esbuild bundle. No credentials.
+      - name: Validate SAM template
+        run: pnpm --filter @nixus/api-billing sam:validate
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Build SAM application
+        run: pnpm --filter @nixus/api-billing sam:build
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+  deploy:
+    name: Deploy (nixus-billing)
+    needs: verify
+    # Three independent conditions, all required:
+    #   1. deployment is explicitly switched on for this repository,
+    #   2. the trigger is a default-branch push or a manual dispatch, and
+    #   3. a dispatch must itself come from the default branch.
+    # Absent the variable this job is skipped entirely, so merging deploy-capable
+    # source cannot deploy anything until someone opts in.
+    if: >-
+      vars.BILLING_DEPLOY_ENABLED == 'true' &&
+      github.ref == 'refs/heads/master' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    # Never cancelled, and serialized against itself: one stack, one deployment at
+    # a time. `cancel-in-progress: false` is the load-bearing half.
+    concurrency:
+      group: billing-deploy-production
+      cancel-in-progress: false
+
+    permissions:
+      id-token: write
+      contents: read
+
+    # One source of truth for the values the deploy and its assertions share, so
+    # an assertion can never prove a value nobody deployed.
+    env:
+      BILLING_STACK_NAME: nixus-billing
+      ACCOUNT_STACK_NAME: nixus-account
+      BEDROCK_STACK_NAME: nixus-bedrock-api
+      API_DOMAIN_NAME: ${{ vars.API_DOMAIN_NAME }}
+      COGNITO_RESOURCE_SERVER_IDENTIFIER: nixus-api
+      # All THREE scopes. UpdateResourceServer is a FULL REPLACE, so a scope list
+      # submitted without one of these deletes it - and the `billing` scope must
+      # exist before any client requests it (AD-17).
+      REQUIRED_COGNITO_SCOPES: ai.invoke billing profile
+      STRIPE_MODE: ${{ vars.BILLING_STRIPE_MODE }}
+      STRIPE_SECRET_KEY_PARAMETER_NAME: /nixus-billing/stripe-secret-key
+      STRIPE_WEBHOOK_SECRET_PARAMETER_NAME: /nixus-billing/stripe-webhook-secret
+      CATALOG_CACHE_TTL_SECONDS: "300"
+      # The published lookup-key set (AD-6). A new tier is a change to THIS value
+      # plus a Stripe Dashboard change, with no code deploy.
+      CATALOG_LOOKUP_KEYS: classic_monthly_cad,advance_monthly_cad
+      # The ONE origin every Stripe success, cancel and portal return URL is
+      # composed from (AD-8). Not a secret: it is a public hostname.
+      ACCOUNT_APP_ORIGIN: https://account.nixusapp.com
+      MINIMUM_CLIENT_VERSION: 0.0.0
+      BILLING_FUNCTION_RESERVED_CONCURRENCY: "10"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SAM application
+        run: pnpm --filter @nixus/api-billing sam:build
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Configure AWS credentials via GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_BILLING_DEPLOY_ROLE_ARN }}
+          role-session-name: nixus-billing-deploy
+          aws-region: us-east-1
+
+      # The domain belongs to nixus-bedrock-api, and an API mapping is only
+      # honoured in an API-mapping routing mode. In ROUTING_RULE_ONLY the mapping
+      # would be created and silently never match, so /v1/billing would answer
+      # with the Bedrock API's own 403 instead.
+      - name: Assert the shared domain still accepts API mappings
+        run: |
+          set -euo pipefail
+          mode="$(aws apigatewayv2 get-domain-name \
+            --domain-name "${API_DOMAIN_NAME}" \
+            --query 'RoutingMode' --output text)"
+          echo "routing_mode=${mode}"
+
+          case "${mode}" in
+            API_MAPPING_ONLY|ROUTING_RULE_THEN_API_MAPPING) ;;
+            *)
+              echo "Routing mode ${mode} does not honour API mappings." >&2
+              echo "The v1/billing mapping would be created and never match." >&2
+              exit 1
+              ;;
+          esac
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # AD-17: the scope must exist before any client requests it, and
+      # UpdateResourceServer is a full replace - so a scope list submitted without
+      # `ai.invoke` takes hosted AI down and one submitted without `profile`
+      # takes the profile API down. All three are asserted together, before this
+      # stack publishes a route that needs one of them.
+      - name: Assert the nixus-api resource server holds all three scopes
+        run: |
+          set -euo pipefail
+          scopes="$(aws cognito-idp describe-resource-server \
+            --user-pool-id "${COGNITO_USER_POOL_ID}" \
+            --identifier "${COGNITO_RESOURCE_SERVER_IDENTIFIER}" \
+            --query 'ResourceServer.Scopes[].ScopeName' --output text | tr '\t' '\n')"
+          echo "scopes=$(printf '%s' "${scopes}" | tr '\n' ' ')"
+
+          for required in ${REQUIRED_COGNITO_SCOPES}; do
+            printf '%s\n' "${scopes}" | grep -Fxq "${required}" || {
+              echo "Scope ${required} is missing from the resource server." >&2
+              echo "Merge it back by reading the current scopes and submitting" >&2
+              echo "the FULL list: a partial list deletes the others." >&2
+              exit 1
+            }
+          done
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+
+      # EXISTENCE ONLY. `describe-parameters` returns metadata - name, type,
+      # last-modified - and has no way to return a value, which is why it is the
+      # call used here and why the deploy role holds no `ssm:GetParameter` at
+      # either path. AD-15 forbids a CI step that prints or compares key
+      # material, so there is deliberately no `get-parameter`, no
+      # `--with-decryption`, and no comparison of anything but a NAME and a TYPE.
+      #
+      # The TYPE is asserted too: a parameter created as a plain `String` would
+      # hold the Stripe key unencrypted, and the Lambda's `WithDecryption` read
+      # would succeed anyway - so the misconfiguration would be invisible at
+      # runtime.
+      - name: Assert both Stripe SecureStrings exist
+        run: |
+          set -euo pipefail
+          for path in \
+            "${STRIPE_SECRET_KEY_PARAMETER_NAME}" \
+            "${STRIPE_WEBHOOK_SECRET_PARAMETER_NAME}"; do
+            type="$(aws ssm describe-parameters \
+              --parameter-filters "Key=Name,Option=Equals,Values=${path}" \
+              --query 'Parameters[0].Type' --output text)"
+            echo "parameter=${path} type=${type}"
+
+            test "${type}" = "SecureString" || {
+              echo "${path} is ${type}, expected SecureString." >&2
+              echo "Create it with --type SecureString before deploying." >&2
+              exit 1
+            }
+          done
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # This stack maps itself under a domain the Bedrock stack owns, so that stack
+      # has to exist and be in a steady state first.
+      - name: Assert the Bedrock stack that owns the domain exists
+        run: |
+          set -euo pipefail
+          status="$(aws cloudformation describe-stacks \
+            --stack-name "${BEDROCK_STACK_NAME}" \
+            --query 'Stacks[0].StackStatus' --output text)"
+          echo "bedrock_stack_status=${status}"
+
+          case "${status}" in
+            CREATE_COMPLETE|UPDATE_COMPLETE|UPDATE_ROLLBACK_COMPLETE|IMPORT_COMPLETE) ;;
+            *)
+              echo "${BEDROCK_STACK_NAME} is ${status}; it owns ${API_DOMAIN_NAME}." >&2
+              exit 1
+              ;;
+          esac
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      - name: Deploy stack
+        working-directory: apps/api-billing
+        run: |
+          set -euo pipefail
+          test -n "${SAM_ARTIFACT_BUCKET}" || {
+            echo "BILLING_SAM_ARTIFACT_BUCKET is not set on the production environment." >&2
+            exit 1
+          }
+
+          # The bucket is explicit because `resolve_s3` is off: SAM's managed
+          # bucket would be created outside the bootstrap stack and outside its
+          # policies. EVERY parameter is passed explicitly because CloudFormation
+          # PRESERVES a previous value for any parameter a deploy omits - which is
+          # how a superseded value survives a deploy and nobody notices.
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --s3-bucket "${SAM_ARTIFACT_BUCKET}" \
+            --s3-prefix "${SAM_ARTIFACT_PREFIX}" \
+            --parameter-overrides \
+              "CognitoUserPoolArn=${COGNITO_USER_POOL_ARN}" \
+              "CognitoUserPoolId=${COGNITO_USER_POOL_ID}" \
+              "ApiDomainName=${API_DOMAIN_NAME}" \
+              "AlertEmail=${ALERT_EMAIL}" \
+              "StripeMode=${STRIPE_MODE}" \
+              "StripeSecretKeyParameterName=${STRIPE_SECRET_KEY_PARAMETER_NAME}" \
+              "StripeWebhookSecretParameterName=${STRIPE_WEBHOOK_SECRET_PARAMETER_NAME}" \
+              "CatalogCacheTtlSeconds=${CATALOG_CACHE_TTL_SECONDS}" \
+              "CatalogLookupKeys=${CATALOG_LOOKUP_KEYS}" \
+              "AccountAppOrigin=${ACCOUNT_APP_ORIGIN}" \
+              "MinimumClientVersion=${MINIMUM_CLIENT_VERSION}" \
+              "BillingFunctionReservedConcurrency=${BILLING_FUNCTION_RESERVED_CONCURRENCY}" \
+              "DeploymentRevision=${GITHUB_SHA}"
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+          SAM_ARTIFACT_BUCKET: ${{ vars.BILLING_SAM_ARTIFACT_BUCKET }}
+          # Stable prefix so the bucket's policy and lifecycle rules apply to one
+          # predictable path rather than whatever key SAM invents per run.
+          SAM_ARTIFACT_PREFIX: nixus-billing
+          COGNITO_USER_POOL_ARN: ${{ secrets.COGNITO_USER_POOL_ARN }}
+          COGNITO_USER_POOL_ID: ${{ secrets.COGNITO_USER_POOL_ID }}
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+
+      # AD-16's routing gate. Adding a mapping under a domain two other stacks
+      # already share is the one change in this deploy that can break services it
+      # does not own, so all three halves are proved: the Bedrock catch-all still
+      # points at the Bedrock API, the account stack still owns `v1/profile`, and
+      # the new key points at this stack's API.
+      - name: Assert the existing mappings on the shared domain are unchanged
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cleanup() { rm -rf "${work}"; }
+          trap cleanup EXIT
+
+          bedrock_api_id="$(aws cloudformation describe-stack-resource \
+            --stack-name "${BEDROCK_STACK_NAME}" \
+            --logical-resource-id HostedAiApi \
+            --query 'StackResourceDetail.PhysicalResourceId' --output text)"
+          profile_api_id="$(aws cloudformation describe-stacks \
+            --stack-name "${ACCOUNT_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='ProfileApiId'].OutputValue" \
+            --output text)"
+          billing_api_id="$(aws cloudformation describe-stacks \
+            --stack-name "${BILLING_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BillingApiId'].OutputValue" \
+            --output text)"
+
+          aws apigatewayv2 get-api-mappings \
+            --domain-name "${API_DOMAIN_NAME}" \
+            --output json > "${work}/mappings.json"
+
+          catch_all="$(jq -r '[.Items[] | select((.ApiMappingKey // "") == "")] | .[0].ApiId // ""' "${work}/mappings.json")"
+          profile_mapped="$(jq -r '[.Items[] | select(.ApiMappingKey == "v1/profile")] | .[0].ApiId // ""' "${work}/mappings.json")"
+          billing_mapped="$(jq -r '[.Items[] | select(.ApiMappingKey == "v1/billing")] | .[0].ApiId // ""' "${work}/mappings.json")"
+          billing_stage="$(jq -r '[.Items[] | select(.ApiMappingKey == "v1/billing")] | .[0].Stage // ""' "${work}/mappings.json")"
+          echo "catch_all_api=${catch_all} bedrock_api=${bedrock_api_id}"
+          echo "profile_mapping_api=${profile_mapped} profile_api=${profile_api_id}"
+          echo "billing_mapping_api=${billing_mapped} billing_api=${billing_api_id} billing_stage=${billing_stage}"
+
+          test "${catch_all}" = "${bedrock_api_id}" || {
+            echo "The empty-key mapping no longer points at the Bedrock API." >&2
+            exit 1
+          }
+          test "${profile_mapped}" = "${profile_api_id}" || {
+            echo "The v1/profile mapping no longer points at the account API." >&2
+            exit 1
+          }
+          test "${billing_mapped}" = "${billing_api_id}" || {
+            echo "The v1/billing mapping does not point at this stack's API." >&2
+            exit 1
+          }
+          test "${billing_stage}" = "v1" || {
+            echo "The v1/billing mapping names stage ${billing_stage}, expected v1." >&2
+            exit 1
+          }
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # AD-16's "existing routing still works" gate. The mapping assertions above
+      # prove the CONFIGURATION; these prove the deployed reality, which is the
+      # half that catches a longest-prefix surprise. Each route must answer with
+      # ITS OWN stack's normal 401 - a 403 or a 404 means the request reached the
+      # wrong API.
+      - name: Assert the profile and hosted-AI routes still reach their own stacks
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cleanup() { rm -rf "${work}"; }
+          trap cleanup EXIT
+
+          for route in v1/profile v1/ai/status; do
+            code="$(curl -sS -o "${work}/body.json" -w '%{http_code}' \
+              "https://${API_DOMAIN_NAME}/${route}")"
+            echo "route=${route} code=${code}"
+
+            test "${code}" = "401" || {
+              echo "GET /${route} answered ${code}, expected 401." >&2
+              echo "A 403 or 404 means the billing mapping stole the route." >&2
+              exit 1
+            }
+            jq -e '.error.code == "unauthorized"' "${work}/body.json" >/dev/null || {
+              echo "GET /${route} did not return its own stack's envelope." >&2
+              exit 1
+            }
+          done
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # The retained table must survive every stack change (AD-15). This asserts
+      # the deployed reality rather than trusting the template's DeletionPolicy.
+      - name: Assert the billing table is still PITR-enabled
+        run: |
+          set -euo pipefail
+          table="$(aws cloudformation describe-stacks \
+            --stack-name "${BILLING_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='BillingTableName'].OutputValue" \
+            --output text)"
+          test -n "${table}" && test "${table}" != "None"
+
+          pitr="$(aws dynamodb describe-continuous-backups \
+            --table-name "${table}" \
+            --query 'ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus' \
+            --output text)"
+          echo "table=${table} pitr=${pitr}"
+          test "${pitr}" = "ENABLED" || {
+            echo "PITR is ${pitr}, expected ENABLED" >&2
+            exit 1
+          }
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # AD-15's concurrency bound, asserted against the deployed function rather
+      # than the template. `0` is distinguished from the configured value on
+      # purpose: a reservation of zero makes the function INERT - every invocation
+      # is throttled - and it is the one value that would look like a successful
+      # reservation in a template diff.
+      - name: Assert the billing Lambda's reserved concurrency is in force
+        run: |
+          set -euo pipefail
+          function_name="$(aws cloudformation describe-stacks \
+            --stack-name "${BILLING_STACK_NAME}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" \
+            --output text)"
+
+          reserved="$(aws lambda get-function-concurrency \
+            --function-name "${function_name}" \
+            --query 'ReservedConcurrentExecutions' --output text)"
+          echo "function=${function_name} reserved=${reserved}"
+
+          test "${reserved}" != "None" || {
+            echo "The function carries NO reservation; AD-15 requires one." >&2
+            exit 1
+          }
+          test "${reserved}" != "0" || {
+            echo "A reservation of 0 makes the function inert, not bounded." >&2
+            exit 1
+          }
+          test "${reserved}" = "${BILLING_FUNCTION_RESERVED_CONCURRENCY}" || {
+            echo "Reserved concurrency is ${reserved}, expected ${BILLING_FUNCTION_RESERVED_CONCURRENCY}." >&2
+            exit 1
+          }
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+
+      # The one smoke test this pipeline can make: `GET /plans` is AD-3's public
+      # route, so it needs no credential. There is deliberately NO authenticated
+      # smoke test - no user token exists in CI, and minting one would mean a
+      # long-lived credential this workflow is built to avoid.
+      - name: Smoke-test the public plan catalog
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cleanup() { rm -rf "${work}"; }
+          trap cleanup EXIT
+
+          code="$(curl -sS -o "${work}/plans.json" -w '%{http_code}' \
+            "https://${API_DOMAIN_NAME}/v1/billing/plans")"
+          echo "plans_code=${code}"
+          test "${code}" = "200" || {
+            echo "GET /v1/billing/plans answered ${code}, expected 200." >&2
+            exit 1
+          }
+
+          # THE single cache bound has to cross the wire, because every client and
+          # CloudFront derive their own from it (AD-6).
+          jq -e '(.plans | type == "array") and (.cache_ttl_seconds | type == "number")' \
+            "${work}/plans.json" >/dev/null || {
+            echo "The catalog did not return the contract's shape." >&2
+            exit 1
+          }
+          jq -e ".cache_ttl_seconds == ${CATALOG_CACHE_TTL_SECONDS}" \
+            "${work}/plans.json" >/dev/null || {
+            echo "The advertised cache TTL is not the deployed one." >&2
+            exit 1
+          }
+          # A public catalog carries no user data and no Stripe price id (AD-6).
+          if jq -e '[.plans[]? | has("price_id")] | any' "${work}/plans.json" >/dev/null; then
+            echo "The public catalog exposed a Stripe price id." >&2
+            exit 1
+          fi
+        env:
+          AWS_DEFAULT_REGION: us-east-1

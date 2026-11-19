@@ -9,6 +9,7 @@ apps/web/.tanstack/
 apps/web/.lighthouseci/
 apps/api-bedrock/.aws-sam/
 apps/api-account/.aws-sam/
+apps/api-billing/.aws-sam/
 
 # Tauri build/generated
 apps/desktop/src-tauri/target/
