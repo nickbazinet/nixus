@@ -208,14 +208,16 @@ pub fn relink_install(
     expect_the_single_row(updated)
 }
 
-/// Forgets that this dataset ever joined, for a file that was REPLACED or COPIED (story wipe-epoch).
+/// Forgets that this dataset ever joined, for a file that was REPLACED or COPIED (story wipe-epoch),
+/// or for one whose local edits diverged from the cloud copy behind a freeze (billing AD-11).
 ///
-/// The opposite of `mark_joined`, and reachable only from `sync::state::remint_install_on` — the
-/// verb whose caller knows a copy or a restore happened, which the file itself cannot tell. Two
-/// things depend on it: `enable_inner` assesses rather than resumes, so CAP-5's question is asked
-/// exactly as "restoring a backup or copying a profile relinks that computer" claims; and the wipe
-/// epoch's self-wipe never fires for it, so an imported backup holding data the account has never
-/// seen is asked about instead of being destroyed.
+/// The opposite of `mark_joined`, and reachable only from `sync::state` — `remint_install_on`, the
+/// verb whose caller knows a copy or a restore happened, which the file itself cannot tell, and
+/// `settle_relink`, whose evidence is this row's own recorded freeze plus a published position.
+/// Two things depend on it: `enable_inner` assesses rather than resumes, so CAP-5's question is
+/// asked exactly as "restoring a backup or copying a profile relinks that computer" claims; and the
+/// wipe epoch's self-wipe never fires for it, so an imported backup holding data the account has
+/// never seen is asked about instead of being destroyed.
 pub fn clear_joined_at(conn: &Connection) -> Result<(), AppError> {
     let updated = conn.execute(
         "UPDATE sync_state SET joined_at = NULL, updated_at = datetime('now') WHERE id = 1",

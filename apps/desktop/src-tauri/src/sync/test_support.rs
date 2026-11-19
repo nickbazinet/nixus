@@ -473,7 +473,11 @@ pub(crate) struct FixedCapabilities(bool);
 
 impl CapabilitySource for FixedCapabilities {
     async fn capabilities(&self) -> AccountCapabilities {
-        AccountCapabilities::from_cloud_entitlement(self.0)
+        if self.0 {
+            AccountCapabilities::from_capabilities(&[crate::entitlements::MULTI_DEVICE_SYNC])
+        } else {
+            AccountCapabilities::empty()
+        }
     }
 }
 

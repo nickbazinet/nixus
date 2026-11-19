@@ -128,7 +128,7 @@ struct Entitled;
 
 impl CapabilitySource for Entitled {
     async fn capabilities(&self) -> AccountCapabilities {
-        AccountCapabilities::from_cloud_entitlement(true)
+        AccountCapabilities::from_capabilities(&[crate::entitlements::MULTI_DEVICE_SYNC])
     }
 }
 

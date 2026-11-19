@@ -361,7 +361,30 @@ impl SyncHost for DatasetHost {
             // AD-4: the install identity is minted here, and re-minted when the stored
             // machine fingerprint no longer describes this computer. It precedes the gate
             // because a dataset with no `sync_state` row has no pin for the gate to check.
-            self.pins()?.ensure_install().map_err(SyncFault::Auth)?;
+            let pins = self.pins()?;
+            pins.ensure_install().map_err(SyncFault::Auth)?;
+
+            // Billing AD-11's recording half, and the ONE place production writes
+            // `EntitlementLapsed`. It sits exactly here for the ordering `sync::state` states:
+            // `ensure_install` above has just consumed any recorded lapse into the relink, and
+            // the gate below would refuse on the very reason this call may have to lift.
+            //
+            // This is also the single funnel — `connect` is the only path the actor has to the
+            // cloud, on every tick, every enable, every `sync_now` and every launch — so a lapse
+            // is recorded whichever of them observes it first, and never twice.
+            //
+            // `entitlement_answer` and not `account_capabilities`: the gate is content with a
+            // bool, but a DURABLE record must tell a verified absence from an entitlement that
+            // could not be established at all. Never fatal: a reason that cannot be written
+            // leaves the gate to refuse on the live answer, which is what it would do anyway.
+            if let Err(error) =
+                pins.settle_entitlement_freeze(crate::entitlements::entitlement_answer().await)
+            {
+                warn!(
+                    "Sync could not record this account's entitlement state: {}",
+                    error
+                );
+            }
 
             let gate = self.gate()?;
             gate.check(None).await.map_err(SyncFault::Blocked)?;
