@@ -49,6 +49,22 @@ account default):
 > of Dashboard work left**, and it is why `stripe-sandbox-setup.ts` deliberately
 > does not check `products` when deciding whether the configuration is already
 > correct: a field that can never be set would make every run re-apply forever.
+>
+> Re-tested on CREATE as well as UPDATE, and with `payment_method_update`
+> explicitly enabled, in case the drop was an update-only quirk: `products` is
+> absent in the create response, in the update response, and on a fresh
+> retrieve of both. It is a genuine account/Managed-Payments restriction, not a
+> call-shape mistake.
+>
+> **Two side-facts from that test, both real gotchas:**
+> - Enabling `subscription_update` on a configuration whose
+>   `payment_method_update` is disabled is **rejected**: *"Cannot enable
+>   subscription updates while payment method update is disabled."* The account
+>   default already has it on, so an update to that configuration never hits
+>   this — but a freshly created one defaults it OFF and will.
+> - Portal configurations **cannot be deleted**, only deactivated. The probe
+>   created during that test is left `active: false` and is harmless; do not go
+>   looking for a delete call that does not exist.
 
 Re-read the current state before touching anything:
 
