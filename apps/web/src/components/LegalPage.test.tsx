@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { act, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import i18n from "@/lib/i18n";
@@ -490,12 +493,11 @@ describe("Nixus Cloud profile disclosure", () => {
     expect(text).toMatch(/account identifier, the route called, the response status/i);
   });
 
-  it("states the Terms version of the same facts, including that billing does not exist yet", () => {
+  it("states the Terms version of the same facts", () => {
     const text = renderText(<TermsPage locale="en" />);
 
     expect(text).toMatch(/Every Nixus Cloud account has one profile/i);
     expect(text).toMatch(/account\.nixusapp\.com/i);
-    expect(text).toMatch(/Payments and billing are not part of Nixus yet/i);
   });
 
   it("carries the same facts in French, with Nixus Cloud left untranslated", async () => {
@@ -514,7 +516,6 @@ describe("Nixus Cloud profile disclosure", () => {
 
       const terms = renderText(<TermsPage locale="fr" />);
       expect(terms).toMatch(/Chaque compte Nixus Cloud possède un seul profil/i);
-      expect(terms).toMatch(/ne font pas encore partie de Nixus/i);
     });
   });
 
@@ -559,5 +560,146 @@ describe("locale key parity", () => {
     );
 
     expect(untranslated).toEqual([]);
+  });
+});
+
+/*
+ * AD-16 is the release gate blocking the first live charge: the Terms must name Stripe
+ * as seller of record with its refund/dispute path, the Privacy Policy must state Nixus
+ * stores no card data and name Stripe as processor, and neither document (nor the README)
+ * may still claim billing does not exist. Each fact is pinned to the architecture spine's
+ * verified facts, not a paraphrase of them.
+ */
+describe("AD-16 billing and payments disclosure", () => {
+  it("names Stripe as seller of record in the Terms, with the refund/dispute path", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/Stripe is the seller of record/i);
+    expect(text).toMatch(/Stripe-hosted pages/i);
+    expect(text).toMatch(/Stripe can issue a refund within 60 days/i);
+    expect(text).toMatch(/Nixus takes no action of its own on a dispute/i);
+  });
+
+  it("states tax and currency handling without ever saying tax is extra", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/listed in Canadian dollars/i);
+    expect(text).toMatch(/tax is included in what you pay/i);
+    expect(text).not.toMatch(/taxes? extra/i);
+    expect(text).not.toMatch(/plus tax/i);
+    expect(text).not.toMatch(/tax not included/i);
+  });
+
+  it("states billing-period behaviour and that losing a plan never deletes data", () => {
+    const text = renderText(<TermsPage locale="en" />);
+
+    expect(text).toMatch(/Upgrading to a higher plan takes effect immediately/i);
+    expect(text).toMatch(/Downgrading or cancelling takes effect at the end of/i);
+    expect(text).toMatch(/Stripe retries it on its own schedule/i);
+    expect(text).toMatch(/never deletes your data/i);
+  });
+
+  it("states in the Privacy Policy that no card data is stored and names Stripe as processor", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+
+    expect(text).toMatch(/Nixus stores no card data of any kind/i);
+    expect(text).toMatch(/Stripe is Nixus's payment processor/i);
+    expect(text).toMatch(/account identifier, your plan, your subscription status/i);
+    expect(text).not.toMatch(/Nixus stores nothing for billing/i);
+  });
+
+  it("never claims Nixus issues or adjudicates refunds, or that billing does not exist", () => {
+    for (const page of [<TermsPage locale="en" />, <PrivacyPage locale="en" />]) {
+      const text = renderText(page);
+      expect(text).not.toMatch(/Payments and billing are not part of Nixus yet/i);
+      expect(text).not.toMatch(/no payments or billing system/i);
+      expect(text).not.toMatch(/Nixus issues refunds|Nixus adjudicates/i);
+    }
+  });
+
+  it("carries the same facts in French, with Nixus Cloud left untranslated", async () => {
+    await withFrench(() => {
+      const terms = renderText(<TermsPage locale="fr" />);
+
+      expect(terms).toMatch(/Stripe est le vendeur officiel/i);
+      expect(terms).toMatch(/remboursement dans les 60 jours/i);
+      expect(terms).toMatch(/la taxe est comprise dans ce que vous payez/i);
+      expect(terms).not.toMatch(/taxes en sus|hors taxes|plus taxes/i);
+      expect(terms).not.toMatch(/ne font pas encore partie de Nixus/i);
+
+      const privacy = renderText(<PrivacyPage locale="fr" />);
+      expect(privacy).toMatch(/Nixus ne stocke aucune donnée de carte/i);
+      expect(privacy).toMatch(/Stripe est le processeur de paiement de Nixus/i);
+      expect(privacy).not.toMatch(/ne font pas encore partie de Nixus/i);
+    });
+  });
+
+  it("keeps both new sections in the rendered section order", () => {
+    const termsKeys = TERMS_SECTIONS.flatMap((section) => section.bodyKeys);
+    const privacyKeys = PRIVACY_SECTIONS.flatMap((section) => section.bodyKeys);
+
+    expect(termsKeys).toEqual(
+      expect.arrayContaining([
+        "termsPage.billing.body",
+        "termsPage.billing.refunds",
+        "termsPage.billing.tax",
+        "termsPage.billing.periods",
+      ])
+    );
+    expect(privacyKeys).toEqual(
+      expect.arrayContaining([
+        "privacyPage.payments.body",
+        "privacyPage.payments.stored",
+        "privacyPage.payments.stripeTerms",
+        "privacyPage.payments.noSale",
+      ])
+    );
+  });
+
+  it("keeps the AD-14 tier guard passing alongside the new billing copy", () => {
+    const text = renderText(<PrivacyPage locale="en" />);
+    expect(text).not.toMatch(/premium multi-device|multi-device sync tier/i);
+  });
+});
+
+/* README no longer claims payments or billing do not exist (AD-16). */
+describe("README no-payments claim is gone", () => {
+  it("does not contain the removed sentence", () => {
+    const readme = readFileSync(join(process.cwd(), "..", "..", "README.md"), "utf-8");
+
+    expect(readme).not.toMatch(/There is no payments or billing system in Nixus yet/i);
+    expect(readme).toMatch(/seller of record/i);
+  });
+});
+
+/* Key-parity test scoped to the new namespaces: identical key sets, no blank values, and
+ * "Nixus Cloud" left untranslated in French, matching the parity convention this file
+ * already enforces for the whole locale file. */
+describe("termsPage.billing / privacyPage.payments key parity", () => {
+  it("defines identical key sets with no blank values in both locales", () => {
+    const prefixes = ["termsPage.billing.", "privacyPage.payments."];
+    const enKeys = Object.keys(enMessages)
+      .filter((key) => prefixes.some((prefix) => key.startsWith(prefix)))
+      .sort();
+    const frKeys = Object.keys(frMessages)
+      .filter((key) => prefixes.some((prefix) => key.startsWith(prefix)))
+      .sort();
+
+    expect(enKeys.length).toBeGreaterThan(0);
+    expect(frKeys).toEqual(enKeys);
+
+    for (const key of enKeys) {
+      expect(enMessages[key as keyof typeof enMessages]).not.toEqual("");
+      expect(frMessages[key as keyof typeof frMessages]).not.toEqual("");
+    }
+  });
+
+  it("leaves Nixus Cloud untranslated in the new French billing and payments copy", () => {
+    const frBillingHeading = frMessages["termsPage.billing.heading" as keyof typeof frMessages];
+    const frPaymentsHeading =
+      frMessages["privacyPage.payments.heading" as keyof typeof frMessages];
+
+    expect(frBillingHeading).toMatch(/Nixus Cloud/);
+    expect(frPaymentsHeading).toMatch(/Nixus Cloud/);
   });
 });

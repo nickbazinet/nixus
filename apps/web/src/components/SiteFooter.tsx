@@ -4,7 +4,7 @@ import { Facebook, Github, Instagram } from "lucide-react";
 
 import { contactMailto } from "@/content/contact";
 import { PRIVACY_PAGE_PATHS, TERMS_PAGE_PATHS } from "./LegalPage";
-import { betaPagePath, homePath, localeFromLanguage } from "@/lib/localePaths";
+import { betaPagePath, homePath, localeFromLanguage, pricingPagePath } from "@/lib/localePaths";
 
 const GITHUB_URL = "https://github.com/nickbazinet/nixus";
 const INSTAGRAM_URL = "https://www.instagram.com/nixusapp/";
@@ -51,6 +51,7 @@ export function SiteFooter() {
         { href: `${home}#how-it-works`, label: t("nav.howItWorks") },
         { href: `${home}#how`, label: t("nav.product") },
         { href: `${home}#features`, label: t("nav.features") },
+        { href: pricingPagePath(locale), label: t("nav.pricing") },
         { href: `${home}#tour`, label: t("footer.col.tourLink") },
       ],
     },

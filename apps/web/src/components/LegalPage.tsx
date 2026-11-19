@@ -117,6 +117,17 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
     bodyKeys: ["termsPage.profile.body", "termsPage.profile.account"],
   },
   { headingKey: "termsPage.accounts.heading", bodyKeys: ["termsPage.accounts.body"] },
+  // AD-16: billing/seller-of-record disclosure, placed right after accounts
+  // because that is where readers already learn how a Nixus Cloud account works.
+  {
+    headingKey: "termsPage.billing.heading",
+    bodyKeys: [
+      "termsPage.billing.body",
+      "termsPage.billing.refunds",
+      "termsPage.billing.tax",
+      "termsPage.billing.periods",
+    ],
+  },
   { headingKey: "termsPage.noAdvice.heading", bodyKeys: ["termsPage.noAdvice.body"] },
   { headingKey: "termsPage.yourData.heading", bodyKeys: ["termsPage.yourData.body"] },
   { headingKey: "termsPage.warranty.heading", bodyKeys: ["termsPage.warranty.body"] },
@@ -144,6 +155,17 @@ export const PRIVACY_SECTIONS: readonly LegalSection[] = [
       "privacyPage.profile.deleteAll",
       "privacyPage.profile.cookie",
       "privacyPage.profile.logs",
+    ],
+  },
+  // AD-16: no-card-data / Stripe-processor disclosure, placed right after the
+  // Nixus Cloud profile section since both are account-data disclosures.
+  {
+    headingKey: "privacyPage.payments.heading",
+    bodyKeys: [
+      "privacyPage.payments.body",
+      "privacyPage.payments.stored",
+      "privacyPage.payments.stripeTerms",
+      "privacyPage.payments.noSale",
     ],
   },
   { headingKey: "privacyPage.aiLeaves.heading", bodyKeys: ["privacyPage.aiLeaves.body"] },

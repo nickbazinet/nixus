@@ -7,6 +7,7 @@ import {
   useDownloadClick,
   type DesktopOS,
   type DownloadCTASize,
+  type DownloadCTAVariant,
 } from "./ctaShell";
 
 /**
@@ -19,11 +20,13 @@ import {
 export function SingleOSVariant({
   os,
   size,
+  variant = "default",
   showAltOS,
   className,
 }: {
   os: DesktopOS;
   size: DownloadCTASize;
+  variant?: DownloadCTAVariant;
   showAltOS: boolean;
   className?: string;
 }) {
@@ -40,6 +43,7 @@ export function SingleOSVariant({
       <Button
         nativeButton={false}
         size={size}
+        variant={variant}
         className="mkt-tap-cta"
         render={
           <a

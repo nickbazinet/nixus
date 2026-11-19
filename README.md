@@ -87,7 +87,7 @@ Before you download: an honest list so you know if this is worth your time.
 - **No bank connection** — you upload credit card statements manually (screenshot or PDF).
 - **Desktop only** — macOS and Windows. No mobile app.
 - **Single user** — one person's finances per install.
-- **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for premium Nixus Cloud accounts, through Nixus infrastructure to AWS Bedrock in the United States. See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
+- **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for Nixus Cloud accounts on the Advance plan, through Nixus infrastructure to AWS Bedrock in the United States. See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
 - **Sync, if you turn it on, stores a copy of your records in Nixus-operated cloud storage** — it is off by default, needs a Nixus Cloud account that includes it, and is **not** end-to-end encrypted in this first version. See [Sync across your computers (optional)](#sync-across-your-computers-optional). Leave it off and no copy of your records leaves your machine.
 - **A Nixus Cloud account has a profile stored in the cloud, not on your machine** — name, date of birth, income bracket, location, and picture. See [Your Nixus Cloud profile](#your-nixus-cloud-profile). A local profile with no Nixus Cloud account keeps this information on your device only.
 - **Pre-alpha** — features change and things break between releases.
@@ -104,7 +104,7 @@ Everything Nixus stores — budgets, transactions, accounts, assets, net worth h
 The AI features are the other exception, and they are opt-in by nature: they only run when you invoke them (statement import, AI chat, project advice, spending-trends insight). When you do, the content of that one request leaves your machine for processing:
 
 - **Bring your own credentials (default).** The request goes directly from your machine to the provider you configured (AWS Bedrock or OpenAI) using credentials you supply. Nixus infrastructure is not involved and cannot see the request.
-- **Nixus Cloud premium (hosted AI).** The request is transmitted **through Nixus's own infrastructure** to **AWS Bedrock**. Nixus does not store the prompt, the attached statement, the model's response, or the file name in its own databases or logs — it records only your account identifier, timestamps, request counts, and token counts for quota and billing purposes.
+- **Nixus Cloud Advance plan (hosted AI).** The request is transmitted **through Nixus's own infrastructure** to **AWS Bedrock**. Nixus does not store the prompt, the attached statement, the model's response, or the file name in its own databases or logs — it records only your account identifier, timestamps, request counts, and token counts for quota and billing purposes.
 
 Two limits on that guarantee, stated plainly:
 
@@ -151,7 +151,7 @@ The account website at account.nixusapp.com uses one essential, first-party sess
 
 Nixus does not log your profile values, your picture, or any token or cookie. What it logs for running the service is your account identifier, the route called, the response status, timing, and sizes.
 
-There is no payments or billing system in Nixus yet.
+Nixus Cloud subscriptions are sold through Stripe, which is the seller of record and handles payment and tax. Nixus stores no card data. See [Privacy Policy](https://nixusapp.com/privacy) and [Terms of Service](https://nixusapp.com/terms) below for the full disclosure.
 
 Full terms: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
 

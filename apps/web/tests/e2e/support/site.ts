@@ -4,15 +4,91 @@ import { expect, type Locator, type Page, type TestInfo } from "@playwright/test
 export const ROUTES = [
   "/",
   "/beta",
+  "/pricing",
   "/terms",
   "/privacy",
   "/404",
   "/fr/",
   "/fr/beta",
+  "/fr/pricing",
   "/fr/terms",
   "/fr/privacy",
   "/fr/404",
 ] as const;
+
+/**
+ * The live plan catalog the `/pricing` page hydrates over.
+ *
+ * Every spec that visits that route must stub this. The suite is hermetic by
+ * design — `captureConsole` allows nothing through, including a failed request
+ * — and the billing API is a separate deploy on a separate origin that serves
+ * no CORS headers to this one, so a real call would surface as
+ * `net::ERR_FAILED` and fail the layout gate for a reason that has nothing to
+ * do with layout. Stubbing it also makes the hydrated amounts assertable.
+ */
+export const PLAN_CATALOG_URL = "https://api.nixusapp.com/v1/billing/plans";
+
+/** The catalog body the suite hydrates with. Amounts differ from the baked ones. */
+export const STUB_PLAN_CATALOG = {
+  plans: [
+    {
+      tier: "classic",
+      lookup_key: "classic_monthly_cad",
+      unit_amount_cents: 1099,
+      currency: "CAD",
+      interval: "month",
+      display_order: 1,
+      capabilities: ["household_net_worth", "multi_device_sync"],
+      monthly_request_limit: null,
+    },
+    {
+      tier: "advance",
+      lookup_key: "advance_monthly_cad",
+      unit_amount_cents: 2199,
+      currency: "CAD",
+      interval: "month",
+      display_order: 2,
+      capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+      monthly_request_limit: 500,
+    },
+  ],
+  cache_ttl_seconds: 300,
+} as const;
+
+/**
+ * Answer the catalog request with `body`, after `delayMs`.
+ *
+ * `body: null` answers 503 — the shape a real outage takes. Deliberately not
+ * `route.abort()`: an aborted request also emits a URL-less
+ * "net::ERR_FAILED" console error, which no filter can exclude without
+ * weakening `captureConsole`'s no-allowlist gate. The aborted and malformed
+ * paths are covered exhaustively in `src/lib/planCatalog.test.ts`.
+ *
+ * `delayMs` lets a caller hold the answer back until the rest of the page has
+ * settled, which is what makes a layout-shift measurement attributable to the
+ * price swap rather than to the download CTA upgrading after OS detection.
+ *
+ * Attach before the first `goto`: the fetch starts as soon as the page hydrates.
+ */
+export async function stubPlanCatalog(
+  page: Page,
+  body: unknown = STUB_PLAN_CATALOG,
+  delayMs = 0,
+): Promise<void> {
+  await page.route(PLAN_CATALOG_URL, async (route) => {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    await route.fulfill({
+      status: body === null ? 503 : 200,
+      contentType: "application/json",
+      headers: { "access-control-allow-origin": "*" },
+      body: JSON.stringify(
+        body === null ? { error: { code: "unavailable" } } : body,
+      ),
+    });
+  });
+}
 
 /** Chrome UA strings pinned per branch so OS detection never depends on the CI host. */
 export const UA = {

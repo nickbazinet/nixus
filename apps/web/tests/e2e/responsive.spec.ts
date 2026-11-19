@@ -8,6 +8,7 @@ import {
   headerReport,
   overflowReport,
   scope,
+  stubPlanCatalog,
   viewportWidth,
 } from "./support/site";
 
@@ -23,6 +24,7 @@ for (const route of ROUTES) {
       const devtools = captureConsole(page);
       const width = viewportWidth(page);
 
+      await stubPlanCatalog(page);
       await page.goto(route);
       await page.waitForLoadState("networkidle");
 
@@ -49,6 +51,7 @@ for (const route of ROUTES) {
     test("stays overflow-free after scrolling to the bottom", async ({
       page,
     }, testInfo) => {
+      await stubPlanCatalog(page);
       await page.goto(route);
       await page.waitForLoadState("networkidle");
 

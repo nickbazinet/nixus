@@ -22,6 +22,13 @@ describe("SiteHeader", () => {
     expect(link).toHaveTextContent("Founding");
   });
 
+  it("renders the Pricing nav link at the pricing route", () => {
+    renderWithProviders(<SiteHeader />);
+    const link = screen.getByTestId("header-pricing-link");
+    expect(link).toHaveAttribute("href", "/pricing");
+    expect(link).toHaveTextContent("Pricing");
+  });
+
   /* AD-10's marketing-site half: a plain cross-origin link with a neutral label.
    * No session is read and no signed-in state is rendered, so the site stays fully
    * static and cacheable - signed-in state here is explicitly deferred. */

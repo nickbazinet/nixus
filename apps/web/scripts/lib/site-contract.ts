@@ -43,6 +43,10 @@ const PRIVACY_ALTERNATES: Record<ExpectedLocale, string> = {
   en: "/privacy",
   fr: "/fr/privacy",
 };
+const PRICING_ALTERNATES: Record<ExpectedLocale, string> = {
+  en: "/pricing",
+  fr: "/fr/pricing",
+};
 
 const MARKER: Record<ExpectedLocale, string> = {
   en: "Skip to main content",
@@ -105,6 +109,20 @@ export const EXPECTED_ROUTES: readonly ExpectedRoute[] = [
     htmlFile: "fr/privacy/index.html",
     localeMarker: MARKER.fr,
     alternates: PRIVACY_ALTERNATES,
+  },
+  {
+    canonicalPath: "/pricing",
+    locale: "en",
+    htmlFile: "pricing/index.html",
+    localeMarker: MARKER.en,
+    alternates: PRICING_ALTERNATES,
+  },
+  {
+    canonicalPath: "/fr/pricing",
+    locale: "fr",
+    htmlFile: "fr/pricing/index.html",
+    localeMarker: MARKER.fr,
+    alternates: PRICING_ALTERNATES,
   },
   {
     canonicalPath: "/404",

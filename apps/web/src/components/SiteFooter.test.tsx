@@ -143,6 +143,34 @@ describe("SiteFooter", () => {
     }
   });
 
+  it("links to the pricing page from the Product column", () => {
+    renderWithProviders(<SiteFooter />);
+    const nav = screen.getByRole("navigation", { name: /^product$/i });
+    const link = screen.getByRole("link", { name: /^Pricing$/i });
+
+    expect(nav).toContainElement(link);
+    expect(link).toHaveAttribute("href", "/pricing");
+  });
+
+  /* The footer is the only chrome that carries pricing below the desktop tier,
+   * so a French visitor landing on the English page here is a real dead end. */
+  it("links to the French pricing page when the locale is fr", async () => {
+    await act(async () => {
+      await i18n.changeLanguage("fr");
+    });
+    try {
+      renderWithProviders(<SiteFooter />);
+      expect(screen.getByRole("link", { name: /^Tarifs$/i })).toHaveAttribute(
+        "href",
+        "/fr/pricing",
+      );
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage("en");
+      });
+    }
+  });
+
   it("never points a French visitor at the English disclosures", async () => {
     await act(async () => {
       await i18n.changeLanguage("fr");

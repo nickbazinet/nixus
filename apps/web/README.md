@@ -18,6 +18,21 @@ pnpm --filter @nixus/web test:e2e   # Playwright e2e (added in later stories)
 
 `pnpm build` produces a fully prerendered static site under `.output/public/`. The Nitro server build under `.output/server/` is unused for the public deployment but is generated as a byproduct of the TanStack Start build pipeline. The CDN serves only `.output/public/`.
 
+## Environment
+
+Copy `.env.example` to `.env` and adjust. Everything the browser needs is `VITE_`-prefixed; all of it is public, none of it is secret.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `VITE_BILLING_API_URL` | `https://api.nixusapp.com` | Origin the `/pricing` page reads the live plan catalog from (`GET /v1/billing/plans`). Point it at a Stripe test-mode deployment to develop against test prices. |
+| `VITE_CLOUDFLARE_ANALYTICS_TOKEN` | unset | Cloudflare Web Analytics site token. The beacon is only injected on production builds when this is set. |
+
+### How `/pricing` gets its prices
+
+The page ships **baked** EN/FR prices in `src/content/pricing.ts` and those are what gets prerendered, so a crawler and an offline visitor both see complete, correct amounts. After hydration `src/lib/usePlanCatalog.ts` fetches the live catalog and replaces the amount, currency and interval of the Stripe-backed columns — per field, so one malformed value does not discard the rest. That is what lets an operator change a price in the Stripe Dashboard with no rebuild.
+
+A failed, slow or non-200 fetch leaves the baked prices in place silently: no banner, no spinner, no console output. Plans are referenced only by `lookup_key`; no Stripe `price_id` or hard-coded live amount exists anywhere in this app. `cache_ttl_seconds` from the response is the system's only cache bound, so the client adds no TTL and no second cache layer of its own.
+
 ## Project Structure
 
 ```

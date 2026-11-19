@@ -15,6 +15,21 @@ export function betaPagePath(locale: Locale): string {
 }
 
 /**
+ * Per-locale pricing paths, used as each other's hreflang alternates. A record
+ * as well as a function because `head()` needs the pair at once, exactly the
+ * way `TERMS_PAGE_PATHS` is consumed.
+ */
+export const PRICING_PAGE_PATHS: Record<Locale, string> = {
+  en: "/pricing",
+  fr: "/fr/pricing",
+};
+
+/** Pricing page path for the given locale. */
+export function pricingPagePath(locale: Locale): string {
+  return PRICING_PAGE_PATHS[locale];
+}
+
+/**
  * The account app, which is a separate origin with its own deploy (AD-10).
  *
  * A plain cross-origin link with a neutral label, and nothing more: the marketing
@@ -25,6 +40,18 @@ export function accountAppUrl(locale: Locale): string {
   return locale === "fr"
     ? "https://account.nixusapp.com/fr"
     : "https://account.nixusapp.com";
+}
+
+/**
+ * Where a pricing-page plan button sends a visitor.
+ *
+ * The checkout flow itself lives in the account app (AD-8 keeps every commerce
+ * surface Stripe-hosted and out of this origin), so the marketing site only
+ * hands over which plan was chosen. A plan travels as its `lookup_key`, never
+ * as a Stripe `price_id` — AD-6 keeps price identity in the Dashboard.
+ */
+export function billingPlanUrl(locale: Locale, planLookupKey: string): string {
+  return `${accountAppUrl(locale)}/billing?plan=${encodeURIComponent(planLookupKey)}`;
 }
 
 /** Home path for the given locale. */

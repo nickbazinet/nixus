@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-import { betaPagePath, homePath } from "./localePaths";
+import { betaPagePath, homePath, pricingPagePath } from "./localePaths";
 import { SITE } from "./meta";
 import {
   PRIVACY_PAGE_PATHS,
@@ -62,6 +62,10 @@ describe("sitemap.xml", () => {
       `${SITE.url}${TERMS_PAGE_PATHS.fr}`,
       `${SITE.url}${PRIVACY_PAGE_PATHS.en}`,
       `${SITE.url}${PRIVACY_PAGE_PATHS.fr}`,
+      // The pricing page is indexable because its prices are prerendered, not
+      // fetched — a crawler gets the real amounts.
+      `${SITE.url}${pricingPagePath("en")}`,
+      `${SITE.url}${pricingPagePath("fr")}`,
     ]);
   });
 

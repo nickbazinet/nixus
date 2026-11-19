@@ -9,11 +9,21 @@ import { useOptionalDownloadState } from "./DownloadStateContext";
 /** Sizes correspond to the shared Button's size variants. */
 export type DownloadCTASize = "sm" | "default" | "lg";
 
+/**
+ * `default` is the brand gradient — the site's primary conversion treatment in
+ * the hero, header and beta page. `outline` exists for the pricing page, where
+ * the gradient has to belong to the recommended plan alone: two gradient
+ * buttons in one row of four cards reads as two recommendations.
+ */
+export type DownloadCTAVariant = "default" | "outline";
+
 export type DesktopOS = "macos" | "windows";
 
 export type DownloadCTAProps = {
   /** Visual size — sticky header uses 'sm', mid-page 'default', hero 'lg'. */
   size?: DownloadCTASize;
+  /** Visual weight. Defaults to the brand gradient. */
+  variant?: DownloadCTAVariant;
   /**
    * When true and the OS-specific (macos/windows) variant is rendered,
    * show a small text link to the *other* OS's download below the CTA.

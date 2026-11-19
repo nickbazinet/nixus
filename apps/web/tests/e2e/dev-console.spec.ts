@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { ROUTES, captureConsole } from "./support/site";
+import { ROUTES, captureConsole, stubPlanCatalog } from "./support/site";
 
 /**
  * Dev-build console gate.
@@ -17,6 +17,7 @@ for (const route of ROUTES) {
   test(`${route} hydrates clean in a dev build`, async ({ page }) => {
     const devtools = captureConsole(page);
 
+    await stubPlanCatalog(page);
     await page.goto(route);
     await page.waitForLoadState("networkidle");
     // Hydration diagnostics land after the client bundle attaches, which

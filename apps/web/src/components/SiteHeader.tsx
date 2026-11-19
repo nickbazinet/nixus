@@ -10,6 +10,7 @@ import {
   betaPagePath,
   homePath,
   localeFromLanguage,
+  pricingPagePath,
 } from "@/lib/localePaths";
 import { LanguageToggle } from "./LanguageToggle";
 import { ThemeToggle } from "./ThemeToggle";
@@ -52,14 +53,19 @@ const SECTION_LINKS = [
   { id: "faq", labelKey: "nav.faq" },
 ] as const;
 
+const NAV_LINK_CLASS =
+  "inline-flex items-center rounded-md px-3 py-2 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50";
+
 export function SiteHeader() {
   const { t, i18n } = useTranslation();
   const { pathname } = useLocation();
   const [scrolled, setScrolled] = useState(false);
   const locale = localeFromLanguage(i18n.language);
   const betaHref = betaPagePath(locale);
+  const pricingHref = pricingPagePath(locale);
   const onBetaPage =
     pathname === "/beta" || pathname === "/fr/beta";
+  const onPricingPage = pathname === "/pricing" || pathname === "/fr/pricing";
   const sectionBase = homePath(locale);
 
   useEffect(() => {
@@ -112,11 +118,31 @@ export function SiteHeader() {
           data-testid="header-sections"
           className="hidden lg:flex lg:items-center lg:gap-1"
         >
+          {/* A route, not an anchor, and first: it is the one destination in
+              here a visitor arrives looking for by name. It is `lg:`-gated for
+              the reason above — the phone bar is already full — and the footer
+              carries it at every width instead. */}
+          <a
+            href={pricingHref}
+            data-testid="header-pricing-link"
+            aria-current={onPricingPage ? "page" : undefined}
+            className={cn(
+              NAV_LINK_CLASS,
+              onPricingPage
+                ? "text-brand-ink"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t("nav.pricing")}
+          </a>
           {SECTION_LINKS.map((link) => (
             <a
               key={link.id}
               href={`${sectionBase}#${link.id}`}
-              className="inline-flex items-center rounded-md px-3 py-2 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+              className={cn(
+                NAV_LINK_CLASS,
+                "text-muted-foreground hover:text-foreground",
+              )}
             >
               {t(link.labelKey)}
             </a>

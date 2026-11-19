@@ -75,6 +75,7 @@ function useShownEvent(os: OS, isLoading: boolean): void {
 
 export function DownloadCTA({
   size = "default",
+  variant = "default",
   showAltOS = false,
   className,
 }: DownloadCTAProps) {
@@ -82,12 +83,19 @@ export function DownloadCTA({
   useShownEvent(os, isLoading);
 
   if (isLoading || os === "unknown") {
-    return <ChoosePlatformVariant size={size} className={className} />;
+    return (
+      <ChoosePlatformVariant size={size} variant={variant} className={className} />
+    );
   }
 
   if (os === "linux") {
     return (
-      <ChoosePlatformVariant size={size} showLinuxNote className={className} />
+      <ChoosePlatformVariant
+        size={size}
+        variant={variant}
+        showLinuxNote
+        className={className}
+      />
     );
   }
 
@@ -99,6 +107,7 @@ export function DownloadCTA({
     <SingleOSVariant
       os={os}
       size={size}
+      variant={variant}
       showAltOS={showAltOS}
       className={className}
     />
