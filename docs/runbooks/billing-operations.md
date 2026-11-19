@@ -458,7 +458,17 @@ retired. Skipping the backfill before the read cutover would mean no bedrock
 request that depended on it had an equivalent `ENTITLEMENT` record to fall back
 on.
 
-### Retiring `premium` is NOT an attribute deletion — measured 2026-11-19
+**That order is now complete, 2026-11-19 (Epic H).** The backfill above had
+already run; `apps/api-bedrock/src/lib/{table,quota,entitlement}.ts` no longer
+read, write, or condition-check `premium` at all, and the reservation
+transaction's first `ConditionCheck` is against the billing table's
+`ENTITLEMENT.version` instead. The three skipped shapes above still need the
+per-account decisions described there; nothing about Epic H resolves them
+automatically, and `--delete-source --apply` on a re-run of the backfill (new
+flag, same script) deletes a migrated account's now-dead source `CONFIG` item
+without touching any of the three.
+
+### Retiring `premium` was NOT an attribute deletion — measured 2026-11-19, shipped the same day
 
 Do not treat the last step of that order as "remove the attribute". It was
 tested against the deployed stack with a throwaway account and the result is
@@ -470,20 +480,21 @@ unambiguous:
 | both present, authority limit set to 777 | `premium: true`, limit **777** — the authority wins |
 | `ENTITLEMENT` granting `hosted_ai` with limit 777, legacy `CONFIG` **deleted** | **`premium: false`, limit 0** |
 
-The third row is the blocker. The grant is present and valid, but
-`hostedAiServiceability` reports it unservable because `quota.ts` still
-reserves against the legacy `CONFIG` item — both its `ConditionCheck` on
-`premium = true` and the `monthly_request_limit` the reservation is gated on
-come from there. Status deliberately refuses to advertise what invoke would
-reject, so it answers `premium: false`.
+The third row was the blocker before Epic H shipped. The grant was present and
+valid, but `hostedAiServiceability` reported it unservable because `quota.ts`
+reserved against the legacy `CONFIG` item — both its `ConditionCheck` on
+`premium = true` and the `monthly_request_limit` the reservation was gated on
+came from there. Status deliberately refused to advertise what invoke would
+reject, so it answered `premium: false`.
 
-**Consequence:** deleting `premium`, or deleting the `CONFIG` item, removes
-hosted AI from an entitled user. Epic H must therefore move the reservation off
-`CONFIG` in the SAME change that removes the attribute — the quota transaction
-has to take its limit from the authority and drop the `premium` condition
-together. The first two rows are what make the current release safe to sit on
-indefinitely: both shapes work, and reverting the bedrock read restores
-previous behaviour with no data loss.
+**Consequence then:** deleting `premium`, or deleting the `CONFIG` item, would
+have removed hosted AI from an entitled user, unless the reservation moved off
+`CONFIG` in the SAME change that removed the attribute — which is exactly what
+Epic H did: the quota transaction now takes its limit and its optimistic-lock
+check from the authority's `ENTITLEMENT` record and drops the `premium`
+condition together. The table above is kept verbatim as the measurement that
+proved the blocker real; it describes a state this codebase can no longer
+reach, not a live risk.
 
 ---
 

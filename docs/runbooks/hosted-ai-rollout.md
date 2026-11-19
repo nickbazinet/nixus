@@ -671,94 +671,28 @@ aws dynamodb put-item --table-name "$TABLE" --item '{
 `enabled: false` means every `POST /v1/ai/invoke` returns `503 hosted_unavailable`
 and `GET /v1/ai/status` reports non-premium. That is the intended pre-rollout state.
 
-### 3.2 Per-premium-user config
+### 3.2 Per-premium-user config — RETIRED (Epic H)
 
-One item per premium user, created by hand. Nothing about the account is hardcoded here:
-the operator supplies the email, and the pool and table are read back from the deployed
-stack rather than pasted, so this block cannot drift onto a stale table or a pool the
-stack does not authorize against. **Which accounts hold premium belongs in the deployment
-evidence, not in committed command text.**
+**This section is historical and no longer describes a working procedure.**
+`HostedAiTable`'s per-user `CONFIG` item and its `premium` attribute are
+retired: `apps/api-bedrock/src/lib/{table,quota}.ts` no longer read, write, or
+condition-check it, so the `put-item` this section used to document would
+write an item nothing consults — a false grant that looks successful and does
+nothing.
 
-```bash
-set -euo pipefail
-: "${PREMIUM_EMAIL:?set PREMIUM_EMAIL to the account to grant}"
+Granting hosted AI by hand is now the billing stack's admin override —
+`docs/runbooks/billing-operations.md` section 5, `POST /v1/billing/admin/override` —
+which writes a versioned, time-boxed `ENTITLEMENT` record instead of an
+unversioned boolean with no expiry and no audit trail. It replaces this
+section exactly as `billing-operations.md` section 5 says: *"There is no path left by
+which an operator writes an `ENTITLEMENT` item directly... the admin route
+below supersedes it for billing entitlements."*
 
-POOL_ID="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
-  --query "Stacks[0].Outputs[?OutputKey=='CognitoUserPoolIdEcho'].OutputValue" --output text)"
-TABLE="$(aws cloudformation describe-stacks --stack-name nixus-bedrock-api \
-  --query "Stacks[0].Outputs[?OutputKey=='TableName'].OutputValue" --output text)"
-for v in POOL_ID TABLE; do
-  test -n "${!v}" && test "${!v}" != "None" || { echo "${v} unresolved" >&2; exit 1; }
-done
-```
-
-The lookup must match **exactly one confirmed** account. A filter that matched two
-accounts, or an unconfirmed one, would otherwise silently grant premium to whichever
-happened to sort first:
-
-```bash
-set -euo pipefail
-SUBS="$(aws cognito-idp list-users \
-  --user-pool-id "$POOL_ID" \
-  --filter "email = \"${PREMIUM_EMAIL}\"" \
-  --query 'Users[?UserStatus==`CONFIRMED`].Attributes[?Name==`sub`].Value[]' \
-  --output text)"
-COUNT="$(printf '%s\n' $SUBS | grep -c . || true)"
-test "$COUNT" -eq 1 || { echo "expected exactly 1 confirmed match, got ${COUNT}" >&2; exit 1; }
-SUB="$SUBS"
-```
-
-The write is conditional, so re-running it can never silently overwrite an existing
-configuration — a rewrite would reset `monthly_request_limit` under a user who is mid
-month while `charged_count` keeps its accumulated value:
-
-```bash
-set -euo pipefail
-: "${TABLE:?run the lookup block above first}"
-: "${SUB:?run the lookup block above first}"
-
-aws dynamodb put-item --table-name "$TABLE" --item '{
-  "pk": {"S": "USER#'"$SUB"'"},
-  "sk": {"S": "CONFIG"},
-  "premium": {"BOOL": true},
-  "monthly_request_limit": {"N": "200"},
-  "updated_at": {"S": "'"$(date -u +%FT%TZ)"'"}
-}' --condition-expression "attribute_not_exists(pk) AND attribute_not_exists(sk)"
-```
-
-A `ConditionalCheckFailedException` means the item already exists: inspect it and
-decide deliberately, never re-run with the condition removed.
-
-**Verify the item, and verify it holds nothing it should not** (AD-11: the table carries
-the subject identifier, entitlement, and limit — never an email, a name, or any content):
-
-```bash
-set -euo pipefail
-: "${TABLE:?run the lookup block above first}"
-: "${SUB:?run the lookup block above first}"
-
-aws dynamodb get-item --table-name "$TABLE" --consistent-read \
-  --key '{"pk":{"S":"USER#'"$SUB"'"},"sk":{"S":"CONFIG"}}' \
-  --query 'Item'
-# expect exactly: pk, sk, premium=true, monthly_request_limit=200, updated_at
-# expect NO email, name, phone, or any prompt/response attribute
-
-aws dynamodb get-item --table-name "$TABLE" --consistent-read \
-  --key '{"pk":{"S":"USER#'"$SUB"'"},"sk":{"S":"CONFIG"}}' \
-  --query 'keys(Item)' --output text | tr '\t' '\n' | sort
-# expect: monthly_request_limit, pk, premium, sk, updated_at — and nothing else
-```
-
-Record the outcome in gate 11b's evidence cell (which account, when, verified attribute
-set) — not by editing the commands above.
-
-Fail-closed shapes, for reference: a missing item, `premium: false`, a
-`monthly_request_limit <= 0`, or a malformed item all resolve to `403 premium_required`
-on invoke. Never edit a `USAGE#` item to grant quota — `charged_count` is the accounting
-authority and lowering it hands out free requests silently.
-
-Re-check [Bedrock token pricing](https://aws.amazon.com/bedrock/pricing/) before
-setting or raising any `monthly_request_limit`.
+Every account this section used to grant by hand was migrated to a billing
+`ENTITLEMENT` record by the Epic G backfill
+(`apps/api-billing/scripts/backfill-entitlements.ts`, see
+`billing-operations.md` section 8) before this section closed: no account lost
+access to hosted AI when it did.
 
 ---
 
@@ -839,7 +773,7 @@ blockers for this beta account.
 | 10 | `README.md` and all marketing copy no longer claim data never leaves the machine, and describe US cross-region processing accurately | AD-13 | | |
 | 11 | `GLOBAL#CONFIG` present with monthly limit 1000 | §3.1, AD-15 | **ENABLED by explicit user decision for first premium beta** | 2026-08-26 |
 | 11a | Orphaned retained table from the rolled-back first attempt identified, confirmed empty, and removed by hand | §2.4 | | |
-| 11b | Premium `USER#<sub>/CONFIG` written conditionally and verified: `premium=true`, `monthly_request_limit=200`, and the attribute set carries no email, name, or content | §3.2, AD-6/AD-11 | | |
+| 11b | ~~Premium `USER#<sub>/CONFIG` written conditionally and verified~~ — **SUPERSEDED by Epic H**: `HostedAiTable.premium` is retired, and the account this gate used to track was migrated to a billing `ENTITLEMENT` record by the Epic G backfill instead | §3.2 (retired), `billing-operations.md` sections 5/8 | **SUPERSEDED** | 2026-11-19 |
 | 12 | Deployed smoke test passes | §4, AD-2/AD-3 | | |
 | 13 | All four surfaces verified hosted on one release build, BYO cleared, against the deployed 4.6 profile | §4, CAP-1/CAP-2 | | |
 | 14 | Quota-exhaustion and global-disable fallback verified | §4, CAP-5 | | |

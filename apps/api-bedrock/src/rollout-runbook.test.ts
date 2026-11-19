@@ -335,54 +335,30 @@ describe("the quota design and model identity are recorded exactly", () => {
   });
 });
 
-describe("the premium user grant is parameterised and cannot overwrite silently", () => {
-  it("writes the user CONFIG item conditionally", () => {
-    expect(RUNBOOK).toContain(
-      "attribute_not_exists(pk) AND attribute_not_exists(sk)"
-    );
-    expect(RUNBOOK).toContain("ConditionalCheckFailedException");
-    expect(RUNBOOK).toMatch(/never re-run with the condition removed/i);
-    expect(RUNBOOK).toContain('"monthly_request_limit": {"N": "200"}');
-  });
-
-  /* Committed command text is copy-pasted by definition. A real address baked into it
-   * both leaks who holds premium and invites the next operator to grant the wrong
-   * account by editing nothing. */
-  it("hardcodes no account email, sub, pool id, or table name", () => {
-    expect(RUNBOOK).toContain('"${PREMIUM_EMAIL:?');
-    expect(RUNBOOK).not.toMatch(/[\w.+-]+@(live|gmail|outlook|hotmail|yahoo|icloud)\.[a-z.]+/i);
-    expect(RUNBOOK).not.toContain("HostedAiTable-");
-    expect(RUNBOOK).not.toMatch(/--user-pool-id "[a-z]{2}-[a-z]+-\d_/);
-  });
-
-  /* Both identifiers are read back from the deployed stack, so this block cannot be run
-   * against a stale table or a pool the stack does not authorize against. */
-  it("derives the pool id and table name from the deployed stack", () => {
+describe("the per-premium-user config procedure is retired in favor of the admin override", () => {
+  it("marks the section historical and names what replaced it", () => {
     const section = sectionOf("### 3.2", "---");
 
-    expect(section).toContain("CognitoUserPoolIdEcho");
-    expect(section).toContain("TableName");
-    expect(section).toContain("describe-stacks --stack-name nixus-bedrock-api");
-    expect(section).toMatch(/unresolved/);
+    expect(section).toMatch(/RETIRED \(Epic H\)/);
+    expect(section).toMatch(/no longer describes a working procedure/i);
+    expect(section).toContain("POST /v1/billing/admin/override");
+    expect(section).toContain("billing-operations.md");
   });
-
-  /* Two confirmed matches, or one unconfirmed match, would otherwise grant premium to
-   * whichever account happened to sort first. */
-  it("requires exactly one confirmed Cognito match before writing", () => {
+  /* The retired section must not leave behind a put-item command that would
+   * silently write a dead item: `HostedAiTable.premium` is retired, so a
+   * stray write to it would do nothing while looking like a successful grant. */
+  it("carries no put-item command for the retired attribute", () => {
     const section = sectionOf("### 3.2", "---");
 
-    expect(section).toContain("UserStatus==`CONFIRMED`");
-    expect(section).toMatch(/expected exactly 1 confirmed match/i);
-    expect(section).toContain('test "$COUNT" -eq 1');
+    expect(section).not.toContain("dynamodb put-item");
+    expect(section).not.toContain('"premium": {"BOOL": true}');
   });
 
-  it("gates the grant on verified attributes that exclude email and content", () => {
-    const row = gateRow("11b");
+  it("records that every hand-granted account was migrated before this section closed", () => {
+    const section = sectionOf("### 3.2", "---");
 
-    expect(row).toMatch(/premium=true/);
-    expect(row).toMatch(/monthly_request_limit=200/);
-    expect(row).toMatch(/no email, name, or content/i);
-    expect(RUNBOOK).toMatch(/expect NO email, name, phone, or any prompt\/response attribute/i);
+    expect(section).toContain("backfill-entitlements.ts");
+    expect(section).toMatch(/no account lost\s+access to hosted AI/i);
   });
 });
 
@@ -573,15 +549,12 @@ describe("runbook cross-references resolve", () => {
     expect(unguarded).toEqual([]);
   });
 
-  /* A variable carried over from an earlier block is the one a reader is most likely not
-   * to have set, and an unset table name silently targets nothing. */
-  it("requires carried-over variables rather than defaulting them", () => {
-    const section = sectionOf("### 3.2", "---");
-
-    expect(section).toContain('"${TABLE:?');
-    expect(section).toContain('"${SUB:?');
-    expect(RUNBOOK).toContain('"${TABLE:?set TABLE to the deployed quota table name');
-  });
+  /* A variable carried over from an earlier block in the SAME section was the one a
+   * reader was most likely not to have set, and an unset table name silently targeted
+   * nothing. The example this asserted, §3.2's `TABLE`/`SUB` handoff between its lookup
+   * and write blocks, was retired with that section (Epic H) and has no replacement: no
+   * other section in this runbook carries a variable across more than one of its own
+   * blocks, so there is nothing left for this test to check. */
 
   it("has no dangling section reference", () => {
     const headings = new Set(
