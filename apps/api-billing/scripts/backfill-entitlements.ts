@@ -3,7 +3,10 @@
  *
  * Migrates every hand-granted hosted-AI user out of `HostedAiTable`'s one-bit
  * `premium` attribute and into the billing table's `ENTITLEMENT` record, which
- * AD-2 makes the sole entitlement authority.
+ * AD-2 makes the sole entitlement authority. Epic H has since removed every
+ * read of `premium` from `apps/api-bedrock`, so the source attribute is dead
+ * weight the moment this script confirms the destination record exists -
+ * `--delete-source` retires it.
  *
  * Per INVESTIGATION §4 the existing hand-granted users were granted **hosted
  * AI**, so they map to the **Advance** capability set with `source = admin` and
@@ -23,6 +26,14 @@
  *   Add --apply to write. Without it the script is a DRY RUN: it reads, prints
  *   exactly what it would do, and performs ZERO writes.
  *
+ *   Add --delete-source (with --apply) to also delete the source `CONFIG` item
+ *   once its grant is confirmed present in the billing table - for a freshly
+ *   migrated record, an already-migrated one, or one Stripe already owns.
+ *   Off by default: it is cleanup, never a prerequisite for the migration, and
+ *   the three `skippedUnusableKey` shapes documented in
+ *   docs/runbooks/billing-operations.md §8 are never touched by it, migration
+ *   or deletion alike - they need a deliberate per-account decision instead.
+ *
  *   --admin-expires-at-days=<n> shortens the recorded override horizon. See
  *   DEFAULT_ADMIN_EXPIRY_DAYS below for why the default is what it is.
  *
@@ -38,6 +49,7 @@ import {
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
+  DeleteCommand,
   GetCommand,
   PutCommand,
   ScanCommand,
@@ -189,9 +201,11 @@ const SECONDS_PER_DAY = 24 * 60 * 60;
  * iff it is a per-user hosted-AI CONFIG item explicitly carrying `premium = true`.
  *
  * `=== true` and not a truthiness test: `parseUserConfig` in
- * `apps/api-bedrock/src/lib/table.ts` grants on exactly that value, so a record
- * with `premium: "true"` or `premium: 1` is NOT entitled today and must not be
- * granted an entitlement by this migration.
+ * `apps/api-bedrock/src/lib/table.ts` granted on exactly that value before
+ * Epic H retired it, so a record with `premium: "true"` or `premium: 1` was
+ * NOT entitled and must not be granted an entitlement by this migration either
+ * - matching that historical rule is what makes "eligible" here mean the same
+ * thing it meant when the attribute still did something.
  */
 export function isEligibleHostedAiConfig(
   item: Record<string, unknown> | undefined,
@@ -346,6 +360,14 @@ export interface BackfillSummary {
    */
   skippedUnusableKey: number;
   failed: number;
+  /**
+   * The source `HostedAiTable` `CONFIG` item deleted after its grant was
+   * confirmed present in the billing table - only ever incremented when
+   * `--delete-source` was passed. Retiring the attribute (Epic H) makes the
+   * source item dead weight; this is cleanup, never a prerequisite for the
+   * migration itself, which is why it defaults to off.
+   */
+  deletedSource: number;
 }
 
 export function emptySummary(): BackfillSummary {
@@ -358,6 +380,7 @@ export function emptySummary(): BackfillSummary {
     skippedStripeOwned: 0,
     skippedUnusableKey: 0,
     failed: 0,
+    deletedSource: 0,
   };
 }
 
@@ -373,6 +396,7 @@ export function formatSummary(summary: BackfillSummary): string {
     `  skipped (stripe-owned)  ${summary.skippedStripeOwned}`,
     `  skipped (unusable key)  ${summary.skippedUnusableKey}`,
     `  failed                  ${summary.failed}`,
+    `  deleted source CONFIG   ${summary.deletedSource}`,
     "",
   ].join("\n");
 }
@@ -382,6 +406,14 @@ export function formatSummary(summary: BackfillSummary): string {
 /* -------------------------------------------------------------------------- */
 
 const APPLY = process.argv.includes("--apply");
+/**
+ * Epic H cleanup, off by default and meaningless without `--apply`. Deletes
+ * the source `HostedAiTable` `CONFIG` item once its grant is confirmed present
+ * in the billing table - never for a `skippedUnusableKey` record, which this
+ * migration never touched in the first place and which `billing-operations.md`
+ * §8 says needs a deliberate per-account decision instead.
+ */
+const DELETE_SOURCE = process.argv.includes("--delete-source");
 
 function log(action: "would" | "did" | "note", what: string): void {
   const prefix =
@@ -493,16 +525,64 @@ function isConditionalCheckFailure(error: unknown): boolean {
   );
 }
 
+/**
+ * Epic H cleanup. Deletes the source `CONFIG` item once its grant is
+ * confirmed present in the billing table, under `--delete-source --apply`
+ * only. A failure here is reported but never escalated to `summary.failed`:
+ * the migration itself already succeeded, and the dead attribute surviving a
+ * little longer is harmless - unlike the migration's own write, there is
+ * nothing to retry safely, since a second run would just see "already
+ * migrated" and skip the delete too.
+ */
+async function deleteSourceConfigIfRequested(args: {
+  readonly documents: DynamoDBDocumentClient;
+  readonly hostedAiTableName: string;
+  readonly sub: string;
+  readonly summary: BackfillSummary;
+}): Promise<void> {
+  const { documents, hostedAiTableName, sub, summary } = args;
+  if (!DELETE_SOURCE) return;
+
+  if (!APPLY) {
+    log("would", `delete source CONFIG item for ${sub}`);
+    return;
+  }
+
+  try {
+    await documents.send(
+      new DeleteCommand({
+        TableName: hostedAiTableName,
+        Key: { pk: `${USER_PARTITION_KEY_PREFIX}${sub}`, sk: HOSTED_AI_CONFIG_SORT_KEY },
+      }),
+    );
+    summary.deletedSource += 1;
+    log("did", `deleted source CONFIG item for ${sub}`);
+  } catch (error) {
+    log(
+      "note",
+      `FAILED to delete source CONFIG item for ${sub}: ${error instanceof Error ? error.name : "unknown error"}`,
+    );
+  }
+}
+
 async function migrateOne(args: {
   readonly documents: DynamoDBDocumentClient;
   readonly billingTableName: string;
+  readonly hostedAiTableName: string;
   readonly user: EligibleUser;
   readonly now: Date;
   readonly adminExpiresAt: number;
   readonly summary: BackfillSummary;
 }): Promise<void> {
-  const { documents, billingTableName, user, now, adminExpiresAt, summary } =
-    args;
+  const {
+    documents,
+    billingTableName,
+    hostedAiTableName,
+    user,
+    now,
+    adminExpiresAt,
+    summary,
+  } = args;
 
   const existing = await documents.send(
     new GetCommand({
@@ -524,12 +604,16 @@ async function migrateOne(args: {
       "note",
       `SKIPPED ${user.sub}: a stripe-sourced entitlement already exists and a backfill never overwrites a paying customer`,
     );
+    // The Stripe-sourced record already supersedes the legacy grant, so the
+    // dead CONFIG item behind it is just as safe to retire as a migrated one.
+    await deleteSourceConfigIfRequested({ documents, hostedAiTableName, sub: user.sub, summary });
     return;
   }
 
   if (disposition === "already_migrated") {
     summary.alreadyMigrated += 1;
     log("note", `already migrated ${user.sub}: left exactly as it is`);
+    await deleteSourceConfigIfRequested({ documents, hostedAiTableName, sub: user.sub, summary });
     return;
   }
 
@@ -547,6 +631,7 @@ async function migrateOne(args: {
         `status=${BACKFILL_STATUS} source=admin monthly_request_limit=${String(user.monthlyRequestLimit)} ` +
         `admin_expires_at=${adminExpiresAt} version=1 statement=absent (minted on read)`,
     );
+    await deleteSourceConfigIfRequested({ documents, hostedAiTableName, sub: user.sub, summary });
     return;
   }
 
@@ -562,6 +647,7 @@ async function migrateOne(args: {
     );
     summary.migrated += 1;
     log("did", `created ENTITLEMENT for ${user.sub}`);
+    await deleteSourceConfigIfRequested({ documents, hostedAiTableName, sub: user.sub, summary });
   } catch (error) {
     if (isConditionalCheckFailure(error)) {
       // Another writer got there between the read and the write. Reporting it as
@@ -569,6 +655,7 @@ async function migrateOne(args: {
       // would be the one thing this script must never do.
       summary.alreadyMigrated += 1;
       log("note", `already migrated ${user.sub}: a concurrent writer won the race`);
+      await deleteSourceConfigIfRequested({ documents, hostedAiTableName, sub: user.sub, summary });
       return;
     }
     summary.failed += 1;
@@ -605,6 +692,7 @@ async function main(): Promise<void> {
       `  destination ${BILLING_STACK_NAME}.${BILLING_TABLE_OUTPUT_KEY} = ${billingTableName}`,
       `  grant       tier=${ADVANCE_TIER} capabilities=${ADVANCE_CAPABILITIES.join(",")} source=admin status=${BACKFILL_STATUS}`,
       `  horizon     admin_expires_at=${adminExpiresAt} (+${adminExpiryDays} days)`,
+      `  delete-source ${DELETE_SOURCE ? "ON - the source CONFIG item is removed once its grant is confirmed" : "off (pass --delete-source to retire the source item too)"}`,
       "",
     ].join("\n"),
   );
@@ -620,6 +708,7 @@ async function main(): Promise<void> {
     await migrateOne({
       documents,
       billingTableName,
+      hostedAiTableName,
       user,
       now,
       adminExpiresAt,

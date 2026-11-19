@@ -106,9 +106,9 @@ describe("the eligibility predicate", () => {
     expect(isEligibleHostedAiConfig(configItem())).toBe(true);
   });
 
-  /* `parseUserConfig` in apps/api-bedrock grants on exactly `true`, so a
-   * truthy-but-not-true record is NOT entitled today and must not be granted an
-   * entitlement by this migration. */
+  /* `parseUserConfig` in apps/api-bedrock granted on exactly `true` before
+   * Epic H retired it, so a truthy-but-not-true record was never entitled and
+   * must not be granted an entitlement by this migration either. */
   it("refuses a truthy-but-not-true premium value", () => {
     for (const premium of ["true", 1, {}, [], "yes"]) {
       expect(
@@ -344,6 +344,7 @@ describe("the run refuses the wrong environment and reports what it did", () => 
       skippedStripeOwned: 0,
       skippedUnusableKey: 0,
       failed: 0,
+      deletedSource: 0,
     });
 
     const rendered = formatSummary({
@@ -355,6 +356,7 @@ describe("the run refuses the wrong environment and reports what it did", () => 
       skippedStripeOwned: 1,
       skippedUnusableKey: 2,
       failed: 0,
+      deletedSource: 0,
     });
 
     for (const label of [
@@ -366,6 +368,7 @@ describe("the run refuses the wrong environment and reports what it did", () => 
       "skipped (stripe-owned)",
       "skipped (unusable key)",
       "failed",
+      "deleted source CONFIG",
     ]) {
       expect(rendered, `summary omits ${label}`).toContain(label);
     }
@@ -385,8 +388,9 @@ describe("the run refuses the wrong environment and reports what it did", () => 
 describe("partition keys the billing table cannot compose", () => {
   const unusable = [
     // A manual put-item left two trailing spaces on the key. `getUserConfig`
-    // composes the clean `USER#<sub>`, so this record has never been read and
-    // that user has never actually had hosted AI.
+    // (retired by Epic H, but this is about the historical data, not the
+    // retired function) composed the clean `USER#<sub>`, so this record was
+    // never read and that user never actually had hosted AI.
     ["trailing whitespace", "USER#047834f8-0071-702b-0045-074f515d0388  "],
     // Federated identities whose OWN Cognito `sub` is a UUID that was migrated
     // separately; these are stale duplicate rows under the provider username.
