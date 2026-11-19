@@ -1,9 +1,21 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BILLING_ERROR_CODES, isPlanLookupKeyShaped } from "@nixus/shared";
+import {
+  BILLING_CAPABILITIES,
+  BILLING_ERROR_CODES,
+  isPlanLookupKeyShaped,
+} from "@nixus/shared";
 import {
   ADVANCE_PLAN_LOOKUP_KEY,
+  HOSTED_AI_CAPABILITY,
   billingMessageKey,
   billingNeedsSignIn,
+  entitlementOrUnestablished,
+  holdsCapability,
+  holdsPaidPlan,
+  lacksCapability,
+  type BillingEntitlement,
 } from "@/lib/billing";
 import { parseAppError, isBillingError } from "@/lib/appError";
 import enLocale from "@/locales/en.json";
@@ -126,4 +138,150 @@ describe("parseAppError on a billing refusal", () => {
       expect(fr[billingMessageKey(code)]).not.toContain("http");
     }
   });
+});
+
+/* The capability answer's gate helpers. Pure functions, so every row of the matrix the two UI
+ * gates are built on is asserted here rather than inferred from a rendered component. */
+describe("the capability gates", () => {
+  const verified = (capabilities: string[]): BillingEntitlement => ({
+    established: true,
+    tier: "whatever",
+    capabilities: capabilities as BillingEntitlement["capabilities"],
+  });
+  const unestablished: BillingEntitlement = {
+    established: false,
+    tier: null,
+    capabilities: [],
+  };
+
+  /* A name typed against the shared union, so a misspelling is a compile error rather than a gate
+   * that silently never opens. Pinned to the union at runtime too, because a rename on the shared
+   * side would otherwise only surface as a feature quietly becoming unreachable. */
+  it("names hosted AI from the shared union and nowhere else", () => {
+    expect(BILLING_CAPABILITIES).toContain(HOSTED_AI_CAPABILITY);
+    expect(HOSTED_AI_CAPABILITY).toBe("hosted_ai");
+  });
+
+  /* "Has a paid plan" is "holds at least one capability", never a tier and never `hosted_ai`:
+   * Classic grants `multi_device_sync` and `household_net_worth` and no hosted AI. */
+  it("treats any single capability as a paid plan", () => {
+    expect(holdsPaidPlan(verified(["multi_device_sync"]))).toBe(true);
+    expect(holdsPaidPlan(verified(["household_net_worth", "multi_device_sync"]))).toBe(true);
+    expect(holdsPaidPlan(verified(["hosted_ai"]))).toBe(true);
+  });
+
+  it("treats a verified empty grant as no plan", () => {
+    expect(holdsPaidPlan(verified([]))).toBe(false);
+  });
+
+  /* The whole point. An answer that was never established is not "no plan" and not "no
+   * capability" — it is "we do not know", and NO gate may act on it in either direction (AD-9). */
+  it("lets an unestablished answer open no gate in either direction", () => {
+    expect(holdsPaidPlan(unestablished)).toBe(false);
+    expect(holdsCapability(unestablished, HOSTED_AI_CAPABILITY)).toBe(false);
+    expect(lacksCapability(unestablished, HOSTED_AI_CAPABILITY)).toBe(false);
+  });
+
+  /* `lacksCapability` is deliberately not `!holdsCapability`, and this is the assertion that
+   * pins the difference: the naive negation is TRUE for an unestablished answer, which is how an
+   * upsell reaches a user whose connection failed and who may already own the capability. */
+  it("is not the naive negation of holdsCapability", () => {
+    expect(!holdsCapability(unestablished, HOSTED_AI_CAPABILITY)).toBe(true);
+    expect(lacksCapability(unestablished, HOSTED_AI_CAPABILITY)).toBe(false);
+  });
+
+  it("answers a named capability only from an established grant", () => {
+    expect(holdsCapability(verified(["hosted_ai"]), HOSTED_AI_CAPABILITY)).toBe(true);
+    expect(holdsCapability(verified(["multi_device_sync"]), HOSTED_AI_CAPABILITY)).toBe(false);
+    expect(lacksCapability(verified(["multi_device_sync"]), HOSTED_AI_CAPABILITY)).toBe(true);
+    expect(lacksCapability(verified(["hosted_ai"]), HOSTED_AI_CAPABILITY)).toBe(false);
+  });
+
+  /* An in-flight or rejected query is the same non-answer as an unreachable server, so the
+   * absence resolves to the shape that claims nothing rather than to `undefined` every caller
+   * would have to remember to handle. */
+  it("resolves an absent answer to the unestablished one", () => {
+    expect(entitlementOrUnestablished(undefined)).toEqual(unestablished);
+    expect(holdsPaidPlan(entitlementOrUnestablished(undefined))).toBe(false);
+    expect(lacksCapability(entitlementOrUnestablished(undefined), HOSTED_AI_CAPABILITY)).toBe(
+      false
+    );
+  });
+});
+
+/* The D11 guard, in code rather than in a merge checklist.
+ *
+ * `ProfileMenu` is mounted on every screen and now reads `get_billing_entitlement` on load, and
+ * the E2E suite has no shared mock module: each spec stubs `window.__TAURI_INTERNALS__.invoke`
+ * itself and falls through to `Promise.reject("Unknown command")`. A spec that omits the case
+ * therefore renders the whole shell in its error state and fails for a reason that looks nothing
+ * like the cause. That is a 40-spec breakage discoverable only by running the suite, so it is
+ * asserted by the unit suite — which runs in seconds — instead.
+ *
+ * Scoped to the commands an always-mounted surface reads, because that is the whole hazard: a
+ * command reached from a route only that route's spec has to mock. */
+describe("the always-mounted command surface", () => {
+  // Resolved from the Vitest root (`apps/desktop`, per `vitest.config.ts`) rather than from
+  // `import.meta.url`, which is not a file URL under the jsdom transform.
+  const TESTS_DIR = resolve(process.cwd(), "tests");
+
+  /** Every command `ProfileMenu`'s own hooks reach on load, with no user interaction. */
+  const ALWAYS_MOUNTED_COMMANDS = ["get_billing_entitlement"];
+
+  const specs = readdirSync(TESTS_DIR)
+    .filter((name) => name.endsWith(".spec.ts"))
+    .map((name) => ({ name, source: readFileSync(`${TESTS_DIR}/${name}`, "utf8") }))
+    .filter(({ source }) => source.includes("__TAURI_INTERNALS__"));
+
+  it("finds the E2E specs it claims to be guarding", () => {
+    expect(specs.length).toBeGreaterThan(30);
+  });
+
+  it.each(ALWAYS_MOUNTED_COMMANDS)(
+    "is handled by every spec that stubs the Tauri IPC layer: %s",
+    (command) => {
+      const missing = specs
+        .filter(({ source }) => !source.includes(command))
+        .map(({ name }) => name);
+
+      expect(
+        missing,
+        `these specs stub invoke() without handling ${command}, so their mock falls through to ` +
+          `the Unknown-command rejection and the app shell renders in its error state (D11)`
+      ).toEqual([]);
+    }
+  );
+
+  /* Per stub, not per file: several specs install more than one mock, and a second stub that
+   * omits the case is exactly as broken as a whole file that does — and far easier to miss. */
+  it.each(ALWAYS_MOUNTED_COMMANDS)(
+    "is handled by every individual invoke stub, not merely once per file: %s",
+    (command) => {
+      const offenders: string[] = [];
+
+      for (const { name, source } of specs) {
+        for (const match of source.matchAll(/invoke: \(cmd[^\n]*=>\s*\{/g)) {
+          const open = source.indexOf("{", match.index + match[0].length - 1);
+          let depth = 0;
+          let close = source.length;
+          for (let i = open; i < source.length; i += 1) {
+            if (source[i] === "{") depth += 1;
+            else if (source[i] === "}") {
+              depth -= 1;
+              if (depth === 0) {
+                close = i;
+                break;
+              }
+            }
+          }
+          const body = source.slice(open, close + 1);
+          if (!body.includes(command)) {
+            offenders.push(`${name}:${source.slice(0, match.index).split("\n").length}`);
+          }
+        }
+      }
+
+      expect(offenders, `these invoke stubs do not handle ${command} (D11)`).toEqual([]);
+    }
+  );
 });

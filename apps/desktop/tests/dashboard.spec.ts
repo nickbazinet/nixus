@@ -69,6 +69,12 @@ async function setupEmptyDashboardMock(page: Page) {
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            // Always mounted: the account menu reads the capability answer on load, so a spec
+            // whose mock omits this falls through to the Unknown-command rejection and renders
+            // the shell in its error state (D11). The default makes no claim at all.
+            case "get_billing_entitlement":
+              return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
             case "get_budget_summary":
@@ -214,6 +220,12 @@ async function setupSeededDashboardMock(page: Page) {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: (cmd: string) => {
         switch (cmd) {
+          // Always mounted: the account menu reads the capability answer on load, so a spec
+          // whose mock omits this falls through to the Unknown-command rejection and renders
+          // the shell in its error state (D11). The default makes no claim at all.
+          case "get_billing_entitlement":
+            return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
           case "check_picker_gate":
             return Promise.resolve({ needs_picker: false });
           case "get_budget_summary":
@@ -313,6 +325,12 @@ async function setupPacingDashboardMock(page: Page) {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
       invoke: (cmd: string) => {
         switch (cmd) {
+          // Always mounted: the account menu reads the capability answer on load, so a spec
+          // whose mock omits this falls through to the Unknown-command rejection and renders
+          // the shell in its error state (D11). The default makes no claim at all.
+          case "get_billing_entitlement":
+            return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
           case "check_picker_gate":
             return Promise.resolve({ needs_picker: false });
           case "get_budget_summary":
@@ -452,6 +470,12 @@ test.describe("Dashboard — Story 5.1", () => {
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            // Always mounted: the account menu reads the capability answer on load, so a spec
+            // whose mock omits this falls through to the Unknown-command rejection and renders
+            // the shell in its error state (D11). The default makes no claim at all.
+            case "get_billing_entitlement":
+              return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
             case "get_budget_summary":
@@ -779,6 +803,12 @@ test.describe("Dashboard — Suggested Next Step Card", () => {
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            // Always mounted: the account menu reads the capability answer on load, so a spec
+            // whose mock omits this falls through to the Unknown-command rejection and renders
+            // the shell in its error state (D11). The default makes no claim at all.
+            case "get_billing_entitlement":
+              return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
             case "get_financial_health_summary":
@@ -957,6 +987,12 @@ async function setupSavingsDashboardMock(
       (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
         invoke: (cmd: string) => {
           switch (cmd) {
+            // Always mounted: the account menu reads the capability answer on load, so a spec
+            // whose mock omits this falls through to the Unknown-command rejection and renders
+            // the shell in its error state (D11). The default makes no claim at all.
+            case "get_billing_entitlement":
+              return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
             case "get_budget_summary":

@@ -179,6 +179,12 @@ const defaultAccounts = [
     ipcCalls.push(cmd);
 
     switch (cmd) {
+      // Always mounted: the account menu reads the capability answer on load, so a spec
+      // whose mock omits this falls through to the Unknown-command rejection and renders
+      // the shell in its error state (D11). The default makes no claim at all.
+      case "get_billing_entitlement":
+        return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
       case "get_tfsa_accumulated_limit":
         return resolveTfsa();
       // Mounted wherever a demographic consumer is: the resolver names the home before any

@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   useAuthSession,
+  useBillingEntitlementState,
   usePremiumEntitlement,
   useSignIn,
   useSignOut,
@@ -31,6 +32,7 @@ import { isBillingError, parseAppError } from "@/lib/appError";
 import {
   billingMessageKey,
   billingNeedsSignIn,
+  holdsPaidPlan,
   useOpenBillingPortal,
 } from "@/lib/billing";
 
@@ -121,7 +123,16 @@ export function ProfileMenu() {
 
   // One entitlement query drives both account-owned surfaces: the trigger's gold icon and the
   // named badge inside its menu. The hook owns profile/session gating and costs no extra IPC.
+  //
+  // Still the HOSTED-AI question, deliberately: the gold icon and the Premium badge are claims
+  // about hosted AI, so `hosted_ai` is the right thing for them to test. What it is no longer
+  // allowed to decide is whether the account has a plan to manage — see below.
   const isPremium = usePremiumEntitlement();
+
+  // The CAPABILITY answer, which is a different question from the one above and the reason this
+  // menu now reads two: "has a paid plan" is "holds at least one capability", and a Classic
+  // subscriber holds `multi_device_sync` without ever holding `hosted_ai`.
+  const entitlement = useBillingEntitlementState();
 
   // The source key is DERIVED from the active-profile query rather than read through a command of
   // its own: this header is always mounted, so a new `invoke()` here would put every existing
@@ -300,11 +311,15 @@ export function ProfileMenu() {
             </DropdownMenuItem>
           ) : null}
 
-          {/* Gated on the CAPABILITY answer this menu already holds, never on a tier: an account
-            * that holds nothing has no plan to manage, and the Portal would refuse it. That is
-            * also why this adds no `invoke()` on load — `isPremium` is the same cached entitlement
-            * read the gold trigger icon is already drawn from (D11). */}
-          {account !== null && isPremium ? (
+          {/* Gated on the capability LIST, never on a tier and never on the hosted-AI boolean.
+            *
+            * The boolean was wrong in both directions. A Classic subscriber holds
+            * `multi_device_sync` and no `hosted_ai`, so a paying customer could not reach the
+            * Portal to manage or cancel their own subscription. And the boolean is fail-closed, so
+            * it reads the same `false` for "verified free" as for "the entitlement could not be
+            * established" — `holdsPaidPlan` requires `established`, which is why an unreachable
+            * server hides this row rather than offering a Portal session that would be refused. */}
+          {account !== null && holdsPaidPlan(entitlement) ? (
             <DropdownMenuItem
               closeOnClick={false}
               disabled={portal.isPending}

@@ -131,6 +131,15 @@ impl CachedEntitlement {
             Self::Missing | Self::Refused(_) => false,
         }
     }
+
+    /// The opaque tier label a current verified statement carried, for display and support only
+    /// (AD-13). `None` for every other answer, because there is no current answer to label.
+    pub(crate) fn tier(&self) -> Option<String> {
+        match self {
+            Self::Verified(claims) => Some(claims.tier.clone()),
+            Self::Missing | Self::Refused(_) => None,
+        }
+    }
 }
 
 /// Reads the document, mutating nothing. A document that cannot be parsed, carries an unknown

@@ -37,6 +37,12 @@ async function setupTauriMock(page: Page, duplicateIndices: number[]) {
           if (cmd === "plugin:dialog|open") return Promise.resolve("/tmp/statement.png");
 
           switch (cmd) {
+            // Always mounted: the account menu reads the capability answer on load, so a spec
+            // whose mock omits this falls through to the Unknown-command rejection and renders
+            // the shell in its error state (D11). The default makes no claim at all.
+            case "get_billing_entitlement":
+              return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
 

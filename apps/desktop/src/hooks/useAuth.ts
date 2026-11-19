@@ -8,7 +8,12 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { queryKeys } from "@/lib/constants";
+import { HOSTED_AI_STATUS_TTL_MS, queryKeys } from "@/lib/constants";
+import {
+  entitlementOrUnestablished,
+  useBillingEntitlement,
+  type BillingEntitlement,
+} from "@/lib/billing";
 import { parseAppError } from "@/lib/appError";
 import { clearProfileScopedState } from "@/lib/datasetSwitch";
 import { useActiveProfile } from "@/hooks/useDatasets";
@@ -25,9 +30,6 @@ import type { AuthState } from "@/lib/types";
 export type LoginIntent =
   | { kind: "Login" }
   | { kind: "Migrate"; source_dataset_id: string };
-
-/** Mirrors `ai::hosted_state::CACHE_TTL`, which is what actually bounds a status re-read. */
-const HOSTED_AI_STATUS_TTL_MS = 5 * 60 * 1000;
 
 /**
  * The session read itself, split from the hook so a second reader can share the cache entry without
@@ -76,6 +78,9 @@ export function useAuthSession({ enabled = true }: { enabled?: boolean } = {}) {
         // Same reasoning: an invalidated `true` keeps a Premium badge on screen
         // under the account that just signed in, which may not be entitled to it.
         queryClient.removeQueries({ queryKey: queryKeys.cloudAiPremium });
+        // Same reasoning again, and the stakes are higher: a retained capability list keeps
+        // "Manage my plan" clickable under an account that may hold no plan at all.
+        queryClient.removeQueries({ queryKey: queryKeys.billingEntitlement });
       });
 
       if (cleaned) {
@@ -207,6 +212,33 @@ export function useSignedInFirstName(): string | null {
  */
 export function usePremiumEntitlement(): boolean {
   return usePremiumEntitlementState().premium;
+}
+
+/**
+ * The account's capability answer, gated exactly like the hosted-AI read above.
+ *
+ * The gating is shared rather than reimplemented per surface for the same reason
+ * `usePremiumEntitlementState`'s is: `profile -> session -> entitlement` assembled twice is two
+ * chances to disagree, and the disagreement a reviewer would never spot is a menu that offers
+ * plan management under an account the Portal will refuse.
+ *
+ * Returns the unestablished answer — not a partially-filled one — whenever the chain has not
+ * produced a server answer yet, so `established` is the single thing every billing gate tests and
+ * no caller needs a separate `resolving` flag to avoid acting on a non-answer.
+ *
+ * This is the one hook here that ADDS an `invoke()` to an always-mounted surface, which is why
+ * every Playwright spec's Tauri mock now carries a `get_billing_entitlement` case (D11).
+ */
+export function useBillingEntitlementState(): BillingEntitlement {
+  const profile = useActiveProfile();
+  const isEligibleProfile =
+    profile.data?.kind === "cloud-linked" && profile.data.is_signed_in;
+  const session = useQuery(authSessionQueryOptions(isEligibleProfile));
+  const entitlement = useBillingEntitlement({
+    enabled: isEligibleProfile && session.data?.status === "LoggedIn",
+  });
+
+  return entitlementOrUnestablished(entitlement.data);
 }
 
 /**

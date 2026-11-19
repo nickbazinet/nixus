@@ -36,10 +36,9 @@ impl Capability {
     /// The stable diagnostic name. Stable because sync AD-16's diagnostics report it and SPEC
     /// CAP-1 names it; it is not a user-facing string.
     ///
-    /// Not yet read outside tests: `sync_diagnostics` is Story 10, and this is the value it
-    /// reports. Narrowly scoped rather than module-wide so the next unused item here still
-    /// fails the gate.
-    #[allow(dead_code)]
+    /// Now read in production, by `SurfaceEntitlement::capability_names` — which is what puts
+    /// `capabilities[]` on the IPC surface as the only field a gate may read (AD-13). The
+    /// `dead_code` exemption this carried while the sole reader was a test is therefore gone.
     pub fn name(self) -> &'static str {
         self.0
     }
@@ -371,7 +370,75 @@ pub async fn entitlement_answer() -> EntitlementAnswer {
         return stated;
     }
 
-    current_entitlement_source().await
+    current_surface_entitlement().await.answer
+}
+
+/// The gate's answer plus the one display-only field the gate drops.
+///
+/// A sibling type rather than a widening of `EntitlementAnswer`, and that is load-bearing: the
+/// enum is `Copy` and is threaded by value through `sync/state.rs`'s freeze arithmetic, so hanging
+/// a heap-allocated label on it would make every capability check in the sync loop carry a string
+/// no gate is permitted to read (AD-1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SurfaceEntitlement {
+    pub answer: EntitlementAnswer,
+    /// The opaque tier label the verified statement carried, for display and support only. Never
+    /// a value to branch on, here or across the wire (AD-13).
+    pub tier: Option<String>,
+}
+
+impl SurfaceEntitlement {
+    /// The normalizing constructor, so the invariant holds by construction rather than by every
+    /// caller remembering it: an answer that was never established carries no label either,
+    /// because a tier the device never verified must not reach a surface that would show it as
+    /// current status.
+    pub fn new(answer: EntitlementAnswer, tier: Option<String>) -> Self {
+        match answer {
+            EntitlementAnswer::Verified(_) => Self { answer, tier },
+            EntitlementAnswer::Unestablished => Self::unestablished(),
+        }
+    }
+
+    /// No statement, an unverifiable one, no session, or an unreachable billing API. There is no
+    /// answer, so there is nothing to grant AND nothing to display.
+    pub fn unestablished() -> Self {
+        Self {
+            answer: EntitlementAnswer::Unestablished,
+            tier: None,
+        }
+    }
+
+    /// Whether this is an answer at all, which is the distinction a fail-closed boolean cannot
+    /// carry: a verified empty grant is a free account an upgrade repairs, and an unestablished
+    /// entitlement is a transient fault an upgrade cannot (AD-9).
+    pub fn is_established(&self) -> bool {
+        matches!(self.answer, EntitlementAnswer::Verified(_))
+    }
+
+    /// The granted capabilities as their stable names, in the union's declared order — which is
+    /// pinned sorted on both sides of the contract, so the caller needs no second sort.
+    pub fn capability_names(&self) -> Vec<&'static str> {
+        match self.answer {
+            EntitlementAnswer::Verified(capabilities) => CAPABILITIES
+                .iter()
+                .copied()
+                .filter(|capability| capabilities.grants(*capability))
+                .map(Capability::name)
+                .collect(),
+            EntitlementAnswer::Unestablished => Vec::new(),
+        }
+    }
+}
+
+/// What a surface reads. `entitlement_answer` is this same read with the label discarded, so the
+/// two can never disagree about whether an entitlement was established.
+pub async fn surface_entitlement() -> SurfaceEntitlement {
+    #[cfg(test)]
+    if let Some(stated) = test_surface_entitlement() {
+        return stated;
+    }
+
+    current_surface_entitlement().await
 }
 
 /// Lets a test state an account's entitlement without a billing API, a cache root, a keyring or
@@ -409,6 +476,89 @@ pub(crate) fn set_test_capabilities(capabilities: Option<&[Capability]>) {
     }));
 }
 
+/// The tier a stated entitlement displays, decorating the override above rather than replacing it:
+/// `TEST_ENTITLEMENT` stays the single switch for whether an override is in force, so a test that
+/// states no tier gets an established answer with no label — exactly what a surface must render
+/// when the statement carried none.
+#[cfg(test)]
+static TEST_ENTITLEMENT_TIER: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn test_entitlement_tier() -> Option<String> {
+    match TEST_ENTITLEMENT_TIER.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_entitlement_tier(tier: Option<&str>) {
+    let mut guard = match TEST_ENTITLEMENT_TIER.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *guard = tier.map(str::to_string);
+}
+
+#[cfg(test)]
+fn test_surface_entitlement() -> Option<SurfaceEntitlement> {
+    test_entitlement().map(|answer| SurfaceEntitlement::new(answer, test_entitlement_tier()))
+}
+
+/// Serializes every test that states an entitlement.
+///
+/// The override is process-global and `cargo test` runs this crate's units in parallel, so two
+/// tests mutating it concurrently is a flake that reports as a product failure — and the signal
+/// it corrupts is a capability grant, which is the worst thing in this crate to be flaky about.
+#[cfg(test)]
+static TEST_ENTITLEMENT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+fn test_entitlement_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENTITLEMENT_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// An entitlement stated for the life of one test, and withdrawn when it ends.
+///
+/// A guard object rather than a bare `set_*` pair for two reasons, both load-bearing. `Drop` is
+/// what leaves the next test a clean source even when this one fails or panics mid-way. And the
+/// serialization lock lives in a FIELD, which keeps it out of the async test body — a bare
+/// `MutexGuard` alive across an `.await` is a clippy denial (`await_holding_lock`), and the fix
+/// is to stop writing one rather than to allow it. Same shape as `ai/hosted_e2e.rs`'s harness,
+/// which takes this guard too.
+#[cfg(test)]
+pub(crate) struct StatedEntitlement {
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl StatedEntitlement {
+    pub(crate) fn verified(capabilities: &[Capability], tier: Option<&str>) -> Self {
+        let guard = test_entitlement_guard();
+        set_test_capabilities(Some(capabilities));
+        set_test_entitlement_tier(tier);
+
+        Self { _guard: guard }
+    }
+
+    /// Restates the entitlement without releasing the lock, so one test can walk two rows of the
+    /// answer matrix rather than splitting into two that could interleave with each other.
+    pub(crate) fn restate(&self, answer: EntitlementAnswer, tier: Option<&str>) {
+        set_test_entitlement(Some(answer));
+        set_test_entitlement_tier(tier);
+    }
+}
+
+#[cfg(test)]
+impl Drop for StatedEntitlement {
+    fn drop(&mut self) {
+        set_test_entitlement(None);
+        set_test_entitlement_tier(None);
+    }
+}
+
 /// The one place the entitlement is obtained.
 ///
 /// Reads the cached statement for the account currently signed in, verifies it offline against
@@ -424,22 +574,25 @@ pub(crate) fn set_test_capabilities(capabilities: Option<&[Capability]>) {
 /// check of a process (app start) and the first after a sign-in both refresh, and the hundreds of
 /// checks sync AD-14 makes in between all read the same cached bytes. A failed fetch leaves the
 /// cache as it was: an outage must not look like a capability loss.
-async fn current_entitlement_source() -> EntitlementAnswer {
+async fn current_surface_entitlement() -> SurfaceEntitlement {
     let Some(dir) = crate::statement_cache::installed_dir() else {
-        return EntitlementAnswer::Unestablished;
+        return SurfaceEntitlement::unestablished();
     };
     let Ok(sub) = crate::commands::auth::current_subject().await else {
-        return EntitlementAnswer::Unestablished;
+        return SurfaceEntitlement::unestablished();
     };
 
     crate::statement_cache::revalidate_if_due(dir, &sub).await;
 
     let cached = crate::statement_cache::read(dir, &sub, chrono::Utc::now().timestamp());
-    if cached.is_server_answer() {
-        EntitlementAnswer::Verified(cached.capabilities())
-    } else {
-        EntitlementAnswer::Unestablished
-    }
+    SurfaceEntitlement::new(
+        if cached.is_server_answer() {
+            EntitlementAnswer::Verified(cached.capabilities())
+        } else {
+            EntitlementAnswer::Unestablished
+        },
+        cached.tier(),
+    )
 }
 
 #[cfg(test)]
@@ -1153,6 +1306,15 @@ mod tests {
             "fn test_entitlement()",
             "pub(crate) fn set_test_entitlement",
             "pub(crate) fn set_test_capabilities",
+            "static TEST_ENTITLEMENT_TIER",
+            "fn test_entitlement_tier()",
+            "pub(crate) fn set_test_entitlement_tier",
+            "fn test_surface_entitlement()",
+            "static TEST_ENTITLEMENT_LOCK",
+            "fn test_entitlement_guard()",
+            "pub(crate) struct StatedEntitlement",
+            "impl StatedEntitlement",
+            "impl Drop for StatedEntitlement",
         ] {
             let declaration = production
                 .find(item)
@@ -1164,6 +1326,121 @@ mod tests {
                 "{item} must be declared directly under a cfg(test) gate"
             );
         }
+    }
+
+    /// `sync/gate.rs`'s `CapabilitySource` is built on this exact declaration, so the surface read
+    /// added alongside it must not have moved the gate's own seam even by a reference or a
+    /// parameter. Asserted on the source text because a compiling call is not the claim — the
+    /// claim is that the declaration itself is byte-identical.
+    #[test]
+    fn the_gates_entitlement_seam_is_byte_identical_after_the_surface_read_was_added() {
+        let whole = std::fs::read_to_string(repo_file("src").join(CAPABILITY_NAME_PARSER))
+            .expect("this module is readable");
+
+        assert!(
+            production_source(&whole)
+                .contains("pub async fn account_capabilities() -> AccountCapabilities {"),
+            "the signature sync/gate.rs depends on changed"
+        );
+    }
+
+    /// The tier is carried, never compared — and the one place it could have been compared is the
+    /// projection the new IPC view is built from, so the sweep above is pinned to actually cover
+    /// the two files that now handle a label.
+    #[test]
+    fn the_label_sweep_covers_every_file_that_handles_a_tier() {
+        let mut sources = Vec::new();
+        rust_sources(&src_root(), &mut sources);
+
+        for relative in ["commands/billing.rs", "statement_cache.rs"] {
+            let (_, production, _) = sources
+                .iter()
+                .find(|(name, _, _)| name == relative)
+                .unwrap_or_else(|| panic!("{relative} is being scanned"));
+
+            assert!(
+                production.contains("tier"),
+                "{relative} is pinned here because it handles a tier, and it no longer does"
+            );
+            for pattern in LABEL_COMPARISON_PATTERNS {
+                assert!(
+                    !production.contains(pattern),
+                    "{relative} compares a product label: {pattern}"
+                );
+            }
+        }
+    }
+
+    /// The surface read keeps the distinction the gate discards, and adds the label the gate has
+    /// no use for. Driven through the public accessor rather than the projection, so the override
+    /// path the rest of the suite relies on is exercised too.
+    #[tokio::test]
+    async fn the_surface_read_carries_the_tier_the_gate_drops() {
+        let stated =
+            StatedEntitlement::verified(&[MULTI_DEVICE_SYNC, HOUSEHOLD_NET_WORTH], Some("classic"));
+
+        let surface = surface_entitlement().await;
+
+        assert!(surface.is_established());
+        assert_eq!(surface.tier.as_deref(), Some("classic"));
+        assert_eq!(
+            surface.capability_names(),
+            vec!["household_net_worth", "multi_device_sync"],
+            "declared-union order, which is sorted"
+        );
+        assert_eq!(
+            account_capabilities().await,
+            AccountCapabilities::from_capabilities(&[MULTI_DEVICE_SYNC, HOUSEHOLD_NET_WORTH]),
+            "the gate reads the same grant from the same source"
+        );
+
+        stated.restate(EntitlementAnswer::Unestablished, Some("classic"));
+        let surface = surface_entitlement().await;
+
+        assert!(!surface.is_established());
+        assert_eq!(
+            surface.tier, None,
+            "a label the device never verified must not survive the read"
+        );
+        assert!(surface.capability_names().is_empty());
+    }
+
+    /// The constructor normalizes rather than trusting its caller: an unestablished answer may
+    /// not keep a label, whatever it was handed. Asserted here because the IPC view's own
+    /// flattening is defence in depth, not the invariant — a second consumer of this type must
+    /// not have to repeat it.
+    #[test]
+    fn an_unestablished_answer_cannot_be_constructed_with_a_label() {
+        let built = SurfaceEntitlement::new(
+            EntitlementAnswer::Unestablished,
+            Some("advance".to_string()),
+        );
+
+        assert_eq!(built, SurfaceEntitlement::unestablished());
+        assert_eq!(built.tier, None);
+        assert!(!built.is_established());
+        assert!(built.capability_names().is_empty());
+
+        let kept = SurfaceEntitlement::new(
+            EntitlementAnswer::Verified(AccountCapabilities::from_capabilities(&[HOSTED_AI])),
+            Some("advance".to_string()),
+        );
+
+        assert_eq!(kept.tier.as_deref(), Some("advance"));
+        assert!(kept.is_established());
+    }
+
+    /// A verified statement that carried no label is still an answer: `established` and the label
+    /// are independent facts, and collapsing them would make a tier-less plan look unreachable.
+    #[tokio::test]
+    async fn an_established_answer_with_no_label_is_still_established() {
+        let _stated = StatedEntitlement::verified(&[HOSTED_AI], None);
+
+        let surface = surface_entitlement().await;
+
+        assert!(surface.is_established());
+        assert_eq!(surface.tier, None);
+        assert_eq!(surface.capability_names(), vec!["hosted_ai"]);
     }
 
     /// The projection the replaced bridge used to perform, now driven by the statement alone.
@@ -1186,30 +1463,26 @@ mod tests {
     /// implementation calls this exact function, with this exact shape.
     #[tokio::test]
     async fn the_capability_source_keeps_the_signature_the_sync_gate_depends_on() {
-        set_test_capabilities(Some(&[MULTI_DEVICE_SYNC]));
+        let _stated = StatedEntitlement::verified(&[MULTI_DEVICE_SYNC], None);
 
         let granted: AccountCapabilities = account_capabilities().await;
 
         assert!(granted.grants(MULTI_DEVICE_SYNC));
         assert!(!granted.grants(HOSTED_AI));
-
-        set_test_capabilities(None);
     }
 
     /// The distinction a gate must ignore and a surface must not: both answers grant nothing,
     /// and only one of them is something an upgrade can fix (AD-9).
     #[tokio::test]
     async fn a_verified_empty_grant_is_told_apart_from_an_unestablished_entitlement() {
-        set_test_entitlement(Some(EntitlementAnswer::Verified(
-            AccountCapabilities::empty(),
-        )));
+        let stated = StatedEntitlement::verified(&[], None);
         assert_eq!(
             entitlement_answer().await,
             EntitlementAnswer::Verified(AccountCapabilities::empty())
         );
         assert_eq!(account_capabilities().await, AccountCapabilities::empty());
 
-        set_test_entitlement(Some(EntitlementAnswer::Unestablished));
+        stated.restate(EntitlementAnswer::Unestablished, None);
         assert_eq!(entitlement_answer().await, EntitlementAnswer::Unestablished);
         assert_eq!(
             account_capabilities().await,
@@ -1221,7 +1494,5 @@ mod tests {
             EntitlementAnswer::Unestablished,
             "a surface must be able to tell them apart"
         );
-
-        set_test_entitlement(None);
     }
 }

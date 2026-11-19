@@ -155,6 +155,12 @@ async function setupTauriMock(
           if (cmd === "plugin:dialog|open") return Promise.resolve(pickedFile);
 
           switch (cmd) {
+            // Always mounted: the account menu reads the capability answer on load, so a spec
+            // whose mock omits this falls through to the Unknown-command rejection and renders
+            // the shell in its error state (D11). The default makes no claim at all.
+            case "get_billing_entitlement":
+              return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
 
@@ -656,7 +662,10 @@ test.describe("Import Page — Story 6.2", () => {
   // must not hide the other three.
   const HOSTED_REFUSALS = [
     ["quota_exhausted", "You've used all of this month's Nixus Cloud AI requests."],
-    ["premium_required", "Nixus Cloud AI isn't enabled on your account."],
+    // Billing AD-12: under two paid tiers this names the CAPABILITY and routes to
+    // an upgrade. It must never read as "you are not a premium user", which would
+    // lie to a paying Classic subscriber.
+    ["premium_required", "Your plan does not include Nixus Cloud AI."],
     ["unauthorized", "Your sign-in has expired. Please sign in again."],
     [
       "hosted_unavailable",

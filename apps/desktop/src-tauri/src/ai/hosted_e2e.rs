@@ -277,6 +277,11 @@ fn chat_ndjson() -> String {
 
 struct Harness {
     _guard: std::sync::MutexGuard<'static, ()>,
+    /// Taken in addition to the keyring guard, and always after it so the two can never be
+    /// acquired in opposing orders: this harness states a capability through the process-global
+    /// entitlement override, which `entitlements.rs`'s own tests also mutate. Withdrawn by its
+    /// own `Drop`, which is why this harness no longer clears the override itself.
+    _entitlement: crate::entitlements::StatedEntitlement,
     previous_url: Option<String>,
 }
 
@@ -300,21 +305,25 @@ impl Harness {
 
     fn with_entitlement(gateway: &StubGateway, entitled: bool) -> Self {
         let guard = credentials::test_keyring_guard();
+        let entitlement = crate::entitlements::StatedEntitlement::verified(
+            if entitled {
+                &[crate::entitlements::HOSTED_AI]
+            } else {
+                &[]
+            },
+            None,
+        );
         let previous_url = std::env::var(BASE_URL_ENV).ok();
 
         hosted_state::clear();
         let _ = credentials::clear_cognito_session();
         install_session();
-        crate::entitlements::set_test_capabilities(Some(if entitled {
-            &[crate::entitlements::HOSTED_AI]
-        } else {
-            &[]
-        }));
         std::env::set_var(BASE_URL_ENV, &gateway.base_url);
         std::env::set_var(TOKEN_BASE_URL_ENV, &gateway.base_url);
 
         Harness {
             _guard: guard,
+            _entitlement: entitlement,
             previous_url,
         }
     }
@@ -328,7 +337,6 @@ impl Drop for Harness {
         }
         std::env::remove_var(TOKEN_BASE_URL_ENV);
         hosted_state::clear();
-        crate::entitlements::set_test_capabilities(None);
         let _ = credentials::clear_cognito_session();
     }
 }

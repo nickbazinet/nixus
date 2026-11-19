@@ -32,6 +32,9 @@ test.describe('AI Section Navigation', () => {
         convertFileSrc: (path: string) => path,
         invoke: (cmd: string) => {
           if (cmd.startsWith('plugin:')) return Promise.resolve(null);
+          // Always mounted: the account menu reads the capability answer on load (D11).
+          if (cmd === 'get_billing_entitlement')
+            return Promise.resolve({ established: false, tier: null, capabilities: [] });
           if (cmd === 'check_picker_gate') return Promise.resolve({ needs_picker: false });
           if (cmd === 'check_onboarding_status') return Promise.resolve({ needs_onboarding: false });
           if (cmd === 'list_agents') {
@@ -77,6 +80,9 @@ test.describe('AI Section Navigation', () => {
         convertFileSrc: (path: string) => path,
         invoke: (cmd: string) => {
           if (cmd.startsWith('plugin:')) return Promise.resolve(null);
+          // Always mounted: the account menu reads the capability answer on load (D11).
+          if (cmd === 'get_billing_entitlement')
+            return Promise.resolve({ established: false, tier: null, capabilities: [] });
           if (cmd === 'check_picker_gate') return Promise.resolve({ needs_picker: false });
           if (cmd === 'check_onboarding_status') return Promise.resolve({ needs_onboarding: false });
           if (cmd === 'list_agents') return Promise.resolve(agents);

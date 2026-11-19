@@ -1,28 +1,39 @@
 import { useTranslation } from "react-i18next";
 import { Alert, AlertTitle, AlertDescription, Card } from "@nixus/shared";
-import { usePremiumEntitlementState } from "@/hooks/useAuth";
+import {
+  useBillingEntitlementState,
+  usePremiumEntitlementState,
+} from "@/hooks/useAuth";
 import { useActiveProfile } from "@/hooks/useDatasets";
 import { BillingUpgradeAction } from "@/components/billing/BillingUpgradeAction";
+import { HOSTED_AI_CAPABILITY, lacksCapability } from "@/lib/billing";
 import { CredentialsForm } from "./CredentialsForm";
 import { SettingRow, SettingsSection } from "./SettingRow";
 
 export function ReadingStatementsSettings() {
   const { t } = useTranslation();
-  const { premium: isPremium, resolving } = usePremiumEntitlementState();
+  const { premium: isPremium } = usePremiumEntitlementState();
+  const entitlement = useBillingEntitlementState();
   const activeProfile = useActiveProfile();
 
   /* The refusal half of this page, and the one state an upgrade can repair: a Nixus Cloud
-   * account that is signed in and does NOT hold the hosted-reading capability.
+   * account whose entitlement was ESTABLISHED and does not hold `hosted_ai`.
    *
-   * `resolving` is part of the gate rather than an afterthought — `premium: false` is both "this
-   * account is not entitled" and "nobody has asked yet", and offering to sell a capability during
-   * the first paint to an account that already owns it is the defect `usePremiumEntitlementState`
-   * exists to prevent. A local profile and a signed-out one are excluded for the same reason the
-   * Home notice excludes them: there is no account for a plan to attach to, so the first step is
-   * a sign-in rather than a purchase. */
+   * `lacksCapability` rather than `!isPremium`, and the difference is the whole point.
+   * `premium: false` is three facts wearing one boolean — not entitled, nobody has asked yet, and
+   * the entitlement could not be established — and the third is not something a purchase repairs.
+   * Selling hosted reading to a user whose connection failed, and who may already own it, is
+   * exactly what AD-9's "a free account receives a signed statement" exists to prevent: a free
+   * account is `established: true` with an empty list, and an unreachable server is
+   * `established: false`, so only the first is invited to upgrade.
+   *
+   * A local profile and a signed-out one are excluded for the same reason the Home notice
+   * excludes them: there is no account for a plan to attach to, so the first step is a sign-in
+   * rather than a purchase. */
   const signedInCloudAccount =
     activeProfile.data?.kind === "cloud-linked" && activeProfile.data.is_signed_in;
-  const offersUpgrade = signedInCloudAccount && !resolving && !isPremium;
+  const offersUpgrade =
+    signedInCloudAccount && lacksCapability(entitlement, HOSTED_AI_CAPABILITY);
 
   return (
     <div className="space-y-section-gap" data-testid="settings-reading-statements">

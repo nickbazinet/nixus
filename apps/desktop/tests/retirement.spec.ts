@@ -38,6 +38,12 @@ async function setupRetirementMock(page: Page, opts: RetirementMockOptions = {})
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
 
         switch (cmd) {
+          // Always mounted: the account menu reads the capability answer on load, so a spec
+          // whose mock omits this falls through to the Unknown-command rejection and renders
+          // the shell in its error state (D11). The default makes no claim at all.
+          case "get_billing_entitlement":
+            return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
           case "check_picker_gate":
             return Promise.resolve({ needs_picker: false });
           case "get_retirement_input":

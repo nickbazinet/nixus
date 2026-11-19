@@ -1,3 +1,12 @@
+/**
+ * Mirrors `ai::hosted_state::CACHE_TTL`, which is what actually bounds an entitlement re-read.
+ *
+ * Declared here rather than in a hook because both entitlement readers need it — the hosted-AI
+ * boolean in `hooks/useAuth.ts` and the capability answer in `lib/billing.ts` — and importing it
+ * from either one into the other would close an import cycle.
+ */
+export const HOSTED_AI_STATUS_TTL_MS = 5 * 60 * 1000;
+
 export const queryKeys = {
   budgetGroups: ["budget-groups"] as const,
   budgetGroupsForMonth: (year: number, month: number) =>
@@ -82,6 +91,7 @@ export const queryKeys = {
     session: ["auth", "session"] as const,
   },
   cloudAiPremium: ["cloud-ai-premium"] as const,
+  billingEntitlement: ["billing-entitlement"] as const,
   homeSurface: ["home-surface"] as const,
   homeComposerAccess: ["home-composer-access"] as const,
   // Every profile-family key shares the `profile` prefix, so one `removeQueries`

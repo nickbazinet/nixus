@@ -1,6 +1,10 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import type { BillingErrorCode } from "@nixus/shared";
+import {
+  type BillingCapability,
+  type BillingErrorCode,
+} from "@nixus/shared";
+import { HOSTED_AI_STATUS_TTL_MS, queryKeys } from "@/lib/constants";
 
 /**
  * The one place a plan's lookup key is written in the frontend.
@@ -11,6 +15,103 @@ import type { BillingErrorCode } from "@nixus/shared";
  * nowhere else.
  */
 export const ADVANCE_PLAN_LOOKUP_KEY = "advance_monthly_cad";
+
+/**
+ * Hosted AI through Nixus infrastructure, named once and typed against the shared union so a
+ * misspelling is a compile error rather than a gate that silently never opens.
+ *
+ * The only capability any surface names today. Every other gate asks "does this account hold at
+ * least one capability", which needs no name at all.
+ */
+export const HOSTED_AI_CAPABILITY: BillingCapability = "hosted_ai";
+
+/**
+ * `get_billing_entitlement`'s wire shape, mirroring Rust's `BillingEntitlementView`.
+ *
+ * Three fields, and the absences are the contract. `capabilities` is the only field a gate may
+ * read (AD-13). `tier` is an opaque label a surface may print and must never compare. And there
+ * is no usage figure, because the limit, the charged count and the period never cross IPC (AD-9).
+ */
+export interface BillingEntitlement {
+  /**
+   * Whether this is an answer at all. `false` covers both "nobody has asked yet" and "the
+   * entitlement could not be established", and neither may render a consequence: an upsell shown
+   * over a flaky connection is sold to a user who may already own the thing.
+   */
+  readonly established: boolean;
+  readonly tier: string | null;
+  readonly capabilities: readonly BillingCapability[];
+}
+
+/** The answer that makes no claim — the shape a gate sees before anything has resolved. */
+const UNESTABLISHED: BillingEntitlement = {
+  established: false,
+  tier: null,
+  capabilities: [],
+};
+
+/**
+ * What the signed-in account's entitlement grants, as a list of capabilities.
+ *
+ * `enabled` is the caller's to supply, for the same reason `useCloudAiPremium`'s is: the command
+ * resolves a call-time Cognito token, so reading it under a local profile would open the OS secure
+ * store for a profile that has no account at all.
+ *
+ * `staleTime` matches Rust's own status TTL and `retry: false` mirrors the hosted read: Rust
+ * answers fail-closed, so a rejection is a local IPC fault rather than a transient upstream one,
+ * and TanStack's default three attempts would re-open the OS secure store on each.
+ */
+export function useBillingEntitlement({ enabled }: { enabled: boolean }) {
+  return useQuery({
+    queryKey: queryKeys.billingEntitlement,
+    queryFn: () => invoke<BillingEntitlement>("get_billing_entitlement"),
+    enabled,
+    staleTime: HOSTED_AI_STATUS_TTL_MS,
+    retry: false,
+  });
+}
+
+/**
+ * Whether the account verifiably holds a paid plan, which is the question "manage my plan" asks.
+ *
+ * "At least one capability", never a tier and never `hosted_ai`: a Classic subscriber holds
+ * `multi_device_sync` and `household_net_worth` and no hosted AI, and gating the Portal on the
+ * hosted-AI boolean left that paying customer unable to manage or cancel their own subscription.
+ */
+export function holdsPaidPlan(entitlement: BillingEntitlement): boolean {
+  return entitlement.established && entitlement.capabilities.length > 0;
+}
+
+/** Whether the account verifiably holds one named capability. */
+export function holdsCapability(
+  entitlement: BillingEntitlement,
+  capability: BillingCapability,
+): boolean {
+  return entitlement.established && entitlement.capabilities.includes(capability);
+}
+
+/**
+ * Whether the account verifiably does NOT hold one named capability — the state an upgrade
+ * repairs, and deliberately not `!holdsCapability`.
+ *
+ * The negation is the trap this function exists to close: `!holdsCapability` is also true for an
+ * entitlement that could not be established, so an upsell gated on it is shown to a user whose
+ * connection failed and who may already own the capability being sold (AD-9).
+ */
+export function lacksCapability(
+  entitlement: BillingEntitlement,
+  capability: BillingCapability,
+): boolean {
+  return entitlement.established && !entitlement.capabilities.includes(capability);
+}
+
+/** The gate's answer before the query has resolved, so no caller has to spell the absence. */
+export function entitlementOrUnestablished(
+  data: BillingEntitlement | undefined,
+): BillingEntitlement {
+  return data ?? UNESTABLISHED;
+}
+
 
 /**
  * Opens Stripe-hosted Checkout for a plan in the **system browser**.

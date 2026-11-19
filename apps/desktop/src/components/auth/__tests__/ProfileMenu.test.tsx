@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProfileMenu } from "@/components/auth/ProfileMenu";
 import { queryKeys } from "@/lib/constants";
 import en from "@/locales/en.json";
+import type { BillingCapability } from "@nixus/shared";
+import type { BillingEntitlement } from "@/lib/billing";
 import type { ActiveProfile } from "@/hooks/useDatasets";
 import type { AuthState } from "@/lib/types";
 
@@ -185,15 +187,27 @@ describe("ProfileMenu plan management", () => {
   const portalCalls = () =>
     invokeMock.mock.calls.filter((call) => call[0] === "open_billing_portal");
 
-  /** Seeds the three existing shared caches this menu derives everything from. */
+  /**
+   * Seeds the shared caches this menu derives everything from.
+   *
+   * `entitled` is the HOSTED-AI boolean, which still drives the gold icon and the Premium badge.
+   * `capabilities` is the capability answer, which is what plan management is gated on — a
+   * different question, and the reason both are settable independently here. Omitting
+   * `capabilities` leaves the answer UNESTABLISHED, which is the state a flaky connection
+   * produces and the one no surface may act on.
+   */
   const seed = ({
     profile,
     session,
     entitled,
+    capabilities,
+    tier,
   }: {
     profile: ActiveProfile;
     session?: AuthState;
     entitled?: boolean;
+    capabilities?: BillingCapability[];
+    tier?: string;
   }) => {
     queryClient.setQueryData(queryKeys.activeProfile, profile);
     if (session !== undefined) {
@@ -202,7 +216,21 @@ describe("ProfileMenu plan management", () => {
     if (entitled !== undefined) {
       queryClient.setQueryData(queryKeys.cloudAiPremium, entitled);
     }
+    if (capabilities !== undefined) {
+      queryClient.setQueryData(queryKeys.billingEntitlement, {
+        established: true,
+        tier: tier ?? null,
+        capabilities,
+      } satisfies BillingEntitlement);
+    }
   };
+
+  const CLASSIC: BillingCapability[] = ["household_net_worth", "multi_device_sync"];
+  const ADVANCE: BillingCapability[] = [
+    "hosted_ai",
+    "household_net_worth",
+    "multi_device_sync",
+  ];
 
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -229,24 +257,56 @@ describe("ProfileMenu plan management", () => {
   });
 
   it("offers plan management to an account whose entitlement grants a capability", async () => {
-    seed({ profile: cloudProfile(true), session: loggedIn, entitled: true });
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: true,
+      capabilities: ADVANCE,
+      tier: "advance",
+    });
     mount();
     await settle();
 
     expect(at(MANAGE)?.textContent).toBe(EN["billing.managePlan"]);
   });
 
-  /* The gate is the capability answer, never a tier: an account that holds nothing has no plan
-   * to manage and the Portal would refuse it, so offering the row would be a dead end. */
-  it("offers nothing to manage to an account with no granted capability", async () => {
-    seed({ profile: cloudProfile(true), session: loggedIn, entitled: false });
+  /* The regression this gate change exists for. Classic grants `multi_device_sync` and
+   * `household_net_worth` and never `hosted_ai`, so the hosted-AI boolean reported this paying
+   * subscriber as entitled to nothing and removed their only route to cancelling. */
+  it("offers plan management to a Classic subscriber who holds no hosted AI", async () => {
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: false,
+      capabilities: CLASSIC,
+      tier: "classic",
+    });
+    mount();
+    await settle();
+
+    expect(at(MANAGE)?.textContent).toBe(EN["billing.managePlan"]);
+  });
+
+  /* The gate is the capability LIST, never a tier and never the hosted-AI boolean: a verified
+   * account that holds nothing has no plan to manage and the Portal would refuse it, so offering
+   * the row would be a dead end. */
+  it("offers nothing to manage to a verified account with no granted capability", async () => {
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: false,
+      capabilities: [],
+      tier: "free",
+    });
     mount();
     await settle();
 
     expect(at(MANAGE)).toBeNull();
   });
 
-  it("offers nothing to manage while the entitlement is still unresolved", async () => {
+  /* An answer that was never established is not "no plan" — it is "we do not know", and a Portal
+   * session cannot be minted against an unknown entitlement (AD-9). */
+  it("offers nothing to manage while the entitlement is unestablished", async () => {
     seed({ profile: cloudProfile(true), session: loggedIn });
     mount();
     await settle();
@@ -254,21 +314,74 @@ describe("ProfileMenu plan management", () => {
     expect(at(MANAGE)).toBeNull();
   });
 
+  /* The `established` half of the gate, made observable.
+   *
+   * Written against an INCONSISTENT payload — not an answer, yet carrying capabilities — because
+   * a consistent unestablished answer always has an empty list, so "no row" is then true for two
+   * different reasons and the test cannot tell which one held. Rust makes this payload
+   * unconstructible (`SurfaceEntitlement::new` drops the label and the view flattens the list),
+   * so this asserts the frontend does not become the layer that trusts it if that ever changes. */
+  it("offers nothing to manage when an answer that was never established claims capabilities", async () => {
+    queryClient.setQueryData(queryKeys.activeProfile, cloudProfile(true));
+    queryClient.setQueryData(queryKeys.auth.session, loggedIn);
+    queryClient.setQueryData(queryKeys.billingEntitlement, {
+      established: false,
+      tier: "advance",
+      capabilities: ADVANCE,
+    } satisfies BillingEntitlement);
+    mount();
+    await settle();
+
+    expect(at(MANAGE)).toBeNull();
+  });
+
+  /* The hosted-AI boolean must not be able to open this row on its own any more: it is a claim
+   * about a different capability, and on a Classic account it is false while a plan exists. */
+  it("never opens the row on the hosted-AI boolean alone", async () => {
+    seed({ profile: cloudProfile(true), session: loggedIn, entitled: true });
+    mount();
+    await settle();
+
+    expect(at(MANAGE)).toBeNull();
+  });
+
   it("offers nothing to manage on a signed-out cloud profile or a local one", async () => {
-    seed({ profile: cloudProfile(false), entitled: true });
+    seed({ profile: cloudProfile(false), entitled: true, capabilities: ADVANCE });
     mount();
     await settle();
     expect(at(MANAGE)).toBeNull();
 
     queryClient.clear();
-    seed({ profile: localProfile(), entitled: true });
+    seed({ profile: localProfile(), entitled: true, capabilities: ADVANCE });
     mount();
     await settle();
     expect(at(MANAGE)).toBeNull();
   });
 
+  /* An opaque label may be carried and displayed; it may never be compared, and nothing in this
+   * menu reads it. Pinned so a future edit cannot start printing the raw code. */
+  it("renders the opaque tier code nowhere", async () => {
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: false,
+      capabilities: CLASSIC,
+      tier: "classic",
+    });
+    mount();
+    await settle();
+
+    expect(at(MANAGE)).not.toBeNull();
+    expect(container.textContent).not.toContain("classic");
+  });
+
   it("opens the Portal with no argument at all, and gets no URL back", async () => {
-    seed({ profile: cloudProfile(true), session: loggedIn, entitled: true });
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: true,
+      capabilities: ADVANCE,
+    });
     mount();
     await settle();
 
@@ -291,7 +404,12 @@ describe("ProfileMenu plan management", () => {
       });
     });
 
-    seed({ profile: cloudProfile(true), session: loggedIn, entitled: true });
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: true,
+      capabilities: ADVANCE,
+    });
     mount();
     await settle();
 
@@ -330,7 +448,12 @@ describe("ProfileMenu plan management", () => {
       };
     });
 
-    seed({ profile: cloudProfile(true), session: loggedIn, entitled: true });
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: true,
+      capabilities: ADVANCE,
+    });
     mount();
     await settle();
 
@@ -356,7 +479,12 @@ describe("ProfileMenu plan management", () => {
       };
     });
 
-    seed({ profile: cloudProfile(true), session: loggedIn, entitled: true });
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: true,
+      capabilities: ADVANCE,
+    });
     mount();
     await settle();
 
@@ -371,16 +499,38 @@ describe("ProfileMenu plan management", () => {
     expect(queryClient.getQueryData(queryKeys.auth.session)).not.toEqual(loggedIn);
   });
 
-  /* The whole header is mounted on every screen, so a billing command reached on load would put
-   * every existing E2E spec's Tauri mock one command short (D11). */
-  it("reaches no billing command on load", async () => {
-    seed({ profile: cloudProfile(true), session: loggedIn, entitled: true });
+  /* The header is mounted on every screen, so no COMMERCE command may be reached on load: one
+   * would open a browser or mint a Stripe session during a page paint.
+   *
+   * The capability READ is a different matter and is expected — it is the one new `invoke()` this
+   * change adds to an always-mounted surface, which is why every Playwright spec's Tauri mock now
+   * carries a `get_billing_entitlement` case (D11). Asserted positively here so that fact stays
+   * visible rather than being rediscovered as 40 broken specs. */
+  it("reaches no commerce command on load, and only the capability read", async () => {
+    seed({
+      profile: cloudProfile(true),
+      session: loggedIn,
+      entitled: true,
+      capabilities: ADVANCE,
+    });
     mount();
     await settle();
 
     expect(portalCalls()).toHaveLength(0);
     expect(
       invokeMock.mock.calls.filter((call) => String(call[0]).startsWith("open_billing"))
+    ).toHaveLength(0);
+  });
+
+  /* A local profile is a purely local concept (NFR7) and this command resolves a call-time
+   * Cognito token, so the gate must hold before any IPC is reached at all. */
+  it("never reaches the capability read under a local profile", async () => {
+    seed({ profile: localProfile() });
+    mount();
+    await settle();
+
+    expect(
+      invokeMock.mock.calls.filter((call) => call[0] === "get_billing_entitlement")
     ).toHaveLength(0);
   });
 });

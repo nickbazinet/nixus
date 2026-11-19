@@ -429,6 +429,7 @@ pub fn run() {
             commands::cloud_ai::get_cloud_ai_premium,
             commands::billing::open_billing_checkout,
             commands::billing::open_billing_portal,
+            commands::billing::get_billing_entitlement,
             commands::profile::get_profile_source,
             commands::profile::get_cloud_profile_status,
             commands::profile::refresh_cloud_profile_now,

@@ -208,6 +208,12 @@ async function setupHomeMock(page: Page, options: HomeMockOptions = {}) {
           if (overview && cmd in OVERVIEW) return Promise.resolve(OVERVIEW[cmd]);
 
           switch (cmd) {
+            // Always mounted: the account menu reads the capability answer on load, so a spec
+            // whose mock omits this falls through to the Unknown-command rejection and renders
+            // the shell in its error state (D11). The default makes no claim at all.
+            case "get_billing_entitlement":
+              return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
             case "check_picker_gate":
               return Promise.resolve({ needs_picker: false });
             case "get_ai_config":
@@ -853,7 +859,13 @@ test.describe("Home dashboard — pre-built sections", () => {
     await setupHomeMock(page, { access: "not_premium", overview: true });
     await page.goto("/home");
     await expect(page.getByTestId("home-ask-input")).toBeDisabled();
-    await expect(page.getByTestId("home-ask-hint")).toContainText("Nixus Cloud premium");
+    // Billing AD-12: the hint names the CAPABILITY the plan lacks and routes to an
+    // upgrade. Asserting the absence of "premium" alongside the presence of the
+    // capability is what keeps this from drifting back to telling a paying Classic
+    // subscriber they need premium.
+    const hint = page.getByTestId("home-ask-hint");
+    await expect(hint).toContainText("Nixus Cloud AI");
+    await expect(hint).not.toContainText(/premium/i);
     await expect(page.getByTestId("home-attention-item")).toHaveCount(4);
     await expect(page.getByTestId("home-recommended-title")).not.toHaveText("Build your first AI widget");
   });

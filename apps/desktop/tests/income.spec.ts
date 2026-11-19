@@ -49,6 +49,12 @@ async function setupTauriMock(page: Page, rejectYearTotals = false) {
         // A truthy updater answer mounts an always-open modal that aria-hidden()s the whole app.
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
+          // Always mounted: the account menu reads the capability answer on load, so a spec
+          // whose mock omits this falls through to the Unknown-command rejection and renders
+          // the shell in its error state (D11). The default makes no claim at all.
+          case "get_billing_entitlement":
+            return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
           case "check_picker_gate":
             return Promise.resolve({ needs_picker: false });
           case "get_income_sources":
@@ -165,6 +171,12 @@ test("the table waits for the year aggregate instead of flashing zero totals", a
       invoke: (cmd: string, args: Record<string, unknown> = {}) => {
         if (cmd.startsWith("plugin:")) return Promise.resolve(null);
         switch (cmd) {
+          // Always mounted: the account menu reads the capability answer on load, so a spec
+          // whose mock omits this falls through to the Unknown-command rejection and renders
+          // the shell in its error state (D11). The default makes no claim at all.
+          case "get_billing_entitlement":
+            return Promise.resolve({ established: false, tier: null, capabilities: [] });
+
           case "check_picker_gate":
             return Promise.resolve({ needs_picker: false });
           case "get_income_sources":

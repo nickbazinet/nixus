@@ -77,6 +77,19 @@ interface MockCloudProfileStatus {
   has_copy: boolean;
 }
 
+/**
+ * `get_billing_entitlement`'s wire shape, mirroring Rust's `BillingEntitlementView`.
+ *
+ * `tier` is carried because the command carries it, and is asserted nowhere: a client may display
+ * an opaque label and may never compare one (AD-13). There is no usage figure, because none
+ * crosses IPC (AD-9).
+ */
+interface MockBillingEntitlement {
+  established: boolean;
+  tier: string | null;
+  capabilities: string[];
+}
+
 /** `get_active_profile`'s wire shape. The Cognito subject is deliberately absent from it (AD-10). */
 interface MockActiveProfile {
   dataset_id: string;
@@ -143,6 +156,11 @@ interface AuthOptions {
    * assumed, so the default is the answer that makes no claim.
    */
   cloudAiPremium?: CommandOutcome;
+  /**
+   * What `get_billing_entitlement` answers. Omit for the unestablished answer, which is what
+   * every pre-existing test in this file runs under: no manage link and no upsell.
+   */
+  billingEntitlement?: MockBillingEntitlement;
   /** Seeds `i18nextLng` before the app boots, so the FR locale is active on first paint. */
   language?: string;
   /**
@@ -358,6 +376,7 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
         ipcCalls.push({ cmd, args: args ?? null });
 
         switch (cmd) {
+
           case "get_auth_session":
             return session === undefined
               ? Promise.reject(`Unknown command: ${cmd}`)
@@ -403,6 +422,18 @@ async function setupTauriMock(page: Page, options: AuthOptions = {}) {
             return opts.cloudAiPremium === undefined
               ? Promise.resolve(false)
               : settle(opts.cloudAiPremium);
+
+          // Always mounted: the account menu reads this on load, so a mock that omitted it would
+          // fall through to the Unknown-command rejection and render the shell in its error
+          // state (D11). The default is the answer that makes no claim.
+          case "get_billing_entitlement":
+            return Promise.resolve(
+              opts.billingEntitlement ?? {
+                established: false,
+                tier: null,
+                capabilities: [],
+              },
+            );
 
           case "list_datasets":
             return opts.datasets === undefined
@@ -1065,6 +1096,9 @@ test.describe("account menu hosted-AI entitlement", () => {
       await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
     ).toBeNull();
     expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+    // The capability read is gated identically, and for the identical reason: it resolves a
+    // call-time Cognito token, so a profile with no account must never reach it (NFR7, AD-10).
+    expect(await readIpcCommands(page)).not.toContain("get_billing_entitlement");
   });
 
   test("a signed-out cloud profile never asks for the entitlement", async ({ page }) => {
@@ -1078,6 +1112,9 @@ test.describe("account menu hosted-AI entitlement", () => {
     await expect(page.getByTestId("profile-menu-cloud-status")).toBeVisible();
     await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
     expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+    // The capability read is gated identically, and for the identical reason: it resolves a
+    // call-time Cognito token, so a profile with no account must never reach it (NFR7, AD-10).
+    expect(await readIpcCommands(page)).not.toContain("get_billing_entitlement");
   });
 
   test("a logged-in session belonging to another account claims nothing here", async ({
@@ -1100,6 +1137,9 @@ test.describe("account menu hosted-AI entitlement", () => {
     await expect(page.getByTestId(PREMIUM_ROW)).toHaveCount(0);
     await expect(page.getByText(/premium/i)).toHaveCount(0);
     expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+    // The capability read is gated identically, and for the identical reason: it resolves a
+    // call-time Cognito token, so a profile with no account must never reach it (NFR7, AD-10).
+    expect(await readIpcCommands(page)).not.toContain("get_billing_entitlement");
   });
 
   test("an expired session never asks for the entitlement", async ({ page }) => {
@@ -1115,6 +1155,9 @@ test.describe("account menu hosted-AI entitlement", () => {
       await page.getByTestId("profile-menu-trigger").getAttribute("data-premium"),
     ).toBeNull();
     expect(await readIpcCommands(page)).not.toContain("get_cloud_ai_premium");
+    // The capability read is gated identically, and for the identical reason: it resolves a
+    // call-time Cognito token, so a profile with no account must never reach it (NFR7, AD-10).
+    expect(await readIpcCommands(page)).not.toContain("get_billing_entitlement");
   });
 
   test("in French the row resolves its label and leaks no raw key", async ({ page }) => {
@@ -1167,6 +1210,110 @@ test.describe("account menu hosted-AI entitlement", () => {
     );
   });
 
+});
+
+/* The capability gate, which is a DIFFERENT question from the hosted-AI entitlement above and the
+ * reason the menu reads two commands. "Has a plan to manage" is "holds at least one capability";
+ * "can use hosted AI" is specifically `hosted_ai`. Gating the Portal on the latter locked a paying
+ * Classic subscriber out of managing or cancelling their own subscription. */
+test.describe("account menu plan management", () => {
+  const MANAGE = "profile-menu-manage-plan";
+  const PREMIUM_BADGE_ROW = "profile-menu-premium";
+
+  async function openAccountMenu(page: Page) {
+    await page.goto("/");
+    await page.getByTestId("profile-menu-trigger").click();
+    await expect(page.getByTestId("profile-menu-panel")).toBeVisible();
+  }
+
+  /* The regression this whole change exists for: Classic grants `multi_device_sync` and
+   * `household_net_worth` and no hosted AI, so the hosted-AI boolean reported this paying customer
+   * as entitled to nothing and hid the one route to cancelling their subscription. */
+  test("a Classic subscriber can reach the Portal to manage their plan", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      // Explicitly NOT entitled to hosted AI, which is the whole point of this row.
+      cloudAiPremium: { kind: "resolve", value: false },
+      billingEntitlement: {
+        established: true,
+        tier: "classic",
+        capabilities: ["household_net_worth", "multi_device_sync"],
+      },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(MANAGE)).toBeVisible();
+    await expect(page.getByTestId(PREMIUM_BADGE_ROW)).toHaveCount(0);
+  });
+
+  test("an Advance subscriber can reach it too", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      cloudAiPremium: { kind: "resolve", value: true },
+      billingEntitlement: {
+        established: true,
+        tier: "advance",
+        capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+      },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(MANAGE)).toBeVisible();
+  });
+
+  /* A verified free account: an answer, and one that holds nothing. There is no plan to manage and
+   * the Portal would refuse the session, so offering the row would be a dead end. */
+  test("a verified free account is offered nothing to manage", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      billingEntitlement: { established: true, tier: "free", capabilities: [] },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(MANAGE)).toHaveCount(0);
+  });
+
+  /* The row the fail-closed boolean could not express: not an answer. An upgrade cannot repair an
+   * unreachable server, and a Portal session cannot be minted against an unknown entitlement, so
+   * this state claims nothing in either direction (AD-9). */
+  test("an unestablished answer offers neither management nor a claim", async ({
+    page,
+  }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      billingEntitlement: { established: false, tier: null, capabilities: [] },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(MANAGE)).toHaveCount(0);
+    await expect(page.getByTestId(PREMIUM_BADGE_ROW)).toHaveCount(0);
+  });
+
+  /* An opaque label may be carried and displayed; it may never be rendered as a gate's reason, and
+   * nothing here reads it. Asserted so a future edit cannot quietly start printing the raw code. */
+  test("the opaque tier code never reaches the panel as text", async ({ page }) => {
+    await setupTauriMock(page, {
+      session: LOGGED_IN,
+      activeProfile: CLOUD_PROFILE_SIGNED_IN,
+      billingEntitlement: {
+        established: true,
+        tier: "classic",
+        capabilities: ["multi_device_sync"],
+      },
+    });
+    await openAccountMenu(page);
+
+    await expect(page.getByTestId(MANAGE)).toBeVisible();
+    await expect(
+      page.getByTestId("profile-menu-panel").getByText("classic", { exact: false }),
+    ).toHaveCount(0);
+  });
 });
 
 test.describe("/profile session guard", () => {
