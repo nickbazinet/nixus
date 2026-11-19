@@ -149,7 +149,16 @@ fn billing_error(refusal: BillingRefusal) -> AppError {
             "A plan change is already open in your browser. Finish it there.",
             true,
         ),
-        // `BillingRefusal::Rejected` carries only the four codes above, and `Transient` is
+        // Never the retry copy: this account holds its capabilities by grant, so there is no
+        // Stripe subscription behind them and no amount of waiting creates one.
+        BillingRefusal::Rejected {
+            code: "no_subscription",
+        } => (
+            "no_subscription",
+            "This plan was granted by Nixus, so there is no subscription to manage here.",
+            false,
+        ),
+        // `BillingRefusal::Rejected` carries only the codes above, and `Transient` is
         // `rate_limited` and `unavailable`. Both degrade to the one outcome a wait repairs.
         BillingRefusal::Rejected { .. } | BillingRefusal::Transient => (
             "unavailable",

@@ -86,7 +86,7 @@ describe("the customer is the caller's own, never a request parameter", () => {
     seedCustomer(SUB_B, "cus_b");
 
     expect((await failureOf(handlePortal({ sub: SUB_A, now: NOW }))).failure.code).toBe(
-      "unavailable",
+      "no_subscription",
     );
     expect(stripe.countOf("billingPortal.sessions.create")).toBe(0);
 
@@ -95,10 +95,11 @@ describe("the customer is the caller's own, never a request parameter", () => {
   });
 
   /* A caller who has never checked out has no portal to open: a CLEAN refusal
-   * rather than a 500. */
+   * rather than a 500, and one that does not read as a passing outage - every
+   * hand-granted account is permanently in this state. */
   it("refuses cleanly for a caller with no customer record", async () => {
     expect((await failureOf(handlePortal({ sub: SUB_A, now: NOW }))).failure.code).toBe(
-      "unavailable",
+      "no_subscription",
     );
   });
 
@@ -113,7 +114,7 @@ describe("the customer is the caller's own, never a request parameter", () => {
 
       expect(
         (await failureOf(handlePortal({ sub: SUB_A, now: NOW }))).failure.code,
-      ).toBe("unavailable");
+      ).toBe("no_subscription");
     },
   );
 

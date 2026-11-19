@@ -377,15 +377,14 @@ describe("validation runs in the dispatcher, before the handler", () => {
     expect(response.payload).toMatchObject({ destination: "checkout" });
   });
 
-  /* SUPERSEDED STUB-ERA ASSERTION: `/portal` keeps the same status for a real
-   * reason now - a caller who has never checked out has no portal to open - and
-   * `/entitlement` answers a signed FREE statement rather than a stub failure,
-   * which is AD-9's whole point. */
+  /* A caller who has never checked out has no portal to open, and that is NOT a
+   * passing outage: every hand-granted account is permanently in this state, so
+   * the status must not be the 503 a client treats as retryable. */
   it("refuses /portal cleanly for a caller with no Stripe customer", async () => {
     const response = await call({ route: "/portal", method: "POST", sub: SUB_A });
 
-    expect(response.status).toBe(503);
-    expect(response.payload.error).toMatchObject({ code: "unavailable" });
+    expect(response.status).toBe(409);
+    expect(response.payload.error).toMatchObject({ code: "no_subscription" });
   });
 
   it("answers /entitlement with a signed free statement and no record", async () => {
@@ -576,7 +575,7 @@ describe("every response and every log line", () => {
     ]);
     expect(lastLine().sub).toBe(SUB_A);
     expect(lastLine().route).toBe("/portal");
-    expect(lastLine().error_code).toBe("unavailable");
+    expect(lastLine().error_code).toBe("no_subscription");
     expect(typeof lastLine().latency_ms).toBe("number");
   });
 
@@ -633,7 +632,7 @@ describe("every response and every log line", () => {
     }) as APIGatewayProxyEvent & { resource: string };
     event.resource = "";
 
-    expect((await dispatch(event, () => NOW)).statusCode).toBe(503);
+    expect((await dispatch(event, () => NOW)).statusCode).toBe(409);
     expect(lastLine().route).toBe("/portal");
   });
 });

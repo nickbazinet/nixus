@@ -167,6 +167,8 @@ export function billingMessageKey(code: BillingErrorCode): string {
       return "billing.errorPromotionInvalid";
     case "checkout_in_progress":
       return "billing.errorAlreadyOpen";
+    case "no_subscription":
+      return "billing.errorNoSubscription";
     case "rate_limited":
     case "unavailable":
       return "billing.errorUnavailable";

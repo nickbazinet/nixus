@@ -66,6 +66,7 @@ export const SIMPLE_MESSAGES: Readonly<Record<SimpleErrorCode, string>> = {
   // The code itself is never echoed back (AD-8, AD-14).
   promotion_invalid: "That promotion code cannot be applied.",
   checkout_in_progress: "A checkout is already in progress for this account.",
+  no_subscription: "This account has no subscription to manage.",
 };
 
 const CONFLICT_MESSAGES: Readonly<Record<BillingVersionedResource, string>> = {
@@ -92,6 +93,7 @@ export function messageFor(failure: BillingFailure): string {
     case "unavailable":
     case "promotion_invalid":
     case "checkout_in_progress":
+    case "no_subscription":
       return SIMPLE_MESSAGES[failure.code];
     default:
       return assertNever(failure);

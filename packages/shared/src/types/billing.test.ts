@@ -206,6 +206,7 @@ const CLIENT_TOO_OLD_ERROR_KEYS = keysOf<BillingClientTooOldError>({
 });
 
 const ERROR_CODE_COVERAGE: Record<BillingErrorCode, true> = {
+  no_subscription: true,
   unauthorized: true,
   reauthentication_required: true,
   validation: true,
@@ -635,6 +636,7 @@ function describeError(error: BillingError): string {
     case "unavailable":
     case "promotion_invalid":
     case "checkout_in_progress":
+    case "no_subscription":
       return error.code;
     default:
       return assertNever(error);

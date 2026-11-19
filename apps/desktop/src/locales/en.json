@@ -1638,6 +1638,7 @@
   "billing.errorSignedOut": "Sign in to your Nixus Cloud account to continue.",
   "billing.errorReauthenticationRequired": "Please sign in again. Your saved sign-in is missing a permission that only a fresh sign-in can grant.",
   "billing.errorClientTooOld": "This version of Nixus is too old to open your plan. Install the latest version and try again — your sign-in is fine.",
+  "billing.errorNoSubscription": "This plan was granted by Nixus, so there is no subscription to manage here.",
   "billing.errorNoPlanToManage": "There is no Nixus Cloud plan on this account to manage.",
   "billing.errorRefused": "Nixus Cloud refused that request. Trying it again unchanged won't help.",
   "billing.errorVersionConflict": "Your plan changed somewhere else. Try again.",

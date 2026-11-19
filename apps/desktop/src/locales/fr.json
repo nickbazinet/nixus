@@ -1638,6 +1638,7 @@
   "billing.errorSignedOut": "Connectez-vous à votre compte Nixus Cloud pour continuer.",
   "billing.errorReauthenticationRequired": "Veuillez vous reconnecter. Il manque à votre connexion enregistrée une permission que seule une nouvelle connexion peut accorder.",
   "billing.errorClientTooOld": "Cette version de Nixus est trop ancienne pour ouvrir votre forfait. Installez la dernière version et réessayez — votre connexion n’est pas en cause.",
+  "billing.errorNoSubscription": "Ce forfait a \u00e9t\u00e9 accord\u00e9 par Nixus\u00a0; il n'y a donc aucun abonnement \u00e0 g\u00e9rer ici.",
   "billing.errorNoPlanToManage": "Aucun forfait Nixus Cloud à gérer dans ce compte.",
   "billing.errorRefused": "Nixus Cloud a refusé cette demande. La reprendre telle quelle n’y changera rien.",
   "billing.errorVersionConflict": "Votre forfait a changé ailleurs. Réessayez.",

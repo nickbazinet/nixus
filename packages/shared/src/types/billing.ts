@@ -310,6 +310,16 @@ export const BILLING_ERROR_CODES = [
    * behaviour for a build that cannot be served.
    */
   "client_too_old",
+  /**
+   * Additive extension to AD-13's enumerated union: no Stripe subscription exists to manage, which
+   * `POST /portal` answers for a hand-granted account that has never checked out.
+   *
+   * Its own code rather than `unavailable` because they differ in the only way that matters to the
+   * reader: `unavailable` is a 503 a wait repairs, and this is permanent until the account buys
+   * something, so reporting it as transient offered a retry that could never clear it. Not
+   * `premium_required` either - that invites an upgrade for capabilities already held (AD-12).
+   */
+  "no_subscription",
 ] as const;
 export type BillingErrorCode = (typeof BILLING_ERROR_CODES)[number];
 
@@ -425,6 +435,7 @@ export const BILLING_ERROR_HTTP_STATUS = {
   promotion_invalid: 400,
   checkout_in_progress: 409,
   client_too_old: 403,
+  no_subscription: 409,
 } as const satisfies Record<BillingErrorCode, number>;
 
 /**

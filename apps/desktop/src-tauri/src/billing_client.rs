@@ -49,7 +49,7 @@ const CLIENT_VERSION_HEADER: &str = "x-nixus-client-version";
 
 /// The closed billing error union, mirroring `BILLING_ERROR_CODES`. Pinned against the contract
 /// source by a test, so a code added on either side fails here rather than at runtime.
-const ERROR_CODES: [&str; 10] = [
+const ERROR_CODES: [&str; 11] = [
     "unauthorized",
     "reauthentication_required",
     "validation",
@@ -60,6 +60,7 @@ const ERROR_CODES: [&str; 10] = [
     "promotion_invalid",
     "checkout_in_progress",
     "client_too_old",
+    "no_subscription",
 ];
 
 fn base_url() -> String {
@@ -164,6 +165,11 @@ fn refusal_for(code: &str, minimum_client_version: Option<String>) -> BillingRef
         },
         "checkout_in_progress" => BillingRefusal::Rejected {
             code: "checkout_in_progress",
+        },
+        // Rejected, never Transient: a hand-granted account has no subscription to manage and a
+        // retry cannot create one, so this must not reach the wait-and-retry copy below.
+        "no_subscription" => BillingRefusal::Rejected {
+            code: "no_subscription",
         },
         // `normalize_error_code` closes the set, so this arm is `rate_limited` and `unavailable`.
         _ => BillingRefusal::Transient,
@@ -911,6 +917,12 @@ mod tests {
                 "client_too_old",
                 BillingRefusal::ForcedUpgrade {
                     minimum_client_version: None,
+                },
+            ),
+            (
+                "no_subscription",
+                BillingRefusal::Rejected {
+                    code: "no_subscription",
                 },
             ),
         ];

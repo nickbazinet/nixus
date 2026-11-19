@@ -277,6 +277,13 @@
     },
     {
       "error": {
+        "code": "no_subscription",
+        "message": "This account has no subscription to manage.",
+        "request_id": "req-21"
+      }
+    },
+    {
+      "error": {
         "code": "promotion_invalid",
         "message": "The promotion code cannot be applied.",
         "request_id": "req-18"
