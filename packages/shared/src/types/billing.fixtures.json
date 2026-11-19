@@ -1,0 +1,278 @@
+{
+  "plan_catalog": {
+    "plans": [
+      {
+        "tier": "classic",
+        "lookup_key": "classic_monthly_cad",
+        "unit_amount_cents": 999,
+        "currency": "CAD",
+        "interval": "month",
+        "display_order": 1,
+        "capabilities": ["household_net_worth", "multi_device_sync"],
+        "monthly_request_limit": null
+      },
+      {
+        "tier": "advance",
+        "lookup_key": "advance_monthly_cad",
+        "unit_amount_cents": 1999,
+        "currency": "CAD",
+        "interval": "month",
+        "display_order": 2,
+        "capabilities": [
+          "hosted_ai",
+          "household_net_worth",
+          "multi_device_sync"
+        ],
+        "monthly_request_limit": 1000
+      }
+    ],
+    "cache_ttl_seconds": 300
+  },
+  "entitlement_paid": {
+    "tier": "advance",
+    "capabilities": ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    "status": "active",
+    "current_period_end": 1796083200,
+    "monthly_request_limit": 1000,
+    "source": "stripe",
+    "statement": "NXS1.cGFpZF9zdGF0ZW1lbnRfcGF5bG9hZA.MEUCIQCpYWlkX3NpZ25hdHVyZV9ieXRlc19wYWlk",
+    "statement_exp": 1795089600,
+    "version": 7
+  },
+  "entitlement_free": {
+    "tier": "free",
+    "capabilities": [],
+    "status": "none",
+    "current_period_end": null,
+    "monthly_request_limit": null,
+    "source": "stripe",
+    "statement": "NXS1.ZnJlZV9zdGF0ZW1lbnRfcGF5bG9hZA.MEUCIQCmZnJlZV9zaWduYXR1cmVfYnl0ZXNfZnJlZQ",
+    "statement_exp": 1795089600,
+    "version": null
+  },
+  "statement_claims_paid": {
+    "sub": "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+    "tier": "advance",
+    "capabilities": ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    "monthly_request_limit": 1000,
+    "iat": 1795003200,
+    "exp": 1795089600,
+    "key_id": "nxs-statement-key-1"
+  },
+  "statement_claims_free": {
+    "sub": "9b2c4a16-7d58-4f1e-bc33-2a6f0e5d7c91",
+    "tier": "free",
+    "capabilities": [],
+    "monthly_request_limit": null,
+    "iat": 1795003200,
+    "exp": 1795089600,
+    "key_id": "nxs-statement-key-1"
+  },
+  "checkout_request_with_promotion": {
+    "plan_lookup_key": "advance_monthly_cad",
+    "promotion_code": "LAUNCH2026"
+  },
+  "checkout_request_without_promotion": {
+    "plan_lookup_key": "classic_monthly_cad",
+    "promotion_code": null
+  },
+  "checkout_response_checkout": {
+    "url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3d4e5f6a7b8c9d0",
+    "destination": "checkout"
+  },
+  "checkout_response_portal": {
+    "url": "https://billing.stripe.com/p/session/test_c3dpdGNoX3BsYW4",
+    "destination": "portal"
+  },
+  "portal_response": {
+    "url": "https://billing.stripe.com/p/session/test_bWFuYWdlX3BsYW4"
+  },
+  "admin_override_request": {
+    "sub": "9b2c4a16-7d58-4f1e-bc33-2a6f0e5d7c91",
+    "tier": "advance",
+    "capabilities": ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    "monthly_request_limit": 1000,
+    "admin_expires_at": 1797595200,
+    "reason": "support_grant_ticket_4821",
+    "expected_version": null
+  },
+  "admin_override_response": {
+    "tier": "advance",
+    "capabilities": ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    "status": "none",
+    "current_period_end": null,
+    "monthly_request_limit": 1000,
+    "source": "admin",
+    "statement": "NXS1.YWRtaW5fc3RhdGVtZW50X3BheWxvYWQ.MEUCIQCzYWRtaW5fc2lnbmF0dXJlX2J5dGVzX2E",
+    "statement_exp": 1795089600,
+    "version": 8
+  },
+  "errors": [
+    {
+      "error": {
+        "code": "unauthorized",
+        "message": "Authentication required.",
+        "request_id": "req-1"
+      }
+    },
+    {
+      "error": {
+        "code": "reauthentication_required",
+        "message": "Sign in again to continue.",
+        "request_id": "req-2"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "The requested plan is not published by the catalog.",
+        "request_id": "req-3",
+        "field": "plan_lookup_key",
+        "reason": "not_allowed"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "The promotion code is malformed.",
+        "request_id": "req-4",
+        "field": "promotion_code",
+        "reason": "invalid_format"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "A required member is absent.",
+        "request_id": "req-5",
+        "field": "sub",
+        "reason": "required"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "A member has the wrong type.",
+        "request_id": "req-6",
+        "field": "tier",
+        "reason": "invalid_type"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "A capability name is not recognised.",
+        "request_id": "req-7",
+        "field": "capabilities",
+        "reason": "not_allowed"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "A number is outside its permitted range.",
+        "request_id": "req-8",
+        "field": "monthly_request_limit",
+        "reason": "out_of_range"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "The expiry has already passed.",
+        "request_id": "req-9",
+        "field": "admin_expires_at",
+        "reason": "in_past"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "A member is longer than permitted.",
+        "request_id": "req-10",
+        "field": "reason",
+        "reason": "too_long"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "A member has the wrong type.",
+        "request_id": "req-11",
+        "field": "expected_version",
+        "reason": "invalid_type"
+      }
+    },
+    {
+      "error": {
+        "code": "validation",
+        "message": "The request body carries an undefined member.",
+        "request_id": "req-12",
+        "field": "body",
+        "reason": "unknown_field"
+      }
+    },
+    {
+      "error": {
+        "code": "premium_required",
+        "message": "Your plan does not include this capability.",
+        "request_id": "req-13",
+        "capability": "hosted_ai"
+      }
+    },
+    {
+      "error": {
+        "code": "version_conflict",
+        "message": "The entitlement changed since it was loaded.",
+        "request_id": "req-14",
+        "resource": "entitlement",
+        "current_version": 7
+      }
+    },
+    {
+      "error": {
+        "code": "version_conflict",
+        "message": "The entitlement does not exist yet.",
+        "request_id": "req-15",
+        "resource": "entitlement",
+        "current_version": null
+      }
+    },
+    {
+      "error": {
+        "code": "rate_limited",
+        "message": "Too many requests.",
+        "request_id": "req-16"
+      }
+    },
+    {
+      "error": {
+        "code": "unavailable",
+        "message": "The billing service is unavailable.",
+        "request_id": "req-17"
+      }
+    },
+    {
+      "error": {
+        "code": "promotion_invalid",
+        "message": "The promotion code cannot be applied.",
+        "request_id": "req-18"
+      }
+    },
+    {
+      "error": {
+        "code": "checkout_in_progress",
+        "message": "A checkout session is already open for this account.",
+        "request_id": "req-19"
+      }
+    },
+    {
+      "error": {
+        "code": "client_too_old",
+        "message": "This version of Nixus is no longer served.",
+        "request_id": "req-20",
+        "minimum_client_version": "1.4.0"
+      }
+    }
+  ]
+}
