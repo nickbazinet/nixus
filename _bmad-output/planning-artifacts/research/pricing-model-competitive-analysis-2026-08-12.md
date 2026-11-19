@@ -13,13 +13,15 @@ inputs:
   - web search, August 2026
 ---
 
+> **Superseded 2026-11-18 — entitlement provider.** This document names LemonSqueezy and/or Keygen as the entitlement or licensing provider. Both are abandoned. Nixus Cloud billing is **Stripe Managed Payments** (Stripe is merchant of record), and the single entitlement authority is the `ENTITLEMENT` record in the `nixus-billing` billing table, written only by the Stripe webhook handler and the admin override route. Gates read **capabilities**, never tiers. The binding design is `_bmad-output/planning-artifacts/architecture/architecture-billing-2026-11-18/ARCHITECTURE-SPINE.md` (AD-1 to AD-18). Anything below that conflicts with that spine is historical.
+
 # Nixus Pricing Model — Competitive Analysis & Recommendation
 
 ## Executive Summary
 
 Nixus is being positioned into the wrong competitive set if compared against YNAB/Monarch/Copilot ($95–$199/yr, bank-synced, cloud-first). Nixus has no bank sync, is local-first, desktop-only, and uses BYOK AI — that puts it in a much smaller, cheaper cluster: **manual-import, local-first, privacy-first desktop finance apps** (Actual Budget, Sumhouse, MeasuredMoney, Ouriva, Rise Budget), where prices run **$0–$50 one-time or $20–$40/yr**, not $100+/yr.
 
-The entitlements architecture is already locked (LemonSqueezy + Keygen, per-module gating, lifetime one-time + monthly/yearly recurring — see [architecture-entitlements-licensing.md](../architecture-entitlements-licensing.md)). Zero pricing/monetization code exists today; the app is fully unlocked. This doc recommends the actual numbers.
+The entitlements architecture is already locked (LemonSqueezy + Keygen, per-module gating, lifetime one-time + monthly/yearly recurring — see [architecture-entitlements-licensing.md](../architecture-entitlements-licensing.md)). **Correction, 2026-11-18: that provider is not locked and never shipped — it was abandoned before implementation. The current entitlement provider is Stripe Managed Payments, per `_bmad-output/planning-artifacts/architecture/architecture-billing-2026-11-18/ARCHITECTURE-SPINE.md`.** Zero pricing/monetization code exists today; the app is fully unlocked. This doc recommends the actual numbers.
 
 **Recommendation:** Per-module lifetime pricing anchored low ($29–$39 Finance, $15–$19 Car, ~$49 bundle), a monthly/yearly subscription as the higher-friction alternative (not the primary ask), and a time-limited "founding price" during pre-alpha/beta — consistent with what every local-first competitor in this cluster actually does.
 
@@ -99,7 +101,7 @@ Positioning Nixus against Cluster A (YNAB/Monarch/Copilot) would price it 3–5x
 
 ## 4. Pricing Recommendation
 
-Architecture is already committed to LemonSqueezy + Keygen with **per-module entitlements** and **lifetime one-time + monthly/yearly recurring** support (FR1/FR2 in the architecture doc). Recommendation works within that, not against it.
+Architecture is already committed to LemonSqueezy + Keygen with **per-module entitlements** and **lifetime one-time + monthly/yearly recurring** support (FR1/FR2 in the architecture doc). **Correction, 2026-11-18: that commitment never shipped and the provider is abandoned; the current provider is Stripe Managed Payments (see the billing spine).** Recommendation works within the per-module / lifetime-plus-recurring shape, not against it.
 
 ### 4.1 Per-module lifetime pricing (primary offer)
 

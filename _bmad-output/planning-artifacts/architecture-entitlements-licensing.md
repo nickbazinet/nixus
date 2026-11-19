@@ -2,7 +2,7 @@
 stepsCompleted: [1, 2, 3, 4, 5, 6, 7, 8]
 workflowType: 'architecture'
 lastStep: 8
-status: 'complete'
+status: 'superseded'
 completedAt: '2026-08-01'
 inputDocuments:
   - architecture.md
@@ -24,6 +24,8 @@ supersedes: 'architecture.md licensing/subscription section (Cognito + DynamoDB 
 # Architecture Decision Document — Entitlements & Module Licensing
 
 > **Supersession note (2026-11-17):** The payment provider decision and the entitlement authority below are superseded by the billing spine deferred from [`architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md`](architecture/architecture-cloud-profile-billing-2026-11-17/ARCHITECTURE-SPINE.md). That spine's leaning is Stripe Managed Payments as merchant of record (LemonSqueezy closes 2027-03-31), with the entitlement home and signed-statement design decided in the future billing spine, not here.
+
+> **Superseded 2026-11-18 — entitlement provider.** This document names LemonSqueezy and/or Keygen as the entitlement or licensing provider. Both are abandoned. Nixus Cloud billing is **Stripe Managed Payments** (Stripe is merchant of record), and the single entitlement authority is the `ENTITLEMENT` record in the `nixus-billing` billing table, written only by the Stripe webhook handler and the admin override route. Gates read **capabilities**, never tiers. The binding design is `_bmad-output/planning-artifacts/architecture/architecture-billing-2026-11-18/ARCHITECTURE-SPINE.md` (AD-1 to AD-18). Anything below that conflicts with that spine is historical.
 
 _This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
 

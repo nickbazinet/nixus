@@ -1,5 +1,7 @@
 # Review — Security & Privacy Lens (Public, Cost-Bearing AI API)
 
+> **Superseded 2026-11-18 — entitlement provider.** This document names LemonSqueezy and/or Keygen as the entitlement or licensing provider. Both are abandoned. Nixus Cloud billing is **Stripe Managed Payments** (Stripe is merchant of record), and the single entitlement authority is the `ENTITLEMENT` record in the `nixus-billing` billing table, written only by the Stripe webhook handler and the admin override route. Gates read **capabilities**, never tiers. The binding design is `_bmad-output/planning-artifacts/architecture/architecture-billing-2026-11-18/ARCHITECTURE-SPINE.md` (AD-1 to AD-18). Anything below that conflicts with that spine is historical.
+
 - **Reviewed:** `ARCHITECTURE-SPINE.md` — Nixus Cloud Bedrock (feature altitude, `status: draft`, 2026-08-25)
 - **Companion read:** `_bmad-output/planning-artifacts/architecture-cloud-bedrock.md`
 - **Grounding:** `architecture-login.md`, `architecture-entitlements-licensing.md`, `.memlog.md` (same run folder), `.github/workflows/web-ci.yml`, live desktop AI call sites (`apps/desktop/src-tauri/src/ai/*`), plus current AWS documentation retrieved 2026-08-25 (cited inline).

@@ -16,6 +16,8 @@ moduleDocuments:
   api: architecture-api.md
 ---
 
+> **Superseded 2026-11-18 — entitlement provider.** This document names LemonSqueezy and/or Keygen as the entitlement or licensing provider. Both are abandoned. Nixus Cloud billing is **Stripe Managed Payments** (Stripe is merchant of record), and the single entitlement authority is the `ENTITLEMENT` record in the `nixus-billing` billing table, written only by the Stripe webhook handler and the admin override route. Gates read **capabilities**, never tiers. The binding design is `_bmad-output/planning-artifacts/architecture/architecture-billing-2026-11-18/ARCHITECTURE-SPINE.md` (AD-1 to AD-18). Anything below that conflicts with that spine is historical.
+
 # Platform Architecture Decision Document
 
 _This is the root architecture document for the Nixus platform. It covers monorepo structure, cross-module decisions, and shared infrastructure. Each module has its own architecture document for internal implementation details._

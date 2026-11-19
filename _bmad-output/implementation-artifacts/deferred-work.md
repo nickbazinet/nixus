@@ -1,5 +1,7 @@
 # Deferred Work
 
+> **Superseded 2026-11-18 — entitlement provider.** This document names LemonSqueezy and/or Keygen as the entitlement or licensing provider. Both are abandoned. Nixus Cloud billing is **Stripe Managed Payments** (Stripe is merchant of record), and the single entitlement authority is the `ENTITLEMENT` record in the `nixus-billing` billing table, written only by the Stripe webhook handler and the admin override route. Gates read **capabilities**, never tiers. The binding design is `_bmad-output/planning-artifacts/architecture/architecture-billing-2026-11-18/ARCHITECTURE-SPINE.md` (AD-1 to AD-18). Anything below that conflicts with that spine is historical.
+
 ## Native selects remaining outside this story's scope
 
 - `src/components/import/AutoCategorizedSummary.tsx` (line ~114) — native `<select>` for category picker in auto-categorized summary
@@ -260,7 +262,7 @@ user wiping data specifically to reclaim space) leaves the file un-shrunk with n
 
 **Architectural implications identified, not yet resolved:**
 - Cognito Groups become the tier signal for this feature specifically (read from the verified JWT's `cognito:groups` claim at the proxy) — this is a deliberate, narrow use of Cognito Groups for authorization, limited to already-online/already-logged-in features. It should **not** be extended to gate the offline-first Finance/Car modules (those stay on Keygen per `architecture-entitlements-licensing.md`'s local-first requirement).
-- `apps/api-licensing` (the LemonSqueezy → Keygen webhook bridge) would gain a second responsibility: syncing Cognito group membership (`AdminAddUserToGroup`/`AdminRemoveUserFromGroup`) when a subscription's tier changes, in addition to its existing Keygen entitlement sync.
+- `apps/api-licensing` (the LemonSqueezy → Keygen webhook bridge) would gain a second responsibility: syncing Cognito group membership (`AdminAddUserToGroup`/`AdminRemoveUserFromGroup`) when a subscription's tier changes, in addition to its existing Keygen entitlement sync. **2026-11-18: `apps/api-licensing` will never be built — `apps/api-billing` (the Stripe webhook handler and admin override route backing the `ENTITLEMENT` record in the `nixus-billing` table) supersedes it.**
 - **Unresolved identity-linking problem:** the proxy needs to know which Cognito `sub` corresponds to which LemonSqueezy subscription. Today, login (Cognito) and purchase (LemonSqueezy) are two independent flows with no guaranteed matching email. Needs a decision: require login with the purchase email, or an explicit "link my subscription" step (e.g., enter license key while logged in).
 - Unresolved: quota numbers per tier, proxy request/response shape, and where rate-limit counters live (a single Lambda invocation has no memory across requests — needs a store, e.g. DynamoDB per-user/per-period counters, not an in-process counter).
 

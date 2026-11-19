@@ -10,6 +10,8 @@ status: 'complete'
 completedAt: '2026-08-09'
 ---
 
+> **Superseded 2026-11-18 — entitlement provider.** This document names LemonSqueezy and/or Keygen as the entitlement or licensing provider. Both are abandoned. Nixus Cloud billing is **Stripe Managed Payments** (Stripe is merchant of record), and the single entitlement authority is the `ENTITLEMENT` record in the `nixus-billing` billing table, written only by the Stripe webhook handler and the admin override route. Gates read **capabilities**, never tiers. The binding design is `_bmad-output/planning-artifacts/architecture/architecture-billing-2026-11-18/ARCHITECTURE-SPINE.md` (AD-1 to AD-18). Anything below that conflicts with that spine is historical.
+
 # Architecture Decision Document: Login / User Identity Feature
 
 _This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
