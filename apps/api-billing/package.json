@@ -15,6 +15,7 @@
     "sam:build": "sam build"
   },
   "dependencies": {
+    "@aws-sdk/client-cloudformation": "3.1118.0",
     "@aws-sdk/client-cloudwatch": "3.1118.0",
     "@aws-sdk/client-dynamodb": "^3.1118.0",
     "@aws-sdk/client-kms": "3.1118.0",

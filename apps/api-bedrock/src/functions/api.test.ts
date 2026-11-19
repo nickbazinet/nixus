@@ -95,6 +95,7 @@ beforeEach(() => {
   client = new FakeDocumentClient();
   setDocumentClientForTesting(client.asDocumentClient());
   process.env.TABLE_NAME = "nixus-hosted-ai";
+  process.env.BILLING_TABLE_NAME = "nixus-billing-billing";
   process.env.BEDROCK_MODEL_ID = "us.anthropic.claude-sonnet-4-6";
   stream = new BufferStream();
   vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -104,6 +105,7 @@ beforeEach(() => {
 afterEach(() => {
   setDocumentClientForTesting(undefined);
   delete process.env.TABLE_NAME;
+  delete process.env.BILLING_TABLE_NAME;
   delete process.env.BEDROCK_MODEL_ID;
   vi.restoreAllMocks();
 });
@@ -199,7 +201,8 @@ describe("identity comes only from the authorizer", () => {
   it("ignores a body-supplied identity entirely", async () => {
     client
       .queueItem(undefined)
-      .queueItem({ enabled: true, monthly_request_limit: 1000 });
+      .queueItem({ enabled: true, monthly_request_limit: 1000 })
+      .queueItem(undefined);
 
     const sink = createResponseSink(stream);
     await dispatch(
@@ -222,6 +225,7 @@ describe("routing", () => {
     client
       .queueItem({ premium: true, monthly_request_limit: 250 })
       .queueItem({ enabled: true, monthly_request_limit: 1000 })
+      .queueItem(undefined)
       .queueItem({ charged_count: 3 });
 
     const sink = createResponseSink(stream);
@@ -245,7 +249,8 @@ describe("routing", () => {
       .queueItem(undefined)
       .queueItem({ enabled: true, monthly_request_limit: 1000 })
       .queueItem({ charged_count: 0 })
-      .queueItem({ charged_count: 0 });
+      .queueItem({ charged_count: 0 })
+      .queueItem(undefined);
 
     const sink = createResponseSink(stream);
     await dispatch(
@@ -312,7 +317,8 @@ describe("routing", () => {
   it("matches the method case-insensitively", async () => {
     client
       .queueItem(undefined)
-      .queueItem({ enabled: true, monthly_request_limit: 1000 });
+      .queueItem({ enabled: true, monthly_request_limit: 1000 })
+      .queueItem(undefined);
 
     const sink = createResponseSink(stream);
     await dispatch(makeEvent({ httpMethod: "get" }), sink, context);

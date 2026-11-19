@@ -40,6 +40,24 @@ Parameters:
     Type: String
     Description: Operator address subscribed to the CloudWatch alarms and AWS Budget.
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  BillingTableName:
+    Type: String
+    Description: >-
+      Physical name of the nixus-billing stack's retained billing table, whose
+      USER#<sub>/ENTITLEMENT record is the sole entitlement authority (billing
+      AD-2) and this service's canonical server-side read (billing AD-4).
+
+      Supplied as a DEPLOY-TIME PARAMETER, which billing AD-17 names as the
+      mechanism: a CloudFormation export/import would make the two stacks'
+      lifecycles mutually blocking, and a committed physical name is how a
+      release lands on a stale table. The operator reads it back from the
+      deployed stack's BillingTableName output.
+
+      NO DEFAULT, deliberately. A default could only name a table this stack does
+      not own, and a wrong one would silently answer every entitlement read with
+      "no record" - which falls back to the legacy premium attribute and hides
+      the misconfiguration instead of failing the deploy.
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{2,254}$'
   BedrockModelId:
     Type: String
     Default: us.anthropic.claude-sonnet-4-6
@@ -329,6 +347,20 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:TransactWriteItems
                 Resource: !GetAtt HostedAiTable.Arn
+        - PolicyName: hosted-ai-billing-entitlement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The entitlement authority lives in another stack's table, and this
+              # service is a READER of it and nothing more (billing AD-4). One
+              # action, GetItem, on one table named by the deploy-time parameter.
+              # No PutItem, no UpdateItem, no TransactWriteItems, no Query, no
+              # Scan: the two writers AD-2 permits are the Stripe webhook and the
+              # admin override, both in the billing stack.
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${BillingTableName}'
         - PolicyName: hosted-ai-bedrock
           PolicyDocument:
             Version: '2012-10-17'
@@ -370,6 +402,7 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref HostedAiTable
+          BILLING_TABLE_NAME: !Ref BillingTableName
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           DEPLOYMENT_REVISION: !Ref DeploymentRevision
       Events:

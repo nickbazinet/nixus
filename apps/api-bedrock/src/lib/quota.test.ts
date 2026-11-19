@@ -394,3 +394,79 @@ describe("all three transaction kinds address the same period", () => {
     }
   });
 });
+
+/*
+ * The positional-index guard.
+ *
+ * DynamoDB returns `CancellationReasons` POSITIONALLY, and reserveQuotaUnit's
+ * USER_CONFIG_INDEX=0 / GLOBAL_CONFIG_INDEX=1 / USER_USAGE_INDEX=2 /
+ * GLOBAL_USAGE_INDEX=3 mapping is the only way it can tell "an admin changed the
+ * config" from "this user is out of quota" from "the service is at its global
+ * cap". Inserting ANY item - an entitlement condition check being the obvious
+ * temptation while the billing authority is being adopted - shifts every later
+ * index and makes `failedAt` misattribute failures silently: a quota exhaustion
+ * reported as a config change, and a config change reported as quota exhaustion.
+ *
+ * This asserts the array's length AND the identity of each position, so neither
+ * an insertion nor a reordering can pass.
+ */
+describe("reserve's TransactItems array keeps exactly four items in order", () => {
+  it("is four items: user config check, global config check, user usage, global usage", async () => {
+    client.queueOk();
+    await reserveQuotaUnit({
+      context,
+      userConfig: USER_CONFIG,
+      globalConfig: GLOBAL_CONFIG,
+      now: NOW,
+    });
+
+    const items = transactItems();
+    expect(items).toHaveLength(4);
+
+    expect(Object.keys(items[0]!)).toEqual(["ConditionCheck"]);
+    expect(items[0]!.ConditionCheck.Key).toEqual({
+      pk: `USER#${SUB}`,
+      sk: "CONFIG",
+    });
+    expect(items[0]!.ConditionCheck.ExpressionAttributeNames["#premium"]).toBe(
+      "premium"
+    );
+
+    expect(Object.keys(items[1]!)).toEqual(["ConditionCheck"]);
+    expect(items[1]!.ConditionCheck.Key).toEqual({ pk: "GLOBAL", sk: "CONFIG" });
+    expect(items[1]!.ConditionCheck.ExpressionAttributeNames["#enabled"]).toBe(
+      "enabled"
+    );
+
+    expect(Object.keys(items[2]!)).toEqual(["Update"]);
+    expect(items[2]!.Update.Key).toEqual({
+      pk: `USER#${SUB}`,
+      sk: "USAGE#2026-08",
+    });
+
+    expect(Object.keys(items[3]!)).toEqual(["Update"]);
+    expect(items[3]!.Update.Key).toEqual({ pk: "GLOBAL", sk: "USAGE#2026-08" });
+  });
+
+  /* Nothing may reach into the billing table from inside the transaction: the
+   * hosted-AI role holds `dynamodb:GetItem` on it and no write action at all, and
+   * the entitlement read is a separate GetCommand for the index reason above. */
+  it("names only the hosted-AI table and no entitlement item", async () => {
+    client.queueOk();
+    await reserveQuotaUnit({
+      context,
+      userConfig: USER_CONFIG,
+      globalConfig: GLOBAL_CONFIG,
+      now: NOW,
+    });
+
+    const serialized = JSON.stringify(transactItems());
+    expect(serialized).not.toContain("ENTITLEMENT");
+    expect(serialized).not.toContain("capabilities");
+
+    for (const item of transactItems()) {
+      const operation = item.ConditionCheck ?? item.Update;
+      expect(operation.TableName).toBe("nixus-hosted-ai");
+    }
+  });
+});

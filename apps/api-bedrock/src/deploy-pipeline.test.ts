@@ -480,9 +480,44 @@ describe("deploy job proves deployed guarantees", () => {
       "ApiCertificateArn=",
       "HostedZoneId=",
       "AlertEmail=",
+      "BillingTableName=",
     ]) {
       expect(commands, `missing override ${parameter}`).toContain(parameter);
     }
+  });
+
+  /*
+   * billing AD-17: the hosted-AI stack learns the entitlement authority's table
+   * by a DEPLOY-TIME PARAMETER. A repository variable rather than a secret,
+   * following this workflow's existing split - secrets carry account-bearing
+   * ARNs and credentials, variables carry non-sensitive deploy inputs such as
+   * SAM_ARTIFACT_BUCKET and API_DOMAIN_NAME. A DynamoDB table name is derived
+   * from the stack name and carries no account id and no credential.
+   */
+  it("sources the billing table name from a repository variable, not a secret", () => {
+    expect(WORKFLOW_TEXT).toContain(
+      "BILLING_TABLE_NAME: ${{ vars.BILLING_TABLE_NAME }}"
+    );
+    expect(WORKFLOW_TEXT).not.toContain("secrets.BILLING_TABLE_NAME");
+    expect(runCommands(DEPLOY)).toContain(
+      '"BillingTableName=${BILLING_TABLE_NAME}"'
+    );
+  });
+
+  /* The parameter has no template default on purpose, so an unset variable would
+   * otherwise fail inside CloudFormation on a pattern mismatch rather than naming
+   * the thing nobody set. */
+  it("fails loudly rather than deploying with an unset billing table name", () => {
+    expect(runCommands(DEPLOY)).toContain('test -n "${BILLING_TABLE_NAME}"');
+  });
+
+  /* A committed physical table name is how a release lands on a stale table, and
+   * a CloudFormation import is what AD-17 forbids outright. */
+  it("commits no billing table name and imports no cross-stack value", () => {
+    expect(WORKFLOW_DIRECTIVES).not.toContain("nixus-billing-billing");
+    expect(WORKFLOW_DIRECTIVES).not.toContain("ImportValue");
+    expect(WORKFLOW_DIRECTIVES).not.toContain("cloudformation list-exports");
+    expect(WORKFLOW_DIRECTIVES).not.toContain("describe-stacks --stack-name nixus-billing");
   });
 
   /* The profile ARN is account-specific, so it stays a deploy-time secret rather than a

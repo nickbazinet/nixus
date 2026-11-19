@@ -6,6 +6,7 @@ import type {
 } from "@nixus/shared";
 
 import type { BedrockPort } from "../lib/bedrock-client.ts";
+import { hostedAiServiceability, resolveHostedAiEntitlement } from "../lib/entitlement.ts";
 import {
   createQuotaRequestContext,
   finalizeQuotaUnit,
@@ -15,6 +16,7 @@ import {
 import {
   type GlobalConfig,
   type UserConfig,
+  getBillingEntitlement,
   getGlobalChargedCount,
   getGlobalConfig,
   getUserChargedCount,
@@ -85,10 +87,30 @@ const HOSTED_UNAVAILABLE: PreOutputFailure = {
   message: "Hosted AI is unavailable.",
 };
 
+/**
+ * `premium_required` keeps its wire code, and its MEANING narrows to "your plan
+ * does not include this capability" (billing AD-12). The message may therefore
+ * never read as "you are not a premium user": under two paid tiers that sentence
+ * is a lie to a Classic subscriber, who pays every month and simply holds a plan
+ * without hosted AI.
+ */
 const PREMIUM_REQUIRED: PreOutputFailure = {
   code: "premium_required",
   status: 403,
-  message: "Hosted AI requires an active premium capability.",
+  message: "Your plan does not include hosted AI.",
+};
+
+/**
+ * Also `premium_required`, because the status and the code are pinned (AD-12)
+ * and a 503 here would tell the desktop to back off and retry a request that
+ * will fail identically. Its message is separate because the cause is: an
+ * administrator moved the config underneath this request, which says nothing
+ * about the caller's plan.
+ */
+const ENTITLEMENT_UNCONFIRMED: PreOutputFailure = {
+  code: "premium_required",
+  status: 403,
+  message: "Hosted AI eligibility could not be confirmed for this request.",
 };
 
 const QUOTA_EXHAUSTED: PreOutputFailure = {
@@ -179,14 +201,15 @@ async function classifyEligibility(
   sub: string,
   periodKey: string
 ): Promise<Eligibility> {
-  const [userConfig, globalConfig, userCharged, globalCharged] = await Promise.all(
-    [
+  const [userConfig, globalConfig, userCharged, globalCharged, entitlement] =
+    await Promise.all([
       getUserConfig(sub),
       getGlobalConfig(),
       getUserChargedCount(sub, periodKey),
       getGlobalChargedCount(periodKey),
-    ]
-  );
+      // A separate GetItem, never a TransactItem: see getBillingEntitlement.
+      getBillingEntitlement(sub),
+    ]);
 
   // GLOBAL is evaluated first: the kill switch must block every new hosted call
   // regardless of who is asking, and 503 is also what tells the desktop to back
@@ -197,13 +220,30 @@ async function classifyEligibility(
   if (globalCharged >= globalConfig.monthly_request_limit) {
     return { ok: false, failure: HOSTED_UNAVAILABLE };
   }
-  if (!userConfig) {
+
+  const hostedAi = resolveHostedAiEntitlement({ entitlement, userConfig });
+  if (!hostedAi.granted) {
     return { ok: false, failure: PREMIUM_REQUIRED };
   }
-  if (userCharged >= userConfig.monthly_request_limit) {
+
+  /*
+   * The authority grants, but this release cannot meter or reserve the request:
+   * `quota.ts` still condition-checks `premium = true` and the CONFIG item's own
+   * limit, and that transaction is deliberately untouched here (billing AD-17
+   * removes it in a later release). The honest answer is 503 - a SERVICE
+   * limitation, which the desktop handles by backing off and falling back to
+   * BYO - and never `premium_required`, which would tell an entitled caller
+   * their plan is wrong.
+   */
+  const service = hostedAiServiceability({ hostedAi, userConfig });
+  if (!service.serviceable) {
+    return { ok: false, failure: HOSTED_UNAVAILABLE };
+  }
+
+  if (userCharged >= service.monthlyRequestLimit) {
     return { ok: false, failure: QUOTA_EXHAUSTED };
   }
-  return { ok: true, userConfig, globalConfig };
+  return { ok: true, userConfig: service.userConfig, globalConfig };
 }
 
 function reserveFailure(
@@ -217,7 +257,7 @@ function reserveFailure(
     case "config_changed":
       // A second mismatch means an admin is actively editing config; fail closed
       // rather than loop (AD-6).
-      return PREMIUM_REQUIRED;
+      return ENTITLEMENT_UNCONFIRMED;
   }
 }
 

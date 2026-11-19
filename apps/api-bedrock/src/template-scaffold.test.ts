@@ -392,12 +392,16 @@ describe("AD-4 compute topology", () => {
     const env = props(fn).Environment.Variables as Record<string, unknown>;
     expect(Object.keys(env).sort()).toEqual([
       "BEDROCK_MODEL_ID",
+      "BILLING_TABLE_NAME",
       "DEPLOYMENT_REVISION",
       "TABLE_NAME",
     ]);
     expect(env.TABLE_NAME).toEqual(ref("HostedAiTable"));
     expect(env.BEDROCK_MODEL_ID).toEqual(ref("BedrockModelId"));
     expect(env.DEPLOYMENT_REVISION).toEqual(ref("DeploymentRevision"));
+    // The billing table is learned from the deploy-time parameter and never from
+    // a resource in this stack, because this stack does not own it (billing AD-17).
+    expect(env.BILLING_TABLE_NAME).toEqual(ref("BillingTableName"));
     // No BEDROCK_REGION: the profile is a us-east-1 profile and the Lambda runs there,
     // so a second source of truth for the region could only disagree with the stack.
     expect(env).not.toHaveProperty("BEDROCK_REGION");
@@ -648,10 +652,28 @@ describe("IAM grants exact actions only", () => {
   ).flatMap((policy) => policy.PolicyDocument.Statement);
   const actions = statements.flatMap((statement) => statement.Action).sort();
 
-  it("grants only the seven actions the service actually requires", () => {
+  /* Asserted as a sorted, de-duplicated list rather than by absence, so ADDING an
+   * action is a deliberate edit to this test and never an accident. The one
+   * duplicate is dynamodb:GetItem: it is granted on the hosted-AI table and again
+   * on the billing table, and the two statements have different resources and
+   * must stay separate. */
+  it("grants only the seven distinct actions the service actually requires", () => {
+    expect([...new Set(actions)].sort()).toEqual([
+      "bedrock:InvokeModelWithResponseStream",
+      "dynamodb:ConditionCheckItem",
+      "dynamodb:GetItem",
+      "dynamodb:TransactWriteItems",
+      "dynamodb:UpdateItem",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]);
+
+    // The whole flat list, so a second grant of an existing action cannot appear
+    // unnoticed behind the de-duplication above.
     expect(actions).toEqual([
       "bedrock:InvokeModelWithResponseStream",
       "dynamodb:ConditionCheckItem",
+      "dynamodb:GetItem",
       "dynamodb:GetItem",
       "dynamodb:TransactWriteItems",
       "dynamodb:UpdateItem",
@@ -676,6 +698,102 @@ describe("IAM grants exact actions only", () => {
       value: "HostedAiExecutionRole.Arn",
     });
     expect(props(role).ManagedPolicyArns).toBeUndefined();
+  });
+});
+
+/*
+ * billing AD-2 / AD-4 / AD-17. The entitlement authority lives in another
+ * stack's table and this service is a READER of it: the two writers AD-2 permits
+ * are the Stripe webhook and the admin override, both in the billing stack. A
+ * single write action here would make this a third writer of entitlement.
+ */
+describe("the billing entitlement grant is one read action on one table", () => {
+  const role = singleResourceOfType("AWS::IAM::Role");
+
+  function billingPolicy(): {
+    PolicyName: string;
+    PolicyDocument: { Statement: { Action: string[]; Resource: unknown }[] };
+  } {
+    const found = (
+      props(role).Policies as {
+        PolicyName: string;
+        PolicyDocument: { Statement: { Action: string[]; Resource: unknown }[] };
+      }[]
+    ).find((policy) => policy.PolicyName === "hosted-ai-billing-entitlement");
+
+    expect(found, "the billing entitlement policy is missing").toBeDefined();
+    return found!;
+  }
+
+  it("grants dynamodb:GetItem and nothing else", () => {
+    const statements = billingPolicy().PolicyDocument.Statement;
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0]!.Action).toEqual(["dynamodb:GetItem"]);
+  });
+
+  it("grants no write, no query, and no scan on the authority's table", () => {
+    const actions = billingPolicy().PolicyDocument.Statement.flatMap(
+      (statement) => statement.Action
+    );
+
+    for (const forbidden of [
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:TransactWriteItems",
+      "dynamodb:ConditionCheckItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
+      "dynamodb:PartiQLUpdate",
+      "dynamodb:PartiQLInsert",
+    ]) {
+      expect(actions, `must not grant ${forbidden}`).not.toContain(forbidden);
+    }
+  });
+
+  /* Composed from the deploy-time parameter. A CloudFormation import would make
+   * the two stacks' lifecycles mutually blocking, and a committed physical name
+   * is how a release lands on a stale table (billing AD-17). */
+  it("names the table by the deploy-time parameter, never an import or a literal", () => {
+    expect(billingPolicy().PolicyDocument.Statement[0]!.Resource).toEqual({
+      __cfn: "Sub",
+      value:
+        "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${BillingTableName}",
+    });
+
+    expect(TEMPLATE_TEXT).not.toContain("Fn::ImportValue");
+    expect(TEMPLATE_TEXT).not.toContain("!ImportValue");
+    expect(TEMPLATE_TEXT).not.toContain("nixus-billing-billing");
+    expect(JSON.stringify(TEMPLATE.Resources)).not.toContain("ImportValue");
+  });
+
+  /* An index ARN would reach the GSI that resolves a Stripe customer to a
+   * subscriber, which is the webhook's lookup and no business of this service. */
+  it("reaches the table itself and not its indexes", () => {
+    expect(
+      JSON.stringify(billingPolicy().PolicyDocument.Statement)
+    ).not.toContain("/index/");
+  });
+
+  it("requires the billing table name explicitly, with no default to get wrong", () => {
+    expect(PARAMETERS.BillingTableName).toMatchObject({ Type: "String" });
+    expect(PARAMETERS.BillingTableName!.Default).toBeUndefined();
+
+    const matcher = new RegExp(
+      PARAMETERS.BillingTableName!.AllowedPattern as string
+    );
+    expect(matcher.test("nixus-billing-billing")).toBe(true);
+    expect(matcher.test("")).toBe(false);
+    expect(matcher.test("ab")).toBe(false);
+    expect(matcher.test("-leading-dash")).toBe(false);
+    expect(
+      matcher.test(
+        "arn:aws:dynamodb:us-east-1:111111111111:table/nixus-billing-billing"
+      )
+    ).toBe(false);
+    expect(matcher.test("nixus billing billing")).toBe(false);
   });
 });
 

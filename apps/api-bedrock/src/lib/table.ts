@@ -1,14 +1,26 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 
+import { toBillingCapabilities, type BillingCapability } from "@nixus/shared";
+
 /*
  * DynamoDB boundary for the hosted-AI quota table. Key builders and config reads
  * live here so `quota.ts` and the handlers never spell a key or an attribute name
  * themselves - AD-5 requires both sides to agree on the exact field names.
+ *
+ * It is also the READ-ONLY boundary onto the billing table's `ENTITLEMENT`
+ * record, which billing AD-2 makes the sole entitlement authority and billing
+ * AD-4 makes this service's canonical server-side read. This service holds
+ * `dynamodb:GetItem` on that table and nothing else: no write action of any
+ * kind, and it learns the table's name from a deploy-time parameter rather than
+ * a CloudFormation export or a committed physical name (billing AD-17).
  */
 
 export const CONFIG_SORT_KEY = "CONFIG";
 export const GLOBAL_PARTITION_KEY = "GLOBAL";
+
+/** The billing table's entitlement sort key (billing AD-4). */
+export const BILLING_ENTITLEMENT_SORT_KEY = "ENTITLEMENT";
 
 /** Default GLOBAL limit from AD-6, used only to describe an absent item, never to create one. */
 export const GLOBAL_DEFAULT_MONTHLY_REQUEST_LIMIT = 1000;
@@ -42,6 +54,10 @@ export function globalUsageKey(periodKey: string): TableKey {
   return { pk: GLOBAL_PARTITION_KEY, sk: usageSortKey(periodKey) };
 }
 
+export function billingEntitlementKey(sub: string): TableKey {
+  return { pk: userPartitionKey(sub), sk: BILLING_ENTITLEMENT_SORT_KEY };
+}
+
 /**
  * UTC `YYYY-MM` period key. Computed once at request start and threaded through
  * refund/finalize: re-deriving it later would operate on the wrong period for a
@@ -63,10 +79,30 @@ export interface GlobalConfig {
   readonly monthly_request_limit: number;
 }
 
+/**
+ * The billing `ENTITLEMENT` record as this service reads it (billing AD-4's
+ * canonical server-side read). Only the two attributes a gate or a quota bound
+ * may consult are carried: `tier` is deliberately absent, because no code
+ * anywhere may compare one (billing AD-1), and the signed statement is
+ * deliberately absent, because a server-side consumer never parses one.
+ */
+export interface BillingEntitlement {
+  readonly capabilities: readonly BillingCapability[];
+  readonly monthly_request_limit: number | null;
+}
+
 export function tableName(): string {
   const name = process.env.TABLE_NAME;
   if (!name) {
     throw new Error("TABLE_NAME is not configured");
+  }
+  return name;
+}
+
+export function billingTableName(): string {
+  const name = process.env.BILLING_TABLE_NAME;
+  if (!name) {
+    throw new Error("BILLING_TABLE_NAME is not configured");
   }
   return name;
 }
@@ -166,4 +202,57 @@ export async function getUserChargedCount(
 
 export async function getGlobalChargedCount(periodKey: string): Promise<number> {
   return chargedCountOf(await getItemConsistently(globalUsageKey(periodKey)));
+}
+
+/**
+ * Fail-closed exactly as `parseUserConfig` is: `undefined` means NO RECORD, and
+ * a record this cannot read is normalised to a record that GRANTS NOTHING -
+ * indistinguishable from an absent grant on the enforcement path, while staying
+ * distinguishable from an absent record, which is what lets the old `premium`
+ * attribute remain the fallback during the AD-17 window.
+ *
+ * Unknown capability names are dropped rather than rejected, because
+ * `toBillingCapabilities` is the shared contract's own normaliser and billing
+ * AD-6 requires a name this build does not know to grant nothing instead of
+ * poisoning the whole record. A list of only unknown names therefore parses
+ * cleanly into an empty grant, which denies.
+ */
+export function parseBillingEntitlement(
+  item: Record<string, unknown> | undefined
+): BillingEntitlement | undefined {
+  if (!item) return undefined;
+
+  const capabilities = Array.isArray(item.capabilities)
+    ? toBillingCapabilities(item.capabilities)
+    : [];
+  const limit = item.monthly_request_limit;
+
+  return {
+    capabilities,
+    monthly_request_limit: isPositiveInteger(limit) ? limit : null,
+  };
+}
+
+/**
+ * ONE `GetItem` against the billing table, strongly consistent for the same
+ * reason every other read here is: an entitlement that was just written must not
+ * be read back as absent and silently fall through to the old `premium`
+ * attribute.
+ *
+ * Deliberately NOT folded into `quota.ts`'s transaction. That array's
+ * `CancellationReasons` are mapped POSITIONALLY, so inserting a condition check
+ * would shift every later index and make a quota failure report itself as a
+ * config change.
+ */
+export async function getBillingEntitlement(
+  sub: string
+): Promise<BillingEntitlement | undefined> {
+  const result = await getDocumentClient().send(
+    new GetCommand({
+      TableName: billingTableName(),
+      Key: billingEntitlementKey(sub),
+      ConsistentRead: true,
+    })
+  );
+  return parseBillingEntitlement(result.Item);
 }

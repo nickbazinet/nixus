@@ -1,6 +1,11 @@
 import type { CloudAiStatusResponse } from "@nixus/shared";
 
 import {
+  hostedAiServiceability,
+  resolveHostedAiEntitlement,
+} from "../lib/entitlement.ts";
+import {
+  getBillingEntitlement,
   getGlobalConfig,
   getUserChargedCount,
   getUserConfig,
@@ -13,6 +18,11 @@ import {
  * 403/429/503, this route answers 200 with zeroed non-premium fields, so the
  * desktop can distinguish "not premium" from "gateway broken" without treating a
  * cold user record as an error.
+ *
+ * The wire shape keeps its `premium` boolean for one deprecation window
+ * (billing AD-17 step 4) so a desktop release that predates the signed statement
+ * still works - but the boolean is now SOURCED from the entitlement authority
+ * rather than from `HostedAiTable.premium`.
  */
 
 const NON_PREMIUM: Omit<CloudAiStatusResponse, "period"> = {
@@ -27,21 +37,26 @@ export async function handleStatus(args: {
 }): Promise<CloudAiStatusResponse> {
   const { sub, periodKey } = args;
 
-  const [userConfig, globalConfig] = await Promise.all([
+  const [userConfig, globalConfig, entitlement] = await Promise.all([
     getUserConfig(sub),
     getGlobalConfig(),
+    getBillingEntitlement(sub),
   ]);
+
+  const hostedAi = resolveHostedAiEntitlement({ entitlement, userConfig });
+  const service = hostedAiServiceability({ hostedAi, userConfig });
 
   // The global kill switch hides premium capability from status too: reporting
   // premium:true while every invoke returns 503 would make the desktop cache a
-  // capability it cannot use.
-  if (!userConfig || !globalConfig?.enabled) {
+  // capability it cannot use. A grant this release cannot serve is zeroed for
+  // exactly the same reason, through the predicate both routes share.
+  if (!globalConfig?.enabled || !service.serviceable) {
     return { ...NON_PREMIUM, period: periodKey };
   }
 
   return {
     premium: true,
-    monthly_request_limit: userConfig.monthly_request_limit,
+    monthly_request_limit: service.monthlyRequestLimit,
     charged_count: await getUserChargedCount(sub, periodKey),
     period: periodKey,
   };

@@ -242,6 +242,14 @@ jobs:
             echo "SAM_ARTIFACT_BUCKET is not set on the production environment." >&2
             exit 1
           }
+          # The billing table has no template default on purpose, so an unset
+          # variable here would otherwise fail inside CloudFormation on a pattern
+          # mismatch rather than naming the thing nobody set.
+          test -n "${BILLING_TABLE_NAME}" || {
+            echo "BILLING_TABLE_NAME is not set: read it from the nixus-billing stack's" >&2
+            echo "BillingTableName output and set the repository variable." >&2
+            exit 1
+          }
 
           # Two-role separation (least privilege): the OIDC deploy role drives
           # CloudFormation but holds no permission to create application resources.
@@ -262,6 +270,7 @@ jobs:
               "ApiCertificateArn=${API_CERTIFICATE_ARN}" \
               "HostedZoneId=${HOSTED_ZONE_ID}" \
               "AlertEmail=${ALERT_EMAIL}" \
+              "BillingTableName=${BILLING_TABLE_NAME}" \
               "BedrockModelId=${APPROVED_BEDROCK_MODEL_ID}" \
               "BedrockInferenceProfileArn=${BEDROCK_INFERENCE_PROFILE_ARN}" \
               "BedrockFoundationModelArnPattern=${APPROVED_BEDROCK_FOUNDATION_MODEL_ARN_PATTERN}" \
@@ -283,6 +292,16 @@ jobs:
           API_CERTIFICATE_ARN: ${{ secrets.API_CERTIFICATE_ARN }}
           HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
           ALERT_EMAIL: ${{ secrets.ALERT_EMAIL }}
+          # A repository VARIABLE, not a secret, following this workflow's existing
+          # split: secrets carry account-bearing ARNs and credentials
+          # (AWS_BEDROCK_CFN_EXEC_ROLE_ARN, API_CERTIFICATE_ARN,
+          # BEDROCK_INFERENCE_PROFILE_ARN), while non-sensitive deploy inputs are
+          # variables (SAM_ARTIFACT_BUCKET, API_DOMAIN_NAME). A DynamoDB table name
+          # is derived from the stack name, carries no account id and no
+          # credential, and the grant that matters is the IAM policy the template
+          # builds from it - masking the name would buy nothing and would hide it
+          # from the deploy log an operator reads to confirm the right table.
+          BILLING_TABLE_NAME: ${{ vars.BILLING_TABLE_NAME }}
           BEDROCK_INFERENCE_PROFILE_ARN: ${{ secrets.BEDROCK_INFERENCE_PROFILE_ARN }}
 
       # Proves the function is UNRESERVED, which is not the same as reserved-zero.

@@ -106,13 +106,17 @@ function fakeBedrock(options: FakeBedrockOptions = {}) {
 let client: FakeDocumentClient;
 let sink: RecordingSink;
 
-/* classifyEligibility fires four consistent reads concurrently in this order. */
+/* classifyEligibility fires five consistent reads concurrently in this order.
+ * The billing ENTITLEMENT record is read LAST, and omitting it models the
+ * pre-backfill state: no record exists, so the legacy `premium` attribute still
+ * decides (AD-17). */
 function queueEligible(
   overrides: {
     user?: Record<string, unknown> | undefined;
     global?: Record<string, unknown> | undefined;
     userCharged?: number;
     globalCharged?: number;
+    entitlement?: Record<string, unknown> | undefined;
   } = {}
 ): void {
   client
@@ -127,7 +131,24 @@ function queueEligible(
         : { enabled: true, monthly_request_limit: 1000 }
     )
     .queueItem({ charged_count: overrides.userCharged ?? 0 })
-    .queueItem({ charged_count: overrides.globalCharged ?? 0 });
+    .queueItem({ charged_count: overrides.globalCharged ?? 0 })
+    .queueItem(overrides.entitlement);
+}
+
+function advanceEntitlement(
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    pk: `USER#${SUB}`,
+    sk: "ENTITLEMENT",
+    tier: "advance",
+    capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    status: "none",
+    monthly_request_limit: 100,
+    source: "admin",
+    version: 1,
+    ...overrides,
+  };
 }
 
 function chatBody(overrides: Record<string, unknown> = {}): string {
@@ -176,6 +197,7 @@ beforeEach(() => {
   client = new FakeDocumentClient();
   setDocumentClientForTesting(client.asDocumentClient());
   process.env.TABLE_NAME = "nixus-hosted-ai";
+  process.env.BILLING_TABLE_NAME = "nixus-billing-billing";
   sink = new RecordingSink();
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -184,6 +206,7 @@ beforeEach(() => {
 afterEach(() => {
   setDocumentClientForTesting(undefined);
   delete process.env.TABLE_NAME;
+  delete process.env.BILLING_TABLE_NAME;
   vi.restoreAllMocks();
 });
 
@@ -327,6 +350,201 @@ describe("an ineligible caller never reaches Bedrock at all", () => {
 });
 
 /*
+ * AD-17 step 3 and AD-12. The entitlement authority decides, the legacy
+ * `premium` attribute is only the fallback, and a refusal names the capability
+ * rather than accusing a paying subscriber of not being premium.
+ */
+describe("the entitlement authority is what grants hosted AI", () => {
+  /* The post-backfill grandfathered state: the authority now holds the grant,
+   * and the legacy CONFIG item survives only as the thing `quota.ts` reserves
+   * against until Epic H. */
+  it("serves a request the authority granted and the legacy item can still meter", async () => {
+    queueEligible({ entitlement: advanceEntitlement() });
+    client.queueOk().queueOk();
+
+    const { promise, bedrock } = run();
+    await promise;
+
+    expect(sink.status).toBe(200);
+    expect(bedrock.streamed).toHaveLength(1);
+  });
+
+  /* The whole point of the cutover. Quota is untouched on both counters and the
+   * global switch is on, so the entitlement is the ONLY thing that can refuse. */
+  it("refuses a Classic-shaped entitlement with 403 premium_required on full quota", async () => {
+    queueEligible({
+      user: { premium: true, monthly_request_limit: 100 },
+      userCharged: 0,
+      globalCharged: 0,
+      entitlement: advanceEntitlement({
+        tier: "classic",
+        capabilities: ["household_net_worth", "multi_device_sync"],
+      }),
+    });
+
+    const { promise, bedrock } = run();
+    await promise;
+
+    expect(sink.status).toBe(403);
+    expect(sink.json.error).toMatchObject({ code: "premium_required" });
+    expect(bedrock.streamed).toHaveLength(0);
+    expect(client.transactions).toHaveLength(0);
+  });
+
+  /*
+   * AD-12: `premium_required` narrowed to "your plan does not include this
+   * capability". A Classic subscriber pays every month, so any sentence they
+   * could read as "you are not premium" is a lie this message may not tell.
+   */
+  it("says nothing a paying subscriber would read as 'you are not premium'", async () => {
+    queueEligible({
+      entitlement: advanceEntitlement({
+        capabilities: ["household_net_worth", "multi_device_sync"],
+      }),
+    });
+
+    const { promise } = run();
+    await promise;
+
+    const message = String(
+      (sink.json.error as Record<string, unknown>).message
+    );
+
+    expect(message).toBe("Your plan does not include hosted AI.");
+    expect(message.toLowerCase()).not.toContain("premium");
+    expect(message.toLowerCase()).not.toContain("requires an active");
+    expect(message.toLowerCase()).toContain("plan");
+  });
+
+  it("refuses an empty and a malformed grant the same way, never falling back", async () => {
+    for (const capabilities of [[], "hosted_ai", undefined, 42]) {
+      client = new FakeDocumentClient();
+      setDocumentClientForTesting(client.asDocumentClient());
+      sink = new RecordingSink();
+
+      queueEligible({ entitlement: advanceEntitlement({ capabilities }) });
+      const { promise, bedrock } = run();
+      await promise;
+
+      expect(sink.status, JSON.stringify(capabilities ?? null)).toBe(403);
+      expect(sink.json.error).toMatchObject({ code: "premium_required" });
+      expect(bedrock.streamed).toHaveLength(0);
+    }
+  });
+
+  /* AD-2: the authority's limit is the per-tier policy; `HostedAiTable` holds
+   * none once it serves every request. */
+  it("meters against the authority's limit, not the legacy CONFIG item's", async () => {
+    queueEligible({
+      user: { premium: true, monthly_request_limit: 100 },
+      userCharged: 40,
+      entitlement: advanceEntitlement({ monthly_request_limit: 40 }),
+    });
+
+    const { promise, bedrock } = run();
+    await promise;
+
+    // 40 charged against the authority's 40 is exhausted, even though the legacy
+    // item would still have allowed 60 more.
+    expect(sink.status).toBe(429);
+    expect(sink.json.error).toMatchObject({ code: "quota_exhausted" });
+    expect(bedrock.streamed).toHaveLength(0);
+  });
+
+  it("falls back to the CONFIG item's limit when the record records none", async () => {
+    queueEligible({
+      user: { premium: true, monthly_request_limit: 100 },
+      userCharged: 100,
+      entitlement: advanceEntitlement({ monthly_request_limit: null }),
+    });
+
+    const { promise } = run();
+    await promise;
+
+    expect(sink.status).toBe(429);
+  });
+
+  /*
+   * The authority grants but `quota.ts`'s untouched `premium = true` condition
+   * check means there is no reservation to make. That is a SERVICE limitation,
+   * so it answers 503 - which the desktop handles by falling back to BYO - and
+   * never `premium_required`, which would blame an entitled caller's plan.
+   */
+  it("answers 503, not 403, for a grant this release cannot yet meter", async () => {
+    queueEligible({
+      user: undefined,
+      entitlement: advanceEntitlement({ monthly_request_limit: null }),
+    });
+
+    const { promise, bedrock } = run();
+    await promise;
+
+    expect(sink.status).toBe(503);
+    expect(sink.json.error).toMatchObject({ code: "hosted_unavailable" });
+    expect(bedrock.streamed).toHaveLength(0);
+    expect(client.transactions).toHaveLength(0);
+  });
+
+  it("reads the entitlement under the authorizer's own sub, strongly consistent", async () => {
+    queueEligible({ entitlement: advanceEntitlement() });
+    client.queueOk().queueOk();
+
+    const { promise } = run();
+    await promise;
+
+    const entitlementRead = client.gets.find(
+      (command) =>
+        (command.input.Key as { sk?: string } | undefined)?.sk === "ENTITLEMENT"
+    );
+    expect(entitlementRead!.input).toEqual({
+      TableName: "nixus-billing-billing",
+      Key: { pk: `USER#${SUB}`, sk: "ENTITLEMENT" },
+      ConsistentRead: true,
+    });
+  });
+
+  /* The global kill switch outranks every entitlement: it has to stop traffic
+   * no matter who is asking. */
+  it("still refuses an authority-granted caller while the kill switch is off", async () => {
+    queueEligible({
+      global: { enabled: false, monthly_request_limit: 1000 },
+      entitlement: advanceEntitlement(),
+    });
+
+    const { promise, bedrock } = run();
+    await promise;
+
+    expect(sink.status).toBe(503);
+    expect(bedrock.streamed).toHaveLength(0);
+  });
+
+  /*
+   * A config race is not a plan limitation. The code and status stay pinned
+   * (AD-12) so no existing client reclassifies the failure, but the message must
+   * not accuse the caller's plan of anything.
+   */
+  it("keeps a config race at 403 premium_required with a cause-specific message", async () => {
+    queueEligible({ entitlement: advanceEntitlement() });
+    client.queueError(
+      transactionCanceled("ConditionalCheckFailed", "None", "None", "None")
+    );
+    queueEligible({ entitlement: advanceEntitlement() });
+    client.queueError(
+      transactionCanceled("ConditionalCheckFailed", "None", "None", "None")
+    );
+
+    const { promise } = run();
+    await promise;
+
+    expect(sink.status).toBe(403);
+    expect(sink.json.error).toMatchObject({
+      code: "premium_required",
+      message: "Hosted AI eligibility could not be confirmed for this request.",
+    });
+  });
+});
+
+/*
  * Quota is per request: one unit per ConverseStream call. Nothing is counted upstream
  * beforehand, so the only pre-reservation rejections are the ones computable from the
  * request itself - and they must all happen BEFORE the reservation, or an oversized
@@ -454,8 +672,8 @@ describe("AD-8 step 4 reservation", () => {
     await promise;
 
     expect(sink.status).toBe(200);
-    // Two eligibility passes (4 reads each) plus reserve+finalize transactions.
-    expect(client.gets).toHaveLength(8);
+    // Two eligibility passes (5 reads each) plus reserve+finalize transactions.
+    expect(client.gets).toHaveLength(10);
     // One reservation, one model call: the retry must not double-charge.
     expect(bedrock.streamed).toHaveLength(1);
   });
