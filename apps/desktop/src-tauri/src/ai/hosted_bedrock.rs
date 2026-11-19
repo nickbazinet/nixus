@@ -416,6 +416,26 @@ pub async fn eligibility() -> HostedEligibility {
     eligibility_with(false).await
 }
 
+/// Which non-granting state an unestablished entitlement actually is.
+///
+/// Decides the refusal a surface SHOWS, never what is granted - both members grant nothing, so
+/// this cannot widen access. Read from the stored session alone, so a second call within one
+/// refresh window cannot answer differently.
+pub fn unestablished_refusal(billing_auth: &AccessTokenAuth) -> HostedEligibility {
+    match billing_auth {
+        AccessTokenAuth::ReauthenticationRequired => HostedEligibility::ReauthenticationRequired,
+        _ => HostedEligibility::Unavailable,
+    }
+}
+
+async fn unestablished_eligibility() -> HostedEligibility {
+    match auth::access_token(auth::BILLING_SCOPE).await {
+        Ok(billing_auth) => unestablished_refusal(&billing_auth),
+        // A session this build cannot read at all proves nothing either way.
+        Err(_) => HostedEligibility::Unavailable,
+    }
+}
+
 /// Reads the entitlement from the statement and the quota through the shared status cache, so the
 /// answer cannot disagree with the one the invocation is then routed against. Spends the closed
 /// table's single refresh on a `401` from the quota read.
@@ -434,12 +454,15 @@ async fn eligibility_with(refreshed: bool) -> HostedEligibility {
         crate::entitlements::EntitlementAnswer::Verified(capabilities) => {
             capabilities.grants(crate::entitlements::HOSTED_AI)
         }
-        // No entitlement this device can act on. Reported as the TRANSIENT state, not as a plan
-        // limitation (FR-7, not FR-11): a surface must not invite an upgrade it cannot know is
-        // needed, which is the whole reason a free account receives a verifiable statement of
-        // its own (AD-9).
+        // No entitlement this device can act on. Still never a plan limitation (FR-7, not FR-11):
+        // a surface must not invite an upgrade it cannot know is needed, which is the whole reason
+        // a free account receives a verifiable statement of its own (AD-9).
+        //
+        // WHICH non-granting state, though, is read from the session: a refresh cannot widen scope
+        // (AD-9), so a token minted before `nixus-api/billing` existed makes this permanent, and
+        // "try again" would be a button that cannot work for as long as that session lasts.
         crate::entitlements::EntitlementAnswer::Unestablished => {
-            return HostedEligibility::Unavailable
+            return unestablished_eligibility().await
         }
     };
     if !entitled {
@@ -1209,6 +1232,50 @@ mod tests {
             classify_status(false, &status(false, 0, 0)),
             HostedEligibility::NotPremium
         );
+    }
+
+    /// The regression this exists for: a session minted before `nixus-api/billing` existed cannot
+    /// be widened by a refresh (AD-9), so reporting it as a transient outage left the Home surface
+    /// offering a "try again" button that could never work for as long as that session lasted.
+    #[test]
+    fn an_unestablished_entitlement_names_a_stale_scope_rather_than_an_outage() {
+        assert_eq!(
+            unestablished_refusal(&AccessTokenAuth::ReauthenticationRequired),
+            HostedEligibility::ReauthenticationRequired
+        );
+
+        // Genuinely indeterminate: this session CAN carry a billing answer, so whatever stopped
+        // the entitlement from being established may well clear on its own.
+        assert_eq!(
+            unestablished_refusal(&AccessTokenAuth::Ready {
+                access_token: "token".to_string(),
+                subject_sub: "subject".to_string(),
+            }),
+            HostedEligibility::Unavailable
+        );
+        assert_eq!(
+            unestablished_refusal(&AccessTokenAuth::SignedOut),
+            HostedEligibility::Unavailable
+        );
+    }
+
+    /// This picks the copy a surface shows, never access. Two members it may never answer: one
+    /// would grant hosted AI off an entitlement nothing established, and the other would invite an
+    /// upgrade for a capability the account may already hold (AD-12).
+    #[test]
+    fn no_unestablished_refusal_grants_access_or_invites_an_upgrade() {
+        for billing_auth in [
+            AccessTokenAuth::ReauthenticationRequired,
+            AccessTokenAuth::SignedOut,
+            AccessTokenAuth::Ready {
+                access_token: "token".to_string(),
+                subject_sub: "subject".to_string(),
+            },
+        ] {
+            let refusal = unestablished_refusal(&billing_auth);
+            assert_ne!(refusal, HostedEligibility::Eligible);
+            assert_ne!(refusal, HostedEligibility::NotPremium);
+        }
     }
 
     /// The defect the tier split creates, closed as a property rather than as copy review: the
