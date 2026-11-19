@@ -163,6 +163,17 @@ describe("AD-15 protected default-branch deployment", () => {
     }
   });
 
+  /* The runbook is an ARTIFACT THIS SUITE TESTS: `billing-runbook.test.ts`
+   * asserts its prose, its parameterised commands and its metric names against
+   * the live template and lib constants. A tested file outside the trigger paths
+   * means a runbook-only edit runs no CI at all and can land red unnoticed -
+   * which is exactly what happened once, so this pins the coupling. */
+  it("triggers on the runbook it asserts the contents of", () => {
+    const runbook = "docs/runbooks/billing-operations.md";
+    expect(TRIGGERS.pull_request.paths).toContain(runbook);
+    expect(TRIGGERS.push.paths).toContain(runbook);
+  });
+
   /* Deliberately ASYMMETRIC, and the asymmetry is the control: the bootstrap
    * stack grants the deploy role the permissions the pre-deploy assertions need
    * and is applied by hand, so merging a bootstrap change must not trigger a

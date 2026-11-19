@@ -24,6 +24,10 @@ on:
       - "packages/shared/**"
       - "infra/bootstrap/billing-oidc-deploy.yaml"
       - ".github/workflows/billing-ci.yml"
+      # The runbook is a TESTED artifact: `src/billing-runbook.test.ts` asserts its
+      # prose, its parameterised commands and its metric names. Without this path a
+      # runbook-only edit runs no CI and can land red unnoticed - which happened once.
+      - "docs/runbooks/billing-operations.md"
       - "pnpm-lock.yaml"
   # Deliberately NOT symmetric with pull_request: the bootstrap template is absent
   # here. That stack grants the deploy role the permissions this workflow's
@@ -39,6 +43,7 @@ on:
       - "apps/api-billing/**"
       - "packages/shared/**"
       - ".github/workflows/billing-ci.yml"
+      - "docs/runbooks/billing-operations.md"
       - "pnpm-lock.yaml"
   # Lets an operator deploy an already-merged commit without an empty push - the
   # normal case for the first deployment, and for re-running one that failed on an

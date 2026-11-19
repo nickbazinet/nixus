@@ -639,6 +639,28 @@ what mistake produced the mismatched event.
 
 ## 13. Known pitfalls
 
+**A tested runbook outside its workflow's trigger paths runs no CI.** This file
+is asserted by `apps/api-billing/src/billing-runbook.test.ts` — its prose, its
+parameterised commands, its metric names, and the catalog TTL are all checked
+against the live template and lib constants. `billing-ci.yml` originally did not
+list it in `paths`, so a runbook-only commit triggered **nothing** and could
+have landed red unnoticed. It is listed now, and
+`deploy-pipeline.test.ts::triggers on the runbook it asserts the contents of`
+pins the coupling.
+
+> **The same gap is still open in two sibling workflows**, found while fixing
+> this one and left alone deliberately rather than churn two production stacks
+> for a latent risk:
+> - `api-bedrock-ci.yml` does not watch `docs/runbooks/hosted-ai-rollout.md`,
+>   which `apps/api-bedrock/src/{rollout-runbook,model-identity}.test.ts` assert.
+> - `account-ci.yml` does not watch `docs/runbooks/account-rollout.md`, which
+>   `apps/api-account/src/{rollout-runbook,oidc-bootstrap}.test.ts` assert.
+>
+> Each is a one-line addition to that workflow's `pull_request` and `push`
+> `paths`. Take them with the next change that already deploys those stacks —
+> merging them alone would redeploy a production stack for a path filter.
+
+
 **Stripe's `expand` depth limit, and the LIST-endpoint trap.** Stripe rejects
 an `expand` path deeper than **four** levels. A LIST endpoint additionally
 prefixes every expand path with `data.`, consuming one of those four levels —
