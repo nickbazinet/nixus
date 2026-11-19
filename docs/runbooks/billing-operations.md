@@ -639,6 +639,23 @@ what mistake produced the mismatched event.
 
 ## 13. Known pitfalls
 
+**Three fields moved in API version `2026-10-28.endive`.** Each one reads as a
+working call that silently returns nothing useful, so they are worth knowing
+before debugging:
+
+| Reading | Actual location |
+| --- | --- |
+| `subscription.current_period_end` | `subscription.items.data[].current_period_end` |
+| `promotionCodes.create({ coupon })` | `promotionCodes.create({ promotion: { type: "coupon", coupon } })` — the flat form is rejected outright |
+| `promotionCode.coupon` on a RESPONSE | `promotionCode.promotion.coupon` — the flat read yields `undefined`, not an error |
+
+The first cost a production 503 before it was found (see the expand-depth note
+below, which it interacts with). The second fails loudly. The third fails
+silently, which is the dangerous one — `lib/*.ts` never reads it, and a check
+confirmed no production code does, but a diagnostic script written from memory
+will.
+
+
 **A tested runbook outside its workflow's trigger paths runs no CI.** This file
 is asserted by `apps/api-billing/src/billing-runbook.test.ts` — its prose, its
 parameterised commands, its metric names, and the catalog TTL are all checked
