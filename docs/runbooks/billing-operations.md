@@ -361,6 +361,23 @@ emitting request was processing. Then, in the Stripe Dashboard, open that
 customer and list their subscriptions; more than one in `active` or `trialing`
 status confirms the defect.
 
+> **AD-4 describes a field that nothing writes.** The spine lists
+> `stripe_subscription_id` on the `BILLING_CUSTOMER` record, and AD-18's
+> "Prevents" clause cites it as a mechanism — "a second subscription invisible
+> to Nixus because `BILLING_CUSTOMER` holds one `stripe_subscription_id`". No
+> code writes it. `BILLING_CUSTOMER` is written in exactly one place,
+> `handlers/checkout.ts`, and carries `stripe_customer_id`, `checkout_lock`,
+> `price_lookup_key` and `updated_at`; the webhook never writes the record at
+> all, and `stripe_subscription_id` survives in runtime code only as a logging
+> ban (`lib/logging.ts`, `?: never`). So the `ENTITLEMENT` item's `stripe_*`
+> shadow is the ONLY recorded evidence that a subscription exists — which is why
+> the AD-18 gate reads it, and why reconciliation below goes to the Dashboard
+> rather than to a stored id.
+>
+> Do not reach for `price_lookup_key` as a substitute: it records the last
+> checkout **attempt**, written before payment, so it goes stale after any
+> portal-driven plan change.
+
 **While it is unresolved:** the architecture never silently picks one
 subscription over the other. The entitlement grants the **union** of both
 subscriptions' capabilities. The customer is not under-served, but they may be
@@ -638,6 +655,38 @@ what mistake produced the mismatched event.
 ---
 
 ## 13. Known pitfalls
+
+**The effective `status` is not evidence that a subscription exists.** This one
+reached a real customer, so it leads the list. When a live admin override
+out-ranks a converged Stripe state (AD-2), the record's effective `status` is
+pinned to `none` for as long as the override lasts — while `stripe_status` can
+read `active`. Four separate consumers had treated the effective status as the
+answer to "does this account have a Stripe subscription", which under an
+override it can never be. The account could be charged repeatedly with nothing
+to show for it, see no renewal date, reach no cancel path, and sit on a
+post-payment page that said "still updating" forever.
+
+The wire now carries `stripe_state` for exactly this. Four questions, four
+fields — collapsing any two of them is what caused the defect:
+
+| Question | Field that answers it |
+| --- | --- |
+| What may this account **do**? | `capabilities[]`, only ever this (AD-1) |
+| What is the **effective** plan? | top-level `tier`/`status`/`current_period_end`, under AD-2 precedence |
+| Does a **commercial relationship** exist? | `stripe_state !== null` |
+| Is money **flowing now**? | a granting `stripe_state.status` |
+
+`stripe_state` is `null` when no Stripe state has ever converged, which is
+deliberately distinct from "Stripe says free". It carries three members only —
+adding `capabilities` would create a second grant alongside `capabilities[]`,
+so a contract test pins the key set.
+
+> **Residual risk, accepted rather than closed.** An admin-overridden record
+> whose webhook has never converged has `stripe_state === null`, falls back to
+> the effective status, and could still open a second checkout. The five-minute
+> `checkout_lock` is the only guard. Closing it properly needs a Stripe read
+> inside the gate, which AD-4's canonical read path forbids.
+
 
 **Three fields moved in API version `2026-10-28.endive`.** Each one reads as a
 working call that silently returns nothing useful, so they are worth knowing

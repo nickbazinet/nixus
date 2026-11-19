@@ -168,6 +168,37 @@ describe("the three custom metrics and three metadata keys are named off the exp
   });
 });
 
+describe("the status-is-not-a-subscription pitfall stays recorded", () => {
+  it("names stripe_state and keeps the four questions distinct", () => {
+    const section = sectionOf("## 13. Known pitfalls", "## 14.");
+    const prose = proseOf(section);
+
+    expect(prose).toMatch(/effective `status` is not evidence/i);
+    expect(prose).toMatch(/`stripe_state`/);
+    // The distinction the defect collapsed: capabilities grant, stripe_state proves.
+    expect(prose).toMatch(/capabilities\[\]/);
+    expect(prose).toMatch(/commercial relationship/i);
+    expect(prose).toMatch(/money \*\*flowing now\*\*|flowing now/i);
+    // And the bound on the fix, so nobody reads it as airtight.
+    expect(prose).toMatch(/[Rr]esidual risk/);
+    expect(prose).toMatch(/checkout_lock/);
+  });
+
+  it("records that nothing writes the subscription id AD-4 describes", () => {
+    const section = sectionOf(
+      "## 7. Duplicate-subscription",
+      "## 8. The entitlement backfill",
+    );
+    const prose = proseOf(section);
+
+    expect(prose).toMatch(/AD-4 describes a field that nothing writes/i);
+    expect(prose).toMatch(/ONLY recorded evidence/);
+    // The wrong substitute an operator would otherwise reach for.
+    expect(prose).toMatch(/price_lookup_key/);
+    expect(prose).toMatch(/last checkout \*\*attempt\*\*|checkout \*\*attempt\*\*/);
+  });
+});
+
 describe("both SSM paths are named and no secret-like value appears", () => {
   it("names both SSM SecureString paths", () => {
     expect(RUNBOOK).toContain("/nixus-billing/stripe-secret-key");
