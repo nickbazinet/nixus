@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -111,7 +111,8 @@ function BudgetPage() {
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [expenseCategoryId, setExpenseCategoryId] = useState<number | undefined>(undefined);
   const { year: selectedYear, month: selectedMonth, label: periodLabel } = usePeriod();
-  const { data: groups = [] } = useBudgetGroupsForMonth(selectedYear, selectedMonth);
+  const groupsQuery = useBudgetGroupsForMonth(selectedYear, selectedMonth);
+  const groups = groupsQuery.data ?? [];
   const activeGroupCount = groups.filter((group) => !group.is_deleted).length;
   const createGroup = useCreateBudgetGroup();
 
@@ -146,21 +147,28 @@ function BudgetPage() {
   const activeGroups = groups.filter((group) => !group.is_deleted);
   const activeCategoryCount = statusList.filter((status) => !status.is_deleted).length;
 
+  // The first pass applies the rule to the budget the user arrived at. A group that appears after
+  // that was just created here, so it opens: the next thing the user does is fill it.
   const loadedStatuses = statusQuery.isSuccess ? statusQuery.data : undefined;
+  const loadedGroups = groupsQuery.isSuccess ? groupsQuery.data : undefined;
+  const seededRef = useRef(false);
   useEffect(() => {
-    if (!loadedStatuses) return;
+    if (!loadedStatuses || !loadedGroups) return;
+    const firstPass = !seededRef.current;
+    seededRef.current = true;
     const stats = groupStatsFrom(loadedStatuses);
     setOpenGroups((current) => {
-      const unseen = groups.filter((group) => !(group.id in current));
+      const unseen = loadedGroups.filter((group) => !(group.id in current));
       if (unseen.length === 0) return current;
       const next = { ...current };
       for (const group of unseen) {
         const entry = stats.get(group.id);
-        next[group.id] = !entry || entry.categoryCount === 0 || entry.overCount > 0;
+        next[group.id] =
+          !firstPass || !entry || entry.categoryCount === 0 || entry.overCount > 0;
       }
       return next;
     });
-  }, [groups, loadedStatuses]);
+  }, [loadedGroups, loadedStatuses]);
 
   // Matching is on the merchant only — the same rule, and the same hint, as the Transactions search.
   const expensesByCategory = searching

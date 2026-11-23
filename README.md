@@ -23,8 +23,6 @@ Nixus is a **local-first desktop app** that takes the busywork out of tracking t
 
 It's built as a set of modules in one shared app. **Finance** and **Car** are available today.
 
-> **Pre-alpha** — core features work, but things change and break between releases.
-
 <p align="center">
   <img src="docs/images/screenshot-dashboard.png" alt="Nixus dashboard showing cash flow, net worth, budget remaining, and spending by category" width="900" />
 </p>

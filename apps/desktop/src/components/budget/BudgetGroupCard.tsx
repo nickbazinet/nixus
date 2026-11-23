@@ -8,6 +8,7 @@ import {
   AlertDescription,
   Badge,
   Button,
+  Card,
   IconChip,
   Meter,
   Dialog,
@@ -263,10 +264,12 @@ export function BudgetGroupCard({
     <>
       {/* One card per group, closed to a single summary line until the user asks for its
         * categories — the budget reads as seven lines, not seventy. */}
-      <section
+      <Card
+        flush
+        render={<section />}
         data-budget-group-id={group.is_deleted ? undefined : group.id}
         data-open={open || undefined}
-        className="rounded-xl border border-line bg-card transition-shadow data-[drop-target=true]:ring-2 data-[drop-target=true]:ring-brand"
+        className="overflow-visible data-[drop-target=true]:ring-2 data-[drop-target=true]:ring-brand"
       >
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4">
           <Button
@@ -525,7 +528,7 @@ export function BudgetGroupCard({
               ))}
           </div>
         )}
-      </section>
+      </Card>
 
       <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <DialogContent data-testid="delete-category-dialog">
