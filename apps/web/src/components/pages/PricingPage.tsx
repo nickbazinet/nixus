@@ -8,7 +8,7 @@ import {
   Kicker,
   Section,
 } from "@/components/ui";
-import { COMPARE_ROWS, PLANS, PRICING_FAQ, type Plan } from "@/content/pricing";
+import { COMPARE_GROUPS, PLANS, PRICING_FAQ, type Plan } from "@/content/pricing";
 import { cn } from "@/lib/cn";
 import { billingPlanUrl } from "@/lib/links";
 import { usePlanPrices, type DisplayPrice } from "@/lib/planPrices";
@@ -34,16 +34,16 @@ export function PricingPage() {
             <PlanCard key={plan.id} plan={plan} price={prices[index]} />
           ))}
         </div>
-
-        <p className="mt-10 text-sm text-ink-muted">
-          [CONFIRM: prices in CAD, taxes extra, annual option, cancel anytime.]
-        </p>
       </Section>
 
       <Section bg="white" id="compare" labelledBy="compare-heading">
         <h2 id="compare-heading" className="text-display-m font-semibold">
           Compare the plans
         </h2>
+        <p className="mt-4 max-w-2xl text-ink-soft">
+          Everything you need to track your money is free on your computer. Cloud plans add the
+          household view, AI that answers from your own numbers, and dashboards built your way.
+        </p>
         <div className="mt-10 overflow-x-auto">
           <table className="w-full min-w-[36rem] border-collapse text-left text-[0.95rem]">
             <caption className="sr-only">Features included in each Nixus plan</caption>
@@ -53,43 +53,58 @@ export function PricingPage() {
                   <span className="sr-only">Feature</span>
                 </th>
                 {PLANS.map((plan) => (
-                  <th key={plan.id} scope="col" className="w-[16%] py-4 text-center font-bold">
+                  <th
+                    key={plan.id}
+                    scope="col"
+                    className={cn(
+                      "w-[16%] py-4 text-center font-bold",
+                      plan.highlighted && "rounded-t-xl bg-violet-soft/40",
+                    )}
+                  >
                     {plan.shortName}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody>
-              {COMPARE_ROWS.map((row) => (
-                <tr key={row.label} className="border-b border-line">
-                  <th scope="row" className="py-4 pl-2 font-normal text-ink-soft">
-                    {row.label}
-                  </th>
-                  {PLANS.map((plan) => {
-                    const value = row.values[plan.id];
-                    return (
-                      <td key={plan.id} className="py-4 text-center">
-                        {typeof value === "string" ? (
-                          value
-                        ) : value ? (
-                          <>
-                            <Check className="mx-auto size-4 text-brand" aria-hidden="true" />
-                            <span className="sr-only">Included</span>
-                          </>
-                        ) : (
-                          <>
-                            <span aria-hidden="true" className="text-ink-muted/60">
-                              —
-                            </span>
-                            <span className="sr-only">Not included</span>
-                          </>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
+            {COMPARE_GROUPS.map((group) => (
+              <tbody key={group.rows[0].label}>
+                {group.rows.map((row) => (
+                  <tr key={row.label} className="border-b border-line">
+                    <th scope="row" className="py-4 pl-2 pr-4 font-normal text-ink-soft">
+                      <span className="block font-semibold text-ink">{row.label}</span>
+                      {row.hint ? (
+                        <span className="mt-0.5 block text-sm text-ink-muted">{row.hint}</span>
+                      ) : null}
+                    </th>
+                    {PLANS.map((plan) => {
+                      const value = row.values[plan.id];
+                      return (
+                        <td
+                          key={plan.id}
+                          className={cn("py-4 text-center", plan.highlighted && "bg-violet-soft/40")}
+                        >
+                          {typeof value === "string" ? (
+                            value
+                          ) : value ? (
+                            <>
+                              <Check className="mx-auto size-4 text-brand" aria-hidden="true" />
+                              <span className="sr-only">Included</span>
+                            </>
+                          ) : (
+                            <>
+                              <span aria-hidden="true" className="text-ink-muted/60">
+                                —
+                              </span>
+                              <span className="sr-only">Not included</span>
+                            </>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            ))}
           </table>
         </div>
       </Section>

@@ -14,21 +14,20 @@
  *   - No headless-browser dependency — keeps CI lean.
  *
  * Visual language: matches the site (slate text on a near-white gradient,
- * the canonical Nixus N-mark logo with brand gradient, Inter via system-font
+ * the Nixus mark from `scripts/brand/nixus-logo.png`, Inter via system-font
  * fallback). The two subtitle lines re-use copy from the marketing pitch.
- *
- * Logo gradient + geometry mirror `packages/shared/src/ui/nixus-logo.tsx`.
- * Keep them in sync if the brand mark evolves.
  */
 
 import { Resvg } from "@resvg/resvg-js";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const svg = `<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+const MARK_PNG = readFileSync(resolve(__dirname, "brand/nixus-logo.png")).toString("base64");
+
+const svg = `<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1200 630">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#F8FAFC"/>
@@ -41,12 +40,8 @@ const svg = `<svg width="1200" height="630" xmlns="http://www.w3.org/2000/svg" v
     </linearGradient>
   </defs>
   <rect width="1200" height="630" fill="url(#bg)"/>
-  <!-- Canonical Nixus N-mark (mirrors packages/shared/src/ui/nixus-logo.tsx) scaled 80x80 at (120, 170). Source viewBox is 0 0 32 32; scale 2.5x. -->
-  <g transform="translate(120 170) scale(2.5)">
-    <rect x="3" y="3" width="7" height="26" rx="2" fill="#5E78ED"/>
-    <rect x="22" y="3" width="7" height="26" rx="2" fill="#DE50A4"/>
-    <polygon points="3,29 10,29 29,3 22,3" fill="url(#nixus-grad)"/>
-  </g>
+  <!-- The Nixus mark, 80x80 at (120, 170). -->
+  <image x="120" y="170" width="80" height="80" xlink:href="data:image/png;base64,${MARK_PNG}"/>
   <text x="240" y="232" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="64" font-weight="700" fill="#0F172A">Nixus</text>
   <text x="120" y="370" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="56" font-weight="700" fill="#0F172A" letter-spacing="-1.5">Personal finance, automated.</text>
   <text x="120" y="450" font-family="Poppins, Nunito, system-ui, sans-serif" font-size="26" font-weight="400" fill="#475569">Drop in a credit card statement. Watch the AI categorize it.</text>

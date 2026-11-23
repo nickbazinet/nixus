@@ -8,6 +8,9 @@ import {
 import { I18nextProvider, useTranslation } from "react-i18next";
 
 import appCss from "../styles/main.css?url";
+import faviconUrl from "../assets/nixus-favicon.png";
+import favicon32Url from "../assets/nixus-favicon-32.png";
+import appleTouchIconUrl from "../assets/nixus-apple-touch-icon.png";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { i18nForLocale, localeFromPath, type Locale } from "@/lib/i18n";
@@ -20,7 +23,12 @@ export const Route = createRootRoute({
       // Nothing here should ever be indexed: every page is behind a session.
       { name: "robots", content: "noindex, nofollow" },
     ],
-    links: [{ rel: "stylesheet", href: appCss }],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      { rel: "icon", type: "image/png", sizes: "32x32", href: favicon32Url },
+      { rel: "icon", type: "image/png", sizes: "64x64", href: faviconUrl },
+      { rel: "apple-touch-icon", sizes: "180x180", href: appleTouchIconUrl },
+    ],
   }),
   shellComponent: RootDocument,
 });

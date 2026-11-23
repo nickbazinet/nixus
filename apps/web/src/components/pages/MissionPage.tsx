@@ -77,12 +77,17 @@ export function MissionPage() {
       <Section bg="page" labelledBy="why-building">
         <div className="grid gap-12 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,2fr)] lg:gap-14">
           <figure>
-            <div className="grid aspect-square max-w-[22rem] place-items-center rounded-3xl bg-glass text-sm font-bold uppercase tracking-wide text-ink-soft">
-              [Your photo]
-            </div>
+            <img
+              src="/team/nick.jpg"
+              alt="Nick, founder of Nixus"
+              width={720}
+              height={720}
+              loading="lazy"
+              className="aspect-square w-full max-w-[22rem] rounded-3xl object-cover"
+            />
             <figcaption className="mt-4">
               <p className="font-bold text-ink">Nick</p>
-              <p className="text-sm text-ink-muted">Founder, building Nixus on his own</p>
+              <p className="text-sm text-ink-muted">Founder of Nixus</p>
             </figcaption>
           </figure>
           <div>
@@ -99,7 +104,7 @@ export function MissionPage() {
               <p>
                 Getting financially responsible changed my life for the better. I want everyone
                 around me to have that, without reinventing the wheel. So I am bringing automation
-                and best practices to everybody, starting with Canadians.
+                and best practices to everybody.
               </p>
               <p>
                 I wanted a tool that tells you what to do next, not just what happened, without
@@ -129,19 +134,26 @@ export function MissionPage() {
           <div className={cn(cardClass(), "p-6")}>
             <h3 className="text-lg font-semibold text-brand">What works today</h3>
             <Bullets
+              marker="plus"
               className="mt-4 text-[0.95rem]"
               items={[
                 "Importing credit card statements",
-                "Budgets and net worth history",
-                "Registered account tracking",
+                "Budgets and cash flow",
+                "Net worth history and forecasts",
+                "Spending insights and year in review",
+                "Retirement projections",
+                "Investment overview",
+                "Registered account tracking (TFSA, RRSP, FHSA)",
+                "Savings goals",
+                "Car maintenance garage",
               ]}
             />
           </div>
           <div className={cn(cardClass(), "p-6")}>
-            <h3 className="text-lg font-semibold text-amber-ink">What it isn&rsquo;t, yet</h3>
+            <h3 className="text-lg font-semibold text-amber-ink">What it isn&rsquo;t</h3>
             <Bullets
               className="mt-4 text-[0.95rem]"
-              items={["No bank connection", "No mobile app", "Not professional financial advice"]}
+              items={["No bank connection", "No mobile app (yet)", "Not professional financial advice"]}
             />
           </div>
         </div>

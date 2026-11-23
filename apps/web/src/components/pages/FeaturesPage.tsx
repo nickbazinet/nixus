@@ -1,4 +1,14 @@
-import { Car, ChartColumn, House, Shield, Sparkles, TrendingUp } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Car,
+  Hourglass,
+  Landmark,
+  PiggyBank,
+  Shield,
+  Sparkles,
+  TrendingUp,
+  Wrench,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import {
@@ -34,7 +44,7 @@ const ROWS: ReadonlyArray<{
     points: [
       "PDF and screenshot import",
       "Automatic categories you can correct",
-      "Your statements never leave your computer",
+      "Statements kept private, never used to train AI",
     ],
     visual: <ImportMock />,
   },
@@ -68,34 +78,49 @@ const ROWS: ReadonlyArray<{
 
 const TOOLBOX = [
   {
+    icon: ArrowLeftRight,
+    title: "Cash flow, clearly",
+    body: "Track every expense and income so you always know what came in, what went out and what is left.",
+  },
+  {
+    icon: Landmark,
+    title: "Every account, CAD and USD",
+    body: "Banks, cards, investments, real estate and more, in Canadian and US dollars, in one place.",
+  },
+  {
+    icon: PiggyBank,
+    title: "Savings goals",
+    body: "Plan the things you are saving for, fund them over time and see how close you are.",
+  },
+  {
     icon: TrendingUp,
-    title: "Insights and analytics",
-    body: "See where your money goes and where it is heading: budget, expenses, income, net worth and retirement, in plain language.",
+    title: "Trends and year in review",
+    body: "Spot spending trends as they form, then look back on the whole year at a glance.",
+  },
+  {
+    icon: Hourglass,
+    title: "Forecasts and retirement",
+    body: "Project your net worth forward and test your retirement plan before you commit to it.",
   },
   {
     icon: Car,
-    title: "Garage",
-    body: "Keep vehicle maintenance next to the rest of life's upkeep.",
-  },
-  {
-    icon: House,
-    title: "Household net worth",
-    body: "One view of what your household owns and owes.",
+    title: "A garage for every vehicle",
+    body: "Keep several vehicles, with service schedules, full history and alerts before maintenance is due.",
   },
   {
     icon: Sparkles,
-    title: "AI integration",
-    body: "Ask questions about your own money and get guidance. [Describe exactly what is sent, and when.]",
+    title: "Ask about your money",
+    body: "Ask questions in plain language, like where last month went, and get an answer from your own numbers.",
   },
   {
-    icon: ChartColumn,
-    title: "Custom dashboards",
-    body: "Build the overview you want to see, with the numbers you care about.",
+    icon: Wrench,
+    title: "Ask about your car",
+    body: "Wondering when the next oil change is due? Ask, and the answer comes from your service history.",
   },
   {
     icon: Shield,
     title: "Private by design",
-    body: "No bank logins. Records live on your computer.",
+    body: "No bank logins and no bank connection. Your records stay on your computer.",
     link: true,
   },
 ];
@@ -180,7 +205,7 @@ export function FeaturesPage() {
           The rest of the toolbox
         </h2>
         <p className="mt-4 text-ink-soft">
-          A few more things that keep your money organized without the upkeep.
+          From daily cash flow to retirement, and even your car: everything else Nixus keeps organized for you.
         </p>
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {TOOLBOX.map((item) => (

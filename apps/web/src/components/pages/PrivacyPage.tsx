@@ -52,12 +52,24 @@ const LAYERS: ReadonlyArray<{
     icon: House,
     badge: "Opt-in · Classic",
     badgeTone: "blue",
-    title: "Household net worth",
+    title: "Cloud sync",
     body: (
-      <p>
-        Encrypted, but not end-to-end encrypted. We say so up front. [Where it is stored, who can
-        access it.]
-      </p>
+      <>
+        <p className="font-bold text-ink">Protected, and only yours.</p>
+        <p className="mt-3">
+          If you turn it on, a copy of your records is kept on secure servers, in a space that belongs
+          only to your account. Nixus does not read your records.
+        </p>
+        <Bullets
+          className="mt-5"
+          items={[
+            "Encrypted while it travels and while it is stored",
+            "Off until you turn it on",
+            "Your AI credentials are never uploaded",
+            "Deletion on request, by email",
+          ]}
+        />
+      </>
     ),
   },
   {
@@ -66,10 +78,21 @@ const LAYERS: ReadonlyArray<{
     badgeTone: "violet",
     title: "AI requests",
     body: (
-      <p>
-        [Describe exactly what is sent, when, to whom, and whether it is stored or used for
-        training.]
-      </p>
+      <>
+        <p className="font-bold text-ink">Only what you ask, only when you ask.</p>
+        <p className="mt-3">
+          Nothing is sent until you import a statement or ask the assistant something. Nixus does not
+          keep it.
+        </p>
+        <Bullets
+          className="mt-5"
+          items={[
+            "Your statement stays private",
+            "Never used or shared by the AI service",
+            "Prefer to skip our servers? Use your own AI provider",
+          ]}
+        />
+      </>
     ),
   },
 ];
@@ -91,18 +114,23 @@ const FLOWS: ReadonlyArray<{
   },
   {
     situation: "Your bank",
-    sent: "Nothing. Nixus never asks for your bank login. You import statements yourself. [CONFIRM: statements are read on your computer and not uploaded.]",
+    sent: "Nothing from your bank. Nixus never asks for your bank login. You import statements yourself, and when AI reads one, that statement is sent as an AI request (below).",
     control: "You choose which statements to import, and you can delete them any time.",
   },
   {
-    situation: "Household net worth",
-    sent: "Encrypted copy of your records. [Region.]",
-    control: "Off until you turn it on. [Delete from servers.]",
+    situation: "Cloud sync",
+    sent: "An encrypted copy of your records: budgets, transactions, accounts and net worth history. Kept on secure servers.",
+    control: "Off until you turn it on. Turning it off stops transfers, and you can ask us by email to delete the stored copy.",
   },
   {
-    situation: "AI integration",
-    sent: "[Describe.]",
-    control: "Off until you turn it on. [Per-request control?]",
+    situation: "Nixus Cloud account",
+    sent: "Your profile: name, date of birth, income bracket, location and an optional picture. Kept on secure servers in the United States.",
+    control: "Only with a Nixus Cloud account. A local-only profile never uploads it. Ask us by email to delete it.",
+  },
+  {
+    situation: "AI requests",
+    sent: "Only the one request you make, such as a statement or a question. It is kept private, and Nixus does not store it, only how many requests you have made.",
+    control: "Only when you start a request. Use your own AI provider and it goes straight there, never through Nixus.",
   },
 ];
 

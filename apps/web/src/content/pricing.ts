@@ -37,7 +37,6 @@ export const PLANS: readonly Plan[] = [
     bakedCurrency: "CAD",
     monthly: false,
     features: [
-      "Statement import and categories",
       "Budgets and net worth history",
       "TFSA, RRSP and FHSA tracking",
       "Next actions and Garage",
@@ -68,26 +67,128 @@ export const PLANS: readonly Plan[] = [
     bakedCurrency: "CAD",
     monthly: true,
     badge: "AI included",
-    features: ["Everything in Classic", "AI integration", "Custom dashboards"],
+    features: [
+      "Everything in Classic",
+      "AI statement import and categories",
+      "AI assistants",
+      "Custom dashboards",
+    ],
     highlighted: true,
   },
 ];
 
 export interface CompareRow {
   readonly label: string;
+  /** One line on what the capability does. */
+  readonly hint?: string;
   /** Either a per-plan inclusion or a per-plan text value. */
   readonly values: Readonly<Record<PlanId, boolean | string>>;
 }
 
-export const COMPARE_ROWS: readonly CompareRow[] = [
-  { label: "Statement import and categories", values: { free: true, classic: true, advance: true } },
-  { label: "Budgets and net worth history", values: { free: true, classic: true, advance: true } },
-  { label: "TFSA, RRSP and FHSA tracking", values: { free: true, classic: true, advance: true } },
-  { label: "Next actions and Garage", values: { free: true, classic: true, advance: true } },
-  { label: "Household net worth", values: { free: false, classic: true, advance: true } },
-  { label: "AI integration", values: { free: false, classic: false, advance: true } },
-  { label: "Custom dashboards", values: { free: false, classic: false, advance: true } },
-  { label: "Account required", values: { free: "No", classic: "Yes", advance: "Yes" } },
+export interface CompareGroup {
+    readonly rows: readonly CompareRow[];
+}
+
+const ALL = { free: true, classic: true, advance: true } as const;
+const CLOUD = { free: false, classic: true, advance: true } as const;
+const ADVANCE = { free: false, classic: false, advance: true } as const;
+
+export const COMPARE_GROUPS: readonly CompareGroup[] = [
+  {
+    rows: [
+      {
+        label: "Budgets and cash flow",
+        hint: "Monthly budgets, expenses and income, and where you stand.",
+        values: ALL,
+      },
+      {
+        label: "Accounts and assets in CAD and USD",
+        hint: "Banks, cards, investments and real estate.",
+        values: ALL,
+      },
+      {
+        label: "Net worth history",
+        hint: "Watch it grow over time, from 1M to all time.",
+        values: ALL,
+      },
+      {
+        label: "TFSA, RRSP and FHSA tracking",
+        hint: "Balances and contribution room next to everything else.",
+        values: ALL,
+      },
+      {
+        label: "Savings goals",
+        hint: "Plan and fund what you are saving for.",
+        values: ALL,
+      },
+      {
+        label: "Insights, forecasts and retirement planning",
+        hint: "Spending trends, a year in review and net worth projections.",
+        values: ALL,
+      },
+      {
+        label: "Next actions",
+        hint: "A short, prioritized list each time you open the app.",
+        values: ALL,
+      },
+      {
+        label: "Garage with service alerts",
+        hint: "Multiple vehicles, service history and due-date alerts.",
+        values: ALL,
+      },
+    ],
+  },
+  {
+    rows: [
+      {
+        label: "Cloud backup and sync",
+        hint: "Free keeps everything on your computer only. Cloud keeps a safe copy and syncs your devices, so a lost or broken computer does not mean lost records.",
+        values: CLOUD,
+      },
+      {
+        label: "Household net worth",
+        hint: "One view of what your household owns and owes.",
+        values: CLOUD,
+      },
+    ],
+  },
+  {
+    rows: [
+      {
+        label: "AI statement import and categories",
+        hint: "Drop in a PDF or screenshot and every transaction is read and sorted.",
+        values: ADVANCE,
+      },
+      {
+        label: "AI assistant for your money",
+        hint: "Ask in plain language where your money went and get answers from your own numbers.",
+        values: ADVANCE,
+      },
+      {
+        label: "AI assistant for your car",
+        hint: "Ask about service schedules and history.",
+        values: ADVANCE,
+      },
+      {
+        label: "Custom dashboards",
+        hint: "Build the overview you want, with the numbers you care about.",
+        values: ADVANCE,
+      },
+    ],
+  },
+  {
+    rows: [
+      {
+        label: "No bank logins or bank connection",
+        hint: "You choose which statements to import, on every plan.",
+        values: ALL,
+      },
+      {
+        label: "Account required",
+        values: { free: "No", classic: "Yes", advance: "Yes" },
+      },
+    ],
+  },
 ];
 
 export const PRICING_FAQ: ReadonlyArray<{ question: string; answer: string }> = [
@@ -99,7 +200,7 @@ export const PRICING_FAQ: ReadonlyArray<{ question: string; answer: string }> = 
   {
     question: "Is Nixus on my computer really free?",
     answer:
-      "Yes. Importing statements, categories, budgets, net worth history, registered accounts, next actions and Garage all work on your computer at no cost, with no trial and no time limit.",
+      "Yes. Budgets, cash flow, net worth history, registered accounts, savings goals, next actions and Garage all work on your computer at no cost, with no trial and no time limit.",
   },
   {
     question: "Do I need to connect my bank?",

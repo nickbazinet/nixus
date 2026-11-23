@@ -24,7 +24,7 @@ const BENEFITS = [
   {
     icon: TrendingUp,
     title: "A discounted price, forever",
-    body: "[DISCOUNT: for example X% off every NixusCloud plan, for as long as you stay.]",
+    body: "50% off every NixusCloud plan, for as long as you stay.",
   },
   {
     icon: MessageSquare,
@@ -35,7 +35,7 @@ const BENEFITS = [
 
 const STEPS = [
   { title: "Apply", body: "Tell me a bit about how you manage money today." },
-  { title: "Get access", body: "I send your invitation and lock in your price. [Reply time.]" },
+  { title: "Get access", body: "I send your invitation and lock in your price." },
   { title: "Talk to me", body: "Use it, tell me what you think, and watch it change." },
 ];
 
@@ -59,15 +59,16 @@ export function FoundingUsersPage() {
               <GradientText>pay less, forever</GradientText>.
             </h1>
             <div className="mt-6 flex items-center gap-3">
-              <span
-                aria-hidden="true"
-                className="nx-gradient-card grid size-10 place-items-center rounded-full font-display font-semibold text-white"
-              >
-                N
-              </span>
+              <img
+                src="/team/nick-small.jpg"
+                alt=""
+                width={160}
+                height={160}
+                className="size-10 rounded-full object-cover"
+              />
               <div className="text-sm">
                 <p className="font-bold text-ink">A note from Nick</p>
-                <p className="text-ink-muted">Founder of Nixus. On this page, &ldquo;I&rdquo; is me.</p>
+                <p className="text-ink-muted">You help me, I help you. A small gift for helping make my dream come true.</p>
               </div>
             </div>
             <p className="mt-6 max-w-2xl text-lead text-ink-soft">
@@ -78,7 +79,6 @@ export function FoundingUsersPage() {
               <ButtonLink to="/founding-users" hash="apply">
                 Apply to be a Founding User
               </ButtonLink>
-              <span className="text-sm text-ink-muted">[N] spots, [N] left.</span>
             </div>
           </div>
           <PillDecoration className="mr-6 hidden lg:block" />
@@ -253,7 +253,7 @@ function ApplicationForm() {
       <p className="mt-4 text-xs text-ink-muted" aria-live="polite">
         {sent
           ? `Your email app should open with your answers. If it does not, write to ${CONTACT_EMAIL}.`
-          : "[Reply time, and what happens to your answers.]"}
+          : "I reply personally to every application. Your answers go only to me, by email, and are used only to follow up with you."}
       </p>
     </form>
   );

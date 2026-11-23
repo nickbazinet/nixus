@@ -20,9 +20,14 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
-      { rel: "icon", type: "image/x-icon", href: "/favicon.ico" },
-      { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" },
+      // `?v=` is the artwork's revision: browsers cache a favicon by URL for a
+      // long time and ignore a changed file at the same address, so a new mark
+      // needs a new URL. The SVG is not linked: it only wraps a raster, so it
+      // would add nothing over the PNG, and a browser that prefers SVG would
+      // keep showing its cached copy of the old one.
+      { rel: "icon", type: "image/x-icon", sizes: "32x32", href: "/favicon.ico?v=2" },
+      { rel: "icon", type: "image/png", sizes: "192x192", href: "/icon-192.png?v=2" },
+      { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png?v=2" },
     ],
   }),
   shellComponent: RootDocument,

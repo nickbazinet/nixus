@@ -64,7 +64,7 @@ export function SiteFooter() {
         <div>
           <p className="font-display text-xl font-bold">Nixus</p>
           <p className="mt-4 max-w-[17rem] text-[0.95rem] leading-relaxed text-white/70">
-            Minus the admin. Personal finance for Canadians, from a solo developer. Alpha.
+            Minus the admin. Personal finance for Canadians.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-10 sm:grid-cols-4 sm:gap-6">

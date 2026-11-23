@@ -51,9 +51,9 @@ export function HomeHeroVisual() {
         <div className="nx-gradient-card rounded-2xl p-5 text-white shadow-[0_24px_40px_-20px_rgba(80,60,190,0.7)]">
           <div className="flex items-start justify-between">
             <p className="text-sm text-white/85">Spending this month</p>
-            <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-bold">0%</span>
+            <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-bold">-6%</span>
           </div>
-          <p className="mt-1 font-display text-3xl font-semibold">$0,000</p>
+          <p className="mt-1 font-display text-3xl font-semibold">$3,480</p>
           <Sparkline className="mt-3 h-12 w-full" />
         </div>
 
@@ -71,14 +71,14 @@ export function HomeHeroVisual() {
             </div>
             <ul className="flex-1 space-y-1.5 text-sm text-ink-soft">
               {[
-                ["Housing", "#5e78ed"],
-                ["Food", "#9978ed"],
-                ["Transport", "#de50a4"],
-              ].map(([label, color]) => (
+                ["Housing", "#5e78ed", "42%"],
+                ["Food", "#9978ed", "28%"],
+                ["Transport", "#de50a4", "18%"],
+              ].map(([label, color, pct]) => (
                 <li key={label} className="flex items-center gap-2">
                   <span className="size-2 rounded-full" style={{ background: color }} />
                   <span className="flex-1">{label}</span>
-                  <span className="font-bold text-ink">00%</span>
+                  <span className="font-bold text-ink">{pct}</span>
                 </li>
               ))}
             </ul>
@@ -91,7 +91,7 @@ export function HomeHeroVisual() {
           </span>
           <div className="flex-1 text-sm">
             <p className="font-bold text-ink">Quick reminder</p>
-            <p className="text-ink-muted">You are at 00% of your goal.</p>
+            <p className="text-ink-muted">You are at 68% of your goal.</p>
           </div>
           <span className="grid size-8 place-items-center rounded-full bg-white shadow-sm">
             <ArrowRight className="size-4 text-ink" />
@@ -163,14 +163,14 @@ export function RegisteredAccountsMock() {
     <GlassPanel>
       <ul className="space-y-5">
         {[
-          ["TFSA", "w-[72%]", "bg-gradient-to-r from-[#de50a4] to-[#c158c0]"],
-          ["RRSP", "w-[58%]", "bg-gradient-to-r from-[#b165dc] to-[#9978ed]"],
-          ["FHSA", "w-[30%]", "bg-gradient-to-r from-[#7d72ea] to-[#5e78ed]"],
-        ].map(([label, width, fill]) => (
+          ["TFSA", "w-[72%]", "bg-gradient-to-r from-[#de50a4] to-[#c158c0]", "$46,100"],
+          ["RRSP", "w-[58%]", "bg-gradient-to-r from-[#b165dc] to-[#9978ed]", "$37,100"],
+          ["FHSA", "w-[30%]", "bg-gradient-to-r from-[#7d72ea] to-[#5e78ed]", "$19,200"],
+        ].map(([label, width, fill, amount]) => (
           <li key={label}>
             <div className="flex items-center justify-between text-sm font-bold text-ink">
               <span>{label}</span>
-              <span>$00,000</span>
+              <span>{amount}</span>
             </div>
             <div className="mt-2 h-2 rounded-full bg-[#e8eef6]">
               <div className={cn("h-full rounded-full", width, fill)} />
@@ -230,15 +230,12 @@ export function LaptopLock({ className }: { className?: string }) {
   );
 }
 
-/** The tall gradient pill on the Founding Users hero. */
+/** The big gradient plus on the Founding Users hero. */
 export function PillDecoration({ className }: { className?: string }) {
   return (
-    <div
-      aria-hidden="true"
-      className={cn(
-        "h-72 w-20 rounded-full bg-gradient-to-b from-[#dc5aab] via-[#a679e6] to-[#6e86f0] shadow-[0_30px_60px_-30px_rgba(120,90,220,0.8)]",
-        className,
-      )}
-    />
+    <div aria-hidden="true" className={cn("relative size-72", className)}>
+      <div className="absolute inset-y-0 left-1/2 w-20 -translate-x-1/2 rounded-full bg-gradient-to-b from-[#dc5aab] via-[#a679e6] to-[#6e86f0] shadow-[0_30px_60px_-30px_rgba(120,90,220,0.8)]" />
+      <div className="absolute inset-x-0 top-1/2 h-20 -translate-y-1/2 rounded-full bg-gradient-to-r from-[#dc5aab] via-[#a679e6] to-[#6e86f0] shadow-[0_30px_60px_-30px_rgba(120,90,220,0.8)]" />
+    </div>
   );
 }

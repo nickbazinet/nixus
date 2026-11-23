@@ -1,11 +1,13 @@
 /**
  * Generate the marketing site's favicon set.
  *
- * Mirrors the structure of `generate-og-image.ts`. One source SVG (the
- * Nixus N-mark with the brand gradient) is rendered at multiple sizes via
- * `@resvg/resvg-js`. Outputs:
+ * Mirrors the structure of `generate-og-image.ts`. The source is the Nixus
+ * mark artwork in `scripts/brand/nixus-logo.png` (512×512, transparent): the
+ * brand's own file is a raster, so it is wrapped in an SVG `<image>` and
+ * rendered at each size through `@resvg/resvg-js`. Outputs:
  *
- *   - apps/web/public/favicon.svg            (modern browsers prefer this)
+ *   - apps/web/public/favicon.svg            (modern browsers prefer this; it
+ *                                             embeds a 64×64 PNG of the mark)
  *   - apps/web/public/favicon.ico            (32×32 PNG renamed to .ico —
  *                                             sufficient for modern browsers
  *                                             per NFR-W6; see spec TD-11)
@@ -13,77 +15,56 @@
  *   - apps/web/public/icon-192.png           (192×192 — Android home screen)
  *   - apps/web/public/icon-512.png           (512×512 — Android splash / PWA)
  *
- * The geometry is intentionally duplicated here rather than imported from
- * `packages/shared` — build scripts can't import React components, and a
- * standalone SVG string keeps the rendering pipeline simple.
- *
  * Run with: `pnpm --filter @nixus/web generate-favicons`
  */
 
 import { Resvg } from "@resvg/resvg-js";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(__dirname, "../public");
 
-/**
- * The canonical Nixus N-mark.
- *
- * Mirrors the geometry of `packages/shared/src/ui/nixus-logo.tsx` (the
- * shared brand component consumed by `apps/desktop` and `apps/web`'s site
- * header): two pillars — indigo (#5E78ED) on the left, pink (#DE50A4) on
- * the right — joined by a diagonal that carries the indigo→violet→pink
- * brand gradient. Background is transparent so the mark sits flush on
- * whatever surface hosts it (browser tab strip, OS home screen, etc.).
- *
- * Geometry duplicated here rather than imported because build scripts
- * can't import React components and resvg needs a plain SVG string. Keep
- * in sync with the shared component if either is edited.
- */
-const SOURCE_SVG = `<svg width="64" height="64" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="nixus-mark-gradient" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#5E78ED"/>
-      <stop offset="50%" stop-color="#9978ED"/>
-      <stop offset="100%" stop-color="#DE50A4"/>
-    </linearGradient>
-  </defs>
-  <rect x="3" y="3" width="7" height="26" rx="2" fill="#5E78ED"/>
-  <rect x="22" y="3" width="7" height="26" rx="2" fill="#DE50A4"/>
-  <polygon points="3,29 10,29 29,3 22,3" fill="url(#nixus-mark-gradient)"/>
-</svg>`;
+const SOURCE_PNG = readFileSync(resolve(__dirname, "brand/nixus-logo.png")).toString("base64");
 
-/**
- * Render the source SVG at the requested pixel size and write the PNG to
- * `public/<filename>`. `fitTo: { mode: "width", value: size }` upscales the
- * vector geometry to the target raster size — no aliasing since we're
- * redrawing from vector at every output size.
- */
-function renderPng(size: number, filename: string): void {
-  const resvg = new Resvg(SOURCE_SVG, {
+/** The mark as an SVG document, at `size` pixels, transparent around it. */
+function markSvg(png: string, size: number): string {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <image width="${size}" height="${size}" xlink:href="data:image/png;base64,${png}"/>
+</svg>`;
+}
+
+const SOURCE_SVG = markSvg(SOURCE_PNG, 512);
+
+/** Render the source at `size` pixels. The source is 512px, so every output is a downscale. */
+function render(size: number): Buffer {
+  return new Resvg(SOURCE_SVG, {
     fitTo: { mode: "width", value: size },
     background: "rgba(0, 0, 0, 0)",
-  });
-  const png = resvg.render().asPng();
-  const out = resolve(PUBLIC_DIR, filename);
-  writeFileSync(out, png);
+  })
+    .render()
+    .asPng();
+}
+
+function writePng(size: number, filename: string): void {
+  const png = render(size);
+  writeFileSync(resolve(PUBLIC_DIR, filename), png);
   console.log(
     `Wrote ${filename} (${size}×${size}, ${png.length} bytes, ${(png.length / 1024).toFixed(1)} KB)`,
   );
 }
 
-// 1) Source SVG — modern browsers (Chrome 80+, Firefox 41+, Safari 16+)
-//    prefer this; it's resolution-independent and tiny.
-const svgOut = resolve(PUBLIC_DIR, "favicon.svg");
-writeFileSync(svgOut, SOURCE_SVG);
-console.log(`Wrote favicon.svg (${SOURCE_SVG.length} bytes)`);
+// 1) Multi-resolution PNGs.
+writePng(32, "favicon.ico"); // PNG-as-ico is acceptable for modern browsers.
+writePng(180, "apple-touch-icon.png");
+writePng(192, "icon-192.png");
+writePng(512, "icon-512.png");
 
-// 2) Multi-resolution PNGs.
-renderPng(32, "favicon.ico"); // PNG-as-ico is acceptable for modern browsers.
-renderPng(180, "apple-touch-icon.png");
-renderPng(192, "icon-192.png");
-renderPng(512, "icon-512.png");
+// 2) favicon.svg — modern browsers (Chrome 80+, Firefox 41+, Safari 16+) prefer
+//    it. A 64px raster inside keeps it small; a tab icon never draws larger.
+const favicon = markSvg(render(64).toString("base64"), 64);
+writeFileSync(resolve(PUBLIC_DIR, "favicon.svg"), favicon);
+console.log(`Wrote favicon.svg (${favicon.length} bytes)`);
 
 console.log("Favicon generation complete.");

@@ -40,11 +40,13 @@ export function GradientText({ children }: { children: ReactNode }) {
 export function Bullets({
   items,
   tone = "light",
+  marker = "minus",
   className,
   itemClassName,
 }: {
   items: readonly ReactNode[];
   tone?: Tone;
+  marker?: "minus" | "plus";
   className?: string;
   itemClassName?: string;
 }) {
@@ -59,10 +61,17 @@ export function Bullets({
             itemClassName,
           )}
         >
-          <span
-            aria-hidden="true"
-            className="nx-gradient-pill mt-[0.6em] h-1.5 w-4 flex-none rounded-full"
-          />
+          {marker === "plus" ? (
+            <span aria-hidden="true" className="relative mt-[0.5em] size-4 flex-none">
+              <span className="nx-gradient-pill absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full" />
+              <span className="absolute inset-y-0 left-1/2 w-1.5 -translate-x-1/2 rounded-full bg-gradient-to-b from-[#c756b9] to-[#8a63e0]" />
+            </span>
+          ) : (
+            <span
+              aria-hidden="true"
+              className="nx-gradient-pill mt-[0.6em] h-1.5 w-4 flex-none rounded-full"
+            />
+          )}
           <span>{item}</span>
         </li>
       ))}
