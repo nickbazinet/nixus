@@ -6,163 +6,56 @@
   <img src="docs/images/nixus-banner.png" alt="Nixus — Financial clarity, built for your future" />
 </p>
 
-<p align="center"><strong>Automate and track your life — from one place, with your records on your own machine.</strong></p>
-
-Nixus is a **local-first desktop app** for **lifestyle automation and tracking**. It uses technology to take the tedious upkeep out of the things you should be staying on top of — money, your car, and more over time — so you actually keep doing them. Each area of life is a module in one shared app, and your financial records are stored on your own machine. Two things can send them off it, and both are off until you turn them on: the optional AI features, which transmit the content of the one request you invoked, and optional sync across your own computers. See [AI features and your data](#ai-features-and-your-data) and [Sync across your computers (optional)](#sync-across-your-computers-optional).
-
-**Finance** is the first module: upload a credit card statement, let AI categorize the transactions, and see your full picture — budget, accounts, assets, net worth — without touching a spreadsheet.
-
-> **Pre-alpha** — core features work, but the product is still maturing. [See limitations](#what-nixus-is--and-isnt) before you download.
-
-**[Download for macOS or Windows →](https://nixusapp.com)** · **[Beta testing](#help-shape-nixus)** · **[Contributing](CONTRIBUTING.md)**
+<p align="center"><strong>Personal finance and car upkeep, automated — with your records on your own computer.</strong></p>
 
 <p align="center">
-  <a href="https://buymeacoffee.com/nickbaz">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210" />
-  </a>
+  <a href="https://nixusapp.com">Website</a> ·
+  <a href="https://nixusapp.com/download">Download</a> ·
+  <a href="https://nixusapp.com/features">Features</a> ·
+  <a href="https://nixusapp.com/pricing">Pricing</a> ·
+  <a href="https://nixusapp.com/privacy">Privacy</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 ---
 
-## What is Nixus?
+Nixus is a **local-first desktop app** that takes the busywork out of tracking the things you should stay on top of. Drop in a credit card statement and it categorizes every transaction. Open the app and it tells you what to do next. Your data lives in a local SQLite database on your machine, with no bank logins and no account required.
 
-Most tracking tools die the moment they demand effort. Spreadsheets, maintenance logs, habit trackers — they all work until the upkeep becomes a chore and you quietly stop. **Nixus is built to remove that upkeep**, using automation and AI to handle the tedious parts (data entry, categorization, reminders) so staying organized doesn't depend on your willpower.
+It's built as a set of modules in one shared app. **Finance** and **Car** are available today.
 
-It's a **modular platform**: each area of your life is its own module in a shared shell (sidebar, consistent design, one install). **Finance** and **Car** are available today, and the shell is designed so new lifestyle modules can plug in over time.
-
-Built by one person because my own spreadsheet stopped scaling. Not a startup pitch — a tool I use every week, opened to a small group of beta testers for honest feedback.
-
----
-
-## Who it's for
-
-- You still track personal finances in a **spreadsheet** (or gave up because it was too much work)
-- You want **budget, expenses, accounts, and net worth** in one desktop app
-- You prefer **local storage** over bank connections and always-on cloud services — with optional sync across your own computers if you want it
-- You're okay uploading **credit card statements manually** (screenshot or PDF) instead of linking your bank
-- You use **macOS or Windows**
-
-## Who it's not for (yet)
-
-- People who need **automatic bank sync** or Plaid-style connections
-- **Mobile-first** users — desktop only, no mobile app (for now)
-- **Multi-user / household** setups — one person's finances per install
-- Anyone expecting **tax, legal, or investment advice** — this is a tracking tool (for now)
-- People who need a **finished, stable product** — see [limitations](#what-nixus-is--and-isnt) below
-
----
-
-## What's in the Finance module today
-
-| Feature | What you get |
-| ------- | ------------ |
-| **AI statement import** | Upload a CC screenshot or PDF; transactions are extracted and categorized |
-| **Budget builder** | Monthly budgets with category groups; see where you stand at a glance |
-| **Expense tracking** | Review, correct, and manually add transactions; recurring templates |
-| **Multi-account tracking** | Banks, credit cards, investment accounts (CAD and USD) in one view |
-| **Passive assets** | Real estate, vehicles, business equity — the full picture |
-| **Net worth history** | Track cash, TFSA, RRSP, crypto, housing, and more over time |
-| **AI chat** | Ask questions about your data in natural language |
-| **Income tracking** | Record monthly income alongside expenses for cash-flow visibility |
-
-English and French UI · Light/dark/system theme · Auto-updates · Database backup/restore
-
----
-
-## Modules
-
-| Module | Status | What it covers |
-| ------ | ------ | -------------- |
-| **Finance** | Available | Budgeting, expenses, accounts, income, net worth, AI chat, CC import |
-| **Car** | Available | Multi-vehicle garage, maintenance schedules, service history, odometer tracking, due-date alerts |
-
-The app shell is designed so new modules plug in without reinventing the desktop experience each time.
-
----
-
-## What Nixus is — and isn't
-
-Before you download: an honest list so you know if this is worth your time.
-
-- **No bank connection** — you upload credit card statements manually (screenshot or PDF).
-- **Desktop only** — macOS and Windows. No mobile app.
-- **Single user** — one person's finances per install.
-- **AI features send that request's content off your machine** — either to your own AI provider using credentials you supply (stored in your OS keychain), or, for Nixus Cloud accounts on the Advance plan, through Nixus infrastructure to AWS Bedrock in the United States. See [AI features and your data](#ai-features-and-your-data). The app works without AI; other features are unaffected.
-- **Sync, if you turn it on, stores a copy of your records in Nixus-operated cloud storage** — it is off by default, needs a Nixus Cloud account that includes it, and is **not** end-to-end encrypted in this first version. See [Sync across your computers (optional)](#sync-across-your-computers-optional). Leave it off and no copy of your records leaves your machine.
-- **A Nixus Cloud account has a profile stored in the cloud, not on your machine** — name, date of birth, income bracket, location, and picture. See [Your Nixus Cloud profile](#your-nixus-cloud-profile). A local profile with no Nixus Cloud account keeps this information on your device only.
-- **Pre-alpha** — features change and things break between releases.
-- **Not tax, legal, or investment advice** — a tracking tool, not a professional service.
-
-More detail on the marketing site: [nixusapp.com/beta](https://nixusapp.com/beta)
-
----
-
-## AI features and your data
-
-Everything Nixus stores — budgets, transactions, accounts, assets, net worth history — lives in a local SQLite database on your machine. Nixus holds no copy of it unless you turn on [sync](#sync-across-your-computers-optional), which is off by default.
-
-The AI features are the other exception, and they are opt-in by nature: they only run when you invoke them (statement import, AI chat, project advice, spending-trends insight). When you do, the content of that one request leaves your machine for processing:
-
-- **Bring your own credentials (default).** The request goes directly from your machine to the provider you configured (AWS Bedrock or OpenAI) using credentials you supply. Nixus infrastructure is not involved and cannot see the request.
-- **Nixus Cloud Advance plan (hosted AI).** The request is transmitted **through Nixus's own infrastructure** to **AWS Bedrock**. Nixus does not store the prompt, the attached statement, the model's response, or the file name in its own databases or logs — it records only your account identifier, timestamps, request counts, and token counts for quota and billing purposes.
-
-Two limits on that guarantee, stated plainly:
-
-- **The non-retention guarantee covers Nixus-controlled systems only.** It does not bind AWS. AWS may process and, under Bedrock's terms and its abuse-detection policies, retain request content. Nixus does not control or override that.
-- **Processing is cross-region within the United States.** Hosted AI uses a `us.` Bedrock cross-region inference profile, so a request may be processed in any US region AWS routes it to — which may be outside your country of residence — under AWS's terms for the handling region.
-
-Hosted AI is subject to a **monthly request quota**. When it is unavailable, ineligible, or out of quota, Nixus falls back to your own configured provider where that provider supports the feature, and otherwise reports a normal error — the rest of the app is unaffected either way.
-
-Full terms: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
-
----
-
-## Sync across your computers (optional)
-
-Nixus is local-only by default. If you want the same records on a second computer, you can turn on multi-device sync — it is off until you do, and it needs a Nixus Cloud account that includes multi-device sync. Leave it off and nothing in this section applies to you; a local-only profile runs no sync code at all.
-
-**What it does.** Your changes travel continuously. Once your edits settle, Nixus uploads them as a log of changes, and periodically a full snapshot, covering budgets, transactions, accounts, income, assets, net worth history, vehicles, maintenance records, your in-app action history and your app settings. Signing in on a new computer downloads the latest snapshot plus everything after it, and your data is there. Full-size project images travel separately so they never slow that first load down: the snapshot carries only their thumbnails and a fingerprint, each full-size image is uploaded as its own object under that fingerprint, and a new computer downloads one the first time you ask to see it.
-
-**How two computers are merged.** Field by field, with no question asked of you. When both computers changed the same field, the later change wins. When one deleted something another edited at the same time, the delete wins — and deleted items stay recoverable for 30 days, on every computer. Balances and counters are merged as additions, so two computers reacting to the same thing never double-count it. Edits you make offline are kept and sent when you are back online. Your action history travels as an append-only record and is never rewritten.
-
-**What it is not.** It is not instant — changes move within seconds to a minute, not keystroke by keystroke. It is not a backup service. If one of your computers is running an older version of Nixus, it waits for the update before applying changes that version cannot read, and keeps working on your local data meanwhile. A computer that has not synced for more than 90 days re-downloads the latest snapshot and re-applies the changes it had not sent yet. The only time Nixus asks you to choose is the first time you link a computer that already has data of its own: load the cloud copy — your current local file is kept as a dated backup — or keep your local data and publish it over the cloud copy. Restoring a backup or copying a profile relinks that computer and asks the same question. **Deleting everything is account-wide:** on a profile that syncs, "Delete everything" also removes your records from your cloud sync and from your other computers — each of them empties itself the next time it checks in, with no prompt, because you already asked for it. Anything you entered on another computer *after* the deletion is kept. A computer whose data did not come from your cloud sync — a restored backup or a copied profile that has not linked yet — is never emptied this way; it asks the link question above instead.
-
-**What is never uploaded.** Your AI provider credentials (they stay in your OS keychain), the settings describing this computer's AI provider configuration, Nixus's internal sync bookkeeping, and anything in a profile you keep local-only.
-
-**Where it lives and who can read it.** A private storage bucket operated by Nixus on AWS in the US East (N. Virginia) region, with a separate location per account. Transfers use TLS; at rest the copy uses Amazon S3 server-side encryption (SSE-S3); each computer gets short-lived credentials scoped to that one account's location. Stated plainly: the copy is **not** end-to-end encrypted. Nixus does not read your records, but a Nixus administrator with access to that AWS account could technically do so, and so could AWS. The stored format reserves a marker for an encryption scheme so a future version can close that gap; it is not closed today.
-
-**Retention and deletion.** Old change-log segments are deleted once a newer snapshot covers them, and previous versions of each object expire after 30 days. The current copy is kept for as long as sync is on, and it is kept — never deleted — if your account stops being eligible, in which case sync freezes: transfers stop and the local app keeps working normally. "Delete everything" in the app stops the cloud copy from ever being loaded again — by that computer, by your other computers, or by a new one you link afterwards — but it does **not** erase the stored objects, and most of them are not deleted at any later point either. The app is deliberately granted no permission to delete your data: its only delete permission is the cleanup inside your own location — superseded snapshots and change-log segments a newer snapshot covers — and it has none for the account binding, the pointers and roster your computers coordinate through, or your project images, so one computer cannot erase what the others are mid-download of. In practice the superseded snapshots are swept once newer ones replace them, while the change-log segments written before a "delete everything" and your uploaded pictures are not reclaimed at all. To have the stored bytes deleted outright, [email me](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20sync%20data%20deletion%20request) and ask; it is handled manually. Turning sync off stops transfers but does not delete the copy.
-
-Sync is not a backup service — keeping your own backups is still your responsibility. Full detail: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
-
----
-
-## Your Nixus Cloud profile
-
-Every Nixus Cloud account has a profile — first and last name, date of birth, income bracket and its currency, country and state, province, or region, and an optional picture — even free accounts. It is kept in a Nixus-operated database on AWS in the US East (N. Virginia) region, keyed to your account.
-
-You edit it from the desktop app or from [account.nixusapp.com](https://account.nixusapp.com); saving a change needs an internet connection either way. The desktop app keeps a read-only copy on your computer so it can show the profile and keep working offline between edits. Transfers use TLS. Nixus never sells or shares your profile and never uses it for advertising.
-
-If you use Nixus without a Nixus Cloud account, your profile stays on that device only and is never uploaded. If you already had a profile on a computer before this feature existed, Nixus asks before uploading it the first time; declining keeps it on that computer and you are not asked again.
-
-"Delete everything" in the app removes the copy on that computer, but it does not delete your Nixus Cloud profile — it reappears the next time you sign in anywhere. To have the Nixus Cloud profile itself deleted, [email me](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20Cloud%20profile%20deletion%20request) and ask; this is handled manually today, since deleting a Nixus Cloud account isn't built yet.
-
-The account website at account.nixusapp.com uses one essential, first-party session cookie to keep you signed in there; it stays on Nixus's server and is never read by page scripts. Signing out of the website does not sign you out of the desktop app, and signing out of the desktop app does not sign you out of the website. No analytics or advertising cookies come with this feature.
-
-Nixus does not log your profile values, your picture, or any token or cookie. What it logs for running the service is your account identifier, the route called, the response status, timing, and sizes.
-
-Nixus Cloud subscriptions are sold through Stripe, which is the seller of record and handles payment and tax. Nixus stores no card data. See [Privacy Policy](https://nixusapp.com/privacy) and [Terms of Service](https://nixusapp.com/terms) below for the full disclosure.
-
-Full terms: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service](https://nixusapp.com/terms)
-
----
-
-## Screenshots
+> **Pre-alpha** — core features work, but things change and break between releases.
 
 <p align="center">
   <img src="docs/images/screenshot-dashboard.png" alt="Nixus dashboard showing cash flow, net worth, budget remaining, and spending by category" width="900" />
-  <br /><em>Finance dashboard — budget, cash flow, and net worth at a glance</em>
 </p>
+
+## Features
+
+### Finance
+
+- **Statement import** — upload a credit card PDF or screenshot; transactions are extracted and categorized, and you can correct any of them
+- **Next actions** — a short, prioritized list of what to do, based on your own numbers
+- **Budgets** — monthly category budgets with starter templates, recurring transactions, and income tracking
+- **Accounts and assets** — banks, cards, investments, real estate and more, in CAD and USD
+- **Registered accounts** — TFSA, RRSP and FHSA tracking, including contribution room
+- **Net worth history** — assets and liabilities over time
+- **Savings projects** — plan what you're saving for and fund it over time
+- **Insights** — spending trends, a year-in-review, net worth projection, and a retirement planner
+- **AI assistants** — ask questions about your money in plain language
+
+### Car
+
+- Garage for multiple vehicles
+- Maintenance schedules, service history, and odometer tracking
+- Due-date alerts and an AI assistant that answers from your service history
+
+### Everywhere
+
+- Multiple local profiles, each with its own separate data
+- English and French
+- Light, dark, and system themes
+- Backup and restore, and automatic updates
+- Optional [Nixus Cloud](https://nixusapp.com/pricing) account for multi-device sync and hosted AI
 
 <table>
   <tr>
@@ -177,44 +70,37 @@ Full terms: [Privacy Policy](https://nixusapp.com/privacy) · [Terms of Service]
   </tr>
 </table>
 
-More product visuals and an AI import demo: **[nixusapp.com](https://nixusapp.com)**. Additional screenshots live in [`docs/images/`](docs/images/).
+## Install
 
----
+Download the latest release for **macOS** or **Windows** from [nixusapp.com/download](https://nixusapp.com/download) or the [GitHub releases](https://github.com/nickbazinet/nixus/releases/latest). Nixus is free to use on your computer and needs no account.
 
-## Help shape Nixus
+To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-I'm looking for a handful of people who still track personal finances in a spreadsheet and are willing to use Nixus for a few weeks and tell me what's confusing or broken. I built this for myself — I'm not asking you to promote it, just honest friction reports.
+## Privacy
 
-**[Email me about beta testing](mailto:support@nixus.nicolasbazinet.net?subject=Nixus%20beta%20tester%20interest)**
+Your records stay on your machine. AI features and Nixus Cloud are optional and off until you use them, and the app works fully without either. Details are in the [privacy policy](https://nixusapp.com/privacy) and [terms](https://nixusapp.com/terms).
 
-Or read the full beta guide on the site: [nixusapp.com/beta](https://nixusapp.com/beta)
+Nixus doesn't connect to your bank, and it's a tracking tool, not tax, legal, or investment advice.
 
----
-
-## Tech at a glance
+## Tech stack
 
 | | |
 | --- | --- |
-| **Stack** | Tauri 2, React 19, Rust, SQLite |
-| **Platforms** | macOS, Windows |
-| **Data** | Local SQLite on your machine; no account needed for your records ([AI features](#ai-features-and-your-data) and [optional sync](#sync-across-your-computers-optional) are the two exceptions) |
-| **Repo** | pnpm monorepo: desktop app, marketing site, shared UI package |
+| **Desktop app** | Tauri 2, React 19, TypeScript, Rust, SQLite |
+| **Website and account portal** | TanStack Start, React, Tailwind CSS |
+| **Cloud services** | AWS (Lambda, DynamoDB, S3, Bedrock), Stripe for billing |
+| **Repo** | pnpm monorepo: `apps/` (desktop, web, account, API services) and `packages/shared` (UI kit and design tokens) |
 
-Open source — inspect the code on GitHub. First-launch warnings (macOS Gatekeeper, Windows SmartScreen) are normal for apps not yet signed by Apple or trusted by Microsoft's reputation system.
+## Contributing
 
----
+Contributions and bug reports are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, tests, and architecture; implementation rules live in [docs/project-context.md](docs/project-context.md).
 
-## Links
+## Feedback
 
-| Resource | Description |
-| -------- | ----------- |
-| [nixusapp.com](https://nixusapp.com) | Download, features, FAQ, beta info |
-| [Contributing](CONTRIBUTING.md) | Clone, run locally, tests, architecture |
-| [Beta validation roadmap (June 2026)](docs/beta-validation-roadmap-june-2026.html) | How this pre-alpha is being validated |
-| [Project context for AI agents](docs/project-context.md) | Implementation rules for contributors |
+Nixus is built by one person. If something confuses you or breaks, I want to hear about it: [open an issue](https://github.com/nickbazinet/nixus/issues) or [email me](mailto:support@nixus.nicolasbazinet.net). If you'd like to help test, see the [beta guide](https://nixusapp.com/beta).
 
----
-
-## Status
-
-Nixus is in **pre-alpha**. The north star for June 2026: learn whether anyone besides the builder would actually use it — not growth, not revenue. If you try it, the most useful feedback is: *"What almost made you close it in the first 10 minutes?"*
+<p align="center">
+  <a href="https://buymeacoffee.com/nickbaz">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210" />
+  </a>
+</p>
