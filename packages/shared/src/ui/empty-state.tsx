@@ -34,7 +34,7 @@ function EmptyState({
         <span
           data-slot="empty-state-glyph"
           aria-hidden="true"
-          className="mb-3 grid size-10 place-items-center rounded-lg bg-track text-ink-dim [&_svg]:size-4"
+          className="mb-4 grid size-12 place-items-center rounded-2xl bg-brand-soft/70 text-brand-ink [&_svg]:size-5 [&_svg]:icon-gradient"
         >
           {icon}
         </span>

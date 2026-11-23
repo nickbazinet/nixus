@@ -1,20 +1,19 @@
-import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import {
   Bot,
   Car,
-  ChevronRight,
-  Gauge,
   Landmark,
   Receipt,
+  TrendingUp,
   Upload,
   Wallet,
   Wrench,
-  type LucideIcon,
 } from "lucide-react";
-import { Card, Meter, Money, Skeleton, buttonVariants, formatMoney } from "@nixus/shared";
+import { Meter, Money, formatMoney } from "@nixus/shared";
+import { MetricTile } from "@/components/shared/MetricTile";
 import { NetWorthSparkline } from "@/components/dashboard/NetWorthSparkline";
+import { daysLeftInMonth, monthName } from "@/components/dashboard/monthPace";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { useBudgetSummary } from "@/hooks/useDashboard";
 import { useIncomeTotal } from "@/hooks/useIncome";
@@ -23,83 +22,9 @@ import { useCurrentNetWorth, useRecentNetWorthSnapshots } from "@/hooks/useNetWo
 import { currentMonth } from "@/hooks/useHomeOverview";
 import { currencyLocale } from "@/lib/formatCurrency";
 import { summarizeMaintenanceFleet } from "@/lib/maintenanceUtils";
+import { cn } from "@/lib/utils";
 
-type GlanceRoute = "/wealth/net-worth" | "/spending/budget" | "/spending/income" | "/car";
-
-/**
- * One module tile: what it is, its one number, one line of context, and where it opens. The whole
- * card is the link (DESIGN.md, interactive card), so each tile is a single target.
- */
-const GLANCE_ACCENT = {
-  indigo: "border-l-[3px] border-l-chart-1",
-  purple: "border-l-[3px] border-l-chart-3",
-  pink: "border-l-[3px] border-l-chart-4",
-  cyan: "border-l-[3px] border-l-chart-5",
-} as const;
-
-function GlanceTile({
-  accent,
-  icon: Icon,
-  label,
-  to,
-  openLabel,
-  loading,
-  children,
-  testId,
-}: {
-  accent: keyof typeof GLANCE_ACCENT;
-  icon: LucideIcon;
-  label: string;
-  to: GlanceRoute;
-  openLabel: string;
-  loading: boolean;
-  children: ReactNode;
-  testId: string;
-}) {
-  return (
-    <Card
-      size="sm"
-      interactive
-      render={<Link to={to} />}
-      className={`group px-card-pad ${GLANCE_ACCENT[accent]}`}
-      data-testid={testId}
-    >
-      <div className="flex items-center gap-2 text-caption text-ink-dim">
-        <span
-          aria-hidden="true"
-          className="grid size-7 place-items-center rounded-md bg-track text-ink-dim"
-        >
-          <Icon className="size-4" />
-        </span>
-        {label}
-      </div>
-      <div className="flex min-h-[88px] flex-col gap-2">{loading ? <Skeleton rows={2} /> : children}</div>
-      <span className="flex items-center gap-1 text-caption text-brand-ink">
-        {openLabel}
-        <ChevronRight
-          className="size-3.5 transition-transform group-hover:translate-x-0.5"
-          aria-hidden="true"
-        />
-      </span>
-    </Card>
-  );
-}
-
-function Figure({ cents, tone }: { cents: number; tone?: "good" | "over" }) {
-  const { i18n } = useTranslation();
-  const { maskProps } = useValuesHidden();
-  return (
-    <span
-      className={
-        tone === "over" ? "text-stat text-over-ink" : tone === "good" ? "text-stat text-good-ink" : "text-stat text-ink"
-      }
-    >
-      <Money cents={cents} locale={currencyLocale(i18n.language)} {...maskProps} />
-    </span>
-  );
-}
-
-/** Home's "stack overview": every module's state in one row, each a door into that module. */
+/** Home's "stack overview": every module's state in one tile, each a door into that module. */
 export function AtAGlance() {
   const { t, i18n } = useTranslation();
   const { hidden, maskProps } = useValuesHidden();
@@ -118,99 +43,126 @@ export function AtAGlance() {
 
   const spent = budget.data?.total_spent_cents ?? 0;
   const target = budget.data?.total_target_cents ?? 0;
+  const remaining = target - spent;
   const incomeCents = income.data?.total_cents ?? 0;
   const net = incomeCents - spent;
   const fleet = summarizeMaintenanceFleet(vehicles.data ?? [], t);
 
+  const daysLeft = daysLeftInMonth(year, month);
+  const label = monthName(year, month, i18n.language);
+
+  const figure = (cents: number, sign?: "always") => (
+    <Money cents={cents} locale={locale} sign={sign} {...maskProps} />
+  );
+
   return (
-    <div className="grid grid-cols-1 gap-4 @2xl:grid-cols-2 @5xl:grid-cols-4" data-testid="home-glance">
-      <GlanceTile
-        accent="indigo"
+    <div
+      className="grid grid-cols-1 gap-grid-gap @2xl:grid-cols-2 @5xl:grid-cols-4"
+      data-testid="home-glance"
+    >
+      <MetricTile
         icon={Landmark}
         label={t("home.glance.netWorth")}
-        to="/wealth/net-worth"
-        openLabel={t("home.glance.openNetWorth")}
-        loading={netWorth.isLoading}
-        testId="home-glance-net-worth"
-      >
-        <Figure cents={netWorth.data?.total_cents ?? 0} />
-        {history.length < 2 ? (
-          <span className="text-caption text-ink-dim">{t("home.glance.netWorthNoTrend")}</span>
-        ) : (
-          <NetWorthSparkline snapshots={history} />
-        )}
-      </GlanceTile>
+        value={figure(netWorth.data?.total_cents ?? 0)}
+        caption={
+          history.length < 2 ? t("home.glance.netWorthNoTrend") : undefined
+        }
+        footer={history.length >= 2 ? <NetWorthSparkline snapshots={history} /> : undefined}
+        href="/wealth/net-worth"
+        linkLabel={`${t("home.glance.netWorth")}, ${money(netWorth.data?.total_cents ?? 0)}`}
+        isLoading={netWorth.isLoading}
+        data-testid="home-glance-net-worth"
+      />
 
-      <GlanceTile
-        accent="purple"
+      <MetricTile
         icon={Wallet}
         label={t("home.glance.spending")}
-        to="/spending/budget"
-        openLabel={t("home.glance.openBudget")}
-        loading={budget.isLoading}
-        testId="home-glance-spending"
-      >
-        <Figure cents={spent} tone={target > 0 && spent > target ? "over" : undefined} />
-        {target > 0 ? (
+        value={figure(spent)}
+        caption={
+          target > 0 ? t("home.v2.budgetedOf", { target: money(target) }) : t("home.glance.spendingNoBudget")
+        }
+        footer={
+          target > 0 ? (
+            <div className="flex flex-col gap-2">
+              <Meter
+                value={Math.min(100, (spent / target) * 100)}
+                label={t("home.glance.spendingMeter")}
+                valueText={t("home.glance.spendingOf", { target: money(target) })}
+                color={spent > target ? "var(--over)" : undefined}
+              />
+              <span
+                className={cn("text-caption", spent > target ? "text-over-ink" : "text-ink-dim")}
+              >
+                {spent > target
+                  ? t("home.glance.spendingOver", { amount: money(spent - target) })
+                  : t("dashboard.categoryLeft", { amount: money(remaining) })}
+                {daysLeft !== null && daysLeft > 0 && (
+                  <span className="text-ink-dim">
+                    {" \u00b7 "}
+                    {t("home.v2.daysLeft", { count: daysLeft, month: label })}
+                  </span>
+                )}
+              </span>
+            </div>
+          ) : undefined
+        }
+        href="/spending/budget"
+        linkLabel={`${t("home.glance.spending")}, ${money(spent)}`}
+        isLoading={budget.isLoading}
+        data-testid="home-glance-spending"
+      />
+
+      <MetricTile
+        icon={TrendingUp}
+        label={t("dashboard.moneyIn")}
+        value={figure(incomeCents)}
+        caption={
           <>
-            <Meter
-              value={Math.min(100, (spent / target) * 100)}
-              label={t("home.glance.spendingMeter")}
-              valueText={t("home.glance.spendingOf", { target: money(target) })}
-            />
-            <span className="text-caption text-ink-dim">
-              {spent > target
-                ? t("home.glance.spendingOver", { amount: money(spent - target) })
-                : t("home.glance.spendingLeft", { amount: money(target - spent), target: money(target) })}
+            {t("home.v2.netCashFlow")}{" "}
+            <span className={net < 0 ? "text-over-ink" : "text-good-ink"}>
+              {money(net, "always")}
             </span>
           </>
-        ) : (
-          <span className="text-caption text-ink-dim">{t("home.glance.spendingNoBudget")}</span>
-        )}
-      </GlanceTile>
+        }
+        footer={
+          incomeCents > 0 ? (
+            <Meter
+              value={Math.min(100, (spent / incomeCents) * 100)}
+              label={t("dashboard.cashFlowMeterLabel")}
+              valueText={t("home.glance.cashFlowInOut", {
+                income: money(incomeCents),
+                spent: money(spent),
+              })}
+              color="var(--chart-2)"
+            />
+          ) : undefined
+        }
+        href="/spending/income"
+        linkLabel={`${t("dashboard.moneyIn")}, ${money(incomeCents)}`}
+        isLoading={budget.isLoading || income.isLoading}
+        data-testid="home-glance-cash-flow"
+      />
 
-      <GlanceTile
-        accent="pink"
-        icon={Gauge}
-        label={t("home.glance.cashFlow")}
-        to="/spending/income"
-        openLabel={t("home.glance.openIncome")}
-        loading={budget.isLoading || income.isLoading}
-        testId="home-glance-cash-flow"
-      >
-        <Figure cents={net} tone={net < 0 ? "over" : net > 0 ? "good" : undefined} />
-        <span className="text-caption text-ink-dim">
-          {t("home.glance.cashFlowInOut", { income: money(incomeCents), spent: money(spent) })}
-        </span>
-      </GlanceTile>
-
-      <GlanceTile
-        accent="cyan"
+      <MetricTile
         icon={Car}
         label={t("home.glance.car")}
-        to="/car"
-        openLabel={t("home.glance.openCar")}
-        loading={vehicles.isLoading}
-        testId="home-glance-car"
-      >
-        {fleet.vehicleCount === 0 ? (
-          <>
-            <span className="text-stat text-ink">{t("home.glance.carNone")}</span>
-            <span className="text-caption text-ink-dim">{t("home.glance.carNoneBody")}</span>
-          </>
-        ) : (
-          <>
-            <span className={fleet.needsAttentionCount > 0 ? "text-stat text-caution-ink" : "text-stat text-ink"}>
-              {fleet.needsAttentionCount > 0
-                ? t("home.glance.carAttention", { count: fleet.needsAttentionCount })
-                : t("home.glance.carOnTrack")}
-            </span>
-            <span className="text-caption text-ink-dim">
-              {t("home.glance.carVehicles", { count: fleet.vehicleCount })}
-            </span>
-          </>
-        )}
-      </GlanceTile>
+        value={
+          fleet.vehicleCount === 0
+            ? t("home.glance.carNone")
+            : fleet.needsAttentionCount > 0
+              ? t("home.glance.carAttention", { count: fleet.needsAttentionCount })
+              : t("home.glance.carOnTrack")
+        }
+        caption={
+          fleet.vehicleCount === 0
+            ? t("home.glance.carNoneBody")
+            : t("home.glance.carVehicles", { count: fleet.vehicleCount })
+        }
+        href="/car"
+        linkLabel={t("home.glance.openCar")}
+        isLoading={vehicles.isLoading}
+        data-testid="home-glance-car"
+      />
     </div>
   );
 }
@@ -221,22 +173,34 @@ const QUICK_ACTIONS = [
   { to: "/car/garage", icon: Wrench, labelKey: "home.quick.service" },
 ] as const;
 
-// Real links styled as buttons: these navigate, so they must announce as links.
-const QUICK_ACTION_CLASS = buttonVariants({ variant: "outline", size: "sm" });
+/** A white pill with a gradient line icon — the charte's chip, raised off the glass panel. */
+const QUICK_ACTION_CLASS = cn(
+  "inline-flex min-h-target-min items-center gap-2 rounded-full border border-transparent bg-card px-3.5 py-2",
+  "text-label text-ink no-underline transition-colors hover:border-brand/40",
+  "[&_svg]:size-4 [&_svg]:shrink-0"
+);
 
 /** The upkeep the app exists to make quick — one click from the first screen. */
 export function QuickActions() {
   const { t } = useTranslation();
   return (
-    <nav aria-label={t("home.quick.label")} className="mb-section-gap flex flex-wrap gap-2" data-testid="home-quick-actions">
+    <nav
+      aria-label={t("home.quick.label")}
+      className="flex flex-wrap gap-2.5"
+      data-testid="home-quick-actions"
+    >
       {QUICK_ACTIONS.map(({ to, icon: Icon, labelKey }) => (
         <Link key={to} to={to} className={QUICK_ACTION_CLASS}>
-          <Icon aria-hidden="true" />
+          <Icon className="icon-gradient" strokeWidth={1.75} aria-hidden="true" />
           {t(labelKey)}
         </Link>
       ))}
-      <Link to="/ai/$agentId" params={{ agentId: "budget-helper" }} className={QUICK_ACTION_CLASS}>
-        <Bot aria-hidden="true" />
+      <Link
+        to="/ai/$agentId"
+        params={{ agentId: "budget-helper" }}
+        className={QUICK_ACTION_CLASS}
+      >
+        <Bot className="icon-gradient" strokeWidth={1.75} aria-hidden="true" />
         {t("home.quick.chat")}
       </Link>
     </nav>

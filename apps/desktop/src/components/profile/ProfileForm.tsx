@@ -299,43 +299,45 @@ export function ProfileForm({ sourceKey, saveDisabled = false }: ProfileFormProp
   return (
     <form
       onSubmit={handleSubmit(onSubmit)}
-      className="space-y-3"
+      className="flex flex-col gap-5"
       data-testid="profile-form"
     >
-      <div className="space-y-1.5">
-        <Label htmlFor="profile-first-name">{t("profile.firstName")}</Label>
-        <Input
-          id="profile-first-name"
-          aria-invalid={!!errors.first_name}
-          aria-describedby={
-            errors.first_name ? "profile-first-name-error" : undefined
-          }
-          data-testid="profile-first-name"
-          {...register("first_name")}
-        />
-        {errors.first_name && (
-          <p id="profile-first-name-error" className="text-caption text-over">
-            {errors.first_name.message}
-          </p>
-        )}
-      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="profile-first-name">{t("profile.firstName")}</Label>
+          <Input
+            id="profile-first-name"
+            aria-invalid={!!errors.first_name}
+            aria-describedby={
+              errors.first_name ? "profile-first-name-error" : undefined
+            }
+            data-testid="profile-first-name"
+            {...register("first_name")}
+          />
+          {errors.first_name && (
+            <p id="profile-first-name-error" className="text-caption text-over">
+              {errors.first_name.message}
+            </p>
+          )}
+        </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="profile-last-name">{t("profile.lastName")}</Label>
-        <Input
-          id="profile-last-name"
-          aria-invalid={!!errors.last_name}
-          aria-describedby={
-            errors.last_name ? "profile-last-name-error" : undefined
-          }
-          data-testid="profile-last-name"
-          {...register("last_name")}
-        />
-        {errors.last_name && (
-          <p id="profile-last-name-error" className="text-caption text-over">
-            {errors.last_name.message}
-          </p>
-        )}
+        <div className="space-y-1.5">
+          <Label htmlFor="profile-last-name">{t("profile.lastName")}</Label>
+          <Input
+            id="profile-last-name"
+            aria-invalid={!!errors.last_name}
+            aria-describedby={
+              errors.last_name ? "profile-last-name-error" : undefined
+            }
+            data-testid="profile-last-name"
+            {...register("last_name")}
+          />
+          {errors.last_name && (
+            <p id="profile-last-name-error" className="text-caption text-over">
+              {errors.last_name.message}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="space-y-1.5">
@@ -386,7 +388,7 @@ export function ProfileForm({ sourceKey, saveDisabled = false }: ProfileFormProp
       {/* Both selects render unconditionally and adjacent: a currency without a
           bracket is a permitted, inert state, so gating the currency on the
           bracket would make it unreachable from the UI. */}
-      <div className="space-y-3" data-testid="profile-income">
+      <div className="grid gap-4 sm:grid-cols-2" data-testid="profile-income">
         <div className="space-y-1.5">
           <Label htmlFor={incomeBracketId}>{t("profile.incomeBracket")}</Label>
           <Controller
@@ -493,83 +495,41 @@ export function ProfileForm({ sourceKey, saveDisabled = false }: ProfileFormProp
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor={countryId}>{t("profile.country")}</Label>        <Controller
-          name="country_code"
-          control={control}
-          render={({ field }) => (
-            <Select
-              value={field.value === "" ? null : field.value}
-              // `""` is a control-local sentinel only; the stored value is a
-              // code or null, so absent has exactly one representation.
-              onValueChange={(value) => {
-                field.onChange(value ?? "");
-                // Cleared in the same form update, not in an effect: an effect
-                // would run after a render in which the mismatched pair was
-                // already submittable, and would also wipe a persisted
-                // subdivision on the post-load reset.
-                setValue("subdivision_code", "", { shouldDirty: true });
-                clearErrors("subdivision_code");
-              }}
-              items={countryOptions}
-            >
-              <SelectTrigger
-                id={countryId}
-                data-testid="profile-country"
-                aria-invalid={!!errors.country_code}
-                aria-describedby={
-                  errors.country_code ? countryErrorId : undefined
-                }
-              >
-                <SelectValue placeholder={t("profile.countryPlaceholder")} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={null}>{t("profile.countryUnset")}</SelectItem>
-                {countryOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        />
-        {errors.country_code && (
-          <p id={countryErrorId} className="text-caption text-over-ink">
-            {errors.country_code.message}
-          </p>
-        )}
-      </div>
-
-      {hasSubdivisions && (
-        <div className="space-y-1.5" data-testid="profile-subdivision">
-          <Label htmlFor={subdivisionId}>{t("profile.subdivision")}</Label>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor={countryId}>{t("profile.country")}</Label>
           <Controller
-            name="subdivision_code"
+            name="country_code"
             control={control}
             render={({ field }) => (
               <Select
                 value={field.value === "" ? null : field.value}
-                onValueChange={(value) => field.onChange(value ?? "")}
-                items={subdivisionOptions}
+                // `""` is a control-local sentinel only; the stored value is a
+                // code or null, so absent has exactly one representation.
+                onValueChange={(value) => {
+                  field.onChange(value ?? "");
+                  // Cleared in the same form update, not in an effect: an effect
+                  // would run after a render in which the mismatched pair was
+                  // already submittable, and would also wipe a persisted
+                  // subdivision on the post-load reset.
+                  setValue("subdivision_code", "", { shouldDirty: true });
+                  clearErrors("subdivision_code");
+                }}
+                items={countryOptions}
               >
                 <SelectTrigger
-                  id={subdivisionId}
-                  data-testid="profile-subdivision-trigger"
-                  aria-invalid={!!errors.subdivision_code}
+                  id={countryId}
+                  data-testid="profile-country"
+                  aria-invalid={!!errors.country_code}
                   aria-describedby={
-                    errors.subdivision_code ? subdivisionErrorId : undefined
+                    errors.country_code ? countryErrorId : undefined
                   }
                 >
-                  <SelectValue
-                    placeholder={t("profile.subdivisionPlaceholder")}
-                  />
+                  <SelectValue placeholder={t("profile.countryPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={null}>
-                    {t("profile.subdivisionUnset")}
-                  </SelectItem>
-                  {subdivisionOptions.map((opt) => (
+                  <SelectItem value={null}>{t("profile.countryUnset")}</SelectItem>
+                  {countryOptions.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>
@@ -578,22 +538,68 @@ export function ProfileForm({ sourceKey, saveDisabled = false }: ProfileFormProp
               </Select>
             )}
           />
-          {errors.subdivision_code && (
-            <p id={subdivisionErrorId} className="text-caption text-over-ink">
-              {errors.subdivision_code.message}
+          {errors.country_code && (
+            <p id={countryErrorId} className="text-caption text-over-ink">
+              {errors.country_code.message}
             </p>
           )}
         </div>
-      )}
 
-      <Button
-        type="submit"
-        size="sm"
-        disabled={saveProfile.isPending || saveDisabled}
-        data-testid="profile-save"
-      >
-        {saveProfile.isPending ? t("profile.saving") : t("common.save")}
-      </Button>
+        {hasSubdivisions && (
+          <div className="space-y-1.5" data-testid="profile-subdivision">
+            <Label htmlFor={subdivisionId}>{t("profile.subdivision")}</Label>
+            <Controller
+              name="subdivision_code"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  value={field.value === "" ? null : field.value}
+                  onValueChange={(value) => field.onChange(value ?? "")}
+                  items={subdivisionOptions}
+                >
+                  <SelectTrigger
+                    id={subdivisionId}
+                    data-testid="profile-subdivision-trigger"
+                    aria-invalid={!!errors.subdivision_code}
+                    aria-describedby={
+                      errors.subdivision_code ? subdivisionErrorId : undefined
+                    }
+                  >
+                    <SelectValue
+                      placeholder={t("profile.subdivisionPlaceholder")}
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={null}>
+                      {t("profile.subdivisionUnset")}
+                    </SelectItem>
+                    {subdivisionOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            {errors.subdivision_code && (
+              <p id={subdivisionErrorId} className="text-caption text-over-ink">
+                {errors.subdivision_code.message}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex border-t border-line pt-5">
+        <Button
+          type="submit"
+          disabled={saveProfile.isPending || saveDisabled}
+          data-testid="profile-save"
+        >
+          {saveProfile.isPending ? t("profile.saving") : t("common.save")}
+        </Button>
+      </div>
     </form>
   );
 }

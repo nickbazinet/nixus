@@ -1,6 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
-import { Button, Card, CardContent } from "@nixus/shared";
+import { CloudUpload } from "lucide-react";
+import { Button } from "@nixus/shared";
+import { InsightCallout } from "@/components/shared/InsightCallout";
 import { useAnswerProfileUpload } from "@/hooks/useProfile";
 import { cloudProfileMessageKey, isCloudProfileError, parseAppError } from "@/lib/appError";
 
@@ -39,16 +41,13 @@ export function ProfileUploadConsent({ sourceKey }: ProfileUploadConsentProps) {
   };
 
   return (
-    <Card data-testid="profile-upload-consent">
-      <CardContent>
-        <p className="text-body text-ink">{t("profile.consent.title")}</p>
-        <p className="mt-1.5 text-caption text-ink-dim">
-          {t("profile.consent.body")}
-        </p>
-
-        <div className="mt-4 flex flex-wrap gap-2">
+    <InsightCallout
+      icon={CloudUpload}
+      eyebrow={t("profile.v2.consentEyebrow")}
+      title={t("profile.consent.title")}
+      actions={
+        <>
           <Button
-            size="sm"
             disabled={answer.isPending}
             onClick={() => respond(true)}
             data-testid="profile-upload-consent-accept"
@@ -58,16 +57,18 @@ export function ProfileUploadConsent({ sourceKey }: ProfileUploadConsentProps) {
               : t("profile.consent.accept")}
           </Button>
           <Button
-            variant="secondary"
-            size="sm"
+            variant="outline"
             disabled={answer.isPending}
             onClick={() => respond(false)}
             data-testid="profile-upload-consent-decline"
           >
             {t("profile.consent.decline")}
           </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </>
+      }
+      data-testid="profile-upload-consent"
+    >
+      {t("profile.consent.body")}
+    </InsightCallout>
   );
 }

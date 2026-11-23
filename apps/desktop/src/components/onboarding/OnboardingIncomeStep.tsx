@@ -2,12 +2,13 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Banknote, Plus } from "lucide-react";
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  IconChip,
   Input,
   Label,
   Select,
@@ -71,12 +72,15 @@ export function OnboardingIncomeStep() {
   };
 
   return (
-    <div className="space-y-4" data-testid="onboarding-income-step">
-      <div>
-        <h2 className="text-h2 text-ink">{t("onboarding.incomeTitle")}</h2>
-        <p className="mt-1 text-caption text-ink-dim">
-          {t("onboarding.incomeDescription")}
-        </p>
+    <div className="flex flex-col gap-grid-gap" data-testid="onboarding-income-step">
+      <div className="flex items-start gap-4">
+        <IconChip icon={Banknote} size="lg" />
+        <div className="min-w-0">
+          <h2 className="font-display text-h1 text-ink">{t("onboarding.incomeTitle")}</h2>
+          <p className="mt-1 text-caption text-ink-dim">
+            {t("onboarding.incomeDescription")}
+          </p>
+        </div>
       </div>
 
       {sources.length === 0 ? (

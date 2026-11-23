@@ -18,20 +18,19 @@ export function CarMaintenanceHeader({
 }: CarMaintenanceHeaderProps) {
   const { t } = useTranslation();
 
+  // Every surface carries a subtitle. The count is the better one once it is known; until then
+  // (first fetch, or an empty garage) the module's own one-liner stands in rather than nothing.
+  const subtitle =
+    !isLoading && vehicleCount !== undefined && vehicleCount > 0
+      ? t("maintenance.subtitle", { count: vehicleCount })
+      : t("maintenance.v2.subtitle");
+
   return (
     <PageHeader
       title={t(titleKey)}
-      subtitle={
-        !isLoading && vehicleCount !== undefined && vehicleCount > 0
-          ? t("maintenance.subtitle", { count: vehicleCount })
-          : undefined
-      }
+      subtitle={subtitle}
       actions={
-        <Button
-          size="sm"
-          onClick={onAddVehicle}
-          data-testid="add-vehicle-button"
-        >
+        <Button onClick={onAddVehicle} data-testid="add-vehicle-button">
           <Plus aria-hidden="true" />
           {t("maintenance.addVehicle")}
         </Button>

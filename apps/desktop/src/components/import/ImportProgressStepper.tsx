@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Loader2, Circle } from "lucide-react";
+import { Card } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
 export type ImportStage =
@@ -40,97 +41,99 @@ export function ImportProgressStepper({
   }, []);
 
   return (
-    <div
-      role="progressbar"
-      aria-valuenow={activeIndex + 1}
-      aria-valuemin={1}
-      aria-valuemax={STAGE_KEYS.length}
-      aria-valuetext={stageLabel}
-      aria-label={t("import.progressLabel", {
-        current: activeIndex + 1,
-        total: STAGE_KEYS.length,
-        stage: stageLabel,
-      })}
-      data-testid="import-progress-stepper"
-    >
-      <ol className="flex list-none items-start justify-center gap-1 p-0">
-        {STAGE_KEYS.map((stage, index) => {
-          const isDone = index < activeIndex || currentStage === "done";
-          const isCurrent = index === activeIndex && currentStage !== "done";
-          const label = t(stage.labelKey);
-          const state = isDone
-            ? t("import.statusComplete")
-            : isCurrent
-              ? t("import.statusInProgress")
-              : t("import.statusPending");
-
-          return (
-            <li key={stage.key} className="flex items-start">
-              <span className="flex w-24 flex-col items-center gap-1.5">
-                <span
-                  data-testid={`stage-${stage.key}`}
-                  aria-label={`${label}: ${state}`}
-                  className={cn(
-                    "flex size-10 items-center justify-center rounded-full transition-colors",
-                    isDone && "bg-good-bg text-good-ink",
-                    isCurrent && "bg-brand-soft text-brand-ink",
-                    !isDone && !isCurrent && "bg-track text-ink-faint"
-                  )}
-                >
-                  {isDone ? (
-                    <Check className="size-5" aria-hidden="true" />
-                  ) : isCurrent ? (
-                    <Loader2 className="size-5 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Circle className="size-5" aria-hidden="true" />
-                  )}
-                </span>
-                <span
-                  className={cn(
-                    "text-center text-caption",
-                    isDone || isCurrent ? "text-ink" : "text-ink-faint"
-                  )}
-                >
-                  {label}
-                </span>
-              </span>
-              {index < STAGE_KEYS.length - 1 && (
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "mt-5 h-px w-6 shrink-0",
-                    isDone ? "bg-good" : "bg-line-strong"
-                  )}
-                />
-              )}
-            </li>
-          );
+    <Card className="px-card-pad">
+      <div
+        role="progressbar"
+        aria-valuenow={activeIndex + 1}
+        aria-valuemin={1}
+        aria-valuemax={STAGE_KEYS.length}
+        aria-valuetext={stageLabel}
+        aria-label={t("import.progressLabel", {
+          current: activeIndex + 1,
+          total: STAGE_KEYS.length,
+          stage: stageLabel,
         })}
-      </ol>
+        data-testid="import-progress-stepper"
+      >
+        <ol className="flex list-none items-start justify-center gap-1 p-0">
+          {STAGE_KEYS.map((stage, index) => {
+            const isDone = index < activeIndex || currentStage === "done";
+            const isCurrent = index === activeIndex && currentStage !== "done";
+            const label = t(stage.labelKey);
+            const state = isDone
+              ? t("import.statusComplete")
+              : isCurrent
+                ? t("import.statusInProgress")
+                : t("import.statusPending");
 
-      {/* Stage level, never per-tick: this region carries the stage name alone, so the Tauri
-        * progress messages rendered below can change freely without a screen-reader firehose. */}
-      <p aria-live="polite" className="sr-only">
-        {stageLabel}
-      </p>
+            return (
+              <li key={stage.key} className="flex items-start">
+                <span className="flex w-24 flex-col items-center gap-2">
+                  <span
+                    data-testid={`stage-${stage.key}`}
+                    aria-label={`${label}: ${state}`}
+                    className={cn(
+                      "flex size-10 items-center justify-center rounded-full transition-colors",
+                      isDone && "bg-button-gradient text-brand-on",
+                      isCurrent && "bg-brand-soft text-brand-ink",
+                      !isDone && !isCurrent && "bg-track text-ink-faint"
+                    )}
+                  >
+                    {isDone ? (
+                      <Check className="size-5" aria-hidden="true" strokeWidth={2.5} />
+                    ) : isCurrent ? (
+                      <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Circle className="size-4" aria-hidden="true" />
+                    )}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-center text-caption",
+                      isCurrent ? "text-label text-brand-ink" : isDone ? "text-ink" : "text-ink-faint"
+                    )}
+                  >
+                    {label}
+                  </span>
+                </span>
+                {index < STAGE_KEYS.length - 1 && (
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "mt-5 h-0.5 w-6 shrink-0 rounded-full",
+                      isDone ? "bg-brand" : "bg-line-strong"
+                    )}
+                  />
+                )}
+              </li>
+            );
+          })}
+        </ol>
 
-      {message && (
-        <p
-          className="mt-4 text-center text-caption text-ink-dim"
-          data-testid="import-message"
-        >
-          {message}
+        {/* Stage level, never per-tick: this region carries the stage name alone, so the Tauri
+          * progress messages rendered below can change freely without a screen-reader firehose. */}
+        <p aria-live="polite" className="sr-only">
+          {stageLabel}
         </p>
-      )}
 
-      {slow && currentStage !== "done" && (
-        <p
-          className="mt-2 text-center text-caption text-ink-dim"
-          data-testid="import-slow-notice"
-        >
-          {t("import.stillWorking")}
-        </p>
-      )}
-    </div>
+        {message && (
+          <p
+            className="mt-5 text-center text-caption text-ink-dim"
+            data-testid="import-message"
+          >
+            {message}
+          </p>
+        )}
+
+        {slow && currentStage !== "done" && (
+          <p
+            className="mt-2 text-center text-caption text-ink-dim"
+            data-testid="import-slow-notice"
+          >
+            {t("import.stillWorking")}
+          </p>
+        )}
+      </div>
+    </Card>
   );
 }

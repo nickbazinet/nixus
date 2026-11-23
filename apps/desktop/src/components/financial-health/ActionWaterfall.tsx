@@ -1,12 +1,22 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronDown } from "lucide-react";
+import {
+  ChartNoAxesColumn,
+  Check,
+  ChevronDown,
+  CreditCard,
+  Database,
+  Shield,
+  Target,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import {
   Badge,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
+  IconChip,
   Skeleton,
   focusRing,
   formatMoney,
@@ -22,6 +32,14 @@ const WATERFALL_STEPS: WaterfallStep[] = [
   "contribute_registered_accounts",
   "invest_surplus",
 ];
+
+/** One glyph per rung, so the order reads as four different jobs rather than four numbers. */
+const STEP_ICONS: Record<WaterfallStep, LucideIcon> = {
+  build_emergency_fund: Shield,
+  pay_high_interest_debt: CreditCard,
+  contribute_registered_accounts: ChartNoAxesColumn,
+  invest_surplus: Database,
+};
 
 type RungState = "completed" | "current" | "future";
 
@@ -68,9 +86,9 @@ function ActionWaterfallSkeleton() {
 }
 
 const numeralClasses: Record<RungState, string> = {
-  completed: "bg-good-bg text-good-ink",
-  current: "bg-brand text-brand-on",
-  future: "bg-neutral-bg text-neutral-ink",
+  completed: "text-good-ink",
+  current: "text-gradient",
+  future: "text-ink-faint",
 };
 
 export function ActionWaterfall() {
@@ -95,7 +113,9 @@ export function ActionWaterfall() {
   return (
     <Card data-testid="action-waterfall">
       <CardHeader>
-        <CardTitle>{t("financialHealth.waterfall.orderOfOperations")}</CardTitle>
+        <CardTitle icon={Target}>
+          {t("financialHealth.waterfall.orderOfOperations")}
+        </CardTitle>
       </CardHeader>
 
       <CardContent>
@@ -115,28 +135,33 @@ export function ActionWaterfall() {
               <li
                 key={step}
                 className={cn(
-                  "flex gap-3 border-b border-line py-3.5 last:border-b-0",
+                  "flex items-start gap-4 border-b border-line py-4 last:border-b-0",
                   // {components.action-card} — the only brand-tinted treatment on this surface, on
                   // exactly one rung. Its scarcity is what makes it read as "do this".
                   isCurrent &&
-                    "-mx-card-pad border-l-3 border-l-brand bg-brand-soft px-card-pad",
+                    "-mx-card-pad rounded-lg border-b-0 bg-glass px-card-pad",
                 )}
                 data-testid={`waterfall-rung-${step}`}
                 data-state={state}
               >
                 <span
                   className={cn(
-                    "mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-caption",
+                    "w-6 shrink-0 text-center font-display text-h1 font-bold",
                     numeralClasses[state],
                   )}
                   aria-hidden="true"
                 >
                   {state === "completed" ? (
-                    <Check className="size-3.5" strokeWidth={2.5} />
+                    <Check className="mx-auto size-5" strokeWidth={2.5} />
                   ) : (
                     index + 1
                   )}
                 </span>
+                <IconChip
+                  icon={STEP_ICONS[step]}
+                  size="sm"
+                  tone={isCurrent ? "card" : "soft"}
+                />
 
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -152,7 +177,9 @@ export function ActionWaterfall() {
                       <Badge variant="good">{t("financialHealth.waterfall.done")}</Badge>
                     )}
                     {isCurrent && (
-                      <Badge variant="caution">
+                      // White rather than soft-brand: the rung itself is brand-tinted, and a soft
+                      // badge on a soft row is a pill nobody can see.
+                      <Badge variant="brand" className="bg-card">
                         {t("financialHealth.waterfall.youreHere")}
                       </Badge>
                     )}

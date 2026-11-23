@@ -2,11 +2,12 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Home, Plus } from "lucide-react";
 import {
   Badge,
   Button,
   Card,
+  IconChip,
   Input,
   Label,
   Money,
@@ -76,12 +77,15 @@ export function OnboardingAssetsStep() {
   };
 
   return (
-    <div className="space-y-4" data-testid="onboarding-assets-step">
-      <div>
-        <h2 className="text-h2 text-ink">{t("onboarding.assetsTitle")}</h2>
-        <p className="mt-1 text-caption text-ink-dim">
-          {t("onboarding.assetsDescription")}
-        </p>
+    <div className="flex flex-col gap-grid-gap" data-testid="onboarding-assets-step">
+      <div className="flex items-start gap-4">
+        <IconChip icon={Home} size="lg" />
+        <div className="min-w-0">
+          <h2 className="font-display text-h1 text-ink">{t("onboarding.assetsTitle")}</h2>
+          <p className="mt-1 text-caption text-ink-dim">
+            {t("onboarding.assetsDescription")}
+          </p>
+        </div>
       </div>
 
       {assets.length === 0 ? (

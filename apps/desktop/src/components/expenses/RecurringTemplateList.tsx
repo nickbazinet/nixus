@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Repeat, Trash2 } from "lucide-react";
+import { ArrowLeftRight, Landmark, Repeat, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Badge,
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
   EmptyState,
+  IconChip,
   Money,
   Skeleton,
   SlideOver,
@@ -45,17 +46,22 @@ import type {
   RecurringTransferTemplate,
   BudgetCategory,
 } from "@/lib/types";
-import { scheduleLabel } from "@/lib/recurrence";
+import { scheduleLabel, monthlyEquivalentCents } from "@/lib/recurrence";
+import { cn } from "@/lib/utils";
+import { rampColor } from "@/components/spending-trends/insights-chart";
+import { formatNextDate, nextOccurrence } from "./recurringSchedule";
+import {
+  BADGES,
+  INCOME_TYPE_KEYS,
+  ROW_TEST_IDS,
+  buildRecurringRows,
+  rowKey,
+  rowName,
+  type RecurringRow,
+} from "./recurringRows";
 import { EditRecurringTemplateForm } from "./EditRecurringTemplateForm";
 import { EditRecurringIncomeForm } from "@/components/income/EditRecurringIncomeForm";
 import { RecurringTransferForm } from "@/components/accounts/RecurringTransferForm";
-
-// One table renders both kinds, so every row carries its origin rather than the caller
-// keeping two parallel lists in sync.
-type RecurringRow =
-  | { kind: "expense"; template: RecurringExpenseTemplate }
-  | { kind: "income"; template: RecurringIncomeTemplate }
-  | { kind: "transfer"; template: RecurringTransferTemplate };
 
 interface RecurringTemplateListProps {
   expenseTemplates: RecurringExpenseTemplate[];
@@ -67,41 +73,15 @@ interface RecurringTemplateListProps {
   onAddTemplate?: () => void;
 }
 
-const INCOME_TYPE_KEYS: Record<string, string> = {
-  employment: "income.typeEmployment",
-  freelance: "income.typeFreelance",
-  investment: "income.typeInvestment",
-  other: "income.typeOther",
-};
-
-const ROW_TEST_IDS: Record<RecurringRow["kind"], string> = {
-  expense: "recurring-template-row",
-  income: "recurring-income-row",
-  transfer: "recurring-transfer-row",
-};
-
-const BADGES = {
-  expense: { variant: "neutral", labelKey: "recurring.typeExpense" },
-  income: { variant: "good", labelKey: "recurring.typeIncome" },
-  transfer: { variant: "brand", labelKey: "recurring.typeTransfer" },
+const ROW_ICONS = {
+  expense: Repeat,
+  income: Landmark,
+  transfer: ArrowLeftRight,
 } as const;
 
-function rowName(row: RecurringRow, accountNames: Map<number, string>): string {
-  switch (row.kind) {
-    case "expense":
-      return row.template.merchant;
-    case "income":
-      return row.template.source_name;
-    case "transfer":
-      return `${accountNames.get(row.template.from_account_id) ?? "—"} → ${
-        accountNames.get(row.template.to_account_id) ?? "—"
-      }`;
-  }
-}
-
-function rowKey(row: RecurringRow): string {
-  return `${row.kind}-${row.template.id}`;
-}
+/** The table lives in a flush card, so its outer cells line up with the card's padding. */
+const CELL_INSET =
+  "[&_td:first-child]:pl-card-pad [&_td:last-child]:pr-card-pad [&_th:first-child]:pl-card-pad [&_th:last-child]:pr-card-pad";
 
 export function RecurringTemplateList({
   expenseTemplates,
@@ -126,13 +106,11 @@ export function RecurringTemplateList({
 
   const accountNames = new Map(accounts.map((account) => [account.id, account.name]));
   const nameOf = (row: RecurringRow) => rowName(row, accountNames);
-  const rows: RecurringRow[] = [
-    ...expenseTemplates.map(
-      (template): RecurringRow => ({ kind: "expense", template })
-    ),
-    ...incomeTemplates.map((template): RecurringRow => ({ kind: "income", template })),
-    ...transferTemplates.map((template): RecurringRow => ({ kind: "transfer", template })),
-  ].sort((a, b) => nameOf(a).localeCompare(nameOf(b), i18n.language));
+  const rows = buildRecurringRows(
+    expenseTemplates,
+    incomeTemplates,
+    transferTemplates
+  ).sort((a, b) => nameOf(a).localeCompare(nameOf(b), i18n.language));
 
   const lastRowCount = useRef(3);
   useEffect(() => {
@@ -208,25 +186,47 @@ export function RecurringTemplateList({
   const activeIncomeCount = incomeTemplates.filter((tpl) => tpl.is_active).length;
   const activeTransferCount = transferTemplates.filter((tpl) => tpl.is_active).length;
 
+  // What the row is filed under: an expense's category, an income's type, or "between accounts".
+  const secondaryOf = (row: RecurringRow): string =>
+    row.kind === "expense"
+      ? (categoryMap.get(row.template.budget_category_id) ?? "—")
+      : row.kind === "income"
+        ? t(INCOME_TYPE_KEYS[row.template.income_type] ?? "income.typeOther")
+        : t("recurring.transferCategory");
+
+  // The chip's dot is coloured by RANK — the heaviest monthly commitment takes the first ramp step
+  // — so no category keeps a hue it could lose when the templates change.
+  const categoryColors = (() => {
+    const totals = new Map<string, number>();
+    for (const row of rows) {
+      const label = secondaryOf(row);
+      totals.set(label, (totals.get(label) ?? 0) + monthlyEquivalentCents(row.template));
+    }
+    return new Map(
+      [...totals.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([label], rank) => [label, rampColor(rank)])
+    );
+  })();
+
   // Chrome resolves first and only the cells are skeletons; the row count is the last real one so
   // the list does not jump when data lands.
   if (isLoading) {
     return (
-      <Table>
+      <Table className={CELL_INSET}>
         <caption className="sr-only">{t("common.loading")}</caption>
         <TableHeader>
           <TableRow>
-            <TableHead>{t("recurring.typeColumn")}</TableHead>
             <TableHead>{t("recurring.nameColumn")}</TableHead>
             <TableHead>{t("recurring.categoryColumn")}</TableHead>
-            <TableHead>{t("recurring.dayColumn")}</TableHead>
+            <TableHead>{t("recurring.v2.nextColumn")}</TableHead>
             <TableHead numeric>{t("common.amount")}</TableHead>
             <TableHead>{t("recurring.activeColumn")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           <TableRow>
-            <TableCell colSpan={6}>
+            <TableCell colSpan={5}>
               <Skeleton rows={lastRowCount.current} data-testid="recurring-skeleton" />
             </TableCell>
           </TableRow>
@@ -248,6 +248,7 @@ export function RecurringTemplateList({
             </Button>
           ) : undefined
         }
+        className="py-6"
         data-testid="recurring-empty-state"
       />
     );
@@ -255,17 +256,18 @@ export function RecurringTemplateList({
 
   return (
     <>
-      <Table>
+      <Table className={cn("table-fixed", CELL_INSET)}>
         <caption className="sr-only">{t("recurring.tableCaption")}</caption>
         <TableHeader>
           <TableRow>
-            <TableHead>{t("recurring.typeColumn")}</TableHead>
-            <TableHead>{t("recurring.nameColumn")}</TableHead>
-            <TableHead>{t("recurring.categoryColumn")}</TableHead>
-            <TableHead>{t("recurring.dayColumn")}</TableHead>
-            <TableHead numeric>{t("common.amount")}</TableHead>
-            <TableHead>{t("recurring.activeColumn")}</TableHead>
-            <TableHead>
+            <TableHead className="w-[38%]">{t("recurring.nameColumn")}</TableHead>
+            <TableHead className="w-[22%]">{t("recurring.categoryColumn")}</TableHead>
+            <TableHead className="w-[10%]">{t("recurring.v2.nextColumn")}</TableHead>
+            <TableHead numeric className="w-[14%]">
+              {t("common.amount")}
+            </TableHead>
+            <TableHead className="w-[9%]">{t("recurring.activeColumn")}</TableHead>
+            <TableHead className="w-[7%]">
               <span className="sr-only">{t("common.delete")}</span>
             </TableHead>
           </TableRow>
@@ -273,13 +275,9 @@ export function RecurringTemplateList({
         <TableBody>
           {rows.map((row) => {
             const name = nameOf(row);
-            const secondary =
-              row.kind === "expense"
-                ? (categoryMap.get(row.template.budget_category_id) ?? "—")
-                : row.kind === "income"
-                  ? t(INCOME_TYPE_KEYS[row.template.income_type] ?? "income.typeOther")
-                  : t("recurring.transferCategory");
+            const secondary = secondaryOf(row);
             const badge = BADGES[row.kind];
+            const due = row.template.is_active ? nextOccurrence(row.template) : null;
 
             return (
               <TableRow
@@ -289,14 +287,33 @@ export function RecurringTemplateList({
                 data-testid={ROW_TEST_IDS[row.kind]}
               >
                 <TableCell>
-                  <Badge variant={badge.variant}>{t(badge.labelKey)}</Badge>
+                  <div className="flex items-center gap-3">
+                    <IconChip icon={ROW_ICONS[row.kind]} size="sm" />
+                    <div className="min-w-0">
+                      <p className="font-bold text-ink">{name}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <Badge variant={badge.variant}>{t(badge.labelKey)}</Badge>
+                        <span className="text-caption text-ink-dim">
+                          {scheduleLabel(t, row.template, i18n.language)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </TableCell>
-                <TableCell>{name}</TableCell>
-                <TableCell dim>{secondary}</TableCell>
-                <TableCell dim>
-                  {scheduleLabel(t, row.template, i18n.language)}
+                <TableCell>
+                  <Badge variant="brand">
+                    <span
+                      aria-hidden="true"
+                      className="size-1.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: categoryColors.get(secondary) ?? rampColor(7) }}
+                    />
+                    {secondary}
+                  </Badge>
                 </TableCell>
-                <TableCell numeric>
+                <TableCell dim className="whitespace-nowrap" data-testid="recurring-next-due">
+                  {due ? formatNextDate(due, i18n.language) : "—"}
+                </TableCell>
+                <TableCell numeric className="whitespace-nowrap">
                   <Money
                     cents={row.template.amount_cents}
                     locale={i18n.language}
@@ -332,7 +349,7 @@ export function RecurringTemplateList({
         </TableBody>
         <TableFooter>
           <TableRow>
-            <TableCell colSpan={3} className="text-caption">
+            <TableCell colSpan={2} className="text-caption">
               {t("recurring.activeCount", { count: activeExpenseCount })}
             </TableCell>
             <TableCell colSpan={2} className="text-caption" data-testid="recurring-active-income-count">

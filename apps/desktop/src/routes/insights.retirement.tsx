@@ -1,19 +1,49 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { InfoIcon, PiggyBankIcon, UserIcon } from "lucide-react";
-import { Alert, AlertDescription, Button, Card, EmptyState } from "@nixus/shared";
+import {
+  FlagIcon,
+  InfoIcon,
+  LayoutGridIcon,
+  PiggyBankIcon,
+  TargetIcon,
+  TrendingUpIcon,
+  UserIcon,
+  WalletIcon,
+} from "lucide-react";
+import {
+  Alert,
+  AlertDescription,
+  Button,
+  Card,
+  CardHeader,
+  CardTitle,
+  EmptyState,
+  Money,
+} from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
+import { MetricTile } from "@/components/shared/MetricTile";
+import { InsightCallout } from "@/components/shared/InsightCallout";
 import { RetirementControls } from "@/components/retirement/RetirementControls";
+import { RetirementIncomeCard } from "@/components/retirement/RetirementIncomeCard";
 import { RetirementMatrix } from "@/components/retirement/RetirementMatrix";
+import { RetirementOutlookChart } from "@/components/retirement/RetirementOutlookChart";
 import { RetirementSettingsPanel } from "@/components/retirement/RetirementSettingsPanel";
+import {
+  retirementFocus,
+  retirementHeadline,
+} from "@/components/retirement/retirement-focus";
+import { insightsLocale } from "@/components/spending-trends/insights-chart";
+import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { useDirtyTrackedValue } from "@/hooks/useDirtyTrackedValue";
+import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useRetirementSettings } from "@/hooks/useRetirementData";
 import {
   autoEstimatedTaxRatePercent,
   computeRetirementMatrix,
   derivedAnchorMonthlyCents,
   horizonsForZoom,
+  CURRENT_PACE_TIER_INDEX,
   DEFAULT_HORIZON_ZOOM,
 } from "@/lib/retirement";
 import type {
@@ -33,8 +63,14 @@ export const Route = createFileRoute("/insights/retirement")({
  */
 const MIN_ANCHOR_RANGE_CENTS = 200_00; // $200
 
+/** Above this share of the target, the gap is a nudge rather than a problem. */
+const ALMOST_THERE_PERCENT = 85;
+
 function RetirementPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const { maskProps } = useValuesHidden();
+  const locale = insightsLocale(i18n.language);
+  const formatCurrency = useFormatCurrency();
   const {
     input,
     isPending,
@@ -118,6 +154,11 @@ function RetirementPage() {
     return computeRetirementMatrix(input, pension, currentAge, options);
   }, [input, pension, currentAge, isExploring, anchorCents, horizonZoom]);
 
+  const focus = useMemo(
+    () => (matrix && currentAge != null ? retirementFocus(matrix, currentAge) : null),
+    [matrix, currentAge],
+  );
+
   // Emptiness is keyed on accounts only, matching the sibling Projection page's pattern — missing
   // expense history alone must never hide the grid (it still renders using $0 base expenses).
   const isEmpty = !isPending && (!input || input.account_balances.length === 0);
@@ -126,9 +167,35 @@ function RetirementPage() {
   // enter an age" — no flat-multiplier fallback), so the grid stays hidden until age resolves.
   const needsAge = !isEmpty && !isPending && currentAge == null;
 
+  const headline =
+    matrix && focus && input && currentAge != null
+      ? retirementHeadline(
+          matrix,
+          focus,
+          isExploring,
+          currentAge,
+          formatCurrency(input.avg_monthly_expense_cents),
+          formatCurrency(matrix.tiersMonthlyCents[CURRENT_PACE_TIER_INDEX] ?? 0),
+        )
+      : null;
+
+  const readyPercent = focus?.readyPercent ?? null;
+  const calloutEyebrow = focus?.achieved
+    ? t("retirement.v2.eyebrowOnTrack")
+    : readyPercent !== null && readyPercent >= ALMOST_THERE_PERCENT
+      ? t("retirement.v2.eyebrowAlmostThere")
+      : t("retirement.v2.eyebrowWorthALook");
+
   return (
     <div>
-      <PageHeader title={t("nav.retirement")} />
+      <PageHeader
+        title={t("nav.retirement")}
+        subtitle={
+          focus?.achieved
+            ? t("surface.subtitle.retirement", { age: focus.age })
+            : t("surface.subtitle.retirementNoAge")
+        }
+      />
 
       {isEmpty ? (
         <Card data-testid="retirement-empty">
@@ -144,7 +211,7 @@ function RetirementPage() {
           />
         </Card>
       ) : (
-        <div className="flex flex-col gap-section-gap">
+        <div className="flex flex-col gap-grid-gap">
           {noExpenseHistory && (
             <Card flush data-testid="retirement-no-expense-history">
               <Alert variant="caution" icon={<InfoIcon />}>
@@ -165,10 +232,122 @@ function RetirementPage() {
             </Card>
           ) : (
             matrix &&
+            focus &&
             input &&
             currentAge != null && (
               <>
+                <div className="grid gap-grid-gap sm:grid-cols-2 xl:grid-cols-4">
+                  <MetricTile
+                    icon={FlagIcon}
+                    label={t("retirement.v2.retireAt")}
+                    value={focus.achieved ? focus.age : "\u2014"}
+                    caption={
+                      focus.achieved
+                        ? t("retirement.v2.inYears", { years: focus.years })
+                        : t("retirement.v2.notWithinYears", {
+                            years: focus.horizonYears,
+                          })
+                    }
+                    data-testid="retirement-metric-age"
+                  />
+                  <MetricTile
+                    icon={WalletIcon}
+                    label={t("retirement.anchorLabel")}
+                    value={
+                      <Money
+                        cents={
+                          matrix.tiersMonthlyCents[CURRENT_PACE_TIER_INDEX] ?? 0
+                        }
+                        locale={locale}
+                        {...maskProps}
+                      />
+                    }
+                    caption={
+                      isExploring
+                        ? t("retirement.v2.paceExploring")
+                        : t("retirement.v2.paceCurrent")
+                    }
+                    data-testid="retirement-metric-pace"
+                  />
+                  <MetricTile
+                    icon={TargetIcon}
+                    label={t("retirement.v2.nestEggYouNeed")}
+                    value={
+                      <Money
+                        cents={focus.nestEggTodayCents}
+                        locale={locale}
+                        {...maskProps}
+                      />
+                    }
+                    caption={t("retirement.v2.inTodaysDollars")}
+                    data-testid="retirement-metric-nest-egg"
+                  />
+                  <MetricTile
+                    icon={TrendingUpIcon}
+                    featured
+                    label={t("retirement.v2.projectedAt", { age: focus.age })}
+                    value={
+                      <Money
+                        cents={focus.projectedTodayCents}
+                        locale={locale}
+                        {...maskProps}
+                      />
+                    }
+                    caption={
+                      readyPercent !== null
+                        ? t("retirement.v2.shareOfWhatYouNeed", {
+                            percent: readyPercent,
+                          })
+                        : undefined
+                    }
+                    data-testid="retirement-metric-projected"
+                  />
+                </div>
+
+                <div className="grid items-start gap-grid-gap lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+                  <RetirementOutlookChart
+                    matrix={matrix}
+                    currentAge={currentAge}
+                  />
+
+                  <div className="flex flex-col gap-grid-gap">
+                    <InsightCallout
+                      icon={TargetIcon}
+                      eyebrow={calloutEyebrow}
+                      title={
+                        readyPercent === null
+                          ? undefined
+                          : focus.achieved
+                            ? t("retirement.v2.youAreThere", {
+                                age: focus.age,
+                              })
+                            : t("retirement.v2.youArePartway", {
+                                percent: readyPercent,
+                              })
+                      }
+                    >
+                      {headline && (
+                        <p data-testid="retirement-headline">
+                          {t(headline.key, headline.args)}
+                        </p>
+                      )}
+                    </InsightCallout>
+
+                    <RetirementIncomeCard
+                      governmentPensionAnnualCents={governmentPensionAnnualCents}
+                      gateGovernmentPensionByAge={gateGovernmentPensionByAge}
+                      employerPensionAnnualCents={employerPensionAnnualCents}
+                      employerPensionStartAge={employerPensionStartAge}
+                    />
+                  </div>
+                </div>
+
                 <Card flush>
+                  <CardHeader className="pt-card-pad">
+                    <CardTitle icon={LayoutGridIcon}>
+                      {t("retirement.v2.matrixTitle")}
+                    </CardTitle>
+                  </CardHeader>
                   <RetirementControls
                     anchorMonthlyCents={anchorCents}
                     maxAnchorMonthlyCents={maxAnchorMonthlyCents}
@@ -178,13 +357,9 @@ function RetirementPage() {
                     horizonZoom={horizonZoom}
                     onHorizonZoomChange={setHorizonZoom}
                   />
-                </Card>
-
-                <Card flush>
                   <RetirementMatrix
                     matrix={matrix}
                     currentAge={currentAge}
-                    avgMonthlyExpenseCents={input.avg_monthly_expense_cents}
                     isExploring={isExploring}
                   />
                 </Card>
@@ -211,6 +386,10 @@ function RetirementPage() {
             ageFromProfile={ageFromProfile}
             onSaveAgeOverride={saveAgeOverride}
           />
+
+          <p className="text-caption text-ink-dim">
+            {t("retirement.v2.footnote")}
+          </p>
         </div>
       )}
     </div>

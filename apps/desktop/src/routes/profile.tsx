@@ -1,6 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { Card, CardContent, Skeleton } from "@nixus/shared";
+import { UserRound } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Skeleton,
+} from "@nixus/shared";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SignInRequired } from "@/components/profile/SignInRequired";
 import { ProfileAvatarField } from "@/components/profile/ProfileAvatarField";
@@ -91,9 +99,12 @@ function ProfilePage() {
     >
       {/* Rendered in every branch: `PageHeader` owns `SURFACE_HEADING_ID`, which the shell's
        * skip link and its route-change focus move both target. */}
-      <PageHeader title={t("profile.title")} />
+      <PageHeader
+        title={t("profile.title")}
+        subtitle={t("surface.subtitle.profile")}
+      />
 
-      <div className="mx-auto max-w-2xl">
+      <div className="mx-auto flex max-w-3xl flex-col gap-grid-gap">
         {guard === "loading" && (
           <Card>
             <CardContent>
@@ -103,18 +114,15 @@ function ProfilePage() {
         )}
 
         {guard === "local" && (
-          <Card>
-            <CardContent>
-              <p
-                className="text-caption text-ink-dim"
-                data-testid="profile-local-description"
-              >
+          <Card flush>
+            <CardHeader className="border-b border-line px-card-pad pt-card-pad">
+              <CardTitle icon={UserRound}>{t("profile.title")}</CardTitle>
+              <CardDescription data-testid="profile-local-description">
                 {t("profile.localDescription")}
-              </p>
-
-              <div className="mt-4">
-                <ProfileForm sourceKey={sourceKey} />
-              </div>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="py-card-pad">
+              <ProfileForm sourceKey={sourceKey} />
             </CardContent>
           </Card>
         )}
@@ -147,50 +155,47 @@ function ProfilePage() {
             )}
 
             {showsForm && (
-              <div className="space-y-4">
+              <>
                 {cloud.data?.consent_pending === true && (
                   <ProfileUploadConsent sourceKey={sourceKey} />
                 )}
 
-                <Card>
-                  <CardContent>
-                    <div className="mb-4">
-                      <ProfileAvatarField sourceKey={sourceKey} />
-                    </div>
+                <Card flush>
+                  <div className="flex flex-wrap items-center justify-between gap-5 border-b border-line px-card-pad py-card-pad">
+                    <ProfileAvatarField sourceKey={sourceKey} />
 
-                    <div className="space-y-1">
-                      <p className="text-caption text-ink-dim">
-                        {t("profile.email")}
-                      </p>
-                      {/* Read text, not a control: a `Label` with no `htmlFor` target is an a11y
-                       * defect, and the `title` carries the full address the truncation hides. */}
+                    <div className="min-w-0">
+                      <p className="text-caption text-ink-dim">{t("profile.email")}</p>
+                      {/* Read text, not a control: a `Label` with no `htmlFor` target is an
+                       * a11y defect, and the `title` carries the full address the truncation
+                       * hides. */}
                       <p
-                        className="truncate text-body text-ink"
+                        className="mt-0.5 truncate text-h3 text-ink"
                         title={account.email}
                         data-testid="profile-email"
                       >
                         {account.email}
                       </p>
                     </div>
+                  </div>
 
-                    {offlineWithCopy && (
-                      <p
-                        className="mt-4 text-caption text-ink-dim"
-                        data-testid="profile-offline-notice"
-                      >
-                        {t("profile.cloud.offlineNotice")}
-                      </p>
-                    )}
+                  {offlineWithCopy && (
+                    <p
+                      className="border-b border-line px-card-pad py-3.5 text-caption text-ink-dim"
+                      data-testid="profile-offline-notice"
+                    >
+                      {t("profile.cloud.offlineNotice")}
+                    </p>
+                  )}
 
-                    <div className="mt-4">
-                      <ProfileForm
-                        sourceKey={sourceKey}
-                        saveDisabled={offlineWithCopy}
-                      />
-                    </div>
+                  <CardContent className="py-card-pad">
+                    <ProfileForm
+                      sourceKey={sourceKey}
+                      saveDisabled={offlineWithCopy}
+                    />
                   </CardContent>
                 </Card>
-              </div>
+              </>
             )}
           </>
         )}

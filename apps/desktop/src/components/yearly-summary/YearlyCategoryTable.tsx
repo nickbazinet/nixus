@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { TagIcon } from "lucide-react";
 import {
   Card,
   CardDescription,
@@ -95,7 +96,7 @@ export function YearlyCategoryTable({
     return (
       <Card data-testid="yearly-category-table">
         <CardHeader>
-          <CardTitle>{t("yearSummary.categories")}</CardTitle>
+          <CardTitle icon={TagIcon}>{t("yearSummary.categories")}</CardTitle>
         </CardHeader>
         <div className="px-card-pad">
           <Skeleton rows={data.length || FALLBACK_SKELETON_ROWS} />
@@ -107,10 +108,12 @@ export function YearlyCategoryTable({
   return (
     <Card flush data-testid="yearly-category-table">
       <CardHeader className="pt-card-pad">
-        <CardTitle>{t("yearSummary.categories")}</CardTitle>
-        <CardDescription>{t("insights.shareOfSpendingHint")}</CardDescription>
+        <CardTitle icon={TagIcon}>{t("yearSummary.categories")}</CardTitle>
+        <CardDescription className="pl-13">
+          {t("insights.shareOfSpendingHint")}
+        </CardDescription>
       </CardHeader>
-      <div className="px-card-pad pt-3">
+      <div className="px-card-pad pt-4">
         <CostGroupTabs
           value={costGroup}
           onChange={setCostGroup}
@@ -135,7 +138,7 @@ export function YearlyCategoryTable({
       ) : (
         <>
           <AllocationBar segments={segments} />
-          <Table className="mt-4 [&_tbody_tr:last-child>td]:border-b-0">
+          <Table className="mt-5 [&_tbody_tr:last-child>td]:border-b-0 [&_td:first-child]:pl-card-pad [&_td:last-child]:pr-card-pad [&_th:first-child]:pl-card-pad [&_th:last-child]:pr-card-pad">
             <TableHeader>
               <TableRow>
                 <TableHead
@@ -160,15 +163,17 @@ export function YearlyCategoryTable({
               {rows.map((segment) => (
                 <TableRow key={segment.key} data-testid="yearly-category-row">
                   <TableCell>
-                    <span className="flex items-center gap-2">
+                    <span className="flex items-center gap-2.5">
                       {/* The swatch is the direct label that replaces a legend: above five
                        * segments a legend the user has to cross-reference is a failure. */}
                       <span
                         aria-hidden="true"
-                        className="size-2.5 shrink-0 rounded-full"
+                        className="size-1.5 shrink-0 rounded-full"
                         style={{ background: segment.color }}
                       />
-                      {segment.name}
+                      <span className="font-semibold text-ink">
+                        {segment.name}
+                      </span>
                     </span>
                   </TableCell>
                   <TableCell numeric dim>
@@ -207,7 +212,7 @@ function AllocationBar({ segments }: { segments: readonly Segment[] }) {
   return (
     <div
       aria-hidden="true"
-      className="mx-card-pad mt-4 flex h-[26px] overflow-hidden rounded-sm"
+      className="mx-card-pad mt-5 flex h-3 overflow-hidden rounded-full"
       style={{ gap: "1px", background: SEGMENT_DIVIDER }}
     >
       {segments.map((segment) => (

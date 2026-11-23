@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useTheme } from "next-themes";
-import { Card, Switch } from "@nixus/shared";
+import { AppWindow, EyeOff, Palette } from "lucide-react";
+import { Switch } from "@nixus/shared";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import { SettingRow, SettingsSection, SegmentedControl } from "./SettingRow";
 
@@ -19,84 +20,75 @@ export function GeneralSettings() {
   };
 
   return (
-    <div className="space-y-section-gap" data-testid="settings-general">
-      <div>
-        <h2 className="text-h1 text-ink">{t("settings.generalTitle")}</h2>
-        <p className="mt-1 text-caption text-ink-dim">
-          {t("settings.generalDescription")}
-        </p>
-      </div>
-
-      <SettingsSection heading={t("settings.sectionAppearance")}>
-        <Card flush>
-          <SettingRow
-            title={t("settings.themeTitle")}
-            description={t("settings.themeDescription")}
-            control={
-              <SegmentedControl
-                name="settings-theme"
-                label={t("settings.themeGroupLabel")}
-                value={activeTheme}
-                onChange={setTheme}
-                options={[
-                  { value: "light", label: t("sidebar.light") },
-                  { value: "dark", label: t("sidebar.dark") },
-                  { value: "system", label: t("sidebar.system") },
-                ]}
-              />
-            }
-            data-testid="setting-theme"
-          />
-          <SettingRow
-            title={t("settings.languageTitle")}
-            description={t("settings.languageDescription")}
-            control={
-              <SegmentedControl
-                name="settings-language"
-                label={t("settings.languageGroupLabel")}
-                value={activeLanguage}
-                onChange={changeLanguage}
-                options={[
-                  { value: "en", label: t("sidebar.english") },
-                  { value: "fr", label: t("sidebar.french") },
-                ]}
-              />
-            }
-            data-testid="setting-language"
-          />
-        </Card>
+    <div className="flex flex-col gap-grid-gap" data-testid="settings-general">
+      <SettingsSection
+        heading={t("settings.sectionAppearance")}
+        icon={Palette}
+        description={t("settings.generalDescription")}
+      >
+        <SettingRow
+          title={t("settings.themeTitle")}
+          description={t("settings.themeDescription")}
+          control={
+            <SegmentedControl
+              name="settings-theme"
+              label={t("settings.themeGroupLabel")}
+              value={activeTheme}
+              onChange={setTheme}
+              options={[
+                { value: "light", label: t("sidebar.light") },
+                { value: "dark", label: t("sidebar.dark") },
+                { value: "system", label: t("sidebar.system") },
+              ]}
+            />
+          }
+          data-testid="setting-theme"
+        />
+        <SettingRow
+          title={t("settings.languageTitle")}
+          description={t("settings.languageDescription")}
+          control={
+            <SegmentedControl
+              name="settings-language"
+              label={t("settings.languageGroupLabel")}
+              value={activeLanguage}
+              onChange={changeLanguage}
+              options={[
+                { value: "en", label: t("sidebar.english") },
+                { value: "fr", label: t("sidebar.french") },
+              ]}
+            />
+          }
+          data-testid="setting-language"
+        />
       </SettingsSection>
 
-      <SettingsSection heading={t("settings.sectionPrivacy")}>
-        <Card flush>
-          <SettingRow
-            title={t("settings.hideAmountsTitle")}
-            description={t("settings.hideAmountsDescription")}
-            control={
-              <Switch
-                checked={hidden}
-                onCheckedChange={toggleHidden}
-                aria-label={t("settings.hideAmountsTitle")}
-                data-testid="setting-hide-amounts-switch"
-              />
-            }
-            data-testid="setting-hide-amounts"
-          />
-        </Card>
+      <SettingsSection heading={t("settings.sectionPrivacy")} icon={EyeOff}>
+        <SettingRow
+          title={t("settings.hideAmountsTitle")}
+          description={t("settings.hideAmountsDescription")}
+          control={
+            <Switch
+              checked={hidden}
+              onCheckedChange={toggleHidden}
+              aria-label={t("settings.hideAmountsTitle")}
+              data-testid="setting-hide-amounts-switch"
+            />
+          }
+          data-testid="setting-hide-amounts"
+        />
       </SettingsSection>
 
       {/* No toggle: nothing in the Rust side registers a tray or intercepts window close, so a
         * switch here would promise behaviour that does not exist. The consequence is stated
         * instead, because a user who quits and then wonders why nothing reminded her has been
         * failed by the copy. */}
-      <SettingsSection heading={t("settings.sectionWindow")}>
-        <Card flush>
-          <SettingRow
-            title={t("settings.trayTitle")}
-            description={t("settings.trayDescription")}
-            data-testid="setting-tray"
-          />
-        </Card>
+      <SettingsSection heading={t("settings.sectionWindow")} icon={AppWindow}>
+        <SettingRow
+          title={t("settings.trayTitle")}
+          description={t("settings.trayDescription")}
+          data-testid="setting-tray"
+        />
       </SettingsSection>
     </div>
   );

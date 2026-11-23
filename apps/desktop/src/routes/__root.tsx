@@ -18,7 +18,7 @@ import { SURFACE_HEADING_ID } from "../components/shared/PageHeader";
 import { normalizePeriodParam } from "../hooks/usePeriod";
 import { fetchPickerGateStatus } from "../hooks/useDatasets";
 import { useTranslation } from "react-i18next";
-import { focusRing } from "@nixus/shared";
+import { IconGradientDefs, focusRing } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
 const PICKER_PATH = "/picker";
@@ -139,6 +139,8 @@ function RootLayout() {
   return (
     <ValuesVisibilityProvider>
       <div className="flex h-full overflow-hidden bg-page text-ink">
+        {/* The gradient every brand line icon strokes with. Once per document, picker included. */}
+        <IconGradientDefs />
         {/* First tab stop in the document, ahead of the rail. Visually hidden until focused. */}
         <a
           href={`#${SURFACE_HEADING_ID}`}
@@ -153,12 +155,7 @@ function RootLayout() {
         </a>
         {!isPicker && <AppSidebar />}
         <div className="flex min-w-0 flex-1 flex-col">
-          {!isPicker && (
-            <>
-              <TopBar onSearchClick={() => setChatOpen(true)} />
-              <DestinationNav />
-            </>
-          )}
+          {!isPicker && <TopBar onSearchClick={() => setChatOpen(true)} />}
           {/* The scroll container is the main column, never the centred measure below it —
            * scrolling the centred wrapper puts the scrollbar inside the content. */}
           <main
@@ -166,25 +163,30 @@ function RootLayout() {
             tabIndex={-1}
             className={cn(
               "flex min-h-0 min-w-0 flex-1 flex-col overscroll-contain bg-page",
-              // The hairline is the rail's boundary, so it goes with the rail.
-              !isPicker && "border-l border-rail-line",
               isFullBleed ? "overflow-hidden" : "overflow-y-auto"
             )}
           >
-            {/* Same centred measure on every surface, except AI chat and the picker: the chat's
-             * two-pane layout (history rail + conversation) needs the full main-column width to lay
-             * out its own panels edge-to-edge, and the picker is chrome-free and centres itself.
-             * Both scroll internally, so neither gets page padding or a max-width of its own. */}
-            <div
-              className={cn(
-                "flex w-full flex-col",
-                isFullBleed
-                  ? "min-h-0 flex-1 overflow-hidden"
-                  : "mx-auto max-w-[1280px] px-page-x py-page-y"
-              )}
-            >
-              <Outlet />
-            </div>
+            {/* Same centred measure on every surface, shared with the top bar so the search field, the
+             * destination pills and the content all start on one edge. AI chat, Home and the picker
+             * are the exceptions: they lay out and scroll their own panels, so they get no page
+             * padding or max-width — only the destination strip, kept on the same measure. */}
+            {isFullBleed ? (
+              <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+                {!isPicker && (
+                  <div className="mx-auto w-full max-w-[1280px] px-page-x pt-2 empty:hidden">
+                    <DestinationNav />
+                  </div>
+                )}
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <Outlet />
+                </div>
+              </div>
+            ) : (
+              <div className="mx-auto flex w-full max-w-[1280px] flex-col px-page-x pt-2 pb-12">
+                {!isPicker && <DestinationNav />}
+                <Outlet />
+              </div>
+            )}
           </main>
         </div>
         {!isPicker && <FloatingChatBar open={chatOpen} onClose={handleClose} />}

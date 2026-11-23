@@ -16,32 +16,38 @@ export function TopBar({ onSearchClick }: TopBarProps) {
   const { t } = useTranslation();
 
   return (
-    <header className="relative flex h-14 shrink-0 items-center justify-center bg-chrome px-page-x">
-      <button
-        type="button"
-        onClick={onSearchClick}
-        className={cn(
-          "flex w-full max-w-[480px] min-h-target-min cursor-pointer items-center gap-2 rounded-md border border-line-strong bg-card px-3 py-1.5 transition-colors hover:bg-hover",
-          focusRing
-        )}
-        aria-label={t("topbar.searchAriaLabel")}
-        data-testid="topbar-search-trigger"
-      >
-        <Search className="size-4 shrink-0 text-ink-faint" aria-hidden="true" />
-        <span className="flex-1 text-left text-body text-ink-faint">
-          {t("topbar.searchPlaceholder")}
-        </span>
-        {/* Read as content, not a badge, so it sits at the 13px caption floor rather than micro. */}
-        <kbd className="rounded-sm border border-line bg-track px-1.5 py-0.5 text-caption text-ink-faint">
-          {SEARCH_SHORTCUT}
-        </kbd>
-      </button>
+    <header className="shrink-0 bg-chrome">
+      <div className="relative mx-auto flex h-[76px] w-full max-w-[1280px] items-center justify-center px-page-x">
+        <button
+          type="button"
+          onClick={onSearchClick}
+          className={cn(
+            "flex h-11 w-full max-w-[560px] min-h-target-min cursor-pointer items-center gap-3 rounded-full border border-line bg-card pr-2 pl-4 transition-colors hover:border-line-strong",
+            focusRing
+          )}
+          aria-label={t("topbar.searchAriaLabel")}
+          data-testid="topbar-search-trigger"
+        >
+          <Search
+            className="icon-gradient size-[18px] shrink-0"
+            strokeWidth={2}
+            aria-hidden="true"
+          />
+          <span className="flex-1 text-left text-body text-ink-dim">
+            {t("topbar.searchPlaceholder")}
+          </span>
+          {/* Read as content, not a badge, so it sits at the 13px caption floor rather than micro. */}
+          <kbd className="rounded-sm border border-line bg-page px-2 py-0.5 font-sans text-caption font-bold text-ink">
+            {SEARCH_SHORTCUT}
+          </kbd>
+        </button>
 
-      {/* Pinned absolutely rather than laid out as a flex sibling: the search field is
-       * `w-full max-w-[480px]` inside a `justify-center` row, so any second participant in that
-       * distribution shifts or resizes it on every route. */}
-      <div className="absolute inset-y-0 right-page-x flex items-center">
-        <ProfileMenu />
+        {/* Pinned absolutely rather than laid out as a flex sibling: the search field is centred in
+         * a `justify-center` row, so any second participant in that distribution would shift or
+         * resize it on every route. */}
+        <div className="absolute inset-y-0 right-page-x flex items-center">
+          <ProfileMenu />
+        </div>
       </div>
     </header>
   );

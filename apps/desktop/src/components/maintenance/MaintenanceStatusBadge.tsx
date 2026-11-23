@@ -6,11 +6,13 @@ import {
 } from "@/lib/maintenanceUtils";
 import type { MaintenanceTaskStatus } from "@/lib/types";
 
+// `brand` rather than `neutral` for the informational case: a soft blue chip in brand ink is this
+// system's neutral info pill, and it keeps the status column from reading as a fourth alarm colour.
 const BADGE_VARIANT = {
   over: "over",
   caution: "caution",
   good: "good",
-  neutral: "neutral",
+  neutral: "brand",
 } as const;
 
 interface MaintenanceStatusBadgeProps {

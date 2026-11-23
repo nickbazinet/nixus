@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   EmptyState,
+  IconChip,
   focusRing,
 } from "@nixus/shared";
 import { cn } from "@/lib/utils";
@@ -104,15 +105,8 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-line bg-page px-page-x py-3">
-        {agent && (
-          <span
-            aria-hidden="true"
-            className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-ink"
-          >
-            <agent.icon size={18} />
-          </span>
-        )}
+      <div className="flex items-center gap-3 border-b border-line pb-4">
+        {agent && <IconChip icon={agent.icon} size="lg" />}
         <div className="min-w-0">
           {/* The shell's skip link and its route-change focus move both target this id, so the
             * chat surface needs the same heading contract as PageHeader gives every other route. */}
@@ -120,7 +114,7 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
             id={SURFACE_HEADING_ID}
             data-surface-heading=""
             tabIndex={-1}
-            className={cn("truncate text-h1 text-ink", focusRing)}
+            className={cn("truncate font-display text-h1 text-ink", focusRing)}
           >
             {agent ? t(agent.nameKey) : agentId}
           </h1>
@@ -134,7 +128,7 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
         * bubble itself, so a live region here would re-announce every token. */}
       <div
         ref={messageAreaRef}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-page-x py-4"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-1 py-5"
         role="log"
         data-testid="chat-message-area"
       >
@@ -172,20 +166,21 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
         )}
 
         {showStarters && agent && (
-          <Card>
+          <Card className="mx-auto w-full max-w-2xl">
             <EmptyState
+              className="max-w-xl"
               icon={<agent.icon />}
               title={t(agent.readyKey)}
               description={t(agent.scopeKey)}
             >
-              <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
                 {starterPrompts.map((prompt) => (
                   <button
                     key={prompt}
                     type="button"
                     onClick={() => send(prompt)}
                     className={cn(
-                      "min-h-target-min rounded-md border border-line-strong px-2.5 py-1 text-caption text-ink transition-colors hover:bg-hover",
+                      "min-h-target-min rounded-full border border-line-strong bg-card px-3.5 py-1.5 text-caption text-ink transition-colors hover:border-brand/40 hover:bg-hover",
                       focusRing
                     )}
                     data-testid="chat-starter-prompt"
@@ -211,7 +206,7 @@ function ChatPanel({ agentId, initialConversationId, onNewChat }: ChatPanelProps
           />
         ))}
         {messages.length > 0 && !streaming && (
-          <p className="text-caption text-ink-faint" data-testid="chat-freshness">
+          <p className="pl-11 text-caption text-ink-faint" data-testid="chat-freshness">
             {t("chat.freshness", { date: freshnessDate })}
           </p>
         )}
@@ -258,14 +253,18 @@ function AgentChatPage() {
 
   if (!agent) {
     return (
-      <EmptyState
-        title={t("chat.agentNotFound")}
-        action={
-          <Button variant="outline" render={<Link to="/ai" />}>
-            {t("chat.backToAgents")}
-          </Button>
-        }
-      />
+      <div className="mx-auto w-full max-w-[1280px] px-page-x">
+        <Card>
+          <EmptyState
+            title={t("chat.agentNotFound")}
+            action={
+              <Button variant="outline" render={<Link to="/ai" />}>
+                {t("chat.backToAgents")}
+              </Button>
+            }
+          />
+        </Card>
+      </div>
     );
   }
 
@@ -292,25 +291,29 @@ function AgentChatPage() {
   };
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <aside
-        className="flex w-56 shrink-0 flex-col border-r border-line bg-chrome"
-        aria-label={t("chat.conversationHistory")}
-      >
-        <ConversationListPanel
-          agentId={agentId}
-          activeConversationId={activeConversationId}
-          onSelectConversation={handleSelectConversation}
-          onNewChat={handleNewChat}
-        />
-      </aside>
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <ChatPanel
-          key={chatKey}
-          agentId={agentId}
-          initialConversationId={activeConversationId ?? undefined}
-          onNewChat={handleNewChat}
-        />
+    <div className="flex h-full min-h-0 overflow-hidden">
+      {/* Same 1280 measure as every other surface so the rail lines up with the sub-tabs above it.
+        * Nothing here carries bottom padding: the composer has to reach the viewport edge. */}
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1280px] gap-grid-gap overflow-hidden px-page-x">
+        <aside
+          className="flex w-64 shrink-0 flex-col overflow-hidden rounded-t-2xl border border-b-0 border-line bg-card"
+          aria-label={t("chat.conversationHistory")}
+        >
+          <ConversationListPanel
+            agentId={agentId}
+            activeConversationId={activeConversationId}
+            onSelectConversation={handleSelectConversation}
+            onNewChat={handleNewChat}
+          />
+        </aside>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <ChatPanel
+            key={chatKey}
+            agentId={agentId}
+            initialConversationId={activeConversationId ?? undefined}
+            onNewChat={handleNewChat}
+          />
+        </div>
       </div>
     </div>
   );

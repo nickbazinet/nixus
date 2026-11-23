@@ -1,23 +1,14 @@
 import { useTranslation } from "react-i18next";
-import { Link } from "@tanstack/react-router";
-import { ChevronDown, Plus, Repeat, Sparkles, TriangleAlert } from "lucide-react";
+import { Tag, Target, TriangleAlert, Wallet } from "lucide-react";
 import {
   Alert,
   AlertDescription,
   AlertTitle,
-  Badge,
-  Button,
-  Card,
-  CardContent,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
   Meter,
   Money,
-  Stat,
-  formatMoney,
 } from "@nixus/shared";
+import { MetricTile } from "@/components/shared/MetricTile";
+import { usePeriod } from "@/hooks/usePeriod";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useMaskProps, useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 
@@ -31,24 +22,32 @@ interface BudgetSummaryStripProps {
   remainingCents: number;
   averageMonthlyIncomeCents: number;
   incomeMonthCount: number;
-  hasGroups: boolean;
-  onAddExpense: () => void;
-  onApplyRecurring: () => void;
-  applyRecurringPending: boolean;
+  /** Under the Budgeted figure: what the plan is made of, e.g. "7 groups, 14 categories". */
+  budgetedCaption?: string;
 }
 
+/** Whole days left in the selected month, or null unless that month is the one in progress. */
+function daysLeftInPeriod(year: number, month: number): number | null {
+  const now = new Date();
+  if (now.getFullYear() !== year || now.getMonth() + 1 !== month) return null;
+  const lastDay = new Date(year, month, 0).getDate();
+  return Math.max(lastDay - now.getDate(), 0);
+}
+
+/**
+ * The surface's KPI row: what was planned, what is gone, and the one figure that answers the
+ * question — what is left. Remaining is the featured tile; the other two are the context it needs.
+ */
 export function BudgetSummaryStrip({
   totalTargetCents,
   totalSpentCents,
   remainingCents,
   averageMonthlyIncomeCents,
   incomeMonthCount,
-  hasGroups,
-  onAddExpense,
-  onApplyRecurring,
-  applyRecurringPending,
+  budgetedCaption,
 }: BudgetSummaryStripProps) {
   const { t, i18n } = useTranslation();
+  const { year, month } = usePeriod();
   const formatCurrency = useFormatCurrency();
   const maskProps = useMaskProps();
   const { hidden } = useValuesHidden();
@@ -64,131 +63,68 @@ export function BudgetSummaryStrip({
     totalTargetCents > averageMonthlyIncomeCents;
 
   // The headline figure is the absolute amount with its own label rather than a signed number: a
-  // leading minus on a 34px figure is the easiest thing on the surface to misread.
+  // leading minus on a 28px figure is the easiest thing on the surface to misread.
   const heroCents = Math.abs(remainingCents);
+  const spentShare =
+    totalTargetCents > 0 ? Math.round((totalSpentCents / totalTargetCents) * 100) : null;
+  const daysLeft = daysLeftInPeriod(year, month);
 
   return (
-    <Card className="mb-section-gap" data-testid="budget-summary-strip">
-      <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-3">
-            <Stat
-              label={overspent ? t("budget.overBudgetLabel") : t("budget.remaining")}
-              value={formatMoney({ cents: heroCents, locale: i18n.language })}
-              caption={t("budget.remainingCaption")}
-              {...maskProps}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="text-label">
-              <span className="text-ink-dim">{t("budget.budget")} </span>
-              <Money
-                cents={totalTargetCents}
-                locale={i18n.language}
-                className="text-ink"
-                {...maskProps}
+    <div className="flex flex-col gap-grid-gap" data-testid="budget-summary-strip">
+      <div className="grid gap-grid-gap md:grid-cols-3">
+        <MetricTile
+          icon={Target}
+          label={t("budget.v2.budgeted")}
+          value={<Money cents={totalTargetCents} locale={i18n.language} {...maskProps} />}
+          caption={budgetedCaption}
+        />
+        <MetricTile
+          icon={Tag}
+          label={t("budget.v2.spentSoFar")}
+          value={<Money cents={totalSpentCents} locale={i18n.language} {...maskProps} />}
+          caption={
+            spentShare !== null ? t("budget.v2.percentOfBudget", { percent: spentShare }) : undefined
+          }
+          footer={
+            totalTargetCents > 0 ? (
+              <Meter
+                value={totalSpentCents}
+                max={totalTargetCents}
+                label={t("budget.overallMeterLabel")}
+                valueText={hidden ? t("common.amountHidden") : paceSentence}
+                data-testid="budget-overall-progress"
               />
-            </div>
-            <div className="text-label">
-              <span className="text-ink-dim">{t("budget.spent")} </span>
-              <Money
-                cents={totalSpentCents}
-                locale={i18n.language}
-                className="text-ink"
-                {...maskProps}
-              />
-            </div>
-            {totalTargetCents > 0 ? (
-              <Badge variant={overspent ? "over" : "neutral"}>{paceSentence}</Badge>
-            ) : (
-              <Badge variant="neutral">{t("budget.categoryNoTarget")}</Badge>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    size="sm"
-                    data-testid="add-transactions-trigger"
-                    disabled={!hasGroups}
-                  />
-                }
-              >
-                <Plus data-icon="inline-start" aria-hidden="true" />
-                {t("budget.addTransactions")}
-                <ChevronDown data-icon="inline-end" aria-hidden="true" />
-              </DropdownMenuTrigger>
-              {/* `w-max` is load-bearing: DropdownMenuContent is
-               * `w-(--anchor-width)`, so anchored to this compact trigger the
-               * longest label — French manual entry — would wrap or clip. Sizing
-               * to content lets any locale set the width; `min-w-56` keeps the
-               * panel from looking cramped beside the trigger.
-               *
-               * Named by its trigger rather than an `aria-label`: Base UI points
-               * the panel's `aria-labelledby` at the button, and labelledby wins
-               * the accessible-name calculation, so an `aria-label` would be dead. */}
-              <DropdownMenuContent
-                align="end"
-                className="w-max min-w-56"
-                data-testid="add-transactions-menu"
-              >
-                {/* `render` rather than a nested anchor: Base UI's menu item owns
-                 * roving focus and typeahead, and an anchor child would take the
-                 * tab stop away from it. */}
-                <DropdownMenuItem
-                  render={<Link to="/import" data-testid="import-statement-item" />}
-                >
-                  <Sparkles aria-hidden="true" />
-                  {t("dashboard.importStatement")}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onAddExpense}
-                  data-testid="add-expense-manually-item"
-                >
-                  <Plus aria-hidden="true" />
-                  {t("budget.addExpenseManually")}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={onApplyRecurring}
-                  disabled={applyRecurringPending}
-                  data-testid="apply-recurring-item"
-                >
-                  <Repeat aria-hidden="true" />
-                  {t("budget.applyRecurringExpenses")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-        {!hasGroups && (
-          <p className="text-caption text-ink-dim" data-testid="add-transactions-hint">
-            {t("budget.createGroupFirst")}
-          </p>
-        )}
-        {totalTargetCents > 0 && (
-          <Meter
-            value={totalSpentCents}
-            max={totalTargetCents}
-            label={t("budget.overallMeterLabel")}
-            valueText={hidden ? t("common.amountHidden") : paceSentence}
-            data-testid="budget-overall-progress"
-          />
-        )}
-        {budgetOutrunsIncome && (
-          <Alert
-            variant="caution"
-            icon={<TriangleAlert className="text-caution" />}
-            data-testid="budget-income-warning"
-          >
-            <AlertTitle>{t("budget.incomeWarningTitle")}</AlertTitle>
-            <AlertDescription>
-              {t("budget.incomeWarningDescription", {
-                target: formatCurrency(totalTargetCents),
-                average: formatCurrency(averageMonthlyIncomeCents),
-              })}
-            </AlertDescription>
-          </Alert>
-        )}
-      </CardContent>
-    </Card>
+            ) : undefined
+          }
+        />
+        <MetricTile
+          featured
+          icon={Wallet}
+          label={overspent ? t("budget.overBudgetLabel") : t("budget.remaining")}
+          value={<Money cents={heroCents} locale={i18n.language} {...maskProps} />}
+          caption={
+            daysLeft !== null
+              ? t("budget.v2.daysLeft", { count: daysLeft })
+              : t("budget.remainingCaption")
+          }
+        />
+      </div>
+
+      {budgetOutrunsIncome && (
+        <Alert
+          variant="caution"
+          icon={<TriangleAlert className="text-caution" />}
+          data-testid="budget-income-warning"
+        >
+          <AlertTitle>{t("budget.incomeWarningTitle")}</AlertTitle>
+          <AlertDescription>
+            {t("budget.incomeWarningDescription", {
+              target: formatCurrency(totalTargetCents),
+              average: formatCurrency(averageMonthlyIncomeCents),
+            })}
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
   );
 }

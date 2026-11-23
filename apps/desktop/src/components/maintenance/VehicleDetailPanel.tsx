@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MoreHorizontal, Plus, Trash2 } from "lucide-react";
+import { Car, MoreHorizontal, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   Button,
@@ -15,6 +15,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   EmptyState,
+  IconChip,
   SlideOver,
   Tabs,
   TabsContent,
@@ -95,13 +96,16 @@ export function VehicleDetailPanel({
 
   return (
     <>
-      <Card flush className="min-h-0" data-testid="vehicle-detail-panel">
-        <div className="border-b border-line px-card-pad py-3">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <h2 className="text-h2 text-ink">{displayName}</h2>
+      <Card flush className="min-h-0 pt-card-pad" data-testid="vehicle-detail-panel">
+        <div className="flex flex-wrap items-start justify-between gap-4 border-b border-line px-card-pad pb-5">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <IconChip icon={Car} />
+            <div className="min-w-0">
+              <h2 className="truncate font-display text-h1 text-ink">
+                {displayName}
+              </h2>
               {subtitle && (
-                <p className="mt-0.5 text-caption text-ink-dim">{subtitle}</p>
+                <p className="truncate text-caption text-ink-dim">{subtitle}</p>
               )}
               <div className="mt-2">
                 <OdometerUpdateForm
@@ -110,59 +114,59 @@ export function VehicleDetailPanel({
                 />
               </div>
             </div>
-            <div
-              className="flex shrink-0 flex-wrap items-center justify-end gap-2"
-              data-testid="vehicle-detail-actions"
+          </div>
+          <div
+            className="flex shrink-0 flex-wrap items-center justify-end gap-2"
+            data-testid="vehicle-detail-actions"
+          >
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCustomLogOpen(true)}
+              data-testid="log-custom-service-button"
             >
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setCustomLogOpen(true)}
-                data-testid="log-custom-service-button"
+              <Plus aria-hidden="true" />
+              {t("maintenance.customService.add")}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setEditOpen(true)}
+              data-testid="edit-vehicle-button"
+            >
+              {t("maintenance.editVehicle")}
+            </Button>
+            {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive
+                action is never a peer of an ordinary one in the same row. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t("maintenance.detail.vehicleActions", {
+                      vehicle: displayName,
+                    })}
+                    data-testid="vehicle-detail-menu"
+                  />
+                }
               >
-                <Plus aria-hidden="true" />
-                {t("maintenance.customService.add")}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setEditOpen(true)}
-                data-testid="edit-vehicle-button"
-              >
-                {t("maintenance.editVehicle")}
-              </Button>
-              {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive
-                  action is never a peer of an ordinary one in the same row. */}
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={t("maintenance.detail.vehicleActions", {
-                        vehicle: displayName,
-                      })}
-                      data-testid="vehicle-detail-menu"
-                    />
-                  }
+                <MoreHorizontal aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setDeleteOpen(true)}
+                  data-testid="delete-vehicle-button"
                 >
-                  <MoreHorizontal aria-hidden="true" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => setDeleteOpen(true)}
-                    data-testid="delete-vehicle-button"
-                  >
-                    <Trash2 aria-hidden="true" />
-                    {t("maintenance.deleteVehicle")}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+                  <Trash2 aria-hidden="true" />
+                  {t("maintenance.deleteVehicle")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -171,7 +175,9 @@ export function VehicleDetailPanel({
             value={activeTab}
             onValueChange={(value) => setActiveTab(value as DetailTab)}
           >
-            <TabsList className="h-auto w-full flex-wrap">
+            {/* Width-fit, not full-bleed: a segmented control stretched across the card reads as
+                three buttons rather than one choice of three. */}
+            <TabsList className="h-auto max-w-full flex-wrap">
               <TabsTrigger
                 value="needs-attention"
                 data-testid="detail-tab-needs-attention"
@@ -186,7 +192,7 @@ export function VehicleDetailPanel({
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="needs-attention" className="mt-4">
+            <TabsContent value="needs-attention" className="mt-5">
               {sortedAttentionTasks.length === 0 ? (
                 <EmptyState
                   title={t("maintenance.garage.allOnTrack")}
@@ -211,7 +217,7 @@ export function VehicleDetailPanel({
 
             <TabsContent
               value="all-tasks"
-              className="mt-4 flex flex-col gap-grid-gap"
+              className="mt-5 flex flex-col gap-grid-gap"
             >
               <div className="flex items-center justify-between gap-3">
                 {/* Count only: when empty, the EmptyState below is what says so. */}
@@ -256,10 +262,12 @@ export function VehicleDetailPanel({
               )}
             </TabsContent>
 
-            <TabsContent value="history" className="mt-4">
+            <TabsContent value="history" className="mt-5">
               <ServiceHistoryTable
                 vehicleId={vehicle.id}
                 enabled={activeTab === "history"}
+                embedded
+                hideTitle
                 onLogService={() => setCustomLogOpen(true)}
               />
             </TabsContent>

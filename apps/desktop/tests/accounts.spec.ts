@@ -645,8 +645,9 @@ test.describe("Accounts Page", () => {
     await expect(page.getByTestId("breakdown-bar")).toBeVisible();
     await expect(page.getByTestId("account-type-group")).toHaveCount(2);
     await expect(page.getByTestId("accounts-net-worth-context")).toBeVisible();
-    // One display figure per surface: the hero total. Section sums are secondary stats.
-    await expect(page.locator('[data-slot="stat"]')).toHaveCount(1);
+    // The hero `Stat` is now the KPI row: one tile per figure the page separates (what you have,
+    // cash, investments), with each group's own sum in its card header rather than as a stat.
+    await expect(page.locator('[data-slot="metric-value"]')).toHaveCount(3);
   });
 
   test("credit card accounts appear in liabilities section", async ({ page }) => {

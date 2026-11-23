@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeftRight, LogIn } from "lucide-react";
-import { Button, EmptyState } from "@nixus/shared";
+import { Button, Card, EmptyState } from "@nixus/shared";
 import { useSignIn } from "@/hooks/useAuth";
 import { useActiveProfile } from "@/hooks/useDatasets";
 
@@ -29,34 +29,35 @@ export function SignInRequired({ actionLabel, authState }: SignInRequiredProps) 
   const isCloudLinked = activeProfile.data?.kind === "cloud-linked";
 
   return (
-    <EmptyState
-      icon={<LogIn />}
-      title={t("profile.signInRequiredTitle")}
-      description={t("profile.signInRequiredBody")}
-      action={
-        isCloudLinked ? (
-          <Button
-            size="sm"
-            onClick={() =>
-              signIn.mutate({ intent: { kind: "Login" }, entry: "SignIn" })
-            }
-            data-testid="profile-sign-in-action"
-          >
-            {actionLabel}
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            onClick={() => void navigate({ to: "/picker" })}
-            data-testid="profile-switch-profile-action"
-          >
-            <ArrowLeftRight aria-hidden="true" />
-            {t("datasets.switchProfile")}
-          </Button>
-        )
-      }
-      data-testid="profile-sign-in-required"
-      data-auth-state={authState}
-    />
+    <Card>
+      <EmptyState
+        icon={<LogIn />}
+        title={t("profile.signInRequiredTitle")}
+        description={t("profile.signInRequiredBody")}
+        action={
+          isCloudLinked ? (
+            <Button
+              onClick={() =>
+                signIn.mutate({ intent: { kind: "Login" }, entry: "SignIn" })
+              }
+              data-testid="profile-sign-in-action"
+            >
+              {actionLabel}
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              onClick={() => void navigate({ to: "/picker" })}
+              data-testid="profile-switch-profile-action"
+            >
+              <ArrowLeftRight aria-hidden="true" />
+              {t("datasets.switchProfile")}
+            </Button>
+          )
+        }
+        data-testid="profile-sign-in-required"
+        data-auth-state={authState}
+      />
+    </Card>
   );
 }

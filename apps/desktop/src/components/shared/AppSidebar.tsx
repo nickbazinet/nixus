@@ -12,9 +12,11 @@ import {
   Moon,
   Monitor,
   Globe,
-  Settings,
-  Bot,
+  SlidersHorizontal,
+  Sparkles,
   House,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -38,24 +40,20 @@ const themeOrder = ["light", "dark", "system"] as const;
 const themeIcons = { light: Sun, dark: Moon, system: Monitor } as const;
 const themeLabelKeys = { light: "sidebar.light", dark: "sidebar.dark", system: "sidebar.system" } as const;
 
-function railItemClass(expanded: boolean, active: boolean) {
+// Module items are full pills: the active module sits in a soft brand capsule, per the charte.
+// Icons are gradient line icons (`icon-gradient`) in every state; the capsule and the label colour
+// carry "active", never the icon alone.
+function railItemClass(expanded: boolean, active: boolean, size: "module" | "utility" = "utility") {
   return cn(
-    "relative flex w-full min-h-target-min items-center rounded-md text-label no-underline transition-colors",
-    expanded ? "gap-3 px-3 py-2" : "justify-center px-2 py-2",
+    "relative flex w-full min-h-target-min items-center rounded-full font-semibold no-underline transition-colors [&_svg]:icon-gradient",
+    size === "module" ? "h-11 text-[15px]" : "h-10 text-[14.5px]",
+    // Collapsed drops the gap too: the label is zero-width but still a flex item, and a gap beside
+    // it would nudge the icon off the rail's centre line.
+    expanded ? "gap-3 px-4" : "justify-center gap-0 px-2",
     active
       ? "bg-rail-on text-rail-on-ink"
       : "text-rail-ink hover:bg-hover hover:text-ink",
     focusRing
-  );
-}
-
-/** 3px brand marker on the active module, per DESIGN.md {components.rail-item-active}. */
-function ActiveMarker() {
-  return (
-    <span
-      aria-hidden="true"
-      className="absolute inset-y-0 right-0 w-[3px] rounded-l-full bg-brand"
-    />
   );
 }
 
@@ -134,7 +132,7 @@ export function AppSidebar() {
       onMouseLeave={() => setHovered(false)}
       style={{ scrollbarWidth: "none" }}
       className={cn(
-        "z-30 flex h-full shrink-0 flex-col bg-rail transition-[width] duration-200 [&::-webkit-scrollbar]:hidden",
+        "z-30 flex h-full shrink-0 flex-col overflow-y-auto border-r border-rail-line bg-rail transition-[width] duration-200 [&::-webkit-scrollbar]:hidden",
         expanded ? "w-rail-w-expanded" : "w-rail-w"
       )}
     >
@@ -142,65 +140,57 @@ export function AppSidebar() {
         {languageNotice}
       </span>
 
-      <SidebarBrandHeader
-        expanded={expanded}
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((c) => !c)}
-      />
+      <SidebarBrandHeader expanded={expanded} />
 
       {/* Module nav */}
-      <nav aria-label={t("sidebar.moduleNav")} className="mt-2 flex-1 px-2">
-        <ul className="space-y-1">
+      <nav aria-label={t("sidebar.moduleNav")} className="mt-3 flex-1 px-3">
+        <ul className="space-y-1.5">
           <li>
             <Link
               to="/home"
-              className={railItemClass(expanded, isHomeSection)}
+              className={railItemClass(expanded, isHomeSection, "module")}
               aria-label={t("sidebar.home")}
               data-testid="rail-home"
             >
-              <House className="size-5 shrink-0" />
+              <House className="size-5 shrink-0" strokeWidth={1.75} />
               <span className={railLabelClass(expanded)}>{t("sidebar.home")}</span>
-              {isHomeSection && <ActiveMarker />}
             </Link>
           </li>
           <li>
             <Link
               to="/"
-              className={railItemClass(expanded, isFinanceSection)}
+              className={railItemClass(expanded, isFinanceSection, "module")}
               aria-label={t("sidebar.finance")}
             >
-              <Wallet className="size-5 shrink-0" />
+              <Wallet className="size-5 shrink-0" strokeWidth={1.75} />
               <span className={railLabelClass(expanded)}>{t("sidebar.finance")}</span>
-              {isFinanceSection && <ActiveMarker />}
             </Link>
           </li>
           <li>
             <Link
               to="/car"
-              className={railItemClass(expanded, isCarSection)}
+              className={railItemClass(expanded, isCarSection, "module")}
               aria-label={t("sidebar.car")}
             >
-              <Car className="size-5 shrink-0" />
+              <Car className="size-5 shrink-0" strokeWidth={1.75} />
               <span className={railLabelClass(expanded)}>{t("sidebar.car")}</span>
-              {isCarSection && <ActiveMarker />}
             </Link>
           </li>
           <li>
             <Link
               to="/ai"
-              className={railItemClass(expanded, isAiSection)}
+              className={railItemClass(expanded, isAiSection, "module")}
               aria-label={t("sidebar.ai")}
             >
-              <Bot className="size-5 shrink-0" />
+              <Sparkles className="size-5 shrink-0" strokeWidth={1.75} />
               <span className={railLabelClass(expanded)}>{t("sidebar.ai")}</span>
-              {isAiSection && <ActiveMarker />}
             </Link>
           </li>
         </ul>
       </nav>
 
       {/* Utility actions */}
-      <div className="space-y-1 border-t border-rail-line px-2 py-3">
+      <div className="space-y-1 px-3 pt-3 pb-4">
         <RailButton
           onClick={toggleHidden}
           icon={hidden ? EyeOff : Eye}
@@ -229,9 +219,8 @@ export function AppSidebar() {
           aria-label={t("sidebar.settings")}
           data-testid="settings-link"
         >
-          <Settings className="size-4 shrink-0" />
+          <SlidersHorizontal className="size-[18px] shrink-0" strokeWidth={1.75} />
           <span className={railLabelClass(expanded)}>{t("sidebar.settings")}</span>
-          {isSettingsSection && <ActiveMarker />}
         </Link>
         {!isPremium && (
           <RailButton
@@ -248,9 +237,17 @@ export function AppSidebar() {
           expanded={expanded}
           itemClassName={railItemClass(expanded, false)}
         />
+        <RailButton
+          onClick={() => setCollapsed((c) => !c)}
+          icon={collapsed ? PanelLeftOpen : PanelLeftClose}
+          label={collapsed ? t("sidebar.expandSidebar") : t("sidebar.collapseSidebar")}
+          expanded={expanded}
+          testId="collapse-sidebar-button"
+          ariaExpanded={!collapsed}
+        />
         <span
           className={cn(
-            "block px-3 pt-2 text-caption text-ink-faint transition-opacity duration-200",
+            "block px-4 pt-3 text-caption text-ink-faint transition-opacity duration-200",
             expanded && version ? "opacity-100" : "h-0 overflow-hidden opacity-0"
           )}
         >
@@ -267,12 +264,14 @@ function RailButton({
   label,
   expanded,
   testId,
+  ariaExpanded,
 }: {
   onClick: () => void;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   label: string;
   expanded: boolean;
   testId?: string;
+  ariaExpanded?: boolean;
 }) {
   return (
     <button
@@ -281,8 +280,9 @@ function RailButton({
       className={railItemClass(expanded, false)}
       data-testid={testId}
       aria-label={label}
+      aria-expanded={ariaExpanded}
     >
-      <Icon className="size-4 shrink-0" />
+      <Icon className="size-[18px] shrink-0" strokeWidth={1.75} />
       <span className={railLabelClass(expanded)}>{label}</span>
     </button>
   );

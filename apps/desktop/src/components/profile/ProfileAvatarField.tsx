@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@nixus/shared";
 import { AccountAvatar } from "@/components/auth/AccountAvatar";
 import { usePremiumEntitlement } from "@/hooks/useAuth";
-import { useSetUserAvatar, useUserAvatar } from "@/hooks/useProfile";
+import { useSetUserAvatar, useUserAvatar, useUserProfile } from "@/hooks/useProfile";
 import { useProjectImagePicker } from "@/hooks/useProjectImagePicker";
 import { userAvatarMessageKey } from "@/lib/appError";
 
@@ -37,6 +37,7 @@ interface ProfileAvatarFieldProps {
 export function ProfileAvatarField({ sourceKey }: ProfileAvatarFieldProps) {
   const { t } = useTranslation();
   const avatar = useUserAvatar({ sourceKey });
+  const profile = useUserProfile(sourceKey);
   const isPremium = usePremiumEntitlement();
   const setAvatar = useSetUserAvatar(sourceKey);
   const {
@@ -73,8 +74,14 @@ export function ProfileAvatarField({ sourceKey }: ProfileAvatarFieldProps) {
   const errorKey = pickErrorKey ?? writeErrorKey;
   const busy = picking || setAvatar.isPending;
 
+  // The same query `ProfileForm` reads, so the monogram spells the name the fields below show
+  // rather than a second source of truth for it. An empty name falls back to the person glyph.
+  const fullName = [profile.data?.first_name, profile.data?.last_name]
+    .filter((part): part is string => typeof part === "string" && part.trim() !== "")
+    .join(" ");
+
   return (
-    <div className="flex items-start gap-4" data-testid="profile-avatar">
+    <div className="flex flex-wrap items-center gap-5" data-testid="profile-avatar">
       <AccountAvatar
         avatar={avatar.data}
         premium={isPremium}
@@ -82,14 +89,19 @@ export function ProfileAvatarField({ sourceKey }: ProfileAvatarFieldProps) {
         alt={t("profile.avatar.alt")}
         imageTestId="profile-avatar-image"
         placeholderTestId="profile-avatar-placeholder"
+        name={fullName === "" ? null : fullName}
       />
 
-      <div className="space-y-1">
-        <p className="text-caption text-ink-dim">{t("profile.avatar.label")}</p>
+      <div className="min-w-0">
+        <p className="text-label text-ink">{t("profile.avatar.label")}</p>
+        <p id={hintId} className="mt-1 text-caption text-ink-dim">
+          {t("profile.avatar.hint")}
+        </p>
 
         <Button
-          variant="secondary"
+          variant="outline"
           size="sm"
+          className="mt-3"
           disabled={busy}
           onClick={handleClick}
           aria-describedby={errorKey === null ? hintId : `${hintId} ${errorId}`}
@@ -104,15 +116,11 @@ export function ProfileAvatarField({ sourceKey }: ProfileAvatarFieldProps) {
               )}
         </Button>
 
-        <p id={hintId} className="text-caption text-ink-dim">
-          {t("profile.avatar.hint")}
-        </p>
-
         {errorKey !== null && (
           <p
             id={errorId}
             role="alert"
-            className="text-caption text-over-ink"
+            className="mt-2 text-caption text-over-ink"
             data-testid="profile-avatar-error"
           >
             {t(errorKey)}

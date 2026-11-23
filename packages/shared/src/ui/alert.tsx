@@ -8,13 +8,13 @@ import { cn } from "../lib/cn"
 // task. The `info` variant also carries the reassurance callouts ("Everything else works without
 // this"), which is why the brand tint is the default rather than an alarm colour.
 const alertVariants = cva(
-  "flex gap-2.5 border-l-3 px-card-pad py-3 text-caption text-ink-dim [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0",
+  "flex gap-3 rounded-lg border px-4 py-3 text-caption text-ink-dim [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        info: "border-brand bg-brand-soft",
-        caution: "border-caution bg-caution-bg",
-        over: "border-over bg-over-bg",
+        info: "border-transparent bg-glass [&_svg]:text-brand-ink",
+        caution: "border-caution/30 bg-caution-bg [&_svg]:text-caution-ink",
+        over: "border-over/30 bg-over-bg [&_svg]:text-over-ink",
       },
     },
     defaultVariants: {

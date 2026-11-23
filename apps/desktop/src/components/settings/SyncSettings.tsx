@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, AlertDescription, AlertTitle, Button, Card } from "@nixus/shared";
+import { Cloud } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle, Button } from "@nixus/shared";
 import { isSyncError, parseAppError, syncMessageKey } from "@/lib/appError";
 import { syncStateLabelKey } from "@/lib/syncState";
 import { useDuplicates, useRemoveDuplicates } from "@/hooks/useDuplicates";
@@ -93,116 +94,124 @@ export function SyncSettings() {
         });
 
   return (
-    <SettingsSection heading={t("sync.sectionHeading")}>
-      <Card flush data-testid="settings-sync">
-        <SettingRow
-          title={t("sync.diagnosticsTitle")}
-          description={
-            diagnostics.data === undefined ? (
-              t("sync.diagnosticsBody")
-            ) : (
-              <span data-testid="sync-diagnostics-output">
-                {t("sync.diagnosticsSummary", {
-                  state: t(syncStateLabelKey(diagnostics.data.state)),
-                  uploads: diagnostics.data.uploads,
-                  conflicts: diagnostics.data.conflicts,
-                  restores: diagnostics.data.restores,
-                  failures: diagnostics.data.failures,
-                  blocked: diagnostics.data.blocked,
-                })}
-              </span>
-            )
-          }
-          control={
-            <Button
-              variant="link"
-              onClick={() => setDiagnosticsRequested(true)}
-              disabled={diagnostics.isFetching}
-              aria-disabled={diagnostics.isFetching || undefined}
-              data-testid="sync-diagnostics-button"
-            >
-              {diagnostics.isFetching
-                ? t("sync.diagnosticsLoading")
-                : t("sync.diagnosticsAction")}
-            </Button>
-          }
-          data-testid="setting-sync-diagnostics"
-        />
+    <SettingsSection
+      heading={t("sync.sectionHeading")}
+      icon={Cloud}
+      data-testid="settings-sync"
+    >
+      <SettingRow
+        title={t("sync.diagnosticsTitle")}
+        description={
+          diagnostics.data === undefined ? (
+            t("sync.diagnosticsBody")
+          ) : (
+            <span data-testid="sync-diagnostics-output">
+              {t("sync.diagnosticsSummary", {
+                state: t(syncStateLabelKey(diagnostics.data.state)),
+                uploads: diagnostics.data.uploads,
+                conflicts: diagnostics.data.conflicts,
+                restores: diagnostics.data.restores,
+                failures: diagnostics.data.failures,
+                blocked: diagnostics.data.blocked,
+              })}
+            </span>
+          )
+        }
+        control={
+          <Button
+            variant="link"
+            onClick={() => setDiagnosticsRequested(true)}
+            disabled={diagnostics.isFetching}
+            aria-disabled={diagnostics.isFetching || undefined}
+            data-testid="sync-diagnostics-button"
+          >
+            {diagnostics.isFetching
+              ? t("sync.diagnosticsLoading")
+              : t("sync.diagnosticsAction")}
+          </Button>
+        }
+        data-testid="setting-sync-diagnostics"
+      />
 
-        <SettingRow
-          title={t("sync.diagnosticsExportTitle")}
-          description={
-            exportedPath === null ? (
-              t("sync.diagnosticsExportBody")
-            ) : (
-              <span data-testid="sync-diagnostics-export-path">
-                {t("sync.diagnosticsExportSaved", { path: exportedPath })}
-              </span>
-            )
-          }
-          control={
+      <SettingRow
+        title={t("sync.diagnosticsExportTitle")}
+        description={
+          exportedPath === null ? (
+            t("sync.diagnosticsExportBody")
+          ) : (
+            <span data-testid="sync-diagnostics-export-path">
+              {t("sync.diagnosticsExportSaved", { path: exportedPath })}
+            </span>
+          )
+        }
+        control={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportDiagnostics}
+            disabled={exportDiagnostics.isPending}
+            aria-disabled={exportDiagnostics.isPending || undefined}
+            data-testid="sync-diagnostics-export-button"
+          >
+            {exportDiagnostics.isPending
+              ? t("sync.diagnosticsExporting")
+              : t("sync.diagnosticsExportAction")}
+          </Button>
+        }
+        data-testid="setting-sync-diagnostics-export"
+      />
+
+      <SettingRow
+        title={t("sync.duplicatesTitle")}
+        description={<span data-testid="sync-duplicates-output">{duplicatesDescription}</span>}
+        control={
+          duplicatesRequested && found !== undefined && found.total > 0 ? (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleRemoveDuplicates}
+              disabled={removeDuplicates.isPending}
+              aria-disabled={removeDuplicates.isPending || undefined}
+              data-testid="sync-duplicates-remove-button"
+            >
+              {removeDuplicates.isPending
+                ? t("sync.duplicatesRemoving")
+                : t("sync.duplicatesRemove", { count: found.total })}
+            </Button>
+          ) : (
             <Button
               variant="outline"
-              onClick={handleExportDiagnostics}
-              disabled={exportDiagnostics.isPending}
-              aria-disabled={exportDiagnostics.isPending || undefined}
-              data-testid="sync-diagnostics-export-button"
+              size="sm"
+              onClick={handleLookForDuplicates}
+              disabled={duplicates.isFetching}
+              aria-disabled={duplicates.isFetching || undefined}
+              data-testid="sync-duplicates-check-button"
             >
-              {exportDiagnostics.isPending
-                ? t("sync.diagnosticsExporting")
-                : t("sync.diagnosticsExportAction")}
+              {duplicates.isFetching
+                ? t("sync.duplicatesChecking")
+                : t("sync.duplicatesCheck")}
             </Button>
-          }
-          data-testid="setting-sync-diagnostics-export"
-        />
+          )
+        }
+        data-testid="setting-sync-duplicates"
+      />
 
-        <SettingRow
-          title={t("sync.duplicatesTitle")}
-          description={<span data-testid="sync-duplicates-output">{duplicatesDescription}</span>}
-          control={
-            duplicatesRequested && found !== undefined && found.total > 0 ? (
-              <Button
-                variant="destructive"
-                onClick={handleRemoveDuplicates}
-                disabled={removeDuplicates.isPending}
-                aria-disabled={removeDuplicates.isPending || undefined}
-                data-testid="sync-duplicates-remove-button"
-              >
-                {removeDuplicates.isPending
-                  ? t("sync.duplicatesRemoving")
-                  : t("sync.duplicatesRemove", { count: found.total })}
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                onClick={handleLookForDuplicates}
-                disabled={duplicates.isFetching}
-                aria-disabled={duplicates.isFetching || undefined}
-                data-testid="sync-duplicates-check-button"
-              >
-                {duplicates.isFetching
-                  ? t("sync.duplicatesChecking")
-                  : t("sync.duplicatesCheck")}
-              </Button>
-            )
-          }
-          data-testid="setting-sync-duplicates"
-        />
-
-        {statusError !== null && (
+      {statusError !== null && (
+        <div className="px-card-pad py-4">
           <Alert variant="over" data-testid="sync-status-error">
             <AlertTitle>{t("sync.problemTitle")}</AlertTitle>
             <AlertDescription>{statusError}</AlertDescription>
           </Alert>
-        )}
+        </div>
+      )}
 
-        {error !== null && (
+      {error !== null && (
+        <div className="px-card-pad py-4">
           <Alert variant="over" data-testid="sync-action-error">
             {error}
           </Alert>
-        )}
-      </Card>
-
+        </div>
+      )}
     </SettingsSection>
   );
 }

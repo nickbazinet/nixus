@@ -3,13 +3,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { Car, LayoutDashboard } from "lucide-react";
 import { SegmentedNav, SegmentedNavItem, focusRing } from "@nixus/shared";
 import { cn } from "@/lib/utils";
-import { MonthNavigator } from "@/components/budget/MonthNavigator";
-import { usePeriod } from "@/hooks/usePeriod";
-import {
-  DESTINATIONS,
-  PERIOD_AWARE_DESTINATIONS,
-  isDestinationActive,
-} from "@/lib/navigation";
+import { DESTINATIONS, isDestinationActive } from "@/lib/navigation";
 import { useAgents } from "@/lib/agents";
 
 const carNavItems = [
@@ -17,12 +11,14 @@ const carNavItems = [
   { to: "/car/garage", labelKey: "nav.maintenanceGarage", icon: Car },
 ] as const;
 
-// DESIGN.md {components.destination-active}: a 2px brand underline, four destinations, never more.
-// The transparent border on the inactive state keeps items from shifting a pixel when activated.
+// Four destinations, never more, as underlined tabs on a hairline rule: the active one is set in ink
+// and carries the brand-gradient bar. The bar is a pseudo-element overlapping the rule by 1px, so
+// activating a destination never shifts the row. Sub-surfaces sit beneath as soft pills.
 function destinationClass(active: boolean) {
   return cn(
-    "flex min-h-target-min items-center whitespace-nowrap border-b-2 px-3 py-2.5 text-label no-underline transition-colors",
-    active ? "border-brand text-brand-ink" : "border-transparent text-ink-dim hover:text-ink",
+    "relative -mb-px flex min-h-target-min items-center whitespace-nowrap px-5 pt-2 pb-3.5 font-display text-[17px] font-semibold no-underline transition-colors",
+    "after:absolute after:inset-x-0 after:bottom-0 after:h-[3px] after:rounded-full",
+    active ? "text-ink after:bg-button-gradient" : "text-ink-dim hover:text-ink",
     focusRing
   );
 }
@@ -30,20 +26,17 @@ function destinationClass(active: boolean) {
 function FinanceNav() {
   const { t } = useTranslation();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { year, month, setPeriod } = usePeriod();
 
   const active = DESTINATIONS.find((d) => isDestinationActive(d, pathname));
   const subSurfaces = active?.children ?? [];
-  const showsPeriod = PERIOD_AWARE_DESTINATIONS.some((to) => to === active?.to);
 
   return (
-    <div className="shrink-0">
+    <div className="mb-section-gap flex shrink-0 flex-col gap-4">
       <nav
         aria-label={t("nav.financeNav")}
-        className={cn(
-          "flex items-center gap-1 bg-chrome px-page-x",
-          subSurfaces.length === 0 && "border-b border-line"
-        )}
+        // `overflow-y-hidden` because the tabs' -1px overlap of the rule would otherwise count as
+        // vertical overflow and paint a stray scrollbar thumb at the strip's right edge.
+        className="flex items-end gap-2 overflow-x-auto overflow-y-hidden border-b border-line [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {DESTINATIONS.map((destination) => {
           const isActive = isDestinationActive(destination, pathname);
@@ -63,17 +56,13 @@ function FinanceNav() {
             </Link>
           );
         })}
-
-        <span className="flex-1" />
-
-        {/* The period is rendered exactly once, here, for every destination that reads it. */}
-        {showsPeriod && (
-          <MonthNavigator selectedYear={year} selectedMonth={month} onChange={setPeriod} />
-        )}
       </nav>
 
       {subSurfaces.length > 0 && (
-        <SegmentedNav aria-label={t(`${active?.labelKey ?? "nav.financeNav"}`)}>
+        <SegmentedNav
+          variant="pills"
+          aria-label={t(`${active?.labelKey ?? "nav.financeNav"}`)}
+        >
           {subSurfaces.map((sub) => (
             <SegmentedNavItem
               key={sub.to}
@@ -98,7 +87,7 @@ export function DestinationNav() {
   // segmented sub-nav case. Finance is the only module with destinations.
   if (pathname.startsWith("/car")) {
     return (
-      <SegmentedNav aria-label={t("nav.carNav")} className="shrink-0">
+      <SegmentedNav aria-label={t("nav.carNav")} className="mb-section-gap shrink-0">
         {carNavItems.map((item) => (
           <SegmentedNavItem
             key={item.to}
@@ -110,7 +99,7 @@ export function DestinationNav() {
             }
             render={<Link to={item.to} activeOptions={{ exact: item.to === "/car" }} />}
           >
-            <item.icon className="size-4 shrink-0" aria-hidden="true" />
+            <item.icon className="icon-gradient size-4 shrink-0" aria-hidden="true" />
             {t(item.labelKey)}
           </SegmentedNavItem>
         ))}
@@ -129,9 +118,15 @@ export function DestinationNav() {
     return null;
   }
 
+  // The onboarding wizard and the account profile are not Finance surfaces: Finance pills above
+  // them would claim a destination the user is not in.
+  if (pathname.startsWith("/onboarding") || pathname.startsWith("/profile")) {
+    return null;
+  }
+
   if (pathname.startsWith("/ai")) {
     return (
-      <SegmentedNav aria-label={t("nav.aiNav")} className="shrink-0">
+      <SegmentedNav aria-label={t("nav.aiNav")} className="mb-section-gap shrink-0">
         {agents.map((agent) => (
           <SegmentedNavItem
             key={agent.id}
@@ -139,7 +134,7 @@ export function DestinationNav() {
             active={pathname === `/ai/${agent.id}`}
             render={<Link to="/ai/$agentId" params={{ agentId: agent.id }} />}
           >
-            <agent.icon className="size-4 shrink-0" aria-hidden="true" />
+            <agent.icon className="icon-gradient size-4 shrink-0" aria-hidden="true" />
             {t(agent.nameKey)}
           </SegmentedNavItem>
         ))}

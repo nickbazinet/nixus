@@ -19,7 +19,11 @@ export function PillTabs<T extends string>({
   "data-testid": testId,
 }: PillTabsProps<T>) {
   return (
-    <div className="flex gap-1" data-slot="pill-tabs" data-testid={testId}>
+    <div
+      className="inline-flex gap-1 rounded-full bg-track p-1"
+      data-slot="pill-tabs"
+      data-testid={testId}
+    >
       {options.map((option) => (
         <button
           key={option}
@@ -27,10 +31,10 @@ export function PillTabs<T extends string>({
           aria-pressed={value === option}
           onClick={() => onChange(option)}
           className={cn(
-            "inline-flex min-h-target-min items-center rounded-md px-3 py-1 text-label transition-colors",
+            "inline-flex min-h-target-min items-center rounded-full px-3.5 py-1 text-label transition-colors",
             value === option
-              ? "bg-brand text-brand-on"
-              : "text-ink-dim hover:bg-hover hover:text-ink",
+              ? "bg-card text-brand-ink shadow-[0_1px_3px_rgba(18,18,42,0.12)]"
+              : "text-ink-dim hover:text-ink",
             focusRing
           )}
           data-testid={testId ? `${testId}-${option}` : undefined}

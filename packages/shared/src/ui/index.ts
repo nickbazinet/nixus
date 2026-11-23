@@ -56,8 +56,11 @@ export {
   DropdownMenuSubContent,
 } from "./dropdown-menu";
 export { EmptyState } from "./empty-state";
+export { Eyebrow } from "./eyebrow";
 export type { EmptyStateProps } from "./empty-state";
 export { focusRing } from "./focus";
+export { IconChip, IconGradientDefs } from "./icon-chip";
+export type { IconChipProps } from "./icon-chip";
 export { Input } from "./input";
 export { Label } from "./label";
 export { Meter } from "./meter";

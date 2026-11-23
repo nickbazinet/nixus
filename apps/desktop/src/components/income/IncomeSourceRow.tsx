@@ -21,9 +21,9 @@ import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import type { IncomeSourceWithLastEntry } from "@/lib/types";
 import { EditIncomeSourceForm } from "./EditIncomeSourceForm";
 
-// An income type is an identity, not a status and not a chart series, so it gets one neutral badge
-// and the word does the work. Four hues pinned to four types is the pinned-colour anti-pattern —
-// and teal, sky, purple and slate carried no meaning a user could ever learn.
+// An income type is an identity, not a status and not a chart series, so it gets one soft brand
+// chip and the word does the work. Four hues pinned to four types is the pinned-colour
+// anti-pattern — and teal, sky, purple and slate carried no meaning a user could ever learn.
 const TYPE_LABEL_KEYS: Record<string, string> = {
   employment: "income.typeEmployment",
   freelance: "income.typeFreelance",
@@ -72,9 +72,9 @@ export function IncomeSourceRow({ source, yearTotalCents }: IncomeSourceRowProps
         aria-label={t("income.openSource", { name: source.name })}
         data-testid="income-source-row"
       >
-        <TableCell>{source.name}</TableCell>
+        <TableCell className="font-bold">{source.name}</TableCell>
         <TableCell>
-          <Badge variant="neutral">{t(typeLabelKey)}</Badge>
+          <Badge variant="brand">{t(typeLabelKey)}</Badge>
         </TableCell>
         <TableCell dim>
           {source.last_month ? formatMonth(source.last_month, i18n.language) : (

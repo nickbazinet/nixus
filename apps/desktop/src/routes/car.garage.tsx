@@ -7,6 +7,7 @@ import {
   Card,
   CardContent,
   EmptyState,
+  Eyebrow,
   Skeleton,
   SlideOver,
 } from "@nixus/shared";
@@ -31,6 +32,10 @@ export const Route = createFileRoute("/car/garage")({
   },
   component: GaragePage,
 });
+
+/** Main detail pane left, the garage list right-sized beside it — one measure for both tabs. */
+const GARAGE_GRID =
+  "grid gap-grid-gap lg:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] lg:items-start";
 
 function GaragePage() {
   const { t } = useTranslation();
@@ -84,10 +89,7 @@ function GaragePage() {
       />
 
       {isLoading && (
-        <div
-          className="grid gap-section-gap lg:grid-cols-[minmax(240px,300px)_1fr]"
-          data-testid="garage-skeleton"
-        >
+        <div className={GARAGE_GRID} data-testid="garage-skeleton">
           {/* One vehicle card's worth of lines. A first fetch cannot know how many cars are in the
               garage, and guessing high is what makes the list jump when the data lands. */}
           <Card size="sm">
@@ -112,7 +114,7 @@ function GaragePage() {
               title={t("maintenance.emptyTitle")}
               description={t("maintenance.emptyHelper")}
               action={
-                <Button onClick={() => setShowForm(true)}>
+                <Button size="lg" onClick={() => setShowForm(true)}>
                   {t("maintenance.onboarding.heroCta")}
                 </Button>
               }
@@ -122,11 +124,11 @@ function GaragePage() {
       )}
 
       {!isLoading && vehicles && vehicles.length > 0 && (
-        <div
-          className="grid gap-section-gap lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start"
-          data-testid="garage-layout"
-        >
-          <div className="flex flex-col gap-2" data-testid="garage-vehicle-list">
+        <div className={GARAGE_GRID} data-testid="garage-layout">
+          <div className="flex flex-col gap-3" data-testid="garage-vehicle-list">
+            <Eyebrow className="px-1">
+              {t("maintenance.v2.garageListTitle")}
+            </Eyebrow>
             {vehicles.map((vehicleWithTasks) => (
               <GarageVehicleRow
                 key={vehicleWithTasks.vehicle.id}

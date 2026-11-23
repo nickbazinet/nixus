@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { Card } from "@nixus/shared";
+import { Car } from "lucide-react";
+import { Card, IconChip } from "@nixus/shared";
 import { MaintenanceStatusBadge } from "@/components/maintenance/MaintenanceStatusBadge";
 import { OdometerUpdateForm } from "@/components/maintenance/OdometerUpdateForm";
 import {
@@ -11,6 +12,7 @@ import {
   getWorstStatus,
 } from "@/lib/maintenanceUtils";
 import type { VehicleWithTasks } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 interface GarageVehicleRowProps {
   vehicleWithTasks: VehicleWithTasks;
@@ -36,7 +38,12 @@ export function GarageVehicleRow({
       interactive
       // Brand carries selection because brand means action; it never means "on track" here — the
       // vehicle's own state is the status badge.
-      className={selected ? "border-brand bg-brand-soft" : undefined}
+      className={cn(
+        "gap-0 px-4 transition-colors",
+        selected
+          ? "border-brand bg-brand-soft hover:bg-brand-soft"
+          : "hover:border-line-strong"
+      )}
       render={
         <button
           type="button"
@@ -47,24 +54,26 @@ export function GarageVehicleRow({
       data-testid={`garage-vehicle-row-${vehicle.id}`}
       data-selected={selected ? "true" : "false"}
     >
-      <div className="flex flex-col gap-2 px-3 text-left">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-h3 text-ink">{displayName}</h3>
-            {subtitle && (
-              <p className="truncate text-caption text-ink-dim">{subtitle}</p>
-            )}
-          </div>
-          <MaintenanceStatusBadge status={worstStatus} />
+      <div className="flex flex-col gap-3 text-left">
+        <div className="flex items-start gap-3">
+          <IconChip icon={Car} size="sm" tone={selected ? "card" : "soft"} />
+          <h3 className="min-w-0 flex-1 font-display text-h3 text-ink">
+            {displayName}
+          </h3>
         </div>
+
+        {subtitle && (
+          <p className="truncate text-caption text-ink-dim">{subtitle}</p>
+        )}
 
         {/* No stopPropagation here: the odometer control stops its own events, and swallowing them
             for the whole band made the middle of the card a dead zone that never selected. */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
           <OdometerUpdateForm
             vehicleId={vehicle.id}
             odometerKm={vehicle.odometer_km}
           />
+          <MaintenanceStatusBadge status={worstStatus} />
         </div>
 
         {urgentTask ? (

@@ -13,6 +13,11 @@ interface MeterProps extends Omit<React.ComponentProps<"div">, "children"> {
   label: string
   /** Spoken instead of the raw percentage — "3.2 of 6 months covered" rather than "53". */
   valueText?: string
+  /**
+   * Fill colour (any CSS colour, typically `var(--chart-n)` for a category). Defaults to brand. The
+   * figure or badge beside the meter still carries any status — a colour is never the only signal.
+   */
+  color?: string
 }
 
 // 7px track, brand fill, pill ends. Never a drag target: if that ever changes, the hit area must
@@ -31,6 +36,7 @@ function Meter({
   max = 100,
   label,
   valueText,
+  color,
   className,
   ...props
 }: MeterProps) {
@@ -47,13 +53,13 @@ function Meter({
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuetext={valueText}
-      className={cn("h-[7px] w-full overflow-hidden rounded-full bg-track", className)}
+      className={cn("h-2 w-full overflow-hidden rounded-full bg-track", className)}
       {...props}
     >
       <div
         data-slot="meter-fill"
         className="h-full rounded-full bg-brand transition-[width] duration-300"
-        style={{ width: `${percent}%` }}
+        style={{ width: `${percent}%`, backgroundColor: color }}
       />
     </div>
   )

@@ -130,16 +130,16 @@ async function setupSeededDashboard(page: Page) {
  * lands here as a failure by design: re-copy from tokens.css :root, do not
  * relax the assertion. */
 const SPINE_LIGHT = {
-  bg: '#F1F5F9',
+  bg: '#F8FBFF',
   card: '#FFFFFF',
-  ink: '#0F172A',
-  'ink-dim': '#576578',
-  line: '#E2E8F0',
-  brand: '#5E78ED',
-  'brand-on': '#0B1020',
-  good: '#047857',
-  caution: '#A16207',
-  over: '#BE123C',
+  ink: '#12122A',
+  'ink-dim': '#545B70',
+  line: '#E3E8F3',
+  brand: '#4F63DB',
+  'brand-on': '#FFFFFF',
+  good: '#0E8C72',
+  caution: '#B45309',
+  over: '#C2410C',
 } as const;
 
 test('spine colour tokens reach the document root', async ({ page }) => {
@@ -273,12 +273,14 @@ test('no surface renders banned 10px or 11px text', async ({ page }) => {
   expect(offenders).toEqual([]);
 });
 
-test('cards carry no shadow', async ({ page }) => {
+test('only the featured card carries a shadow', async ({ page }) => {
   await page.goto('/');
   await page.waitForLoadState('networkidle');
 
+  // Depth is the hairline plus the page -> card tonal step. The one exception is the featured
+  // card's violet halo, which marks the figure that answers the surface's question.
   const shadowed = await page.evaluate(() =>
-    [...document.querySelectorAll('[data-slot="card"]')]
+    [...document.querySelectorAll('[data-slot="card"]:not([data-tone="featured"])')]
       .filter((el) => {
         const shadow = getComputedStyle(el).boxShadow;
         return shadow !== 'none' && shadow.length > 0;

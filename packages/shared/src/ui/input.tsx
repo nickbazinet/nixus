@@ -20,7 +20,7 @@ function Input({
       data-slot="input"
       data-money={money || undefined}
       className={cn(
-        "h-8 min-h-target-min w-full min-w-0 rounded-sm border border-line-strong bg-card px-2.5 py-1 text-body text-ink transition-colors file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-label file:text-ink placeholder:text-ink-faint disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-line disabled:text-ink-disabled aria-disabled:cursor-not-allowed aria-disabled:border-line aria-disabled:text-ink-disabled aria-invalid:border-over",
+        "h-9 min-h-target-min w-full min-w-0 rounded-sm border border-line-strong bg-card px-3 py-1 text-body text-ink transition-colors file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-label file:text-ink placeholder:text-ink-faint disabled:pointer-events-none disabled:cursor-not-allowed disabled:border-line disabled:text-ink-disabled aria-disabled:cursor-not-allowed aria-disabled:border-line aria-disabled:text-ink-disabled aria-invalid:border-over",
         money && "money text-right",
         focusRing,
         className

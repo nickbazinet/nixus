@@ -5,6 +5,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import type { Components, Options } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { Download, RefreshCw } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -13,7 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@nixus/shared";
-import { Button, Meter, focusRing } from "@nixus/shared";
+import { Button, IconChip, Meter, focusRing } from "@nixus/shared";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -106,13 +107,16 @@ export function UpdateChecker() {
         * path, whatever the body happens to contain. */}
       <DialogContent showCloseButton={stage === "available"} initialFocus={dismissRef}>
         <DialogHeader>
-          <DialogTitle>
-            {stage === "ready"
-              ? t("update.restarting")
-              : stage === "downloading"
-                ? t("update.downloading")
-                : `${t("update.available")} — v${update.version}`}
-          </DialogTitle>
+          <div className="flex items-center gap-3">
+            <IconChip icon={stage === "available" ? Download : RefreshCw} size="sm" />
+            <DialogTitle>
+              {stage === "ready"
+                ? t("update.restarting")
+                : stage === "downloading"
+                  ? t("update.downloading")
+                  : `${t("update.available")} — v${update.version}`}
+            </DialogTitle>
+          </div>
           {/* Two elements, not one. The scroll box owns the keyboard affordance and needs a name, but
             * an aria-label on the aria-describedby target REPLACES the description — the dialog would
             * announce "Update available" instead of the changelog (measured). So the labelled region
@@ -142,14 +146,14 @@ export function UpdateChecker() {
         </DialogHeader>
 
         {stage === "downloading" && (
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1.5">
             {/* The meter is never the only indicator: the percentage below it is the paired figure. */}
             <Meter
               value={progress}
               label={t("update.downloading")}
               valueText={`${progress}%`}
             />
-            <span className="text-right text-caption text-ink-dim">{progress}%</span>
+            <span className="money text-right text-caption text-ink-dim">{progress}%</span>
           </div>
         )}
 

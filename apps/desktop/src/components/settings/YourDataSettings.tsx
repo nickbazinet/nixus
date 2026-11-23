@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Alert, AlertTitle, AlertDescription, Button, Card } from "@nixus/shared";
+import { Database, LayoutTemplate, RotateCcw } from "lucide-react";
+import { Alert, AlertTitle, AlertDescription, Button } from "@nixus/shared";
 import {
   useApplySystemTemplate,
   useExportBudgetTemplate,
@@ -148,149 +149,144 @@ export function YourDataSettings() {
   };
 
   return (
-    <div className="space-y-section-gap" data-testid="settings-your-data">
-      <div>
-        <h2 className="text-h1 text-ink">{t("settings.yourDataTitle")}</h2>
-        <p className="mt-1 text-caption text-ink-dim">
-          {t("settings.yourDataDescription")}
-        </p>
-      </div>
-
+    <div className="flex flex-col gap-grid-gap" data-testid="settings-your-data">
       {error !== null && (
         <Alert variant="over" data-testid="your-data-error">
           {error}
         </Alert>
       )}
 
-      <SettingsSection heading={t("settings.sectionBackup")}>
-        <Card flush>
-          <SettingRow
-            title={t("settings.backupSaveTitle")}
-            description={t("settings.backupSaveBody")}
-            control={
-              <Button
-                onClick={handleSaveCopy}
-                disabled={busy}
-                aria-disabled={busy || undefined}
-                data-testid="your-data-save-copy"
-              >
-                {saving ? t("settings.backupSaving") : t("settings.backupSaveAction")}
-              </Button>
-            }
-            data-testid="setting-backup"
-          />
-          <SettingRow
-            title={t("settings.dataLocationTitle")}
-            description={t("settings.dataLocationUnknown")}
-            data-testid="setting-data-location"
-          />
-        </Card>
+      <SettingsSection
+        heading={t("settings.sectionBackup")}
+        icon={Database}
+        description={t("settings.yourDataDescription")}
+      >
+        <SettingRow
+          title={t("settings.backupSaveTitle")}
+          description={t("settings.backupSaveBody")}
+          control={
+            <Button
+              onClick={handleSaveCopy}
+              disabled={busy}
+              aria-disabled={busy || undefined}
+              data-testid="your-data-save-copy"
+            >
+              {saving ? t("settings.backupSaving") : t("settings.backupSaveAction")}
+            </Button>
+          }
+          data-testid="setting-backup"
+        />
+        <SettingRow
+          title={t("settings.dataLocationTitle")}
+          description={t("settings.dataLocationUnknown")}
+          data-testid="setting-data-location"
+        />
       </SettingsSection>
 
       {/* The warning sits above the control rather than inside a confirm dialog after the fact:
         * "restore replaces everything" is the thing to know before choosing a file, not after. */}
-      <SettingsSection heading={t("settings.sectionRestore")}>
-        <Card flush>
+      <SettingsSection heading={t("settings.sectionRestore")} icon={RotateCcw}>
+        <div className="px-card-pad pt-4">
           <Alert variant="caution">
             <AlertTitle>{t("settings.restoreWarningTitle")}</AlertTitle>
             <AlertDescription>{t("settings.restoreWarningBody")}</AlertDescription>
           </Alert>
-          <SettingRow
-            title={t("settings.restoreTitle")}
-            description={t("settings.restoreBody")}
-            control={
-              <Button
-                variant="outline"
-                onClick={handleRestore}
-                disabled={busy}
-                aria-disabled={busy || undefined}
-                data-testid="your-data-restore"
-              >
-                {restoring ? t("settings.restoring") : t("settings.restoreAction")}
-              </Button>
-            }
-            data-testid="setting-restore"
-          />
-        </Card>
+        </div>
+        <SettingRow
+          title={t("settings.restoreTitle")}
+          description={t("settings.restoreBody")}
+          control={
+            <Button
+              variant="outline"
+              onClick={handleRestore}
+              disabled={busy}
+              aria-disabled={busy || undefined}
+              data-testid="your-data-restore"
+            >
+              {restoring ? t("settings.restoring") : t("settings.restoreAction")}
+            </Button>
+          }
+          data-testid="setting-restore"
+        />
       </SettingsSection>
 
-      <SettingsSection heading={t("settings.sectionTemplates")}>
-        <Card flush>
-          {starterTemplates.isPending ? (
-            <SettingRow
-              title={t("settings.templateStarterLoading")}
-              data-testid="setting-template-starter-loading"
-            />
-          ) : starters.length === 0 ? (
-            <SettingRow
-              title={t("settings.templateStarterUnavailable")}
-              data-testid="setting-template-starter-empty"
-            />
-          ) : (
-            starters.map((template) => {
-              const copy = STARTER_TEMPLATE_COPY[template.id];
-              return (
-                <SettingRow
-                  key={template.id}
-                  title={copy === undefined ? template.name : t(copy.nameKey)}
-                  description={
-                    copy === undefined
-                      ? (template.description ?? undefined)
-                      : t(copy.bodyKey)
-                  }
-                  control={
-                    <Button
-                      onClick={() => handleApplyStarterTemplate(template.id)}
-                      disabled={busy}
-                      aria-disabled={busy || undefined}
-                      data-testid={`your-data-template-apply-${template.id}`}
-                    >
-                      {applyingId === template.id
-                        ? t("settings.templateStarterApplying")
-                        : t("settings.templateStarterApplyAction")}
-                    </Button>
-                  }
-                  data-testid={`setting-template-starter-${template.id}`}
-                />
-              );
-            })
-          )}
+      <SettingsSection heading={t("settings.sectionTemplates")} icon={LayoutTemplate}>
+        {starterTemplates.isPending ? (
           <SettingRow
-            title={t("settings.templateExportTitle")}
-            description={t("settings.templateExportBody")}
-            control={
-              <Button
-                onClick={handleExportTemplate}
-                disabled={busy}
-                aria-disabled={busy || undefined}
-                data-testid="your-data-template-export"
-              >
-                {exportTemplate.isPending
-                  ? t("settings.templateExporting")
-                  : t("settings.templateExportAction")}
-              </Button>
-            }
-            data-testid="setting-template-export"
+            title={t("settings.templateStarterLoading")}
+            data-testid="setting-template-starter-loading"
           />
+        ) : starters.length === 0 ? (
           <SettingRow
-            title={t("settings.templateImportTitle")}
-            description={t("settings.templateImportBody")}
-            control={
-              <Button
-                variant="outline"
-                onClick={handleImportTemplate}
-                disabled={busy}
-                aria-disabled={busy || undefined}
-                data-testid="your-data-template-import"
-              >
-                {importTemplate.isPending
-                  ? t("settings.templateImporting")
-                  : t("settings.templateImportAction")}
-              </Button>
-            }
-            data-testid="setting-template-import"
+            title={t("settings.templateStarterUnavailable")}
+            data-testid="setting-template-starter-empty"
           />
-        </Card>
+        ) : (
+          starters.map((template) => {
+            const copy = STARTER_TEMPLATE_COPY[template.id];
+            return (
+              <SettingRow
+                key={template.id}
+                title={copy === undefined ? template.name : t(copy.nameKey)}
+                description={
+                  copy === undefined
+                    ? (template.description ?? undefined)
+                    : t(copy.bodyKey)
+                }
+                control={
+                  <Button
+                    variant="outline"
+                    onClick={() => handleApplyStarterTemplate(template.id)}
+                    disabled={busy}
+                    aria-disabled={busy || undefined}
+                    data-testid={`your-data-template-apply-${template.id}`}
+                  >
+                    {applyingId === template.id
+                      ? t("settings.templateStarterApplying")
+                      : t("settings.templateStarterApplyAction")}
+                  </Button>
+                }
+                data-testid={`setting-template-starter-${template.id}`}
+              />
+            );
+          })
+        )}
+        <SettingRow
+          title={t("settings.templateExportTitle")}
+          description={t("settings.templateExportBody")}
+          control={
+            <Button
+              variant="outline"
+              onClick={handleExportTemplate}
+              disabled={busy}
+              aria-disabled={busy || undefined}
+              data-testid="your-data-template-export"
+            >
+              {exportTemplate.isPending
+                ? t("settings.templateExporting")
+                : t("settings.templateExportAction")}
+            </Button>
+          }
+          data-testid="setting-template-export"
+        />
+        <SettingRow
+          title={t("settings.templateImportTitle")}
+          description={t("settings.templateImportBody")}
+          control={
+            <Button
+              variant="outline"
+              onClick={handleImportTemplate}
+              disabled={busy}
+              aria-disabled={busy || undefined}
+              data-testid="your-data-template-import"
+            >
+              {importTemplate.isPending
+                ? t("settings.templateImporting")
+                : t("settings.templateImportAction")}
+            </Button>
+          }
+          data-testid="setting-template-import"
+        />
       </SettingsSection>
 
       <SyncSettings />

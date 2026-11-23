@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { TagIcon } from "lucide-react";
 import {
   Badge,
   Card,
@@ -21,6 +22,7 @@ import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import {
   filterByCostGroup,
   insightsLocale,
+  rampColor,
   type CostGroup,
 } from "./insights-chart";
 import { CostGroupTabs } from "./CostGroupTabs";
@@ -91,6 +93,15 @@ export function CategorySpendTable({
   const [sortDirection, setSortDirection] =
     useState<Exclude<SortDirection, "none">>("descending");
 
+  // Swatch colours follow each category's rank by spend across the WHOLE window, so re-sorting the
+  // table or switching cost group never repaints a category a different colour.
+  const colorByCategoryId = useMemo(() => {
+    const ranked = [...categoryCompare].sort((a, b) => b.avg_cents - a.avg_cents);
+    return new Map(
+      ranked.map((row, rank) => [row.category_id, rampColor(rank)] as const),
+    );
+  }, [categoryCompare]);
+
   const rows = useMemo(() => {
     const filtered = filterByCostGroup(categoryCompare, costGroup);
     filtered.sort((a, b) => compareRows(a, b, sortColumn));
@@ -116,7 +127,9 @@ export function CategorySpendTable({
     return (
       <Card data-testid="category-spend-table">
         <CardHeader>
-          <CardTitle>{t("spendingTrends.avgSpendByCategory")}</CardTitle>
+          <CardTitle icon={TagIcon}>
+            {t("spendingTrends.avgSpendByCategory")}
+          </CardTitle>
         </CardHeader>
         <div className="px-card-pad">
           <Skeleton rows={categoryCompare.length || FALLBACK_SKELETON_ROWS} />
@@ -128,12 +141,14 @@ export function CategorySpendTable({
   return (
     <Card flush data-testid="category-spend-table">
       <CardHeader className="pt-card-pad">
-        <CardTitle>{t("spendingTrends.avgSpendByCategory")}</CardTitle>
-        <CardDescription>
+        <CardTitle icon={TagIcon}>
+          {t("spendingTrends.avgSpendByCategory")}
+        </CardTitle>
+        <CardDescription className="pl-13">
           {t("insights.avgOverMonths", { months: monthCount })}
         </CardDescription>
       </CardHeader>
-      <div className="px-card-pad pt-3">
+      <div className="px-card-pad pt-4">
         <CostGroupTabs
           value={costGroup}
           onChange={setCostGroup}
@@ -155,7 +170,7 @@ export function CategorySpendTable({
           }
         />
       ) : (
-        <Table className="mt-3 [&_tbody_tr:last-child>td]:border-b-0">
+        <Table className="mt-4 [&_tbody_tr:last-child>td]:border-b-0 [&_td:first-child]:pl-card-pad [&_td:last-child]:pr-card-pad [&_th:first-child]:pl-card-pad [&_th:last-child]:pr-card-pad">
           <TableHeader>
             <TableRow>
               <TableHead
@@ -198,7 +213,21 @@ export function CategorySpendTable({
                 key={row.category_id}
                 data-testid="category-compare-row"
               >
-                <TableCell>{row.category_name}</TableCell>
+                <TableCell>
+                  <span className="flex items-center gap-2.5">
+                    <span
+                      aria-hidden="true"
+                      className="size-1.5 shrink-0 rounded-full"
+                      style={{
+                        background:
+                          colorByCategoryId.get(row.category_id) ?? rampColor(0),
+                      }}
+                    />
+                    <span className="font-semibold text-ink">
+                      {row.category_name}
+                    </span>
+                  </span>
+                </TableCell>
                 <TableCell numeric>
                   <Money cents={row.avg_cents} locale={locale} {...maskProps} />
                 </TableCell>
@@ -213,13 +242,8 @@ export function CategorySpendTable({
                     <span className="text-ink-dim">{"\u2014"}</span>
                   )}
                 </TableCell>
-                <TableCell numeric dim data-testid="category-delta">
-                  {row.delta_pct === null
-                    ? "\u2014"
-                    : t("insights.deltaPercent", {
-                        sign: row.delta_pct > 0 ? "+" : "",
-                        percent: row.delta_pct,
-                      })}
+                <TableCell numeric>
+                  <DeltaCell deltaPct={row.delta_pct} />
                 </TableCell>
                 <TableCell>
                   <Badge
@@ -235,5 +259,35 @@ export function CategorySpendTable({
         </Table>
       )}
     </Card>
+  );
+}
+
+/**
+ * Over target is the charte's `over` ink with a ▲, under it the `good` ink with a ▼ — and the
+ * glyph sits OUTSIDE the figure so the percentage reads as a percentage on its own.
+ */
+function DeltaCell({ deltaPct }: { deltaPct: number | null }) {
+  const { t } = useTranslation();
+
+  if (deltaPct === null) {
+    return <span className="text-ink-dim">{"\u2014"}</span>;
+  }
+
+  const tone =
+    deltaPct > 0 ? "text-over-ink" : deltaPct < 0 ? "text-good-ink" : "text-ink-dim";
+  const glyph = deltaPct > 0 ? "\u25B2" : deltaPct < 0 ? "\u25BC" : "\u2022";
+
+  return (
+    <span className={`inline-flex items-baseline gap-1 ${tone}`}>
+      <span aria-hidden="true" className="text-[10px] leading-none">
+        {glyph}
+      </span>
+      <span data-testid="category-delta">
+        {t("insights.deltaPercent", {
+          sign: deltaPct > 0 ? "+" : "",
+          percent: deltaPct,
+        })}
+      </span>
+    </span>
   );
 }

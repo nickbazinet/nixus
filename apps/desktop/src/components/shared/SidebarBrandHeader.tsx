@@ -1,6 +1,5 @@
-import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
-import { NixusLogo, focusRing } from "@nixus/shared";
+import { BrandMark } from "./BrandMark";
 
 const RAIL_COLLAPSED_KEY = "rail-collapsed";
 
@@ -35,47 +34,27 @@ export function railLabelClass(expanded: boolean) {
   );
 }
 
-/**
- * The rail's header: the brand lockup, the collapse control it doubles as, and the premium label.
- *
- * `collapsed` is a separate prop from `expanded` rather than derived from it, because they answer
- * different questions: `expanded` includes a transient hover or focus-within, while the accessible
- * name has to describe what the click will actually persist.
- */
-export function SidebarBrandHeader({
-  expanded,
-  collapsed,
-  onToggle,
-}: {
-  expanded: boolean;
-  collapsed: boolean;
-  onToggle: () => void;
-}) {
-  const { t } = useTranslation();
-
+/** The rail's header: the brand lockup. Collapsing is done by the toggle at the rail's bottom. */
+export function SidebarBrandHeader({ expanded }: { expanded: boolean }) {
   return (
-    /* Rail mark — one of only three places the identity gradient is permitted. */
-    <button
-      type="button"
-      onClick={onToggle}
+    /* Rail mark — the charte's glossy N, the same artwork nixusapp.com uses, with the wordmark. */
+    <div
       className={cn(
-        "flex h-14 w-full min-h-target-min items-center px-3 text-left",
-        focusRing
+        "flex h-[76px] w-full shrink-0 items-center",
+        expanded ? "px-6" : "justify-center px-0"
       )}
-      aria-label={collapsed ? t("sidebar.expandSidebar") : t("sidebar.collapseSidebar")}
-      aria-expanded={expanded}
     >
-      <span className="flex min-w-0 items-end">
-        <NixusLogo className="h-8 w-8 shrink-0" />
+      <span className="flex min-w-0 items-center gap-2">
+        <BrandMark />
         <span
           className={cn(
-            "-ml-0.5 mb-px bg-logo-gradient bg-clip-text text-h2 leading-none text-transparent",
+            "font-display text-[22px] leading-none font-bold tracking-[-0.02em] text-ink",
             railLabelClass(expanded)
           )}
         >
-          ixus
+          Nixus
         </span>
       </span>
-    </button>
+    </div>
   );
 }

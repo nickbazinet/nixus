@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Upload, FileCheck } from "lucide-react";
-import { Alert, Card, CardContent, focusRing } from "@nixus/shared";
+import { Alert, Card, CardContent, IconChip, focusRing } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 
 const MAX_CLIPBOARD_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -325,13 +325,8 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
     return (
       <Card data-testid="upload-zone-success">
         <CardContent className="flex flex-col items-center justify-center gap-3 py-8 text-center">
-          <span
-            aria-hidden="true"
-            className="grid size-10 place-items-center rounded-lg bg-brand-soft text-brand-ink"
-          >
-            <FileCheck className="size-5" />
-          </span>
-          <p className="text-h2 text-ink" data-testid="validated-file-name">
+          <IconChip icon={FileCheck} size="lg" />
+          <p className="font-display text-h1 text-ink" data-testid="validated-file-name">
             {validatedFile.map((f) => f.file_name).join(", ")}
           </p>
           <p className="text-caption text-ink-dim">{t("import.fileValidated")}</p>
@@ -350,10 +345,10 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
         aria-describedby="upload-zone-hint"
         data-testid="upload-zone"
         className={cn(
-          "flex min-h-target-min cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-10 text-center transition-colors",
+          "flex min-h-target-min cursor-pointer flex-col items-center justify-center gap-4 rounded-xl border border-dashed px-8 py-12 text-center transition-colors",
           dragOver
-            ? "border-brand bg-brand-soft"
-            : "border-line-strong bg-card hover:bg-hover",
+            ? "border-feature bg-brand-soft/60"
+            : "border-line-strong bg-card hover:border-brand/40 hover:bg-hover",
           focusRing
         )}
         onClick={handleClick}
@@ -364,26 +359,32 @@ export function UploadZone({ onValidated }: UploadZoneProps) {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <span
-          aria-hidden="true"
-          className={cn(
-            "grid size-10 place-items-center rounded-lg",
-            dragOver ? "bg-card text-brand-ink" : "bg-track text-ink-dim"
-          )}
-        >
-          <Upload className="size-5" />
-        </span>
-        <div>
-          <p className="text-h2 text-ink">
+        <IconChip
+          icon={Upload}
+          size="lg"
+          tone={dragOver ? "card" : "soft"}
+          className="rounded-2xl"
+        />
+        <div className="max-w-md">
+          <p className="font-display text-h1 text-ink">
             {validating ? t("import.validating") : t("import.dropHere")}
           </p>
-          <p id="upload-zone-hint" className="mt-1 text-caption text-ink-dim">
+          <p id="upload-zone-hint" className="mt-2 text-caption text-ink-dim">
             {t("import.orClickToBrowse")}
           </p>
         </div>
+        {/* A styled span, not a nested `<button>`: the zone itself is the control (and carries the
+          * accessible name), so a real button inside it would be a button inside a button. Clicking
+          * the pill still opens the picker, because the click lands on the zone. */}
+        <span
+          aria-hidden="true"
+          className="inline-flex h-9 items-center rounded-full border border-line-strong bg-card px-4 text-label text-ink"
+        >
+          {t("import.v2.chooseFile")}
+        </span>
       </div>
       {error && (
-        <Alert variant="over" className="mt-3" data-testid="upload-error">
+        <Alert variant="over" className="mt-4" data-testid="upload-error">
           {error}
         </Alert>
       )}

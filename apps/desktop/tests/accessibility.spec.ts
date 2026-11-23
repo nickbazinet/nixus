@@ -170,7 +170,7 @@ test.describe("Accessibility", () => {
 
     // The rail is the second stop, never the first.
     await page.keyboard.press("Tab");
-    await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeFocused();
+    await expect(page.getByTestId("rail-home")).toBeFocused();
   });
 
   test("activating the skip link moves focus to the surface heading", async ({ page }) => {
@@ -332,45 +332,48 @@ test.describe("Accessibility", () => {
     await expect(dialog).toHaveAttribute("aria-label", "Quick chat");
   });
 
-  test("account rows are table rows described by their column headers", async ({ page }) => {
+  test("account rows are list items whose own text carries their meaning", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/wealth/accounts");
 
-    // The account list is a real table now, so a row's meaning comes from its cells plus the
-    // column headers — ARIA forbids naming a row with aria-label, which is what this used to assert.
-    const table = page.getByRole("table");
-    await expect(table).toBeVisible();
-    for (const head of ["Account", "Last updated", "Balance"]) {
-      await expect(table.getByRole("columnheader", { name: head, exact: true })).toBeVisible();
-    }
+    // The account list is one card per group now rather than one table for all of them, so a
+    // row's meaning comes from its own text — name, institution, type, balance — plus the group
+    // card that names it and sums it. ARIA forbids naming a row with aria-label, and the same
+    // holds for the list item that replaced it.
+    const group = page.getByTestId("account-type-group");
+    await expect(group).toBeVisible();
+    await expect(group).toContainText("Cash");
+
+    const list = group.getByRole("list", { name: "Cash" });
+    await expect(list).toBeVisible();
 
     const row = page.getByTestId("account-row");
     await expect(row).toHaveCount(1);
-    await expect(row).toHaveRole("row");
     expect(await row.getAttribute("aria-label")).toBeNull();
-
-    const nameCell = row.getByRole("cell").first();
-    await expect(nameCell).toContainText("Main Chequing");
-    await expect(nameCell).toContainText("TD Bank");
+    await expect(row).toContainText("Main Chequing");
+    await expect(row).toContainText("TD Bank");
+    await expect(row).toContainText("Chequing");
     await expect(row.getByTestId("account-balance")).toContainText("$");
   });
 
-  test("asset rows are table rows described by their column headers", async ({ page }) => {
+  test("asset cards name what they are and what they are worth", async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/wealth/assets");
 
-    const table = page.getByRole("table");
-    await expect(table).toBeVisible();
-    for (const head of ["Asset", "Last updated", "Value"]) {
-      await expect(table.getByRole("columnheader", { name: head, exact: true })).toBeVisible();
-    }
+    // One card per thing owned, grouped under a heading that names the type: the value is the
+    // card's own figure rather than a cell that needs a column header to mean anything.
+    const group = page.getByTestId("asset-type-group");
+    await expect(group).toBeVisible();
+    await expect(
+      group.getByRole("heading", { name: "Real estate", exact: true })
+    ).toBeVisible();
 
     const row = page.getByTestId("asset-row");
     await expect(row).toHaveCount(1);
-    await expect(row).toHaveRole("row");
     expect(await row.getAttribute("aria-label")).toBeNull();
-
-    await expect(row.getByRole("cell").first()).toContainText("Family Home");
+    await expect(
+      row.getByRole("heading", { name: "Family Home", exact: true })
+    ).toBeVisible();
     await expect(row.getByTestId("asset-value")).toContainText("$");
   });
 

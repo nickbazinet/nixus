@@ -49,6 +49,27 @@ const NO_INCOME_HISTORY: SummaryFixture = {
 };
 
 /**
+ * Groups open closed unless they need attention or are still empty, so a spec that arrives at an
+ * already-built budget opens them all before reading category rows.
+ */
+async function expandAllGroups(page: Page) {
+  const toggle = page.getByTestId("expand-all-groups");
+  await expect(toggle).toBeVisible();
+  if ((await toggle.textContent())?.includes("Expand all")) await toggle.click();
+  await expect(toggle).toHaveText("Collapse all");
+}
+
+/**
+ * Reorder handles and delete controls live in edit mode: outside it the budget reads as a plan.
+ * Edit mode also opens every group.
+ */
+async function enterEditMode(page: Page) {
+  const toggle = page.getByTestId("edit-budget-toggle");
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+}
+
+/**
  * Sets up Tauri IPC mocks so invoke() calls work in a browser context.
  * Maintains in-memory state for budget groups and categories.
  */
@@ -754,8 +775,9 @@ test.describe("Budget Page", () => {
       page.getByTestId("budget-category-row").getByText("Housing")
     ).toBeVisible();
 
-    // Hover-only affordances are banned: the delete control has a visible resting state, so it is
-    // reachable without a pointer ever entering the row.
+    // Hover-only affordances are banned: in edit mode the delete control has a visible resting
+    // state, so it is reachable without a pointer ever entering the row.
+    await enterEditMode(page);
     const deleteButton = page.getByTestId("delete-category-button");
     await expect(deleteButton).toBeVisible();
     await deleteButton.click();
@@ -848,17 +870,19 @@ test.describe("Budget Page", () => {
     await expect(fill).toBeAttached();
     expect(await fill.evaluate((el) => (el as HTMLElement).style.width)).toBe("0%");
 
-    // The meter fill is brand at every ratio: hue on the bar would be a second, weaker status
-    // channel. Status is the badge and the dot next to it, which carry shape as well as hue.
-    const [fillColor, brandColor] = await fill.evaluate((el) => {
+    // The fill carries the category's own chart colour (the charte's "bars coloured by category",
+    // orange only when it goes over), so what is asserted is that it is the first ramp step for
+    // the first row — not brand, and never the status channel on its own. Status is the figure and
+    // the dot next to it, which carry shape and words as well as hue.
+    const [fillColor, rampColor] = await fill.evaluate((el) => {
       const probe = document.createElement("div");
-      probe.className = "bg-brand";
+      probe.style.backgroundColor = "var(--chart-1)";
       el.ownerDocument.body.append(probe);
-      const brand = getComputedStyle(probe).backgroundColor;
+      const ramp = getComputedStyle(probe).backgroundColor;
       probe.remove();
-      return [getComputedStyle(el).backgroundColor, brand];
+      return [getComputedStyle(el).backgroundColor, ramp];
     });
-    expect(fillColor).toBe(brandColor);
+    expect(fillColor).toBe(rampColor);
 
     await expect(page.getByTestId("status-badge")).toHaveAttribute(
       "data-variant",
@@ -869,7 +893,7 @@ test.describe("Budget Page", () => {
     ).toHaveAttribute("data-status", "under");
   });
 
-  test("spent / target reads as a slash on screen and \"of\" to a screen reader", async ({
+  test("spent and target read \"of\" on screen and to a screen reader alike", async ({
     page,
   }) => {
     // Create a group and category
@@ -889,8 +913,8 @@ test.describe("Budget Page", () => {
     const spentTarget = page.getByTestId("spent-target");
     await expect(spentTarget).toBeVisible();
 
-    // The separator is split across two channels: a sighted reader gets the "/" glyph, a screen
-    // reader gets the word, and neither gets both. Asserting raw textContent would see the pair.
+    // One word for both channels: the charte writes "$598.36 of $850", so the separator a sighted
+    // reader sees is the same one a screen reader speaks, and neither hears it twice.
     const { seen, spoken } = await spentTarget.evaluate((el) => {
       const strip = (selector: string) => {
         const clone = el.cloneNode(true) as HTMLElement;
@@ -899,7 +923,7 @@ test.describe("Budget Page", () => {
       };
       return { seen: strip(".sr-only"), spoken: strip('[aria-hidden="true"]') };
     });
-    expect(seen).toBe("$0.00 / $700.00");
+    expect(seen).toBe("$0.00 of $700.00");
     expect(spoken).toBe("$0.00 of $700.00");
 
     // Money is tabular Inter — monospace on a financial figure was the retired convention.
@@ -1040,6 +1064,7 @@ test.describe("Budget Page", () => {
     ).toBeVisible();
 
     // Try to delete the group
+    await enterEditMode(page);
     await page.getByTestId("delete-group-button").click();
 
     // Should show inline error, NOT a dialog
@@ -1070,6 +1095,7 @@ test.describe("Budget Page", () => {
   // webview never fires a `drop` for), so tests drive it with real mouse coordinates rather
   // than Playwright's dragTo() helper.
   async function dragCategoryTo(page: Page, fromIndex: number, toIndex: number) {
+    await enterEditMode(page);
     const source = page.getByTestId("category-drag-handle").nth(fromIndex);
     const sourceBox = await source.boundingBox();
     const targetRow = page.getByTestId("budget-status-row").nth(toIndex);
@@ -1118,6 +1144,7 @@ test.describe("Budget Page", () => {
     await createGroup(page, "Essentials");
     await createCategory(page, "Housing", "700");
 
+    await enterEditMode(page);
     await expect(page.getByTestId("category-drag-handle")).toHaveCount(0);
   });
 
@@ -1187,6 +1214,7 @@ test.describe("Budget Page", () => {
     toGroup: string,
     dropOn: "top" | "bottom"
   ) {
+    await enterEditMode(page);
     const source = await groupCard(page, fromGroup);
     const row = source
       .getByTestId("budget-status-row")
@@ -1300,6 +1328,7 @@ test.describe("Budget above recorded income", () => {
     await expect(page.getByTestId("budget-summary-strip")).toBeVisible();
     if (fixture.seedTargetCents > 0) {
       await expect(page.getByTestId("budget-overall-progress")).toBeVisible();
+      await expandAllGroups(page);
     }
   }
 
@@ -1663,6 +1692,7 @@ test.describe("A savings project's budget line", () => {
     await setupTauriMock(page, { ...NO_INCOME_HISTORY, seedTargetCents: 50_000, linked });
     await page.goto("/spending/budget");
     await expect(page.getByTestId("budget-summary-strip")).toBeVisible();
+    await expandAllGroups(page);
   }
 
   function linkedRow(page: Page) {

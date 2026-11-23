@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { PiggyBank } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -188,7 +189,9 @@ export function SavingsCapacityPanel() {
   return (
     <Card data-testid="savings-capacity-panel">
       <CardHeader>
-        <CardTitle>{t("financialHealth.savings.title")}</CardTitle>
+        <CardTitle icon={PiggyBank}>
+          {t("financialHealth.savings.title")}
+        </CardTitle>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-5">

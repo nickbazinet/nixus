@@ -97,6 +97,7 @@ const REQUIRED_KEYS = [
   "profile.consent.decline",
   "profile.consent.pending",
   "profile.consent.failed",
+  "profile.v2.consentEyebrow",
   "profile.validation.birthDateFormat",
   "profile.validation.birthDateFuture",
   "profile.validation.birthDateTooYoung",

@@ -8,6 +8,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -16,9 +17,14 @@ import {
 import { Money } from "@nixus/shared";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import {
+  BAR_FILL,
+  BAR_FILL_OPACITY_COMPLETE,
+  CHART_AXIS_TICK,
+  CHART_GRID_STROKE,
   insightsLocale,
   makeAxisTickFormatter,
   rampColor,
+  SERIES_COLOR,
 } from "@/components/spending-trends/insights-chart";
 import { ChartTableEquivalent } from "./ChartTableEquivalent";
 
@@ -131,11 +137,11 @@ function ChartFrame({ props, children }: { props: SeriesChartProps; children: Re
   );
 }
 
-const AXIS_TICK = { fontSize: 13, fill: "var(--ink-faint)" };
+const AXIS_TICK = CHART_AXIS_TICK;
 
 function axes(formatTick: (cents: number) => string) {
   return [
-    <CartesianGrid key="grid" stroke="var(--line)" strokeDasharray="3 3" vertical={false} />,
+    <CartesianGrid key="grid" stroke={CHART_GRID_STROKE} vertical={false} />,
     <XAxis
       key="x"
       dataKey="label"
@@ -145,13 +151,23 @@ function axes(formatTick: (cents: number) => string) {
       minTickGap={16}
       interval="preserveStartEnd"
     />,
-    <YAxis key="y" tickFormatter={formatTick} tick={AXIS_TICK} tickLine={false} axisLine={false} width={78} />,
+    <YAxis key="y" tickFormatter={formatTick} tick={AXIS_TICK} tickLine={false} axisLine={false} width={72} />,
   ];
+}
+
+/**
+ * A series' colour. A widget the user gave an accent keeps it; otherwise a lone line or area takes
+ * the charte's violet trend colour, and several series walk the rank ramp from the start.
+ */
+function seriesColor(index: number, count: number, accent: number | undefined): string {
+  if (accent !== undefined) return rampColor(index, accent);
+  return count === 1 ? SERIES_COLOR.projected : rampColor(index);
 }
 
 /** `linear`, never smoothed: a curve would invent movement between two recorded points. */
 export function LineSeriesChart(props: SeriesChartProps) {
   const { points, formatTick, locale } = useChartScale(props.rows, props.series);
+  const lastLabel = points[points.length - 1]?.label;
   return (
     <ChartFrame props={props}>
         <LineChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
@@ -162,13 +178,27 @@ export function LineSeriesChart(props: SeriesChartProps) {
               key={s.key}
               type="linear"
               dataKey={s.key}
-              stroke={rampColor(index, props.accent)}
-              strokeWidth={2}
-              dot={{ r: 3, fill: rampColor(index, props.accent), stroke: "var(--card)", strokeWidth: 1 }}
-              activeDot={{ r: 5, fill: rampColor(index, props.accent), stroke: "var(--card)", strokeWidth: 2 }}
+              stroke={seriesColor(index, props.series.length, props.accent)}
+              strokeWidth={2.5}
+              dot={false}
+              activeDot={{ r: 4, fill: seriesColor(index, props.series.length, props.accent), stroke: "var(--card)", strokeWidth: 2 }}
               isAnimationActive={false}
             />
           ))}
+          {/* A dot on the last point only: it marks where the series stops, and a dot per point
+            * turns a trend into a scatter plot. */}
+          {lastLabel !== undefined &&
+            props.series.map((s, index) => (
+              <ReferenceDot
+                key={`last-${s.key}`}
+                x={lastLabel}
+                y={Number(points[points.length - 1][s.key] ?? 0)}
+                r={4}
+                fill={seriesColor(index, props.series.length, props.accent)}
+                stroke="var(--card)"
+                strokeWidth={2}
+              />
+            ))}
         </LineChart>
     </ChartFrame>
   );
@@ -176,9 +206,10 @@ export function LineSeriesChart(props: SeriesChartProps) {
 
 export function BarSeriesChart(props: SeriesChartProps) {
   const { points, formatTick, locale } = useChartScale(props.rows, props.series);
+  const single = props.series.length === 1;
   return (
     <ChartFrame props={props}>
-        <BarChart data={points} barCategoryGap="18%">
+        <BarChart data={points} barCategoryGap="22%">
           {axes(formatTick)}
           <Tooltip
             cursor={{ fill: "var(--hover)" }}
@@ -188,8 +219,11 @@ export function BarSeriesChart(props: SeriesChartProps) {
             <Bar
               key={s.key}
               dataKey={s.key}
-              fill={rampColor(index, props.accent)}
-              radius={[4, 4, 2, 2]}
+              // One series is the surface's own measure and takes the soft brand fill; several
+              // series have to be told apart, which is what the rank ramp is for.
+              fill={single ? BAR_FILL : seriesColor(index, props.series.length, props.accent)}
+              fillOpacity={single ? BAR_FILL_OPACITY_COMPLETE : 1}
+              radius={[6, 6, 0, 0]}
               maxBarSize={64}
               isAnimationActive={false}
             />
@@ -203,14 +237,15 @@ export function AreaSeriesChart(props: SeriesChartProps) {
   const { points, formatTick, locale } = useChartScale(props.rows, props.series);
   // Per-instance, so two area charts on one surface never resolve each other's gradient.
   const gradientPrefix = useId().replace(/:/g, "");
+  const lastLabel = points[points.length - 1]?.label;
   return (
     <ChartFrame props={props}>
-        <AreaChart data={points}>
+        <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
           <defs>
             {props.series.map((s, index) => (
               <linearGradient key={s.key} id={`${gradientPrefix}-${index}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={rampColor(index, props.accent)} stopOpacity={0.32} />
-                <stop offset="95%" stopColor={rampColor(index, props.accent)} stopOpacity={0} />
+                <stop offset="0%" stopColor={seriesColor(index, props.series.length, props.accent)} stopOpacity={0.32} />
+                <stop offset="95%" stopColor={seriesColor(index, props.series.length, props.accent)} stopOpacity={0} />
               </linearGradient>
             ))}
           </defs>
@@ -221,12 +256,26 @@ export function AreaSeriesChart(props: SeriesChartProps) {
               key={s.key}
               type="linear"
               dataKey={s.key}
-              stroke={rampColor(index, props.accent)}
-              strokeWidth={2}
+              stroke={seriesColor(index, props.series.length, props.accent)}
+              strokeWidth={2.5}
               fill={`url(#${gradientPrefix}-${index})`}
+              dot={false}
+              activeDot={{ r: 4, fill: seriesColor(index, props.series.length, props.accent), stroke: "var(--card)", strokeWidth: 2 }}
               isAnimationActive={false}
             />
           ))}
+          {lastLabel !== undefined &&
+            props.series.map((s, index) => (
+              <ReferenceDot
+                key={`last-${s.key}`}
+                x={lastLabel}
+                y={Number(points[points.length - 1][s.key] ?? 0)}
+                r={4}
+                fill={seriesColor(index, props.series.length, props.accent)}
+                stroke="var(--card)"
+                strokeWidth={2}
+              />
+            ))}
         </AreaChart>
     </ChartFrame>
   );

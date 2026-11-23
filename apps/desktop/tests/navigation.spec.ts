@@ -70,8 +70,11 @@ test('clicking each destination navigates to its first sub-surface with active s
 }) => {
   await page.goto('/');
 
-  const brand = await resolveToken(page, '--brand');
-  const brandInk = await resolveToken(page, '--brand-ink');
+  const ink = await resolveToken(page, '--ink');
+  const inkDim = await resolveToken(page, '--ink-dim');
+  // The active bar is a pseudo-element, which `toHaveCSS` cannot read.
+  const barImage = (link: ReturnType<Page['locator']>) =>
+    link.evaluate((el) => getComputedStyle(el, '::after').backgroundImage);
 
   for (const item of destinations) {
     const nav = financeNav(page);
@@ -82,21 +85,19 @@ test('clicking each destination navigates to its first sub-surface with active s
     await expect(page.locator('h1')).toHaveText(item.heading);
 
     // Semantics first, then the painted result: reading computed style means a token rename
-    // cannot pass a class-string check while the user sees no active destination. `toHaveCSS`
-    // retries, which is required because the underline is a colour transition.
+    // cannot pass a class-string check while the user sees no active destination. The active
+    // destination is set in ink and carries the brand-gradient bar.
     await expect(link).toHaveAttribute('aria-current', 'page');
-    await expect(link).toHaveCSS('color', brandInk);
-    await expect(link).toHaveCSS('border-bottom-color', brand);
-    await expect(link).toHaveCSS('border-bottom-width', '2px');
+    await expect(link).toHaveCSS('color', ink);
+    await expect.poll(() => barImage(link)).toMatch(/linear-gradient/);
 
     for (const other of destinations.filter((i) => i.label !== item.label)) {
       const inactive = nav.getByRole('link', { name: other.label, exact: true });
       await expect(inactive).not.toHaveAttribute('aria-current', 'page');
-
-      // The inactive underline is transparent rather than absent, so activating a destination
-      // cannot shift the strip by a pixel.
-      await expect(inactive).toHaveCSS('border-bottom-color', 'rgba(0, 0, 0, 0)');
-      await expect(inactive).toHaveCSS('border-bottom-width', '2px');
+      await expect(inactive).toHaveCSS('color', inkDim);
+      // The bar is absent rather than removed from layout, so activating a destination cannot
+      // shift the strip by a pixel.
+      expect(await barImage(inactive)).toBe('none');
     }
   }
 });
@@ -165,15 +166,18 @@ test('activating a sub-nav item moves aria-current to it', async ({ page }) => {
   ).toHaveAttribute('aria-current', 'page');
 });
 
-test('the global period control is rendered once, by the nav, only where it applies', async ({
+test('the global period control is rendered once, by the page header, only where it applies', async ({
   page,
 }) => {
-  // Period-aware destinations get exactly one month control and it lives in the destination nav —
-  // no surface renders its own any more.
+  // Period-aware destinations get exactly one month control and it sits beside the surface title,
+  // rendered by the shared PageHeader — no surface renders its own.
   for (const path of ['/', '/spending/budget', '/insights/trends']) {
     await page.goto(path);
     await expect(page.getByTestId('month-navigator')).toHaveCount(1);
-    await expect(financeNav(page).getByTestId('month-navigator')).toHaveCount(1);
+    await expect(financeNav(page).getByTestId('month-navigator')).toHaveCount(0);
+    await expect(
+      page.locator('main').getByTestId('month-navigator')
+    ).toHaveCount(1);
     await expect(page.getByTestId('prev-month-button')).toHaveCount(1);
     await expect(page.getByTestId('next-month-button')).toHaveCount(1);
     await expect(page.getByTestId('current-month-label')).toHaveCount(1);

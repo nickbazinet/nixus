@@ -9,11 +9,11 @@ import {
   Button,
   Card,
   CardContent,
-  NixusLogo,
   Separator,
   Skeleton,
   focusRing,
 } from "@nixus/shared";
+import { BrandMark } from "@/components/shared/BrandMark";
 import { SURFACE_HEADING_ID } from "@/components/shared/PageHeader";
 import {
   useActiveDatasetId,
@@ -196,18 +196,17 @@ export function DatasetPicker({ defaultLocalOpen }: DatasetPickerProps) {
             )}
           >
             <span aria-hidden="true">{t("datasets.titleLead")}</span>
-            {/* The brand as the app draws it everywhere else — the mark followed by "ixus", the same
-              * lockup, kerning and gradient clip the rail wordmark uses — so the first screen of a
-              * launch shows the identity instead of spelling it out. This is the one surface heading
-              * permitted to carry the logo gradient, recorded as such in DESIGN.md.
+            {/* The brand as the app draws it everywhere else — the glossy mark followed by "ixus",
+              * the same lockup, kerning and gradient clip the rail wordmark uses — so the first
+              * screen of a launch shows the identity instead of spelling it out. This is the one
+              * surface heading permitted to carry the logo gradient, recorded as such in DESIGN.md.
               *
-              * The mark's artboard leaves ~3px of empty box under its glyph, so `items-end` alone
-              * drops the "N" below the greeting's baseline. `mb-0.5` lifts it by that slack minus the
-              * font's descender space, which is what seats the glyph on the same baseline as
-              * "Welcome to" and "ixus" — half the lift this started with, which rode too high. */}
+              * `BrandMark` is the charte's glossy artwork (`components/shared/BrandMark.tsx`), the
+              * same file nixusapp.com and the account site serve, so the launch screen and the web
+              * identity cannot drift. `mb-0.5` seats the glyph on the greeting's baseline. */}
             <span aria-hidden="true" className="flex items-end">
               <span data-testid="picker-brand-mark" className="mb-0.5 block size-8">
-                <NixusLogo className="size-full" />
+                <BrandMark className="size-full" />
               </span>
               <span className="-ml-0.5 bg-logo-gradient bg-clip-text leading-none text-transparent">
                 ixus

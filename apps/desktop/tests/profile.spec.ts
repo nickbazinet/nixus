@@ -916,10 +916,12 @@ test.describe("account menu hosted-AI entitlement", () => {
     await page.goto("/");
 
     const lockup = page.locator("aside button[aria-expanded]").first();
-    await expect(lockup.locator("svg")).toHaveCount(1);
+    // The rail mark is the charte's glossy `BrandMark` artwork now, not a drawn `<svg>`.
+    await expect(lockup.locator("img")).toHaveCount(1);
+    // The redesigned rail pairs the glossy mark with the full "Nixus" wordmark.
     expect(
       await lockup.evaluate((node) => (node.textContent ?? "").replace(/\s/g, ""))
-    ).toBe("ixus");
+    ).toBe("Nixus");
     await expect(page.getByTestId("sidebar-premium")).toHaveCount(0);
 
     const trigger = page.getByTestId("profile-menu-trigger");
@@ -3112,13 +3114,14 @@ test.describe("profile picture", () => {
  * unreadable at the 20px the placeholder glyph used to be, and the enlarged picture may not buy its
  * legibility by shrinking the target it sits in or by moving the search field beside it.
  *
- * Measured from the live layout, never from class names: `size-8` on the picture and `size-10` on
+ * Measured from the live layout, never from class names: `size-9` on the picture and `size-10` on
  * the button are two independent decisions in two different files, and a shared-package change to
  * the `icon` variant could satisfy both class assertions while producing a 28px face in a 32px
  * button. Only the box the browser actually resolved proves the result.
  */
 test.describe("account trigger geometry", () => {
-  const AVATAR_PX = 32;
+  // 36px: the redesign's gradient monogram needs the extra 4px for two legible initials.
+  const AVATAR_PX = 36;
   const MIN_TARGET_PX = 40;
 
   /** The rendered box of the trigger and whichever face it is currently painting. */

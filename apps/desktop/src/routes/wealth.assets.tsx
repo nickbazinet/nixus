@@ -1,40 +1,44 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Plus, Gem } from "lucide-react";
+import { ChartNoAxesColumn, CreditCard, Gem, House, Plus } from "lucide-react";
 import {
   Button,
   Card,
   CardContent,
+  CardHeader,
+  CardTitle,
   EmptyState,
-  formatMoney,
   Money,
   Skeleton,
   SlideOver,
-  Stat,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  formatMoney,
 } from "@nixus/shared";
+import { DonutBreakdown, type DonutItem } from "@/components/charts/DonutBreakdown";
+import { MetricTile } from "@/components/shared/MetricTile";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { AssetRow } from "@/components/assets/AssetRow";
 import { AddAssetForm } from "@/components/assets/AddAssetForm";
 import { EditAssetForm } from "@/components/assets/EditAssetForm";
 import { NetWorthBreakdownBar } from "@/components/net-worth/NetWorthBreakdownBar";
 import { RefreshStockPricesButton } from "@/components/assets/RefreshStockPricesButton";
+import { useAccounts } from "@/hooks/useAccounts";
 import { useAssets } from "@/hooks/useAssets";
 import { useCurrentNetWorth } from "@/hooks/useNetWorth";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
+import {
+  isLiabilityAccountType,
+  partitionAccounts,
+  sumBalanceCents,
+  sumLiabilityOwedCents,
+} from "@/lib/accountUtils";
 import {
   ASSET_TYPE_KEYS,
   buildAssetBreakdown,
   groupAssetsByType,
   STOCK_ASSET_TYPE,
 } from "@/lib/assetUtils";
-import type { PassiveAsset } from "@/lib/types";
+import type { Account, PassiveAsset } from "@/lib/types";
 
 export const Route = createFileRoute("/wealth/assets")({
   component: AssetsPage,
@@ -45,12 +49,21 @@ export const Route = createFileRoute("/wealth/assets")({
 // never faked against content the app already knows.
 const FALLBACK_SKELETON_ROWS = 3;
 
+/** The account types that are money you can spend today rather than money that is invested. */
+const CASH_TYPES = ["chequing", "savings"] as const;
+
+function isCashAccount(account: Account): boolean {
+  return (CASH_TYPES as readonly string[]).includes(account.account_type);
+}
+
 function AssetsPage() {
   const { t, i18n } = useTranslation();
   const maskProps = useMaskProps();
   const [showForm, setShowForm] = useState(false);
   const [editingAsset, setEditingAsset] = useState<PassiveAsset | null>(null);
   const { data: assets, isLoading } = useAssets();
+  const accountsQuery = useAccounts();
+  const accounts = accountsQuery.data ?? [];
   const netWorth = useCurrentNetWorth();
   const hasStock = useMemo(
     () => (assets ?? []).some((asset) => asset.asset_type === STOCK_ASSET_TYPE),
@@ -73,6 +86,41 @@ function AssetsPage() {
       ASSET_TYPE_KEYS[type] ? t(ASSET_TYPE_KEYS[type]) : type
     );
   }, [assets, t]);
+
+  // The accounts side of the picture, so "everything together" is the whole of what the user owns
+  // rather than only the half this surface edits.
+  const { cashCents, investmentsCents, owedCents } = useMemo(() => {
+    const { assetAccounts } = partitionAccounts(accounts);
+    return {
+      cashCents: sumBalanceCents(assetAccounts.filter(isCashAccount)),
+      investmentsCents: sumBalanceCents(
+        assetAccounts.filter((account) => !isCashAccount(account))
+      ),
+      owedCents: sumLiabilityOwedCents(
+        accounts.filter((account) => isLiabilityAccountType(account.account_type))
+      ),
+    };
+  }, [accounts]);
+
+  // Every holding in one donut: the asset types this surface owns, plus the two account groups.
+  const donutItems = useMemo<DonutItem[]>(() => {
+    const items: DonutItem[] = groupedAssets.map(([type, groupAssets]) => ({
+      key: `asset-${type}`,
+      label: ASSET_TYPE_KEYS[type] ? t(ASSET_TYPE_KEYS[type]) : type,
+      cents: groupAssets.reduce((sum, asset) => sum + asset.value_cents, 0),
+    }));
+    items.push({
+      key: "accounts-investments",
+      label: t("wealth.v2.accounts.investments"),
+      cents: investmentsCents,
+    });
+    items.push({
+      key: "accounts-cash",
+      label: t("wealth.v2.accounts.cash"),
+      cents: cashCents,
+    });
+    return items;
+  }, [groupedAssets, cashCents, investmentsCents, t]);
 
   const handleEdit = (asset: PassiveAsset) => {
     setShowForm(false);
@@ -136,12 +184,108 @@ function AssetsPage() {
 
       {!isLoading && assets && assets.length > 0 && (
         <div className="flex flex-col gap-section-gap">
-          <Stat
-            label={t("assets.totalLabel")}
-            value={formatMoney({ cents: grandTotal, locale: i18n.language })}
-            data-testid="assets-total"
-            {...maskProps}
-          />
+          <div className="grid gap-grid-gap md:grid-cols-3">
+            <MetricTile
+              featured
+              icon={House}
+              label={t("wealth.v2.assets.youOwn")}
+              value={
+                <Money
+                  cents={grandTotal}
+                  locale={i18n.language}
+                  {...maskProps}
+                />
+              }
+              caption={t("wealth.v2.assets.youOwnCaption")}
+              data-testid="assets-total"
+            />
+            <MetricTile
+              icon={ChartNoAxesColumn}
+              label={t("wealth.v2.accounts.haveCaption")}
+              value={
+                <Money
+                  cents={cashCents + investmentsCents}
+                  locale={i18n.language}
+                  {...maskProps}
+                />
+              }
+              caption={t("wealth.v2.assets.countedInNetWorth")}
+              data-testid="assets-accounts-total"
+            />
+            <MetricTile
+              icon={CreditCard}
+              label={t("wealth.v2.assets.owe")}
+              value={
+                <Money
+                  cents={owedCents}
+                  locale={i18n.language}
+                  sign="never"
+                  {...maskProps}
+                />
+              }
+              caption={t("wealth.v2.accounts.credit")}
+              data-testid="assets-owed-total"
+            />
+          </div>
+
+          <div className="grid items-start gap-grid-gap lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+            <div className="flex flex-col gap-grid-gap">
+              {groupedAssets.map(([type, groupAssets]) => {
+                const subtotal = groupAssets.reduce(
+                  (sum, a) => sum + a.value_cents,
+                  0
+                );
+                const typeLabel = ASSET_TYPE_KEYS[type]
+                  ? t(ASSET_TYPE_KEYS[type])
+                  : type;
+
+                return (
+                  <AssetTypeGroup
+                    key={type}
+                    typeLabel={typeLabel}
+                    subtotal={subtotal}
+                    groupAssets={groupAssets}
+                    compact={type === STOCK_ASSET_TYPE}
+                    onEdit={handleEdit}
+                  />
+                );
+              })}
+
+              <Button
+                variant="outline"
+                className="self-start"
+                onClick={openAddForm}
+                data-testid="assets-add-inline"
+              >
+                <Plus aria-hidden="true" />
+                {t("assets.addAsset")}
+              </Button>
+            </div>
+
+            <Card className="lg:sticky lg:top-grid-gap" data-testid="assets-donut">
+              <CardHeader>
+                <CardTitle icon={ChartNoAxesColumn}>
+                  {t("wealth.v2.assets.everythingTogether")}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <DonutBreakdown
+                  items={donutItems}
+                  centerLabel={t("wealth.v2.assets.grossLabel")}
+                  listLabel={t("wealth.v2.assets.everythingTogether")}
+                />
+              </CardContent>
+            </Card>
+          </div>
+
+          {breakdown.length > 0 && (
+            <div data-testid="assets-breakdown">
+              <NetWorthBreakdownBar
+                breakdown={breakdown}
+                titleKey="assets.breakdown"
+              />
+            </div>
+          )}
 
           {netWorth.data && grandTotal > 0 && (
             <p
@@ -167,51 +311,6 @@ function AssetsPage() {
               </Link>
             </p>
           )}
-
-          {breakdown.length > 0 && (
-            <div data-testid="assets-breakdown">
-              <NetWorthBreakdownBar
-                breakdown={breakdown}
-                titleKey="assets.breakdown"
-              />
-            </div>
-          )}
-
-          <Card flush data-testid="assets-list">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("assets.colAsset")}</TableHead>
-                  <TableHead>{t("assets.colUpdated")}</TableHead>
-                  <TableHead numeric>{t("assets.colValue")}</TableHead>
-                  <TableHead numeric>
-                    <span className="sr-only">{t("assets.colActions")}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {groupedAssets.map(([type, groupAssets]) => {
-                  const subtotal = groupAssets.reduce(
-                    (sum, a) => sum + a.value_cents,
-                    0
-                  );
-                  const typeLabel = ASSET_TYPE_KEYS[type]
-                    ? t(ASSET_TYPE_KEYS[type])
-                    : type;
-
-                  return (
-                    <AssetTypeGroup
-                      key={type}
-                      typeLabel={typeLabel}
-                      subtotal={subtotal}
-                      groupAssets={groupAssets}
-                      onEdit={handleEdit}
-                    />
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </Card>
         </div>
       )}
 
@@ -243,34 +342,46 @@ function AssetsPage() {
   );
 }
 
+/**
+ * The assets of one type, under a quiet header that names the type and sums it. The header is a
+ * label rather than a card of its own, so the asset cards below it stay the thing being read.
+ */
 function AssetTypeGroup({
   typeLabel,
   subtotal,
   groupAssets,
+  compact,
   onEdit,
 }: {
   typeLabel: string;
   subtotal: number;
   groupAssets: PassiveAsset[];
+  /** Holdings that can run to dozens share one card of dense lines instead of a card each. */
+  compact: boolean;
   onEdit: (asset: PassiveAsset) => void;
 }) {
   const { i18n } = useTranslation();
   const maskProps = useMaskProps();
 
   return (
-    <>
-      <TableRow data-testid="asset-type-group" className="bg-chrome">
-        <TableCell colSpan={2} className="text-label text-ink">
-          {typeLabel}
-        </TableCell>
-        <TableCell numeric dim>
+    <section className="flex flex-col gap-3" data-testid="asset-type-group">
+      <div className="flex items-baseline justify-between gap-3 px-1">
+        <h2 className="text-h3 text-ink-dim">{typeLabel}</h2>
+        <span className="money text-label font-bold text-ink-dim">
           <Money cents={subtotal} locale={i18n.language} {...maskProps} />
-        </TableCell>
-        <TableCell />
-      </TableRow>
-      {groupAssets.map((asset) => (
-        <AssetRow key={asset.id} asset={asset} onEdit={onEdit} />
-      ))}
-    </>
+        </span>
+      </div>
+      {compact ? (
+        <Card flush className="divide-y divide-line">
+          {groupAssets.map((asset) => (
+            <AssetRow key={asset.id} asset={asset} onEdit={onEdit} compact />
+          ))}
+        </Card>
+      ) : (
+        groupAssets.map((asset) => (
+          <AssetRow key={asset.id} asset={asset} onEdit={onEdit} />
+        ))
+      )}
+    </section>
   );
 }

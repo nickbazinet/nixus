@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { InfoIcon } from "lucide-react";
+import { InfoIcon, PercentIcon, SlidersHorizontalIcon } from "lucide-react";
 import {
   Alert,
   AlertDescription,
@@ -26,6 +26,9 @@ interface AssumptionsPanelProps {
   expenseMonthCount: number;
 }
 
+/** Scroll target for the "See all assumptions" pill in the summary card above. */
+export const ASSUMPTIONS_PANEL_ID = "projection-assumptions";
+
 const GROWTH_RATE_KEYS = [
   {
     categoryKey: "projection.tfsaRrspFhsa",
@@ -51,18 +54,26 @@ export function AssumptionsPanel({
   const leftOverCents = avgMonthlyIncomeCents - avgMonthlyExpenseCents;
 
   return (
-    <Card flush>
+    <Card
+      flush
+      id={ASSUMPTIONS_PANEL_ID}
+      tabIndex={-1}
+      className="scroll-mt-6"
+      data-testid="projection-assumptions"
+    >
       <CardHeader className="pt-card-pad">
-        <CardTitle>{t("projection.cashFlowAssumptions")}</CardTitle>
+        <CardTitle icon={SlidersHorizontalIcon}>
+          {t("projection.cashFlowAssumptions")}
+        </CardTitle>
       </CardHeader>
 
-      <Alert variant="info" icon={<InfoIcon />} className="mt-3">
+      <Alert variant="info" icon={<InfoIcon />} className="mx-card-pad mt-4">
         <AlertDescription>
           {t("projection.assumptionsExplainer")}
         </AlertDescription>
       </Alert>
 
-      <dl className="flex flex-col gap-2 p-card-pad text-body">
+      <dl className="flex flex-col p-card-pad text-body">
         <AssumptionRow
           term={t("projection.avgMonthlyIncome")}
           detail={
@@ -132,9 +143,11 @@ export function AssumptionsPanel({
       </dl>
 
       <CardHeader>
-        <CardTitle>{t("projection.growthRateAssumptions")}</CardTitle>
+        <CardTitle icon={PercentIcon}>
+          {t("projection.growthRateAssumptions")}
+        </CardTitle>
       </CardHeader>
-      <Table className="mt-2 [&_tbody_tr:last-child>td]:border-b-0">
+      <Table className="mt-2 [&_tbody_tr:last-child>td]:border-b-0 [&_td:first-child]:pl-card-pad [&_td:last-child]:pr-card-pad [&_th:first-child]:pl-card-pad [&_th:last-child]:pr-card-pad">
         <TableHeader>
           <TableRow>
             <TableHead>{t("common.category")}</TableHead>
@@ -150,7 +163,7 @@ export function AssumptionsPanel({
           ))}
         </TableBody>
       </Table>
-      <CardContent className="pb-card-pad">
+      <CardContent className="pb-card-pad pt-4">
         <p className="text-caption text-ink-faint">
           {t("projection.growthRateBasis")}
         </p>
@@ -171,7 +184,7 @@ function AssumptionRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4">
+    <div className="flex items-baseline justify-between gap-4 border-b border-line py-3 last:border-b-0">
       <div className="min-w-0">
         <dt className={emphasis ? "text-label text-ink" : "text-body text-ink-dim"}>
           {term}
@@ -180,9 +193,7 @@ function AssumptionRow({
           <p className="text-caption text-ink-faint">{detail}</p>
         ) : null}
       </div>
-      <dd className={emphasis ? "text-label text-ink" : "text-body text-ink"}>
-        {children}
-      </dd>
+      <dd className="money text-label font-bold text-ink">{children}</dd>
     </div>
   );
 }

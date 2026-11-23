@@ -1,31 +1,39 @@
 import { useMemo } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { ArrowRight, Car } from "lucide-react";
 import {
-  AttentionRow,
+  ArrowRight,
+  CalendarClock,
+  Car,
+  CircleAlert,
+  CircleCheck,
+  Clock,
+  ListChecks,
+  Wrench,
+} from "lucide-react";
+import {
   Button,
   Card,
+  CardAction,
   CardContent,
+  CardHeader,
+  CardTitle,
   EmptyState,
+  IconChip,
   Skeleton,
-  Stat,
-  SubStat,
-  buttonVariants,
-  focusRing,
 } from "@nixus/shared";
 import { CarOnboardingChecklist } from "@/components/maintenance/CarOnboardingChecklist";
 import { MaintenanceStatusBadge } from "@/components/maintenance/MaintenanceStatusBadge";
+import { InsightCallout } from "@/components/shared/InsightCallout";
+import { MetricTile } from "@/components/shared/MetricTile";
 import {
   formatNextDueLine,
+  formatOdometerKm,
   formatVehicleDisplayName,
-  getMaintenanceStatusAccentClass,
-  getMaintenanceStatusTone,
   getMaintenanceTaskLabel,
   summarizeMaintenanceFleet,
 } from "@/lib/maintenanceUtils";
 import type { MaintenanceTaskStatus, VehicleWithTasks } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 interface CarDashboardProps {
   vehicles: VehicleWithTasks[] | undefined;
@@ -33,32 +41,14 @@ interface CarDashboardProps {
   onAddVehicle: () => void;
 }
 
-const STATUS_INK: Record<MaintenanceTaskStatus, string> = {
-  overdue: "text-over-ink",
-  due: "text-caution-ink",
-  upcoming: "text-caution-ink",
-  ok: "text-ink",
+// The chip icon repeats the row's status in a second channel: three identical wrenches down the
+// list give the scan nothing, and the badge beside it stays the one that carries the words.
+const STATUS_ICON: Record<MaintenanceTaskStatus, typeof Wrench> = {
+  overdue: CircleAlert,
+  due: Clock,
+  upcoming: CalendarClock,
+  ok: CircleCheck,
 };
-
-function MetricCard({
-  title,
-  value,
-  hero = false,
-}: {
-  title: string;
-  value: string;
-  hero?: boolean;
-}) {
-  const Figure = hero ? Stat : SubStat;
-
-  return (
-    <Card interactive render={<Link to="/car/garage" />}>
-      <CardContent>
-        <Figure label={title} value={value} />
-      </CardContent>
-    </Card>
-  );
-}
 
 export function CarDashboard({
   vehicles,
@@ -78,18 +68,19 @@ export function CarDashboard({
         className="flex flex-col gap-grid-gap"
         data-testid="car-dashboard-skeleton"
       >
-        <div className="grid grid-cols-1 gap-grid-gap sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-grid-gap md:grid-cols-3">
           {[
-            t("maintenance.dashboard.metricNeedsAttention"),
-            t("maintenance.dashboard.metricVehicles"),
-            t("maintenance.dashboard.metricOnTrack"),
-          ].map((label) => (
-            <Card key={label}>
-              <CardContent className="flex flex-col gap-2">
-                <span className="text-caption text-ink-dim">{label}</span>
-                <Skeleton rows={1} className="max-w-24" />
-              </CardContent>
-            </Card>
+            {
+              icon: Wrench,
+              label: t("maintenance.dashboard.metricNeedsAttention"),
+            },
+            { icon: Car, label: t("maintenance.dashboard.metricVehicles") },
+            {
+              icon: CircleCheck,
+              label: t("maintenance.dashboard.metricOnTrack"),
+            },
+          ].map(({ icon, label }) => (
+            <MetricTile key={label} icon={icon} label={label} value="" isLoading />
           ))}
         </div>
         <Card>
@@ -111,6 +102,7 @@ export function CarDashboard({
             description={t("maintenance.onboarding.heroSubtitle")}
             action={
               <Button
+                size="lg"
                 onClick={onAddVehicle}
                 data-testid="car-onboarding-hero-cta"
               >
@@ -125,6 +117,23 @@ export function CarDashboard({
 
   if (!summary) return null;
 
+  const scheduledCount = vehicles.reduce(
+    (total, { tasks }) => total + tasks.length,
+    0
+  );
+  const fleetOdometerKm = vehicles.reduce(
+    (total, { vehicle }) => total + vehicle.odometer_km,
+    0
+  );
+  const odometerCaption =
+    summary.vehicleCount === 1
+      ? t("maintenance.v2.captionOdometer", {
+          km: formatOdometerKm(fleetOdometerKm),
+        })
+      : t("maintenance.v2.captionOdometerFleet", {
+          km: formatOdometerKm(fleetOdometerKm),
+        });
+
   const statusSubtitle =
     summary.needsAttentionCount === 0
       ? t("maintenance.dashboard.allUpToDate")
@@ -132,142 +141,178 @@ export function CarDashboard({
           count: summary.needsAttentionCount,
         });
 
+  const next = summary.topUrgent[0];
+
   return (
     <div className="flex flex-col gap-grid-gap" data-testid="car-dashboard">
       <CarOnboardingChecklist vehicles={vehicles} />
 
+      {/* The violet tile is the one that answers "does my car need anything" — the question this
+          surface exists for, and the only figure allowed to be loudest. */}
       <div
-        className="grid grid-cols-1 gap-grid-gap sm:grid-cols-3"
+        className="grid grid-cols-1 gap-grid-gap md:grid-cols-3"
         data-testid="car-dashboard-metrics"
       >
-        {/* The one text-display figure on this surface: "does my car need anything" is the question
-            the page exists to answer, so it is the only figure allowed to be loudest. */}
-        <MetricCard
-          hero
-          title={t("maintenance.dashboard.metricNeedsAttention")}
+        <MetricTile
+          featured
+          size="hero"
+          icon={Wrench}
+          label={t("maintenance.dashboard.metricNeedsAttention")}
           value={String(summary.needsAttentionCount)}
+          caption={t("maintenance.v2.captionOfScheduled", {
+            count: scheduledCount,
+          })}
+          href="/car/garage"
+          linkLabel={`${t("maintenance.dashboard.metricNeedsAttention")}, ${statusSubtitle}`}
         />
-        <MetricCard
-          title={t("maintenance.dashboard.metricVehicles")}
+        <MetricTile
+          icon={Car}
+          label={t("maintenance.dashboard.metricVehicles")}
           value={String(summary.vehicleCount)}
+          caption={odometerCaption}
+          href="/car/garage"
+          linkLabel={`${t("maintenance.dashboard.metricVehicles")}, ${summary.vehicleCount}`}
         />
-        <MetricCard
-          title={t("maintenance.dashboard.metricOnTrack")}
+        <MetricTile
+          icon={CircleCheck}
+          label={t("maintenance.dashboard.metricOnTrack")}
           value={String(summary.onTrackCount)}
+          caption={t("maintenance.v2.captionOnTrack")}
+          href="/car/garage"
+          linkLabel={`${t("maintenance.dashboard.metricOnTrack")}, ${summary.onTrackCount}`}
         />
       </div>
 
-      <Card
-        className={getMaintenanceStatusAccentClass(summary.worstStatus)}
-        data-testid="car-dashboard-status"
-      >
-        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-caption text-ink-dim">
-              {summary.vehicleCount === 1
-                ? t("maintenance.dashboard.yourCar")
-                : t("maintenance.dashboard.yourCars")}
-            </p>
-            <p className={cn("mt-1 text-h2", STATUS_INK[summary.worstStatus])}>
-              {statusSubtitle}
-            </p>
-          </div>
-          <Link
-            to="/car/garage"
-            className={buttonVariants({ variant: "outline", size: "sm" })}
-            data-testid="car-dashboard-open-garage"
-          >
-            {t("maintenance.dashboard.openGarage")}
-            <ArrowRight aria-hidden="true" />
-          </Link>
-        </CardContent>
-      </Card>
-
       {summary.needsAttentionCount === 0 ? (
-        <Card data-testid="car-dashboard-all-clear">
-          <CardContent className="text-center">
-            <p className="text-caption text-ink-dim">
-              {t("maintenance.dashboard.garageHint")}
-            </p>
-            <Link
-              to="/car/garage"
-              className={cn(
-                "mt-2 inline-block text-caption text-brand-ink underline-offset-4 hover:underline",
-                focusRing
-              )}
+        <InsightCallout
+          layout="row"
+          icon={CircleCheck}
+          eyebrow={t("maintenance.v2.eyebrowAllClear")}
+          title={t("maintenance.dashboard.allUpToDate")}
+          data-testid="car-dashboard-all-clear"
+          actions={
+            <Button
+              variant="outline"
+              render={<Link to="/car/garage" />}
               data-testid="car-dashboard-garage-link"
             >
               {t("maintenance.inbox.goToGarage")}
-            </Link>
-          </CardContent>
-        </Card>
-      ) : (
-        <div
-          className="flex flex-col gap-2"
-          data-testid="car-dashboard-urgent-list"
+              <ArrowRight aria-hidden="true" data-icon="inline-end" />
+            </Button>
+          }
         >
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-h3 text-ink">
-              {t("maintenance.dashboard.urgentHeading")}
-            </h2>
-            {summary.needsAttentionCount > summary.topUrgent.length && (
-              <Link
-                to="/car/garage"
-                className={cn(
-                  "text-caption text-brand-ink underline-offset-4 hover:underline",
-                  focusRing
-                )}
-                data-testid="car-dashboard-view-all-urgent"
+          {t("maintenance.dashboard.garageHint")}
+        </InsightCallout>
+      ) : (
+        <>
+          <InsightCallout
+            layout="row"
+            icon={Wrench}
+            eyebrow={t("maintenance.v2.eyebrowNextService")}
+            title={statusSubtitle}
+            data-testid="car-dashboard-status"
+            actions={
+              <Button
+                variant="outline"
+                render={<Link to="/car/garage" />}
+                data-testid="car-dashboard-open-garage"
               >
-                {t("maintenance.dashboard.viewAllInGarage", {
-                  count: summary.needsAttentionCount,
-                })}
-              </Link>
-            )}
-          </div>
+                {t("maintenance.dashboard.openGarage")}
+                <ArrowRight aria-hidden="true" data-icon="inline-end" />
+              </Button>
+            }
+          >
+            {next &&
+              t("maintenance.v2.nextServiceLine", {
+                task: getMaintenanceTaskLabel(next.task, t),
+                vehicle: formatVehicleDisplayName(next.vehicle),
+                detail:
+                  formatNextDueLine(next.task, t) ||
+                  t(`maintenance.status.${next.task.status}`),
+              })}
+          </InsightCallout>
 
-          {summary.topUrgent.map((item) => {
-            const vehicleName = formatVehicleDisplayName(item.vehicle);
-            const taskName = getMaintenanceTaskLabel(item.task, t);
-            const urgencyLine = formatNextDueLine(item.task, t);
-
-            return (
-              <Card
-                key={`${item.vehicle.id}-${item.task.id}`}
-                size="sm"
-                data-testid={`car-dashboard-urgent-row-${item.task.id}`}
-              >
-                <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <AttentionRow
-                    status={getMaintenanceStatusTone(item.task.status)}
-                    name={`${vehicleName} · ${taskName}`}
-                    figure={urgencyLine || undefined}
-                    badge={<MaintenanceStatusBadge status={item.task.status} />}
-                    accessibleName={t("maintenance.a11y.urgentRow", {
-                      vehicle: vehicleName,
-                      task: taskName,
-                      detail:
-                        urgencyLine ||
-                        t(`maintenance.status.${item.task.status}`),
-                    })}
-                    className="min-w-0 flex-1 border-b-0"
-                  />
-                  <Link
-                    to="/car/garage"
-                    search={{ vehicle: item.vehicle.id }}
-                    className={cn(
-                      buttonVariants({ variant: "outline", size: "sm" }),
-                      "shrink-0"
-                    )}
-                    data-testid={`car-dashboard-view-car-${item.vehicle.id}`}
+          <Card flush data-testid="car-dashboard-urgent-list">
+            <CardHeader className="border-b border-line pt-card-pad pb-4">
+              <CardTitle icon={ListChecks}>
+                {t("maintenance.dashboard.urgentHeading")}
+              </CardTitle>
+              {summary.needsAttentionCount > summary.topUrgent.length && (
+                <CardAction>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    render={<Link to="/car/garage" />}
+                    data-testid="car-dashboard-view-all-urgent"
                   >
-                    {t("maintenance.dashboard.manageInGarage")}
-                  </Link>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+                    {t("maintenance.dashboard.viewAllInGarage", {
+                      count: summary.needsAttentionCount,
+                    })}
+                  </Button>
+                </CardAction>
+              )}
+            </CardHeader>
+
+            <CardContent className="py-1">
+              {summary.topUrgent.map((item) => {
+                const vehicleName = formatVehicleDisplayName(item.vehicle);
+                const taskName = getMaintenanceTaskLabel(item.task, t);
+                const urgencyLine = formatNextDueLine(item.task, t);
+
+                return (
+                  <div
+                    key={`${item.vehicle.id}-${item.task.id}`}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-line py-3.5 last:border-b-0"
+                    data-testid={`car-dashboard-urgent-row-${item.task.id}`}
+                  >
+                    {/* One sentence for assistive tech; every visual fragment below is hidden so
+                        the row is not announced as four disconnected pieces. */}
+                    <span className="sr-only">
+                      {t("maintenance.a11y.urgentRow", {
+                        vehicle: vehicleName,
+                        task: taskName,
+                        detail:
+                          urgencyLine || t(`maintenance.status.${item.task.status}`),
+                      })}
+                    </span>
+                    <IconChip icon={STATUS_ICON[item.task.status]} size="sm" />
+                    <div className="min-w-0 flex-1" aria-hidden="true">
+                      <p className="truncate text-label text-ink">{taskName}</p>
+                      <p className="truncate text-caption text-ink-dim">
+                        {vehicleName}
+                      </p>
+                    </div>
+                    {urgencyLine && (
+                      <span
+                        aria-hidden="true"
+                        className="money shrink-0 text-caption font-semibold text-ink"
+                      >
+                        {urgencyLine}
+                      </span>
+                    )}
+                    <span aria-hidden="true" className="shrink-0">
+                      <MaintenanceStatusBadge status={item.task.status} />
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      render={
+                        <Link
+                          to="/car/garage"
+                          search={{ vehicle: item.vehicle.id }}
+                        />
+                      }
+                      data-testid={`car-dashboard-view-car-${item.vehicle.id}`}
+                    >
+                      {t("maintenance.dashboard.manageInGarage")}
+                    </Button>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        </>
       )}
     </div>
   );

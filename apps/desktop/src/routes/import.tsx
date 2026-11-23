@@ -3,7 +3,13 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
-import { Check, FileQuestion } from "lucide-react";
+import {
+  Check,
+  FileQuestion,
+  History,
+  ListChecks,
+  TriangleAlert,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Alert,
@@ -15,12 +21,14 @@ import {
   CardContent,
   Checkbox,
   DatePicker,
+  IconChip,
   Input,
   Label,
   Money,
   SubStat,
 } from "@nixus/shared";
 import { MoneyInput } from "../components/shared/MoneyInput";
+import { InsightCallout } from "../components/shared/InsightCallout";
 import { PageHeader } from "../components/shared/PageHeader";
 import { UploadZone } from "../components/import/UploadZone";
 import { ImportProgressStepper } from "../components/import/ImportProgressStepper";
@@ -110,8 +118,8 @@ function ImportPage() {
 
   return (
     <div>
-      <PageHeader title={t("import.import")} />
-      <div className="mx-auto max-w-2xl space-y-section-gap py-8">
+      <PageHeader title={t("import.import")} subtitle={t("surface.subtitle.import")} />
+      <div className="mx-auto flex max-w-3xl flex-col gap-grid-gap">
         {resumedDraft !== null ? (
           <ReviewScreen
             key="resumed"
@@ -181,22 +189,24 @@ function DraftResumePrompt({
 }) {
   const { t } = useTranslation();
   return (
-    <Card data-testid="import-draft-prompt">
-      <CardContent>
-        <h2 className="text-h2 text-ink">{t("import.draftFoundTitle")}</h2>
-        <p className="mt-1 text-caption text-ink-dim">
-          {t("import.draftFoundBody", { count: draft.transactions.length })}
-        </p>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+    <InsightCallout
+      icon={History}
+      eyebrow={t("import.v2.draftEyebrow")}
+      title={t("import.draftFoundTitle")}
+      actions={
+        <>
           <Button onClick={onResume} data-testid="import-draft-resume">
             {t("import.draftResume")}
           </Button>
           <Button variant="outline" onClick={onDiscard} data-testid="import-draft-discard">
             {t("import.draftDiscard")}
           </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </>
+      }
+      data-testid="import-draft-prompt"
+    >
+      {t("import.draftFoundBody", { count: draft.transactions.length })}
+    </InsightCallout>
   );
 }
 
@@ -595,54 +605,56 @@ function ReviewScreen({
     for (const entry of validManualEntries) uniqueCategories.add(entry.budget_category_id);
 
     return (
-      <div
-        className="flex flex-col items-center gap-4 py-8 text-center"
-        data-testid="import-completion"
-      >
-        <span
-          aria-hidden="true"
-          className="grid size-10 place-items-center rounded-lg bg-good-bg text-good-ink"
+      <Card className="px-card-pad">
+        <div
+          className="flex flex-col items-center gap-4 py-4 text-center"
+          data-testid="import-completion"
         >
-          <Check className="size-5" />
-        </span>
-        <h2 className="text-h2 text-ink">{t("import.completionTitle")}</h2>
-        <SubStat
-          value={formatCurrency(selectedSumCents)}
-          label={t("import.completionTotalLabel")}
-          caption={`${t("import.completionCount", { count: totalCount })} · ${t(
-            "import.completionCategories",
-            { count: uniqueCategories.size }
-          )}`}
-          data-testid="completion-total"
-        />
-        {selectedIncomeIndices.length > 0 && (
-          <p className="text-caption text-ink-dim" data-testid="completion-income">
-            {t("import.completionIncome", {
-              count: selectedIncomeIndices.length,
-              amount: formatCurrency(selectedIncomeSumCents),
-            })}
-          </p>
-        )}
-        <p className="text-caption text-ink-dim">{t("import.rememberLine")}</p>
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button onClick={() => navigate({ to: "/" })} data-testid="view-dashboard-button">
-            {t("import.viewDashboard")}
-          </Button>
-          <Button variant="outline" onClick={onReset} data-testid="import-another-link">
-            {t("import.importAnother")}
-          </Button>
+          <span
+            aria-hidden="true"
+            className="grid size-12 place-items-center rounded-2xl bg-button-gradient text-brand-on"
+          >
+            <Check className="size-6" strokeWidth={2.5} />
+          </span>
+          <h2 className="font-display text-h1 text-ink">{t("import.completionTitle")}</h2>
+          <SubStat
+            value={formatCurrency(selectedSumCents)}
+            label={t("import.completionTotalLabel")}
+            caption={`${t("import.completionCount", { count: totalCount })} · ${t(
+              "import.completionCategories",
+              { count: uniqueCategories.size }
+            )}`}
+            data-testid="completion-total"
+          />
+          {selectedIncomeIndices.length > 0 && (
+            <p className="text-caption text-ink-dim" data-testid="completion-income">
+              {t("import.completionIncome", {
+                count: selectedIncomeIndices.length,
+                amount: formatCurrency(selectedIncomeSumCents),
+              })}
+            </p>
+          )}
+          <p className="text-caption text-ink-dim">{t("import.rememberLine")}</p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Button onClick={() => navigate({ to: "/" })} data-testid="view-dashboard-button">
+              {t("import.viewDashboard")}
+            </Button>
+            <Button variant="outline" onClick={onReset} data-testid="import-another-link">
+              {t("import.importAnother")}
+            </Button>
+          </div>
         </div>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="space-y-4" data-testid="import-review-screen">
+    <div className="flex flex-col gap-grid-gap" data-testid="import-review-screen">
       <div data-testid="review-summary">
-        <h2 className="text-h2 text-ink">
+        <h2 className="font-display text-h1 text-ink">
           {t("import.reviewHeading", { count: transactions.length })}
         </h2>
-        <p className="mt-1 text-caption text-ink-dim">
+        <p className="mt-1.5 text-caption text-ink-dim">
           {flaggedGlobalIndices.length > 0
             ? t("import.reviewSubheading", {
                 auto: autoGlobalIndices.length,
@@ -706,8 +718,11 @@ function ReviewScreen({
       />
 
       {flaggedGlobalIndices.length > 0 && (
-        <section className="space-y-3">
-          <h3 className="text-h3 text-ink">{t("import.needsReview")}</h3>
+        <section className="flex flex-col gap-3">
+          <h3 className="flex items-center gap-3 font-display text-h2 text-ink">
+            <IconChip icon={ListChecks} size="sm" />
+            {t("import.needsReview")}
+          </h3>
           {flaggedGroups.map((groupIndices) => {
             const cards = groupIndices.map((globalIndex) => {
               const tx = transactions[globalIndex];
@@ -791,8 +806,9 @@ function ReviewScreen({
       )}
 
       {unreadable.length > 0 && (
-        <section className="space-y-3">
-          <h3 className="text-h3 text-ink">
+        <section className="flex flex-col gap-3">
+          <h3 className="flex items-center gap-3 font-display text-h2 text-ink">
+            <IconChip icon={FileQuestion} size="sm" />
             {t("import.couldntBeRead")} ({unreadable.length})
           </h3>
           {unreadable.map((desc, i) => (
@@ -832,7 +848,7 @@ function ReviewScreen({
         </Alert>
       )}
 
-      <div className="space-y-2">
+      <div className="flex flex-col gap-2">
         <Button
           size="lg"
           className="w-full"
@@ -849,11 +865,11 @@ function ReviewScreen({
               : t("import.confirmButton", { count: totalCount })}
         </Button>
         {blockedReason !== null && (
-          <p id="confirm-blocked-reason" className="text-caption text-ink-dim">
+          <p id="confirm-blocked-reason" className="text-center text-caption text-ink-dim">
             {blockedReason}
           </p>
         )}
-        <p className="text-caption text-ink-faint">{t("import.draftKeptNote")}</p>
+        <p className="text-center text-caption text-ink-faint">{t("import.draftKeptNote")}</p>
       </div>
     </div>
   );
@@ -935,8 +951,8 @@ function UnreadableLineForm({
           <span className="text-ink-faint">{t("import.unreadableOriginal")}: </span>
           {originalLine}
         </p>
-        <div className="mt-3 grid grid-cols-2 gap-3">
-          <div className="space-y-1">
+        <div className="mt-4 grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
             <Label htmlFor={merchantId} required>
               {t("expenses.merchant")}
             </Label>
@@ -957,7 +973,7 @@ function UnreadableLineForm({
               </p>
             )}
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <Label htmlFor={amountId} required>
               {t("common.amount")}
             </Label>
@@ -974,7 +990,7 @@ function UnreadableLineForm({
               </p>
             )}
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <Label htmlFor={categoryId} required>
               {t("common.category")}
             </Label>
@@ -999,7 +1015,7 @@ function UnreadableLineForm({
               </p>
             )}
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <Label htmlFor={dateId} required>
               {t("common.date")}
             </Label>
@@ -1035,21 +1051,26 @@ function ImportUnavailable({
   return (
     <Card data-testid="import-error-state">
       <CardContent>
-        <h2 className="text-h2 text-ink">{title}</h2>
-        <p className="mt-1 text-caption text-ink-dim">{body}</p>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button variant="outline" onClick={onReset} data-testid="try-again-button">
-            {t("import.tryAgain")}
-          </Button>
-          {/* The named manual path has to land where an expense can actually be added; /spending/budget
-            * is where targets are set, not where a transaction gets typed in. */}
-          <Button
-            variant="link"
-            render={<Link to="/spending/transactions" />}
-            data-testid="manual-entry-link"
-          >
-            {t("import.addManually")}
-          </Button>
+        <div className="flex items-start gap-4">
+          <IconChip icon={TriangleAlert} size="lg" />
+          <div className="min-w-0">
+            <h2 className="font-display text-h1 text-ink">{title}</h2>
+            <p className="mt-1.5 text-caption text-ink-dim">{body}</p>
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <Button variant="outline" onClick={onReset} data-testid="try-again-button">
+                {t("import.tryAgain")}
+              </Button>
+              {/* The named manual path has to land where an expense can actually be added;
+                * /spending/budget is where targets are set, not where a transaction gets typed in. */}
+              <Button
+                variant="link"
+                render={<Link to="/spending/transactions" />}
+                data-testid="manual-entry-link"
+              >
+                {t("import.addManually")}
+              </Button>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -1071,28 +1092,31 @@ function ErrorScreen({
     return (
       <Card data-testid="import-error-state">
         <CardContent>
-          <span
-            aria-hidden="true"
-            className="mb-3 grid size-10 place-items-center rounded-lg bg-track text-ink-dim"
-          >
-            <FileQuestion className="size-4" />
-          </span>
-          <h2 className="text-h2 text-ink">{t("import.notConfiguredTitle")}</h2>
-          <p className="mt-1 text-caption text-ink-dim">{t("import.notConfiguredBody")}</p>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Button render={<Link to="/settings" />} data-testid="open-settings-link">
-              {t("import.setUpReading")}
-            </Button>
-            <Button
-              variant="outline"
-              render={<Link to="/spending/transactions" />}
-              data-testid="manual-entry-link"
-            >
-              {t("import.addManually")}
-            </Button>
-            <Button variant="link" onClick={onReset} data-testid="try-again-button">
-              {t("import.tryAgain")}
-            </Button>
+          <div className="flex items-start gap-4">
+            <IconChip icon={FileQuestion} size="lg" />
+            <div className="min-w-0">
+              <h2 className="font-display text-h1 text-ink">
+                {t("import.notConfiguredTitle")}
+              </h2>
+              <p className="mt-1.5 text-caption text-ink-dim">
+                {t("import.notConfiguredBody")}
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <Button render={<Link to="/settings" />} data-testid="open-settings-link">
+                  {t("import.setUpReading")}
+                </Button>
+                <Button
+                  variant="outline"
+                  render={<Link to="/spending/transactions" />}
+                  data-testid="manual-entry-link"
+                >
+                  {t("import.addManually")}
+                </Button>
+                <Button variant="link" onClick={onReset} data-testid="try-again-button">
+                  {t("import.tryAgain")}
+                </Button>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>

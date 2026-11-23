@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Paperclip, Send, X } from "lucide-react";
+import { ArrowUp, Paperclip, Sparkles, X } from "lucide-react";
 import { Alert, Button, Input, Label } from "@nixus/shared";
+import { cn } from "@/lib/utils";
 import type { ChatAttachmentState } from "@/hooks/useChatAttachment";
 
 interface ChatComposerProps {
@@ -76,9 +77,12 @@ export function ChatComposer({
   };
 
   const attachDisabled = busy || attachments.picking;
+  const sendDisabled = busy || draft.trim() === "";
 
   return (
-    <div className="border-t border-line px-page-x py-3" data-testid="chat-input-area">
+    // The testid element runs to the bottom of the surface and the breathing room lives inside it:
+    // padding under it would unpin the composer from the viewport edge.
+    <div className="shrink-0 pt-3 pb-5" data-testid="chat-input-area">
       <div className="mx-auto max-w-2xl">
         {(attachments.attachment || errorKey) && (
           <div className="mb-2 flex flex-col gap-2">
@@ -88,7 +92,7 @@ export function ChatComposer({
                  is the remove button's focus ring clearance: it draws 2px at a 2px offset, which
                  at `pr-1` lands exactly on the chip border. */
               <div
-                className="flex max-w-full min-w-0 items-center gap-2 self-start rounded-md border border-line-strong bg-card py-1.5 pr-1.5 pl-2"
+                className="flex max-w-full min-w-0 items-center gap-2 self-start rounded-full border border-line-strong bg-card py-1.5 pr-1.5 pl-3"
                 data-testid="chat-attachment-chip"
               >
                 <Paperclip aria-hidden="true" className="size-3.5 shrink-0 text-ink-dim" />
@@ -128,13 +132,26 @@ export function ChatComposer({
           </div>
         )}
 
-        <div className="flex items-center gap-2">
+        {/* One white pill on the page: the gradient spark names what the box is for, the gradient
+          * round button is the only primary action in this pane. */}
+        <div
+          className={cn(
+            "flex items-center gap-2 rounded-full border border-line bg-card py-2 pr-2 pl-4",
+            "focus-within:border-brand/40"
+          )}
+        >
+          <Sparkles
+            aria-hidden="true"
+            className="icon-gradient size-[18px] shrink-0"
+            strokeWidth={1.75}
+          />
           <Label htmlFor="agent-chat-input" className="sr-only">
             {t("chat.placeholder")}
           </Label>
           <Button
-            size="icon"
-            variant="outline"
+            size="icon-sm"
+            variant="ghost"
+            className="shrink-0 text-ink-dim"
             onClick={() => void openPicker()}
             disabled={attachDisabled}
             aria-disabled={attachDisabled || undefined}
@@ -157,18 +174,20 @@ export function ChatComposer({
             placeholder={t("chat.placeholder")}
             disabled={busy}
             aria-disabled={busy || undefined}
+            className="h-8 border-0 bg-transparent px-0 focus-visible:outline-0"
             data-testid="chat-input"
             autoFocus
           />
           <Button
             size="icon"
+            className="shrink-0"
             onClick={submit}
-            disabled={busy || draft.trim() === ""}
-            aria-disabled={busy || draft.trim() === "" || undefined}
+            disabled={sendDisabled}
+            aria-disabled={sendDisabled || undefined}
             aria-label={t("chat.send")}
             data-testid="chat-send-button"
           >
-            <Send aria-hidden="true" />
+            <ArrowUp aria-hidden="true" />
           </Button>
         </div>
       </div>

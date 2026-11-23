@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
-import { Button, Card, CardContent, Input, Label, Money } from "@nixus/shared";
+import { Plus, Tag, Wallet } from "lucide-react";
+import { Button, Card, CardContent, IconChip, Input, Label, Money } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { OnboardingStarterTemplate } from "@/components/onboarding/OnboardingStarterTemplate";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
@@ -68,12 +68,12 @@ function GroupCategoryList({ group }: { group: BudgetGroup }) {
       {categories.map((cat) => (
         <div
           key={cat.id}
-          className="flex items-center justify-between gap-3 rounded-sm bg-chrome px-2.5 py-1.5"
+          className="flex items-center justify-between gap-3 border-b border-line py-2.5 last:border-b-0"
         >
           <span className="min-w-0 truncate text-label text-ink">{cat.name}</span>
           <Money
             cents={cat.target_cents}
-            className="shrink-0 text-label text-ink-dim"
+            className="money shrink-0 text-label text-ink"
             {...maskProps}
           />
         </div>
@@ -201,13 +201,16 @@ export function OnboardingBudgetStep() {
   };
 
   return (
-    <div className="space-y-4" data-testid="onboarding-budget-step">
-      <div>
-        <h2 className="text-h2 text-ink">{t("onboarding.budgetTitle")}</h2>
-        <p className="mt-1 text-caption text-ink-dim">
-          {t("onboarding.budgetDescription")}
-        </p>
-        <p className="mt-1 text-caption text-ink-faint">{t("onboarding.editableLater")}</p>
+    <div className="flex flex-col gap-grid-gap" data-testid="onboarding-budget-step">
+      <div className="flex items-start gap-4">
+        <IconChip icon={Wallet} size="lg" />
+        <div className="min-w-0">
+          <h2 className="font-display text-h1 text-ink">{t("onboarding.budgetTitle")}</h2>
+          <p className="mt-1 text-caption text-ink-dim">
+            {t("onboarding.budgetDescription")}
+          </p>
+          <p className="mt-1 text-caption text-ink-faint">{t("onboarding.editableLater")}</p>
+        </div>
       </div>
 
       {starterTemplateId !== undefined && (
@@ -232,11 +235,16 @@ export function OnboardingBudgetStep() {
       {manualPathVisible && (
         <>
           {groups.map((group) => (
-            <Card key={group.id}>
-              <CardContent>
-                <h3 className="mb-2 text-h3 text-ink">{group.name}</h3>
+            <Card key={group.id} flush>
+              <div className="flex items-center gap-3 border-b border-line px-card-pad py-4">
+                <IconChip icon={Tag} size="sm" />
+                <h3 className="min-w-0 flex-1 font-display text-h3 text-ink">
+                  {group.name}
+                </h3>
+              </div>
+              <div className="px-card-pad py-4">
                 <GroupCategoryList group={group} />
-              </CardContent>
+              </div>
             </Card>
           ))}
 

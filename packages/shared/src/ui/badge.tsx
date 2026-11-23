@@ -16,7 +16,7 @@ import { cn } from "../lib/cn"
 // bans all-caps on rapidly scanned content, and uppercased `stale` reads "UPDATED 6 WEEKS AGO".
 // The mocks agree: sentence-case pills, uppercase reserved for eyebrows via `text-micro uppercase`.
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 rounded-md px-1.5 py-0.5 text-micro whitespace-nowrap [&>svg]:pointer-events-none [&>svg]:size-3",
+  "inline-flex w-fit shrink-0 items-center justify-center gap-1 rounded-full px-2.5 py-0.5 text-micro font-bold tracking-normal whitespace-nowrap [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {

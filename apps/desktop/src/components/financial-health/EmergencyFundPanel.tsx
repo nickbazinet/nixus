@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
+import { Shield } from "lucide-react";
 import {
   Badge,
   Card,
@@ -152,7 +153,9 @@ export function EmergencyFundPanel() {
   return (
     <Card data-testid="emergency-fund-panel">
       <CardHeader>
-        <CardTitle>{t("financialHealth.panel.cushion.title")}</CardTitle>
+        <CardTitle icon={Shield}>
+          {t("financialHealth.panel.cushion.title")}
+        </CardTitle>
       </CardHeader>
 
       <CardContent className="flex flex-col gap-4">

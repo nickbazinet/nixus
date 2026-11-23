@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
+import { KeyRound, Sparkles } from "lucide-react";
 import {
   Alert,
   AlertDescription,
@@ -13,7 +14,7 @@ import {
   Skeleton,
 } from "@nixus/shared";
 import { ProviderSelector } from "./ProviderSelector";
-import { SettingRow } from "./SettingRow";
+import { SettingRow, SettingsSection } from "./SettingRow";
 import { useAiConfig, useInvalidateAiConfig } from "../../hooks/useAiConfig";
 
 type Status = "idle" | "saving" | "success" | "error" | "testing" | "clearing";
@@ -167,29 +168,31 @@ export function CredentialsForm() {
   };
 
   return (
-    <div className="space-y-3">
-      <Card flush>
+    <div className="flex flex-col gap-grid-gap">
+      <SettingsSection heading={t("settings.sectionService")} icon={Sparkles}>
         <SettingRow
           title={t("settings.providerLegend")}
           description={t("settings.providerDescription")}
         />
-        <div className="px-card-pad pb-3.5">
+        <div className="px-card-pad pb-card-pad">
           <ProviderSelector value={selectedProvider} onChange={handleProviderChange} />
         </div>
 
         {isConfigured && (
           <SettingRow
+            className="border-t border-line"
             title={t("settings.connectionTitle")}
             description={
               tested ? t("settings.connectionChecked") : t("settings.connectionUnchecked")
             }
             control={
               <span className="flex items-center gap-2">
-                <Badge variant={tested ? "good" : "neutral"}>
+                <Badge variant={tested ? "good" : "brand"}>
                   {tested ? t("settings.connected") : activeProvider}
                 </Badge>
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={handleTest}
                   disabled={busy}
                   aria-disabled={busy || undefined}
@@ -202,18 +205,17 @@ export function CredentialsForm() {
             data-testid="setting-connection"
           />
         )}
-      </Card>
+      </SettingsSection>
 
-      <Card>
-        <div className="space-y-3 px-card-pad">
-          <h4 className="text-h3 text-ink">
-            {isConfigured
-              ? t("settings.updateCredentials")
-              : t("settings.enterCredentials")}
-          </h4>
-
+      <SettingsSection
+        heading={
+          isConfigured ? t("settings.updateCredentials") : t("settings.enterCredentials")
+        }
+        icon={KeyRound}
+      >
+        <div className="flex flex-col gap-4 px-card-pad py-card-pad">
           {selectedProvider === "bedrock" ? (
-            <>
+            <div className="grid gap-4 sm:grid-cols-2">
               <Field
                 id="access-key"
                 label={t("settings.accessKeyId")}
@@ -273,7 +275,7 @@ export function CredentialsForm() {
                   onChange={(e) => setRegion(e.target.value)}
                 />
               </Field>
-            </>
+            </div>
           ) : (
             <Field
               id="api-key"
@@ -312,30 +314,7 @@ export function CredentialsForm() {
             </Alert>
           )}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              onClick={handleSave}
-              disabled={!canSave || busy}
-              aria-disabled={!canSave || busy || undefined}
-              aria-describedby={!canSave ? "credentials-save-blocked" : undefined}
-              data-testid="credentials-save"
-            >
-              {status === "saving" ? t("settings.saving") : t("settings.saveCredentials")}
-            </Button>
-            {!canSave && (
-              <p id="credentials-save-blocked" className="text-caption text-ink-dim">
-                {selectedProvider === "bedrock"
-                  ? t("settings.accessKeyRequired")
-                  : t("settings.apiKeyRequired")}
-              </p>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      {isConfigured && (
-        <Card flush>
-          {confirmingClear ? (
+          {confirmingClear && (
             <Alert variant="caution" data-testid="credentials-clear-confirm">
               <AlertTitle>{t("settings.confirmClear")}</AlertTitle>
               <AlertDescription className="mt-2 flex flex-wrap gap-2">
@@ -356,27 +335,52 @@ export function CredentialsForm() {
                 </Button>
               </AlertDescription>
             </Alert>
-          ) : (
-            <SettingRow
-              title={t("settings.clearCredentials")}
-              control={
-                <Button
-                  variant="outline"
-                  onClick={() => setConfirmingClear(true)}
-                  disabled={busy}
-                  aria-disabled={busy || undefined}
-                  data-testid="credentials-clear"
-                >
-                  {status === "clearing"
-                    ? t("settings.clearing")
-                    : t("settings.clearCredentials")}
-                </Button>
-              }
-              data-testid="setting-clear-credentials"
-            />
           )}
-        </Card>
-      )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={handleSave}
+              disabled={!canSave || busy}
+              aria-disabled={!canSave || busy || undefined}
+              aria-describedby={!canSave ? "credentials-save-blocked" : undefined}
+              data-testid="credentials-save"
+            >
+              {status === "saving" ? t("settings.saving") : t("settings.saveCredentials")}
+            </Button>
+            {!canSave && (
+              <p id="credentials-save-blocked" className="text-caption text-ink-dim">
+                {selectedProvider === "bedrock"
+                  ? t("settings.accessKeyRequired")
+                  : t("settings.apiKeyRequired")}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Demoted out of the save row: clearing a key is destructive, so it is never a peer of
+          * the primary action side by side. */}
+        {isConfigured && (
+          <SettingRow
+            className="border-t border-line"
+            title={t("settings.clearCredentials")}
+            control={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmingClear(true)}
+                disabled={busy || confirmingClear}
+                aria-disabled={busy || confirmingClear || undefined}
+                data-testid="credentials-clear"
+              >
+                {status === "clearing"
+                  ? t("settings.clearing")
+                  : t("settings.clearCredentials")}
+              </Button>
+            }
+            data-testid="setting-clear-credentials"
+          />
+        )}
+      </SettingsSection>
     </div>
   );
 }
@@ -397,7 +401,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5">
       <Label htmlFor={id} required>
         {label}
       </Label>

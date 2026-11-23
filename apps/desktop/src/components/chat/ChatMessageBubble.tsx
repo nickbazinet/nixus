@@ -3,9 +3,9 @@ import { useTranslation } from "react-i18next";
 import type { Components, Options } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Button, Card, CardContent } from "@nixus/shared";
+import { Button, Card, CardContent, IconChip } from "@nixus/shared";
 import { cn } from "@/lib/utils";
-import { Ban, CircleCheck, CircleDashed } from "lucide-react";
+import { Ban, CircleCheck, CircleDashed, Sparkles } from "lucide-react";
 import {
   hasValidChatActionParams,
   isChatActionType,
@@ -154,15 +154,21 @@ export function ChatMessageBubble({
     isStreaming === true
   );
 
+  /* An action card brings its own card chrome, so the bubble around it drops to nothing: a card
+   * nested inside a bubble card is two borders saying the same thing. */
+  const isOwnChrome = !isUser && actionPayload !== null && card !== null && !actionOutcome;
+
   return (
     <div
-      className={cn("flex", isUser ? "justify-end" : "justify-start")}
+      className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
       data-testid={`chat-message-${role}`}
     >
+      {!isUser && <IconChip icon={Sparkles} size="sm" className="mt-0.5" />}
       <div
         className={cn(
-          "max-w-[80%] rounded-lg px-3.5 py-2.5 text-body",
-          isUser ? "bg-brand text-brand-on" : "bg-chrome text-ink"
+          "min-w-0 max-w-[80%] text-body text-ink",
+          isUser && "rounded-2xl bg-brand-soft px-4 py-2.5",
+          !isUser && !isOwnChrome && "rounded-2xl border border-line bg-card px-4 py-3"
         )}
       >
         {!isUser && (
@@ -216,19 +222,22 @@ export function ChatMessageBubble({
         ) : actionPayload && card ? (
           <Card data-testid="action-confirmation-card">
             <CardContent>
-              <h4 className="text-h3 text-ink">{card.label}</h4>
-              <dl className="mt-2 space-y-1">
+              <h4 className="font-display text-h2 text-ink">{card.label}</h4>
+              <dl className="mt-3 space-y-0">
                 {card.details.map((detail, i) => (
-                  <div key={i} className="flex justify-between gap-3 text-caption">
+                  <div
+                    key={i}
+                    className="flex justify-between gap-3 border-b border-line py-2 text-caption last:border-b-0"
+                  >
                     <dt className="text-ink-dim">{detail.field}</dt>
-                    <dd className="money text-ink">{detail.value}</dd>
+                    <dd className="money font-semibold text-ink">{detail.value}</dd>
                   </div>
                 ))}
               </dl>
               {/* The model never writes on its own: it proposes, this card waits, the user
                 * approves. The hint says so rather than leaving it to be inferred. */}
-              <p className="mt-2 text-caption text-ink-dim">{card.hint}</p>
-              <div className="mt-3 flex gap-2">
+              <p className="mt-3 text-caption text-ink-dim">{card.hint}</p>
+              <div className="mt-4 flex gap-2">
                 <Button
                   size="sm"
                   onClick={() => onConfirm?.(actionPayload)}
@@ -277,45 +286,62 @@ function OutcomeIcon({ outcome }: { outcome: ChatActionOutcome }) {
 }
 
 const markdownComponents: Components = {
-  h1: ({ children }) => <h1 className="mt-3 mb-2 text-h2 first:mt-0">{children}</h1>,
-  h2: ({ children }) => <h2 className="mt-2.5 mb-1.5 text-h3 first:mt-0">{children}</h2>,
-  h3: ({ children }) => <h3 className="mt-2 mb-1 text-h3 first:mt-0">{children}</h3>,
-  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-  strong: ({ children }) => <strong className="text-label">{children}</strong>,
-  ul: ({ children }) => <ul className="mb-2 ml-4 list-disc space-y-0.5 last:mb-0">{children}</ul>,
-  ol: ({ children }) => (
-    <ol className="mb-2 ml-4 list-decimal space-y-0.5 last:mb-0">{children}</ol>
+  h1: ({ children }) => (
+    <h1 className="mt-4 mb-2 font-display text-h2 first:mt-0">{children}</h1>
   ),
-  li: ({ children }) => <li>{children}</li>,
+  h2: ({ children }) => (
+    <h2 className="mt-3.5 mb-1.5 font-display text-h3 first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="mt-3 mb-1 font-display text-h3 first:mt-0">{children}</h3>
+  ),
+  p: ({ children }) => <p className="mb-2.5 last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="text-label text-ink">{children}</strong>,
+  ul: ({ children }) => (
+    <ul className="mb-2.5 ml-5 list-disc space-y-1.5 last:mb-0">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="mb-2.5 ml-5 list-decimal space-y-1.5 last:mb-0">{children}</ol>
+  ),
+  // The marker takes brand ink so a list reads as part of the product rather than raw markdown.
+  li: ({ children }) => (
+    <li className="marker:text-brand [&>ul]:mt-1.5 [&>ul]:mb-0">{children}</li>
+  ),
   // font-mono survives here and in <pre> only: this is genuine code, never a figure.
   code: ({ children }) => (
-    <code className="rounded-sm bg-track px-1 py-0.5 font-mono text-caption">{children}</code>
+    <code className="rounded-sm bg-track px-1.5 py-0.5 font-mono text-caption">{children}</code>
   ),
   pre: ({ children }) => (
-    <pre className="my-2 overflow-x-auto rounded-md bg-track p-2 font-mono text-caption [&>code]:block [&>code]:rounded-none [&>code]:bg-transparent [&>code]:p-0">
+    <pre className="my-3 overflow-x-auto rounded-md border border-line bg-track p-3 font-mono text-caption [&>code]:block [&>code]:rounded-none [&>code]:bg-transparent [&>code]:p-0">
       {children}
     </pre>
   ),
   table: ({ children }) => (
-    <div className="my-2 overflow-x-auto" data-testid="chat-table">
+    <div
+      className="my-3 overflow-x-auto rounded-lg border border-line"
+      data-testid="chat-table"
+    >
       <table className="w-full border-collapse text-caption">{children}</table>
     </div>
   ),
   thead: ({ children }) => <thead>{children}</thead>,
   tbody: ({ children }) => <tbody>{children}</tbody>,
-  tr: ({ children }) => <tr className="border-b border-line">{children}</tr>,
+  tr: ({ children }) => <tr className="border-b border-line last:border-b-0">{children}</tr>,
   th: ({ children }) => (
-    <th scope="col" className="px-2 py-1 text-left text-column-head text-ink-faint">
+    <th
+      scope="col"
+      className="border-b border-line px-3 py-2 text-left text-column-head text-ink-faint uppercase"
+    >
       {children}
     </th>
   ),
-  td: ({ children }) => <td className="money px-2 py-1">{children}</td>,
+  td: ({ children }) => <td className="money px-3 py-2 align-middle">{children}</td>,
   blockquote: ({ children }) => (
-    <blockquote className="my-2 border-l-2 border-line-strong pl-3 italic">
+    <blockquote className="my-3 rounded-r-md border-l-2 border-brand bg-brand-soft/40 py-1.5 pl-3">
       {children}
     </blockquote>
   ),
-  hr: () => <hr className="my-3 border-line" />,
+  hr: () => <hr className="my-4 border-line" />,
   a: ({ href, children }) => (
     <a
       href={href}

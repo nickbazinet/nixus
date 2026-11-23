@@ -1,25 +1,28 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Plus, Landmark } from "lucide-react";
+import {
+  ChartNoAxesColumn,
+  CreditCard,
+  Landmark,
+  Plus,
+  Wallet,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import {
   Button,
   Card,
+  CardAction,
   CardContent,
+  CardHeader,
+  CardTitle,
   EmptyState,
   formatMoney,
   Money,
   Skeleton,
   SlideOver,
-  Stat,
-  SubStat,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
 } from "@nixus/shared";
+import { MetricTile } from "@/components/shared/MetricTile";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { AccountRow } from "@/components/accounts/AccountRow";
 import { AddAccountForm } from "@/components/accounts/AddAccountForm";
@@ -31,8 +34,8 @@ import { useCurrentNetWorth } from "@/hooks/useNetWorth";
 import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import {
   ACCOUNT_TYPE_KEYS,
+  ACCOUNT_TYPE_ORDER,
   buildAccountBreakdown,
-  groupAccountsBySection,
   hasMixedCurrencies,
   isLiabilityAccountType,
   netAccountPositionCents,
@@ -51,6 +54,24 @@ export const Route = createFileRoute("/wealth/accounts")({
 // provably nothing cached to count. Later fetches keep the real rows on screen, so a row count is
 // never faked against content the app already knows.
 const FALLBACK_SKELETON_ROWS = 3;
+
+/**
+ * The three groups an account list reads as: the money you can spend today, the money that is
+ * invested, and what you owe. Finer than this and every account type becomes its own card; coarser
+ * and "cash" and "investments" — the two figures the page exists to separate — are added together.
+ */
+const CASH_TYPES = ["chequing", "savings"] as const;
+
+type SectionKey = "cash" | "investments" | "credit";
+
+interface AccountSection {
+  key: SectionKey;
+  labelKey: string;
+  icon: LucideIcon;
+  accounts: Account[];
+  /** A liability section states what is owed, so its total is never signed. */
+  isLiability: boolean;
+}
 
 interface CurrencyPosition {
   currency: string;
@@ -99,50 +120,108 @@ function sumLinkedStockValueCents(
   );
 }
 
-function AccountTypeGroup({
-  type,
-  groupAccounts,
+function sectionKeyFor(account: Account): SectionKey {
+  if (isLiabilityAccountType(account.account_type)) return "credit";
+  return (CASH_TYPES as readonly string[]).includes(account.account_type)
+    ? "cash"
+    : "investments";
+}
+
+/** Type order first, then name: the order the account list has always read in. */
+function byTypeThenName(first: Account, second: Account): number {
+  const order =
+    ACCOUNT_TYPE_ORDER.indexOf(
+      first.account_type as (typeof ACCOUNT_TYPE_ORDER)[number]
+    ) -
+    ACCOUNT_TYPE_ORDER.indexOf(
+      second.account_type as (typeof ACCOUNT_TYPE_ORDER)[number]
+    );
+  return order !== 0 ? order : first.name.localeCompare(second.name);
+}
+
+function buildSections(accounts: Account[]): AccountSection[] {
+  const shape: AccountSection[] = [
+    {
+      key: "cash",
+      labelKey: "wealth.v2.accounts.cash",
+      icon: Wallet,
+      accounts: [],
+      isLiability: false,
+    },
+    {
+      key: "investments",
+      labelKey: "wealth.v2.accounts.investments",
+      icon: ChartNoAxesColumn,
+      accounts: [],
+      isLiability: false,
+    },
+    {
+      key: "credit",
+      labelKey: "wealth.v2.accounts.credit",
+      icon: CreditCard,
+      accounts: [],
+      isLiability: true,
+    },
+  ];
+
+  for (const account of accounts) {
+    const section = shape.find((entry) => entry.key === sectionKeyFor(account));
+    section?.accounts.push(account);
+  }
+  for (const section of shape) section.accounts.sort(byTypeThenName);
+
+  return shape.filter((section) => section.accounts.length > 0);
+}
+
+function AccountSectionCard({
+  section,
   onEdit,
   stocksByAccount,
 }: {
-  type: string;
-  groupAccounts: Account[];
+  section: AccountSection;
   onEdit: (account: Account) => void;
   stocksByAccount: Map<number, PassiveAsset[]>;
 }) {
   const { t, i18n } = useTranslation();
   const maskProps = useMaskProps();
-  const isLiability = isLiabilityAccountType(type);
-  const subtotal = isLiability
-    ? sumLiabilityOwedCents(groupAccounts)
-    : sumBalanceCents(groupAccounts) +
-      sumLinkedStockValueCents(groupAccounts, stocksByAccount);
+
+  const total = section.isLiability
+    ? sumLiabilityOwedCents(section.accounts)
+    : sumBalanceCents(section.accounts) +
+      sumLinkedStockValueCents(section.accounts, stocksByAccount);
 
   return (
-    <>
-      <TableRow data-testid="account-type-group" className="bg-chrome">
-        <TableCell colSpan={2} className="text-label text-ink">
-          {ACCOUNT_TYPE_KEYS[type] ? t(ACCOUNT_TYPE_KEYS[type]) : type}
-        </TableCell>
-        <TableCell numeric dim>
-          <Money
-            cents={subtotal}
-            locale={i18n.language}
-            sign={isLiability ? "never" : "auto"}
-            {...maskProps}
-          />
-        </TableCell>
-        <TableCell />
-      </TableRow>
-      {groupAccounts.map((account) => (
-        <AccountRow
-          key={account.id}
-          account={account}
-          onEdit={onEdit}
-          stockAssets={stocksByAccount.get(account.id)}
-        />
-      ))}
-    </>
+    <Card
+      data-testid={
+        section.isLiability ? "accounts-liability-section" : "account-type-group"
+      }
+    >
+      <CardHeader>
+        <CardTitle icon={section.icon}>{t(section.labelKey)}</CardTitle>
+        <CardAction className="self-center pr-11">
+          <span className="money text-h1 font-bold text-ink">
+            <Money
+              cents={total}
+              locale={i18n.language}
+              sign={section.isLiability ? "never" : "auto"}
+              {...maskProps}
+            />
+          </span>
+        </CardAction>
+      </CardHeader>
+      <CardContent>
+        <ul aria-label={t(section.labelKey)}>
+          {section.accounts.map((account) => (
+            <AccountRow
+              key={account.id}
+              account={account}
+              onEdit={onEdit}
+              stockAssets={stocksByAccount.get(account.id)}
+            />
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -161,11 +240,8 @@ function AccountsPage() {
     [assets]
   );
 
-  const { assetGroups, liabilityGroups } = useMemo(
-    () =>
-      accounts
-        ? groupAccountsBySection(accounts)
-        : { assetGroups: [], liabilityGroups: [] },
+  const sections = useMemo(
+    () => (accounts ? buildSections(accounts) : []),
     [accounts]
   );
 
@@ -201,6 +277,19 @@ function AccountsPage() {
     [accounts, stocksByAccount]
   );
 
+  const cashSection = sections.find((section) => section.key === "cash");
+  const investmentSection = sections.find(
+    (section) => section.key === "investments"
+  );
+  const cashCents = cashSection
+    ? sumBalanceCents(cashSection.accounts) +
+      sumLinkedStockValueCents(cashSection.accounts, stocksByAccount)
+    : 0;
+  const investmentsCents = investmentSection
+    ? sumBalanceCents(investmentSection.accounts) +
+      sumLinkedStockValueCents(investmentSection.accounts, stocksByAccount)
+    : 0;
+
   const openAddForm = () => {
     setEditingAccount(null);
     setShowForm(true);
@@ -223,11 +312,19 @@ function AccountsPage() {
             </Button>
             <Button
               size="sm"
+              variant="outline"
               onClick={openAddForm}
               data-testid="add-account-button"
             >
               <Plus aria-hidden="true" />
               {t("accounts.addAccount")}
+            </Button>
+            <Button
+              size="sm"
+              render={<Link to="/import" />}
+              data-testid="accounts-import-button"
+            >
+              {t("wealth.v2.importStatement")}
             </Button>
           </>
         }
@@ -261,28 +358,33 @@ function AccountsPage() {
 
       {!isLoading && accounts && accounts.length > 0 && (
         <div className="flex flex-col gap-section-gap">
-          <div className="flex flex-col gap-grid-gap">
-            {showMixedCurrencyNote ? (
-              // No single hero figure exists here: adding CAD to USD would invent an exchange rate.
-              positions.map((position) => (
+          {showMixedCurrencyNote ? (
+            // No single hero figure exists here: adding CAD to USD would invent an exchange rate.
+            <div className="flex flex-col gap-grid-gap">
+              {positions.map((position) => (
                 <div
                   key={position.currency}
-                  className="grid grid-cols-1 gap-grid-gap min-[1100px]:grid-cols-2"
+                  className="grid gap-grid-gap md:grid-cols-2"
                   data-testid="accounts-currency-position"
                 >
-                  <SubStat
-                    label={t("accounts.haveInCurrency", { currency: position.currency })}
+                  <MetricTile
+                    icon={Wallet}
+                    label={t("accounts.haveInCurrency", {
+                      currency: position.currency,
+                    })}
                     value={formatMoney({
                       cents: position.assets,
                       currency: position.currency,
                       locale: i18n.language,
                     })}
                     data-testid="accounts-total"
-                    {...maskProps}
                   />
                   {liabilityAccounts.length > 0 && (
-                    <SubStat
-                      label={t("accounts.oweInCurrency", { currency: position.currency })}
+                    <MetricTile
+                      icon={CreditCard}
+                      label={t("accounts.oweInCurrency", {
+                        currency: position.currency,
+                      })}
                       value={formatMoney({
                         cents: position.debt,
                         currency: position.currency,
@@ -290,108 +392,122 @@ function AccountsPage() {
                         sign: "never",
                       })}
                       data-testid="accounts-debt-total"
-                      {...maskProps}
                     />
                   )}
                 </div>
-              ))
-            ) : (
-              <div className="grid grid-cols-1 gap-grid-gap min-[1100px]:grid-cols-2">
-                <Stat
-                  label={t("accounts.totalLabel")}
-                  value={formatMoney({
-                    cents: positions[0]?.assets ?? 0,
-                    locale: i18n.language,
-                  })}
-                  data-testid="accounts-total"
-                  {...maskProps}
-                />
-                {liabilityAccounts.length > 0 && (
-                  <SubStat
-                    label={t("accounts.debtTotalLabel")}
-                    value={formatMoney({
-                      cents: positions[0]?.debt ?? 0,
-                      locale: i18n.language,
-                      sign: "never",
-                    })}
-                    data-testid="accounts-debt-total"
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-grid-gap md:grid-cols-2 xl:grid-cols-4">
+              <MetricTile
+                featured
+                icon={Landmark}
+                label={t("wealth.v2.accounts.haveLabel")}
+                value={
+                  <Money
+                    cents={positions[0]?.assets ?? 0}
+                    locale={i18n.language}
                     {...maskProps}
                   />
-                )}
-              </div>
-            )}
-          </div>
-
-          {netWorth.data && !showMixedCurrencyNote && grandTotal > 0 && (
-            <p className="text-caption text-ink-dim" data-testid="accounts-net-worth-context">
-              {t("accounts.contributesToNetWorth", {
-                amount: formatMoney({ cents: grandTotal, locale: i18n.language }),
-                total: formatMoney({
-                  cents: netWorth.data.total_cents,
-                  locale: i18n.language,
-                }),
-              })}{" "}
-              <Link
-                to="/wealth/net-worth"
-                className="text-brand-ink underline underline-offset-2"
-                data-testid="accounts-net-worth-link"
-              >
-                {t("accounts.viewDetails")}
-              </Link>
-            </p>
-          )}
-
-          {breakdown.length > 0 && (
-            <div data-testid="accounts-breakdown">
-              <NetWorthBreakdownBar
-                breakdown={breakdown}
-                titleKey="accounts.breakdown"
+                }
+                caption={t("wealth.v2.accounts.haveCaption")}
+                data-testid="accounts-total"
               />
+              <MetricTile
+                icon={Wallet}
+                label={t("wealth.v2.accounts.cash")}
+                value={
+                  <Money
+                    cents={cashCents}
+                    locale={i18n.language}
+                    {...maskProps}
+                  />
+                }
+                caption={t("wealth.v2.accounts.accountCount", {
+                  count: cashSection?.accounts.length ?? 0,
+                })}
+                data-testid="accounts-cash-total"
+              />
+              <MetricTile
+                icon={ChartNoAxesColumn}
+                label={t("wealth.v2.accounts.investments")}
+                value={
+                  <Money
+                    cents={investmentsCents}
+                    locale={i18n.language}
+                    {...maskProps}
+                  />
+                }
+                caption={t("wealth.v2.accounts.accountCount", {
+                  count: investmentSection?.accounts.length ?? 0,
+                })}
+                data-testid="accounts-investments-total"
+              />
+              {liabilityAccounts.length > 0 && (
+                <MetricTile
+                  icon={CreditCard}
+                  label={t("wealth.v2.accounts.owed")}
+                  value={
+                    <Money
+                      cents={positions[0]?.debt ?? 0}
+                      locale={i18n.language}
+                      sign="never"
+                      {...maskProps}
+                    />
+                  }
+                  caption={t("wealth.v2.accounts.accountCount", {
+                    count: liabilityAccounts.length,
+                  })}
+                  data-testid="accounts-debt-total"
+                />
+              )}
             </div>
           )}
 
-          <Card flush data-testid="accounts-list">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("accounts.colAccount")}</TableHead>
-                  <TableHead>{t("accounts.colUpdated")}</TableHead>
-                  <TableHead numeric>{t("accounts.colBalance")}</TableHead>
-                  <TableHead numeric>
-                    <span className="sr-only">{t("accounts.colActions")}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {assetGroups.length > 0 &&
-                  assetGroups.map(([type, groupAccounts]) => (
-                    <AccountTypeGroup
-                      key={type}
-                      type={type}
-                      groupAccounts={groupAccounts}
-                      onEdit={setEditingAccount}
-                      stocksByAccount={stocksByAccount}
-                    />
-                  ))}
-                {liabilityGroups.length > 0 && (
-                  <TableRow data-testid="accounts-liability-section">
-                    <TableCell colSpan={4} className="text-label text-ink">
-                      {t("accounts.sectionLiabilities")}
-                    </TableCell>
-                  </TableRow>
-                )}
-                {liabilityGroups.map(([type, groupAccounts]) => (
-                  <AccountTypeGroup
-                    key={type}
-                    type={type}
-                    groupAccounts={groupAccounts}
-                    onEdit={setEditingAccount}
-                    stocksByAccount={stocksByAccount}
-                  />
-                ))}
-              </TableBody>
-            </Table>
-          </Card>
+          <div className="flex flex-col gap-grid-gap">
+            {sections.map((section) => (
+              <AccountSectionCard
+                key={section.key}
+                section={section}
+                onEdit={setEditingAccount}
+                stocksByAccount={stocksByAccount}
+              />
+            ))}
+
+            {breakdown.length > 0 && (
+              <div data-testid="accounts-breakdown">
+                <NetWorthBreakdownBar
+                  breakdown={breakdown}
+                  titleKey="accounts.breakdown"
+                />
+              </div>
+            )}
+
+            {netWorth.data && !showMixedCurrencyNote && grandTotal > 0 && (
+              <p
+                className="text-caption text-ink-dim"
+                data-testid="accounts-net-worth-context"
+              >
+                {t("accounts.contributesToNetWorth", {
+                  amount: formatMoney({
+                    cents: grandTotal,
+                    locale: i18n.language,
+                  }),
+                  total: formatMoney({
+                    cents: netWorth.data.total_cents,
+                    locale: i18n.language,
+                  }),
+                })}{" "}
+                <Link
+                  to="/wealth/net-worth"
+                  className="text-brand-ink underline underline-offset-2"
+                  data-testid="accounts-net-worth-link"
+                >
+                  {t("accounts.viewDetails")}
+                </Link>
+              </p>
+            )}
+          </div>
         </div>
       )}
 

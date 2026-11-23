@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { InfoIcon, TriangleAlertIcon } from "lucide-react";
+import { InfoIcon, LightbulbIcon, TriangleAlertIcon } from "lucide-react";
 import {
   Alert,
   AlertDescription,
@@ -8,13 +8,10 @@ import {
   Badge,
   Button,
   Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  EmptyState,
   Skeleton,
 } from "@nixus/shared";
 import type { UseQueryResult } from "@tanstack/react-query";
+import { InsightCallout } from "@/components/shared/InsightCallout";
 import type { TrendsInsightResponse } from "@/lib/types";
 import type { AiAvailability } from "@/hooks/useAiConfig";
 import { useAiErrorPresentation } from "@/hooks/useAiErrorPresentation";
@@ -37,6 +34,11 @@ const TONE_VARIANT: Record<
   calm: "neutral",
 };
 
+/**
+ * The glass "INSIGHT" callout — the one place this surface speaks to the user. Every state keeps
+ * the same shape, so the panel never jumps as the answer resolves, and every failure state still
+ * names the manual path and leaves the chart and the table either side of it alone.
+ */
 export function TrendsInsightPanel({
   gatePassed,
   availability,
@@ -51,21 +53,24 @@ export function TrendsInsightPanel({
 
   if (!gatePassed) {
     return (
-      <Card data-testid="trends-insight-panel">
-        <EmptyState
-          title={t("insights.insightGateTitle")}
-          description={t("spendingTrends.insightGateEmpty")}
-          action={
-            <Button
-              variant="outline"
-              render={<Link to="/spending/budget" />}
-              data-testid="trends-insight-budget-link"
-            >
-              {t("insights.insightGateAction")}
-            </Button>
-          }
-        />
-      </Card>
+      <InsightCallout
+        icon={LightbulbIcon}
+        eyebrow={t("insights.v2.insightEyebrow")}
+        title={t("insights.insightGateTitle")}
+        actions={
+          <Button
+            variant="outline"
+            size="lg"
+            render={<Link to="/spending/budget" />}
+            data-testid="trends-insight-budget-link"
+          >
+            {t("insights.insightGateAction")}
+          </Button>
+        }
+        data-testid="trends-insight-panel"
+      >
+        {t("spendingTrends.insightGateEmpty")}
+      </InsightCallout>
     );
   }
 
@@ -86,7 +91,7 @@ export function TrendsInsightPanel({
           <Button
             variant="outline"
             size="sm"
-            className="mt-2"
+            className="mt-3"
             render={<Link to="/settings" />}
             data-testid="trends-insight-settings-link"
           >
@@ -99,17 +104,19 @@ export function TrendsInsightPanel({
 
   if (isPending || (isFetching && !data)) {
     return (
-      <Card data-testid="trends-insight-panel">
-        <CardContent>
-          <p className="mb-3 text-caption text-ink-dim">
-            {t("spendingTrends.insightSkeleton")}
-          </p>
-          <Skeleton
-            rows={INSIGHT_SKELETON_ROWS}
-            data-testid="trends-insight-skeleton"
-          />
-        </CardContent>
-      </Card>
+      <InsightCallout
+        icon={LightbulbIcon}
+        eyebrow={t("insights.v2.insightEyebrow")}
+        data-testid="trends-insight-panel"
+      >
+        <p className="mb-3 text-caption text-ink-dim">
+          {t("spendingTrends.insightSkeleton")}
+        </p>
+        <Skeleton
+          rows={INSIGHT_SKELETON_ROWS}
+          data-testid="trends-insight-skeleton"
+        />
+      </InsightCallout>
     );
   }
 
@@ -125,7 +132,7 @@ export function TrendsInsightPanel({
             <Button
               variant="outline"
               size="sm"
-              className="mt-2"
+              className="mt-3"
               onClick={() => refetch()}
               data-testid="trends-insight-retry"
             >
@@ -142,16 +149,20 @@ export function TrendsInsightPanel({
   }
 
   return (
-    <Card data-testid="trends-insight-panel">
-      <CardHeader>
-        <h2 className="text-h2 text-ink">{data.headline}</h2>
-        <CardAction>
-          <Badge variant={TONE_VARIANT[data.tone]}>{data.window_label}</Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent>
-        <p className="text-body text-ink-dim">{data.body}</p>
-      </CardContent>
-    </Card>
+    <InsightCallout
+      icon={LightbulbIcon}
+      eyebrow={t("insights.v2.insightEyebrow")}
+      title={data.headline}
+      collapsible={{
+        collapseLabel: t("insights.collapseInsight"),
+        expandLabel: t("insights.expandInsight"),
+      }}
+      data-testid="trends-insight-panel"
+    >
+      <p>{data.body}</p>
+      <Badge variant={TONE_VARIANT[data.tone]} className="mt-4">
+        {data.window_label}
+      </Badge>
+    </InsightCallout>
   );
 }

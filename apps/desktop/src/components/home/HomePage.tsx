@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import {
   Alert,
   AlertTitle,
+  Badge,
   Button,
   Card,
   CardContent,
@@ -439,8 +440,8 @@ function Section({
 }) {
   return (
     <section className="mt-section-gap" data-testid={testId}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-h3 text-ink">{title}</h2>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-h1 text-ink">{title}</h2>
         {aside}
       </div>
       {children}
@@ -534,20 +535,17 @@ export function HomePage() {
             busy={composer.busy}
             onAsk={ask}
             onRetry={() => void access.refetch()}
-          />
-          <QuickActions />
+          >
+            <QuickActions />
+          </AskHero>
 
-          <div className="grid grid-cols-1 gap-4 @4xl:grid-cols-5">
-            <div className="@4xl:col-span-3">
-              <NeedsAttentionCard items={attention.items} loading={attention.isLoading} />
-            </div>
-            <div className="@4xl:col-span-2">
-              <RecommendedCard
-                recommendations={recommendations.recommendations}
-                loading={recommendations.isLoading}
-                onOpenComposer={() => setOpen(true)}
-              />
-            </div>
+          <div className="grid grid-cols-1 gap-grid-gap @4xl:grid-cols-2">
+            <NeedsAttentionCard items={attention.items} loading={attention.isLoading} />
+            <RecommendedCard
+              recommendations={recommendations.recommendations}
+              loading={recommendations.isLoading}
+              onOpenComposer={() => setOpen(true)}
+            />
           </div>
 
           <Section title={t("home.glance.title")}>
@@ -561,9 +559,9 @@ export function HomePage() {
               aside={
                 <div className="flex items-center gap-3">
                   {widgets.length > 0 && (
-                    <span className="text-caption text-ink-dim">
+                    <Badge variant="brand">
                       {t("home.widgets.count", { count: widgets.length, max: MAX_WIDGETS })}
-                    </span>
+                    </Badge>
                   )}
                   <Button
                     ref={toggleRef}
@@ -590,7 +588,10 @@ export function HomePage() {
               ) : widgets.length === 0 ? (
                 <WidgetInvitation canAsk={canAsk} onAsk={ask} />
               ) : (
-                <div className="grid grid-cols-1 gap-4 @3xl:grid-cols-2" data-testid="home-surface">
+                <div
+                  className="grid grid-cols-1 gap-grid-gap @3xl:grid-cols-2"
+                  data-testid="home-surface"
+                >
                   {orderedWidgets.map((widget, index) => (
                     <WidgetCard
                       key={widget.id}

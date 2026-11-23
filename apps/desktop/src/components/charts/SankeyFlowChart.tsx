@@ -75,6 +75,45 @@ function toGraph(data: HomeDataset, t: TFunction): { names: string[]; links: Flo
 const LABEL_GAP = 8;
 
 /**
+ * A ribbon, painted from the ranked palette at low opacity. recharts strokes a bezier at the
+ * band's width rather than filling a shape, so the colour is the STROKE and the thickness is
+ * `linkWidth` — a fill here would draw a lens instead of a band. The class is applied by hand
+ * because recharts only adds it to the link it draws itself.
+ */
+function FlowLinkShape({
+  sourceX,
+  sourceY,
+  sourceControlX,
+  targetX,
+  targetY,
+  targetControlX,
+  linkWidth,
+  index,
+  accent,
+}: {
+  sourceX: number;
+  sourceY: number;
+  sourceControlX: number;
+  targetX: number;
+  targetY: number;
+  targetControlX: number;
+  linkWidth: number;
+  index: number;
+  accent?: number;
+}) {
+  return (
+    <path
+      className="recharts-sankey-link"
+      d={`M${sourceX},${sourceY}C${sourceControlX},${sourceY} ${targetControlX},${targetY} ${targetX},${targetY}`}
+      fill="none"
+      stroke={rampColor(index, accent)}
+      strokeOpacity={0.24}
+      strokeWidth={linkWidth}
+    />
+  );
+}
+
+/**
  * A node's rectangle and its name, placed so it never crosses a ribbon: left of a node money only
  * leaves, right of a node money only reaches, and above a node with ribbons on both sides.
  */
@@ -109,10 +148,10 @@ function FlowNodeShape({
         y={y}
         width={width}
         height={height}
-        fill={isHub ? "var(--ink-dim)" : rampColor(index, accent)}
+        fill={rampColor(index, accent)}
         stroke={SEGMENT_DIVIDER}
         strokeWidth={1}
-        radius={2}
+        radius={3}
       />
       {isHub ? (
         <text
@@ -186,10 +225,7 @@ export function SankeyFlowChart({
             iterations={64}
             margin={{ top: 20, right: 140, bottom: 8, left: 140 }}
             node={(props) => <FlowNodeShape {...props} accent={accent} />}
-            // A ribbon is a bezier STROKED at the band's width, so its colour is the stroke and
-            // its width is recharts' own `linkWidth`; setting a fill here would draw a lens
-            // instead of a band.
-            link={{ stroke: "var(--ink)", strokeOpacity: 0.2 }}
+            link={(props) => <FlowLinkShape {...props} accent={accent} />}
           >
             <Tooltip
               content={({ active, payload }) => {

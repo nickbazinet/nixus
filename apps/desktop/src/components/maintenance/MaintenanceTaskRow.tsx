@@ -34,7 +34,7 @@ export function MaintenanceTaskRow({
     <>
       <div
         className={cn(
-          "flex flex-col gap-2 border-b border-line px-3 py-1 last:border-b-0 sm:flex-row sm:items-center sm:gap-4",
+          "flex flex-col gap-2 border-b border-line px-4 py-1.5 last:border-b-0 sm:flex-row sm:items-center sm:gap-4",
           isLogging && "bg-hover"
         )}
         data-testid="maintenance-task-row"
@@ -42,10 +42,14 @@ export function MaintenanceTaskRow({
       >
         <AttentionRow
           status={getMaintenanceStatusTone(task.status)}
-          name={getMaintenanceTaskLabel(task, t)}
+          name={
+            <span className="text-label text-ink">
+              {getMaintenanceTaskLabel(task, t)}
+            </span>
+          }
           figure={nextDueLine || undefined}
           accessibleName={formatTaskAccessibleName(task, t)}
-          className="min-w-0 flex-1 border-b-0"
+          className="min-w-0 flex-1 border-b-0 py-2.5"
         />
 
         <div className="flex shrink-0 items-center gap-2">

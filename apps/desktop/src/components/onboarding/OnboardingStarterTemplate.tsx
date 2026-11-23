@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Button, Card, CardContent, Label } from "@nixus/shared";
+import { Tag } from "lucide-react";
+import { Button, Card, IconChip, Label } from "@nixus/shared";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { useApplySystemTemplate, useSystemTemplateDetail } from "@/hooks/useBudgetTemplates";
 import { queryKeys } from "@/lib/constants";
@@ -116,9 +117,11 @@ export function OnboardingStarterTemplate({ templateId }: { templateId: string }
   };
 
   return (
-    <div className="space-y-3" data-testid="onboarding-starter-template">
+    <div className="flex flex-col gap-grid-gap" data-testid="onboarding-starter-template">
       <div>
-        <h3 className="text-h3 text-ink">{t("onboarding.starterTemplateTitle")}</h3>
+        <h3 className="font-display text-h2 text-ink">
+          {t("onboarding.starterTemplateTitle")}
+        </h3>
         <p className="mt-1 text-caption text-ink-dim">
           {t("onboarding.starterTemplateDescription")}
         </p>
@@ -128,54 +131,57 @@ export function OnboardingStarterTemplate({ templateId }: { templateId: string }
       </div>
 
       {groups.map((group) => (
-        <Card key={group.name}>
-          <CardContent>
-            <h4 className="text-label text-ink">{group.name}</h4>
-            <p className="mb-2 text-caption text-ink-faint">
-              {t("onboarding.starterTemplateTargetLabel")}
-            </p>
-            <div className="space-y-2">
-              {group.categories.map((category) => {
-                const key = editKey(group.name, category.name);
-                const inputId = `starter-target-${group.name}-${category.name}`.replace(
-                  /\s+/g,
-                  "-"
-                );
-                return (
-                  <div
-                    key={category.name}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <Label htmlFor={inputId} className="min-w-0 truncate">
-                      {category.name}
-                    </Label>
-                    <div className="w-36 shrink-0">
-                      <MoneyInput
-                        id={inputId}
-                        value={edits[key] ?? authoredTarget(category.target_cents)}
-                        onChange={(cents) =>
-                          setEdits((previous) => ({ ...previous, [key]: cents }))
-                        }
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
+        <Card key={group.name} flush>
+          <div className="flex items-center gap-3 border-b border-line px-card-pad py-4">
+            <IconChip icon={Tag} size="sm" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-display text-h3 text-ink">{group.name}</span>
+              <span className="mt-0.5 block text-caption text-ink-faint">
+                {t("onboarding.starterTemplateTargetLabel")}
+              </span>
+            </span>
+          </div>
+          {group.categories.map((category) => {
+            const key = editKey(group.name, category.name);
+            const inputId = `starter-target-${group.name}-${category.name}`.replace(
+              /\s+/g,
+              "-"
+            );
+            return (
+              <div
+                key={category.name}
+                className="flex items-center justify-between gap-4 px-card-pad py-3 not-last:border-b not-last:border-line"
+              >
+                <Label htmlFor={inputId} className="min-w-0 truncate">
+                  {category.name}
+                </Label>
+                <div className="w-36 shrink-0">
+                  <MoneyInput
+                    id={inputId}
+                    value={edits[key] ?? authoredTarget(category.target_cents)}
+                    onChange={(cents) =>
+                      setEdits((previous) => ({ ...previous, [key]: cents }))
+                    }
+                  />
+                </div>
+              </div>
+            );
+          })}
         </Card>
       ))}
 
-      <Button
-        onClick={handleConfirm}
-        disabled={applyTemplate.isPending}
-        aria-disabled={applyTemplate.isPending || undefined}
-        data-testid="onboarding-starter-confirm"
-      >
-        {applyTemplate.isPending
-          ? t("onboarding.starterTemplateConfirming")
-          : t("onboarding.starterTemplateConfirmAction")}
-      </Button>
+      <div className="flex">
+        <Button
+          onClick={handleConfirm}
+          disabled={applyTemplate.isPending}
+          aria-disabled={applyTemplate.isPending || undefined}
+          data-testid="onboarding-starter-confirm"
+        >
+          {applyTemplate.isPending
+            ? t("onboarding.starterTemplateConfirming")
+            : t("onboarding.starterTemplateConfirmAction")}
+        </Button>
+      </div>
     </div>
   );
 }

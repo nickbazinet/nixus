@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import {
   AlarmClock,
-  CircleCheckBig,
+  CloudCheck,
   CircleHelp,
   CirclePause,
   CircleArrowUp,
@@ -43,7 +43,7 @@ import { SyncRemoteChangedDialog } from "./SyncRemoteChangedDialog";
 
 const STATE_ICON: Record<SyncState, React.ComponentType<{ className?: string }>> = {
   unlinked: CloudOff,
-  idle: CircleCheckBig,
+  idle: CloudCheck,
   syncing: RefreshCw,
   offline: CloudOff,
   frozen: CirclePause,
@@ -164,8 +164,11 @@ export function SyncStatusIndicator({
           >
             <Icon
               className={cn(
-                "size-4 shrink-0",
+                "size-[18px] shrink-0",
                 TONE_CLASS[syncStateTone(state)],
+                // The rail strokes its icons with the brand gradient; a state that needs attention
+                // keeps its own status colour instead.
+                syncStateTone(state) !== "quiet" && "[stroke:currentColor]!",
                 state === "syncing" && "animate-spin"
               )}
             />
@@ -174,10 +177,16 @@ export function SyncStatusIndicator({
             <span
               role="status"
               aria-live="polite"
-              className={cn(railLabelClass(expanded), "truncate")}
+              className={cn(railLabelClass(expanded), expanded && "flex-1 truncate text-left")}
             >
               {label}
             </span>
+            {state === "idle" && (
+              <span
+                aria-hidden="true"
+                className={cn("size-2 shrink-0 rounded-full bg-good", !expanded && "hidden")}
+              />
+            )}
           </TooltipTrigger>
           <TooltipContent side="right" className="text-caption">
             <span className="flex flex-col gap-0.5">

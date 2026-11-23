@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useForm, Controller } from "react-hook-form";
 import {
@@ -6,6 +6,9 @@ import {
   BulkBar,
   Button,
   Card,
+  CardAction,
+  CardHeader,
+  CardTitle,
   Checkbox,
   DatePicker,
   Dialog,
@@ -42,10 +45,11 @@ import {
   type SortDirection,
 } from "@nixus/shared";
 import { toast } from "sonner";
-import { Plus, Receipt, Search } from "lucide-react";
+import { Plus, Receipt, Search, Tag } from "lucide-react";
 import { MoneyInput } from "@/components/shared/MoneyInput";
 import { InlineEditMoney } from "@/components/shared/InlineEdit";
 import { OptionalAccountSelect } from "@/components/shared/OptionalAccountSelect";
+import { rampColor } from "@/components/spending-trends/insights-chart";
 import {
   useUpdateExpense,
   useDeleteExpense,
@@ -68,6 +72,17 @@ interface ExpenseListProps {
    * shape for the unified view, where an income row's source lands in the same slot.
    */
   showCategory?: boolean;
+  /** Card heading for the standalone surface, e.g. "November transactions". Omitted when nested. */
+  title?: string;
+  /** Pills beside the heading — add, import. */
+  actions?: ReactNode;
+  /** A label naming what the card is scoped to, e.g. the period. */
+  scopeLabel?: string;
+  /**
+   * `nested` drops the card chrome for a list opened inside a budget category row: the row is
+   * already the frame, and a card inside a card inside a card is what made the budget feel cramped.
+   */
+  variant?: "card" | "nested";
 }
 
 interface EditFormData {
@@ -325,11 +340,28 @@ function UnlinkedAccountCell({ source }: { source: string }) {
   );
 }
 
+function CardFrame({ children }: { children: ReactNode }) {
+  return (
+    <Card flush data-testid="expense-list">
+      {children}
+    </Card>
+  );
+}
+
+function NestedFrame({ children }: { children: ReactNode }) {
+  return <div data-testid="expense-list">{children}</div>;
+}
+
 export function ExpenseList({
   expenses,
   onAddExpense,
   showCategory = false,
+  title,
+  actions,
+  scopeLabel,
+  variant = "card",
 }: ExpenseListProps) {
+  const nested = variant === "nested";
   const { t, i18n } = useTranslation();
   const formatCurrency = useFormatCurrency();
   const maskProps = useMaskProps();
@@ -376,7 +408,22 @@ export function ExpenseList({
     () => visible.filter((expense) => selectedIds.has(expense.id)),
     [visible, selectedIds]
   );
-  const selectedSumCents = selected.reduce((sum, expense) => sum + expense.amount_cents, 0);
+  // The category chip's dot is coloured by RANK — the biggest share of the month gets the first
+  // ramp step — so no category owns a hue it could lose next month.
+  const categoryColors = useMemo(() => {
+    const totals = new Map<number, number>();
+    for (const expense of expenses) {
+      totals.set(
+        expense.budget_category_id,
+        (totals.get(expense.budget_category_id) ?? 0) + expense.amount_cents
+      );
+    }
+    return new Map(
+      [...totals.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([categoryId], rank) => [categoryId, rampColor(rank)])
+    );
+  }, [expenses]);  const selectedSumCents = selected.reduce((sum, expense) => sum + expense.amount_cents, 0);
   const totalCents = visible.reduce((sum, expense) => sum + expense.amount_cents, 0);
 
   const allSelected = visible.length > 0 && selected.length === visible.length;
@@ -457,8 +504,37 @@ export function ExpenseList({
     </Button>
   ) : undefined;
 
-  if (expenses.length === 0) {
+  const cardHeader = title ? (
+    <CardHeader className="border-b border-line pt-card-pad pb-4">
+      <CardTitle icon={Tag}>{title}</CardTitle>
+      {actions && <CardAction>{actions}</CardAction>}
+    </CardHeader>
+  ) : null;
+
+  if (expenses.length === 0 && nested) {
     return (
+      <div
+        className="flex flex-wrap items-center gap-3 rounded-lg bg-page px-4 py-3 text-caption text-ink-dim"
+        data-testid="no-expenses-message"
+      >
+        <Receipt className="icon-gradient size-4 shrink-0" aria-hidden="true" />
+        <span>
+          <span className="font-bold text-ink">{t("expenses.noExpensesThisMonth")}</span>
+          {" · "}
+          {t("expenses.noExpensesHint")}
+        </span>
+        {onAddExpense && (
+          <Button variant="outline" size="xs" className="ml-auto" onClick={onAddExpense}>
+            <Plus aria-hidden="true" />
+            {t("budget.addExpense")}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  if (expenses.length === 0) {
+    const empty = (
       <EmptyState
         icon={<Receipt />}
         title={t("expenses.noExpensesThisMonth")}
@@ -467,38 +543,56 @@ export function ExpenseList({
         data-testid="no-expenses-message"
       />
     );
+    return title ? (
+      <Card flush data-testid="expense-list">
+        {cardHeader}
+        <div className="py-4">{empty}</div>
+      </Card>
+    ) : (
+      empty
+    );
   }
+
+  const Frame = nested ? NestedFrame : CardFrame;
 
   return (
     <>
-      <Card flush data-testid="expense-list">
-        <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
-          <div className="relative w-56">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-ink-faint"
-            />
-            {/* "Search" alone would promise more than this does: matching is a merchant substring,
-              * so a category or a note is unfindable and the placeholder has to say so. */}
-            <Input
-              type="search"
-              value={query}
-              onChange={(event) => handleQueryChange(event.target.value)}
-              placeholder={t("expenses.searchMerchants")}
-              aria-label={t("expenses.searchMerchants")}
-              className="pl-7"
-              data-testid="expense-search"
-            />
+      <Frame>
+        {cardHeader}
+        {/* Nested inside a budget category the search lives once, at the top of the page: a field
+          * per open category repeated the same control down the whole list. */}
+        {!nested && (
+          <div className="flex flex-wrap items-center gap-2.5 border-b border-line px-card-pad py-3.5">
+            <div className="relative w-64">
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-ink-faint"
+              />
+              {/* "Search" alone would promise more than this does: matching is a merchant substring,
+                * so a category or a note is unfindable and the placeholder has to say so. */}
+              <Input
+                type="search"
+                value={query}
+                onChange={(event) => handleQueryChange(event.target.value)}
+                placeholder={t("expenses.searchMerchants")}
+                aria-label={t("expenses.searchMerchants")}
+                className="rounded-full pl-10"
+                data-testid="expense-search"
+              />
+            </div>
+            {/* A label, not a control: the month comes from the one global period navigator in the
+              * page header, so a second control here would be a second source of truth. */}
+            {scopeLabel && <Badge variant="brand">{scopeLabel}</Badge>}
+            <span className="flex-1" />
+            {/* Only while filtering. Unfiltered it would just restate the footer total in the same
+              * small card, and two counts that can differ is worse than one that cannot. */}
+            {query.trim() !== "" && (
+              <span className="text-caption text-ink-dim" data-testid="expense-count">
+                {t("expenses.rowCount", { count: visible.length })}
+              </span>
+            )}
           </div>
-          <span className="flex-1" />
-          {/* Only while filtering. Unfiltered it would just restate the footer total in the same
-            * small card, and two counts that can differ is worse than one that cannot. */}
-          {query.trim() !== "" && (
-            <span className="text-caption text-ink-dim" data-testid="expense-count">
-              {t("expenses.rowCount", { count: visible.length })}
-            </span>
-          )}
-        </div>
+        )}
 
         {selected.length > 0 && (
           <BulkBar
@@ -533,7 +627,12 @@ export function ExpenseList({
             data-testid="expense-no-match"
           />
         ) : (
-          <Table>
+          <Table
+            className={cn(
+              title &&
+                "[&_td:first-child]:pl-card-pad [&_td:last-child]:pr-card-pad [&_th:first-child]:pl-card-pad [&_th:last-child]:pr-card-pad"
+            )}
+          >
             <caption className="sr-only">{t("expenses.tableCaption")}</caption>
             <TableHeader>
               <TableRow>
@@ -604,10 +703,20 @@ export function ExpenseList({
                     <TableCell dim data-testid="expense-date">
                       {formatShortDate(expense.date, i18n.language)}
                     </TableCell>
-                    <TableCell data-testid="expense-merchant">{expense.merchant}</TableCell>
+                    <TableCell className="font-bold" data-testid="expense-merchant">
+                      {expense.merchant}
+                    </TableCell>
                     {showCategory && (
                       <TableCell data-testid="expense-category">
                         <Badge variant="brand">
+                          <span
+                            aria-hidden="true"
+                            className="size-1.5 shrink-0 rounded-full"
+                            style={{
+                              backgroundColor:
+                                categoryColors.get(expense.budget_category_id) ?? rampColor(7),
+                            }}
+                          />
                           {categoryNameById.get(expense.budget_category_id) ??
                             t("expenses.uncategorized")}
                         </Badge>
@@ -631,19 +740,21 @@ export function ExpenseList({
                 );
               })}
             </TableBody>
-            <TableFooter>
-              <TableRow>
-                <TableCell colSpan={showCategory ? 5 : 4} className="text-caption">
-                  {t("expenses.rowCount", { count: visible.length })}
-                </TableCell>
-                <TableCell numeric data-testid="expense-total">
-                  <Money cents={totalCents} locale={i18n.language} {...maskProps} />
-                </TableCell>
-              </TableRow>
-            </TableFooter>
+            {!nested && (
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={showCategory ? 5 : 4} className="text-caption">
+                    {t("expenses.rowCount", { count: visible.length })}
+                  </TableCell>
+                  <TableCell numeric data-testid="expense-total">
+                    <Money cents={totalCents} locale={i18n.language} {...maskProps} />
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
+            )}
           </Table>
         )}
-      </Card>
+      </Frame>
 
       <SlideOver
         open={editing !== null}

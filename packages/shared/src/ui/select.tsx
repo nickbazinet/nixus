@@ -17,7 +17,7 @@ function SelectTrigger({
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
       className={cn(
-        "flex h-8 min-h-target-min w-full items-center justify-between gap-2 rounded-sm border border-line-strong bg-card px-2.5 py-1 text-body text-ink transition-colors disabled:cursor-not-allowed disabled:border-line disabled:text-ink-disabled aria-disabled:cursor-not-allowed aria-disabled:border-line aria-disabled:text-ink-disabled aria-invalid:border-over [&>span]:line-clamp-1",
+        "flex h-9 min-h-target-min w-full items-center justify-between gap-2 rounded-sm border border-line-strong bg-card px-3 py-1 text-body text-ink transition-colors disabled:cursor-not-allowed disabled:border-line disabled:text-ink-disabled aria-disabled:cursor-not-allowed aria-disabled:border-line aria-disabled:text-ink-disabled aria-invalid:border-over [&>span]:line-clamp-1",
         focusRing,
         className
       )}

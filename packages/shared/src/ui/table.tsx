@@ -126,7 +126,7 @@ function TableHead({
       scope="col"
       aria-sort={sortable ? sortDirection : undefined}
       className={cn(
-        "border-b border-line px-3 py-2.5 text-left text-column-head whitespace-nowrap text-ink-faint",
+        "border-b border-line px-3 py-3 text-left text-column-head whitespace-nowrap text-ink-faint uppercase",
         numeric && "text-right",
         className
       )}
@@ -169,7 +169,7 @@ function TableCell({
     <td
       data-slot="table-cell"
       className={cn(
-        "border-b border-line px-3 py-2.5 align-middle",
+        "border-b border-line px-3 py-3.5 align-middle",
         numeric && "money text-right font-semibold",
         dim && "text-ink-dim",
         className

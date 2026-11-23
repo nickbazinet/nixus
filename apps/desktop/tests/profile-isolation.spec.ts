@@ -501,7 +501,7 @@ async function launchAndCreateSecondProfile(page: Page) {
   await expect(rows).toHaveCount(1);
   await page.getByTestId("picker-new-profile-button").click();
   await expect(rows).toHaveCount(2);
-  await expect(rows.nth(1)).toHaveText(CREATED_LABEL);
+  await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText(CREATED_LABEL);
 }
 
 /**
@@ -680,8 +680,9 @@ async function expectAiIsolated(page: Page, self: ProfileExpectation) {
   await expect(section).toBeVisible();
 
   const connection = page.getByTestId("setting-connection");
-  const savedHeading = page.getByRole("heading", { level: 4, name: "Replace what's saved" });
-  const emptyHeading = page.getByRole("heading", { level: 4, name: "Your key" });
+  // Level 2: the redesign promotes each settings group's name to the card's own heading.
+  const savedHeading = page.getByRole("heading", { level: 2, name: "Replace what's saved" });
+  const emptyHeading = page.getByRole("heading", { level: 2, name: "Your key" });
 
   if (self.aiConfigured) {
     // `CredentialsForm` renders the connection row and the clear-credentials row only when

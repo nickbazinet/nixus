@@ -11,6 +11,7 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
+  IconChip,
   Label,
   Money,
   Select,
@@ -131,16 +132,12 @@ export function SuggestedAllocationPanel({
 
   return (
     <Card
-      className="mb-section-gap border-l-3 border-l-brand"
+      tone="glass"
+      className="mb-section-gap"
       data-testid="suggested-allocation-panel"
     >
       <CardHeader className="flex items-center gap-3">
-        <span
-          aria-hidden="true"
-          className="grid size-9 shrink-0 place-items-center rounded-lg bg-brand-soft text-brand-ink"
-        >
-          <Target className="size-4" />
-        </span>
+        <IconChip icon={Target} tone="card" />
         <div className="flex items-center gap-1.5">
           <Button
             variant="ghost"

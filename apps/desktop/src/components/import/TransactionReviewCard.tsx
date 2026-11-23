@@ -127,12 +127,12 @@ export function TransactionReviewCard({
         </Alert>
       )}
       <CardContent className="py-card-pad">
-        <div className="flex items-start gap-2">
+        <div className="flex items-start gap-3">
           <Checkbox
             checked={selected}
             onCheckedChange={onToggleSelect}
             aria-label={`${merchant} ${formatCurrency(amountCents)}`}
-            className="mt-1 -ml-1"
+            className="mt-1"
             data-testid="transaction-checkbox"
           />
           <div
@@ -176,7 +176,7 @@ export function TransactionReviewCard({
               </div>
             </div>
 
-            <div className="mt-2 flex items-center gap-2">
+            <div className="mt-3 flex items-center gap-2">
               <div className="shrink-0" data-testid="date-input">
                 <Label htmlFor={dateId} className="sr-only">
                   {t("common.date")}
@@ -221,10 +221,10 @@ export function TransactionReviewCard({
             {!isIncome && !isResolved && proposedCategory && (
               <Alert
                 variant="caution"
-                className="mt-2"
+                className="mt-3"
                 data-testid="propose-category-alert"
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <span>{proposalMessage(proposedCategory, groups, t)}</span>
                   <Button
                     type="button"

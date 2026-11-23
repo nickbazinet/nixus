@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Card, CardContent, Label } from "@nixus/shared";
+import { Layers } from "lucide-react";
+import { Button, Card, CardContent, IconChip, Label } from "@nixus/shared";
 import {
   ImportCategorySelect,
   type ImportSelectCategory,
@@ -32,27 +33,30 @@ export function MerchantGroup({
   const selectId = `group-category-${merchant.replace(/\W+/g, "-").toLowerCase()}`;
 
   return (
-    <div className="space-y-2" data-testid="merchant-group">
+    <div className="flex flex-col gap-3" data-testid="merchant-group">
       <Card flush>
-        <CardContent className="flex flex-wrap items-end gap-2 py-3">
-          <div className="min-w-0 flex-1">
-            <Label htmlFor={selectId} className="mb-1">
+        <CardContent className="py-4">
+          <div className="mb-2.5 flex items-center gap-3">
+            <IconChip icon={Layers} size="sm" />
+            <Label htmlFor={selectId} className="min-w-0">
               {t("import.groupHeading", { count, merchant })}
             </Label>
-            <ImportCategorySelect
-              id={selectId}
-              value={groupCategory}
-              onChange={(catId) => {
-                setGroupCategory(catId);
-                setApplied(false);
-              }}
-              categories={categories}
-              groups={groups}
-              placeholder={t("import.selectCategory")}
-              testId="group-category-select"
-            />
           </div>
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <ImportCategorySelect
+                id={selectId}
+                value={groupCategory}
+                onChange={(catId) => {
+                  setGroupCategory(catId);
+                  setApplied(false);
+                }}
+                categories={categories}
+                groups={groups}
+                placeholder={t("import.selectCategory")}
+                testId="group-category-select"
+              />
+            </div>
             <Button
               variant="outline"
               disabled={groupCategory === null}
@@ -70,16 +74,14 @@ export function MerchantGroup({
           {applied && (
             <p
               aria-live="polite"
-              className="w-full text-caption text-good-ink"
+              className="mt-2 text-caption text-good-ink"
               data-testid="group-applied-notice"
             >
               {t("import.groupApplied", { count })}
             </p>
           )}
           {groupCategory === null && (
-            <p className="w-full text-caption text-ink-dim">
-              {t("import.groupPickFirst")}
-            </p>
+            <p className="mt-2 text-caption text-ink-dim">{t("import.groupPickFirst")}</p>
           )}
         </CardContent>
       </Card>

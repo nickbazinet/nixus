@@ -52,6 +52,8 @@ vi.mock("@nixus/shared", () => {
     AlertTitle: passthrough("p"),
     AlertDescription: passthrough("p"),
     Card: passthrough("div"),
+    // The settings group card's header chip. Decorative, so a bare span is the whole contract.
+    IconChip: () => <span aria-hidden="true" />,
     Button: ({
       children,
       render: _render,

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { Landmark } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, SubStat } from "@nixus/shared";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
 import { useTfsaAccumulatedLimit } from "@/hooks/useProfile";
@@ -16,7 +17,9 @@ export function TfsaRoomPanel() {
   return (
     <Card data-testid="tfsa-room-panel">
       <CardHeader>
-        <CardTitle>{t("profile.tfsaAccumulatedLimit")}</CardTitle>
+        <CardTitle icon={Landmark}>
+          {t("profile.tfsaAccumulatedLimit")}
+        </CardTitle>
       </CardHeader>
 
       <CardContent>

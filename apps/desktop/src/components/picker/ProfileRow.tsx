@@ -4,6 +4,7 @@ import {
   Card,
   CardContent,
 } from "@nixus/shared";
+import { AccountAvatar } from "@/components/auth/AccountAvatar";
 import { cn } from "@/lib/utils";
 import type { Dataset } from "@/hooks/useDatasets";
 import { ProfileRowMenu, type DeleteAvailability } from "./ProfileRowMenu";
@@ -81,19 +82,35 @@ export function ProfileRow({
           {/* `flex-wrap`, never `truncate`: the label is the user's own text, up to the 80 characters
             * rename allows, so it keeps wrapping and the mark drops onto its own line instead of
             * squeezing the name or sliding under the menu the `pr-10` above reserves room for. */}
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="text-label text-ink" data-testid="picker-dataset-label">
-              {entry.label}
+          <span className="flex items-center gap-3">
+            {/* The charte's gradient monogram, the same treatment the account trigger wears: a
+              * profile is a person, and two rows apart from their initials are easier to tell
+              * apart than two identical cards. Decorative — `AccountAvatar` marks it aria-hidden,
+              * and the row's own label carries the name. */}
+            <AccountAvatar
+              avatar={null}
+              premium={false}
+              sizeClassName="size-9"
+              alt=""
+              imageTestId="picker-dataset-avatar"
+              placeholderTestId="picker-dataset-monogram"
+              name={entry.label}
+            />
+            <span className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="text-label text-ink" data-testid="picker-dataset-label">
+                {entry.label}
+              </span>
+              {/* A word, never a dot or an icon: this is the only thing telling two otherwise
+                * identical rows apart, so it has to survive a user who cannot separate the brand
+                * tint from the card. Inside the row button on purpose — a Badge is a label, not a
+                * control, so it adds no second focus target and the word joins the button's own
+                * accessible name. */}
+              {isOpen ? (
+                <Badge variant="brand" data-testid="picker-active-badge">
+                  {t("datasets.currentProfileBadge")}
+                </Badge>
+              ) : null}
             </span>
-            {/* A word, never a dot or an icon: this is the only thing telling two otherwise identical
-              * rows apart, so it has to survive a user who cannot separate the brand tint from the
-              * card. Inside the row button on purpose — a Badge is a label, not a control, so it adds
-              * no second focus target and the word joins the button's own accessible name. */}
-            {isOpen ? (
-              <Badge variant="brand" data-testid="picker-active-badge">
-                {t("datasets.currentProfileBadge")}
-              </Badge>
-            ) : null}
           </span>
         </CardContent>
       </Card>

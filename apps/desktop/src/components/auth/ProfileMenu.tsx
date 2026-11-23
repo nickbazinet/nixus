@@ -12,7 +12,6 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@nixus/shared";
 import { cn } from "@/lib/utils";
@@ -209,9 +208,9 @@ export function ProfileMenu() {
             <Button
               variant="ghost"
               size="icon"
-              // `size-10` overrides the variant's own `size-8`: a 32px picture needs a target bigger
-              // than 32px. Safe to grow only because TopBar pins this absolutely, outside the
-              // `justify-center` row the search field is distributed in.
+              // `size-10` overrides the variant's own `size-9`: a 36px monogram needs a target
+              // bigger than itself. Safe to grow only because TopBar pins this absolutely, outside
+              // the `justify-center` row the search field is distributed in.
               className={cn(
                 "size-10",
                 state === "session-expired" && "text-caution-ink",
@@ -232,12 +231,13 @@ export function ProfileMenu() {
           <AccountAvatar
             avatar={avatar.data}
             premium={showPremium}
-            sizeClassName="size-8"
+            sizeClassName="size-9"
             // Decorative: the trigger's own `aria-label` already names the account this picture
             // belongs to, so an alt here would only say it twice.
             alt=""
             imageTestId="profile-menu-avatar"
             placeholderTestId="profile-menu-icon"
+            name={displayName || account?.email || cloudProfile.label}
           />
         </DropdownMenuTrigger>
 
@@ -246,15 +246,17 @@ export function ProfileMenu() {
          * address the panel exists to show. */}
         <DropdownMenuContent
           align="end"
-          className="w-64"
+          className="w-68"
           data-testid="profile-menu-panel"
         >
-          <DropdownMenuGroup>
+          {/* The identity block: read, never actuated, and hairline-separated from the actions
+            * below it exactly as a card's header is from its rows. */}
+          <DropdownMenuGroup className="-mx-1 -mt-1 mb-1 border-b border-line px-3 py-2.5">
             {!cloudProfile.is_signed_in ? (
               // Read, never actuated, so a plain element for the same reason the address below is
               // one: a menu item here would take roving focus for a label.
               <div
-                className="px-1.5 py-1 text-caption text-ink-dim"
+                className="text-caption text-ink-dim"
                 data-testid="profile-menu-cloud-status"
               >
                 {t("datasets.signedOut")}
@@ -263,11 +265,13 @@ export function ProfileMenu() {
 
             {account !== null ? (
               <>
-                <DropdownMenuLabel>{t("profile.signedInAs")}</DropdownMenuLabel>
+                <DropdownMenuLabel className="px-0 pt-0 pb-0.5 text-micro uppercase tracking-[0.1em]">
+                  {t("profile.signedInAs")}
+                </DropdownMenuLabel>
                 {/* Plain elements, not DropdownMenuItems: identity is read, never actuated, and menu
                  * items take roving focus and typeahead that would strand the keyboard here. */}
                 <div
-                  className="truncate px-1.5 py-1 text-body text-ink"
+                  className="truncate text-label text-ink"
                   title={account.email}
                   data-testid="profile-menu-email"
                 >
@@ -275,7 +279,7 @@ export function ProfileMenu() {
                 </div>
                 {displayName ? (
                   <div
-                    className="truncate px-1.5 pb-1 text-caption text-ink-dim"
+                    className="truncate text-caption text-ink-dim"
                     title={displayName}
                     data-testid="profile-menu-name"
                   >
@@ -288,7 +292,7 @@ export function ProfileMenu() {
                  * so forced colors lose nothing when the trigger's decorative icon colour is flattened. */}
                 {isPremium ? (
                   <div
-                    className="flex items-center px-1.5 pb-1"
+                    className="mt-1.5 flex items-center"
                     data-testid="profile-menu-premium"
                   >
                     <Badge variant="premium">{t("profile.premiumBadge")}</Badge>
@@ -297,8 +301,6 @@ export function ProfileMenu() {
               </>
             ) : null}
           </DropdownMenuGroup>
-
-          <DropdownMenuSeparator />
 
           {account !== null ? (
             // `render` rather than a nested anchor: Base UI's menu item owns roving focus and
@@ -423,12 +425,20 @@ export function ProfileMenu() {
             />
           }
         >
-          <User aria-hidden="true" className="size-5" />
+          <AccountAvatar
+            avatar={null}
+            premium={false}
+            sizeClassName="size-9"
+            alt=""
+            imageTestId="profile-menu-local-avatar"
+            placeholderTestId="profile-menu-local-monogram"
+            name={activeProfile.data.label}
+          />
         </DropdownMenuTrigger>
 
         <DropdownMenuContent
           align="end"
-          className="w-64"
+          className="w-68"
           data-testid="profile-menu-panel"
         >
           <DropdownMenuItem

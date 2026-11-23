@@ -1,6 +1,14 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { ImageIcon, ImagePlus } from "lucide-react";
+import {
+  Globe,
+  House,
+  ImagePlus,
+  Plane,
+  Shield,
+  Target,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@nixus/shared";
 import { useProjectThumbnails, useSetProjectImage } from "@/hooks/useProjects";
 import {
@@ -10,6 +18,19 @@ import {
 import { projectImageMessageKey } from "@/lib/appError";
 import { cn } from "@/lib/utils";
 import type { Project } from "@/lib/types";
+
+/**
+ * The stored `icon` name a project may carry, mapped to the line icon that stands in for a picture.
+ * Anything unrecognised falls back to the goal glyph, so a tile is never empty of meaning.
+ */
+const PROJECT_ICONS: Record<string, LucideIcon> = {
+  shield: Shield,
+  home: House,
+  house: House,
+  plane: Plane,
+  globe: Globe,
+  travel: Globe,
+};
 
 interface ProjectRowThumbnailProps {
   project: Project;
@@ -78,6 +99,10 @@ export function ProjectRowThumbnail({
     void pick();
   };
 
+  const FallbackIcon =
+    (project.icon ? PROJECT_ICONS[project.icon.toLowerCase()] : undefined) ??
+    Target;
+
   return (
     <Button
       variant="secondary"
@@ -85,8 +110,8 @@ export function ProjectRowThumbnail({
       // The row's geometry is unchanged from when the tile was presentational: hover and focus are
       // the only things that changed, and they say "interactive" without moving anything.
       className={cn(
-        "group/tile relative size-14 overflow-hidden rounded-md bg-track p-0",
-        "hover:border-line-strong"
+        "group/tile relative size-12 overflow-hidden rounded-2xl bg-brand-soft/70 p-0",
+        "hover:brightness-[0.97]"
       )}
       disabled={picking || setImage.isPending}
       onClick={handleClick}
@@ -99,8 +124,9 @@ export function ProjectRowThumbnail({
       data-testid="project-thumbnail-button"
     >
       {thumbnail === undefined ? (
-        <ImageIcon
-          className="size-5 text-ink-faint"
+        <FallbackIcon
+          className="size-5 icon-gradient"
+          strokeWidth={1.75}
           aria-hidden="true"
           data-testid="project-thumbnail-empty"
         />

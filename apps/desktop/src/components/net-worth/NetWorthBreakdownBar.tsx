@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { ChartPie } from "lucide-react";
 import {
   Card,
+  CardAction,
   CardContent,
   CardHeader,
   CardTitle,
@@ -105,7 +107,7 @@ export function NetWorthBreakdownBar({
     return (
       <Card data-testid="breakdown-bar-card">
         <CardHeader>
-          <CardTitle>{t(titleKey)}</CardTitle>
+          <CardTitle icon={ChartPie}>{t(titleKey)}</CardTitle>
         </CardHeader>
         <CardContent>
           <Skeleton rows={1} />
@@ -116,17 +118,24 @@ export function NetWorthBreakdownBar({
 
   if (segments.length === 0) return null;
 
+  const total = segments.reduce((sum, segment) => sum + segment.cents, 0);
+
   return (
     <Card data-testid="breakdown-bar-card">
       <CardHeader>
-        <CardTitle>{t(titleKey)}</CardTitle>
+        <CardTitle icon={ChartPie}>{t(titleKey)}</CardTitle>
+        <CardAction className="self-center">
+          <span className="money text-h1 font-bold text-ink">
+            <Money cents={total} locale={i18n.language} {...maskProps} />
+          </span>
+        </CardAction>
       </CardHeader>
       <CardContent>
         {/* Presentational: the bar carries proportion, the table below carries every label, figure
          * and share. Above five segments a colour key the user has to cross-reference is a failure,
          * so there is no key — the table is the direct label, in the same order as the bands. */}
         <div
-          className="flex h-6 overflow-hidden rounded-sm bg-track"
+          className="flex h-3 overflow-hidden rounded-full bg-track"
           aria-hidden="true"
           data-testid="breakdown-bar"
         >

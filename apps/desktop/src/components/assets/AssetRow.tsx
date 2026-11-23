@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   Badge,
   Button,
+  Card,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -15,9 +16,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  IconChip,
   Money,
-  TableCell,
-  TableRow,
 } from "@nixus/shared";
 import { InlineEditMoney } from "@/components/shared/InlineEdit";
 import { useUpdateAssetValue, useDeleteAsset } from "@/hooks/useAssets";
@@ -35,6 +35,11 @@ import type { PassiveAsset } from "@/lib/types";
 interface AssetRowProps {
   asset: PassiveAsset;
   onEdit: (asset: PassiveAsset) => void;
+  /**
+   * One dense line for a holding in a long list, rendered without a card of its own so the parent
+   * can stack many of them inside a single card.
+   */
+  compact?: boolean;
 }
 
 /** An estimate a year old is data too old to trust, so it carries the `stale` treatment. */
@@ -57,7 +62,12 @@ function relativeAge(days: number, locale: string): string {
   return relative.format(-days, "day");
 }
 
-export function AssetRow({ asset, onEdit }: AssetRowProps) {
+/**
+ * One thing you own, as its own card: what it is, what it is worth, and when that figure was last
+ * believed. The value is the card's figure rather than a cell in a column, because a house and a
+ * car are two readings a user takes one at a time, not a column they scan.
+ */
+export function AssetRow({ asset, onEdit, compact = false }: AssetRowProps) {
   const { t, i18n } = useTranslation();
   const maskProps = useMaskProps();
   const holding = asset.stock;
@@ -112,127 +122,188 @@ export function AssetRow({ asset, onEdit }: AssetRowProps) {
     });
   };
 
-  return (
-    <>
-      <TableRow data-testid="asset-row">
-        <TableCell>
-          <div className="flex items-start gap-2">
-            <TypeIcon
-              className="mt-0.5 size-4 shrink-0 text-ink-faint"
-              aria-hidden="true"
-            />
-            <div className="min-w-0">
-              <span className="text-label text-ink">{asset.name}</span>
-              {holding ? (
-                <StockRowDetail holding={holding} />
-              ) : (
-                <p className="text-caption text-ink-dim">{typeLabel}</p>
-              )}
-            </div>
-          </div>
-        </TableCell>
-        <TableCell dim>
-          {updatedLabel && isStale ? (
-            <span className="inline-flex items-center gap-1.5">
-              {/* A ring dot rather than a filled one: amber against crimson is the pair a
-               * deuteranopic user cannot separate, and the dot column is the fastest scan path. */}
-              <span
-                data-slot="status-dot"
-                data-status="caution"
-                aria-hidden="true"
-                className="size-[7px] shrink-0 rounded-full border-[1.5px] border-caution bg-transparent"
-              />
-              <Badge variant="caution" data-testid="asset-stale-badge">
-                {updatedLabel}
-              </Badge>
-            </span>
-          ) : (
-            <span className="text-caption">{updatedLabel}</span>
-          )}
-        </TableCell>
-        <TableCell numeric>
-          {/* A stock's value is derived from quantity x price x FX, so it is read-only here:
-            * an inline edit would be silently overwritten by the next refresh. */}
+  // A stock's value is derived from quantity x price x FX, so it is read-only here: an inline edit
+  // would be silently overwritten by the next refresh.
+  const valueNode = holding ? (
+    <Money
+      cents={asset.value_cents}
+      locale={i18n.language}
+      data-testid="stock-asset-value"
+      {...maskProps}
+    />
+  ) : (
+    <InlineEditMoney
+      value={asset.value_cents}
+      onSave={handleValueSave}
+      className={compact ? "text-label" : "text-stat"}
+      data-testid="asset-value"
+    />
+  );
+
+  const statusNode =
+    updatedLabel && isStale ? (
+      <span className="inline-flex items-center gap-1.5">
+        {/* A ring dot rather than a filled one: amber against crimson is the pair a
+         * deuteranopic user cannot separate, and the dot column is the fastest scan path. */}
+        <span
+          data-slot="status-dot"
+          data-status="caution"
+          aria-hidden="true"
+          className="size-[7px] shrink-0 rounded-full border-[1.5px] border-caution bg-transparent"
+        />
+        <Badge variant="caution" data-testid="asset-stale-badge">
+          {updatedLabel}
+        </Badge>
+      </span>
+    ) : (
+      updatedLabel && (
+        <span className="text-caption text-ink-dim">{updatedLabel}</span>
+      )
+    );
+
+  const actionsMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t("assets.rowActions", { name: asset.name })}
+            data-testid="asset-row-menu"
+          />
+        }
+      >
+        <MoreHorizontal aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem
+          onClick={() => onEdit(asset)}
+          data-testid="edit-asset-button"
+        >
+          <Pencil aria-hidden="true" />
+          {t("assets.editAsset_action")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={() => setShowDeleteDialog(true)}
+          data-testid="delete-asset-button"
+        >
+          <Trash2 aria-hidden="true" />
+          {t("assets.deleteAsset_action")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const deleteDialog = (
+    <Dialog
+      open={showDeleteDialog}
+      onOpenChange={(open) => {
+        if (!open) setShowDeleteDialog(false);
+      }}
+    >
+      <DialogContent data-testid="delete-asset-dialog">
+        <DialogHeader>
+          <DialogTitle>{t("assets.deleteAsset")}</DialogTitle>
+          <DialogDescription>
+            {t("accounts.confirmDelete")} {asset.name}?{" "}
+            {t("accounts.cannotBeUndone")}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
+            {t("common.cancel")}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            data-testid="confirm-delete-asset-button"
+          >
+            {t("common.delete")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  if (compact) {
+    return (
+      <div
+        className="flex items-center gap-3 px-card-pad py-3"
+        data-testid="asset-row"
+      >
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-label font-bold text-ink">{asset.name}</h3>
           {holding ? (
-            <Money
-              cents={asset.value_cents}
-              locale={i18n.language}
-              data-testid="stock-asset-value"
-              {...maskProps}
-            />
+            <StockRowDetail holding={holding} />
           ) : (
-            <InlineEditMoney
-              value={asset.value_cents}
-              onSave={handleValueSave}
-              data-testid="asset-value"
-            />
+            <p className="text-caption text-ink-dim">{typeLabel}</p>
           )}
-        </TableCell>
-        <TableCell numeric>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {statusNode}
+        </div>
+        <div className="money w-32 shrink-0 text-right text-label font-bold text-ink">
+          {valueNode}
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onEdit(asset)}
+            data-testid="asset-edit-action"
+          >
+            {t("assets.editAsset_action")}
+          </Button>
+          {actionsMenu}
+        </div>
+        {deleteDialog}
+      </div>
+    );
+  }
+
+  return (
+    <Card data-testid="asset-row">
+      <div className="flex items-start gap-3 px-card-pad">
+        <IconChip icon={TypeIcon} />
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-h1 text-ink">{asset.name}</h3>
+          {holding ? (
+            <StockRowDetail holding={holding} />
+          ) : (
+            <p className="text-caption text-ink-dim">{typeLabel}</p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onEdit(asset)}
+            data-testid="asset-edit-action"
+          >
+            {t("assets.editAsset_action")}
+          </Button>
           {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive
            * action is never a peer of an ordinary one in the same row. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t("assets.rowActions", { name: asset.name })}
-                  data-testid="asset-row-menu"
-                />
-              }
-            >
-              <MoreHorizontal aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => onEdit(asset)}
-                data-testid="edit-asset-button"
-              >
-                <Pencil aria-hidden="true" />
-                {t("assets.editAsset_action")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() => setShowDeleteDialog(true)}
-                data-testid="delete-asset-button"
-              >
-                <Trash2 aria-hidden="true" />
-                {t("assets.deleteAsset_action")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </TableCell>
-      </TableRow>
+          {actionsMenu}
+        </div>
+      </div>
 
-      <Dialog
-        open={showDeleteDialog}
-        onOpenChange={(open) => {
-          if (!open) setShowDeleteDialog(false);
-        }}
-      >
-        <DialogContent data-testid="delete-asset-dialog">
-          <DialogHeader>
-            <DialogTitle>{t("assets.deleteAsset")}</DialogTitle>
-            <DialogDescription>
-              {t("accounts.confirmDelete")} {asset.name}?{" "}
-              {t("accounts.cannotBeUndone")}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>
-              {t("common.cancel")}
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              data-testid="confirm-delete-asset-button"
-            >
-              {t("common.delete")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+      <div className="px-card-pad">
+        <div className="money text-stat text-ink">{valueNode}</div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          {statusNode}
+          {!holding && (
+            <span className="text-caption text-ink-faint">
+              {updatedLabel ? "· " : null}
+              {t("wealth.v2.assets.updateHint")}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {deleteDialog}
+    </Card>
   );
 }

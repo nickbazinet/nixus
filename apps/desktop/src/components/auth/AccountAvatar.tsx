@@ -1,4 +1,4 @@
-import { CircleUser } from "lucide-react";
+import { User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UserAvatar } from "@/lib/types";
 
@@ -15,6 +15,19 @@ interface AccountAvatarProps {
   readonly alt: string;
   readonly imageTestId: string;
   readonly placeholderTestId: string;
+  /** Name the placeholder's initials are drawn from. Without one it shows a person glyph. */
+  readonly name?: string | null;
+}
+
+/** "Nick Bazinet" -> "NB"; "nick@x.com" -> "N". At most two letters, always upper-case. */
+export function initialsOf(name: string | null | undefined): string {
+  const words = (name ?? "")
+    .split("@")[0]
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+  const letters =
+    words.length >= 2 ? `${words[0][0]}${words[words.length - 1][0]}` : (words[0]?.[0] ?? "");
+  return letters.toLocaleUpperCase();
 }
 
 /**
@@ -36,9 +49,10 @@ interface AccountAvatarProps {
  * content box instead puts the ring outside the declared size, so the face is the same number of
  * pixels either way and only the outer footprint grows by 4px.
  *
- * A missing picture keeps the pre-existing `CircleUser` placeholder and its pre-existing gold
- * ICON treatment: an entitled account with no upload still reads as entitled, and nothing about
- * this feature was allowed to change that.
+ * A missing picture renders the charte's gradient monogram — the account's initials, or a person
+ * glyph when there is no name — and keeps the gold treatment: an entitled account with no upload
+ * still reads as entitled. The monogram's `color` is the premium ink (its own letters are painted
+ * white), so the entitlement stays assertable on the placeholder exactly as before.
  */
 export function AccountAvatar({
   avatar,
@@ -47,14 +61,26 @@ export function AccountAvatar({
   alt,
   imageTestId,
   placeholderTestId,
+  name,
 }: AccountAvatarProps) {
   if (avatar === null || avatar === undefined) {
+    const initials = initialsOf(name);
     return (
-      <CircleUser
+      <span
         aria-hidden="true"
-        className={cn(sizeClassName, premium && "text-premium-ink")}
+        className={cn(
+          sizeClassName,
+          "@container inline-grid shrink-0 place-items-center rounded-full bg-logo-gradient font-display font-bold",
+          premium && "box-content border-2 border-premium-ink text-premium-ink",
+        )}
         data-testid={placeholderTestId}
-      />
+      >
+        {initials ? (
+          <span className="text-[38cqw] leading-none text-white">{initials}</span>
+        ) : (
+          <User className="size-[55%] text-white" strokeWidth={2} />
+        )}
+      </span>
     );
   }
 

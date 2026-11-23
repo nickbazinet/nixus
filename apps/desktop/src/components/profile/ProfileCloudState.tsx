@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { CloudOff, LogIn } from "lucide-react";
-import { Button, EmptyState } from "@nixus/shared";
+import { Button, Card, EmptyState } from "@nixus/shared";
 import { useSignIn } from "@/hooks/useAuth";
 
 /**
@@ -25,35 +25,38 @@ export function ProfileCloudState({ variant }: ProfileCloudStateProps) {
 
   if (variant === "offline-no-copy") {
     return (
-      <EmptyState
-        icon={<CloudOff />}
-        title={t("profile.cloud.offlineNoCopyTitle")}
-        description={t("profile.cloud.offlineNoCopyBody")}
-        data-testid="profile-cloud-state"
-        data-cloud-state="offline-no-copy"
-      />
+      <Card>
+        <EmptyState
+          icon={<CloudOff />}
+          title={t("profile.cloud.offlineNoCopyTitle")}
+          description={t("profile.cloud.offlineNoCopyBody")}
+          data-testid="profile-cloud-state"
+          data-cloud-state="offline-no-copy"
+        />
+      </Card>
     );
   }
 
   return (
-    <EmptyState
-      icon={<LogIn />}
-      title={t("profile.cloud.reauthTitle")}
-      description={t("profile.cloud.reauthBody")}
-      action={
-        <Button
-          size="sm"
-          disabled={signIn.isPending}
-          onClick={() =>
-            signIn.mutate({ intent: { kind: "Login" }, entry: "SignIn" })
-          }
-          data-testid="profile-reauth-action"
-        >
-          {t("profile.cloud.reauthAction")}
-        </Button>
-      }
-      data-testid="profile-cloud-state"
-      data-cloud-state="reauthentication-required"
-    />
+    <Card>
+      <EmptyState
+        icon={<LogIn />}
+        title={t("profile.cloud.reauthTitle")}
+        description={t("profile.cloud.reauthBody")}
+        action={
+          <Button
+            disabled={signIn.isPending}
+            onClick={() =>
+              signIn.mutate({ intent: { kind: "Login" }, entry: "SignIn" })
+            }
+            data-testid="profile-reauth-action"
+          >
+            {t("profile.cloud.reauthAction")}
+          </Button>
+        }
+        data-testid="profile-cloud-state"
+        data-cloud-state="reauthentication-required"
+      />
+    </Card>
   );
 }

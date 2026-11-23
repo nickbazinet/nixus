@@ -307,22 +307,6 @@ export function getMaintenanceStatusLabelKey(
   return `maintenance.status.${status}`;
 }
 
-// Recolours the card's existing hairline rather than adding a ring around it: depth in this system
-// is the hairline plus the page-to-card tonal step, and a second ring reads as a banned shadow.
-export function getMaintenanceStatusAccentClass(
-  status: MaintenanceTaskStatus
-): string | undefined {
-  switch (status) {
-    case "overdue":
-      return "border-over";
-    case "due":
-    case "upcoming":
-      return "border-caution";
-    case "ok":
-      return undefined;
-  }
-}
-
 export function getWorstStatus(
   tasks: MaintenanceTaskWithStatus[]
 ): MaintenanceTaskStatus {

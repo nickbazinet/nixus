@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createFileRoute } from "@tanstack/react-router";
 import { format, parseISO } from "date-fns";
-import { Plus, Target } from "lucide-react";
+import { Calendar, Flag, Plus, Target } from "lucide-react";
 import { toast } from "sonner";
 import {
   Button,
@@ -15,9 +15,12 @@ import {
   DialogHeader,
   DialogTitle,
   EmptyState,
+  IconChip,
+  Money,
   Skeleton,
   SlideOver,
 } from "@nixus/shared";
+import { MetricTile } from "@/components/shared/MetricTile";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ProjectForm } from "@/components/projects/ProjectForm";
 import { ProjectRow } from "@/components/projects/ProjectRow";
@@ -32,11 +35,13 @@ import {
   useArchiveProject,
   useClearSuggestedAllocationSkip,
   useConfirmProjectAllocations,
+  useProjectPace,
   useProjects,
   useProjectSavedTotals,
   useSkipSuggestedAllocation,
   useSuggestedAllocation,
 } from "@/hooks/useProjects";
+import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
 import type { Project } from "@/lib/types";
 
 export const Route = createFileRoute("/wealth/projects")({
@@ -46,7 +51,8 @@ export const Route = createFileRoute("/wealth/projects")({
 const FALLBACK_SKELETON_ROWS = 3;
 
 function ProjectsPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const maskProps = useMaskProps();
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [archivingProject, setArchivingProject] = useState<Project | null>(null);
@@ -55,7 +61,10 @@ function ProjectsPage() {
   // returns to the real state.
   const [reopenedSettlement, setReopenedSettlement] = useState(false);
   const { data: projects, isLoading } = useProjects();
-  const { data: savedTotals = [] } = useProjectSavedTotals();
+  const savedTotalsQuery = useProjectSavedTotals();
+  const pacesQuery = useProjectPace();
+  const savedTotals = savedTotalsQuery.data ?? [];
+  const paces = pacesQuery.data ?? [];
   const { data: suggestion, isLoading: suggestionsLoading } =
     useSuggestedAllocation();
   const { data: healthSummary, isLoading: healthLoading } =
@@ -85,6 +94,24 @@ function ProjectsPage() {
   const savedCentsFor = (projectId: number) =>
     savedTotals.find((total) => total.project_id === projectId)?.saved_cents ??
     0;
+
+  // Three readings of the same list: what is already set aside, what is left to find, and the
+  // monthly rate that would get there. Every figure is a sum of what Rust already returned — the
+  // monthly step is the required pace per goal added up, never a rate derived here.
+  const activeProjects = projects ?? [];
+  const totalSavedCents = activeProjects.reduce(
+    (sum, project) => sum + savedCentsFor(project.id),
+    0
+  );
+  const totalRemainingCents = activeProjects.reduce(
+    (sum, project) =>
+      sum + Math.max(0, project.target_cents - savedCentsFor(project.id)),
+    0
+  );
+  const monthlyStepCents = activeProjects.reduce((sum, project) => {
+    const pace = paces.find((entry) => entry.project_id === project.id);
+    return sum + (pace?.required_monthly_cents ?? 0);
+  }, 0);
 
   // Skipping writes exactly one `config` key and never touches `project_contributions`: at the
   // ledger level it must stay indistinguishable from never opening the panel (FR8). What changed
@@ -175,93 +202,163 @@ function ProjectsPage() {
         }
       />
 
-      {showSettledCard && settlement && suggestion && (
-        <SettledAllocationCard
-          settlement={settlement}
-          remainingSurplusCents={suggestion.remaining_surplus_cents}
-          nextSuggestionDate={suggestion.next_suggestion_date}
-          hasOpenSuggestions={suggestions.length > 0}
-          onReopen={reopenSettlement}
-        />
-      )}
-
-      {showActivePanel && suggestion && (
-        <SuggestedAllocationPanel
-          suggestions={suggestions}
-          availableSurplusCents={availableSurplusCents}
-          nextSuggestionDate={suggestion.next_suggestion_date}
-          onConfirm={confirmSuggestion}
-          onSkip={skipSuggestionForMonth}
-          isSubmitting={confirmAllocations.isPending}
-          initialExpanded={reopenedSettlement}
-        />
-      )}
-
-      {isLoading && (
-        <Card data-testid="projects-skeleton">
-          <CardContent>
-            <Skeleton rows={FALLBACK_SKELETON_ROWS} />
-          </CardContent>
-        </Card>
-      )}
-
-      {!isLoading && projects && projects.length === 0 && (
-        <Card data-testid="projects-empty-state">
-          <CardContent>
-            <EmptyState
-              icon={<Target />}
-              title={t("projects.emptyTitle")}
-              description={t("projects.emptyDescription")}
-              action={
-                <Button size="sm" onClick={() => setShowAddForm(true)}>
-                  <Plus aria-hidden="true" />
-                  {t("projects.addProject")}
-                </Button>
+      <div className="flex flex-col gap-section-gap">
+        {!isLoading && projects && projects.length > 0 && (
+          <div className="grid gap-grid-gap md:grid-cols-3">
+            <MetricTile
+              featured
+              icon={Flag}
+              label={t("wealth.v2.projects.savedToward")}
+              value={
+                <Money
+                  cents={totalSavedCents}
+                  locale={i18n.language}
+                  {...maskProps}
+                />
               }
+              caption={t("wealth.v2.projects.savedTowardCaption", {
+                count: projects.length,
+              })}
+              data-testid="projects-saved-total"
             />
-          </CardContent>
-        </Card>
-      )}
+            <MetricTile
+              icon={Target}
+              label={t("wealth.v2.projects.stillToSave")}
+              value={
+                <Money
+                  cents={totalRemainingCents}
+                  locale={i18n.language}
+                  {...maskProps}
+                />
+              }
+              caption={t("wealth.v2.projects.stillToSaveCaption")}
+              data-testid="projects-remaining-total"
+            />
+            <MetricTile
+              icon={Calendar}
+              label={t("wealth.v2.projects.monthlyStep")}
+              value={
+                <Money
+                  cents={monthlyStepCents}
+                  locale={i18n.language}
+                  {...maskProps}
+                />
+              }
+              caption={t("wealth.v2.projects.monthlyStepCaption")}
+              data-testid="projects-monthly-step"
+            />
+          </div>
+        )}
 
-      {!isLoading && projects && projects.length > 0 && (
-        <Card data-testid="projects-list">
-          <CardContent>
+        {isLoading && (
+          <Card data-testid="projects-skeleton">
+            <CardContent>
+              <Skeleton rows={FALLBACK_SKELETON_ROWS} />
+            </CardContent>
+          </Card>
+        )}
+
+        {!isLoading && projects && projects.length === 0 && (
+          <Card data-testid="projects-empty-state">
+            <CardContent>
+              <EmptyState
+                icon={<Target />}
+                title={t("projects.emptyTitle")}
+                description={t("projects.emptyDescription")}
+                action={
+                  <Button size="sm" onClick={() => setShowAddForm(true)}>
+                    <Plus aria-hidden="true" />
+                    {t("projects.addProject")}
+                  </Button>
+                }
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {!isLoading && projects && projects.length > 0 && (
+          <div className="flex flex-col gap-grid-gap" data-testid="projects-list">
             {orderedProjects.length > 1 && (
               <p
-                className="mb-2 text-caption text-ink-dim"
+                className="text-caption text-ink-dim"
                 data-testid="projects-reorder-hint"
               >
                 {t("projects.reorderHint")}
               </p>
             )}
-            {orderedProjects.map((project, index) => (
-              <div
-                key={project.id}
-                draggable={orderedProjects.length > 1}
-                onDragStart={() => startDrag(index)}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  dropOn(index);
-                }}
-                data-testid="project-row-drag-handle"
-              >
-                <ProjectRow
-                  project={project}
-                  savedCents={savedCentsFor(project.id)}
-                  striped={index % 2 === 1}
-                  onEdit={setEditingProject}
-                  onArchive={setArchivingProject}
-                  onMoveUp={(target) => moveByOffset(target, -1)}
-                  onMoveDown={(target) => moveByOffset(target, 1)}
-                  canMoveUp={index > 0}
-                  canMoveDown={index < orderedProjects.length - 1}
-                />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+            <div className="grid gap-grid-gap md:grid-cols-2 xl:grid-cols-3">
+              {orderedProjects.map((project, index) => (
+                <div
+                  key={project.id}
+                  className="h-full"
+                  draggable={orderedProjects.length > 1}
+                  onDragStart={() => startDrag(index)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    dropOn(index);
+                  }}
+                  data-testid="project-row-drag-handle"
+                >
+                  <ProjectRow
+                    project={project}
+                    savedCents={savedCentsFor(project.id)}
+                    onEdit={setEditingProject}
+                    onArchive={setArchivingProject}
+                    onMoveUp={(target) => moveByOffset(target, -1)}
+                    onMoveDown={(target) => moveByOffset(target, 1)}
+                    canMoveUp={index > 0}
+                    canMoveDown={index < orderedProjects.length - 1}
+                  />
+                </div>
+              ))}
+
+              {/* The dashed card is the list's own invitation to extend it — the same create flow
+               * the header offers, where the eye already is once the goals have been read. */}
+              <Card className="h-full justify-center border-dashed border-line-strong text-center">
+                <CardContent className="flex flex-col items-center gap-3">
+                  <IconChip icon={Plus} size="lg" />
+                  <p className="text-h1 text-ink">
+                    {t("wealth.v2.projects.newProject")}
+                  </p>
+                  <p className="max-w-xs text-caption text-ink-dim">
+                    {t("wealth.v2.projects.newProjectBody")}
+                  </p>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowAddForm(true)}
+                    data-testid="projects-create-cta"
+                  >
+                    {t("wealth.v2.projects.createProject")}
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
+
+        {showSettledCard && settlement && suggestion && (
+          <SettledAllocationCard
+            settlement={settlement}
+            remainingSurplusCents={suggestion.remaining_surplus_cents}
+            nextSuggestionDate={suggestion.next_suggestion_date}
+            hasOpenSuggestions={suggestions.length > 0}
+            onReopen={reopenSettlement}
+          />
+        )}
+
+        {showActivePanel && suggestion && (
+          <SuggestedAllocationPanel
+            suggestions={suggestions}
+            availableSurplusCents={availableSurplusCents}
+            nextSuggestionDate={suggestion.next_suggestion_date}
+            onConfirm={confirmSuggestion}
+            onSkip={skipSuggestionForMonth}
+            isSubmitting={confirmAllocations.isPending}
+            initialExpanded={reopenedSettlement}
+          />
+        )}
+      </div>
 
       <SlideOver
         open={showAddForm}

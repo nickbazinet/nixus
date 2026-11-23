@@ -6,6 +6,7 @@ import {
   Card,
   Checkbox,
   DatePicker,
+  IconChip,
   Input,
   Label,
   PillTabs,
@@ -69,13 +70,12 @@ export function AutoCategorizedSummary({
 
   return (
     <Card flush data-testid="auto-categorized-summary">
-      <div className="flex items-center gap-2 px-card-pad py-3">
+      <div className="flex items-center gap-3 px-card-pad py-4">
         <Checkbox
           checked={allSelected}
           indeterminate={someSelected}
           onCheckedChange={(next) => onSelectAll(next)}
           aria-label={t("import.autoSelectAll")}
-          className="-ml-1"
           data-testid="auto-select-all"
         />
         <button
@@ -84,13 +84,13 @@ export function AutoCategorizedSummary({
           aria-expanded={expanded}
           aria-controls="auto-categorized-list"
           className={cn(
-            "flex min-h-target-min flex-1 items-center gap-2 rounded-md text-left transition-colors hover:text-brand-ink",
+            "flex min-h-target-min flex-1 items-center gap-3 rounded-md text-left transition-colors hover:text-brand-ink",
             focusRing
           )}
           data-testid="auto-categorized-toggle"
         >
-          <Check className="size-4 shrink-0 text-good" aria-hidden="true" />
-          <span className="flex-1 text-label text-ink">
+          <IconChip icon={Check} size="sm" />
+          <span className="flex-1 font-display text-h3 text-ink">
             {t("import.autoCategorizedToggle", {
               selected: selectedCount,
               total: transactions.length,
@@ -105,7 +105,7 @@ export function AutoCategorizedSummary({
       </div>
 
       {!expanded && (
-        <p className="border-t border-line px-card-pad py-2.5 text-caption text-ink-dim">
+        <p className="border-t border-line px-card-pad py-3 text-caption text-ink-dim">
           {t("import.autoCategorizedHint")}
         </p>
       )}
@@ -127,14 +127,14 @@ export function AutoCategorizedSummary({
             return (
               <div
                 key={gi}
-                className="flex items-start gap-2 border-t border-line px-card-pad py-2.5"
+                className="flex items-start gap-3 border-t border-line px-card-pad py-3.5"
                 data-testid="auto-categorized-row"
               >
                 <Checkbox
                   checked={isSelected}
                   onCheckedChange={() => onToggleSelect(index)}
                   aria-label={merchantValue}
-                  className="mt-1 -ml-1"
+                  className="mt-1"
                   data-testid="auto-transaction-checkbox"
                 />
                 <div

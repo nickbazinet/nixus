@@ -440,6 +440,9 @@ test.describe("Expense Tracking", () => {
   test.beforeEach(async ({ page }) => {
     await setupTauriMock(page);
     await page.goto("/spending/budget");
+    // Groups open closed on an already-built budget; every spec here reads category rows.
+    await page.getByTestId("expand-all-groups").click();
+    await expect(page.getByTestId("expand-all-groups")).toHaveText("Collapse all");
   });
 
   test("clicking Add Expense opens the form with all fields including optional account", async ({ page }) => {
@@ -574,7 +577,7 @@ test.describe("Expense Tracking", () => {
     await expect(page.getByTestId("expense-amount")).toContainText("$5.50");
   });
 
-  test("expense list is a real table: sentence-case sortable heads, right-aligned tabular amount", async ({ page }) => {
+  test("expense list is a real table: uppercase sortable heads, right-aligned tabular amount", async ({ page }) => {
     // Add an expense
     await openAddExpenseForm(page);
     const form = page.getByTestId("add-expense-form");
@@ -606,10 +609,11 @@ test.describe("Expense Tracking", () => {
     await expect(heads.nth(4)).toHaveAttribute("aria-sort", "none");
     await expect(heads.nth(3)).not.toHaveAttribute("aria-sort", /.*/);
 
-    // Sentence case, not the uppercase shouting the old header used.
+    // Column heads are the charte's small uppercase key (the shared TableHead applies the
+    // transform in CSS, so the accessible text above is still sentence case).
     expect(
       await heads.nth(1).evaluate((el) => getComputedStyle(el).textTransform)
-    ).toBe("none");
+    ).toBe("uppercase");
 
     const row = table.getByRole("row").filter({ hasText: "Grocery Store" });
     await expect(row.getByTestId("expense-date")).toBeVisible();

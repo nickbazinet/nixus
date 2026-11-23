@@ -15,9 +15,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  IconChip,
   Money,
-  TableCell,
-  TableRow,
 } from "@nixus/shared";
 import { InlineEditMoney } from "@/components/shared/InlineEdit";
 import { MetricInfoTooltip } from "@/components/financial-health/MetricInfoTooltip";
@@ -45,6 +44,9 @@ interface AccountRowProps {
 
 /** Past a month a typed-in balance is data too old to trust, so it carries the `stale` treatment. */
 const STALE_AFTER_DAYS = 30;
+
+/** The indented breakdown lines under an expanded row: what the balance is made of. */
+const subRow = "flex items-center gap-2 text-caption text-ink-dim";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -169,91 +171,86 @@ export function AccountRow({ account, onEdit, stockAssets = [] }: AccountRowProp
   };
 
   return (
-    <>
-      <TableRow data-testid="account-row">
-        <TableCell>
-          <div className="flex items-start gap-2">
-            {expandable ? (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="mt-0.5"
-                onClick={() => setExpanded((current) => !current)}
-                aria-expanded={expanded}
-                aria-label={
-                  expanded
-                    ? t("accounts.collapseBreakdown", { name: account.name })
-                    : t("accounts.expandBreakdown", { name: account.name })
-                }
-                data-testid="account-earmark-toggle"
-              >
-                {expanded ? (
-                  <ChevronDown className="text-ink-dim" aria-hidden="true" />
-                ) : (
-                  <ChevronRight className="text-ink-dim" aria-hidden="true" />
-                )}
-              </Button>
+    <li className="border-b border-line last:border-b-0">
+      <div className="flex items-center gap-3 py-3.5" data-testid="account-row">
+        {expandable ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="-ml-1.5 shrink-0"
+            onClick={() => setExpanded((current) => !current)}
+            aria-expanded={expanded}
+            aria-label={
+              expanded
+                ? t("accounts.collapseBreakdown", { name: account.name })
+                : t("accounts.expandBreakdown", { name: account.name })
+            }
+            data-testid="account-earmark-toggle"
+          >
+            {expanded ? (
+              <ChevronDown className="text-ink-dim" aria-hidden="true" />
             ) : (
-              // Reserves the toggle button's footprint so the icon and name line up with
-              // expandable rows above/below instead of drifting left when there's nothing to expand.
-              <span className="size-6 shrink-0" aria-hidden="true" />
+              <ChevronRight className="text-ink-dim" aria-hidden="true" />
             )}
-            <TypeIcon
-              className="mt-0.5 size-4 shrink-0 text-ink-faint"
-              aria-hidden="true"
-            />
-            <div className="min-w-0">
-              <span className="text-label text-ink">{account.name}</span>
-              <p className="text-caption text-ink-dim">
-                {account.institution} · {typeLabel} · {account.currency}
-              </p>
-              {hasEarmarks && (
-                <p
-                  className="text-caption text-ink-dim"
-                  data-testid="account-earmark-summary"
-                >
-                  <Money
-                    cents={earmarkData?.earmarked_cents ?? 0}
-                    locale={i18n.language}
-                    {...maskProps}
-                  />{" "}
-                  {t("projects.accountEarmarkSetAsideSuffix")}
-                </p>
-              )}
-              {hasStocks && (
-                <p
-                  className="text-caption text-ink-dim"
-                  data-testid="account-stock-summary"
-                >
-                  <Money
-                    cents={stockValueCents}
-                    locale={i18n.language}
-                    {...maskProps}
-                  />{" "}
-                  {t("accounts.stockValueSuffix", { count: stockAssets.length })}
-                </p>
-              )}
-            </div>
-          </div>
-        </TableCell>
-        <TableCell dim>
-          {updatedLabel && isStale ? (
-            <span className="inline-flex items-center gap-1.5">
-              {/* A ring dot rather than a filled one: amber against crimson is the pair a
-               * deuteranopic user cannot separate, and the dot column is the fastest scan path. */}
-              <span
-                data-slot="status-dot"
-                data-status="caution"
-                aria-hidden="true"
-                className="size-[7px] shrink-0 rounded-full border-[1.5px] border-caution bg-transparent"
-              />
-              <Badge variant="caution">{updatedLabel}</Badge>
-            </span>
-          ) : (
-            <span className="text-caption">{updatedLabel}</span>
+          </Button>
+        ) : (
+          // Reserves the toggle button's footprint so the chip and name line up with expandable
+          // rows above and below instead of drifting left when there's nothing to expand.
+          <span className="-ml-1.5 size-7 shrink-0" aria-hidden="true" />
+        )}
+        <IconChip icon={TypeIcon} size="sm" />
+
+        <div className="min-w-0 flex-1">
+          <span className="truncate text-label font-bold text-ink">
+            {account.name}
+          </span>
+          <p className="text-caption text-ink-dim">
+            {account.institution} · {typeLabel} · {account.currency}
+            {updatedLabel && !isStale ? ` · ${updatedLabel}` : null}
+          </p>
+          {hasEarmarks && (
+            <p
+              className="text-caption text-ink-dim"
+              data-testid="account-earmark-summary"
+            >
+              <Money
+                cents={earmarkData?.earmarked_cents ?? 0}
+                locale={i18n.language}
+                {...maskProps}
+              />{" "}
+              {t("projects.accountEarmarkSetAsideSuffix")}
+            </p>
           )}
-        </TableCell>
-        <TableCell numeric>
+          {hasStocks && (
+            <p
+              className="text-caption text-ink-dim"
+              data-testid="account-stock-summary"
+            >
+              <Money
+                cents={stockValueCents}
+                locale={i18n.language}
+                {...maskProps}
+              />{" "}
+              {t("accounts.stockValueSuffix", { count: stockAssets.length })}
+            </p>
+          )}
+        </div>
+
+        {isStale && updatedLabel && (
+          <span className="inline-flex shrink-0 items-center gap-1.5">
+            {/* A ring dot rather than a filled one: amber against crimson is the pair a
+             * deuteranopic user cannot separate, and the dot column is the fastest scan path. */}
+            <span
+              data-slot="status-dot"
+              data-status="caution"
+              aria-hidden="true"
+              className="size-[7px] shrink-0 rounded-full border-[1.5px] border-caution bg-transparent"
+            />
+            <Badge variant="caution">{updatedLabel}</Badge>
+          </span>
+        )}
+
+        <div className="money shrink-0 text-right text-label font-bold text-ink">
           {hasStocks ? (
             // Derived, so it is shown the way a stock asset's own value is: read-only. The cash
             // half stays editable on the "Cash" sub-row below.
@@ -269,97 +266,91 @@ export function AccountRow({ account, onEdit, stockAssets = [] }: AccountRowProp
               value={displayCents}
               onSave={handleBalanceSave}
               allowZero
+              className="font-bold"
               data-testid="account-balance"
             />
           )}
-        </TableCell>
-        <TableCell numeric>
-          {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive
-           * action is never a peer of an ordinary one in the same row. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t("accounts.rowActions", { name: account.name })}
-                  data-testid="account-row-menu"
-                />
-              }
+        </div>
+
+        {/* Delete is demoted into the overflow rather than sitting beside Edit: a destructive
+         * action is never a peer of an ordinary one in the same row. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0"
+                aria-label={t("accounts.rowActions", { name: account.name })}
+                data-testid="account-row-menu"
+              />
+            }
+          >
+            <MoreHorizontal aria-hidden="true" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onClick={() => onEdit(account)}
+              data-testid="edit-account-button"
             >
-              <MoreHorizontal aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() => onEdit(account)}
-                data-testid="edit-account-button"
-              >
-                <Pencil aria-hidden="true" />
-                {t("accounts.editAccount_action")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                variant="destructive"
-                onClick={() => setShowDeleteDialog(true)}
-                data-testid="delete-account-button"
-              >
-                <Trash2 aria-hidden="true" />
-                {t("accounts.deleteAccount_action")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </TableCell>
-      </TableRow>
+              <Pencil aria-hidden="true" />
+              {t("accounts.editAccount_action")}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => setShowDeleteDialog(true)}
+              data-testid="delete-account-button"
+            >
+              <Trash2 aria-hidden="true" />
+              {t("accounts.deleteAccount_action")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
-      {expanded && hasStocks && (
-        <TableRow data-testid="account-cash-row">
-          <TableCell colSpan={2}>
-            <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
-              <span className="min-w-0 truncate">{t("accounts.cashLabel")}</span>
+      {expanded && (expandable || hasStocks) && (
+        <div className="flex flex-col gap-2 pb-4 pl-[52px]">
+          {hasStocks && (
+            <div className={subRow} data-testid="account-cash-row">
+              <span className="min-w-0 flex-1 truncate">
+                {t("accounts.cashLabel")}
+              </span>
+              <InlineEditMoney
+                value={displayCents}
+                onSave={handleBalanceSave}
+                allowZero
+                className="text-caption"
+                data-testid="account-balance"
+              />
             </div>
-          </TableCell>
-          <TableCell numeric>
-            <InlineEditMoney
-              value={displayCents}
-              onSave={handleBalanceSave}
-              allowZero
-              data-testid="account-balance"
-            />
-          </TableCell>
-          <TableCell />
-        </TableRow>
-      )}
+          )}
 
-      {expanded && hasEarmarks && (
-        <TableRow data-testid="account-earmark-unallocated-row">
-          <TableCell colSpan={2}>
-            <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
-              <span className="min-w-0 truncate">
+          {hasEarmarks && (
+            <div className={subRow} data-testid="account-earmark-unallocated-row">
+              <span className="min-w-0 flex-1 truncate">
                 {t("projects.accountEarmarkUnallocatedLabel")}
               </span>
+              <span className="money" data-testid="account-earmark-unallocated-amount">
+                <Money
+                  cents={earmarkData?.unallocated_cents ?? 0}
+                  locale={i18n.language}
+                  {...maskProps}
+                />
+              </span>
             </div>
-          </TableCell>
-          <TableCell numeric dim data-testid="account-earmark-unallocated-amount">
-            <Money
-              cents={earmarkData?.unallocated_cents ?? 0}
-              locale={i18n.language}
-              {...maskProps}
-            />
-          </TableCell>
-          <TableCell />
-        </TableRow>
-      )}
+          )}
 
-      {expanded &&
-        hasEarmarks &&
-        segments.map((segment) => (
-          <TableRow
-            key={segment.project_id}
-            data-testid="account-earmark-project-row"
-          >
-            <TableCell colSpan={2}>
-              <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
+          {hasEarmarks &&
+            segments.map((segment) => (
+              <div
+                key={segment.project_id}
+                className={subRow}
+                data-testid="account-earmark-project-row"
+              >
                 <span aria-hidden="true">↳</span>
-                <span className="min-w-0 truncate">{segment.project_name}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {segment.project_name}
+                </span>
                 <MetricInfoTooltip
                   ariaLabel={t("projects.accountEarmarkShareTooltipLabel", {
                     project: segment.project_name,
@@ -373,31 +364,39 @@ export function AccountRow({ account, onEdit, stockAssets = [] }: AccountRowProp
                   })}
                   testId="account-earmark-share-tooltip"
                 />
+                <span className="money" data-testid="account-earmark-amount">
+                  <Money
+                    cents={segment.earmarked_cents}
+                    locale={i18n.language}
+                    {...maskProps}
+                  />
+                </span>
               </div>
-            </TableCell>
-            <TableCell numeric dim data-testid="account-earmark-amount">
-              <Money cents={segment.earmarked_cents} locale={i18n.language} {...maskProps} />
-            </TableCell>
-            <TableCell />
-          </TableRow>
-        ))}
+            ))}
 
-      {expanded &&
-        stockAssets.map((asset) => (
-          <TableRow key={asset.id} data-testid="account-stock-row">
-            <TableCell colSpan={2}>
-              <div className="flex items-center gap-2 pl-8 text-caption text-ink-dim">
-                <span aria-hidden="true">↳</span>
-                <span className="min-w-0 truncate">{asset.name}</span>
-                {asset.stock && <StockRowDetail holding={asset.stock} />}
-              </div>
-            </TableCell>
-            <TableCell numeric dim data-testid="account-stock-amount">
-              <Money cents={asset.value_cents} locale={i18n.language} {...maskProps} />
-            </TableCell>
-            <TableCell />
-          </TableRow>
-        ))}
+          {stockAssets.map((asset) => (
+            <div
+              key={asset.id}
+              className={subRow}
+              data-testid="account-stock-row"
+            >
+              <span aria-hidden="true">↳</span>
+              <span className="min-w-0 truncate">{asset.name}</span>
+              {asset.stock && <StockRowDetail holding={asset.stock} />}
+              <span
+                className="money ml-auto"
+                data-testid="account-stock-amount"
+              >
+                <Money
+                  cents={asset.value_cents}
+                  locale={i18n.language}
+                  {...maskProps}
+                />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Dialog
         open={showDeleteDialog}
@@ -427,6 +426,6 @@ export function AccountRow({ account, onEdit, stockAssets = [] }: AccountRowProp
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </li>
   );
 }

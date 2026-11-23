@@ -51,7 +51,10 @@ export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthN
 
   return (
     <div
-      className={cn("flex items-center gap-2 rounded-md", focusRing)}
+      className={cn(
+        "flex h-12 items-center gap-1 rounded-full border border-line bg-card p-1",
+        focusRing
+      )}
       role="navigation"
       aria-label={t("budget.monthNavigation")}
       data-testid="month-navigator"
@@ -64,14 +67,14 @@ export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthN
         onClick={goPrev}
         aria-label={`${t("budget.goTo")} ${getMonthName(prevM, locale, "long")} ${prevY}`}
         data-testid="prev-month-button"
-        className="w-20 justify-start"
+        className="h-10 w-[72px] justify-center gap-0.5 font-bold"
       >
         <ChevronLeft aria-hidden="true" className="shrink-0" />
-        <span className="truncate">{getMonthName(prevM, locale, "short")}</span>
+        <span className="truncate capitalize">{getMonthName(prevM, locale, "short")}</span>
       </Button>
 
       <span
-        className="text-h3 text-ink min-w-32 text-center"
+        className="flex h-10 min-w-40 items-center justify-center rounded-full bg-brand-soft px-5 text-label font-bold text-brand-ink capitalize"
         data-testid="current-month-label"
       >
         {getMonthName(selectedMonth, locale)} {selectedYear}
@@ -83,9 +86,9 @@ export function MonthNavigator({ selectedYear, selectedMonth, onChange }: MonthN
         onClick={goNext}
         aria-label={`${t("budget.goTo")} ${getMonthName(nextM, locale, "long")} ${nextY}`}
         data-testid="next-month-button"
-        className="w-20 justify-end"
+        className="h-10 w-[72px] justify-center gap-0.5 font-bold"
       >
-        <span className="truncate">{getMonthName(nextM, locale, "short")}</span>
+        <span className="truncate capitalize">{getMonthName(nextM, locale, "short")}</span>
         <ChevronRight aria-hidden="true" className="shrink-0" />
       </Button>
     </div>

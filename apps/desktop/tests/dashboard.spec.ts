@@ -650,31 +650,36 @@ test.describe("Dashboard — Story 5.2", () => {
     const netWorth = metricCard(page, "Net worth").getByTestId("metric-value");
     await expect(netWorth).toContainText("$525,000.00");
 
-    // Net worth was demoted from a 34px hero to a 26px secondary figure so that budget remaining
-    // is the only number answering "am I OK this month?".
+    // Net worth was demoted from a 34px hero to the 28px `text-stat` secondary figure so that
+    // budget remaining is the only number answering "am I OK this month?".
     const heroSize = await figureSize(
       metricCard(page, "Budget Remaining").getByTestId("metric-value")
     );
-    expect(await figureSize(netWorth)).toBe(26);
+    expect(await figureSize(netWorth)).toBe(28);
     expect(await figureSize(netWorth)).toBeLessThan(heroSize);
   });
 
-  test("3 secondary cards (Cash, Investments, Assets) are visible with values", async ({
+  test("Cash, Investments and Assets are rows inside the Net worth card", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
     const cards = page.getByTestId("metric-card");
-    // 2 hero + 3 secondary = 5 total metric cards
-    await expect(cards).toHaveCount(5);
+    // The three part figures stopped being cards of their own: a chequing balance is not an
+    // answer to a question, it is a line of what the total is made of.
+    await expect(cards).toHaveCount(2);
 
-    // Check secondary card values
-    const values = page.getByTestId("metric-value");
-    // 0: Budget hero, 1: Net worth, 2: Cash, 3: Investments, 4: Assets
-    await expect(values.nth(2)).toContainText("$15,000.00"); // Cash
-    await expect(values.nth(3)).toContainText("$250,000.00"); // Investments
-    await expect(values.nth(4)).toContainText("$260,000.00"); // Assets
+    const netWorthCard = metricCard(page, "Net worth");
+    for (const [name, amount] of [
+      ["Cash", "$15,000.00"],
+      ["Investments", "$250,000.00"],
+      ["Assets", "$260,000.00"],
+    ]) {
+      await expect(
+        netWorthCard.getByRole("group").locator("> div").filter({ hasText: name })
+      ).toContainText(amount);
+    }
   });
 
   test("Spending breakdown section shows expense categories", async ({
@@ -699,20 +704,22 @@ test.describe("Dashboard — Story 5.2", () => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
-    // The hero row is three cards wide now, and the next-action card is the only 3px brand
-    // left-border on the surface.
+    // The first row carries the budget figure and cash flow; the next step is the surface's one
+    // glass callout below them.
     await expect(metricCard(page, "Budget Remaining")).toBeVisible();
     await expect(page.getByTestId("cash-flow-card")).toBeVisible();
     await expect(page.getByTestId("financial-health-card")).toBeVisible();
   });
 
-  test("Clicking the Net worth card navigates to the Net worth surface", async ({
+  test("The Net worth card's Details pill opens the Net worth surface", async ({
     page,
   }) => {
     await setupSeededDashboardMock(page);
     await page.goto("/");
 
-    await metricCard(page, "Net worth").click();
+    // The card holds its own list of parts, so it is no longer one click target: the header pill
+    // is the single explicit way into the surface.
+    await page.getByTestId("net-worth-details-link").click();
     await expect(page).toHaveURL(/\/wealth\/net-worth/);
   });
 
@@ -1004,10 +1011,12 @@ async function setupSavingsDashboardMock(
               });
             case "get_top_budget_categories":
               return Promise.resolve([]);
+            // The savings row lives inside the Net worth card now, so this profile needs a net
+            // worth for the card that holds it to exist at all.
             case "get_current_net_worth":
               return Promise.resolve({
-                total_cents: 0,
-                cash_cents: 0,
+                total_cents: 1500000,
+                cash_cents: 1500000,
                 investments_cents: 0,
                 assets_cents: 0,
               });
@@ -1052,10 +1061,11 @@ async function setupSavingsDashboardMock(
   );
 }
 
-test.describe("Dashboard — Saved toward goals card", () => {
+test.describe("Dashboard — Saved toward goals row", () => {
   const label = "Saved toward goals";
+  const savingsRow = (page: Page): Locator => page.getByTestId("savings-projects-row");
 
-  test("card shows the total saved across active projects", async ({ page }) => {
+  test("row shows the total saved across active projects", async ({ page }) => {
     await setupSavingsDashboardMock(page, {
       active_project_count: 2,
       total_saved_cents: 450000,
@@ -1063,19 +1073,19 @@ test.describe("Dashboard — Saved toward goals card", () => {
     });
     await page.goto("/");
 
-    const card = metricCard(page, label);
-    await expect(card).toBeVisible();
-    await expect(card).toContainText("$4,500.00");
-    // A secondary figure, never the surface's single text-display one.
-    const hero = metricCard(page, "Budget remaining");
-    await expect(hero).toHaveCount(0);
-    await expect(card.getByTestId("savings-projects-progress")).toHaveAttribute(
+    const row = savingsRow(page);
+    await expect(row).toBeVisible();
+    await expect(row).toContainText(label);
+    await expect(row).toContainText("$4,500.00");
+    // A part of the net worth total, never the surface's single text-display figure.
+    await expect(metricCard(page, "Budget remaining")).toHaveCount(0);
+    await expect(row.getByTestId("savings-projects-progress")).toHaveAttribute(
       "aria-valuetext",
       "$4,500.00 of $10,000.00 across 2 goals"
     );
   });
 
-  test("card links to the projects surface", async ({ page }) => {
+  test("row links to the projects surface", async ({ page }) => {
     await setupSavingsDashboardMock(page, {
       active_project_count: 1,
       total_saved_cents: 25000,
@@ -1083,11 +1093,11 @@ test.describe("Dashboard — Saved toward goals card", () => {
     });
     await page.goto("/");
 
-    await metricCard(page, label).click();
+    await savingsRow(page).getByRole("link").click();
     await expect(page).toHaveURL(/\/wealth\/projects/);
   });
 
-  test("card still renders at zero saved when a goal exists", async ({
+  test("row still renders at zero saved when a goal exists", async ({
     page,
   }) => {
     await setupSavingsDashboardMock(page, {
@@ -1097,10 +1107,10 @@ test.describe("Dashboard — Saved toward goals card", () => {
     });
     await page.goto("/");
 
-    await expect(metricCard(page, label)).toContainText("$0.00");
+    await expect(savingsRow(page)).toContainText("$0.00");
   });
 
-  test("no card at all when there are no active projects", async ({ page }) => {
+  test("no row at all when there are no active projects", async ({ page }) => {
     await setupSavingsDashboardMock(page, {
       active_project_count: 0,
       total_saved_cents: 0,
@@ -1108,8 +1118,8 @@ test.describe("Dashboard — Saved toward goals card", () => {
     });
     await page.goto("/");
 
-    // The other secondary cards prove the surface rendered before asserting an absence.
-    await expect(metricCard(page, "Cash")).toBeVisible();
-    await expect(metricCard(page, label)).toHaveCount(0);
+    // The card that would hold the row proves the surface rendered before asserting an absence.
+    await expect(metricCard(page, "Net worth")).toBeVisible();
+    await expect(savingsRow(page)).toHaveCount(0);
   });
 });

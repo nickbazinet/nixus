@@ -3167,10 +3167,10 @@ test.describe("Project image editing from the row thumbnail", () => {
     await expect(page.getByTestId("project-detail")).toBeVisible();
     expect(await horizontalOverflowPx(page)).toBeLessThanOrEqual(0);
 
-    // The tile keeps the geometry the list gives it, at the size the row shipped with.
+    // The tile keeps the geometry the list gives it, at the icon-chip size the card shipped with.
     const box = await tileButton(page).boundingBox();
-    expect(box?.width).toBe(56);
-    expect(box?.height).toBe(56);
+    expect(box?.width).toBe(48);
+    expect(box?.height).toBe(48);
 
     // A refusal is a full-width block below the meter, so it cannot squeeze the header either.
     await tileButton(page).click();

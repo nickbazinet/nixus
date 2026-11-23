@@ -1,34 +1,41 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import {
   Area,
   AreaChart,
+  CartesianGrid,
+  ReferenceDot,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
 import { useTranslation } from "react-i18next";
+import { TrendingUpIcon } from "lucide-react";
 import {
   Card,
   CardContent,
   CardHeader,
+  CardTitle,
   Money,
   Skeleton,
-  Stat,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-  formatMoney,
 } from "@nixus/shared";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import {
+  CHART_AXIS_TICK,
+  CHART_GRID_STROKE,
+  SERIES_COLOR,
   formatMonthTick,
   insightsLocale,
   makeAxisTickFormatter,
+  niceAxisScale,
 } from "@/components/spending-trends/insights-chart";
+import { projectionEndYear } from "./milestones";
 import type { ProjectionPoint } from "@/lib/projection";
 
 interface ProjectionChartProps {
@@ -47,34 +54,25 @@ interface ChartPoint {
 const CHART_SKELETON_ROWS = 8;
 
 /**
- * Y-axis for projected gain from today. Anchors at $0 so compound growth reads as upward momentum
- * on longer horizons without distorting the data.
+ * Y-axis for a net-worth line. Not anchored at $0: today's balances are the floor the user already
+ * stands on, and a 0-anchored axis flattens a decade of compounding into a straight shallow line.
+ * The figures beside the chart carry the absolute scale.
  */
-function computeGainYAxisDomain(
-  gains: number[],
-  startCents: number,
-): [number, number] {
-  if (gains.length === 0) return [0, 1];
-
-  const min = Math.min(...gains);
-  const max = Math.max(...gains);
-  const range = max - min;
-
-  if (range === 0) {
-    const headroom = Math.max(Math.abs(startCents) * 0.002, 10_000);
-    if (min >= 0) return [0, headroom];
-    return [min - headroom * 0.06, max + headroom * 0.06];
-  }
-
-  const padding = range * 0.06;
-  if (min >= 0) return [0, max + padding];
-  return [min - padding, max + padding];
+function projectionScale(totals: number[]) {
+  if (totals.length === 0) return niceAxisScale(0, 1);
+  return niceAxisScale(Math.min(...totals), Math.max(...totals));
 }
 
+/**
+ * "Net worth to 2046": one violet line with a lavender fade under it and a dot on the last point.
+ * `monotone`, because the series is itself a smooth compounding curve rather than recorded
+ * observations joined up.
+ */
 export function ProjectionChart({ data, isLoading }: ProjectionChartProps) {
   const { t, i18n } = useTranslation();
   const { hidden, maskProps } = useValuesHidden();
   const locale = insightsLocale(i18n.language);
+  const gradientId = `${useId().replace(/:/g, "")}-projection`;
 
   const view = useMemo(() => {
     const startCents = data[0]?.total_cents ?? 0;
@@ -93,13 +91,12 @@ export function ProjectionChart({ data, isLoading }: ProjectionChartProps) {
       investmentGainCents: point.investment_gain_cents,
     }));
 
-    const endCents = points[points.length - 1]?.totalCents ?? startCents;
-    const maxGain = points.reduce(
-      (max, point) => Math.max(max, Math.abs(point.gainCents)),
+    const maxTotal = points.reduce(
+      (max, point) => Math.max(max, Math.abs(point.totalCents)),
       0,
     );
 
-    return { points, startCents, endCents, maxGain };
+    return { points, maxTotal, endYear: projectionEndYear(data, now) };
   }, [data, locale]);
 
   if (isLoading) {
@@ -116,77 +113,58 @@ export function ProjectionChart({ data, isLoading }: ProjectionChartProps) {
     );
   }
 
-  const { points, endCents, maxGain } = view;
-  const yDomain = computeGainYAxisDomain(
-    points.map((point) => point.gainCents),
-    view.startCents,
-  );
-  const formatTick = makeAxisTickFormatter(maxGain, locale, hidden);
+  const { points, maxTotal, endYear } = view;
+  const scale = projectionScale(points.map((point) => point.totalCents));
+  const formatTick = makeAxisTickFormatter(maxTotal, locale, hidden);
+  const last = points[points.length - 1];
 
-  const tickInterval =
-    points.length > 60
-      ? Math.floor(points.length / 12) - 1
-      : points.length > 24
-        ? Math.floor(points.length / 6) - 1
-        : 0;
+  // About seven labels across the axis at any horizon, so month labels never run together.
+  const tickInterval = Math.max(0, Math.ceil(points.length / 7) - 1);
 
   return (
     <Card>
       <CardHeader>
-        <Stat
-          label={t("projection.projectedNetWorth")}
-          value={formatMoney({ cents: endCents, locale })}
-          caption={t("projection.assumptionCaption")}
-          {...maskProps}
-          data-testid="projection-end-total"
-        />
+        <CardTitle icon={TrendingUpIcon}>
+          {t("insights.v2.netWorthToYear", { year: endYear })}
+        </CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-caption text-ink-dim">
-          {t("projection.growthFromToday")}
-        </p>
-        <div
-          className="mt-2 h-64"
-          data-testid="projection-chart"
-          aria-hidden="true"
-        >
+        <div className="h-96" data-testid="projection-chart" aria-hidden="true">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={points}>
+            <AreaChart
+              data={points}
+              margin={{ top: 8, right: 28, bottom: 0, left: 0 }}
+            >
               <defs>
-                <linearGradient
-                  id="projectionGainGradient"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                   <stop
-                    offset="5%"
-                    stopColor="var(--chart-1)"
+                    offset="0%"
+                    stopColor={SERIES_COLOR.projected}
                     stopOpacity={0.32}
                   />
                   <stop
                     offset="95%"
-                    stopColor="var(--chart-1)"
+                    stopColor={SERIES_COLOR.projected}
                     stopOpacity={0}
                   />
                 </linearGradient>
               </defs>
+              <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
               <XAxis
                 dataKey="label"
-                tick={{ fontSize: 13, fill: "var(--ink-faint)" }}
+                tick={CHART_AXIS_TICK}
                 tickLine={false}
                 axisLine={false}
                 interval={tickInterval}
               />
               <YAxis
-                domain={yDomain}
-                tickCount={5}
+                domain={scale.domain}
+                ticks={scale.ticks}
                 tickFormatter={formatTick}
-                tick={{ fontSize: 13, fill: "var(--ink-faint)" }}
+                tick={CHART_AXIS_TICK}
                 tickLine={false}
                 axisLine={false}
-                width={78}
+                width={72}
               />
               <Tooltip
                 content={
@@ -204,15 +182,30 @@ export function ProjectionChart({ data, isLoading }: ProjectionChartProps) {
               />
               <Area
                 type="monotone"
-                dataKey="gainCents"
-                stroke="var(--chart-1)"
-                strokeWidth={2}
-                fill="url(#projectionGainGradient)"
+                dataKey="totalCents"
+                stroke={SERIES_COLOR.projected}
+                strokeWidth={2.5}
+                fill={`url(#${gradientId})`}
+                dot={false}
+                activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--card)" }}
                 isAnimationActive={false}
               />
+              {last && (
+                <ReferenceDot
+                  x={last.label}
+                  y={last.totalCents}
+                  r={4.5}
+                  fill={SERIES_COLOR.projected}
+                  stroke="var(--card)"
+                  strokeWidth={2}
+                />
+              )}
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        <p className="mt-4 text-caption text-ink-dim">
+          {t("projection.growthFromToday")}
+        </p>
         <ProjectionTableEquivalent
           points={points}
           locale={locale}

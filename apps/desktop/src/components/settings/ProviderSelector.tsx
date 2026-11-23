@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Provider = "bedrock" | "openai";
@@ -24,11 +25,15 @@ const PROVIDERS: { value: Provider; label: string; descriptionKey: string }[] = 
 // Native radios, so grouping and arrow-key movement are the platform's. `focusRing` cannot go on a
 // visually hidden input, so the ring is drawn on the visible card through `peer-focus-visible` with
 // the same width, token, and offset the exported helper uses.
+//
+// The chosen provider wears the `featured` card treatment — a 2px violet border and the soft violet
+// glow — because it is the answer to the question this group asks. The check mark carries it too,
+// so the selection survives a user who cannot separate the violet border from the hairline.
 export function ProviderSelector({ value, onChange }: ProviderSelectorProps) {
   const { t } = useTranslation();
 
   return (
-    <fieldset className="grid grid-cols-2 gap-3">
+    <fieldset className="grid gap-3 sm:grid-cols-2">
       <legend className="sr-only">{t("settings.providerLegend")}</legend>
       {PROVIDERS.map((provider) => {
         const selected = value === provider.value;
@@ -44,17 +49,33 @@ export function ProviderSelector({ value, onChange }: ProviderSelectorProps) {
             />
             <span
               className={cn(
-                "flex h-full cursor-pointer flex-col gap-1 rounded-lg border p-3 transition-colors",
+                "flex h-full cursor-pointer flex-col gap-1 rounded-lg border bg-card p-4 transition-colors",
                 "peer-focus-visible:outline-2 peer-focus-visible:outline-focus-ring peer-focus-visible:outline-offset-2",
                 selected
-                  ? "border-brand bg-brand-soft"
-                  : "border-line bg-card hover:bg-hover"
+                  ? "border-2 border-feature shadow-feature"
+                  : "border-line hover:border-line-strong hover:bg-hover"
               )}
             >
-              <span className={cn("text-label", selected ? "text-brand-ink" : "text-ink")}>
-                {provider.label}
+              <span className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    "font-display text-h3",
+                    selected ? "text-brand-ink" : "text-ink"
+                  )}
+                >
+                  {provider.label}
+                </span>
+                {selected && (
+                  <Check
+                    aria-hidden="true"
+                    className="size-4 shrink-0 icon-gradient"
+                    strokeWidth={2.5}
+                  />
+                )}
               </span>
-              <span className="text-caption text-ink-dim">{t(provider.descriptionKey)}</span>
+              <span className="text-caption text-ink-dim">
+                {t(provider.descriptionKey)}
+              </span>
             </span>
           </label>
         );

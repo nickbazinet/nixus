@@ -8,9 +8,8 @@ import {
   AlertDescription,
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
+  IconChip,
+  Meter,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -34,7 +33,11 @@ import {
 import { BudgetCategoryRow } from "@/components/budget/BudgetCategoryRow";
 import { useCategoryReorder } from "@/hooks/useCategoryReorder";
 import { useFormatCurrency } from "@/hooks/useFormatCurrency";
-import { useMaskProps } from "@/contexts/ValuesVisibilityContext";
+import { useMaskProps, useValuesHidden } from "@/contexts/ValuesVisibilityContext";
+import { rampColor } from "@/components/spending-trends/insights-chart";
+import { cn } from "@/lib/utils";
+import { groupIcon } from "./groupIcon";
+import { isCategoryOver } from "./groupStats";
 import type { BudgetGroup, BudgetCategory, BudgetCategoryStatus, Expense } from "@/lib/types";
 
 interface CategoryFormData {
@@ -45,23 +48,49 @@ interface CategoryFormData {
 interface BudgetGroupCardProps {
   group: BudgetGroup;
   statusByCategory?: Map<number, BudgetCategoryStatus>;
+  /**
+   * Each category's spend rank across the whole budget, so a category wears the same ramp colour
+   * here as in the "Where it went" donut beside it. Falls back to the row's position in the group.
+   */
+  colorRankByCategory?: Map<number, number>;
   expensesByCategory?: Record<number, Expense[]>;
   onAddExpense?: (categoryId: number) => void;
   /** True when another active group exists, so a category row can be dragged into it. */
   canMoveBetweenGroups?: boolean;
+  /** Whether the group's categories are showing. Owned by the page so "Expand all" can drive it. */
+  open: boolean;
+  onToggle: () => void;
+  /**
+   * Edit mode: the structural controls — reorder handles, delete — are shown. Outside it the list
+   * reads as a plan, not a form; renaming and retargeting stay one click away inline either way.
+   */
+  editing?: boolean;
+  /** The group's spend rank across the budget, which picks its bar colour. */
+  colorRank?: number;
+  /**
+   * The page's merchant search is active, and `expensesByCategory` holds only the matches: show
+   * just the categories with a match, their transactions open, and nothing structural.
+   */
+  searching?: boolean;
 }
 
 export function BudgetGroupCard({
   group,
   statusByCategory,
+  colorRankByCategory,
   expensesByCategory,
   onAddExpense,
   canMoveBetweenGroups = false,
+  open,
+  onToggle,
+  editing = false,
+  colorRank = 0,
+  searching = false,
 }: BudgetGroupCardProps) {
   const { t, i18n } = useTranslation();
   const formatCurrency = useFormatCurrency();
   const maskProps = useMaskProps();
-  const [collapsed, setCollapsed] = useState(false);
+  const { hidden } = useValuesHidden();
   const [showForm, setShowForm] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BudgetCategory | null>(null);
   const [showDeleteGroupDialog, setShowDeleteGroupDialog] = useState(false);
@@ -211,54 +240,125 @@ export function BudgetGroupCard({
     0
   );
 
+  const activeStatuses = categories.map((cat) => statusByCategory?.get(cat.id));
+  const groupSpentCents =
+    activeStatuses.reduce((sum, status) => sum + (status?.spent_cents ?? 0), 0) +
+    archivedStatuses.reduce((sum, status) => sum + status.spent_cents, 0);
+  const overCount = activeStatuses.filter(
+    (status): status is BudgetCategoryStatus => status !== undefined && isCategoryOver(status)
+  ).length;
+  const groupStatus = group.is_deleted
+    ? null
+    : overCount > 0
+      ? { variant: "over" as const, label: t("budget.v3.groupOver", { count: overCount }) }
+      : groupSpentCents > 0
+        ? { variant: "good" as const, label: t("budget.v3.groupOnTrack") }
+        : { variant: "neutral" as const, label: t("budget.v3.groupNotStarted") };
+  const groupColor = overCount > 0 && groupSpentCents > groupTargetCents
+    ? "var(--over)"
+    : rampColor(colorRank);
+  const Icon = groupIcon(group.name);
+
   return (
     <>
-      <Card
+      {/* One card per group, closed to a single summary line until the user asks for its
+        * categories — the budget reads as seven lines, not seventy. */}
+      <section
         data-budget-group-id={group.is_deleted ? undefined : group.id}
-        className="data-[drop-target=true]:ring-2 data-[drop-target=true]:ring-brand"
+        data-open={open || undefined}
+        className="rounded-xl border border-line bg-card transition-shadow data-[drop-target=true]:ring-2 data-[drop-target=true]:ring-brand"
       >
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-1.5">
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => setCollapsed(!collapsed)}
-                aria-label={collapsed ? t("budget.expandGroup") : t("budget.collapseGroup")}
-                aria-expanded={!collapsed}
-                data-testid="toggle-group-button"
-              >
-                {collapsed ? (
-                  <ChevronRight className="text-ink-dim" aria-hidden="true" />
-                ) : (
-                  <ChevronDown className="text-ink-dim" aria-hidden="true" />
-                )}
-              </Button>
-              <h2 className="flex min-w-0 items-center gap-2 text-h2 text-ink">
-                {group.is_deleted ? (
-                  <span className="truncate" data-testid="group-name">
-                    {group.name}
-                  </span>
-                ) : (
-                  <InlineEditText
-                    value={group.name}
-                    onSave={handleUpdateGroupName}
-                    data-testid="group-name"
-                  />
-                )}
-                {group.is_deleted && (
-                  <Badge variant="neutral" data-testid="archived-group-badge">
-                    {t("budget.archivedGroup")}
-                  </Badge>
-                )}
-                {categories.length > 0 && (
-                  <span className="text-caption text-ink-dim" data-testid="group-total">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onToggle}
+            aria-label={open ? t("budget.collapseGroup") : t("budget.expandGroup")}
+            aria-expanded={open}
+            data-testid="toggle-group-button"
+            className="-ml-1.5 shrink-0"
+          >
+            {open ? (
+              <ChevronDown className="text-ink-dim" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="text-ink-dim" aria-hidden="true" />
+            )}
+          </Button>
+          <IconChip icon={Icon} />
+          <div className="min-w-0 basis-44 shrink-0">
+            <h2 className="flex min-w-0 items-center gap-2 text-h2 text-ink">
+              {group.is_deleted ? (
+                <span className="truncate" data-testid="group-name">
+                  {group.name}
+                </span>
+              ) : (
+                <InlineEditText
+                  value={group.name}
+                  onSave={handleUpdateGroupName}
+                  className="font-display text-h2"
+                  data-testid="group-name"
+                />
+              )}
+              {group.is_deleted && (
+                <Badge variant="neutral" data-testid="archived-group-badge">
+                  {t("budget.archivedGroup")}
+                </Badge>
+              )}
+            </h2>
+            <p className="text-caption text-ink-dim">
+              {t("budget.v3.categoryCount", { count: categories.length })}
+            </p>
+          </div>
+
+          <div className="min-w-32 flex-1">
+            {groupTargetCents > 0 && (
+              <Meter
+                value={groupSpentCents}
+                max={groupTargetCents}
+                color={groupColor}
+                label={t("budget.v3.groupMeterLabel", { name: group.name })}
+                valueText={
+                  hidden
+                    ? t("common.amountHidden")
+                    : t("budget.categoryMeterValue", {
+                        spent: formatCurrency(groupSpentCents),
+                        target: formatCurrency(groupTargetCents),
+                      })
+                }
+                data-testid="group-progress"
+              />
+            )}
+          </div>
+
+          <div className="ml-auto flex shrink-0 items-center gap-4">
+            {categories.length > 0 && (
+              <span className="text-right text-label whitespace-nowrap text-ink">
+                <Money
+                  cents={groupSpentCents}
+                  locale={i18n.language}
+                  className="font-bold"
+                  data-testid="group-spent"
+                  {...maskProps}
+                />
+                <span className="text-caption font-normal text-ink-dim">
+                  {" "}
+                  {t("budget.ofSeparator")}{" "}
+                  <span data-testid="group-total">
                     <Money cents={groupTargetCents} locale={i18n.language} {...maskProps} />
                   </span>
-                )}
-              </h2>
-            </div>
-            {!group.is_deleted && (
+                </span>
+              </span>
+            )}
+            {groupStatus && (
+              <Badge
+                variant={groupStatus.variant}
+                className="min-w-[5.5rem]"
+                data-testid="group-status-badge"
+              >
+                {groupStatus.label}
+              </Badge>
+            )}
+            {editing && !group.is_deleted && (
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -271,148 +371,161 @@ export function BudgetGroupCard({
               </Button>
             )}
           </div>
-          {groupError && (
-            <Alert
-              variant="over"
-              icon={<TriangleAlert />}
-              className="mt-2"
-              data-testid="group-error"
-            >
-              <AlertDescription>{groupError}</AlertDescription>
-            </Alert>
-          )}
-        </CardHeader>
-        {!collapsed && (
-        <CardContent className="space-y-3">
-          {(categories.length > 0 || archivedStatuses.length > 0) && (
-            <div>
-              {orderedCategories.map((cat, index) => {
-                const status: BudgetCategoryStatus = statusByCategory?.get(cat.id) ?? {
-                  id: cat.id,
-                  group_id: cat.group_id,
-                  name: cat.name,
-                  target_cents: cat.target_cents,
-                  spent_cents: 0,
-                  is_deleted: false,
-                  project_id: cat.project_id,
-                };
-                return (
-                  <BudgetCategoryRow
-                    key={cat.id}
-                    category={status}
-                    expenses={expensesByCategory?.[cat.id]}
-                    striped={index % 2 === 0}
-                    onRename={(name) => handleUpdateCategoryName(cat, name)}
-                    onUpdateTarget={(cents) => handleUpdateCategoryTarget(cat, cents)}
-                    onDelete={() => setDeleteTarget(cat)}
-                    onAddExpense={onAddExpense ? () => onAddExpense(cat.id) : undefined}
-                    showDragHandle={orderedCategories.length > 1 || canMoveBetweenGroups}
-                    onDragHandlePointerDown={beginPointerDrag(index)}
-                    rowRef={setRowRef(index)}
-                    isDragSource={drag?.from === index}
-                    isDragOver={drag !== null && drag.over === index && drag.from !== index}
-                  />
-                );
-              })}
-              {archivedStatuses.map((status) => (
-                <div key={status.id} data-testid="archived-budget-category-row">
-                  <BudgetCategoryRow
-                    category={status}
-                    expenses={expensesByCategory?.[status.id]}
-                    archived
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+        </div>
 
-          {!group.is_deleted && (
-            showForm ? (
-              <form
-                onSubmit={handleSubmit(onSubmit)}
-                className="space-y-3 border-t border-line pt-3"
-              >
-                <div className="space-y-1.5">
-                  <Label htmlFor={nameFieldId} required>
-                    {t("budget.categoryName")}
-                  </Label>
-                  <Input
-                    id={nameFieldId}
-                    placeholder={t("budget.categoryNamePlaceholder")}
-                    aria-required="true"
-                    aria-invalid={!!errors.name}
-                    aria-describedby={errors.name ? `${nameFieldId}-error` : undefined}
-                    {...register("name", { required: t("budget.nameRequired") })}
-                  />
-                  {errors.name && (
-                    <p id={`${nameFieldId}-error`} className="text-caption text-over">
-                      {errors.name.message}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor={targetFieldId} required>
-                    {t("budget.monthlyTarget")}
-                  </Label>
-                  <Controller
-                    name="target_cents"
-                    control={control}
-                    rules={{
-                      validate: (v) => v > 0 || t("budget.targetRequired"),
-                    }}
-                    render={({ field }) => (
-                      <MoneyInput
-                        id={targetFieldId}
-                        className="w-full max-w-48"
-                        value={field.value}
-                        onChange={field.onChange}
-                        onBlur={field.onBlur}
-                        aria-invalid={!!errors.target_cents}
-                        aria-required
-                        aria-describedby={
-                          errors.target_cents ? `${targetFieldId}-error` : undefined
-                        }
+        {groupError && (
+          <Alert
+            variant="over"
+            icon={<TriangleAlert />}
+            className="mx-5 mb-4"
+            data-testid="group-error"
+          >
+            <AlertDescription>{groupError}</AlertDescription>
+          </Alert>
+        )}
+
+        {open && (
+          <div className="px-5 pb-4 md:pl-[4.25rem]">
+            {(categories.length > 0 || archivedStatuses.length > 0) && (
+              <div>
+                {orderedCategories.map((cat, index) => {
+                  // Skipped rather than filtered out, so `index` stays the drag hook's index.
+                  if (searching && !(expensesByCategory?.[cat.id]?.length ?? 0)) return null;
+                  const status: BudgetCategoryStatus = statusByCategory?.get(cat.id) ?? {
+                    id: cat.id,
+                    group_id: cat.group_id,
+                    name: cat.name,
+                    target_cents: cat.target_cents,
+                    spent_cents: 0,
+                    is_deleted: false,
+                    project_id: cat.project_id,
+                  };
+                  return (
+                    <BudgetCategoryRow
+                      key={cat.id}
+                      category={status}
+                      expenses={expensesByCategory?.[cat.id]}
+                      colorRank={colorRankByCategory?.get(cat.id) ?? index}
+                      onRename={(name) => handleUpdateCategoryName(cat, name)}
+                      onUpdateTarget={(cents) => handleUpdateCategoryTarget(cat, cents)}
+                      onDelete={editing ? () => setDeleteTarget(cat) : undefined}
+                      onAddExpense={onAddExpense ? () => onAddExpense(cat.id) : undefined}
+                      showDragHandle={
+                        editing && (orderedCategories.length > 1 || canMoveBetweenGroups)
+                      }
+                      onDragHandlePointerDown={beginPointerDrag(index)}
+                      rowRef={setRowRef(index)}
+                      isDragSource={drag?.from === index}
+                      isDragOver={drag !== null && drag.over === index && drag.from !== index}
+                      forceExpanded={searching}
+                    />
+                  );
+                })}
+                {archivedStatuses
+                  .filter((status) => !searching || (expensesByCategory?.[status.id]?.length ?? 0) > 0)
+                  .map((status) => (
+                    <div key={status.id} data-testid="archived-budget-category-row">
+                      <BudgetCategoryRow
+                        category={status}
+                        expenses={expensesByCategory?.[status.id]}
+                        archived
+                        forceExpanded={searching}
                       />
-                    )}
-                  />
-                  {errors.target_cents && (
-                    <p id={`${targetFieldId}-error`} className="text-caption text-over">
-                      {errors.target_cents.message}
-                    </p>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {!group.is_deleted && !searching &&
+              (showForm ? (
+                <form
+                  onSubmit={handleSubmit(onSubmit)}
+                  className={cn(
+                    "space-y-3 pt-3",
+                    categories.length > 0 && "border-t border-line"
                   )}
-                </div>
-                <div className="flex gap-2">
-                  <Button type="submit" size="sm">
-                    {t("budget.saveCategory")}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      reset();
-                      setShowForm(false);
-                    }}
-                  >
-                    {t("common.cancel")}
-                  </Button>
-                </div>
-              </form>
-            ) : (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowForm(true)}
-                className="w-full justify-start text-ink-dim"
-                data-testid="add-category-button"
-              >
-                <Plus aria-hidden="true" />
-                {t("budget.addCategory")}
-              </Button>
-            )
-          )}
-        </CardContent>)}
-      </Card>
+                >
+                  <div className="space-y-1.5">
+                    <Label htmlFor={nameFieldId} required>
+                      {t("budget.categoryName")}
+                    </Label>
+                    <Input
+                      id={nameFieldId}
+                      placeholder={t("budget.categoryNamePlaceholder")}
+                      aria-required="true"
+                      aria-invalid={!!errors.name}
+                      aria-describedby={errors.name ? `${nameFieldId}-error` : undefined}
+                      {...register("name", { required: t("budget.nameRequired") })}
+                    />
+                    {errors.name && (
+                      <p id={`${nameFieldId}-error`} className="text-caption text-over">
+                        {errors.name.message}
+                      </p>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor={targetFieldId} required>
+                      {t("budget.monthlyTarget")}
+                    </Label>
+                    <Controller
+                      name="target_cents"
+                      control={control}
+                      rules={{
+                        validate: (v) => v > 0 || t("budget.targetRequired"),
+                      }}
+                      render={({ field }) => (
+                        <MoneyInput
+                          id={targetFieldId}
+                          className="w-full max-w-48"
+                          value={field.value}
+                          onChange={field.onChange}
+                          onBlur={field.onBlur}
+                          aria-invalid={!!errors.target_cents}
+                          aria-required
+                          aria-describedby={
+                            errors.target_cents ? `${targetFieldId}-error` : undefined
+                          }
+                        />
+                      )}
+                    />
+                    {errors.target_cents && (
+                      <p id={`${targetFieldId}-error`} className="text-caption text-over">
+                        {errors.target_cents.message}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button type="submit" size="sm">
+                      {t("budget.saveCategory")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        reset();
+                        setShowForm(false);
+                      }}
+                    >
+                      {t("common.cancel")}
+                    </Button>
+                  </div>
+                </form>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowForm(true)}
+                  className="mt-1 -ml-2 text-ink-dim"
+                  data-testid="add-category-button"
+                >
+                  <Plus aria-hidden="true" />
+                  {t("budget.addCategory")}
+                </Button>
+              ))}
+          </div>
+        )}
+      </section>
 
       <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
         <DialogContent data-testid="delete-category-dialog">

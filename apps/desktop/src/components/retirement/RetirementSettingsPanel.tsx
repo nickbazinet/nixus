@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { RotateCcwIcon } from "lucide-react";
+import { RotateCcwIcon, SlidersHorizontalIcon } from "lucide-react";
 import {
   Badge,
   Button,
@@ -137,9 +137,11 @@ export function RetirementSettingsPanel({
   return (
     <Card flush>
       <CardHeader className="pt-card-pad">
-        <CardTitle>{t("retirement.settingsTitle")}</CardTitle>
+        <CardTitle icon={SlidersHorizontalIcon}>
+          {t("retirement.settingsTitle")}
+        </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4 pb-card-pad">
+      <CardContent className="grid grid-cols-1 gap-x-grid-gap gap-y-6 pb-card-pad pt-5 lg:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="retirement-government-pension">
             {t("retirement.governmentPensionLabel")}
@@ -352,7 +354,7 @@ export function RetirementSettingsPanel({
         )}
 
         {ageFromProfile && (
-          <p className="text-caption text-ink-faint">
+          <p className="text-caption text-ink-faint lg:col-span-2">
             {t("retirement.ageFromProfileNote", { age: currentAge })}
           </p>
         )}

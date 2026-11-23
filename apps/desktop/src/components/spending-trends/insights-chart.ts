@@ -48,6 +48,31 @@ export function rampColor(rank: number, offset = 0): string {
   return CHART_RAMP[(index + rotation) % CHART_RAMP_LENGTH];
 }
 
+/**
+ * Colours for series whose identity is FIXED BY MEANING rather than by rank: money in is always
+ * teal, money out always pink, a projection always violet, a secondary scenario sky. `rampColor`
+ * above still governs everything that is ranked (categories, slices, segments) — these four are
+ * the only named exceptions, and they exist so "in" and "out" never swap colours between two
+ * charts on the same surface.
+ */
+export const SERIES_COLOR = {
+  in: "var(--chart-2)",
+  out: "var(--chart-3)",
+  projected: "var(--chart-4)",
+  target: "var(--chart-3)",
+  alt: "var(--chart-5)",
+} as const;
+
+/** Axis ticks: 12.5px faint ink, and never an axis line — the grid carries the scale. */
+export const CHART_AXIS_TICK = { fontSize: 12.5, fill: "var(--ink-faint)" } as const;
+
+/** The one grid colour, drawn horizontally only and solid — a dashed grid competes with the data. */
+export const CHART_GRID_STROKE = "var(--line)";
+
+/** Bars are soft periwinkle (brand at half strength); a partial period goes solid brand. */
+export const BAR_FILL = "var(--brand)";
+export const BAR_FILL_OPACITY_COMPLETE = 0.5;
+
 const LOCALE_TAGS: Record<string, string> = { en: "en-CA", fr: "fr-CA" };
 
 /** i18next language -> the BCP 47 tag `Money` and `Intl` want. */
@@ -84,11 +109,48 @@ export function makeAxisTickFormatter(
   return (cents: number) => format.format(Math.round(cents / 100));
 }
 
+/** 1, 2, 2.5, 5 or 10 × a power of ten — the only step sizes a reader can do mental maths on. */
+function niceStep(raw: number): number {
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(raw)));
+  const normalized = raw / magnitude;
+  const step =
+    normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+/**
+ * Round domain and tick values for a money axis.
+ *
+ * Not cosmetic: `makeAxisTickFormatter` prints ONE format for the whole axis, and a compact format
+ * with no decimals turns recharts' own $1.5M and $2.25M ticks into two labels both reading "$2M".
+ * Choosing the ticks ourselves is what keeps every label distinct and readable.
+ */
+export function niceAxisScale(
+  minCents: number,
+  maxCents: number,
+  tickCount = 5,
+): { domain: [number, number]; ticks: number[] } {
+  if (!Number.isFinite(minCents) || !Number.isFinite(maxCents) || maxCents <= minCents) {
+    return { domain: [0, 1], ticks: [0, 1] };
+  }
+
+  const step = niceStep((maxCents - minCents) / Math.max(1, tickCount - 1));
+  const low = Math.floor(minCents / step) * step;
+  const high = Math.ceil(maxCents / step) * step;
+
+  const ticks: number[] = [];
+  for (let tick = low; tick <= high + step / 2; tick += step) {
+    ticks.push(Math.round(tick));
+  }
+
+  return { domain: [low, high], ticks };
+}
+
 /**
  * `Dec '25`, never `Dec 25` — the latter parses as a date. Takes a `YYYY-MM` key.
  * Returns the raw key unchanged if it is not one, so a malformed month never renders as `NaN`.
- */
-export function formatMonthKey(monthKey: string, locale: string): string {
+ */export function formatMonthKey(monthKey: string, locale: string): string {
   const parsed = parseMonthKey(monthKey);
   if (!parsed) return monthKey;
   return formatMonthTick(parsed.year, parsed.monthIndex, locale);

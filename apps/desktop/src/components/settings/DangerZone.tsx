@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, ShieldAlert } from "lucide-react";
 import {
   Alert,
   Button,
@@ -14,6 +14,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  IconChip,
   Input,
   Label,
   focusRing,
@@ -113,21 +114,24 @@ export function DangerZone() {
         aria-expanded={isExpanded}
         aria-controls="danger-zone-content"
         className={cn(
-          "flex w-full items-center gap-2 px-card-pad py-3.5 text-left transition-colors hover:bg-hover disabled:cursor-default",
+          "flex w-full items-center gap-3 bg-over-bg/60 px-card-pad py-4 text-left transition-colors hover:bg-over-bg disabled:cursor-default",
           focusRing
         )}
         data-testid="danger-zone-toggle"
       >
+        <IconChip icon={ShieldAlert} className="bg-card" />
         <span className="min-w-0 flex-1">
-          <span className="block text-h3 text-over-ink">{t("settings.dangerZone")}</span>
-          <span className="mt-0.5 block text-caption text-ink-dim">
+          <span className="block font-display text-h1 text-over-ink">
+            {t("settings.dangerZone")}
+          </span>
+          <span className="mt-1 block text-caption text-ink-dim">
             {t("settings.dangerZoneDescription")}
           </span>
         </span>
         {isExpanded ? (
-          <ChevronUp className="size-4 shrink-0 text-ink-dim" aria-hidden="true" />
+          <ChevronUp className="size-4 shrink-0 text-over-ink" aria-hidden="true" />
         ) : (
-          <ChevronDown className="size-4 shrink-0 text-ink-dim" aria-hidden="true" />
+          <ChevronDown className="size-4 shrink-0 text-over-ink" aria-hidden="true" />
         )}
       </button>
 
@@ -143,7 +147,7 @@ export function DangerZone() {
             <dd className="text-ink-dim">{t("settings.dangerZoneKeptList")}</dd>
           </dl>
 
-          <div className="mt-4">
+          <div className="mt-5">
             <Button
               variant="outline"
               onClick={handleExportBackup}
@@ -159,7 +163,7 @@ export function DangerZone() {
 
           {/* Demoted out of the primary row: a destructive action is never a peer of a primary
             * action side by side, so it sits on its own line under the safe one. */}
-          <div className="mt-4 border-t border-line pt-4">
+          <div className="mt-5 border-t border-line pt-5">
             <Button
               variant="destructive"
               onClick={() => handleOpenChange(true)}
@@ -172,7 +176,7 @@ export function DangerZone() {
           </div>
 
           {error !== null && !open && (
-            <Alert variant="over" className="mt-3">
+            <Alert variant="over" className="mt-4">
               {error}
             </Alert>
           )}

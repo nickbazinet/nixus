@@ -1,9 +1,9 @@
 /* ============================================================================
- * Nixus design tokens — Direction C "Clear Slate" colors
+ * Nixus design tokens — the "Charte graphique" palette
  *
- * Source of truth: _bmad-output/planning-artifacts/ux-designs/ux-nixus-2026-08-01/.working/directions-3.html
- * Color values only — layout, typography, radius, spacing, and shadow rules
- * below are unchanged from the prior token set.
+ * Palette principale: Ambition #DE50A4, Organisation #9978ED, Liberté #5E78ED,
+ * Couleur du verre #DCECF5, Fond froid #F8FBFF. Poppins for titles and
+ * figures, Nunito for text and navigation.
  *
  * Consumers import this AFTER `@import "tailwindcss"` (and any tailwind plugins
  * like tw-animate-css / shadcn) so the @theme blocks register against the
@@ -51,113 +51,119 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ---------------------------------------------------------------------------
- * Light — the default surface. Cool slate, cards white on it.
+ * Light — the default surface. "Fond froid" page, white cards on it.
  * ------------------------------------------------------------------------- */
 :root {
   /* Surfaces */
-  --bg: #F1F5F9;
+  --bg: #F8FBFF;
   --card: #FFFFFF;
-  --chrome: #FFFFFF;
+  --chrome: #F8FBFF;
   --rail: #FFFFFF;
-  --rail-line: #E2E8F0;
-  --track: #EDF1F6;
-  --hover: #F8FAFC;
+  --rail-line: #E3E8F3;
+  --track: #EAEFF8;
+  --hover: #F2F6FD;
+  /* "Couleur du verre" — the glass-blue callout surface (suggestions, insights). */
+  --glass: #DCECF5;
 
   /* Ink */
-  --ink: #0F172A;
-  --ink-dim: #576578;
-  --ink-faint: #5B6B80;
-  --ink-disabled: #7B8798;
+  --ink: #12122A;
+  --ink-dim: #545B70;
+  --ink-faint: #5F667A;
+  --ink-disabled: #8A90A6;
 
   /* Hairlines */
-  --line: #E2E8F0;
-  --line-strong: #CBD5E1;
+  --line: #E3E8F3;
+  --line-strong: #CDD5E6;
 
-  /* Rail — its own inks, because the rail expands to 192px and renders
-   * real text labels, so it needs 4.5:1 rather than icon-level 3:1. */
-  --rail-ink: #647188;
-  --rail-on: #EDF0FD;
-  --rail-on-ink: #3A4FB8;
+  /* Rail — its own inks, because the rail renders real text labels, so it
+   * needs 4.5:1 rather than icon-level 3:1. */
+  --rail-ink: #2E3250;
+  --rail-on: #E8EEFC;
+  --rail-on-ink: #3A4FC8;
 
   /* Brand and action. Nothing else. */
-  --brand: #5E78ED;
-  --brand-ink: #3A4FB8;
-  --brand-on: #0B1020;
-  --brand-soft: #EDF0FD;
+  --brand: #4F63DB;
+  --brand-ink: #3F51C8;
+  --brand-on: #FFFFFF;
+  --brand-soft: #E9EDFD;
   --focus-ring: #5E78ED;
+  /* The highlighted ("featured") card outline — "Organisation" violet. */
+  --feature: #8A5CD8;
 
-  /* Status — a separate family, and never the sole signal. */
-  --good: #047857;
-  --good-bg: #E6F4EF;
-  --good-ink: #03624A;
-  --caution: #A16207;
-  --caution-bg: #FBF2DE;
-  --caution-ink: #834F06;
-  --over: #BE123C;
-  --over-bg: #FCEAEE;
-  --over-ink: #9C0F33;
+  /* Status — a separate family, and never the sole signal. Over-budget reads
+   * orange, per the charte ("bars turn orange when a category goes over"). */
+  --good: #0E8C72;
+  --good-bg: #E3F5EF;
+  --good-ink: #03704F;
+  --caution: #B45309;
+  --caution-bg: #FCEFD9;
+  --caution-ink: #8A4A06;
+  --over: #C2410C;
+  --over-bg: #FDEDE3;
+  --over-ink: #9A3412;
   --over-on: #FFFFFF;
-  --neutral-bg: #EDF1F6;
-  --neutral-ink: #576578;
+  --neutral-bg: #EEF2F9;
+  --neutral-ink: #545B70;
 
   /* Entitlement — deliberately NOT the status family. A premium account is a
    * durable fact, not something that went well (`good`) or needs attention
-   * (`caution`), so it owns a token and a distinctly yellower gold (hue ~42 vs
-   * caution's ~36 ochre). Ink only: the entitlement never renders as a filled
-   * status pill — the account menu uses the `neutral` badge. */
+   * (`caution`), so it owns a token and a distinctly yellower gold. Ink only:
+   * the entitlement never renders as a filled status pill. */
   --premium-ink: #8A6304;
 
-  /* Charts — eight steps, walking brand indigo through violet/orchid/pink
-   * then teal, teal-green, warm amber, and cool slate for the long tail.
-   * Luminance alternates (odd steps dark, even steps light) so adjacent
+  /* Charts — eight steps from the brand palette: Liberté blue, teal,
+   * Ambition pink, Organisation violet, sky, amber, then slate for the long
+   * tail. Luminance alternates (odd steps dark, even steps light) so adjacent
    * pairs stay separable — see contrast.test.ts. */
-  --chart-1: #4F46E5;
-  --chart-2: #9270F0;
-  --chart-3: #9333EA;
-  --chart-4: #EC4899;
-  --chart-5: #0E7490;
-  --chart-6: #0D9488;
-  --chart-7: #A8500A;
-  --chart-8: #7C8DA3;
+  --chart-1: #4356D6;
+  --chart-2: #129C8A;
+  --chart-3: #C2378A;
+  --chart-4: #9978ED;
+  --chart-5: #2A6CB0;
+  --chart-6: #C97A12;
+  --chart-7: #565E8C;
+  --chart-8: #8089AD;
 
   /* Floating layers only: slide-over, dialog, toast, popover. */
-  --shadow-float-value: 0 2px 10px rgba(15, 23, 42, 0.10);
+  --shadow-float-value: 0 12px 32px -12px rgba(18, 18, 42, 0.18);
 
   /* The scrim behind a floating layer. Deliberately not derived from an ink
    * token: a backdrop must darken in BOTH modes, and `--ink` inverts to a
    * near-white in dark, which would wash the page out instead. */
-  --scrim: rgba(15, 23, 42, 0.32);
+  --scrim: rgba(18, 18, 42, 0.32);
 }
 
 /* ---------------------------------------------------------------------------
  * Dark — page sits darker than cards so surfaces actually layer.
  * ------------------------------------------------------------------------- */
 .dark {
-  --bg: #080D18;
-  --card: #172033;
-  --chrome: #111A2B;
-  --rail: #111A2B;
-  --rail-line: #232E42;
-  --track: #212C3E;
-  --hover: #1C2740;
+  --bg: #0C0E1D;
+  --card: #161A2F;
+  --chrome: #0C0E1D;
+  --rail: #121527;
+  --rail-line: #242944;
+  --track: #252A45;
+  --hover: #1C2039;
+  --glass: #18263A;
 
-  --ink: #E8EDF5;
-  --ink-dim: #94A3B8;
-  --ink-faint: #7E8CA0;
-  --ink-disabled: #63738C;
+  --ink: #ECEEF8;
+  --ink-dim: #A4AAC3;
+  --ink-faint: #959CB8;
+  --ink-disabled: #6E7494;
 
-  --line: #2A3547;
-  --line-strong: #374357;
+  --line: #282D49;
+  --line-strong: #383E5E;
 
-  --rail-ink: #7C8899;
-  --rail-on: #1C2547;
-  --rail-on-ink: #B4C0FA;
+  --rail-ink: #B4B9D0;
+  --rail-on: #262D57;
+  --rail-on-ink: #C9D0FF;
 
-  --brand: #5E78ED;
+  --brand: #5468DF;
   --brand-ink: #B4C0FA;
-  --brand-on: #0B1020;
-  --brand-soft: #1C2547;
+  --brand-on: #FFFFFF;
+  --brand-soft: #222A55;
   --focus-ring: #8EA2F5;
+  --feature: #A78BFA;
 
   --good: #34D399;
   --good-bg: #0F3328;
@@ -165,34 +171,34 @@
   --caution: #FBBF24;
   --caution-bg: #33290F;
   --caution-ink: #FCD34D;
-  --over: #FB7185;
-  --over-bg: #3A1A24;
-  --over-ink: #FDA4AF;
-  --over-on: #3A1A24;
-  --neutral-bg: #212C3E;
-  --neutral-ink: #94A3B8;
+  --over: #F4895B;
+  --over-bg: #3A1D12;
+  --over-ink: #FDBA94;
+  --over-on: #3A1608;
+  --neutral-bg: #252A45;
+  --neutral-ink: #A4AAC3;
 
   /* Muted rather than caution-dark's saturated amber: premium stays calm. */
   --premium-ink: #E9C46A;
 
-  --chart-1: #818CF8;
-  --chart-2: #8074B0;
-  --chart-3: #C084FC;
-  --chart-4: #AE6E8D;
-  --chart-5: #38BDF8;
-  --chart-6: #469B90;
-  --chart-7: #FBBF24;
-  --chart-8: #7688A0;
+  --chart-1: #7D8FF5;
+  --chart-2: #1F8073;
+  --chart-3: #F07BBF;
+  --chart-4: #8A63D6;
+  --chart-5: #5FB4EC;
+  --chart-6: #B07A1E;
+  --chart-7: #A8A2E8;
+  --chart-8: #6B7596;
 
-  --shadow-float-value: 0 2px 12px rgba(0, 0, 0, 0.45);
+  --shadow-float-value: 0 12px 32px -12px rgba(0, 0, 0, 0.6);
   --scrim: rgba(0, 0, 0, 0.55);
 }
 
 /* ---------------------------------------------------------------------------
- * Identity — mode-independent. The gradient belongs on the rail mark, the
- * installer, marketing, and the primary (default) button fill, which carries
- * the dark `--brand-on` label (4.9-5.7:1 across all three stops). NEVER on a
- * surface, card, or chart.
+ * Identity — mode-independent. The logo gradient belongs on the brand mark,
+ * the installer and marketing. The deeper button gradient is the primary
+ * action fill and the active destination pill, carrying a white label. Neither
+ * is ever a card surface or a chart fill.
  * ------------------------------------------------------------------------- */
 :root {
   --logo-stop-1: #5E78ED;
@@ -204,6 +210,11 @@
     var(--logo-stop-2) 50%,
     var(--logo-stop-3)
   );
+  /* The primary action fill: a deeper walk of the same three stops, so a
+   * white label holds 4.5:1 across the whole sweep. */
+  --button-gradient: linear-gradient(90deg, #4A63E0 0%, #8B56D5 55%, #C03E95 100%);
+  /* The minus-sign pill ("barre du logo"): eyebrows, legend markers. */
+  --pill-gradient: linear-gradient(90deg, #6A7CF0 0%, #B75CC4 100%);
 }
 
 /* ---------------------------------------------------------------------------
@@ -332,6 +343,8 @@
   --color-brand-on: var(--brand-on);
   --color-brand-soft: var(--brand-soft);
   --color-focus-ring: var(--focus-ring);
+  --color-feature: var(--feature);
+  --color-glass: var(--glass);
 
   /* Status */
   --color-good: var(--good);
@@ -469,9 +482,34 @@ h3,
   outline-offset: var(--spacing-focus-offset-w);
 }
 
-/* The identity gradient. Rail mark, installer, marketing, primary button. */
+/* The identity gradient. Rail mark, installer, marketing. */
 @utility bg-logo-gradient {
   background-image: var(--logo-gradient);
+}
+
+/* The primary action fill (buttons, the active destination pill). */
+@utility bg-button-gradient {
+  background-image: var(--button-gradient);
+}
+
+/* The minus-sign pill: eyebrow markers and the logo-bar variant. */
+@utility bg-pill-gradient {
+  background-image: var(--pill-gradient);
+}
+
+/* Line icons stroked with the brand gradient. Resolves against the
+ * `<IconGradientDefs />` mounted once per document. `userSpaceOnUse` there is
+ * what lets straight strokes (zero-height boxes) still paint. */
+@utility icon-gradient {
+  stroke: url(#nx-icon-gradient) var(--brand);
+}
+
+/* Text painted with the brand gradient ("votre argent"). */
+@utility text-gradient {
+  background-image: linear-gradient(90deg, #DE50A4 0%, #A866DA 50%, #5F78EC 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* ---------------------------------------------------------------------------

@@ -39,11 +39,11 @@ function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title={t("settings.title")} />
-
+      {/* Sections sit above the title, exactly where Finance's sub-surfaces sit, so every module
+       * reads tabs -> kicker -> title in the same order. */}
       <SegmentedNav
         aria-label={t("settings.subNavLabel")}
-        className="-mx-page-x mb-section-gap px-0"
+        className="mb-section-gap"
         data-testid="settings-sub-nav"
       >
         {NAV_ITEMS.map((item) => (
@@ -63,7 +63,13 @@ function SettingsPage() {
         ))}
       </SegmentedNav>
 
-      <div className="mx-auto max-w-2xl">
+      <PageHeader
+        title={t("settings.title")}
+        subtitle={t("surface.subtitle.settings")}
+        eyebrow={t("sidebar.settings")}
+      />
+
+      <div className="max-w-4xl">
         {active === "general" && <GeneralSettings />}
         {active === "reading" && <ReadingStatementsSettings />}
         {active === "data" && <YourDataSettings />}

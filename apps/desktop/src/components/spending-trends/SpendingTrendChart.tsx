@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import {
   Bar,
   BarChart,
+  CartesianGrid,
   Rectangle,
   ResponsiveContainer,
   Tooltip,
@@ -9,48 +10,54 @@ import {
   YAxis,
 } from "recharts";
 import { useTranslation } from "react-i18next";
+import { ChartNoAxesColumnIcon } from "lucide-react";
 import {
+  Badge,
   Card,
+  CardAction,
   CardContent,
   CardHeader,
+  CardTitle,
   Money,
   Skeleton,
-  Stat,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
-  formatMoney,
 } from "@nixus/shared";
 import { useValuesHidden } from "@/contexts/ValuesVisibilityContext";
 import {
-  currentMonthKey,
-  formatMonthKey,
-  formatMonthName,
+  BAR_FILL,
+  BAR_FILL_OPACITY_COMPLETE,
+  CHART_AXIS_TICK,
+  CHART_GRID_STROKE,
   insightsLocale,
   makeAxisTickFormatter,
 } from "./insights-chart";
+import {
+  averageBasisCaption,
+  monthlySpendView,
+  type MonthlySpendPoint,
+} from "./monthly-spend";
 import type { MonthlySpendTotal } from "@/lib/types";
 
 interface SpendingTrendChartProps {
   data: MonthlySpendTotal[];
   isLoading?: boolean;
-  /** i18n key for the figure's label. Defaults to spendingTrends.avgMonthlySpend. */
+  /** i18n key for the average figure's label. Defaults to spendingTrends.avgMonthlySpend. */
   titleKey?: string;
-}
-
-interface ChartPoint {
-  monthKey: string;
-  label: string;
-  cents: number;
-  isCurrent: boolean;
 }
 
 /** Gridline count the loading placeholder stands in for. */
 const CHART_SKELETON_ROWS = 8;
 
+/**
+ * "Spending, last N months": one bar per month, the running month solid brand so a part-month bar
+ * never reads as a finished one. The monthly average sits under the plot as the reference the bars
+ * are judged against.
+ */
 export function SpendingTrendChart({
   data,
   isLoading,
@@ -60,34 +67,7 @@ export function SpendingTrendChart({
   const { hidden, maskProps } = useValuesHidden();
   const locale = insightsLocale(i18n.language);
 
-  const view = useMemo(() => {
-    const thisMonth = currentMonthKey();
-
-    // A year window returns all twelve months, so months that have not happened yet arrive at zero.
-    // Dropped rather than drawn — an empty November bar in August claims knowledge Nixus lacks.
-    const points: ChartPoint[] = data
-      .filter((row) => row.month <= thisMonth)
-      .map((row) => ({
-        monthKey: row.month,
-        label: formatMonthKey(row.month, locale),
-        cents: row.total_cents,
-        isCurrent: row.month === thisMonth,
-      }));
-
-    // The average counts COMPLETED months only. Folding a part-month into a monthly average drags
-    // it below anything the user would recognise as her own number.
-    const completed = points.filter((point) => !point.isCurrent);
-    const partial = points.find((point) => point.isCurrent);
-    const total = completed.reduce((sum, point) => sum + point.cents, 0);
-    const avgCents =
-      completed.length > 0 ? Math.round(total / completed.length) : 0;
-    const maxCents = points.reduce(
-      (max, point) => Math.max(max, point.cents),
-      0,
-    );
-
-    return { points, completed, partial, avgCents, maxCents };
-  }, [data, locale]);
+  const view = useMemo(() => monthlySpendView(data, locale), [data, locale]);
 
   if (isLoading) {
     return (
@@ -103,41 +83,23 @@ export function SpendingTrendChart({
     );
   }
 
-  const { points, completed, partial, avgCents, maxCents } = view;
+  const { points, partial, avgCents, maxCents } = view;
   const formatTick = makeAxisTickFormatter(maxCents, locale, hidden);
-
-  const caption =
-    completed.length === 0
-      ? t("insights.avgNoCompletedMonths")
-      : partial
-        ? t("insights.avgCompletedMonthsPartial", {
-            months: completed.length,
-            first: formatMonthName(completed[0].monthKey, locale),
-            last: formatMonthName(
-              completed[completed.length - 1].monthKey,
-              locale,
-            ),
-            current: formatMonthName(partial.monthKey, locale),
-          })
-        : t("insights.avgCompletedMonths", {
-            months: completed.length,
-            first: formatMonthName(completed[0].monthKey, locale),
-            last: formatMonthName(
-              completed[completed.length - 1].monthKey,
-              locale,
-            ),
-          });
+  const basis = averageBasisCaption(view);
 
   return (
     <Card>
       <CardHeader>
-        <Stat
-          label={t(titleKey)}
-          value={formatMoney({ cents: avgCents, locale })}
-          caption={caption}
-          {...maskProps}
-          data-testid="spending-trend-avg"
-        />
+        <CardTitle icon={ChartNoAxesColumnIcon}>
+          {t("insights.v2.spendingLastMonths", { months: points.length })}
+        </CardTitle>
+        {partial && (
+          <CardAction>
+            <Badge variant="brand">
+              {t("insights.v2.monthIsPartial", { month: partial.monthName })}
+            </Badge>
+          </CardAction>
+        )}
       </CardHeader>
       <CardContent>
         {/* The plot is hidden from assistive tech; the table below carries the same numbers, so a
@@ -148,20 +110,22 @@ export function SpendingTrendChart({
           aria-hidden="true"
         >
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={points} barCategoryGap="18%">
+            <BarChart data={points} barCategoryGap="22%">
+              <CartesianGrid stroke={CHART_GRID_STROKE} vertical={false} />
               <XAxis
                 dataKey="label"
-                tick={{ fontSize: 13, fill: "var(--ink-faint)" }}
+                tick={CHART_AXIS_TICK}
                 tickLine={false}
                 axisLine={false}
-                interval="preserveStartEnd"
+                interval={0}
+                minTickGap={0}
               />
               <YAxis
                 tickFormatter={formatTick}
-                tick={{ fontSize: 13, fill: "var(--ink-faint)" }}
+                tick={CHART_AXIS_TICK}
                 tickLine={false}
                 axisLine={false}
-                width={78}
+                width={66}
               />
               <Tooltip
                 cursor={{ fill: "var(--hover)" }}
@@ -183,13 +147,19 @@ export function SpendingTrendChart({
             </BarChart>
           </ResponsiveContainer>
         </div>
-        {partial ? (
-          <p className="mt-3 text-caption text-ink-dim">
-            {t("insights.currentBarNote", {
-              month: formatMonthName(partial.monthKey, locale),
-            })}
-          </p>
-        ) : null}
+        <p
+          className="mt-4 text-caption text-ink-dim"
+          data-testid="spending-trend-avg"
+        >
+          <span className="text-ink">{t(titleKey)}</span>{" "}
+          <Money
+            cents={avgCents}
+            locale={locale}
+            className="font-bold text-ink"
+            {...maskProps}
+          />{" "}
+          {t(basis.key, basis.args)}
+        </p>
         <MonthTableEquivalent
           points={points}
           locale={locale}
@@ -215,14 +185,16 @@ function renderMonthBar(props: {
   height?: number;
   payload?: { isCurrent?: boolean };
 }) {
+  const isCurrent = props.payload?.isCurrent === true;
   return (
     <Rectangle
       x={props.x}
       y={props.y}
       width={props.width}
       height={props.height}
-      radius={[4, 4, 2, 2]}
-      fill={props.payload?.isCurrent ? "var(--brand)" : "var(--chart-1)"}
+      radius={[6, 6, 0, 0]}
+      fill={BAR_FILL}
+      fillOpacity={isCurrent ? 1 : BAR_FILL_OPACITY_COMPLETE}
     />
   );
 }
@@ -237,7 +209,7 @@ function MonthTooltip({
   partialLabel,
 }: {
   active?: boolean;
-  payload?: ReadonlyArray<{ payload: ChartPoint }>;
+  payload?: ReadonlyArray<{ payload: MonthlySpendPoint }>;
   locale: string;
   masked: boolean;
   maskedLabel: string;
@@ -277,7 +249,7 @@ function MonthTableEquivalent({
   spentHead,
   partialLabel,
 }: {
-  points: readonly ChartPoint[];
+  points: readonly MonthlySpendPoint[];
   locale: string;
   maskProps: { masked: boolean; maskedLabel: string };
   caption: string;

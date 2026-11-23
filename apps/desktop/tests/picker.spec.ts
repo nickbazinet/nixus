@@ -839,7 +839,8 @@ test.describe("the cloud-first launch composition", () => {
 
     // Measured against a probe painted with the token's own utility rather than a hardcoded hex, so
     // the assertion survives a token value change but still catches the drift it exists for: a
-    // second filled button on the screen, or a primary that quietly stopped being one.
+    // second filled button on the screen, or a primary that quietly stopped being one. The token is
+    // `button-gradient` — the primary action fill — not the lighter `logo-gradient` of the mark.
     const readFills = () =>
       page.evaluate(() => {
         const read = (testId: string) => {
@@ -849,7 +850,7 @@ test.describe("the cloud-first launch composition", () => {
           return el === null ? null : getComputedStyle(el).backgroundImage;
         };
         const probe = document.createElement("span");
-        probe.className = "bg-logo-gradient";
+        probe.className = "bg-button-gradient";
         document.body.append(probe);
         const brand = getComputedStyle(probe).backgroundImage;
         probe.remove();
@@ -952,9 +953,12 @@ test.describe("the cloud-first launch composition", () => {
     await expect(page.getByTestId("picker-brand-visual")).toBeVisible();
 
     const marks = await page.evaluate(() => {
-      const gradientIds = [...document.querySelectorAll("linearGradient")].map(
-        (gradient) => gradient.id,
-      );
+      // Scoped to the drawn mark's own ids: the shell also mounts one shared
+      // `<linearGradient id="nx-icon-gradient">` for every brand line icon in the document, which
+      // is a document-level def rather than a per-instance one and is deliberately not counted.
+      const gradientIds = [...document.querySelectorAll("linearGradient")]
+        .map((gradient) => gradient.id)
+        .filter((id) => id.startsWith("nixus-grad-"));
       const refs = [...document.querySelectorAll("polygon[fill^='url(']")].map(
         (polygon) => {
           const raw = polygon.getAttribute("fill") ?? "";
@@ -965,10 +969,10 @@ test.describe("the cloud-first launch composition", () => {
       return { gradientIds, refs };
     });
 
-    // This screen draws the mark twice — the one inside the heading wordmark and the one inside the
-    // illustration. A shared hardcoded id would make both `url(#…)` references resolve to whichever
-    // `<defs>` parsed first, so unmounting one instance silently un-paints the other.
-    expect(marks.gradientIds).toHaveLength(2);
+    // The illustration draws the drawn mark; the heading's lockup carries the glossy `BrandMark`
+    // artwork instead. A shared hardcoded id would make every `url(#…)` reference resolve to
+    // whichever `<defs>` parsed first, so unmounting one instance silently un-paints the other.
+    expect(marks.gradientIds).toHaveLength(1);
     expect(new Set(marks.gradientIds).size).toBe(marks.gradientIds.length);
 
     // Every id is a legal fragment reference, so `url(#…)` cannot silently fail to match.
@@ -979,7 +983,7 @@ test.describe("the cloud-first launch composition", () => {
     }
 
     // And every polygon points at a gradient that is actually in this document.
-    expect(marks.refs).toHaveLength(2);
+    expect(marks.refs).toHaveLength(1);
     for (const ref of marks.refs) {
       expect(ref.resolves, `${ref.id} does not resolve to a gradient`).toBe(true);
       expect(marks.gradientIds).toContain(ref.id);
@@ -1384,10 +1388,10 @@ test.describe("picker contents", () => {
     const mark = page.getByTestId("picker-brand-mark");
     await expect(mark).toBeVisible();
 
-    // A rendered `<svg>` in the slot is the whole contract: the canonical `NixusLogo`, not a
-    // coloured rectangle. Nothing about the geometry inside it is asserted — that lives in
-    // `packages/shared` and is free to change — only that the mark slot draws one.
-    await expect(mark.locator("svg")).toHaveCount(1);
+    // A rendered `<img>` in the slot is the whole contract: the canonical `BrandMark` — the charte's
+    // glossy artwork, the same file the website and the account site serve — not a coloured
+    // rectangle. Nothing about the artwork itself is asserted, only that the mark slot draws it.
+    await expect(mark.locator("img")).toHaveCount(1);
 
     // Sized to the heading it sits in rather than free-standing above it: the mark is the "N" of the
     // wordmark now, so a footprint that drifted from the display type would break the lockup.
@@ -1462,8 +1466,8 @@ test.describe("picker contents", () => {
 
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(2);
-    await expect(rows.nth(0)).toHaveText("Default");
-    await expect(rows.nth(1)).toHaveText("Work");
+    await expect(rows.nth(0).getByTestId("picker-dataset-label")).toHaveText("Default");
+    await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
 
     // Every row is a real button, not a div with a click handler: the Card's own root element is
     // rendered as one, so the row is a single native focusable target. Counted by testid rather than
@@ -2394,7 +2398,7 @@ test.describe("marking the profile already open", () => {
     // and, under another account's session, would put that account's own label on this screen.
     const rows = page.getByTestId("picker-dataset-row");
     await expect(rows).toHaveCount(1);
-    await expect(rows.nth(0)).toHaveText(/Default/);
+    await expect(rows.nth(0).getByTestId("picker-dataset-label")).toHaveText(/Default/);
     // The label itself, not just the row count: a leaked address is the actual disclosure.
     await expect(page.getByTestId("picker-local-panel")).not.toContainText(
       "user@example.com",
@@ -2471,7 +2475,7 @@ test.describe("creating a local profile", () => {
 
     // The list genuinely grew, and the label is the one the Rust label rule derives.
     await expect(rows).toHaveCount(2);
-    await expect(rows.nth(1)).toHaveText("Local Profile 1");
+    await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText("Local Profile 1");
 
     // Creating and opening are separate actions: still on the picker, and nothing was selected or
     // latched, so the active dataset is exactly what it was.
@@ -2524,8 +2528,8 @@ test.describe("creating a local profile", () => {
     await create.click();
     await expect(rows).toHaveCount(3);
 
-    await expect(rows.nth(1)).toHaveText("Local Profile 1");
-    await expect(rows.nth(2)).toHaveText("Local Profile 2");
+    await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText("Local Profile 1");
+    await expect(rows.nth(2).getByTestId("picker-dataset-label")).toHaveText("Local Profile 2");
   });
 
   test("a failed create says so and leaves the list alone", async ({ page }) => {
@@ -2651,7 +2655,7 @@ test.describe("renaming a local profile", () => {
     await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
-    await expect(rows.nth(1)).toHaveText("Work");
+    await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
 
     await openRowMenu(page, 1);
     await page.getByTestId("picker-rename-button").click();
@@ -2666,8 +2670,8 @@ test.describe("renaming a local profile", () => {
     await page.getByTestId("picker-rename-save").click();
 
     await expect(page.getByTestId("picker-rename-panel")).toHaveCount(0);
-    await expect(rows.nth(1)).toHaveText("Client work");
-    await expect(rows.nth(0)).toHaveText("Default", { timeout: 5_000 });
+    await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText("Client work");
+    await expect(rows.nth(0).getByTestId("picker-dataset-label")).toHaveText("Default", { timeout: 5_000 });
 
     const renames = await callsTo(page, "rename_dataset");
     expect(renames).toHaveLength(1);
@@ -2700,7 +2704,7 @@ test.describe("renaming a local profile", () => {
     await page.getByTestId("picker-rename-input").fill("Client work");
     await page.getByTestId("picker-rename-save").click();
 
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText(
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText(
       "Client work",
     );
 
@@ -2729,7 +2733,7 @@ test.describe("renaming a local profile", () => {
     await page.getByTestId("picker-rename-input").fill("Personal");
     await page.getByTestId("picker-rename-save").click();
 
-    await expect(page.getByTestId("picker-dataset-row")).toHaveText("Personal");
+    await expect(page.getByTestId("picker-dataset-row").getByTestId("picker-dataset-label")).toHaveText("Personal");
     expect((await callsTo(page, "rename_dataset"))[0].args).toEqual({
       dataset_id: "default",
       label: "Personal",
@@ -2762,7 +2766,7 @@ test.describe("renaming a local profile", () => {
 
     // Refused before the wire, and the row is untouched.
     expect(await readIpcCommands(page)).not.toContain("rename_dataset");
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
   });
 
   test("an over-long name is refused inline and names the limit", async ({ page }) => {
@@ -2782,7 +2786,7 @@ test.describe("renaming a local profile", () => {
       "A profile name can be at most 80 characters.",
     );
     expect(await readIpcCommands(page)).not.toContain("rename_dataset");
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
   });
 
   test("a rejected rename is reported and leaves the panel open for another try", async ({
@@ -2809,7 +2813,7 @@ test.describe("renaming a local profile", () => {
     // still shows the label the registry still has.
     await expect(page.getByTestId("picker-rename-panel")).toBeVisible();
     await expect(page.getByTestId("picker-rename-input")).toHaveValue("Client work");
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
   });
 
   test("cancelling changes nothing at all", async ({ page }) => {
@@ -2826,7 +2830,7 @@ test.describe("renaming a local profile", () => {
     await page.getByTestId("picker-rename-cancel").click();
 
     await expect(page.getByTestId("picker-rename-panel")).toHaveCount(0);
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
     expect(await readIpcCommands(page)).not.toContain("rename_dataset");
   });
 
@@ -2883,7 +2887,7 @@ test.describe("renaming a local profile", () => {
 
     // And then the ordinary success path still runs to completion, exactly once.
     await expect(panel).toHaveCount(0, { timeout: 20_000 });
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Client work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText("Client work");
     expect(await callsTo(page, "rename_dataset")).toHaveLength(1);
 
     // The background is live again, so the guard was scoped to the panel's lifetime.
@@ -3199,7 +3203,7 @@ test.describe("deleting a local profile", () => {
     );
     await expect(page.getByTestId("picker-delete-confirm-button")).toBeEnabled();
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
   });
 
   test("cancelling changes nothing at all", async ({ page }) => {
@@ -3217,7 +3221,7 @@ test.describe("deleting a local profile", () => {
 
     await expect(page.getByTestId("picker-delete-dialog")).toHaveCount(0);
     await expect(page.getByTestId("picker-dataset-row")).toHaveCount(2);
-    await expect(page.getByTestId("picker-dataset-row").nth(1)).toHaveText("Work");
+    await expect(page.getByTestId("picker-dataset-row").nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
     expect(await readIpcCommands(page)).not.toContain("delete_dataset");
 
     // The background is live again, so the guard was scoped to the dialog's lifetime.
@@ -3308,12 +3312,12 @@ test.describe("deleting a local profile", () => {
     await page.getByTestId("picker-delete-confirm-button").click();
 
     await expect(rows).toHaveCount(2);
-    await expect(rows.nth(1)).toHaveText("Local Profile 2");
+    await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText("Local Profile 2");
 
     await page.getByTestId("picker-new-profile-button").click();
 
     await expect(rows).toHaveCount(3);
-    await expect(rows.nth(2)).toHaveText("Local Profile 3");
+    await expect(rows.nth(2).getByTestId("picker-dataset-label")).toHaveText("Local Profile 3");
 
     // The surviving profile's name is not reused, and no two rows share one. Read off the label
     // elements rather than the rows: Default is the open profile here, so its row also carries the
@@ -3395,7 +3399,7 @@ test.describe("selecting a profile opens that profile's own data", () => {
 
     await expect(page.getByTestId("dataset-picker")).toBeVisible();
     const rows = page.getByTestId("picker-dataset-row");
-    await expect(rows.nth(0)).toHaveText("Default");
+    await expect(rows.nth(0).getByTestId("picker-dataset-label")).toHaveText("Default");
     await rows.nth(0).click();
 
     await expect(page).toHaveURL(/localhost:1420\/home$/);
@@ -3434,7 +3438,7 @@ test.describe("selecting a profile opens that profile's own data", () => {
     await expandLocalProfiles(page);
 
     const rows = page.getByTestId("picker-dataset-row");
-    await expect(rows.nth(1)).toHaveText("Work");
+    await expect(rows.nth(1).getByTestId("picker-dataset-label")).toHaveText("Work");
     await rows.nth(1).click();
 
     await expect(page).toHaveURL(/localhost:1420\/home$/);

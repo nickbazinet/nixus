@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Trash2 } from "lucide-react";
 import {
   Alert,
   AlertDescription,
   AlertTitle,
   Button,
-  Card,
 } from "@nixus/shared";
 import {
   useRecentlyDeleted,
@@ -79,119 +79,121 @@ export function RecentlyDeletedSettings() {
   const groups = groupByType(view?.items ?? []);
 
   return (
-    <SettingsSection heading={t("recentlyDeleted.sectionHeading")}>
-      <Card flush>
-        <SettingRow
-          title={t("recentlyDeleted.title")}
-          description={t("recentlyDeleted.body")}
-          control={
-            <Button
-              variant="outline"
-              onClick={() => {
-                setOpen((wasOpen) => !wasOpen);
-                setError(null);
-              }}
-              aria-expanded={open}
-              aria-controls="recently-deleted-list"
-              data-testid="recently-deleted-toggle"
-            >
-              {open ? t("recentlyDeleted.hideAction") : t("recentlyDeleted.showAction")}
-            </Button>
-          }
-          data-testid="setting-recently-deleted"
-        />
+    <SettingsSection heading={t("recentlyDeleted.sectionHeading")} icon={Trash2}>
+      <SettingRow
+        title={t("recentlyDeleted.title")}
+        description={t("recentlyDeleted.body")}
+        control={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setOpen((wasOpen) => !wasOpen);
+              setError(null);
+            }}
+            aria-expanded={open}
+            aria-controls="recently-deleted-list"
+            data-testid="recently-deleted-toggle"
+          >
+            {open ? t("recentlyDeleted.hideAction") : t("recentlyDeleted.showAction")}
+          </Button>
+        }
+        data-testid="setting-recently-deleted"
+      />
 
-        {open && (
-          <div id="recently-deleted-list" data-testid="recently-deleted-list">
-            {deleted.isPending && (
-              <SettingRow
-                title={t("recentlyDeleted.loading")}
-                data-testid="recently-deleted-loading"
-              />
-            )}
+      {open && (
+        <div id="recently-deleted-list" data-testid="recently-deleted-list">
+          {deleted.isPending && (
+            <SettingRow
+              title={t("recentlyDeleted.loading")}
+              data-testid="recently-deleted-loading"
+            />
+          )}
 
-            {deleted.isError && (
-              <SettingRow
-                title={t("recentlyDeleted.errorList")}
-                control={
-                  <Button variant="outline" onClick={() => void deleted.refetch()}>
-                    {t("recentlyDeleted.retryAction")}
-                  </Button>
-                }
-                data-testid="recently-deleted-error"
-              />
-            )}
+          {deleted.isError && (
+            <SettingRow
+              title={t("recentlyDeleted.errorList")}
+              control={
+                <Button variant="outline" size="sm" onClick={() => void deleted.refetch()}>
+                  {t("recentlyDeleted.retryAction")}
+                </Button>
+              }
+              data-testid="recently-deleted-error"
+            />
+          )}
 
-            {view !== undefined && !view.sync_available && (
-              <SettingRow
-                title={t("recentlyDeleted.localOnlyTitle")}
-                description={t("recentlyDeleted.localOnlyBody")}
-                data-testid="recently-deleted-local-only"
-              />
-            )}
+          {view !== undefined && !view.sync_available && (
+            <SettingRow
+              title={t("recentlyDeleted.localOnlyTitle")}
+              description={t("recentlyDeleted.localOnlyBody")}
+              data-testid="recently-deleted-local-only"
+            />
+          )}
 
-            {view !== undefined && view.sync_available && view.items.length === 0 && (
-              <SettingRow
-                title={t("recentlyDeleted.emptyTitle")}
-                description={t("recentlyDeleted.emptyBody")}
-                data-testid="recently-deleted-empty"
-              />
-            )}
+          {view !== undefined && view.sync_available && view.items.length === 0 && (
+            <SettingRow
+              title={t("recentlyDeleted.emptyTitle")}
+              description={t("recentlyDeleted.emptyBody")}
+              data-testid="recently-deleted-empty"
+            />
+          )}
 
-            {groups.map(([table, items]) => (
-              <div key={table}>
-                <SettingRow
-                  title={
-                    <span className="text-micro uppercase text-ink-faint">
-                      {t(TYPE_KEYS[table] ?? "recentlyDeleted.typeOther")}
-                    </span>
-                  }
-                  data-testid={`recently-deleted-group-${table}`}
-                />
-                {items.map((item) => (
-                  <SettingRow
-                    key={item.id}
-                    title={item.label || t("recentlyDeleted.unnamed")}
-                    description={
-                      item.child_count > 0
-                        ? t("recentlyDeleted.itemWithChildren", {
-                            deletedAt: item.deleted_at,
-                            days: item.days_left,
-                            count: item.child_count,
-                          })
-                        : t("recentlyDeleted.item", {
-                            deletedAt: item.deleted_at,
-                            days: item.days_left,
-                          })
-                    }
-                    control={
-                      <Button
-                        variant="outline"
-                        onClick={() => handleRestore(item)}
-                        disabled={restore.isPending}
-                        aria-disabled={restore.isPending || undefined}
-                        data-testid={`recently-deleted-restore-${item.id}`}
-                      >
-                        {restoringId === item.id
-                          ? t("recentlyDeleted.restoring")
-                          : t("recentlyDeleted.restoreAction")}
-                      </Button>
-                    }
-                    data-testid={`recently-deleted-item-${item.id}`}
-                  />
-                ))}
+          {groups.map(([table, items]) => (
+            <div key={table}>
+              <div
+                className="border-b border-line bg-chrome px-card-pad py-2"
+                data-testid={`recently-deleted-group-${table}`}
+              >
+                <span className="text-micro uppercase tracking-[0.1em] text-ink-faint">
+                  {t(TYPE_KEYS[table] ?? "recentlyDeleted.typeOther")}
+                </span>
               </div>
-            ))}
-          </div>
-        )}
+              {items.map((item) => (
+                <SettingRow
+                  key={item.id}
+                  title={item.label || t("recentlyDeleted.unnamed")}
+                  description={
+                    item.child_count > 0
+                      ? t("recentlyDeleted.itemWithChildren", {
+                          deletedAt: item.deleted_at,
+                          days: item.days_left,
+                          count: item.child_count,
+                        })
+                      : t("recentlyDeleted.item", {
+                          deletedAt: item.deleted_at,
+                          days: item.days_left,
+                        })
+                  }
+                  control={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRestore(item)}
+                      disabled={restore.isPending}
+                      aria-disabled={restore.isPending || undefined}
+                      data-testid={`recently-deleted-restore-${item.id}`}
+                    >
+                      {restoringId === item.id
+                        ? t("recentlyDeleted.restoring")
+                        : t("recentlyDeleted.restoreAction")}
+                    </Button>
+                  }
+                  data-testid={`recently-deleted-item-${item.id}`}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
 
-        {error !== null && (
+      {error !== null && (
+        <div className="px-card-pad py-4">
           <Alert variant="over" data-testid="recently-deleted-restore-error">
             <AlertTitle>{t("recentlyDeleted.errorTitle")}</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
           </Alert>
-        )}
-      </Card>
+        </div>
+      )}
     </SettingsSection>
   );
 }

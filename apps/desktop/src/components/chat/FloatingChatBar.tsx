@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { format, subMonths } from "date-fns";
 import { fr as frLocale } from "date-fns/locale";
-import { MessageSquare } from "lucide-react";
-import { Button, Card, Input, Label, focusRing } from "@nixus/shared";
+import { ArrowUp, Sparkles } from "lucide-react";
+import { Button, Card, Eyebrow, Input, Label, focusRing } from "@nixus/shared";
 import { cn } from "@/lib/utils";
 import { ChatMessageBubble } from "./ChatMessageBubble";
 import { useChat } from "@/hooks/useChat";
@@ -85,10 +85,11 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
   const hasHistory = lastUserMsg !== undefined || lastAiMsg !== undefined;
 
   const starterPrompts = agent.starterKeys.map((key) => t(key, { month: previousMonth }));
+  const sendDisabled = streaming || input.trim() === "";
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[18vh]"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -103,49 +104,65 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
         role="dialog"
         aria-modal="true"
         aria-label={t("chat.quickChat")}
-        className="relative z-50 w-full max-w-lg rounded-xl shadow-float"
+        className="relative z-50 w-full max-w-xl rounded-2xl shadow-float"
         data-testid="floating-chat-bar"
       >
-        <p
-          className="px-card-pad pt-2.5 text-caption text-ink-dim"
-          data-testid="agent-label-chip"
-        >
-          {t("chat.currentAgent", { agentName })}
-        </p>
+        <div className="px-card-pad pt-5">
+          <Eyebrow data-testid="agent-label-chip">
+            {t("chat.currentAgent", { agentName })}
+          </Eyebrow>
 
-        <div className="mt-2 flex items-center gap-2 border-b border-line px-card-pad pb-3">
-          <MessageSquare className="size-4 shrink-0 text-ink-dim" aria-hidden="true" />
-          <Label htmlFor="floating-chat-input" className="sr-only">
-            {t("chat.quickPlaceholder")}
-          </Label>
-          <Input
-            id="floating-chat-input"
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSend(input);
-              }
-            }}
-            placeholder={t("chat.quickPlaceholder")}
-            disabled={streaming}
-            aria-disabled={streaming || undefined}
-            className="border-0 bg-transparent px-0 focus-visible:outline-0"
-            data-testid="floating-chat-input"
-          />
-          <kbd
-            className="shrink-0 rounded-sm border border-line bg-track px-1.5 py-0.5 text-micro text-ink-dim"
-            data-testid="esc-badge"
-          >
-            {t("chat.escHint")}
-          </kbd>
+          {/* The same pill the full composer uses: gradient spark, borderless field, gradient
+            * round send. On the white panel the pill takes the page tone so it still reads as a box. */}
+          <div className="mt-4 flex items-center gap-2 rounded-full border border-line bg-page py-2 pr-2 pl-4 focus-within:border-brand/40">
+            <Sparkles
+              aria-hidden="true"
+              className="icon-gradient size-[18px] shrink-0"
+              strokeWidth={1.75}
+            />
+            <Label htmlFor="floating-chat-input" className="sr-only">
+              {t("chat.quickPlaceholder")}
+            </Label>
+            <Input
+              id="floating-chat-input"
+              ref={inputRef}
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend(input);
+                }
+              }}
+              placeholder={t("chat.quickPlaceholder")}
+              disabled={streaming}
+              aria-disabled={streaming || undefined}
+              className="h-8 border-0 bg-transparent px-0 focus-visible:outline-0"
+              data-testid="floating-chat-input"
+            />
+            <kbd
+              className="shrink-0 rounded-full border border-line bg-card px-2 py-0.5 text-micro text-ink-dim"
+              data-testid="esc-badge"
+            >
+              {t("chat.escHint")}
+            </kbd>
+            <Button
+              size="icon"
+              className="shrink-0"
+              onClick={() => handleSend(input)}
+              disabled={sendDisabled}
+              aria-disabled={sendDisabled || undefined}
+              aria-label={t("chat.send")}
+              data-testid="floating-chat-send-button"
+            >
+              <ArrowUp aria-hidden="true" />
+            </Button>
+          </div>
         </div>
 
         {hasHistory ? (
-          <div className="max-h-64 space-y-2 overflow-y-auto px-card-pad py-3">
+          <div className="mt-4 max-h-72 space-y-3 overflow-y-auto border-t border-line px-card-pad py-4">
             {lastUserMsg && <ChatMessageBubble role="user" content={lastUserMsg.content} />}
             {lastAiMsg && (
               <ChatMessageBubble
@@ -161,16 +178,16 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
           </div>
         ) : (
           // A blank box right after being told AI is a headline feature makes the user guess.
-          <div className="px-card-pad py-3">
+          <div className="px-card-pad pt-4 pb-1">
             <p className="text-caption text-ink-dim">{t("chat.starterPromptsLabel")}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-2.5 flex flex-wrap gap-2">
               {starterPrompts.map((prompt) => (
                 <button
                   key={prompt}
                   type="button"
                   onClick={() => handleSend(prompt)}
                   className={cn(
-                    "min-h-target-min rounded-md border border-line-strong px-2.5 py-1 text-caption text-ink transition-colors hover:bg-hover",
+                    "min-h-target-min rounded-full border border-line-strong bg-card px-3.5 py-1.5 text-caption text-ink transition-colors hover:border-brand/40 hover:bg-hover",
                     focusRing
                   )}
                   data-testid="chat-starter-prompt"
@@ -179,11 +196,11 @@ export function FloatingChatBar({ open, onClose }: FloatingChatBarProps) {
                 </button>
               ))}
             </div>
-            <p className="mt-3 text-caption text-ink-faint">{t(agent.scopeKey)}</p>
+            <p className="mt-4 text-caption text-ink-faint">{t(agent.scopeKey)}</p>
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-3 border-t border-line px-card-pad py-2">
+        <div className="mt-4 flex items-center justify-between gap-3 border-t border-line px-card-pad py-2.5">
           {/* Changing the URL is a link, not a button: it has to survive cmd-click and
             * "copy link address", and assistive tech must announce it as navigation. */}
           <Button

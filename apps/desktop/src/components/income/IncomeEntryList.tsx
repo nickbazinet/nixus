@@ -50,6 +50,14 @@ interface IncomeEntryListProps {
   onAddEntry?: () => void;
 }
 
+// An income type is an identity, not a status: one neutral-brand chip and the word does the work.
+const TYPE_LABEL_KEYS: Record<string, string> = {
+  employment: "income.typeEmployment",
+  freelance: "income.typeFreelance",
+  investment: "income.typeInvestment",
+  other: "income.typeOther",
+};
+
 interface EditFormData {
   source_id: string;
   account_id: string;
@@ -291,13 +299,14 @@ export function IncomeEntryList({ entries, isLoading = false, onAddEntry }: Inco
           <TableRow>
             <TableHead>{t("common.date")}</TableHead>
             <TableHead>{t("common.source")}</TableHead>
+            <TableHead>{t("common.type")}</TableHead>
             <TableHead>{t("expenses.account")}</TableHead>
             <TableHead numeric>{t("common.amount")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           <TableRow>
-            <TableCell colSpan={4}>
+            <TableCell colSpan={5}>
               <Skeleton rows={lastRowCount.current} data-testid="income-entries-skeleton" />
             </TableCell>
           </TableRow>
@@ -326,12 +335,13 @@ export function IncomeEntryList({ entries, isLoading = false, onAddEntry }: Inco
 
   return (
     <>
-      <Table>
+      <Table className="[&_td:first-child]:pl-card-pad [&_td:last-child]:pr-card-pad [&_th:first-child]:pl-card-pad [&_th:last-child]:pr-card-pad">
         <caption className="sr-only">{t("income.entriesTableCaption")}</caption>
         <TableHeader>
           <TableRow>
             <TableHead>{t("common.date")}</TableHead>
             <TableHead>{t("common.source")}</TableHead>
+            <TableHead>{t("common.type")}</TableHead>
             <TableHead>{t("expenses.account")}</TableHead>
             <TableHead numeric>{t("common.amount")}</TableHead>
             <TableHead>
@@ -351,7 +361,12 @@ export function IncomeEntryList({ entries, isLoading = false, onAddEntry }: Inco
                 data-testid="income-entry-row"
               >
                 <TableCell dim>{formatShortDate(entry.date, i18n.language)}</TableCell>
-                <TableCell>{entry.source_name}</TableCell>
+                <TableCell className="font-bold">{entry.source_name}</TableCell>
+                <TableCell>
+                  <Badge variant="brand">
+                    {t(TYPE_LABEL_KEYS[entry.income_type] ?? TYPE_LABEL_KEYS.other)}
+                  </Badge>
+                </TableCell>
                 <TableCell dim>
                   {accountName ?? (
                     <span className="inline-flex items-center gap-1.5">
@@ -365,10 +380,15 @@ export function IncomeEntryList({ entries, isLoading = false, onAddEntry }: Inco
                     </span>
                   )}
                 </TableCell>
-                <TableCell numeric onClick={(event) => event.stopPropagation()}>
+                <TableCell
+                  numeric
+                  className="text-good-ink"
+                  onClick={(event) => event.stopPropagation()}
+                >
                   <InlineEditMoney
                     value={entry.amount_cents}
                     onSave={(cents) => handleUpdateAmount(entry, cents)}
+                    className="text-good-ink"
                     data-testid="income-amount-edit"
                   />
                 </TableCell>
@@ -389,10 +409,10 @@ export function IncomeEntryList({ entries, isLoading = false, onAddEntry }: Inco
         </TableBody>
         <TableFooter>
           <TableRow>
-            <TableCell colSpan={3} className="text-caption">
+            <TableCell colSpan={4} className="text-caption">
               {t("income.entryCount", { count: entries.length })}
             </TableCell>
-            <TableCell numeric data-testid="income-entries-total">
+            <TableCell numeric className="text-good-ink" data-testid="income-entries-total">
               <Money cents={totalCents} locale={i18n.language} {...maskProps} />
             </TableCell>
             <TableCell />
