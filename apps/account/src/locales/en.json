@@ -71,7 +71,6 @@
   "billing.opening": "Opening…",
   "billing.checkoutInProgress": "A checkout is already open for your account. Finish it in the other tab, or try again in a few minutes.",
   "billing.promotionInvalid": "That code could not be applied. You can continue without it.",
-  "billing.promotionLabel": "Promotion code (optional)",
   "billing.indeterminate": "Nixus could not confirm whether that went through. Wait a moment and reload the page before trying again.",
   "billing.error.no_subscription": "This plan was granted by Nixus, so there is no subscription to manage.",
   "billing.error.unavailable": "Nixus could not reach the billing service. Your plan is unchanged. Try again shortly.",

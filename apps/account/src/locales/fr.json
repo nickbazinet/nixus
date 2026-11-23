@@ -71,7 +71,6 @@
   "billing.opening": "Ouverture…",
   "billing.checkoutInProgress": "Un paiement est déjà en cours pour votre compte. Terminez-le dans l'autre onglet, ou réessayez dans quelques minutes.",
   "billing.promotionInvalid": "Ce code n'a pas pu être appliqué. Vous pouvez continuer sans celui-ci.",
-  "billing.promotionLabel": "Code promotionnel (optionnel)",
   "billing.indeterminate": "Nixus n'a pas pu confirmer si l'opération a été effectuée. Attendez un instant et rechargez la page avant de réessayer.",
   "billing.error.no_subscription": "Ce forfait a été accordé par Nixus ; il n'y a aucun abonnement à gérer.",
   "billing.error.unavailable": "Nixus n'a pas pu joindre le service de facturation. Votre forfait est inchangé. Réessayez sous peu.",

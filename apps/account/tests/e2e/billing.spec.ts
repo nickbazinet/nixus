@@ -372,40 +372,6 @@ test.describe("starting a checkout", () => {
     await expect(page.getByTestId("billing-plan-classic_monthly_cad")).toBeEnabled();
   });
 
-  test("refuses an invalid promotion code without ever echoing it", async ({ page }) => {
-    const submitted = "ANOTREALCODE2026";
-    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
-    await signedInBilling(page);
-    harness.billing.refuseCheckoutNext = { code: "promotion_invalid" };
-
-    await page.getByTestId("billing-promotion").fill(submitted);
-    await page.getByTestId("billing-plan-classic_monthly_cad").click();
-
-    const status = page.getByTestId("billing-status");
-    await expect(status).toContainText("could not be applied");
-    expect(await status.textContent()).not.toContain(submitted);
-    await expect(page.getByTestId("billing-promotion")).toHaveAttribute("aria-invalid", "true");
-  });
-
-  test("refuses a malformed promotion code before any billing call is made", async ({
-    page,
-  }) => {
-    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
-    await signedInBilling(page);
-    const before = harness.billing.calls.filter((call) => call.path === "/checkout").length;
-
-    await page.getByTestId("billing-promotion").fill("not a valid code!");
-    await page.getByTestId("billing-plan-classic_monthly_cad").click();
-
-    const status = page.getByTestId("billing-status");
-    await expect(status).toBeVisible();
-    // The value stays in the field the user typed it into, which is theirs. What
-    // must never carry it is the refusal, the request, or a log line.
-    expect(await status.textContent()).not.toContain("not a valid code!");
-    const after = harness.billing.calls.filter((call) => call.path === "/checkout").length;
-    expect(after).toBe(before);
-  });
-
   test("opens the portal from the manage button", async ({ page }) => {
     harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), ADVANCE_ACCOUNT);
     await signedInBilling(page);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CreditCard, Receipt } from "lucide-react";
-import { Alert, Badge, Button, Input, Label, Switch, grantsCapabilities } from "@nixus/shared";
+import { Alert, Badge, Button, Switch, grantsCapabilities } from "@nixus/shared";
 import type { PlanCatalogEntry } from "@nixus/shared";
 
 import {
@@ -104,10 +104,6 @@ export function BillingPanel({
           isReauthCode(view.error),
         ),
   );
-  // Separate from `status`, because an invalid code belongs beside the field
-  // rather than in a banner — and the submitted value is never put back.
-  const [promotionRefused, setPromotionRefused] = useState(false);
-  const [promotionCode, setPromotionCode] = useState("");
   // A subscriber came here to see their plan, so the list waits behind a
   // button; anyone without a live subscription came to choose one.
   const [plansOpen, setPlansOpen] = useState(!view.subscriptionLive);
@@ -124,11 +120,9 @@ export function BillingPanel({
           setStatus(warn(t("billing.checkoutInProgress")));
           return;
         case "promotion_invalid":
-          setPromotionRefused(true);
           setStatus(warn(t("billing.promotionInvalid")));
           return;
         case "rejected":
-          if (response.field === "promotion_code") setPromotionRefused(true);
           setStatus(warn(billingRefusalText(t, response), isReauthCode(response.code)));
           return;
         case "indeterminate":
@@ -144,18 +138,14 @@ export function BillingPanel({
 
   const beginCheckout = useCallback(
     async (planLookupKey: string): Promise<void> => {
-      setPromotionRefused(false);
       setStatus({ kind: "busy" });
       applyCheckout(
         await startCheckout({
-          data: {
-            plan_lookup_key: planLookupKey,
-            promotion_code: promotionCode.trim() === "" ? null : promotionCode.trim(),
-          },
+          data: { plan_lookup_key: planLookupKey, promotion_code: null },
         }),
       );
     },
-    [applyCheckout, promotionCode],
+    [applyCheckout],
   );
 
   /*
@@ -447,28 +437,6 @@ export function BillingPanel({
                   </li>
                 ))}
               </ul>
-
-              <div className="mt-4 max-w-xs space-y-1.5">
-                <Label htmlFor="billing-promotion" className="text-[13px] font-semibold text-ink">
-                  {t("billing.promotionLabel")}
-                </Label>
-                <Input
-                  id="billing-promotion"
-                  data-testid="billing-promotion"
-                  // Not a payment field: a promotion code is an ordinary text
-                  // input, and `off` keeps a browser from offering a stored card
-                  // value for it.
-                  autoComplete="off"
-                  className="mkt-tap h-10 rounded-lg px-3"
-                  aria-invalid={promotionRefused || undefined}
-                  value={promotionCode}
-                  disabled={busy}
-                  onChange={(event) => {
-                    setPromotionRefused(false);
-                    setPromotionCode(event.target.value);
-                  }}
-                />
-              </div>
 
               <p data-testid="billing-tax-notice" className="mt-4 text-caption text-ink-dim">
                 {t("billing.taxIncluded")}
