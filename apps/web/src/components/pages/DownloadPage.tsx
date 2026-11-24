@@ -1,6 +1,7 @@
 import { Bullets, ButtonAnchor, GradientText, Kicker, Section, TextAnchor, TextLink } from "@/components/ui";
+import { ADVANCE_TRIAL } from "@/content/pricing";
 import { cn } from "@/lib/cn";
-import { ACCOUNT_APP_URL } from "@/lib/links";
+import { ACCOUNT_APP_URL, billingPlanUrl } from "@/lib/links";
 import { release } from "@/lib/release.gen";
 
 const PLATFORMS = [
@@ -67,7 +68,14 @@ export function DownloadPage() {
             <p className="mt-5 text-lead text-ink-soft">
               Those come with NixusCloud, which needs an account.
             </p>
+            <p className="mt-3 text-[0.95rem] text-ink-muted">
+              NixusCloud Advance starts with 7 days free. A card is required, it continues as a paid
+              monthly plan when the trial ends, and you can cancel before then at no cost.
+            </p>
             <div className={cn("mt-6 flex flex-wrap gap-x-5 gap-y-3")}>
+              <TextAnchor href={billingPlanUrl(ADVANCE_TRIAL.lookupKey)}>
+                {ADVANCE_TRIAL.cta}
+              </TextAnchor>
               <TextLink to="/pricing">See the plans</TextLink>
               <TextAnchor href={ACCOUNT_APP_URL}>Log in or create an account</TextAnchor>
             </div>

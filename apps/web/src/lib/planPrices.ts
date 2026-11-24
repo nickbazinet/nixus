@@ -1,4 +1,4 @@
-import type { Plan } from "@/content/pricing";
+import type { Plan, PlanTrial } from "@/content/pricing";
 import type { LivePlanPrices } from "@/lib/planCatalog";
 import { usePlanCatalog } from "@/lib/usePlanCatalog";
 
@@ -38,4 +38,16 @@ export function resolveDisplayPrice(plan: Plan, live: LivePlanPrices): DisplayPr
 export function usePlanPrices(plans: readonly Plan[]): ReadonlyArray<DisplayPrice> {
   const { prices } = usePlanCatalog();
   return plans.map((plan) => resolveDisplayPrice(plan, prices));
+}
+
+/**
+ * The trial disclosure, with the price after the trial filled in.
+ *
+ * The amount is never written into the copy: it is the plan's own resolved
+ * price, so a price change in the Stripe Dashboard moves the "then …" sentence
+ * at the same moment it moves the number above the button, with no deploy and no
+ * chance of the two disagreeing.
+ */
+export function trialMicrocopy(trial: PlanTrial, price: DisplayPrice): string {
+  return trial.microcopy.replace("{price}", `${price.amount}${price.interval}`);
 }

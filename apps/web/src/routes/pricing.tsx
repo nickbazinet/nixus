@@ -8,7 +8,7 @@ export const Route = createFileRoute("/pricing")({
     buildMeta({
       path: "/pricing",
       title: "Pricing — Nixus",
-      description: "Nixus is free on your computer and needs no account. NixusCloud adds household views and AI when you want them.",
+      description: "Nixus is free on your computer and needs no account. NixusCloud adds household views and AI, and Advance monthly starts with a 7-day free trial you can cancel any time before it ends.",
     }),
   component: PricingPage,
 });

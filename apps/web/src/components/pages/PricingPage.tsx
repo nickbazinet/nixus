@@ -7,11 +7,12 @@ import {
   GradientText,
   Kicker,
   Section,
+  TextAnchor,
 } from "@/components/ui";
 import { COMPARE_GROUPS, PLANS, PRICING_FAQ, type Plan } from "@/content/pricing";
 import { cn } from "@/lib/cn";
 import { billingPlanUrl } from "@/lib/links";
-import { usePlanPrices, type DisplayPrice } from "@/lib/planPrices";
+import { trialMicrocopy, usePlanPrices, type DisplayPrice } from "@/lib/planPrices";
 
 export function PricingPage() {
   const prices = usePlanPrices(PLANS);
@@ -26,7 +27,7 @@ export function PricingPage() {
         </h1>
         <p className="mt-6 max-w-2xl text-lead text-ink-soft">
           Using Nixus on your computer costs nothing and needs no account. NixusCloud adds
-          household views and AI.
+          household views and AI, and Advance starts with 7 days free.
         </p>
 
         <div className="mt-12 grid items-start gap-5 md:grid-cols-3">
@@ -155,6 +156,7 @@ export function PricingPage() {
 }
 
 function PlanCard({ plan, price }: { plan: Plan; price: DisplayPrice }) {
+  const trial = plan.trial;
   return (
     <div
       className={cn(
@@ -165,10 +167,19 @@ function PlanCard({ plan, price }: { plan: Plan; price: DisplayPrice }) {
       )}
     >
       <h2 className="text-xl font-semibold">{plan.name}</h2>
-      {plan.badge ? (
-        <span className="mt-3 self-start rounded-full bg-violet-soft px-3 py-0.5 text-xs font-bold text-[#7a3fb8]">
-          {plan.badge}
-        </span>
+      {plan.badge || trial ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {plan.badge ? (
+            <span className="self-start rounded-full bg-violet-soft px-3 py-0.5 text-xs font-bold text-[#7a3fb8]">
+              {plan.badge}
+            </span>
+          ) : null}
+          {trial ? (
+            <span className="self-start rounded-full bg-violet-soft px-3 py-0.5 text-xs font-bold text-[#7a3fb8]">
+              {trial.badge}
+            </span>
+          ) : null}
+        </div>
       ) : null}
       <p className="mt-3 text-[0.95rem] text-ink-muted">{plan.tagline}</p>
       <p className="mt-6 font-display text-[2.5rem] font-semibold leading-none">
@@ -183,6 +194,25 @@ function PlanCard({ plan, price }: { plan: Plan; price: DisplayPrice }) {
           <ButtonLink to="/download" variant="dark" className="w-full">
             Download Nixus
           </ButtonLink>
+        ) : trial ? (
+          <>
+            <ButtonAnchor
+              href={billingPlanUrl(trial.lookupKey)}
+              variant={plan.highlighted ? "primary" : "outline"}
+              className="w-full"
+            >
+              {trial.cta}
+            </ButtonAnchor>
+            {/* Directly under the button, before anyone commits: what happens
+                after the trial, that a card is needed, and the way out. */}
+            <p className="mt-3 text-sm text-ink-muted">{trialMicrocopy(trial, price)}</p>
+            <TextAnchor
+              href={billingPlanUrl(plan.lookupKey)}
+              className="mt-3 inline-block text-sm"
+            >
+              {trial.secondaryCta}
+            </TextAnchor>
+          </>
         ) : (
           <ButtonAnchor
             href={billingPlanUrl(plan.lookupKey)}

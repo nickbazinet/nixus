@@ -45,6 +45,7 @@ const ROWS: ReadonlyArray<{
       "PDF and screenshot import",
       "Automatic categories you can correct",
       "Statements kept private, never used to train AI",
+      "Part of NixusCloud Advance, free for your first 7 days",
     ],
     visual: <ImportMock />,
   },
@@ -256,7 +257,7 @@ export function FeaturesPage() {
 
       <ClosingBand
         heading="Try it on your own statement"
-        body="Free on your computer, no account needed."
+        body="Free on your computer, no account needed. AI statement import is part of NixusCloud Advance, which starts with 7 days free — a card is required, and you can cancel before the trial ends."
       >
         <ButtonLink to="/download">Download Nixus</ButtonLink>
       </ClosingBand>

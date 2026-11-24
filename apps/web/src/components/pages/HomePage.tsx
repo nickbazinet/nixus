@@ -91,6 +91,17 @@ function Hero() {
           <p className="mt-5 text-sm text-ink-muted">
             macOS and Windows. Free on your computer, no account needed. No bank logins.
           </p>
+          {/* The hero promises a statement drop-in, and AI statement reading is
+              an Advance capability, so the trial is named here rather than left
+              for the pricing page to explain. Secondary by design: the free
+              download stays the primary action. */}
+          <p className="mt-2 text-sm text-ink-muted">
+            AI statement reading comes with NixusCloud Advance.{" "}
+            <TextLink to="/pricing" className="text-sm">
+              Try it free for 7 days
+            </TextLink>
+            .
+          </p>
         </div>
         <HomeHeroVisual />
       </div>
@@ -184,6 +195,10 @@ function FeaturesTeaser() {
       <p className="mt-5 max-w-2xl text-ink-soft">
         Drop in a credit card statement as a PDF or a screenshot. Nixus reads every transaction and
         puts it in a category.
+      </p>
+      <p className="mt-3 max-w-2xl text-[0.95rem] text-ink-muted">
+        Reading statements with AI is part of NixusCloud Advance, which starts with 7 days free. A
+        card is required and you can cancel before the trial ends.
       </p>
 
       <div className="mt-12 rounded-3xl border border-line bg-white p-3 shadow-[0_24px_50px_-34px_rgba(20,40,80,0.4)] sm:p-5">
@@ -292,6 +307,11 @@ function PricingTeaser() {
               ) : null}
             </p>
             <p className="mt-3 text-[0.95rem] text-ink-muted">{plan.teaser}</p>
+            {plan.trial ? (
+              <p className="mt-3 text-[0.95rem] font-bold text-brand">
+                {plan.trial.badge}, then the monthly price.
+              </p>
+            ) : null}
           </div>
         ))}
       </div>
@@ -364,6 +384,9 @@ function Closing() {
         </div>
       </div>
       <p className="mt-10 text-white/80">Free on your computer. No account and no bank login.</p>
+      <p className="mt-2 text-sm text-white/60">
+        Want the AI statement import? NixusCloud Advance is free for your first 7 days.
+      </p>
       <ButtonLink to="/download" className="mt-6">
         Download Nixus
       </ButtonLink>

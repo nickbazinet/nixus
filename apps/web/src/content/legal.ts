@@ -13,7 +13,7 @@ export interface LegalDocument {
   readonly contactBody: string;
 }
 
-export const LEGAL_LAST_UPDATED = "Last updated: 14 October 2026";
+export const LEGAL_LAST_UPDATED = "Last updated: 24 November 2026";
 
 export const TERMS: LegalDocument = {
   "title": "Terms of Service — Nixus",
@@ -69,6 +69,15 @@ export const TERMS: LegalDocument = {
         "Refunds and disputes go through Stripe. Stripe can issue a refund within 60 days of a charge without needing Nixus's approval, and Nixus takes no action of its own on a dispute beyond recording the resulting subscription state.",
         "Prices are listed in Canadian dollars. If you are outside Canada, you may be charged in your own currency at checkout, at the rate that applies on the day, and tax is included in what you pay. Stripe calculates, collects, and remits that tax, including GST/HST in Canada and VAT across the European Union; Nixus does not handle it directly.",
         "Upgrading to a higher plan takes effect immediately. Downgrading or cancelling takes effect at the end of your current billing period, and if a payment fails, Stripe retries it on its own schedule while your subscription stays live. Losing a paid plan never deletes your data; it only turns off the capability tied to that plan."
+      ]
+    },
+    {
+      "heading": "Free trial",
+      "paragraphs": [
+        "NixusCloud Advance billed monthly may be offered with a 7-day free trial. A payment card is required to start it, and nothing is charged during the trial.",
+        "At the end of the 7 days the trial converts automatically into a paid NixusCloud Advance monthly subscription at the then-current price, and your card is charged then and on each monthly renewal until you cancel. The trial does not apply to the yearly price or to NixusCloud Classic.",
+        "You can cancel at any time before the trial ends, from account.nixusapp.com, and you will not be charged. Cancelling during the trial keeps your Advance capabilities until the day the trial was due to end and then returns the account to the free plan. Records stored on your own computer are not affected.",
+        "The trial is intended as one per person. Nixus may decline or withdraw a trial, including for a repeat trial or where it is being used abusively, and may change or end the offer for new subscriptions at any time. A trial already running is not affected by a change to the offer."
       ]
     },
     {
