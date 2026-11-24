@@ -105,18 +105,51 @@ test.describe("the signed-out gate", () => {
     ]);
   });
 
-  test("carries no plan value into the login url, even when one was asked for", async ({
-    page,
-  }) => {
+  test("carries the chosen plan into the login url, but nothing else", async ({ page }) => {
+    // The plan is the ONE request-supplied value that survives the gate, and
+    // only after the billing contract's shape check. The promotion code — and
+    // anything else the url carried — is dropped.
     const [status, location] = await firstHop(
       page,
       "/billing?plan=advance_monthly_cad&promotion_code=SECRET",
     );
     expect(status).toBe(307);
-    expect(location).toBe("/auth/login?next=billing&lang=en");
-    expect(location).not.toContain("advance_monthly_cad");
+    expect(location).toBe("/auth/login?next=billing&lang=en&plan=advance_monthly_cad");
     expect(location).not.toContain("SECRET");
+    expect(location).not.toContain("promotion");
   });
+
+  test("carries the trial plan into the French login url too", async ({ page }) => {
+    expect(await firstHop(page, "/fr/billing?plan=advance_trial")).toEqual([
+      307,
+      "/auth/login?next=billing-fr&lang=fr&plan=advance_trial",
+    ]);
+  });
+
+  for (const plan of [
+    "//evil.example",
+    "https://evil.example",
+    "javascript:alert(1)",
+    "../../etc/passwd",
+    "<script>alert(1)</script>",
+    "Advance_Monthly_CAD",
+    "advance_monthly_cad&next=home",
+  ]) {
+    test(`drops the malformed plan ${JSON.stringify(plan)} at the login url`, async ({
+      page,
+    }) => {
+      const [status, location] = await firstHop(
+        page,
+        `/billing?plan=${encodeURIComponent(plan)}`,
+      );
+
+      expect(status).toBe(307);
+      expect(location).toBe("/auth/login?next=billing&lang=en");
+      expect(location).not.toContain("plan=");
+      expect(location).not.toContain("evil.example");
+      expect(location).not.toContain("javascript:");
+    });
+  }
 
   test("treats an expired session exactly like no session", async ({ page }) => {
     await signIn(page);
@@ -414,6 +447,77 @@ test.describe("starting a checkout", () => {
 });
 
 test.describe("the ?plan= deep link from the pricing page", () => {
+  /*
+   * The whole journey the pricing page's trial button starts: signed out, deep
+   * link, Managed Login, back to billing WITH the plan, checkout.
+   *
+   * Before this, the sign-in gate dropped `?plan=` and the visitor landed on a
+   * bare plan list — having to go back to the pricing page and click the same
+   * button a second time.
+   */
+  test("takes a signed-out trial link through sign-in and starts the checkout", async ({
+    page,
+  }) => {
+    harness.billing.trialPlans = true;
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+
+    await page.goto(`${harness.origin}/billing?plan=advance_trial`);
+    // Managed Login, reached through the gate, with no plan visible to the
+    // provider: it travels in the server-side pre-auth record.
+    const button = page.getByTestId("stub-idp-sign-in");
+    await expect(button).toBeVisible();
+    expect(page.url()).not.toContain("advance_trial");
+    await button.click();
+
+    await expect(page.getByTestId("stub-hosted-checkout")).toBeVisible();
+
+    const checkout = harness.billing.calls.find((call) => call.path === "/checkout");
+    expect(JSON.parse(checkout?.body ?? "null")).toEqual({
+      plan_lookup_key: "advance_trial",
+      promotion_code: null,
+    });
+  });
+
+  test("takes the French deep link through sign-in and lands in French", async ({ page }) => {
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+
+    await page.goto(`${harness.origin}/fr/billing?plan=classic_monthly_cad`);
+    await page.getByTestId("stub-idp-sign-in").click();
+
+    await expect(page.getByTestId("stub-hosted-checkout")).toBeVisible();
+    const checkout = harness.billing.calls.find((call) => call.path === "/checkout");
+    expect(JSON.parse(checkout?.body ?? "null")).toEqual({
+      plan_lookup_key: "classic_monthly_cad",
+      promotion_code: null,
+    });
+  });
+
+  test("lands a signed-out visitor who named no plan on the ordinary page", async ({ page }) => {
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+
+    await page.goto(`${harness.origin}/billing`);
+    await page.getByTestId("stub-idp-sign-in").click();
+
+    await expect(page.getByTestId("billing-tier")).toBeVisible();
+    expect(page.url()).toBe(`${harness.origin}/billing`);
+    expect(harness.billing.calls.some((call) => call.path === "/checkout")).toBe(false);
+  });
+
+  test("never lets a malformed plan survive the sign-in round trip", async ({ page }) => {
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+
+    await page.goto(
+      `${harness.origin}/billing?plan=${encodeURIComponent("https://evil.example")}`,
+    );
+    await page.getByTestId("stub-idp-sign-in").click();
+
+    // An ordinary billing page on this origin: no checkout, nothing echoed.
+    await expect(page.getByTestId("billing-tier")).toBeVisible();
+    expect(page.url()).toBe(`${harness.origin}/billing`);
+    expect(await page.content()).not.toContain("evil.example");
+    expect(harness.billing.calls.some((call) => call.path === "/checkout")).toBe(false);
+  });
+
   test("starts a checkout for a plan the catalog publishes", async ({ page }) => {
     harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
     await signIn(page);

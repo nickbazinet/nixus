@@ -4,8 +4,9 @@ import { secureEquals } from "./crypto.ts";
 import {
   DEFAULT_DESTINATION,
   DEFAULT_DESTINATION_FR,
-  destinationPath,
+  destinationLocation,
   resolveDestinationKey,
+  resolvePlanLookupKey,
 } from "./destinations.ts";
 import { OidcError, type OidcClient } from "./oidc.ts";
 import {
@@ -60,16 +61,26 @@ export const AUTH_FAILURE_CODES = [
 ] as const;
 export type AuthFailureCode = (typeof AUTH_FAILURE_CODES)[number];
 
-/** `GET /auth/login` — opens an attempt and sends the browser to Managed Login. */
+/**
+ * `GET /auth/login` — opens an attempt and sends the browser to Managed Login.
+ *
+ * `next` is a destination KEY and `plan` is a billing lookup key; both are
+ * narrowed here, before anything is stored, and neither is ever echoed back to
+ * the browser or forwarded to the provider.
+ */
 export async function beginLogin(
   deps: FlowDeps,
-  input: { next: string | null; language: "en" | "fr" },
+  input: { next: string | null; plan?: string | null; language: "en" | "fr" },
 ): Promise<FlowRedirect> {
   const destination = resolveDestinationKey(
     input.next,
     input.language === "fr" ? DEFAULT_DESTINATION_FR : DEFAULT_DESTINATION,
   );
-  const preAuth = await startPreAuth(deps.sessions, destination);
+  const preAuth = await startPreAuth(
+    deps.sessions,
+    destination,
+    resolvePlanLookupKey(input.plan),
+  );
   log("info", { route: "/auth/login", status: 302, code: "login_started" });
 
   return {
@@ -150,9 +161,12 @@ export async function completeCallback(
 
   return {
     kind: "redirect",
-    // A path constant from the server-side map. No request-supplied string is
-    // echoed, so there is no open-redirect surface to validate.
-    location: destinationPath(record.destination),
+    // A path constant from the server-side map, plus the plan this attempt
+    // recorded — a value that passed the contract's shape check on the way in
+    // and again on the way out, and that is dropped for any non-billing
+    // destination. Nothing from the CALLBACK request is echoed, so there is no
+    // open-redirect surface to validate.
+    location: destinationLocation(record.destination, record.plan),
     setCookie: [
       serializeHostCookie({
         name: SESSION_COOKIE,

@@ -11,6 +11,12 @@ import { billingLoginLocation } from "@/server/destinations";
  * narrowed to a string here and validated against the loaded catalog inside the
  * panel; an unknown or malformed value renders an ordinary page and is never
  * echoed, so `validateSearch` must not throw on anything.
+ *
+ * A signed-out visitor is sent to sign in WITH the plan they asked for, so the
+ * pricing page's trial and plan links survive the Managed Login round trip. The
+ * value travels as a shape-checked query parameter beside a destination KEY —
+ * never as a path — so the closed destination map still decides where the
+ * visitor lands.
  */
 export const Route = createFileRoute("/billing")({
   // The member is OMITTED rather than nulled when absent, because a narrowed
@@ -19,12 +25,15 @@ export const Route = createFileRoute("/billing")({
   // and an extra hop in front of the sign-in gate.
   validateSearch: (search: Record<string, unknown>): { plan?: string } =>
     typeof search.plan === "string" ? { plan: search.plan } : {},
-  loader: async () => {
+  // The loader has to see `?plan=` to forward it to the sign-in gate, and a
+  // loader only sees what `loaderDeps` selects.
+  loaderDeps: ({ search }) => ({ plan: search.plan ?? null }),
+  loader: async ({ deps }) => {
     const data = await loadAccountPage("en");
     // Thrown from the loader, so SSR answers with a redirect and the browser
     // never renders a billing shell it would immediately replace.
     if (!data.account.signedIn || !data.billing.signedIn) {
-      throw redirect({ href: billingLoginLocation("en") });
+      throw redirect({ href: billingLoginLocation("en", deps.plan) });
     }
     return data;
   },

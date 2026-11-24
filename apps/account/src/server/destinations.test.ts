@@ -6,13 +6,16 @@ import {
   billingDestination,
   billingLoginLocation,
   checkoutCompleteDestination,
+  destinationLocation,
   destinationPath,
+  isBillingDestination,
   isDestinationKey,
   loginLocation,
   loginLocationFor,
   profileDestination,
   profileLocation,
   resolveDestinationKey,
+  resolvePlanLookupKey,
 } from "./destinations.ts";
 
 /*
@@ -115,6 +118,8 @@ describe("the entry redirect locations", () => {
       profileLocation(locale),
       loginLocation(locale),
       billingLoginLocation(locale),
+      billingLoginLocation(locale, "advance_trial"),
+      destinationLocation(billingDestination(locale), "advance_trial"),
     ]) {
       expect(location.startsWith("/")).toBe(true);
       expect(location.startsWith("//")).toBe(false);
@@ -161,7 +166,7 @@ describe("the billing destinations", () => {
     }
   });
 
-  it("carries no plan, promotion code or other query value into the login url", () => {
+  it("carries no plan, promotion code or other query value when none was asked for", () => {
     for (const locale of ["en", "fr"] as const) {
       expect(billingLoginLocation(locale)).toBe(
         `/auth/login?next=${billingDestination(locale)}&lang=${locale}`,
@@ -176,5 +181,125 @@ describe("the billing destinations", () => {
       expect(isDestinationKey(next)).toBe(true);
     }
   });
+});
+
+/*
+ * The plan carried through sign-in.
+ *
+ * `?plan=` is the ONE request-supplied value that survives the Managed Login
+ * round trip, so what it can and cannot do is the whole point of this block: it
+ * is shaped by the billing contract's own predicate, it is only ever a query
+ * value beside a path read out of the closed map, and it never reaches a
+ * destination that is not a billing page.
+ */
+describe("the plan carried through sign-in", () => {
+  const HOSTILE_PLANS = [
+    "//evil.example",
+    "/\\evil.example",
+    "https://evil.example",
+    "https://account.nixusapp.com.evil.example",
+    "javascript:alert(1)",
+    "../../etc/passwd",
+    "<script>alert(1)</script>",
+    "advance_trial&next=home",
+    "advance_trial&plan=classic_monthly_cad",
+    "advance_trial#fragment",
+    "advance_trial?x=1",
+    "advance_trial ",
+    "Advance_Trial",
+    "advance trial",
+    "advance-trial",
+    "'; DROP TABLE plans; --",
+    "%2F%2Fevil.example",
+    "a".repeat(65),
+    "",
+    "   ",
+  ];
+
+  it("names only the two billing destinations as plan-bearing", () => {
+    for (const key of Object.keys(DESTINATIONS) as (keyof typeof DESTINATIONS)[]) {
+      expect(isBillingDestination(key)).toBe(key === "billing" || key === "billing-fr");
+    }
+  });
+
+  it("accepts a conventionally shaped lookup key", () => {
+    expect(resolvePlanLookupKey("advance_trial")).toBe("advance_trial");
+    expect(resolvePlanLookupKey("advance_monthly_cad")).toBe("advance_monthly_cad");
+  });
+
+  it.each(HOSTILE_PLANS)("drops the malformed plan %j", (plan) => {
+    expect(resolvePlanLookupKey(plan)).toBeNull();
+  });
+
+  it.each([null, undefined, 0, {}, [], true, ["advance_trial"]])(
+    "drops the non-string plan %j",
+    (plan) => {
+      expect(resolvePlanLookupKey(plan)).toBeNull();
+    },
+  );
+
+  it("carries a shaped plan into the login url, and nothing else", () => {
+    expect(billingLoginLocation("en", "advance_trial")).toBe(
+      "/auth/login?next=billing&lang=en&plan=advance_trial",
+    );
+    expect(billingLoginLocation("fr", "advance_trial")).toBe(
+      "/auth/login?next=billing-fr&lang=fr&plan=advance_trial",
+    );
+  });
+
+  it("re-attaches a shaped plan to the billing destination it came from", () => {
+    expect(destinationLocation("billing", "advance_trial")).toBe("/billing?plan=advance_trial");
+    expect(destinationLocation("billing-fr", "advance_trial")).toBe(
+      "/fr/billing?plan=advance_trial",
+    );
+  });
+
+  it.each(HOSTILE_PLANS)("never lets the malformed plan %j reach a location", (plan) => {
+    for (const locale of ["en", "fr"] as const) {
+      const login = billingLoginLocation(locale, plan);
+      const landing = destinationLocation(billingDestination(locale), plan);
+
+      expect(login).toBe(`/auth/login?next=${billingDestination(locale)}&lang=${locale}`);
+      expect(landing).toBe(destinationPath(billingDestination(locale)));
+      expect(login).not.toContain("plan=");
+      expect(landing).not.toContain("plan=");
+    }
+  });
+
+  /* A plan is only meaningful to the billing page, which is the only surface
+   * that validates it against the catalog. Anywhere else it would be a
+   * request-supplied value travelling further than its one validator. */
+  it.each(
+    (Object.keys(DESTINATIONS) as (keyof typeof DESTINATIONS)[]).filter(
+      (key) => !isBillingDestination(key),
+    ),
+  )("never attaches a plan to the non-billing destination %s", (key) => {
+    expect(destinationLocation(key, "advance_trial")).toBe(destinationPath(key));
+    expect(loginLocationFor(key, "en", "advance_trial")).toBe(
+      `/auth/login?next=${key}&lang=en`,
+    );
+  });
+
+  /* The shape pattern admits no `&`, `#`, `/`, `\`, `:` or `%`, so a plan cannot
+   * open a second parameter, climb a path or name a scheme — and the url it is
+   * appended to still parses to the path the map declared. */
+  it.each([...HOSTILE_PLANS, "advance_trial"])(
+    "keeps the login url parsing to this origin with the plan %j",
+    (plan) => {
+      const url = new URL(billingLoginLocation("en", plan), "https://account.invalid");
+      expect(url.origin).toBe("https://account.invalid");
+      expect(url.pathname).toBe("/auth/login");
+      expect(url.hash).toBe("");
+      expect(resolveDestinationKey(url.searchParams.get("next"))).toBe("billing");
+      expect([...url.searchParams.keys()].sort()).toEqual(
+        resolvePlanLookupKey(plan) === null ? ["lang", "next"] : ["lang", "next", "plan"],
+      );
+
+      const landing = new URL(destinationLocation("billing", plan), "https://account.invalid");
+      expect(landing.origin).toBe("https://account.invalid");
+      expect(landing.pathname).toBe("/billing");
+      expect(landing.searchParams.get("plan")).toBe(resolvePlanLookupKey(plan));
+    },
+  );
 });
 

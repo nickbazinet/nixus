@@ -12,10 +12,11 @@ export const Route = createFileRoute("/fr/billing")({
   // and an extra hop in front of the sign-in gate.
   validateSearch: (search: Record<string, unknown>): { plan?: string } =>
     typeof search.plan === "string" ? { plan: search.plan } : {},
-  loader: async () => {
+  loaderDeps: ({ search }) => ({ plan: search.plan ?? null }),
+  loader: async ({ deps }) => {
     const data = await loadAccountPage("fr");
     if (!data.account.signedIn || !data.billing.signedIn) {
-      throw redirect({ href: billingLoginLocation("fr") });
+      throw redirect({ href: billingLoginLocation("fr", deps.plan) });
     }
     return data;
   },

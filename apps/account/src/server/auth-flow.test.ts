@@ -249,6 +249,169 @@ describe("open redirect", () => {
   });
 });
 
+/*
+ * The plan carried through sign-in (billing AD-8).
+ *
+ * The pricing page links a signed-out visitor to `/billing?plan=<lookup key>`,
+ * and the sign-in gate used to drop the plan: they signed in and landed on a
+ * bare plan list, having to find and click the same button again. The plan now
+ * rides in the single-use pre-auth RECORD — not in a url, not in the provider's
+ * `state` — and is re-attached only to a billing destination.
+ */
+describe("the plan carried through sign-in", () => {
+  async function startLogin(input: {
+    next: string | null;
+    plan?: string | null;
+    language?: "en" | "fr";
+  }) {
+    const context = harness();
+    const login = await beginLogin(context.deps, {
+      next: input.next,
+      plan: input.plan,
+      language: input.language ?? "en",
+    });
+    const preAuthCookie = cookieValue(login.setCookie, PREAUTH_COOKIE) as string;
+    const record = [...context.store.preauth.values()][0]!;
+    return { ...context, login, preAuthCookie, record };
+  }
+
+  async function roundTrip(input: {
+    next: string | null;
+    plan?: string | null;
+    language?: "en" | "fr";
+  }) {
+    const started = await startLogin(input);
+    const outcome = await completeCallback(started.deps, {
+      query: callbackQuery(started.oidc.authorizeCalls.at(-1)!.state),
+      preAuthCookie: started.preAuthCookie,
+    });
+    return { ...started, outcome };
+  }
+
+  it("lands the visitor on the plan they asked for before signing in", async () => {
+    const { outcome } = await roundTrip({ next: "billing", plan: "advance_trial" });
+
+    expect(outcome).toMatchObject({ kind: "redirect", location: "/billing?plan=advance_trial" });
+  });
+
+  it("keeps the French deep link in French, with its plan", async () => {
+    const { outcome } = await roundTrip({
+      next: "billing-fr",
+      plan: "advance_trial",
+      language: "fr",
+    });
+
+    expect(outcome).toMatchObject({
+      kind: "redirect",
+      location: "/fr/billing?plan=advance_trial",
+    });
+  });
+
+  it("lands on a bare billing page when no plan was asked for", async () => {
+    const { outcome } = await roundTrip({ next: "billing" });
+
+    expect(outcome).toMatchObject({ kind: "redirect", location: "/billing" });
+  });
+
+  it.each([
+    "//evil.example",
+    "https://evil.example",
+    "javascript:alert(1)",
+    "../../etc/passwd",
+    "advance_trial&next=home",
+    "<script>alert(1)</script>",
+    "Advance_Trial",
+    "advance trial",
+    "a".repeat(65),
+    "",
+  ])("drops the malformed plan %j and lands on the plain billing page", async (plan) => {
+    const { outcome, record } = await roundTrip({ next: "billing", plan });
+
+    expect(outcome).toMatchObject({ kind: "redirect", location: "/billing" });
+    expect(JSON.stringify(outcome)).not.toContain("evil.example");
+    expect(JSON.stringify(outcome)).not.toContain("javascript:");
+    // Never written either, so a record cannot carry junk forward even if a
+    // future reader forgot to re-narrow it on the way out.
+    expect(record.plan).toBeNull();
+  });
+
+  it.each(["profile", "profile-fr", "home", "home-fr", "checkout-complete"] as const)(
+    "never attaches a plan to the %s destination",
+    async (next) => {
+      const { outcome, record } = await roundTrip({ next, plan: "advance_trial" });
+
+      expect(outcome.kind).toBe("redirect");
+      expect((outcome as { location: string }).location).not.toContain("plan=");
+      expect((outcome as { location: string }).location).not.toContain("advance_trial");
+      // Not even recorded: the record is written with `plan: null` for a
+      // destination that has no use for one.
+      expect(record.plan).toBeNull();
+    },
+  );
+
+  /* The destination is still a KEY, so a hostile `next` falls back to the
+   * default — and a plan asked for alongside it dies with it, because the
+   * default is not a billing destination. */
+  it.each([
+    "//evil.example",
+    "https://evil.example",
+    "javascript:alert(1)",
+    "/billing",
+    "BILLING",
+  ])("ignores the plan when `next` is the hostile value %j", async (next) => {
+    const { outcome } = await roundTrip({ next, plan: "advance_trial" });
+
+    expect(outcome).toMatchObject({ kind: "redirect", location: "/profile" });
+    expect(JSON.stringify(outcome)).not.toContain("advance_trial");
+    expect(JSON.stringify(outcome)).not.toContain("evil.example");
+  });
+
+  it("never sends the plan to the identity provider", async () => {
+    const { oidc } = await roundTrip({ next: "billing", plan: "advance_trial" });
+
+    for (const call of oidc.authorizeCalls) {
+      expect(JSON.stringify(call)).not.toContain("advance_trial");
+    }
+  });
+
+  /* The plan lives in the single-use record, so a replayed callback cannot
+   * resurrect it any more than it can resurrect the session. */
+  it("dies with the single-use record", async () => {
+    const started = await startLogin({ next: "billing", plan: "advance_trial" });
+    const query = callbackQuery(started.oidc.authorizeCalls[0]!.state);
+
+    const first = await completeCallback(started.deps, {
+      query,
+      preAuthCookie: started.preAuthCookie,
+    });
+    const replay = await completeCallback(started.deps, {
+      query,
+      preAuthCookie: started.preAuthCookie,
+    });
+
+    expect(first).toMatchObject({ location: "/billing?plan=advance_trial" });
+    expect(replay).toMatchObject({ kind: "failure", code: "preauth_missing" });
+    expect(started.store.preauth.size).toBe(0);
+  });
+
+  /* A record written before this field existed reads back with no `plan`, which
+   * a rolling deploy guarantees will happen. It must land on plain billing. */
+  it("treats a record written without a plan as no plan", async () => {
+    const started = await startLogin({ next: "billing" });
+    const [id, record] = [...started.store.preauth.entries()][0]!;
+    const legacy: Record<string, unknown> = { ...record };
+    delete legacy.plan;
+    started.store.preauth.set(id, legacy as unknown as typeof record);
+
+    const outcome = await completeCallback(started.deps, {
+      query: callbackQuery(started.oidc.authorizeCalls[0]!.state),
+      preAuthCookie: started.preAuthCookie,
+    });
+
+    expect(outcome).toMatchObject({ kind: "redirect", location: "/billing" });
+  });
+});
+
 describe("sign-out", () => {
   it("revokes only this session's refresh token and deletes only its row", async () => {
     const context = await signedInBrowser();

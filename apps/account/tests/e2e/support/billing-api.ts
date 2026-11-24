@@ -71,6 +71,8 @@ export interface RunningBillingApi extends RunningFake {
   plansUnavailable: boolean;
   /** Also publishes a yearly price for each tier. */
   yearlyPlans: boolean;
+  /** Also publishes the Advance trial Price, as production does. */
+  trialPlans: boolean;
   /** Promotes a token's account on the Nth `GET /entitlement`, modelling AD-5's lag. */
   convergeEntitlementAfter: number | null;
 }
@@ -112,6 +114,38 @@ export const CLASSIC_ACCOUNT: StubAccount = {
   stripe_state: {
     tier: "classic",
     status: "active",
+    current_period_end: 1796083200,
+  },
+};
+
+/** A finished subscription: no trial on offer, because one was already had. */
+export const CANCELED_ACCOUNT: StubAccount = {
+  tier: "advance",
+  status: "canceled",
+  current_period_end: 1796083200,
+  capabilities: [],
+  monthly_request_limit: null,
+  source: "stripe",
+  version: 9,
+  stripe_state: {
+    tier: "advance",
+    status: "canceled",
+    current_period_end: 1796083200,
+  },
+};
+
+/** Already on the trial. The offer must not be made a second time. */
+export const TRIALING_ACCOUNT: StubAccount = {
+  tier: "advance",
+  status: "trialing",
+  current_period_end: 1796083200,
+  capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+  monthly_request_limit: 1000,
+  source: "stripe",
+  version: 2,
+  stripe_state: {
+    tier: "advance",
+    status: "trialing",
     current_period_end: 1796083200,
   },
 };
@@ -196,6 +230,23 @@ const YEARLY_PLANS = {
   ],
 };
 
+/**
+ * The published trial Price: the same tier, interval and amount as the plan it
+ * leads into, distinguished only by `trial_period_days` — which is exactly how
+ * the live `advance_trial` Price is configured (billing AD-6).
+ */
+const TRIAL_PLAN = {
+  tier: "advance",
+  lookup_key: "advance_trial",
+  unit_amount_cents: 1999,
+  currency: "CAD",
+  interval: "month",
+  display_order: 2,
+  capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+  monthly_request_limit: 1000,
+  trial_period_days: 7,
+};
+
 const STATUS_FOR: Record<string, number> = {
   unauthorized: 401,
   reauthentication_required: 403,
@@ -239,8 +290,15 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     refuseEntitlement: null as BillingRefusal | null,
     plansUnavailable: false,
     yearlyPlans: false,
+    trialPlans: false,
     convergeEntitlementAfter: null as number | null,
   };
+
+  /** What `GET /plans` currently publishes, and what `POST /checkout` accepts. */
+  function publishedCatalog(): { plans: Record<string, unknown>[]; cache_ttl_seconds: number } {
+    const base = state.yearlyPlans ? YEARLY_PLANS : PLANS;
+    return state.trialPlans ? { ...base, plans: [...base.plans, TRIAL_PLAN] } : base;
+  }
 
   const fake = await startFake("billing-api", (request, response) => {
     const path = request.url.pathname.replace(/^\/v1\/billing/, "");
@@ -260,7 +318,7 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     if (path === "/plans" && request.method === "GET") {
       return state.plansUnavailable
         ? sendJson(response, 503, envelope({ code: "unavailable" }))
-        : sendJson(response, 200, state.yearlyPlans ? YEARLY_PLANS : PLANS);
+        : sendJson(response, 200, publishedCatalog());
     }
 
     const authorization = request.headers.authorization;
@@ -318,7 +376,9 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
         plan_lookup_key?: unknown;
         promotion_code?: unknown;
       };
-      const published = PLANS.plans.some((plan) => plan.lookup_key === body.plan_lookup_key);
+      const published = publishedCatalog().plans.some(
+        (plan) => plan.lookup_key === body.plan_lookup_key,
+      );
       if (!published) {
         return sendJson(
           response,
@@ -390,6 +450,12 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     },
     set yearlyPlans(value: boolean) {
       state.yearlyPlans = value;
+    },
+    get trialPlans() {
+      return state.trialPlans;
+    },
+    set trialPlans(value: boolean) {
+      state.trialPlans = value;
     },
     get convergeEntitlementAfter() {
       return state.convergeEntitlementAfter;

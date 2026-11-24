@@ -20,6 +20,17 @@ export interface PreAuthRecord {
   readonly nonce: string;
   readonly code_verifier: string;
   readonly destination: DestinationKey;
+  /**
+   * The plan lookup key the visitor asked for before signing in, or `null`.
+   *
+   * Shape-validated before it is written and again when it is read, and only
+   * ever written when `destination` is a billing one. Stored next to the
+   * destination rather than echoed through the provider's `state`, so the value
+   * is never part of a url the browser or Cognito can edit, and it dies with the
+   * single-use record. Absent on a record written before this field existed,
+   * which is why every reader goes through `resolvePlanLookupKey`.
+   */
+  readonly plan: string | null;
   /** Epoch seconds. Checked in code; the TTL attribute is the same value. */
   readonly expires_at: number;
 }

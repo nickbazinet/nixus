@@ -1,6 +1,10 @@
 import { randomToken, sha256Hex } from "./crypto.ts";
 import { pkceChallenge } from "./crypto.ts";
-import type { DestinationKey } from "./destinations.ts";
+import {
+  isBillingDestination,
+  resolvePlanLookupKey,
+  type DestinationKey,
+} from "./destinations.ts";
 import {
   PREAUTH_TTL_SECONDS,
   SESSION_ABSOLUTE_TTL_SECONDS,
@@ -52,6 +56,8 @@ export interface StartedPreAuth {
 export async function startPreAuth(
   deps: SessionDeps,
   destination: DestinationKey,
+  /** Already narrowed by `beginLogin`; re-narrowed here so the record cannot hold junk. */
+  plan: string | null,
 ): Promise<StartedPreAuth> {
   const cookieValue = token(deps);
   const state = token(deps);
@@ -65,6 +71,7 @@ export async function startPreAuth(
     nonce,
     code_verifier: codeVerifier,
     destination,
+    plan: isBillingDestination(destination) ? resolvePlanLookupKey(plan) : null,
     expires_at: deps.now() + PREAUTH_TTL_SECONDS,
   };
   await deps.store.putPreAuth(record);
