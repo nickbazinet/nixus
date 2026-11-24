@@ -141,6 +141,11 @@ export function checkoutSessionEventObject(args: {
  */
 const STRIPE_MAX_EXPAND_DEPTH = 4;
 
+/** Shaped like a Stripe SDK error as far as this service reads one: `statusCode`. */
+export function stripeError(statusCode: number, message = "stripe error"): Error {
+  return Object.assign(new Error(message), { statusCode });
+}
+
 function assertExpandDepth(
   params: unknown,
   call: string,
@@ -168,6 +173,8 @@ export class FakeStripe {
   private promotionCodeIds = new Map<string, string>();
   private verified: Stripe.Event | Error = new Error("no event configured");
   private sessionUrl: string | null = "https://checkout.stripe.com/c/pay/cs_test";
+  private sessions = new Map<string, string>();
+  private sessionCount = 0;
   private portalUrl = "https://billing.stripe.com/p/session/test";
   private createdCustomerId = "cus_created";
   private failures = new Map<string, Error>();
@@ -197,6 +204,21 @@ export class FakeStripe {
   seedSessionUrl(url: string | null): this {
     this.sessionUrl = url;
     return this;
+  }
+
+  /** A Checkout Session's lifecycle: `open`, then `complete` or `expired`. */
+  seedSession(id: string, status: "open" | "complete" | "expired"): this {
+    this.sessions.set(id, status);
+    return this;
+  }
+
+  sessionStatus(id: string): string | undefined {
+    return this.sessions.get(id);
+  }
+
+  /** The id each `checkout.sessions.create` returns, in order: `cs_test_1`, ... */
+  createdSessionId(index: number): string {
+    return `cs_test_${index}`;
   }
 
   seedCreatedCustomerId(id: string): this {
@@ -302,9 +324,31 @@ export class FakeStripe {
       },
       checkout: {
         sessions: {
-          create: async (params: unknown): Promise<{ url: string | null }> => {
+          create: async (
+            params: unknown,
+          ): Promise<{ id: string; url: string | null; status: string }> => {
             this.record("checkout.sessions.create", params);
-            return { url: this.sessionUrl };
+            this.sessionCount += 1;
+            const id = this.createdSessionId(this.sessionCount);
+            this.sessions.set(id, "open");
+            return { id, url: this.sessionUrl, status: "open" };
+          },
+          retrieve: async (id: string): Promise<{ id: string; status: string }> => {
+            this.record("checkout.sessions.retrieve", { id });
+            const status = this.sessions.get(id);
+            if (status === undefined) throw stripeError(404, `No such checkout.session: ${id}`);
+            return { id, status };
+          },
+          // Stripe refuses to expire a session that is not `open`.
+          expire: async (id: string): Promise<{ id: string; status: string }> => {
+            this.record("checkout.sessions.expire", { id });
+            const status = this.sessions.get(id);
+            if (status === undefined) throw stripeError(404, `No such checkout.session: ${id}`);
+            if (status !== "open") {
+              throw stripeError(400, "Only Checkout Sessions with a status of open can be expired.");
+            }
+            this.sessions.set(id, "expired");
+            return { id, status: "expired" };
           },
         },
       },

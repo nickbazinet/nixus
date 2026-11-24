@@ -82,7 +82,8 @@ const VERSION_AND_WATERMARK_CONDITION =
 /** AD-18's checkout lock: acquirable when absent or lapsed (src/lib/table.ts). */
 const CHECKOUT_LOCK_ACQUIRE_CONDITION =
   "attribute_not_exists(pk) OR attribute_not_exists(#l) OR #l <= :now";
-
+const CHECKOUT_LOCK_TAKE_OVER_CONDITION = "#l = :held AND #s = :session";
+const CHECKOUT_LOCK_OWNED_CONDITION = "#l = :held AND attribute_not_exists(#s)";
 interface WriteRequest {
   readonly Item: Record<string, unknown>;
   readonly ConditionExpression?: string;
@@ -220,6 +221,24 @@ export class FakeDynamo {
           storedLock === undefined ||
           (typeof storedLock === "number" &&
             storedLock <= Number(values[":now"])),
+        existing,
+      };
+    }
+    if (condition === CHECKOUT_LOCK_TAKE_OVER_CONDITION) {
+      return {
+        satisfied:
+          existing !== undefined &&
+          existing.checkout_lock === values[":held"] &&
+          existing.checkout_session_id === values[":session"],
+        existing,
+      };
+    }
+    if (condition === CHECKOUT_LOCK_OWNED_CONDITION) {
+      return {
+        satisfied:
+          existing !== undefined &&
+          existing.checkout_lock === values[":held"] &&
+          existing.checkout_session_id === undefined,
         existing,
       };
     }

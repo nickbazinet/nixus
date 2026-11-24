@@ -14,12 +14,13 @@ import {
 import { fail, failValidation } from "../lib/errors.ts";
 import { getStripeClient } from "../lib/stripe.ts";
 import {
-  acquireCheckoutLock,
   billingCustomerKey,
   CHECKOUT_LOCK_ATTRIBUTE,
+  CHECKOUT_SESSION_ID_ATTRIBUTE,
   entitlementKey,
   getItem,
   STRIPE_CUSTOMER_ID_ATTRIBUTE,
+  writeCheckoutLock,
 } from "../lib/table.ts";
 import type { ValidatedCheckoutRequest } from "../lib/validation.ts";
 import { SUBSCRIPTION_SUB_METADATA_KEY } from "./webhook.ts";
@@ -41,11 +42,13 @@ import { SUBSCRIPTION_SUB_METADATA_KEY } from "./webhook.ts";
  * How long the `checkout_lock` holds, in seconds.
  *
  * Five minutes: long enough to cover a request that crashed after creating a
- * Checkout Session but before answering, and short enough that a user who
- * abandoned a session can start another without support. The lock is a LAPSING
- * timestamp rather than a flag, so a crashed request cannot hold an account
- * forever, and it is never explicitly released - the window IS the "a checkout is
- * already in progress" answer.
+ * Checkout Session but before recording it. The lock is a LAPSING timestamp
+ * rather than a flag, so a crashed request cannot hold an account forever.
+ *
+ * It does not make a returning user wait: once the holder's session is
+ * recorded, a new attempt asks Stripe to expire it and takes the lock over. Only
+ * a session that is mid-creation, or one that just completed, answers
+ * `checkout_in_progress`.
  */
 export const CHECKOUT_LOCK_TTL_SECONDS = 300;
 
@@ -156,6 +159,66 @@ function storedCustomerId(
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function storedLock(item: Record<string, unknown> | undefined): number | null {
+  const value = item?.[CHECKOUT_LOCK_ATTRIBUTE];
+  return typeof value === "number" ? value : null;
+}
+
+function storedSessionId(item: Record<string, unknown> | undefined): string | null {
+  const value = item?.[CHECKOUT_SESSION_ID_ATTRIBUTE];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function stripeStatusCode(error: unknown): number | null {
+  const value = (error as { statusCode?: unknown } | null)?.statusCode;
+  return typeof value === "number" ? value : null;
+}
+
+/** A 4xx is Stripe refusing the request outright, so nothing was created. Any
+ * other failure may have created the session and must keep the lock. */
+function refusedOutright(error: unknown): boolean {
+  const status = stripeStatusCode(error);
+  return status !== null && status >= 400 && status < 500;
+}
+
+type SessionState = "open" | "complete" | "gone";
+
+async function sessionState(stripe: Stripe, sessionId: string): Promise<SessionState> {
+  let session;
+  try {
+    session = await stripe.checkout.sessions.retrieve(sessionId);
+  } catch (error) {
+    // Unknown to this Stripe account, so it can never complete here.
+    if (stripeStatusCode(error) === 404) return "gone";
+    throw error;
+  }
+  if (session.status === "open") return "open";
+  if (session.status === "complete") return "complete";
+  return "gone";
+}
+
+/**
+ * Closes the session a previous attempt opened, and says what became of it.
+ *
+ * `expire` is refused for a session that is no longer open, which is how a
+ * session completing at this same moment is told apart from one this call
+ * closed: the status is read again rather than assumed.
+ */
+async function closePreviousSession(
+  stripe: Stripe,
+  sessionId: string,
+): Promise<SessionState> {
+  const state = await sessionState(stripe, sessionId);
+  if (state !== "open") return state;
+  try {
+    const expired = await stripe.checkout.sessions.expire(sessionId);
+    if (expired.status === "expired") return "gone";
+  } catch {
+    // Completed, or already expired by a concurrent attempt. Read it again.
+  }
+  return sessionState(stripe, sessionId);
+}
+
 export async function handleCheckout(args: {
   readonly sub: string;
   readonly request: ValidatedCheckoutRequest;
@@ -206,34 +269,82 @@ export async function handleCheckout(args: {
       )
     ).id;
 
+  const heldUntil = storedLock(existing);
+  const previousSessionId = storedSessionId(existing);
+  const liveHolder =
+    heldUntil !== null && heldUntil > nowSeconds
+      ? { heldUntil, sessionId: previousSessionId }
+      : null;
+
+  // The holder has not recorded its session yet, so there is nothing to close.
+  if (liveHolder !== null && liveHolder.sessionId === null) {
+    fail("checkout_in_progress");
+  }
+
+  // Closed even once the lock has lapsed: a session stays payable for a day,
+  // far longer than the lock, and an open one is a second subscription waiting.
+  if (previousSessionId !== null) {
+    const previous = await closePreviousSession(stripe, previousSessionId);
+    if (previous === "open") fail("unavailable");
+    if (previous === "complete" && liveHolder !== null) fail("checkout_in_progress");
+  }
+
+  const unlocked: Record<string, unknown> = {
+    ...existing,
+    ...billingCustomerKey(sub),
+    [STRIPE_CUSTOMER_ID_ATTRIBUTE]: customerId,
+    price_lookup_key: plan.entry.lookup_key,
+    updated_at: now.toISOString(),
+  };
+  delete unlocked[CHECKOUT_LOCK_ATTRIBUTE];
+  delete unlocked[CHECKOUT_SESSION_ID_ATTRIBUTE];
+  const lockUntil = nowSeconds + CHECKOUT_LOCK_TTL_SECONDS;
+  const locked = { ...unlocked, [CHECKOUT_LOCK_ATTRIBUTE]: lockUntil };
+  const owned = { kind: "owned", heldUntil: lockUntil } as const;
+
   // Recorded BEFORE the session URL is returned, in the same conditional write
   // that takes the lock - so a webhook can always resolve back to the account,
   // and a second concurrent attempt is refused rather than answered with a
   // second session URL.
-  const lock = await acquireCheckoutLock({
-    nowSeconds,
-    item: {
-      ...billingCustomerKey(sub),
-      ...existing,
-      ...billingCustomerKey(sub),
-      [STRIPE_CUSTOMER_ID_ATTRIBUTE]: customerId,
-      [CHECKOUT_LOCK_ATTRIBUTE]: nowSeconds + CHECKOUT_LOCK_TTL_SECONDS,
-      price_lookup_key: plan.entry.lookup_key,
-      updated_at: now.toISOString(),
-    },
+  const lock = await writeCheckoutLock({
+    item: locked,
+    claim:
+      liveHolder?.sessionId != null
+        ? { kind: "take_over", heldUntil: liveHolder.heldUntil, sessionId: liveHolder.sessionId }
+        : { kind: "acquire", nowSeconds },
   });
-  if (lock === "already_locked") {
+  if (lock === "lost") {
     fail("checkout_in_progress");
   }
 
-  const session = await stripe.checkout.sessions.create(
-    checkoutSessionParams({
-      sub,
-      customerId,
-      priceId: plan.priceId,
-      promotionCodeId,
-    }),
-  );
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create(
+      checkoutSessionParams({
+        sub,
+        customerId,
+        priceId: plan.priceId,
+        promotionCodeId,
+      }),
+    );
+  } catch (error) {
+    if (refusedOutright(error)) {
+      // Nothing was created, so a retry should not wait out the lock.
+      await writeCheckoutLock({ item: unlocked, claim: owned }).catch(() => undefined);
+    }
+    throw error;
+  }
+
+  const recorded = await writeCheckoutLock({
+    item: { ...locked, [CHECKOUT_SESSION_ID_ATTRIBUTE]: session.id },
+    claim: owned,
+  });
+  if (recorded === "lost") {
+    // The lock lapsed under this request and another attempt holds it now. This
+    // session is unrecorded, so it is closed rather than left payable.
+    await stripe.checkout.sessions.expire(session.id).catch(() => undefined);
+    fail("checkout_in_progress");
+  }
 
   if (session.url === null) {
     fail("unavailable");

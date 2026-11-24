@@ -69,6 +69,8 @@ export interface RunningBillingApi extends RunningFake {
   refuseEntitlement: BillingRefusal | null;
   /** Forces `GET /plans` to answer `unavailable`. */
   plansUnavailable: boolean;
+  /** Also publishes a yearly price for each tier. */
+  yearlyPlans: boolean;
   /** Promotes a token's account on the Nth `GET /entitlement`, modelling AD-5's lag. */
   convergeEntitlementAfter: number | null;
 }
@@ -163,6 +165,33 @@ const PLANS = {
   cache_ttl_seconds: 300,
 };
 
+const YEARLY_PLANS = {
+  ...PLANS,
+  plans: [
+    ...PLANS.plans,
+    {
+      tier: "classic",
+      lookup_key: "classic_yearly_cad",
+      unit_amount_cents: 9999,
+      currency: "CAD",
+      interval: "year",
+      display_order: 1,
+      capabilities: ["household_net_worth", "multi_device_sync"],
+      monthly_request_limit: null,
+    },
+    {
+      tier: "advance",
+      lookup_key: "advance_yearly_cad",
+      unit_amount_cents: 12999,
+      currency: "CAD",
+      interval: "year",
+      display_order: 2,
+      capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+      monthly_request_limit: 1000,
+    },
+  ],
+};
+
 const STATUS_FOR: Record<string, number> = {
   unauthorized: 401,
   reauthentication_required: 403,
@@ -205,6 +234,7 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     refusePortalNext: null as BillingRefusal | null,
     refuseEntitlement: null as BillingRefusal | null,
     plansUnavailable: false,
+    yearlyPlans: false,
     convergeEntitlementAfter: null as number | null,
   };
 
@@ -226,7 +256,7 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     if (path === "/plans" && request.method === "GET") {
       return state.plansUnavailable
         ? sendJson(response, 503, envelope({ code: "unavailable" }))
-        : sendJson(response, 200, PLANS);
+        : sendJson(response, 200, state.yearlyPlans ? YEARLY_PLANS : PLANS);
     }
 
     const authorization = request.headers.authorization;
@@ -350,6 +380,12 @@ export async function startBillingApi(): Promise<RunningBillingApi> {
     },
     set plansUnavailable(value: boolean) {
       state.plansUnavailable = value;
+    },
+    get yearlyPlans() {
+      return state.yearlyPlans;
+    },
+    set yearlyPlans(value: boolean) {
+      state.yearlyPlans = value;
     },
     get convergeEntitlementAfter() {
       return state.convergeEntitlementAfter;

@@ -370,12 +370,21 @@ export async function writeEntitlementStateAdvance(args: {
  * and not a DynamoDB TTL attribute: a boolean would strand the account forever if
  * a request crashed between taking the lock and releasing it, and a table TTL
  * would delete the record that carries the Stripe customer id.
+ *
+ * `checkout_session_id` names the Checkout Session the lock holder opened. It is
+ * what lets a later attempt replace an abandoned session instead of waiting out
+ * the lock: once Stripe confirms that session expired it can never complete, so
+ * a new one cannot become a second subscription.
  */
 
 export const CHECKOUT_LOCK_ATTRIBUTE = "checkout_lock";
+export const CHECKOUT_SESSION_ID_ATTRIBUTE = "checkout_session_id";
 export const STRIPE_CUSTOMER_ID_ATTRIBUTE = "stripe_customer_id";
 
-const LOCK_NAMES = { "#l": CHECKOUT_LOCK_ATTRIBUTE } as const;
+const LOCK_NAMES = {
+  "#l": CHECKOUT_LOCK_ATTRIBUTE,
+  "#s": CHECKOUT_SESSION_ID_ATTRIBUTE,
+} as const;
 
 /** Acquirable when no record exists, when no lock was ever taken, or when the
  * previous lock has lapsed. Those three cases are one expression on purpose: a
@@ -383,25 +392,70 @@ const LOCK_NAMES = { "#l": CHECKOUT_LOCK_ATTRIBUTE } as const;
 const CHECKOUT_LOCK_ACQUIRE_CONDITION =
   "attribute_not_exists(pk) OR attribute_not_exists(#l) OR #l <= :now";
 
-export type CheckoutLockOutcome = "acquired" | "already_locked";
+/** A live lock whose session Stripe has confirmed closed. Compared on BOTH
+ * values read, so two attempts replacing the same session cannot both win. */
+const CHECKOUT_LOCK_TAKE_OVER_CONDITION = "#l = :held AND #s = :session";
 
-export async function acquireCheckoutLock(args: {
+/** The holder's own follow-up writes. Nobody else can satisfy this while the
+ * lock is live: acquiring needs it lapsed, and taking over needs a session. */
+const CHECKOUT_LOCK_OWNED_CONDITION = "#l = :held AND attribute_not_exists(#s)";
+
+export type CheckoutLockClaim =
+  | { readonly kind: "acquire"; readonly nowSeconds: number }
+  | {
+      readonly kind: "take_over";
+      readonly heldUntil: number;
+      readonly sessionId: string;
+    }
+  | { readonly kind: "owned"; readonly heldUntil: number };
+
+export type CheckoutLockOutcome = "written" | "lost";
+
+function lockCondition(claim: CheckoutLockClaim): {
+  readonly expression: string;
+  readonly names: Record<string, string>;
+  readonly values: Record<string, unknown>;
+} {
+  switch (claim.kind) {
+    case "acquire":
+      return {
+        expression: CHECKOUT_LOCK_ACQUIRE_CONDITION,
+        names: { "#l": LOCK_NAMES["#l"] },
+        values: { ":now": claim.nowSeconds },
+      };
+    case "take_over":
+      return {
+        expression: CHECKOUT_LOCK_TAKE_OVER_CONDITION,
+        names: { ...LOCK_NAMES },
+        values: { ":held": claim.heldUntil, ":session": claim.sessionId },
+      };
+    case "owned":
+      return {
+        expression: CHECKOUT_LOCK_OWNED_CONDITION,
+        names: { ...LOCK_NAMES },
+        values: { ":held": claim.heldUntil },
+      };
+  }
+}
+
+export async function writeCheckoutLock(args: {
   readonly item: Record<string, unknown>;
-  readonly nowSeconds: number;
+  readonly claim: CheckoutLockClaim;
 }): Promise<CheckoutLockOutcome> {
+  const condition = lockCondition(args.claim);
   try {
     await getDocumentClient().send(
       new PutCommand({
         TableName: tableName(),
         Item: args.item,
-        ConditionExpression: CHECKOUT_LOCK_ACQUIRE_CONDITION,
-        ExpressionAttributeNames: { ...LOCK_NAMES },
-        ExpressionAttributeValues: { ":now": args.nowSeconds },
+        ConditionExpression: condition.expression,
+        ExpressionAttributeNames: condition.names,
+        ExpressionAttributeValues: condition.values,
       }),
     );
-    return "acquired";
+    return "written";
   } catch (error) {
-    if (isConditionalCheckFailure(error)) return "already_locked";
+    if (isConditionalCheckFailure(error)) return "lost";
     throw error;
   }
 }

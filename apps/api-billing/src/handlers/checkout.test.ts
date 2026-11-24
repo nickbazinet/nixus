@@ -11,6 +11,7 @@ import {
 import { FakeDynamo } from "../lib/testing/fake-dynamo.ts";
 import {
   FakeStripe,
+  stripeError,
   stripePrice,
   stripeProduct,
 } from "../lib/testing/fake-stripe.ts";
@@ -244,11 +245,6 @@ describe("AD-16: two concurrent attempts cannot produce two subscriptions", () =
     ).toBeLessThanOrEqual(1);
   });
 
-  it("refuses a second attempt while the lock is live", async () => {
-    await call();
-    expect((await failureOf(call())).failure.code).toBe("checkout_in_progress");
-  });
-
   /* A LAPSING timestamp rather than a flag, so a crashed request cannot hold an
    * account forever. */
   it("lets a new attempt through once the lock has lapsed", async () => {
@@ -268,6 +264,157 @@ describe("AD-16: two concurrent attempts cannot produce two subscriptions", () =
 
   it("stores the lock as the second at which it lapses", async () => {
     await call();
+    expect(customerRecord(SUB_A)!.checkout_lock).toBe(
+      NOW_SECONDS + CHECKOUT_LOCK_TTL_SECONDS,
+    );
+  });
+
+  it("records the session it opened alongside the lock", async () => {
+    await call();
+    expect(customerRecord(SUB_A)!.checkout_session_id).toBe(stripe.createdSessionId(1));
+  });
+
+  it("refuses an attempt while the holder has not recorded its session yet", async () => {
+    dynamo.seed({
+      pk: partitionKey(SUB_A),
+      sk: "BILLING_CUSTOMER",
+      stripe_customer_id: "cus_existing",
+      checkout_lock: NOW_SECONDS + 60,
+    });
+
+    expect((await failureOf(call())).failure.code).toBe("checkout_in_progress");
+    expect(stripe.countOf("checkout.sessions.create")).toBe(0);
+  });
+});
+
+/*
+ * A visitor who goes to Stripe and comes back - through the back button, the
+ * cancel link, or by closing the tab - must be able to choose again at once.
+ * The earlier session is expired first, so it can never complete alongside the
+ * new one.
+ */
+describe("AD-18: an abandoned session is replaced, not waited out", () => {
+  it("expires the open session and opens a new one while the lock is live", async () => {
+    await call();
+    const first = stripe.createdSessionId(1);
+
+    expect(await call()).toEqual({ url: SESSION_URL, destination: "checkout" });
+
+    expect(stripe.sessionStatus(first)).toBe("expired");
+    expect(stripe.countOf("checkout.sessions.create")).toBe(2);
+    expect(customerRecord(SUB_A)!.checkout_session_id).toBe(stripe.createdSessionId(2));
+  });
+
+  it("lets a different plan replace the open session", async () => {
+    stripe.seedPrices([
+      stripePrice({ id: "price_classic", lookupKey: "classic_monthly_cad", product: CLASSIC }),
+      stripePrice({ id: "price_yearly", lookupKey: "classic_yearly_cad", product: CLASSIC }),
+    ]);
+    resetCatalogCacheForTesting();
+
+    await call();
+    await call({ planLookupKey: "classic_yearly_cad" });
+
+    expect(stripe.sessionStatus(stripe.createdSessionId(1))).toBe("expired");
+    expect(customerRecord(SUB_A)!.price_lookup_key).toBe("classic_yearly_cad");
+  });
+
+  it("refuses while the recorded session has just completed", async () => {
+    await call();
+    stripe.seedSession(stripe.createdSessionId(1), "complete");
+
+    expect((await failureOf(call())).failure.code).toBe("checkout_in_progress");
+    expect(stripe.countOf("checkout.sessions.create")).toBe(1);
+  });
+
+  it("lets exactly one of two concurrent replacements through", async () => {
+    await call();
+
+    const outcomes = await Promise.allSettled([call(), call()]);
+    const rejected = outcomes.filter((entry) => entry.status === "rejected");
+
+    expect(outcomes.filter((entry) => entry.status === "fulfilled")).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(
+      ((rejected[0] as PromiseRejectedResult).reason as BillingFailureError).failure.code,
+    ).toBe("checkout_in_progress");
+
+    const open = [1, 2, 3]
+      .map((index) => stripe.sessionStatus(stripe.createdSessionId(index)))
+      .filter((status) => status === "open");
+    expect(open).toHaveLength(1);
+  });
+
+  /* A session stays payable for far longer than the lock holds. */
+  it("expires a session left open after the lock lapsed", async () => {
+    dynamo.seed({
+      pk: partitionKey(SUB_A),
+      sk: "BILLING_CUSTOMER",
+      stripe_customer_id: "cus_existing",
+      checkout_lock: NOW_SECONDS - 60,
+      checkout_session_id: "cs_test_old",
+    });
+    stripe.seedSession("cs_test_old", "open");
+
+    expect((await call()).destination).toBe("checkout");
+    expect(stripe.sessionStatus("cs_test_old")).toBe("expired");
+  });
+
+  it("does not hold back an account whose last checkout completed long ago", async () => {
+    dynamo.seed({
+      pk: partitionKey(SUB_A),
+      sk: "BILLING_CUSTOMER",
+      stripe_customer_id: "cus_existing",
+      checkout_lock: NOW_SECONDS - 60,
+      checkout_session_id: "cs_test_old",
+    });
+    stripe.seedSession("cs_test_old", "complete");
+
+    expect((await call()).destination).toBe("checkout");
+    expect(stripe.countOf("checkout.sessions.expire")).toBe(0);
+  });
+
+  it("treats a session Stripe does not know as closed", async () => {
+    dynamo.seed({
+      pk: partitionKey(SUB_A),
+      sk: "BILLING_CUSTOMER",
+      stripe_customer_id: "cus_existing",
+      checkout_lock: NOW_SECONDS + 60,
+      checkout_session_id: "cs_test_unknown",
+    });
+
+    expect((await call()).destination).toBe("checkout");
+  });
+
+  it("refuses rather than opening a second session it could not close", async () => {
+    await call();
+    stripe.failOn("checkout.sessions.expire", stripeError(500));
+
+    expect((await failureOf(call())).failure.code).toBe("unavailable");
+    expect(stripe.countOf("checkout.sessions.create")).toBe(1);
+  });
+});
+
+describe("a session Stripe refused to create", () => {
+  it("releases the lock when Stripe refused the request outright", async () => {
+    stripe.failOn("checkout.sessions.create", stripeError(400));
+    await expect(call()).rejects.toThrow();
+    expect(customerRecord(SUB_A)!.checkout_lock).toBeUndefined();
+
+    stripe = new FakeStripe()
+      .seedPrices([
+        stripePrice({ id: "price_classic", lookupKey: "classic_monthly_cad", product: CLASSIC }),
+      ])
+      .seedSessionUrl(SESSION_URL);
+    setStripeClientForTesting(stripe.asStripe());
+    expect((await call()).destination).toBe("checkout");
+  });
+
+  /* The session may exist even though the answer never arrived. */
+  it("keeps the lock when the outcome is unknown", async () => {
+    stripe.failOn("checkout.sessions.create", stripeError(500));
+    await expect(call()).rejects.toThrow();
+
     expect(customerRecord(SUB_A)!.checkout_lock).toBe(
       NOW_SECONDS + CHECKOUT_LOCK_TTL_SECONDS,
     );

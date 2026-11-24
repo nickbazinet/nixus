@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CreditCard, Receipt } from "lucide-react";
-import { Alert, Badge, Button, Switch, grantsCapabilities } from "@nixus/shared";
+import { Alert, Badge, Button, Switch, cn, grantsCapabilities } from "@nixus/shared";
 import type { PlanCatalogEntry } from "@nixus/shared";
 
 import {
@@ -13,13 +13,15 @@ import {
 } from "@/actions/billing";
 import {
   capabilityLabel,
+  formatCentsAmount,
   formatPeriodEnd,
   formatPlanAmount,
-  formatPlanPrice,
+  groupPlansByTier,
   listPriceFor,
   resolvePlanDeepLink,
   statusLabel,
   tierDisplayName,
+  yearlySavings,
 } from "@/lib/billing-plans";
 import { billingDestinationKey, type Locale } from "@/lib/i18n";
 import { billingRefusalText } from "@/lib/messages";
@@ -74,10 +76,6 @@ function warn(text: string, needsSignIn = false): Status {
   return { kind: "message", tone: "warn", text, needsSignIn };
 }
 
-function intervalKey(plan: PlanCatalogEntry): string {
-  return plan.interval === "year" ? "billing.perYear" : "billing.perMonth";
-}
-
 function shortIntervalKey(plan: PlanCatalogEntry): string {
   return plan.interval === "year" ? "billing.slashYear" : "billing.slashMonth";
 }
@@ -107,6 +105,12 @@ export function BillingPanel({
   // A subscriber came here to see their plan, so the list waits behind a
   // button; anyone without a live subscription came to choose one.
   const [plansOpen, setPlansOpen] = useState(!view.subscriptionLive);
+  const tiers = useMemo(() => groupPlansByTier(view.plans), [view.plans]);
+  const offersBothIntervals = tiers.some((entry) => entry.monthly && entry.yearly);
+  const [interval, setInterval] = useState<"month" | "year">(
+    tiers.some((entry) => entry.yearly) ? "year" : "month",
+  );
+  const bestSavingPercent = Math.max(0, ...tiers.map((entry) => yearlySavings(entry)?.percent ?? 0));
 
   const applyCheckout = useCallback(
     (response: StartCheckoutResponse): void => {
@@ -391,51 +395,133 @@ export function BillingPanel({
         </div>
 
         <div id={plansId} hidden={!plansOpen} className="mt-2 border-t border-line pt-6">
-          <h3 className="text-body font-semibold text-ink">{t("billing.plansHeading")}</h3>
-
           {view.plans.length === 0 ? (
-            <p data-testid="billing-plans-unavailable" className="mt-3 text-body text-ink">
+            <p data-testid="billing-plans-unavailable" className="text-body text-ink">
               {t("billing.plansUnavailable")}
             </p>
           ) : (
             <>
               {view.subscriptionLive ? (
-                <p data-testid="billing-switch-hint" className="mt-2 text-caption text-ink-dim">
+                <p data-testid="billing-switch-hint" className="mb-4 text-caption text-ink-dim">
                   {t("billing.switchHint")}
                 </p>
               ) : null}
 
-              <ul className="mt-4 grid gap-3 sm:grid-cols-2">
-                {view.plans.map((plan) => (
-                  <li
-                    key={plan.lookup_key}
-                    className="flex flex-col gap-3 rounded-xl border border-line p-4"
-                  >
-                    <div>
-                      <p className="font-display text-base font-semibold text-ink">
-                        {tierDisplayName(t, plan.tier)}
-                      </p>
-                      <p
-                        data-testid={`billing-price-${plan.lookup_key}`}
-                        className="text-caption text-ink-dim"
+              {offersBothIntervals ? (
+                <div
+                  role="radiogroup"
+                  aria-label={t("billing.intervalLabel")}
+                  className="inline-flex items-center gap-1 rounded-full bg-track p-1"
+                >
+                  {(["month", "year"] as const).map((option) => {
+                    const selected = interval === option;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        data-testid={`billing-interval-${option}`}
+                        onClick={() => setInterval(option)}
+                        className={cn(
+                          "inline-flex h-9 items-center gap-2 rounded-full px-4 text-body font-semibold transition-colors",
+                          selected ? "bg-card text-ink shadow-sm" : "text-ink-dim hover:text-ink",
+                        )}
                       >
-                        {`${formatPlanPrice(plan, locale)} ${t(intervalKey(plan))}`}
-                      </p>
-                    </div>
-                    <Button
-                      className={`${PILL_BUTTON_CLASS} self-start`}
-                      data-testid={`billing-plan-${plan.lookup_key}`}
-                      disabled={busy}
-                      onClick={() => void beginCheckout(plan.lookup_key)}
+                        {t(`billing.interval.${option}`)}
+                        {option === "year" && bestSavingPercent > 0 ? (
+                          <span className="rounded-full bg-good-bg px-2 py-0.5 text-caption font-semibold text-good-ink">
+                            {t("billing.saveUpTo", { percent: bestSavingPercent })}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              <ul className="mt-5 flex flex-col gap-3">
+                {tiers.map((entry) => {
+                  const plan =
+                    interval === "year"
+                      ? (entry.yearly ?? entry.monthly)
+                      : (entry.monthly ?? entry.yearly);
+                  if (plan === null) return null;
+                  const savings = plan.interval === "year" ? yearlySavings(entry) : null;
+                  return (
+                    <li
+                      key={entry.tier}
+                      className="flex flex-col gap-4 rounded-xl bg-gradient-to-br from-[#EDF0FD] via-[#F0EFFD] to-[#F4EEFB] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6"
                     >
-                      {busy
-                        ? t("billing.opening")
-                        : view.subscriptionLive
-                          ? t("billing.switchPlan")
-                          : t("billing.choosePlan")}
-                    </Button>
-                  </li>
-                ))}
+                      <div className="min-w-0">
+                        <p className="font-display text-lg font-semibold tracking-[-0.015em] text-ink">
+                          {tierDisplayName(t, entry.tier)}
+                        </p>
+                        <p className="mt-1.5 text-body text-ink-dim">
+                          {plan.capabilities
+                            .map((capability) => capabilityLabel(t, capability))
+                            .join(" · ")}
+                        </p>
+                      </div>
+
+                      <div className="flex shrink-0 flex-col gap-3 sm:items-end">
+                        <div className="sm:text-right">
+                          <p data-testid={`billing-price-${plan.lookup_key}`} className="text-ink">
+                            <span className="font-display text-2xl font-bold tracking-[-0.02em]">
+                              {formatPlanAmount(plan, locale)}
+                            </span>{" "}
+                            <span className="text-caption text-ink-dim">
+                              {`${plan.currency} ${t(shortIntervalKey(plan))}`}
+                            </span>
+                          </p>
+                          {savings !== null ? (
+                            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 sm:justify-end">
+                              <s className="text-caption text-ink-faint">
+                                {formatCentsAmount(
+                                  savings.yearOfMonthlyCents,
+                                  plan.currency,
+                                  locale,
+                                )}
+                              </s>
+                              <span className="rounded-full bg-good-bg px-2 py-0.5 text-caption font-semibold text-good-ink">
+                                {t("billing.saveAmount", {
+                                  amount: formatCentsAmount(
+                                    savings.savedCents,
+                                    plan.currency,
+                                    locale,
+                                  ),
+                                })}
+                              </span>
+                            </p>
+                          ) : null}
+                          {savings !== null ? (
+                            <p className="mt-1 text-caption text-ink-dim">
+                              {t("billing.perMonthEquivalent", {
+                                amount: formatCentsAmount(
+                                  Math.round(plan.unit_amount_cents / 12),
+                                  plan.currency,
+                                  locale,
+                                ),
+                              })}
+                            </p>
+                          ) : null}
+                        </div>
+                        <Button
+                          className={PILL_BUTTON_CLASS}
+                          data-testid={`billing-plan-${plan.lookup_key}`}
+                          disabled={busy}
+                          onClick={() => void beginCheckout(plan.lookup_key)}
+                        >
+                          {busy
+                            ? t("billing.opening")
+                            : view.subscriptionLive
+                              ? t("billing.switchPlan")
+                              : t("billing.choosePlan")}
+                        </Button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
 
               <p data-testid="billing-tax-notice" className="mt-4 text-caption text-ink-dim">

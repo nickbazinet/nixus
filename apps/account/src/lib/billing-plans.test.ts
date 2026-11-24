@@ -8,10 +8,12 @@ import {
   formatPeriodEnd,
   formatPlanAmount,
   formatPlanPrice,
+  groupPlansByTier,
   listPriceFor,
   resolvePlanDeepLink,
   statusLabel,
   tierDisplayName,
+  yearlySavings,
 } from "./billing-plans.ts";
 import { i18nForLocale } from "./i18n.ts";
 import FIXTURES from "../../../../packages/shared/src/types/billing.fixtures.json" with {
@@ -187,5 +189,64 @@ describe("the /checkout/complete polling bounds", () => {
     expect(CHECKOUT_POLL_ATTEMPTS).toBe(6);
     expect(CHECKOUT_POLL_INTERVAL_MS).toBe(2_000);
     expect(CHECKOUT_POLL_ATTEMPTS * CHECKOUT_POLL_INTERVAL_MS).toBe(12_000);
+  });
+});
+
+describe("groupPlansByTier and yearlySavings", () => {
+  const entry = (
+    tier: string,
+    interval: "month" | "year",
+    cents: number,
+    order: number,
+    currency = "CAD",
+  ): PlanCatalogEntry => ({
+    ...PLANS[0]!,
+    tier,
+    lookup_key: `${tier}_${interval}ly_${currency.toLowerCase()}`,
+    interval,
+    unit_amount_cents: cents,
+    display_order: order,
+    currency,
+  });
+
+  const CATALOG = [
+    entry("advance", "year", 12999, 2),
+    entry("classic", "month", 999, 1),
+    entry("advance", "month", 1999, 2),
+    entry("classic", "year", 9999, 1),
+  ];
+
+  it("pairs each tier's monthly and yearly price, in display order", () => {
+    const tiers = groupPlansByTier(CATALOG);
+    expect(tiers.map((tier) => tier.tier)).toEqual(["classic", "advance"]);
+    expect(tiers[0]?.monthly?.unit_amount_cents).toBe(999);
+    expect(tiers[0]?.yearly?.unit_amount_cents).toBe(9999);
+  });
+
+  it("leaves the missing interval null for a tier priced one way only", () => {
+    const [only] = groupPlansByTier([entry("classic", "month", 999, 1)]);
+    expect(only?.yearly).toBeNull();
+    expect(yearlySavings(only!)).toBeNull();
+  });
+
+  it("measures the yearly saving against twelve monthly payments", () => {
+    const [classic, advance] = groupPlansByTier(CATALOG);
+    expect(yearlySavings(classic!)).toEqual({
+      yearOfMonthlyCents: 11988,
+      savedCents: 1989,
+      percent: 17,
+    });
+    expect(yearlySavings(advance!)?.savedCents).toBe(10989);
+    expect(yearlySavings(advance!)?.percent).toBe(46);
+  });
+
+  it("claims no saving when yearly is not cheaper or the currencies differ", () => {
+    const dearer = groupPlansByTier([entry("t", "month", 100, 1), entry("t", "year", 1200, 1)]);
+    expect(yearlySavings(dearer[0]!)).toBeNull();
+    const mixed = groupPlansByTier([
+      entry("t", "month", 1000, 1),
+      entry("t", "year", 5000, 1, "USD"),
+    ]);
+    expect(yearlySavings(mixed[0]!)).toBeNull();
   });
 });

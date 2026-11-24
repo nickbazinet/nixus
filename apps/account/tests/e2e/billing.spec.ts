@@ -234,6 +234,23 @@ test.describe("the billing page", () => {
     );
   });
 
+  test("offers a monthly or yearly price per tier, with what yearly saves", async ({ page }) => {
+    harness.billing.yearlyPlans = true;
+    await signedInBilling(page);
+
+    // Yearly is the default, and one card per tier rather than one per price.
+    await expect(page.getByTestId("billing-interval-year")).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByTestId("billing-price-classic_yearly_cad")).toContainText("99.99");
+    await expect(page.getByTestId("billing-price-advance_yearly_cad")).toContainText("129.99");
+    await expect(page.getByTestId("billing-plan-classic_monthly_cad")).toHaveCount(0);
+    await expect(page.getByTestId("billing-interval-year")).toContainText("46%");
+
+    await page.getByTestId("billing-interval-month").click();
+    await expect(page.getByTestId("billing-price-classic_monthly_cad")).toContainText("9.99");
+    await expect(page.getByTestId("billing-price-advance_monthly_cad")).toContainText("19.99");
+    await expect(page.getByTestId("billing-plan-classic_yearly_cad")).toHaveCount(0);
+  });
+
   test("lists both plans in display order, with CAD prices and the tax rule", async ({
     page,
   }) => {

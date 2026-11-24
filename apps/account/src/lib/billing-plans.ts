@@ -94,6 +94,67 @@ export function listPriceFor(
   return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
+/** One tier's published prices, so a monthly and a yearly entry read as one plan. */
+export interface TierPlans {
+  readonly tier: string;
+  readonly displayOrder: number;
+  readonly monthly: PlanCatalogEntry | null;
+  readonly yearly: PlanCatalogEntry | null;
+}
+
+/**
+ * Groups the catalog by its opaque tier code, in display order. The tier is only
+ * ever a grouping key here, never compared to a literal (AD-1).
+ */
+export function groupPlansByTier(plans: readonly PlanCatalogEntry[]): TierPlans[] {
+  const grouped = new Map<string, TierPlans>();
+  for (const plan of plans) {
+    const current = grouped.get(plan.tier);
+    grouped.set(plan.tier, {
+      tier: plan.tier,
+      displayOrder: Math.min(current?.displayOrder ?? plan.display_order, plan.display_order),
+      monthly: plan.interval === "month" ? plan : (current?.monthly ?? null),
+      yearly: plan.interval === "year" ? plan : (current?.yearly ?? null),
+    });
+  }
+  return [...grouped.values()].sort((a, b) => a.displayOrder - b.displayOrder);
+}
+
+export interface YearlySavings {
+  readonly yearOfMonthlyCents: number;
+  readonly savedCents: number;
+  readonly percent: number;
+}
+
+/**
+ * What paying yearly saves against twelve monthly payments, or `null` when the
+ * two prices cannot be compared or yearly is not cheaper.
+ */
+export function yearlySavings(tier: TierPlans): YearlySavings | null {
+  const { monthly, yearly } = tier;
+  if (monthly === null || yearly === null) return null;
+  if (monthly.currency !== yearly.currency) return null;
+
+  const yearOfMonthlyCents = monthly.unit_amount_cents * 12;
+  const savedCents = yearOfMonthlyCents - yearly.unit_amount_cents;
+  if (yearOfMonthlyCents <= 0 || savedCents <= 0) return null;
+
+  return {
+    yearOfMonthlyCents,
+    savedCents,
+    percent: Math.round((savedCents / yearOfMonthlyCents) * 100),
+  };
+}
+
+/** Whole-cents amount in the plan's currency with the local symbol ("$9.99"). */
+export function formatCentsAmount(cents: number, currency: string, locale: Locale): string {
+  return new Intl.NumberFormat(INTL_LOCALE[locale], {
+    style: "currency",
+    currency,
+    currencyDisplay: "narrowSymbol",
+  }).format(cents / 100);
+}
+
 /** Epoch seconds in the active locale's own long date form, or `null` if absent. */
 export function formatPeriodEnd(epochSeconds: number | null, locale: Locale): string | null {
   if (epochSeconds === null || !Number.isFinite(epochSeconds)) return null;

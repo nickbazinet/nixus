@@ -367,7 +367,7 @@ status confirms the defect.
 > to Nixus because `BILLING_CUSTOMER` holds one `stripe_subscription_id`". No
 > code writes it. `BILLING_CUSTOMER` is written in exactly one place,
 > `handlers/checkout.ts`, and carries `stripe_customer_id`, `checkout_lock`,
-> `price_lookup_key` and `updated_at`; the webhook never writes the record at
+> `checkout_session_id`, `price_lookup_key` and `updated_at`; the webhook never writes the record at
 > all, and `stripe_subscription_id` survives in runtime code only as a logging
 > ban (`lib/logging.ts`, `?: never`). So the `ENTITLEMENT` item's `stripe_*`
 > shadow is the ONLY recorded evidence that a subscription exists — which is why
@@ -694,8 +694,9 @@ so a contract test pins the key set.
 
 > **Residual risk, accepted rather than closed.** An admin-overridden record
 > whose webhook has never converged has `stripe_state === null`, falls back to
-> the effective status, and could still open a second checkout. The five-minute
-> `checkout_lock` is the only guard. Closing it properly needs a Stripe read
+> the effective status, and could still open a second checkout. The
+> `checkout_lock`, and the expiry of the previously recorded Checkout Session
+> before a new one opens, are the only guards. Closing it properly needs a Stripe read
 > inside the gate, which AD-4's canonical read path forbids.
 
 
