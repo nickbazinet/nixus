@@ -78,6 +78,8 @@ To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Your records stay on your machine. AI features and Nixus Cloud are optional and off until you use them, and the app works fully without either. Details are in the [privacy policy](https://nixusapp.com/privacy) and [terms](https://nixusapp.com/terms).
 
+Nixus Cloud is a paid subscription sold through Stripe, which is the seller of record. Nixus stores no card data; checkout and subscription management happen on Stripe-hosted pages.
+
 Nixus doesn't connect to your bank, and it's a tracking tool, not tax, legal, or investment advice.
 
 ## Tech stack

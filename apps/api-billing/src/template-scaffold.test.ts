@@ -114,7 +114,7 @@ describe("template conventions", () => {
     // AD-6's published set, as CONFIGURATION: adding a tier whose capabilities
     // already exist is a change to this value, not a deploy of new code.
     expect(TEMPLATE.parameters.CatalogLookupKeys.Default).toBe(
-      "classic_monthly_cad,advance_monthly_cad",
+      "classic_monthly_cad,advance_monthly_cad,classic_yearly_cad,advance_yearly_cad",
     );
     expect(TEMPLATE.parameters.AccountAppOrigin.Default).toBe(
       "https://account.nixusapp.com",

@@ -34,6 +34,10 @@ export function PricingPage() {
             <PlanCard key={plan.id} plan={plan} price={prices[index]} />
           ))}
         </div>
+        <p className="mt-6 max-w-2xl text-sm text-ink-muted">
+          Prices are in Canadian dollars and tax is included. Outside Canada, checkout shows the
+          price in your own currency. Payments are handled by Stripe.
+        </p>
       </Section>
 
       <Section bg="white" id="compare" labelledBy="compare-heading">

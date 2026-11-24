@@ -59,7 +59,7 @@ export const TERMS: LegalDocument = {
     {
       "heading": "Accounts and premium access",
       "paragraphs": [
-        "A Nixus Cloud account is required for hosted AI. Premium hosted-AI capability is granted manually and is entirely separate from any paid module license. Nixus may suspend or revoke hosted-AI access, including for abuse or excessive cost."
+        "A Nixus Cloud account is required for hosted AI. Premium hosted-AI capability comes with a paid Nixus Cloud plan that includes it, or is granted by Nixus directly. Nixus may suspend or revoke hosted-AI access, including for abuse or excessive cost."
       ]
     },
     {

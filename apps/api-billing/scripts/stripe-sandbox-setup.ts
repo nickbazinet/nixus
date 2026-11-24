@@ -5,7 +5,7 @@
  *
  *   - one Product per tier, carrying the metadata the authority derives from
  *     (`nixus_tier`, `nixus_capabilities`, `nixus_monthly_request_limit`, `nixus_display_order`)
- *   - one monthly CAD Price per tier, addressed only by `lookup_key`
+ *   - one monthly and one yearly CAD Price per tier, addressed only by `lookup_key`
  *   - one test promotion code, so AD-16's "a discount applies with no deploy" gate is provable
  *   - the webhook endpoint the authority is signed against
  *
@@ -102,6 +102,32 @@ const PLANS: readonly PlanSpec[] = [
     unitAmountCents: 1999,
     currency: "cad",
     interval: "month",
+    capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    monthlyRequestLimit: 1000,
+    displayOrder: 2,
+  },
+  {
+    tier: "classic",
+    productName: "Nixus Cloud Classic",
+    productDescription:
+      "Nixus Cloud with multi-device sync and household net worth.",
+    lookupKey: "classic_yearly_cad",
+    unitAmountCents: 9999,
+    currency: "cad",
+    interval: "year",
+    capabilities: ["household_net_worth", "multi_device_sync"],
+    monthlyRequestLimit: null,
+    displayOrder: 1,
+  },
+  {
+    tier: "advance",
+    productName: "Nixus Cloud Advance",
+    productDescription:
+      "Nixus Cloud with multi-device sync, household net worth and hosted AI.",
+    lookupKey: "advance_yearly_cad",
+    unitAmountCents: 12999,
+    currency: "cad",
+    interval: "year",
     capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
     monthlyRequestLimit: 1000,
     displayOrder: 2,
@@ -427,11 +453,19 @@ async function convergePortalConfiguration(stripe: Stripe): Promise<void> {
     expand: ["data.product"],
   });
 
-  const switchable = prices.data.flatMap((price) => {
+  const pricesByProduct = new Map<string, string[]>();
+  for (const price of prices.data) {
     const product = price.product;
-    if (typeof product === "string" || product.deleted === true) return [];
-    return [{ product: product.id, prices: [price.id] }];
-  });
+    if (typeof product === "string" || product.deleted === true) continue;
+    pricesByProduct.set(product.id, [
+      ...(pricesByProduct.get(product.id) ?? []),
+      price.id,
+    ]);
+  }
+  const switchable = [...pricesByProduct].map(([product, priceIds]) => ({
+    product,
+    prices: priceIds,
+  }));
 
   const configurations = await stripe.billingPortal.configurations.list({ limit: 10 });
   const target = configurations.data.find((entry) => entry.is_default);
@@ -492,9 +526,13 @@ async function main(): Promise<void> {
     `Stripe sandbox setup — mode=test ${APPLY ? "APPLY" : "DRY RUN (pass --apply to write)"}\n\n`,
   );
 
+  // A tier has one Product and one Price per interval, so the Product is converged once per tier.
+  const productIds = new Map<string, string | undefined>();
   for (const plan of PLANS) {
-    const productId = await convergeProduct(stripe, plan);
-    await convergePrice(stripe, plan, productId);
+    if (!productIds.has(plan.tier)) {
+      productIds.set(plan.tier, await convergeProduct(stripe, plan));
+    }
+    await convergePrice(stripe, plan, productIds.get(plan.tier));
   }
   await convergePromotionCode(stripe);
   await convergeWebhookEndpoint(stripe, webhookUrl);

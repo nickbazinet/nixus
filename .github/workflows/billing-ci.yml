@@ -172,7 +172,7 @@ jobs:
       CATALOG_CACHE_TTL_SECONDS: "300"
       # The published lookup-key set (AD-6). A new tier is a change to THIS value
       # plus a Stripe Dashboard change, with no code deploy.
-      CATALOG_LOOKUP_KEYS: classic_monthly_cad,advance_monthly_cad
+      CATALOG_LOOKUP_KEYS: classic_monthly_cad,advance_monthly_cad,classic_yearly_cad,advance_yearly_cad
       # The ONE origin every Stripe success, cancel and portal return URL is
       # composed from (AD-8). Not a secret: it is a public hostname.
       ACCOUNT_APP_ORIGIN: https://account.nixusapp.com

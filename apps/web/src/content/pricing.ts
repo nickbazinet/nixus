@@ -218,6 +218,11 @@ export const PRICING_FAQ: ReadonlyArray<{ question: string; answer: string }> = 
       "Your data is a file on your own computer and the code is open source, so the app keeps working with what you have, and anyone can read or build the code.",
   },
   {
+    question: "Who do I pay, and are taxes included?",
+    answer:
+      "Stripe sells NixusCloud and is the seller of record, so you pay on Stripe's secure pages and Nixus never sees or stores your card. Prices are listed in Canadian dollars with tax included, and outside Canada checkout shows the price in your own currency. You can cancel, update your card and switch plans from your account, and refunds go through Stripe.",
+  },
+  {
     question: "Is this financial advice?",
     answer:
       "No. Nixus is a tool for tracking and organizing your money. Its suggestions are educational, not tax, legal or investment advice, and you decide what to do.",
