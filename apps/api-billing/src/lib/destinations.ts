@@ -6,7 +6,9 @@
  */
 
 const CHECKOUT_SUCCESS_PATH = "/checkout/complete";
-const CHECKOUT_CANCEL_PATH = "/pricing";
+// Checkout is only ever started from the account app's billing page; the
+// marketing `/pricing` page lives on a different origin and 404s here.
+const CHECKOUT_CANCEL_PATH = "/billing";
 const PORTAL_RETURN_PATH = "/billing";
 
 export const ALLOWED_DESTINATION_PATHS: readonly string[] = [

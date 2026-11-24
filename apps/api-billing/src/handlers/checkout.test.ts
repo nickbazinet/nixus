@@ -663,7 +663,7 @@ describe("the Checkout Session parameter set", () => {
     const params = PARAMS();
 
     expect(params.success_url).toBe(`${TEST_ACCOUNT_APP_ORIGIN}/checkout/complete`);
-    expect(params.cancel_url).toBe(`${TEST_ACCOUNT_APP_ORIGIN}/pricing`);
+    expect(params.cancel_url).toBe(`${TEST_ACCOUNT_APP_ORIGIN}/billing`);
   });
 
   it("refuses a configured origin that is not a bare https origin", () => {
