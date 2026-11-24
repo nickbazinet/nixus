@@ -21,6 +21,7 @@ import {
   resolvePlanDeepLink,
   statusLabel,
   tierDisplayName,
+  trialPlanForTier,
   yearlySavings,
 } from "@/lib/billing-plans";
 import { billingDestinationKey, type Locale } from "@/lib/i18n";
@@ -210,6 +211,10 @@ export function BillingPanel({
   );
   const subscriptionStatus = subscription?.status ?? entitlement?.status;
   const ending = subscriptionStatus === "canceled" || subscriptionStatus === "unpaid";
+  // A trial is a LIVE subscription, so the renewal row describes it rather than
+  // hiding: the date it shows is the day the card is charged, which is the one
+  // fact a visitor on a trial most needs.
+  const trialing = subscriptionStatus === "trialing";
   const listPrice =
     view.subscriptionLive && subscription !== null
       ? listPriceFor(view.plans, subscription.tier)
@@ -315,6 +320,17 @@ export function BillingPanel({
                     : t("billing.requestLimit", { count: entitlement.monthlyRequestLimit })}
                 </p>
 
+                {/* The whole of the trial disclosure, in the one place a visitor
+                    on a trial looks: what it is, when it ends, that it continues
+                    on its own, and how to stop it. */}
+                {trialing ? (
+                  <p data-testid="billing-trial-notice" className="mt-1 text-caption text-ink-dim">
+                    {periodEnd === null
+                      ? t("billing.trialNotice")
+                      : t("billing.trialNoticeDated", { date: periodEnd })}
+                  </p>
+                ) : null}
+
                 {/* Shown only where the grant and the charge can disagree, which
                     is decided from `source` - comparing the two tiers would be
                     exactly the branch AD-1 forbids. */}
@@ -347,10 +363,14 @@ export function BillingPanel({
                 <>
                   {periodEnd === null ? null : (
                     <span>
-                      {ending ? t("billing.endsOn") : t("billing.renewsOn")}{" "}
+                      {ending
+                        ? t("billing.endsOn")
+                        : trialing
+                          ? t("billing.trialEndsOn")
+                          : t("billing.renewsOn")}{" "}
                       <span data-testid="billing-period-end">{periodEnd}</span>
                       {!ending && listPrice !== null
-                        ? ` ${t("billing.renewsFor", { amount: formatPlanAmount(listPrice, locale) })}`
+                        ? ` ${t(trialing ? "billing.thenCharged" : "billing.renewsFor", { amount: formatPlanAmount(listPrice, locale) })}`
                         : null}
                       .{" "}
                     </span>
@@ -448,15 +468,35 @@ export function BillingPanel({
                       : (entry.monthly ?? entry.yearly);
                   if (plan === null) return null;
                   const savings = plan.interval === "year" ? yearlySavings(entry) : null;
+                  // Monthly only, and only for an account that has never
+                  // subscribed: the trial Price is a monthly Price, and the
+                  // yearly tab is the place to buy a year outright.
+                  const trial =
+                    view.trialEligible && plan.interval === "month"
+                      ? trialPlanForTier(view.plans, entry.tier)
+                      : null;
                   return (
                     <li
                       key={entry.tier}
                       className="flex flex-col gap-4 rounded-xl bg-gradient-to-br from-[#EDF0FD] via-[#F0EFFD] to-[#F4EEFB] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6"
                     >
                       <div className="min-w-0">
-                        <p className="font-display text-lg font-semibold tracking-[-0.015em] text-ink">
-                          {tierDisplayName(t, entry.tier)}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <p className="font-display text-lg font-semibold tracking-[-0.015em] text-ink">
+                            {tierDisplayName(t, entry.tier)}
+                          </p>
+                          {trial === null ? null : (
+                            <Badge
+                              data-testid={`billing-trial-badge-${entry.tier}`}
+                              variant="brand"
+                              className="rounded-full px-2"
+                            >
+                              {t("billing.trialBadge", {
+                                count: trial.trial_period_days ?? 0,
+                              })}
+                            </Badge>
+                          )}
+                        </div>
                         <p className="mt-1.5 text-body text-ink-dim">
                           {plan.capabilities
                             .map((capability) => capabilityLabel(t, capability))
@@ -506,18 +546,57 @@ export function BillingPanel({
                             </p>
                           ) : null}
                         </div>
-                        <Button
-                          className={PILL_BUTTON_CLASS}
-                          data-testid={`billing-plan-${plan.lookup_key}`}
-                          disabled={busy}
-                          onClick={() => void beginCheckout(plan.lookup_key)}
-                        >
-                          {busy
-                            ? t("billing.opening")
-                            : view.subscriptionLive
-                              ? t("billing.switchPlan")
-                              : t("billing.choosePlan")}
-                        </Button>
+                        {trial === null ? (
+                          <Button
+                            className={PILL_BUTTON_CLASS}
+                            data-testid={`billing-plan-${plan.lookup_key}`}
+                            disabled={busy}
+                            onClick={() => void beginCheckout(plan.lookup_key)}
+                          >
+                            {busy
+                              ? t("billing.opening")
+                              : view.subscriptionLive
+                                ? t("billing.switchPlan")
+                                : t("billing.choosePlan")}
+                          </Button>
+                        ) : (
+                          <div className="flex flex-col gap-2 sm:items-end">
+                            <Button
+                              className={PILL_BUTTON_CLASS}
+                              data-testid={`billing-plan-${trial.lookup_key}`}
+                              disabled={busy}
+                              onClick={() => void beginCheckout(trial.lookup_key)}
+                            >
+                              {busy
+                                ? t("billing.opening")
+                                : t("billing.startTrial", {
+                                    count: trial.trial_period_days ?? 0,
+                                  })}
+                            </Button>
+                            {/* Stated beside the button, not behind a link: the
+                                price after the trial, that it renews on its own,
+                                that a card is taken now, and how to stop it. */}
+                            <p
+                              data-testid={`billing-trial-terms-${entry.tier}`}
+                              className="max-w-sm text-caption text-ink-dim sm:text-right"
+                            >
+                              {t("billing.trialTerms", {
+                                count: trial.trial_period_days ?? 0,
+                                amount: formatPlanAmount(plan, locale),
+                                interval: t(shortIntervalKey(plan)),
+                              })}
+                            </p>
+                            <Button
+                              variant="outline"
+                              className={PILL_BUTTON_CLASS}
+                              data-testid={`billing-plan-${plan.lookup_key}`}
+                              disabled={busy}
+                              onClick={() => void beginCheckout(plan.lookup_key)}
+                            >
+                              {busy ? t("billing.opening") : t("billing.skipTrial")}
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     </li>
                   );

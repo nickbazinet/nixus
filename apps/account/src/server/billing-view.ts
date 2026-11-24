@@ -72,6 +72,23 @@ export interface BillingView {
    * stays true for a finished subscription so an invoice remains reachable.
    */
   readonly subscriptionLive: boolean;
+  /**
+   * Whether a published free trial may be offered to this account.
+   *
+   * The test is "no Stripe state has ever converged" — the only evidence in the
+   * contract that no commercial relationship exists — so an account that has
+   * subscribed before, including one whose subscription has since ended, is
+   * offered the ordinary price instead. An admin-granted account is excluded
+   * too: Nixus already gave it the plan, so a trial of it is not an offer.
+   *
+   * This is best-effort and deliberately not a gate: Stripe has no per-customer
+   * "one trial ever" rule, so a determined visitor can still reach a second
+   * trial (a second Nixus account, say). `POST /checkout` accepts the trial
+   * Price from anyone who has no live subscription, exactly as it accepts every
+   * other published Price, and the Terms reserve the right to refuse a repeat
+   * trial. See docs/runbooks/billing-operations.md §3b.
+   */
+  readonly trialEligible: boolean;
   readonly error: BillingErrorCode | null;
 }
 
@@ -81,6 +98,7 @@ export const ANONYMOUS_BILLING_VIEW: BillingView = {
   plans: [],
   portalAvailable: false,
   subscriptionLive: false,
+  trialEligible: false,
   error: null,
 };
 
@@ -166,6 +184,10 @@ export async function loadBillingSnapshot(api: BillingApi): Promise<BillingView>
       entitlement !== null &&
       entitlement.stripeState !== null &&
       grantsCapabilities(entitlement.stripeState.status),
+    trialEligible:
+      entitlement !== null &&
+      entitlement.stripeState === null &&
+      entitlement.source !== "admin",
     error,
   };
 }

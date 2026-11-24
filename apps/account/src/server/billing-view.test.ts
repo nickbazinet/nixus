@@ -168,6 +168,7 @@ describe("loadBillingSnapshot", () => {
     expect(view.plans.map((plan) => plan.lookup_key)).toEqual([
       "classic_monthly_cad",
       "advance_monthly_cad",
+      "advance_trial",
     ]);
   });
 
@@ -219,6 +220,49 @@ describe("loadBillingSnapshot", () => {
     expect(view.subscriptionLive).toBe(false);
   });
 
+  /*
+   * Who a free trial may be offered to. The test is "no Stripe state has ever
+   * converged", which is the only evidence in the contract that no commercial
+   * relationship exists — so a former subscriber is offered the ordinary price,
+   * not a second trial. It is best-effort and not a gate: Stripe has no
+   * one-trial-per-customer rule (runbook §3b).
+   */
+  it("offers a trial to a signed-in account that has never subscribed", async () => {
+    const view = await loadBillingSnapshot(
+      api({ entitlement: ok(FREE), plans: ok(FIXTURES.plan_catalog) }),
+    );
+
+    expect(view.entitlement?.stripeState).toBeNull();
+    expect(view.trialEligible).toBe(true);
+  });
+
+  it.each([
+    ["a live subscriber", PAID],
+    [
+      "a former subscriber whose subscription has ended",
+      {
+        ...PAID,
+        status: "canceled",
+        stripe_state: { ...PAID.stripe_state, status: "canceled" },
+      } as EntitlementResponse,
+    ],
+    ["an account Nixus granted the plan to", GRANT_ONLY],
+  ])("offers no trial to %s", async (_label, entitlement) => {
+    const view = await loadBillingSnapshot(
+      api({ entitlement: ok(entitlement), plans: ok(FIXTURES.plan_catalog) }),
+    );
+
+    expect(view.trialEligible).toBe(false);
+  });
+
+  it("offers no trial when the entitlement could not be read at all", async () => {
+    const view = await loadBillingSnapshot(
+      api({ entitlement: refused("unavailable"), plans: ok(FIXTURES.plan_catalog) }),
+    );
+
+    expect(view.trialEligible).toBe(false);
+  });
+
   it("sorts the catalog by the operator-controlled display order", async () => {
     const reversed = {
       ...FIXTURES.plan_catalog,
@@ -228,7 +272,7 @@ describe("loadBillingSnapshot", () => {
       api({ entitlement: ok(FREE), plans: ok(reversed) }),
     );
 
-    expect(view.plans.map((plan) => plan.display_order)).toEqual([1, 2]);
+    expect(view.plans.map((plan) => plan.display_order)).toEqual([1, 2, 2]);
   });
 
   it("still shows the plans when the entitlement read is refused", async () => {
@@ -239,7 +283,7 @@ describe("loadBillingSnapshot", () => {
     expect(view.entitlement).toBeNull();
     expect(view.portalAvailable).toBe(false);
     expect(view.error).toBe("unavailable");
-    expect(view.plans).toHaveLength(2);
+    expect(view.plans).toHaveLength(3);
   });
 
   it("still shows the entitlement and the portal when the catalog read is refused", async () => {

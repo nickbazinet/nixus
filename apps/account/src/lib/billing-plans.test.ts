@@ -13,6 +13,7 @@ import {
   resolvePlanDeepLink,
   statusLabel,
   tierDisplayName,
+  trialPlanForTier,
   yearlySavings,
 } from "./billing-plans.ts";
 import { i18nForLocale } from "./i18n.ts";
@@ -36,6 +37,14 @@ describe("resolvePlanDeepLink", () => {
   it("resolves a key the loaded catalog publishes", () => {
     expect(resolvePlanDeepLink(PLANS, "advance_monthly_cad")?.tier).toBe("advance");
     expect(resolvePlanDeepLink(PLANS, "classic_monthly_cad")?.tier).toBe("classic");
+  });
+
+  /* The marketing site's trial CTA links to `?plan=advance_trial`, so the deep
+   * link has to resolve a trial Price exactly like any other published one. */
+  it("resolves the trial Price the pricing page links to", () => {
+    const trial = resolvePlanDeepLink(PLANS, "advance_trial");
+    expect(trial?.tier).toBe("advance");
+    expect(trial?.trial_period_days).toBe(7);
   });
 
   it("ignores a conventionally shaped key the catalog does not publish", () => {
@@ -100,6 +109,12 @@ describe("formatPlanAmount", () => {
 describe("listPriceFor", () => {
   it("finds the one catalog entry carrying a tier", () => {
     expect(listPriceFor(PLANS, "classic")?.lookup_key).toBe("classic_monthly_cad");
+  });
+
+  /* A trial Price names the amount it converts to, so it is not a second list
+   * price: counting it would turn a knowable amount into "more than one". */
+  it("ignores a tier's trial Price when deciding the list price", () => {
+    expect(listPriceFor(PLANS, "advance")?.lookup_key).toBe("advance_monthly_cad");
   });
 
   it("shows nothing for a tier the catalog does not list", () => {
@@ -248,5 +263,86 @@ describe("groupPlansByTier and yearlySavings", () => {
       entry("t", "year", 5000, 1, "USD"),
     ]);
     expect(yearlySavings(mixed[0]!)).toBeNull();
+  });
+});
+
+/*
+ * The trial Price. It names the same tier, the same interval and the same
+ * amount as the plan it leads into, so leaving it in the tier grouping would
+ * show one plan twice at one price — the confusing duplicate, not an offer.
+ */
+describe("trial prices in the plan list", () => {
+  it("keeps the trial Price out of the monthly/yearly grouping", () => {
+    const tiers = groupPlansByTier(PLANS);
+    expect(tiers.map((tier) => tier.tier)).toEqual(["classic", "advance"]);
+    // The ordinary monthly Price, not the trial, is what the Advance row shows.
+    expect(tiers[1]?.monthly?.lookup_key).toBe("advance_monthly_cad");
+    expect(tiers[1]?.yearly).toBeNull();
+  });
+
+  it("offers the tier's trial Price separately", () => {
+    expect(trialPlanForTier(PLANS, "advance")?.lookup_key).toBe("advance_trial");
+    expect(trialPlanForTier(PLANS, "advance")?.trial_period_days).toBe(7);
+  });
+
+  it("offers nothing for a tier with no trial Price, and nothing on an empty catalog", () => {
+    expect(trialPlanForTier(PLANS, "classic")).toBeNull();
+    expect(trialPlanForTier([], "advance")).toBeNull();
+  });
+
+  /* `trial_period_days: 0` is not a trial. The contract says absent is `null`,
+   * but a zero arriving from a newer server must not render "0 days free". */
+  it("treats a zero-day trial as no trial", () => {
+    const zeroed = PLANS.map((plan) =>
+      plan.lookup_key === "advance_trial" ? { ...plan, trial_period_days: 0 } : plan,
+    );
+    expect(trialPlanForTier(zeroed, "advance")).toBeNull();
+    expect(groupPlansByTier(zeroed)).toHaveLength(2);
+  });
+});
+
+/*
+ * The trial disclosure. A trial that converts to a charge has to state the
+ * price after it, that it renews on its own, that a card is taken now, and how
+ * to stop it — in both locales, with the length interpolated from the catalog
+ * rather than written into the sentence.
+ */
+describe("trial copy", () => {
+  const ARGS = { count: 7, amount: "$19.99", interval: "/ month" };
+
+  it.each([
+    ["en", EN],
+    ["fr", FR],
+  ])("interpolates the catalog's trial length in %s", (_locale, i18n) => {
+    for (const key of ["billing.startTrial", "billing.trialBadge", "billing.trialTerms"]) {
+      const text = i18n.t(key, ARGS);
+      expect(text, key).not.toContain(key);
+      expect(text, key).not.toContain("{{");
+      expect(text, key).toContain("7");
+    }
+  });
+
+  it("states the price after the trial, the card and the way out", () => {
+    const en = EN.t("billing.trialTerms", ARGS);
+    expect(en).toContain("$19.99");
+    expect(en).toMatch(/card is required/i);
+    expect(en).toMatch(/cancel/i);
+    expect(en).toMatch(/will not be charged/i);
+
+    const fr = FR.t("billing.trialTerms", ARGS);
+    expect(fr).toContain("$19.99");
+    expect(fr).toMatch(/carte est exigée/i);
+    expect(fr).toMatch(/[Aa]nnulez/);
+  });
+
+  it("says a trial continues automatically rather than just ending", () => {
+    for (const i18n of [EN, FR]) {
+      const dated = i18n.t("billing.trialNoticeDated", { date: "1 December 2026" });
+      expect(dated).toContain("1 December 2026");
+      expect(dated).not.toContain("{{");
+      expect(i18n.t("billing.trialNotice")).not.toContain("{{");
+    }
+    expect(EN.t("billing.trialNotice")).toMatch(/continues automatically/i);
+    expect(FR.t("billing.trialNotice")).toMatch(/automatiquement/i);
   });
 });

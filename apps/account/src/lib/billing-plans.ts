@@ -1,6 +1,7 @@
 import type { TFunction } from "i18next";
 import {
   isPlanLookupKeyShaped,
+  isTrialPlan,
   type BillingCapability,
   type EntitlementStatus,
   type PlanCatalogEntry,
@@ -85,13 +86,37 @@ export function formatPlanAmount(plan: PlanCatalogEntry, locale: Locale): string
  * read from the catalog. It is shown only when exactly one entry carries the
  * subscription's tier: with a monthly and a yearly price for one tier there is
  * no telling which one is being paid, and a wrong amount is worse than none.
+ *
+ * Trial entries are not candidates. A trial Price names the amount it converts
+ * to, so it is not a second list price — counting it would only ever turn a
+ * knowable amount into "more than one".
  */
 export function listPriceFor(
   plans: readonly PlanCatalogEntry[],
   tier: string,
 ): PlanCatalogEntry | null {
-  const matches = plans.filter((plan) => plan.tier === tier);
+  const matches = plans.filter(
+    (plan) => plan.tier === tier && !isTrialPlan(plan),
+  );
   return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+/**
+ * The trial Price offered for a tier, or `null` when none is published.
+ *
+ * A trial Price is an ordinary catalog entry carrying `trial_period_days`, on
+ * the same tier and at the same amount as the plan it leads into — so without
+ * this split the plan list would show one tier twice at one price, which is the
+ * confusing duplicate rather than an offer. The first in display order wins; two
+ * trials on one tier is a configuration mistake, not a choice to present.
+ */
+export function trialPlanForTier(
+  plans: readonly PlanCatalogEntry[],
+  tier: string,
+): PlanCatalogEntry | null {
+  return (
+    plans.find((plan) => plan.tier === tier && isTrialPlan(plan)) ?? null
+  );
 }
 
 /** One tier's published prices, so a monthly and a yearly entry read as one plan. */
@@ -105,10 +130,16 @@ export interface TierPlans {
 /**
  * Groups the catalog by its opaque tier code, in display order. The tier is only
  * ever a grouping key here, never compared to a literal (AD-1).
+ *
+ * Trial entries are excluded HERE rather than at the call site: they share a
+ * tier and an interval with the plan they lead into, so one left in would
+ * replace that plan's own entry and the list would advertise the trial as if it
+ * were the ordinary price. `trialPlanForTier` is how a trial is offered.
  */
 export function groupPlansByTier(plans: readonly PlanCatalogEntry[]): TierPlans[] {
   const grouped = new Map<string, TierPlans>();
   for (const plan of plans) {
+    if (isTrialPlan(plan)) continue;
     const current = grouped.get(plan.tier);
     grouped.set(plan.tier, {
       tier: plan.tier,

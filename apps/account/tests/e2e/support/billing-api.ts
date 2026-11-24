@@ -150,6 +150,7 @@ const PLANS = {
       display_order: 1,
       capabilities: ["household_net_worth", "multi_device_sync"],
       monthly_request_limit: null,
+      trial_period_days: null,
     },
     {
       tier: "advance",
@@ -160,6 +161,7 @@ const PLANS = {
       display_order: 2,
       capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
       monthly_request_limit: 1000,
+      trial_period_days: null,
     },
   ],
   cache_ttl_seconds: 300,
@@ -178,6 +180,7 @@ const YEARLY_PLANS = {
       display_order: 1,
       capabilities: ["household_net_worth", "multi_device_sync"],
       monthly_request_limit: null,
+      trial_period_days: null,
     },
     {
       tier: "advance",
@@ -188,6 +191,7 @@ const YEARLY_PLANS = {
       display_order: 2,
       capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
       monthly_request_limit: 1000,
+      trial_period_days: null,
     },
   ],
 };
