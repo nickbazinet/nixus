@@ -572,6 +572,7 @@ describe("the Checkout Session parameter set", () => {
       customerId: "cus_existing",
       priceId: "price_classic",
       promotionCodeId: null,
+      trialPeriodDays: null,
     });
 
   it("is a Managed Payments subscription carrying the sub on both halves", () => {
@@ -609,6 +610,7 @@ describe("the Checkout Session parameter set", () => {
         customerId: "cus_existing",
         priceId: "price_classic",
         promotionCodeId,
+        trialPeriodDays: 7,
       }) as Record<string, unknown>;
 
       for (const key of forbidden) {
@@ -650,6 +652,7 @@ describe("the Checkout Session parameter set", () => {
       customerId: "cus_existing",
       priceId: "price_classic",
       promotionCodeId: "promo_abc123",
+      trialPeriodDays: null,
     }) as Record<string, unknown>;
 
     expect(params.discounts).toEqual([{ promotion_code: "promo_abc123" }]);
@@ -688,6 +691,115 @@ describe("the Checkout Session parameter set", () => {
     expect(serialized).not.toContain("999");
     expect(serialized).not.toContain("unit_amount");
     expect(serialized).not.toContain("cad");
+  });
+});
+
+/*
+ * The free trial. Checkout reads a trial from `subscription_data` and from
+ * nowhere else - a trial configured on the Price object is not honoured here -
+ * so the length travels from Stripe PRICE metadata through the catalog into
+ * this one parameter, and a Price with no trial produces no trial key at all.
+ */
+describe("a Price the catalog publishes with a free trial", () => {
+  const ADVANCE = stripeProduct({
+    id: "prod_advance",
+    metadata: {
+      nixus_tier: "advance",
+      nixus_capabilities: "hosted_ai,multi_device_sync,household_net_worth",
+      nixus_monthly_request_limit: "1000",
+    },
+  });
+
+  function seedTrialCatalog(): void {
+    installBillingEnvironment({
+      CATALOG_LOOKUP_KEYS: "advance_monthly_cad,advance_trial",
+    });
+    stripe.seedPrices([
+      stripePrice({
+        id: "price_advance",
+        lookupKey: "advance_monthly_cad",
+        product: ADVANCE,
+      }),
+      stripePrice({
+        id: "price_advance_trial",
+        lookupKey: "advance_trial",
+        product: ADVANCE,
+        metadata: { nixus_trial_days: "7" },
+      }),
+    ]);
+    resetCatalogCacheForTesting();
+  }
+
+  it("opens the session with the catalog's trial length on subscription_data", async () => {
+    seedTrialCatalog();
+    expect((await call({ planLookupKey: "advance_trial" })).destination).toBe(
+      "checkout",
+    );
+
+    const params = stripe.paramsOf("checkout.sessions.create") as {
+      line_items: { price: string }[];
+      subscription_data: Record<string, unknown>;
+    };
+    expect(params.line_items[0]?.price).toBe("price_advance_trial");
+    expect(params.subscription_data.trial_period_days).toBe(7);
+    // The sub still travels on both halves of AD-8's linkage.
+    expect(params.subscription_data.metadata).toEqual({ nixus_sub: SUB_A });
+  });
+
+  /* The card is collected UP FRONT, which is what the offer states. That is the
+   * default, so `payment_method_collection` is absent rather than set - and
+   * `trial_settings` exists only for the missing-card case, which cannot arise. */
+  it("collects the card up front and configures no missing-card behaviour", async () => {
+    seedTrialCatalog();
+    await call({ planLookupKey: "advance_trial" });
+
+    const params = stripe.paramsOf("checkout.sessions.create") as Record<
+      string,
+      unknown
+    >;
+    expect(Object.hasOwn(params, "payment_method_collection")).toBe(false);
+    expect(
+      Object.hasOwn(params.subscription_data as object, "trial_settings"),
+    ).toBe(false);
+  });
+
+  it("sends no trial member at all for the plan sold without one", async () => {
+    seedTrialCatalog();
+    await call({ planLookupKey: "advance_monthly_cad" });
+
+    const subscriptionData = (
+      stripe.paramsOf("checkout.sessions.create") as {
+        subscription_data: object;
+      }
+    ).subscription_data;
+    expect(Object.hasOwn(subscriptionData, "trial_period_days")).toBe(false);
+  });
+
+  /* AD-18 is unchanged by the trial: a trialing subscription is live, so a
+   * second purchase attempt is a plan change in the portal. */
+  it("routes an account already trialing to the portal", async () => {
+    seedTrialCatalog();
+    dynamo
+      .seed({
+        pk: partitionKey(SUB_A),
+        sk: "ENTITLEMENT",
+        tier: "advance",
+        capabilities: ["hosted_ai"],
+        status: "trialing",
+        source: "stripe",
+        statement: "NXS1.a.b",
+        version: 2,
+      })
+      .seed({
+        pk: partitionKey(SUB_A),
+        sk: "BILLING_CUSTOMER",
+        stripe_customer_id: "cus_existing",
+      });
+
+    expect((await call({ planLookupKey: "advance_trial" })).destination).toBe(
+      "portal",
+    );
+    expect(stripe.countOf("checkout.sessions.create")).toBe(0);
   });
 });
 

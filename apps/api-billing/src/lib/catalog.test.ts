@@ -5,6 +5,7 @@ import {
   CATALOG_DISPLAY_ORDER_METADATA_KEY,
   CATALOG_MONTHLY_REQUEST_LIMIT_METADATA_KEY,
   CATALOG_TIER_METADATA_KEY,
+  CATALOG_TRIAL_DAYS_METADATA_KEY,
   catalogCacheTtlSeconds,
   catalogLookupKeys,
   deriveProductGrant,
@@ -157,6 +158,12 @@ describe("the metadata contract (AD-6)", () => {
       "nixus_monthly_request_limit",
     );
     expect(CATALOG_DISPLAY_ORDER_METADATA_KEY).toBe("nixus_display_order");
+  });
+
+  /* The one key that lives on the PRICE: two Prices of one tier differ in it,
+   * so it cannot be a Product key. */
+  it("names the price-level trial key", () => {
+    expect(CATALOG_TRIAL_DAYS_METADATA_KEY).toBe("nixus_trial_days");
   });
 
   it("derives the tier, the capability list and the limit from metadata", () => {
@@ -402,6 +409,96 @@ describe("the public catalog", () => {
     );
     expect(planForLookupKey(catalog, "privilege_monthly_cad")).toBeNull();
   });
+});
+
+/*
+ * The trial Price. Checkout honours a trial only when the SESSION asks for one,
+ * so the length has to be published for the session to be able to carry it -
+ * and for a surface to tell a trial Price apart from a second full-price Price
+ * on the same tier.
+ */
+describe("a Price sold with a free trial", () => {
+  const ADVANCE = stripeProduct({
+    id: "prod_advance",
+    metadata: {
+      nixus_tier: "advance",
+      nixus_capabilities: "hosted_ai,multi_device_sync,household_net_worth",
+      nixus_monthly_request_limit: "1000",
+    },
+  });
+
+  function seedTrial(trialDays: string | undefined): void {
+    installBillingEnvironment({
+      CATALOG_LOOKUP_KEYS: "advance_monthly_cad,advance_trial",
+    });
+    resetCatalogCacheForTesting();
+    stripe.seedPrices([
+      stripePrice({
+        id: "price_advance",
+        lookupKey: "advance_monthly_cad",
+        unitAmount: 1999,
+        product: ADVANCE,
+      }),
+      stripePrice({
+        id: "price_advance_trial",
+        lookupKey: "advance_trial",
+        unitAmount: 1999,
+        product: ADVANCE,
+        metadata: trialDays === undefined ? {} : { nixus_trial_days: trialDays },
+      }),
+    ]);
+  }
+
+  it("publishes the trial length from the Price's own metadata", async () => {
+    seedTrial("7");
+    const catalog = await getCatalog({ now: NOW, requestId: REQUEST_ID });
+
+    expect(
+      catalog.plans.map((plan) => [
+        plan.entry.lookup_key,
+        plan.entry.trial_period_days,
+      ]),
+    ).toEqual([
+      ["advance_monthly_cad", null],
+      ["advance_trial", 7],
+    ]);
+    // The trial Price is an ordinary entry otherwise: same tier, same grant and
+    // the same amount it converts to.
+    const trial = planForLookupKey(catalog, "advance_trial")!;
+    expect(trial.entry.tier).toBe("advance");
+    expect(trial.entry.capabilities).toEqual([
+      "hosted_ai",
+      "household_net_worth",
+      "multi_device_sync",
+    ]);
+    expect(metrics.names).toEqual([]);
+  });
+
+  it("publishes null for a Price with no trial metadata", async () => {
+    seedTrial(undefined);
+    const catalog = await getCatalog({ now: NOW, requestId: REQUEST_ID });
+
+    expect(planForLookupKey(catalog, "advance_trial")?.entry.trial_period_days)
+      .toBeNull();
+    expect(metrics.names).toEqual([]);
+  });
+
+  /* A Price advertised as a trial that Checkout would open at FULL PRICE is the
+   * one outcome a customer would call fraud, so an unparseable length refuses
+   * the Price outright and alarms rather than degrading to a sale. */
+  it.each([["0"], ["-7"], ["7.5"], ["a week"], ["731"]])(
+    "refuses the Price and alarms on the trial length %j",
+    async (value) => {
+      seedTrial(value);
+      const catalog = await getCatalog({ now: NOW, requestId: REQUEST_ID });
+
+      expect(catalog.plans.map((plan) => plan.entry.lookup_key)).toEqual([
+        "advance_monthly_cad",
+      ]);
+      expect(planForLookupKey(catalog, "advance_trial")).toBeNull();
+      expect(metrics.names).toEqual(["CatalogMetadataMalformed"]);
+    },
+  );
 });
 
 describe("ONE cache, bounded by ONE TTL (AD-6)", () => {

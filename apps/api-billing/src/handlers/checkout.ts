@@ -93,14 +93,33 @@ async function resolvePromotionCode(args: {
  * serialises to an empty string and still conflicts. So exactly one key is
  * constructed: `allow_promotion_codes: true` when no code was supplied,
  * `discounts` when one was.
+ *
+ * `subscription_data.trial_period_days` is the ONLY way a Checkout Session
+ * starts a free trial. Stripe's Checkout guide names `trial_period_days` and
+ * `trial_end` under `subscription_data` and nothing else: a trial configured on
+ * the Price is not read here (`recurring.trial_period_days` is not even a
+ * creatable Price parameter), and the newer Trial Offer objects are documented
+ * as unsupported by Checkout Sessions outside a private preview. So the length
+ * travels from Stripe PRICE metadata through the catalog to this parameter, and
+ * a Price with no trial produces NO trial key at all.
+ *
+ * Managed Payments supports a trialing subscription - its changelog records the
+ * trial confirmation email and optional no-card trials - and
+ * `subscription_data.trial_period_days` is absent from its forbidden-parameter
+ * table. Two parameters are deliberately NOT sent with it:
+ * `payment_method_collection`, so the default `always` stands and the card is
+ * collected up front as the offer states, and `trial_settings`, whose only
+ * purpose is the missing-payment-method case that therefore cannot arise.
  */
 export function checkoutSessionParams(args: {
   readonly sub: string;
   readonly customerId: string;
   readonly priceId: string;
   readonly promotionCodeId: string | null;
+  /** From the catalog entry's `trial_period_days`. `null` is "no trial". */
+  readonly trialPeriodDays: number | null;
 }): Stripe.Checkout.SessionCreateParams {
-  const { sub, promotionCodeId } = args;
+  const { sub, promotionCodeId, trialPeriodDays } = args;
 
   return {
     mode: "subscription",
@@ -111,7 +130,12 @@ export function checkoutSessionParams(args: {
     // `checkout.session.completed` event, and `subscription_data.metadata` puts
     // it on the Subscription so it appears on every later event.
     client_reference_id: sub,
-    subscription_data: { metadata: { [SUBSCRIPTION_SUB_METADATA_KEY]: sub } },
+    subscription_data: {
+      metadata: { [SUBSCRIPTION_SUB_METADATA_KEY]: sub },
+      ...(trialPeriodDays === null
+        ? {}
+        : { trial_period_days: trialPeriodDays }),
+    },
     success_url: checkoutSuccessUrl(),
     cancel_url: checkoutCancelUrl(),
     ...(promotionCodeId === null
@@ -325,6 +349,7 @@ export async function handleCheckout(args: {
         customerId,
         priceId: plan.priceId,
         promotionCodeId,
+        trialPeriodDays: plan.entry.trial_period_days,
       }),
     );
   } catch (error) {

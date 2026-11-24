@@ -26,6 +26,7 @@ import {
   ENTITLEMENT_STATUSES,
   PLAN_INTERVALS,
   PLAN_LOOKUP_KEY_MAX_LENGTH,
+  PLAN_TRIAL_MAX_DAYS,
   PROMOTION_CODE_MAX_LENGTH,
   grantsCapability,
   isBillingCapability,
@@ -34,6 +35,7 @@ import {
   isEntitlementStatus,
   isPlanLookupKeyShaped,
   isPromotionCodeShaped,
+  isTrialPlan,
   toBillingCapabilities,
   toBillingErrorCode,
   toEntitlementStatus,
@@ -69,6 +71,7 @@ const NEVER_ECHOED = [
   "LAUNCH2026",
   "classic_monthly_cad",
   "advance_monthly_cad",
+  "advance_trial",
   "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
   "9b2c4a16-7d58-4f1e-bc33-2a6f0e5d7c91",
   "checkout.stripe.com",
@@ -96,6 +99,7 @@ const PLAN_CATALOG_ENTRY_KEYS = keysOf<PlanCatalogEntry>({
   display_order: true,
   capabilities: true,
   monthly_request_limit: true,
+  trial_period_days: true,
 });
 
 const PLAN_CATALOG_RESPONSE_KEYS = keysOf<PlanCatalogResponse>({
@@ -349,6 +353,7 @@ function readPlanCatalogEntry(value: RawRecord): PlanCatalogEntry {
     display_order: integer(value, "display_order"),
     capabilities: capabilityList(value, "capabilities"),
     monthly_request_limit: nullableInteger(value, "monthly_request_limit"),
+    trial_period_days: nullableInteger(value, "trial_period_days"),
   };
 }
 
@@ -980,12 +985,13 @@ function expectStatementShape(statement: string): void {
 describe("billing contract: plan catalog fixture", () => {
   const catalog = FIXTURES.plan_catalog;
 
-  it("publishes the two launch plans in display order", () => {
+  it("publishes the launch plans in display order", () => {
     expect(catalog.plans.map((plan) => plan.lookup_key)).toEqual([
       "classic_monthly_cad",
       "advance_monthly_cad",
+      "advance_trial",
     ]);
-    expect(catalog.plans.map((plan) => plan.display_order)).toEqual([1, 2]);
+    expect(catalog.plans.map((plan) => plan.display_order)).toEqual([1, 2, 2]);
     for (const plan of catalog.plans) {
       expect(plan.currency).toBe("CAD");
       expect(plan.currency).toMatch(/^[A-Z]{3}$/);
@@ -998,6 +1004,29 @@ describe("billing contract: plan catalog fixture", () => {
       expect(plan.tier.length).toBeGreaterThan(0);
     }
     expect(catalog.cache_ttl_seconds).toBeGreaterThan(0);
+  });
+
+  /* A trial Price is an ORDINARY catalog entry carrying a trial length. It names the same
+   * tier and the same post-trial amount as the plan it leads into, which is exactly why a
+   * surface needs `trial_period_days` to tell the two apart instead of listing one plan
+   * twice. */
+  it("marks the trial Price, and only it, as a trial", () => {
+    const trials = catalog.plans.filter(isTrialPlan);
+    expect(trials.map((plan) => plan.lookup_key)).toEqual(["advance_trial"]);
+
+    const [trial] = trials;
+    expect(trial!.trial_period_days).toBe(7);
+    expect(trial!.trial_period_days!).toBeLessThanOrEqual(PLAN_TRIAL_MAX_DAYS);
+
+    const advance = catalog.plans.find(
+      (plan) => plan.lookup_key === "advance_monthly_cad",
+    )!;
+    // The amount after the trial, the tier and the grant are the ordinary plan's.
+    expect(trial!.tier).toBe(advance.tier);
+    expect(trial!.unit_amount_cents).toBe(advance.unit_amount_cents);
+    expect(trial!.capabilities).toEqual(advance.capabilities);
+    // A plan sold with no trial carries `null`, never `0` (absent is null, AD-13).
+    expect(advance.trial_period_days).toBeNull();
   });
 
   it("grants Classic its two capabilities and Advance all three", () => {

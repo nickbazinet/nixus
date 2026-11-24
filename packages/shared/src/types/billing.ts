@@ -107,7 +107,32 @@ export interface PlanCatalogEntry {
   /** Validated against `BILLING_CAPABILITIES`; an unrecognised name was dropped server-side. */
   readonly capabilities: readonly BillingCapability[];
   readonly monthly_request_limit: number | null;
+  /**
+   * Length of the free trial this Price is sold with, in days, or `null` for a Price with no
+   * trial. Operator-controlled from Stripe PRICE metadata `nixus_trial_days` (billing AD-6) —
+   * price-level and not product-level, because one tier's Product carries its trial Price
+   * beside its ordinary ones.
+   *
+   * It is on the wire because Stripe Checkout honours a trial only when the SESSION asks for
+   * one (`subscription_data.trial_period_days`): a trial configured on the Price object is
+   * ignored by Checkout. So the authority has to read it, pass it at session creation, and
+   * publish it — otherwise a surface cannot tell a trial Price apart from a second full-price
+   * Price for the same tier, and would advertise one plan twice.
+   */
+  readonly trial_period_days: number | null;
 }
+
+/** True when this catalog entry is sold with a free trial. The only shape that test may take. */
+export function isTrialPlan(plan: PlanCatalogEntry): boolean {
+  return plan.trial_period_days !== null && plan.trial_period_days > 0;
+}
+
+/**
+ * The widest trial Stripe accepts, in days (two years). A configured value above it is
+ * refused rather than clamped: a `nixus_trial_days` Stripe would reject at checkout is a
+ * typo, and selling the plan with no trial at all would be worse than not selling it.
+ */
+export const PLAN_TRIAL_MAX_DAYS = 730;
 
 /**
  * `GET /v1/billing/plans`. Public, unauthenticated, cacheable.

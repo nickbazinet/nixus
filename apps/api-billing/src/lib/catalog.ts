@@ -1,6 +1,7 @@
 import {
   isPlanLookupKeyShaped,
   toBillingCapabilities,
+  PLAN_TRIAL_MAX_DAYS,
   type BillingCapability,
   type PlanCatalogEntry,
   type PlanInterval,
@@ -29,6 +30,19 @@ import { getStripeClient } from "./stripe.ts";
  * MALFORMED case AD-6 defines rather than discovers: no capability is granted and
  * `CatalogMetadataMalformed` is emitted so the alarm fires. A typo therefore
  * never grants a capability, and never silently revokes one without an alert.
+ *
+ * One key lives on the PRICE rather than on the Product, because it varies
+ * between two Prices of the same tier:
+ *
+ *   nixus_trial_days             optional  positive integer <= PLAN_TRIAL_MAX_DAYS
+ *
+ * It exists because Stripe Checkout honours a free trial only when the SESSION
+ * asks for one: `subscription_data.trial_period_days` (or `trial_end`) is the
+ * documented parameter, a trial configured on the Price object is not read by
+ * Checkout, and the newer Trial Offer objects are not supported by Checkout
+ * Sessions outside a private preview. So the trial length has to reach this
+ * service as configuration and be passed at session creation - which keeps it
+ * operator-owned in Stripe rather than a literal in a handler.
  */
 
 export const CATALOG_TIER_METADATA_KEY = "nixus_tier";
@@ -36,6 +50,7 @@ export const CATALOG_CAPABILITIES_METADATA_KEY = "nixus_capabilities";
 export const CATALOG_MONTHLY_REQUEST_LIMIT_METADATA_KEY =
   "nixus_monthly_request_limit";
 export const CATALOG_DISPLAY_ORDER_METADATA_KEY = "nixus_display_order";
+export const CATALOG_TRIAL_DAYS_METADATA_KEY = "nixus_trial_days";
 
 /** The same shape `validateAdminOverrideRequest` enforces, so one tier code is
  * acceptable to both writers. The value is never compared, only carried (AD-1). */
@@ -121,34 +136,53 @@ export function expandedProductOf(price: Stripe.Price): Stripe.Product {
 }
 
 function readMetadata(
-  product: Stripe.Product,
+  metadata: Stripe.Metadata | null | undefined,
   key: string,
 ): string | undefined {
-  const value = product.metadata[key];
+  const value = metadata?.[key];
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
 function readPositiveInteger(
-  product: Stripe.Product,
+  metadata: Stripe.Metadata | null | undefined,
   key: string,
+  maximum = Number.MAX_SAFE_INTEGER,
 ): { readonly value: number | null; readonly unparseable: boolean } {
-  const raw = readMetadata(product, key);
+  const raw = readMetadata(metadata, key);
   if (raw === undefined) return { value: null, unparseable: false };
 
   const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  if (!Number.isInteger(parsed) || parsed <= 0 || parsed > maximum) {
     return { value: null, unparseable: true };
   }
   return { value: parsed, unparseable: false };
 }
 
 function readTier(product: Stripe.Product): string | null {
-  const tier = readMetadata(product, CATALOG_TIER_METADATA_KEY);
+  const tier = readMetadata(product.metadata, CATALOG_TIER_METADATA_KEY);
   if (tier === undefined) return null;
   if (tier.length > TIER_MAX_LENGTH || !TIER_PATTERN.test(tier)) return null;
   return tier;
+}
+
+/**
+ * The trial length this Price is sold with, read from PRICE metadata.
+ *
+ * An out-of-range or non-integer value is `unparseable` rather than "no trial":
+ * a Price advertised as a trial that Checkout would open at full price is the
+ * one outcome a customer would call fraud, so it is refused and alarmed like any
+ * other malformed metadata (AD-6) instead of degrading to a sale.
+ */
+function readTrialDays(
+  price: Stripe.Price,
+): { readonly value: number | null; readonly unparseable: boolean } {
+  return readPositiveInteger(
+    price.metadata,
+    CATALOG_TRIAL_DAYS_METADATA_KEY,
+    PLAN_TRIAL_MAX_DAYS,
+  );
 }
 
 /**
@@ -161,7 +195,7 @@ function readCapabilities(
   product: Stripe.Product,
   requestId: string,
 ): { readonly capabilities: readonly BillingCapability[]; readonly usable: boolean } {
-  const raw = readMetadata(product, CATALOG_CAPABILITIES_METADATA_KEY);
+  const raw = readMetadata(product.metadata, CATALOG_CAPABILITIES_METADATA_KEY);
   if (raw === undefined) return { capabilities: [], usable: false };
 
   const names = raw
@@ -196,10 +230,13 @@ export function deriveProductGrant(args: {
   const tier = readTier(product);
   const { capabilities, usable } = readCapabilities(product, requestId);
   const limit = readPositiveInteger(
-    product,
+    product.metadata,
     CATALOG_MONTHLY_REQUEST_LIMIT_METADATA_KEY,
   );
-  const order = readPositiveInteger(product, CATALOG_DISPLAY_ORDER_METADATA_KEY);
+  const order = readPositiveInteger(
+    product.metadata,
+    CATALOG_DISPLAY_ORDER_METADATA_KEY,
+  );
 
   const malformed =
     tier === null || !usable || limit.unparseable || order.unparseable;
@@ -266,6 +303,12 @@ function toCatalogPlan(args: {
   // defines; that path reads the Product off the subscription, not this list.
   if (grant.malformed) return null;
 
+  const trial = readTrialDays(price);
+  if (trial.unparseable) {
+    void emitBillingMetric("CatalogMetadataMalformed");
+    return null;
+  }
+
   // `display_order` is Stripe metadata when the operator set one, and otherwise
   // the 1-based position of the key in CATALOG_LOOKUP_KEYS - so the configured
   // order is the default and the Dashboard is the override.
@@ -283,6 +326,7 @@ function toCatalogPlan(args: {
       display_order: grant.displayOrder ?? fallbackOrder,
       capabilities: grant.capabilities,
       monthly_request_limit: grant.monthlyRequestLimit,
+      trial_period_days: trial.value,
     },
   };
 }

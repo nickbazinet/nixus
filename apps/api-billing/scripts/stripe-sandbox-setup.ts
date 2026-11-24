@@ -36,6 +36,7 @@ import {
   BILLING_CAPABILITIES,
   type BillingCapability,
   isPlanLookupKeyShaped,
+  PLAN_TRIAL_MAX_DAYS,
 } from "../../../packages/shared/src/types/billing.ts";
 
 /** Pinned, never floating — the version `stripe@23.1.0` ships with. */
@@ -51,12 +52,16 @@ const SAAS_TAX_CODE = "txcd_10103001";
  * The metadata keys the authority reads. These are a CONTRACT with `lib/catalog.ts`: a rename here
  * without a rename there yields a paid-but-capability-less entitlement and an alarm, which is
  * AD-6's defined malformed case working as designed — but it is still an outage for the customer.
+ *
+ * `trialDays` is the one key that goes on the PRICE rather than on the Product: two Prices of one
+ * tier differ in it, and a Product-level key could not express that.
  */
 const METADATA_KEYS = {
   tier: "nixus_tier",
   capabilities: "nixus_capabilities",
   monthlyRequestLimit: "nixus_monthly_request_limit",
   displayOrder: "nixus_display_order",
+  trialDays: "nixus_trial_days",
 } as const;
 
 interface PlanSpec {
@@ -73,11 +78,23 @@ interface PlanSpec {
   /** `null` for a tier that grants no hosted AI, so no per-tier quota applies. */
   readonly monthlyRequestLimit: number | null;
   readonly displayOrder: number;
+  /**
+   * Free-trial length in days, written to PRICE metadata, or `null` for a Price sold with no
+   * trial. `POST /checkout` reads it from the catalog and passes it as the Checkout Session's
+   * `subscription_data.trial_period_days`, which is the ONLY trial a Checkout Session honours —
+   * a trial set on the Price object itself is ignored there, and `recurring.trial_period_days`
+   * is not even a creatable Price parameter.
+   */
+  readonly trialDays: number | null;
 }
 
 /**
  * The launch catalog (INVESTIGATION §4). Classic advertises household net worth ahead of its code,
  * which AD-1 explicitly permits: a capability may be granted before anything consumes it.
+ *
+ * `advance_trial` is the Advance monthly Price sold with a 7-day free trial. It is a SECOND Price
+ * on the same Product, so it carries the same tier, grant and post-trial amount; only its
+ * `lookup_key` and its `nixus_trial_days` differ.
  */
 const PLANS: readonly PlanSpec[] = [
   {
@@ -92,6 +109,7 @@ const PLANS: readonly PlanSpec[] = [
     capabilities: ["household_net_worth", "multi_device_sync"],
     monthlyRequestLimit: null,
     displayOrder: 1,
+    trialDays: null,
   },
   {
     tier: "advance",
@@ -105,6 +123,7 @@ const PLANS: readonly PlanSpec[] = [
     capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
     monthlyRequestLimit: 1000,
     displayOrder: 2,
+    trialDays: null,
   },
   {
     tier: "classic",
@@ -118,6 +137,7 @@ const PLANS: readonly PlanSpec[] = [
     capabilities: ["household_net_worth", "multi_device_sync"],
     monthlyRequestLimit: null,
     displayOrder: 1,
+    trialDays: null,
   },
   {
     tier: "advance",
@@ -131,6 +151,21 @@ const PLANS: readonly PlanSpec[] = [
     capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
     monthlyRequestLimit: 1000,
     displayOrder: 2,
+    trialDays: null,
+  },
+  {
+    tier: "advance",
+    productName: "Nixus Cloud Advance",
+    productDescription:
+      "Nixus Cloud with multi-device sync, household net worth and hosted AI.",
+    lookupKey: "advance_trial",
+    unitAmountCents: 1999,
+    currency: "cad",
+    interval: "month",
+    capabilities: ["hosted_ai", "household_net_worth", "multi_device_sync"],
+    monthlyRequestLimit: 1000,
+    displayOrder: 2,
+    trialDays: 7,
   },
 ];
 
@@ -209,6 +244,16 @@ function assertPlanIsContractValid(plan: PlanSpec): void {
   if (!Number.isInteger(plan.unitAmountCents) || plan.unitAmountCents <= 0) {
     throw new Error(`unit amount must be positive minor units: ${plan.lookupKey}`);
   }
+  if (
+    plan.trialDays !== null &&
+    (!Number.isInteger(plan.trialDays) ||
+      plan.trialDays <= 0 ||
+      plan.trialDays > PLAN_TRIAL_MAX_DAYS)
+  ) {
+    throw new Error(
+      `trial length must be 1..${PLAN_TRIAL_MAX_DAYS} days or null: ${plan.lookupKey}`,
+    );
+  }
 }
 
 function metadataFor(plan: PlanSpec): Stripe.MetadataParam {
@@ -219,6 +264,14 @@ function metadataFor(plan: PlanSpec): Stripe.MetadataParam {
     [METADATA_KEYS.monthlyRequestLimit]:
       plan.monthlyRequestLimit === null ? "" : String(plan.monthlyRequestLimit),
     [METADATA_KEYS.displayOrder]: String(plan.displayOrder),
+  };
+}
+
+/** PRICE metadata. An empty value deletes the key, which is the "no trial" state. */
+function priceMetadataFor(plan: PlanSpec): Stripe.MetadataParam {
+  return {
+    [METADATA_KEYS.trialDays]:
+      plan.trialDays === null ? "" : String(plan.trialDays),
   };
 }
 
@@ -296,6 +349,10 @@ async function convergeProduct(
  * Price created with `transfer_lookup_key: true`: existing subscribers stay on their Price at their
  * grandfathered rate, and new checkouts pick up the new amount. That is AD-6's price-change
  * mechanism, and it is why no amount may ever appear in the Lambda.
+ *
+ * Metadata, unlike the amount, IS mutable — so a changed trial length is an update in place rather
+ * than a superseding Price. Stripe fixes a trial when the subscription is created, so an update
+ * only affects later checkouts and never shortens a trial already running.
  */
 async function convergePrice(
   stripe: Stripe,
@@ -308,15 +365,34 @@ async function convergePrice(
     limit: 1,
   });
   const existing = found.data[0];
+  const priceMetadata = priceMetadataFor(plan);
 
   const matches =
     existing !== undefined &&
     existing.unit_amount === plan.unitAmountCents &&
     existing.currency === plan.currency &&
     existing.recurring?.interval === plan.interval;
+  // `""` and an absent key are the same state in Stripe, and the authority's
+  // `readMetadata` trims and treats empty as absent — so comparing them
+  // literally would report drift on every converging run.
+  const metadataMatches =
+    existing !== undefined &&
+    Object.entries(priceMetadata).every(
+      ([key, value]) => (existing.metadata[key] ?? "") === value,
+    );
 
-  if (matches) {
+  if (matches && metadataMatches) {
     log(APPLY ? "did" : "would", `Price ${existing.id} (${plan.lookupKey}) already correct`);
+    return;
+  }
+
+  if (matches && !metadataMatches) {
+    if (!APPLY) {
+      log("would", `update Price ${existing.id} (${plan.lookupKey}) metadata`);
+      return;
+    }
+    await stripe.prices.update(existing.id, { metadata: priceMetadata });
+    log("did", `updated Price ${existing.id} (${plan.lookupKey}) metadata`);
     return;
   }
 
@@ -336,6 +412,7 @@ async function convergePrice(
     unit_amount: plan.unitAmountCents,
     recurring: { interval: plan.interval },
     lookup_key: plan.lookupKey,
+    metadata: priceMetadata,
     // Moves the key off whatever Price currently holds it, atomically.
     transfer_lookup_key: true,
   });
@@ -543,6 +620,8 @@ async function main(): Promise<void> {
       "  - Managed Payments enablement and the business location\n" +
       "  - the LIVE Customer Portal configuration (the sandbox one is set above)\n" +
       "  - the dunning / smart-retry schedule, which is the ONLY grace period in the system (AD-11)\n" +
+      "  - the free-trial reminder email (Settings > Subscriptions and emails): Stripe sends it 7 days\n" +
+      "    before a trial ends and never in a sandbox, so it has to be switched on in live mode\n" +
       "  - live mode\n",
   );
 }

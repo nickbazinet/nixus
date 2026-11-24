@@ -5,6 +5,7 @@ import {
   CATALOG_DISPLAY_ORDER_METADATA_KEY,
   CATALOG_MONTHLY_REQUEST_LIMIT_METADATA_KEY,
   CATALOG_TIER_METADATA_KEY,
+  CATALOG_TRIAL_DAYS_METADATA_KEY,
 } from "./lib/catalog.ts";
 import { BILLING_METRIC_NAMES } from "./lib/metrics.ts";
 import { loadTemplate, readRepoFile } from "./lib/testing/cfn.ts";
@@ -135,9 +136,27 @@ describe("the three custom metrics and three metadata keys are named off the exp
       CATALOG_CAPABILITIES_METADATA_KEY,
       CATALOG_MONTHLY_REQUEST_LIMIT_METADATA_KEY,
       CATALOG_DISPLAY_ORDER_METADATA_KEY,
+      CATALOG_TRIAL_DAYS_METADATA_KEY,
     ]) {
       expect(RUNBOOK, `metadata key ${key} must be documented`).toContain(key);
     }
+  });
+
+  /* A trial a Checkout Session does not ask for is not applied, so the one
+   * thing an operator must not do - configure the trial on the Price in the
+   * Dashboard and expect it to work - has to be written down. */
+  it("records why a trial length is metadata the session passes, not a Price setting", () => {
+    const section = sectionOf("## 3b. Free trials", "## 4. Discount codes");
+    const prose = proseOf(section);
+
+    expect(prose).toMatch(/subscription_data\.trial_period_days/);
+    expect(prose).toMatch(/not read by Checkout|silently ignored/i);
+    // The fail-closed consequence of a typo, and the card-up-front promise.
+    expect(prose).toMatch(/CatalogMetadataMalformed/);
+    expect(prose).toMatch(/card is collected up front/i);
+    // And the honest bound: Stripe cannot prevent a repeat trial.
+    expect(prose).toMatch(/[Rr]epeat trials are NOT prevented|repeat trial/);
+    expect(prose).toMatch(/reminder email/i);
   });
 
   it("states the CatalogMetadataMalformed consequence as paid-but-capability-less", () => {

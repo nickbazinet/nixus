@@ -21,6 +21,7 @@ const KEEP_LOOKUP_KEYS: ReadonlySet<string> = new Set([
   "advance_monthly_cad",
   "classic_yearly_cad",
   "advance_yearly_cad",
+  "advance_trial",
 ]);
 
 const APPLY = process.argv.includes("--apply");

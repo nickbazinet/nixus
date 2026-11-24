@@ -91,7 +91,7 @@ Parameters:
       layer may widen it.
   CatalogLookupKeys:
     Type: String
-    Default: classic_monthly_cad,advance_monthly_cad,classic_yearly_cad,advance_yearly_cad
+    Default: classic_monthly_cad,advance_monthly_cad,classic_yearly_cad,advance_yearly_cad,advance_trial
     AllowedPattern: '^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*){0,9}$'
     Description: >-
       Comma-separated Stripe Price `lookup_key`s the public catalog publishes
@@ -101,7 +101,10 @@ Parameters:
       `price_id` appears here or anywhere else - only lookup keys. Order is
       significant: it is the fallback for a plan whose Product carries no
       nixus_display_order. At most ten keys, because `prices.list` accepts ten
-      lookup keys per call and the catalog is read in ONE call.
+      lookup keys per call and the catalog is read in ONE call. A trial Price is
+      an ordinary member of this set: `advance_trial` is the Advance monthly
+      Price sold with a free trial, whose length the catalog reads from that
+      Price's own nixus_trial_days metadata.
   AccountAppOrigin:
     Type: String
     Default: https://account.nixusapp.com

@@ -9,7 +9,8 @@
         "interval": "month",
         "display_order": 1,
         "capabilities": ["household_net_worth", "multi_device_sync"],
-        "monthly_request_limit": null
+        "monthly_request_limit": null,
+        "trial_period_days": null
       },
       {
         "tier": "advance",
@@ -23,7 +24,23 @@
           "household_net_worth",
           "multi_device_sync"
         ],
-        "monthly_request_limit": 1000
+        "monthly_request_limit": 1000,
+        "trial_period_days": null
+      },
+      {
+        "tier": "advance",
+        "lookup_key": "advance_trial",
+        "unit_amount_cents": 1999,
+        "currency": "CAD",
+        "interval": "month",
+        "display_order": 2,
+        "capabilities": [
+          "hosted_ai",
+          "household_net_worth",
+          "multi_device_sync"
+        ],
+        "monthly_request_limit": 1000,
+        "trial_period_days": 7
       }
     ],
     "cache_ttl_seconds": 300

@@ -76,6 +76,7 @@ describe("the public catalog response", () => {
           display_order: 1,
           capabilities: ["household_net_worth", "multi_device_sync"],
           monthly_request_limit: null,
+          trial_period_days: null,
         },
         {
           tier: "advance",
@@ -90,6 +91,7 @@ describe("the public catalog response", () => {
             "multi_device_sync",
           ],
           monthly_request_limit: 1000,
+          trial_period_days: null,
         },
       ],
       cache_ttl_seconds: TEST_CATALOG_TTL_SECONDS,

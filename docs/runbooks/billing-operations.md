@@ -204,6 +204,59 @@ it never reaches an entitlement.
 
 ---
 
+## 3b. Free trials
+
+A trial is a **second Price on the same Product**, carrying `nixus_trial_days`
+in its own **PRICE** metadata. `advance_trial` is that Price for Advance
+monthly: the same tier, the same grant and the same amount it converts to, with
+a 7-day trial in front of it.
+
+1. Create the Price on the existing tier Product, with the ordinary monthly
+   amount, a `lookup_key` (`advance_trial`), and PRICE metadata
+   `nixus_trial_days = 7`.
+2. Add that `lookup_key` to `CatalogLookupKeys` and deploy the parameter.
+3. Switch on the trial-ending reminder email under **Settings → Subscriptions
+   and emails**. Stripe sends it 7 days before a trial ends and **never in a
+   sandbox**, so it cannot be verified there. Card-network rules for trials
+   expect that notice.
+
+**Why the trial length has to be metadata rather than a Price setting.** A
+Checkout Session honours a trial only when the session asks for one:
+`subscription_data.trial_period_days` (or `trial_end`) is the documented
+parameter. A trial configured on the Price object is not read by Checkout —
+`recurring.trial_period_days` is not even a creatable Price parameter — and the
+newer Trial Offer objects are documented as unsupported by Checkout Sessions
+outside a private preview. So `POST /checkout` reads `nixus_trial_days` from the
+catalog entry and passes it at session creation. A trial set only in the
+Dashboard on the Price would be silently ignored and the customer charged
+immediately.
+
+**An unparseable `nixus_trial_days` refuses the Price.** A non-integer, a zero
+or negative value, or anything above 730 days (Stripe's maximum) drops the Price
+from the catalog and emits `CatalogMetadataMalformed`. A Price advertised as a
+trial that Checkout would open at full price is the one failure a customer would
+call fraud, so it fails closed rather than selling.
+
+**The card is collected up front.** `payment_method_collection` is left at its
+default, so Checkout takes a card and the subscription converts automatically at
+the end of the trial. `trial_settings` is therefore never sent: its only purpose
+is the missing-payment-method case, which cannot arise.
+
+**Managed Payments supports trials.** `subscription_data.trial_period_days` is
+absent from its forbidden-parameter table, and its changelog records both the
+trial confirmation email and optional no-card trials.
+
+**Repeat trials are NOT prevented.** Stripe has no per-customer "one trial ever"
+rule, and nothing in this service enforces one. The account app offers the trial
+only to an account whose entitlement has never carried a Stripe state, which
+stops the ordinary repeat but not a determined one (a second Nixus account, or
+an account whose subscription has since been deleted). Terms reserve the right to
+refuse a repeat trial. If this needs real enforcement, the cheapest honest
+mechanism is a `trial_used_at` attribute on the `BILLING_CUSTOMER` item, written
+when a trialing subscription first converges and condition-checked at checkout.
+
+---
+
 ## 4. Discount codes
 
 Coupons and promotion codes are created in the **Dashboard**, not by this
@@ -615,8 +668,8 @@ against Stripe test mode only. The ordered checklist before it can be:
 5. `nixus-bedrock-api`'s read cutover to the billing authority deployed (AD-17
    deploy order).
 6. Live Products and Prices created in Stripe, mirroring the sandbox catalog
-   (`classic_monthly_cad`, `advance_monthly_cad`) with the same metadata
-   contract.
+   (`classic_monthly_cad`, `advance_monthly_cad`, and `advance_trial` with its
+   `nixus_trial_days` price metadata) with the same metadata contract.
 7. A live-mode webhook endpoint created in Stripe, and its signing secret
    stored to `/nixus-billing/stripe-webhook-secret` (§10) — this **replaces**
    the test-mode secret; the two modes do not coexist on one stack.
@@ -774,7 +827,7 @@ public pricing page no matter how long is waited.
 | `AlertEmail` | stack parameter | `template.yaml` | set, confirmed subscriber |
 | `StripeMode` | stack parameter | `template.yaml`, `test` \| `live` | **test** |
 | `CatalogCacheTtlSeconds` | stack parameter | `template.yaml`, default 300 | **300** (echoed as `CatalogCacheTtlSecondsEcho`) |
-| `CatalogLookupKeys` | stack parameter | `template.yaml`, default `classic_monthly_cad,advance_monthly_cad` | set (echoed as `CatalogLookupKeysEcho`) |
+| `CatalogLookupKeys` | stack parameter | `template.yaml`, default `classic_monthly_cad,advance_monthly_cad,classic_yearly_cad,advance_yearly_cad,advance_trial` | set (echoed as `CatalogLookupKeysEcho`) |
 | `AccountAppOrigin` | stack parameter | `template.yaml`, default `https://account.nixusapp.com` | set (echoed as `AccountAppOriginEcho`) |
 | `MinimumClientVersion` | stack parameter | `template.yaml`, default `0.0.0` | set, refuses nothing yet |
 | `BillingFunctionReservedConcurrency` | stack parameter | `template.yaml`, default 10 | set |

@@ -153,6 +153,7 @@ describe("AD-3 the unauthenticated route set is closed and exactly two", () => {
           display_order: 1,
           capabilities: ["household_net_worth", "multi_device_sync"],
           monthly_request_limit: null,
+          trial_period_days: null,
         },
       ],
       cache_ttl_seconds: CATALOG_TTL,

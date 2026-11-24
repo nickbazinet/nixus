@@ -38,6 +38,8 @@ export function stripePrice(args: {
   readonly currency?: string;
   readonly interval?: string | null;
   readonly active?: boolean;
+  /** PRICE metadata, which is where the trial length lives (AD-6). */
+  readonly metadata?: Readonly<Record<string, string>>;
   /** A bare id reproduces the UNEXPANDED case the narrowing helper must refuse. */
   readonly product: Stripe.Product | string;
 }): Stripe.Price {
@@ -47,6 +49,7 @@ export function stripePrice(args: {
     active: args.active ?? true,
     currency: args.currency ?? "cad",
     lookup_key: args.lookupKey,
+    metadata: { ...(args.metadata ?? {}) },
     unit_amount: args.unitAmount === undefined ? 999 : args.unitAmount,
     recurring:
       args.interval === null ? null : { interval: args.interval ?? "month" },
