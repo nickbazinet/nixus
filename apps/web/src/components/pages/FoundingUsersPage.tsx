@@ -117,7 +117,7 @@ export function FoundingUsersPage() {
             {[
               "Share what works and what does not, the good and the bad",
               "Suggest improvements, big or small",
-              "Talk with me frequently about how to make Nixus better [cadence: for example a short call each month]",
+              "Talk with me regularly about how to make Nixus better, by email or a short call when it suits you",
             ].map((item) => (
               <li key={item} className="flex items-start gap-3 text-ink-soft">
                 <span
