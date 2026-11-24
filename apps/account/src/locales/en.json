@@ -186,7 +186,6 @@
   "billing.trialOfferTitle_one": "Try Nixus Cloud {{plan}} free for {{count}} day",
   "billing.trialOfferTitle_other": "Try Nixus Cloud {{plan}} free for {{count}} days",
   "billing.trialOfferIncludes": "What the free trial includes",
-  "billing.skipTrial": "Subscribe now instead",
   "billing.renewalHint": "The switch opens Stripe's secure portal, where you confirm any change.",
   "billing.compare": "Compare and change plan",
   "billing.compareHint": "Want more from Nixus Cloud? Compare the plans and switch at any time.",

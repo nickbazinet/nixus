@@ -626,6 +626,27 @@ test.describe("the free-trial offer for an account with no subscription", () => 
     await expect(page.getByTestId("billing-price-advance_yearly_cad")).toContainText("129.99");
   });
 
+  test("keeps the plan row to a plain subscribe button, so the trial is offered once", async ({
+    page,
+  }) => {
+    harness.billing.trialPlans = true;
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+    await signedInBilling(page);
+
+    const row = page.getByTestId("billing-plan-advance_monthly_cad");
+    await expect(row).toHaveText("Choose this plan");
+    await expect(page.getByTestId("billing-plan-advance_trial")).toHaveCount(0);
+    await expect(page.getByTestId("billing-trial-terms-advance")).toHaveCount(0);
+
+    await row.click();
+    await expect(page.getByTestId("stub-hosted-checkout")).toBeVisible();
+    const checkout = harness.billing.calls.find((call) => call.path === "/checkout");
+    expect(JSON.parse(checkout?.body ?? "null")).toEqual({
+      plan_lookup_key: "advance_monthly_cad",
+      promotion_code: null,
+    });
+  });
+
   test("starts the trial checkout from the card", async ({ page }) => {
     harness.billing.trialPlans = true;
     harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
