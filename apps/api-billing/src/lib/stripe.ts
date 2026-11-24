@@ -21,8 +21,8 @@ export interface StripeSecrets {
   readonly mode: StripeMode;
 }
 
-const TEST_KEY_PREFIX = "sk_test_";
-const LIVE_KEY_PREFIX = "sk_live_";
+const TEST_KEY_PREFIXES = ["sk_test_", "rk_test_"] as const;
+const LIVE_KEY_PREFIXES = ["sk_live_", "rk_live_"] as const;
 
 export function isStripeMode(value: unknown): value is StripeMode {
   return value === "test" || value === "live";
@@ -39,9 +39,11 @@ export function isStripeMode(value: unknown): value is StripeMode {
  * at the documented mode prefix.
  */
 export function assertStripeMode(key: string, mode: StripeMode): void {
-  const keyMode: StripeMode | undefined = key.startsWith(TEST_KEY_PREFIX)
+  const keyMode: StripeMode | undefined = TEST_KEY_PREFIXES.some((prefix) =>
+    key.startsWith(prefix),
+  )
     ? "test"
-    : key.startsWith(LIVE_KEY_PREFIX)
+    : LIVE_KEY_PREFIXES.some((prefix) => key.startsWith(prefix))
       ? "live"
       : undefined;
 

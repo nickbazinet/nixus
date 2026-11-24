@@ -78,6 +78,22 @@ describe("assertStripeMode (AD-7)", () => {
     expect(() => assertStripeMode(LIVE_KEY, "live")).not.toThrow();
   });
 
+  /* A restricted key is the least-privilege way to run this Lambda, and its
+   * `rk_` prefix carries the same mode information as `sk_`. */
+  it("accepts a restricted key in the matching mode", () => {
+    expect(() => assertStripeMode("rk_test_restricted", "test")).not.toThrow();
+    expect(() => assertStripeMode("rk_live_restricted", "live")).not.toThrow();
+  });
+
+  it("refuses a restricted key in the wrong mode", () => {
+    expect(() => assertStripeMode("rk_live_restricted", "test")).toThrow(
+      "is a live-mode key but STRIPE_MODE is test",
+    );
+    expect(() => assertStripeMode("rk_test_restricted", "live")).toThrow(
+      "is a test-mode key but STRIPE_MODE is live",
+    );
+  });
+
   /* A test key in production and a live key outside production are both STARTUP
    * failures rather than runtime surprises, because the alternative is finding
    * out when a real customer is charged - or when a production entitlement is
@@ -96,7 +112,6 @@ describe("assertStripeMode (AD-7)", () => {
 
   it.each([
     ["pk_test_publishable"],
-    ["rk_test_restricted"],
     ["whsec_signing_secret"],
     ["sk_AAAABBBB"],
     [""],
