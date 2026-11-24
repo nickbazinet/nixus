@@ -70,9 +70,12 @@ function checkAssetsPassThrough(): void {
 }
 
 function checkUnknownRouteIsNotHomepage(): void {
-  for (const unknown of ["/does-not-exist", "/beta"]) {
+  // `/fr/does-not-exist` is the case a naive SPA rewrite gets wrong twice: it
+  // either serves the English homepage at 200, or serves the French one.
+  for (const unknown of ["/does-not-exist", "/beta", "/fr/does-not-exist", "/fr/beta"]) {
     const uri = rewriteUri(rewrite, unknown);
     check(`unknown ${unknown}`, uri !== "/index.html", "was mapped to the homepage");
+    check(`unknown ${unknown}`, uri !== "/fr/index.html", "was mapped to the French homepage");
     check(
       `unknown ${unknown}`,
       !existsSync(`${STATIC_ROOT}${uri}`),
