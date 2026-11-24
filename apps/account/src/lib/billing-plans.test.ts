@@ -13,6 +13,7 @@ import {
   resolvePlanDeepLink,
   statusLabel,
   tierDisplayName,
+  trialOffer,
   trialPlanForTier,
   yearlySavings,
 } from "./billing-plans.ts";
@@ -302,6 +303,91 @@ describe("trial prices in the plan list", () => {
 });
 
 /*
+ * The headline free-trial card, for an account with no subscription.
+ *
+ * Before this, the trial was reachable only from the Advance MONTHLY row of the
+ * plan list, and the interval toggle defaulted to Yearly — so an account that
+ * had never paid never saw the one offer the page most wanted to make. The
+ * visibility rules live in `trialOffer` so they can be proved here, without a
+ * DOM, in the four shapes that actually occur.
+ */
+describe("trialOffer", () => {
+  const ELIGIBLE = {
+    plans: PLANS,
+    trialEligible: true,
+    subscriptionLive: false,
+    status: "none" as const,
+  };
+
+  it("offers the catalog's trial Price to an account that has never subscribed", () => {
+    const offer = trialOffer(ELIGIBLE);
+    expect(offer?.lookup_key).toBe("advance_trial");
+    // The length and the amount are read off this entry, never written into the
+    // page: a trial retuned in the Stripe Dashboard needs no deploy.
+    expect(offer?.trial_period_days).toBe(7);
+    expect(offer?.unit_amount_cents).toBe(1999);
+    expect(offer?.tier).toBe("advance");
+  });
+
+  it("offers nothing to an account that has, or has had, a subscription", () => {
+    expect(trialOffer({ ...ELIGIBLE, trialEligible: false })).toBeNull();
+  });
+
+  it("offers nothing while a subscription is live", () => {
+    expect(trialOffer({ ...ELIGIBLE, subscriptionLive: true })).toBeNull();
+  });
+
+  /* Belt and braces: `trialEligible` is already false for an account Stripe has
+   * converged, so this can only fire if eligibility is ever widened. Offering a
+   * trial to someone already on one would be the worst version of that bug. */
+  it("offers nothing to an account already on a trial", () => {
+    expect(trialOffer({ ...ELIGIBLE, status: "trialing" })).toBeNull();
+  });
+
+  it.each(["active", "past_due", "canceled", "unpaid", "paused"] as const)(
+    "offers nothing on the status %s once eligibility is gone",
+    (status) => {
+      expect(trialOffer({ ...ELIGIBLE, trialEligible: false, status })).toBeNull();
+    },
+  );
+
+  it("offers nothing when the catalog publishes no trial Price", () => {
+    const noTrial = PLANS.filter((plan) => plan.lookup_key !== "advance_trial");
+    expect(trialOffer({ ...ELIGIBLE, plans: noTrial })).toBeNull();
+    expect(trialOffer({ ...ELIGIBLE, plans: [] })).toBeNull();
+  });
+
+  /* `trial_period_days: 0` is not a trial, so it must not render a card
+   * offering "0 days free" either. */
+  it("offers nothing for a zero-day trial", () => {
+    const zeroed = PLANS.map((plan) =>
+      plan.lookup_key === "advance_trial" ? { ...plan, trial_period_days: 0 } : plan,
+    );
+    expect(trialOffer({ ...ELIGIBLE, plans: zeroed })).toBeNull();
+  });
+
+  /* The tier is read off the entry, never assumed (AD-1): a trial published on
+   * a tier these locale files have never seen must still be offered. */
+  it("offers a trial on a tier it cannot name", () => {
+    const dashboard = PLANS.map((plan) =>
+      plan.lookup_key === "advance_trial"
+        ? { ...plan, tier: "a_tier_shipped_from_the_dashboard" }
+        : plan,
+    );
+    const offer = trialOffer({ ...ELIGIBLE, plans: dashboard });
+    expect(offer?.tier).toBe("a_tier_shipped_from_the_dashboard");
+    expect(tierDisplayName(EN.t, offer!.tier)).toBe(EN.t("billing.tier.unknown"));
+  });
+
+  /* The offered Price is monthly, which is what the interval toggle now
+   * defaults to when a trial is on offer — otherwise the Yearly default hides
+   * the trial row behind a tab the visitor has no reason to open. */
+  it("offers a monthly Price, which is the interval the toggle must open on", () => {
+    expect(trialOffer(ELIGIBLE)?.interval).toBe("month");
+  });
+});
+
+/*
  * The trial disclosure. A trial that converts to a charge has to state the
  * price after it, that it renews on its own, that a card is taken now, and how
  * to stop it — in both locales, with the length interpolated from the catalog
@@ -320,6 +406,32 @@ describe("trial copy", () => {
       expect(text, key).not.toContain("{{");
       expect(text, key).toContain("7");
     }
+  });
+
+  /* The headline card's own copy. The tier name is interpolated rather than
+   * written in, because the trial is published on whichever tier the Dashboard
+   * put it on — including one these files cannot name. */
+  it.each([
+    ["en", EN],
+    ["fr", FR],
+  ])("names the plan and the trial length in the offer title in %s", (_locale, i18n) => {
+    const title = i18n.t("billing.trialOfferTitle", { count: 7, plan: "Advance" });
+    expect(title).not.toContain("{{");
+    expect(title).not.toContain("billing.trialOfferTitle");
+    expect(title).toContain("7");
+    expect(title).toContain("Advance");
+    expect(title).toContain("Nixus Cloud");
+
+    const includes = i18n.t("billing.trialOfferIncludes");
+    expect(includes).not.toContain("billing.trialOfferIncludes");
+    expect(includes).not.toContain("{{");
+  });
+
+  it("asks for the trial in French with the established wording", () => {
+    expect(FR.t("billing.trialOfferTitle", { count: 7, plan: "Advance" })).toContain(
+      "essai gratuit de 7 jours",
+    );
+    expect(FR.t("billing.startTrial", ARGS)).toContain("essai gratuit de 7 jours");
   });
 
   it("states the price after the trial, the card and the way out", () => {

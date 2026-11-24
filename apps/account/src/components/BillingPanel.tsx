@@ -21,6 +21,7 @@ import {
   resolvePlanDeepLink,
   statusLabel,
   tierDisplayName,
+  trialOffer,
   trialPlanForTier,
   yearlySavings,
 } from "@/lib/billing-plans";
@@ -95,6 +96,30 @@ export function BillingPanel({
 }) {
   const { t, i18n } = useTranslation();
   const plansId = useId();
+  const entitlement = view.entitlement;
+  const subscription = entitlement?.stripeState ?? null;
+  const subscriptionStatus = subscription?.status ?? entitlement?.status ?? null;
+  // A trial is a LIVE subscription, so the renewal row describes it rather than
+  // hiding: the date it shows is the day the card is charged, which is the one
+  // fact a visitor on a trial most needs.
+  const trialing = subscriptionStatus === "trialing";
+  /*
+   * The headline free-trial offer, for an account with no subscription.
+   *
+   * Decided in `trialOffer` rather than here so the visibility rules — never for
+   * an account that has or had a subscription, never while trialing, never
+   * without a published trial Price — are unit-testable without a DOM.
+   */
+  const offeredTrial = useMemo(
+    () =>
+      trialOffer({
+        plans: view.plans,
+        trialEligible: view.trialEligible,
+        subscriptionLive: view.subscriptionLive,
+        status: subscriptionStatus,
+      }),
+    [view.plans, view.trialEligible, view.subscriptionLive, subscriptionStatus],
+  );
   const [status, setStatus] = useState<Status>(
     view.error === null
       ? { kind: "idle" }
@@ -108,8 +133,18 @@ export function BillingPanel({
   const [plansOpen, setPlansOpen] = useState(!view.subscriptionLive);
   const tiers = useMemo(() => groupPlansByTier(view.plans), [view.plans]);
   const offersBothIntervals = tiers.some((entry) => entry.monthly && entry.yearly);
+  /*
+   * Yearly is the default, because it is the better deal — EXCEPT when a trial
+   * is on offer. The trial Price is monthly, so a yearly default hid the trial
+   * row behind a tab the visitor had no reason to leave, and the one offer the
+   * page most wants to make was the one thing it did not show.
+   */
   const [interval, setInterval] = useState<"month" | "year">(
-    tiers.some((entry) => entry.yearly) ? "year" : "month",
+    offeredTrial !== null
+      ? offeredTrial.interval
+      : tiers.some((entry) => entry.yearly)
+        ? "year"
+        : "month",
   );
   const bestSavingPercent = Math.max(0, ...tiers.map((entry) => yearlySavings(entry)?.percent ?? 0));
 
@@ -200,8 +235,6 @@ export function BillingPanel({
   }
 
   const busy = status.kind === "busy";
-  const entitlement = view.entitlement;
-  const subscription = entitlement?.stripeState ?? null;
   // The period and the ending notice describe the SUBSCRIPTION, so both read the
   // recorded Stripe state: a live override nulls the effective period (AD-2) and
   // would otherwise hide the renewal date from a customer who is being charged.
@@ -209,12 +242,7 @@ export function BillingPanel({
     subscription?.currentPeriodEnd ?? entitlement?.currentPeriodEnd ?? null,
     locale,
   );
-  const subscriptionStatus = subscription?.status ?? entitlement?.status;
   const ending = subscriptionStatus === "canceled" || subscriptionStatus === "unpaid";
-  // A trial is a LIVE subscription, so the renewal row describes it rather than
-  // hiding: the date it shows is the day the card is charged, which is the one
-  // fact a visitor on a trial most needs.
-  const trialing = subscriptionStatus === "trialing";
   const listPrice =
     view.subscriptionLive && subscription !== null
       ? listPriceFor(view.plans, subscription.tier)
@@ -354,6 +382,100 @@ export function BillingPanel({
             </p>
           )}
         </div>
+
+        {/*
+          The free-trial offer, for an account with no subscription.
+
+          Above the plan list and in the same gradient card the plan rows use, so
+          it reads as the headline offer without introducing a second visual
+          language. Everything it states comes off the catalog entry: the length,
+          the amount after the trial, and what the plan includes. The alternatives
+          stay visible immediately below — the plan list is already open for an
+          account with no subscription — so this is an offer, not a funnel.
+        */}
+        {offeredTrial === null ? null : (
+          <div
+            data-testid="billing-trial-offer"
+            className="mt-6 flex flex-col gap-4 rounded-xl bg-gradient-to-br from-[#EDF0FD] via-[#F0EFFD] to-[#F4EEFB] p-5 sm:flex-row sm:items-start sm:justify-between sm:p-6"
+          >
+            <div className="min-w-0">
+              <Badge
+                data-testid="billing-trial-offer-badge"
+                variant="brand"
+                className="rounded-full px-2"
+              >
+                {t("billing.trialBadge", { count: offeredTrial.trial_period_days ?? 0 })}
+              </Badge>
+              <p
+                data-testid="billing-trial-offer-title"
+                className="mt-2 font-display text-lg font-semibold tracking-[-0.015em] text-ink"
+              >
+                {t("billing.trialOfferTitle", {
+                  count: offeredTrial.trial_period_days ?? 0,
+                  plan: tierDisplayName(t, offeredTrial.tier),
+                })}
+              </p>
+              {offeredTrial.capabilities.length === 0 ? null : (
+                <>
+                  <p className="mt-2 text-caption font-semibold text-ink">
+                    {t("billing.trialOfferIncludes")}
+                  </p>
+                  <ul
+                    data-testid="billing-trial-offer-capabilities"
+                    aria-label={t("billing.trialOfferIncludes")}
+                    className="mt-1 flex flex-wrap gap-x-1.5 text-body text-ink-dim"
+                  >
+                    {offeredTrial.capabilities.map((capability, index) => (
+                      <li
+                        key={capability}
+                        data-testid={`billing-trial-offer-capability-${capability}`}
+                      >
+                        {capabilityLabel(t, capability)}
+                        {index < offeredTrial.capabilities.length - 1 ? " ·" : "."}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+
+            <div className="flex shrink-0 flex-col gap-3 sm:items-end">
+              <p data-testid="billing-trial-offer-price" className="text-ink sm:text-right">
+                <span className="font-display text-2xl font-bold tracking-[-0.02em]">
+                  {formatPlanAmount(offeredTrial, locale)}
+                </span>{" "}
+                <span className="text-caption text-ink-dim">
+                  {`${offeredTrial.currency} ${t(shortIntervalKey(offeredTrial))}`}
+                </span>
+              </p>
+              <Button
+                className={PILL_BUTTON_CLASS}
+                data-testid="billing-trial-offer-start"
+                disabled={busy}
+                onClick={() => void beginCheckout(offeredTrial.lookup_key)}
+              >
+                {busy
+                  ? t("billing.opening")
+                  : t("billing.startTrial", {
+                      count: offeredTrial.trial_period_days ?? 0,
+                    })}
+              </Button>
+              {/* The whole disclosure beside the button, not behind a link: the
+                  price after the trial, that a card is taken now, and the way
+                  out before a charge. */}
+              <p
+                data-testid="billing-trial-offer-terms"
+                className="max-w-sm text-caption text-ink-dim sm:text-right"
+              >
+                {t("billing.trialTerms", {
+                  count: offeredTrial.trial_period_days ?? 0,
+                  amount: formatPlanAmount(offeredTrial, locale),
+                  interval: t(shortIntervalKey(offeredTrial)),
+                })}
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6">
           {periodEnd !== null || view.portalAvailable ? (

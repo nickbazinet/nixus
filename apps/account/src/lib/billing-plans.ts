@@ -119,6 +119,36 @@ export function trialPlanForTier(
   );
 }
 
+/**
+ * The trial Price to offer an account that has no subscription, or `null`.
+ *
+ * Four refusals, each for its own reason:
+ *
+ *  - `trialEligible` is false — the account has, or has had, a subscription, or
+ *    holds an admin grant. `billing-view.ts` owns that test; this never
+ *    second-guesses it.
+ *  - a subscription is live, or the account is already trialing. Implied by the
+ *    first test today, asserted here anyway so a future widening of eligibility
+ *    cannot offer a trial to someone already on one.
+ *  - the catalog publishes no trial Price at all, which is the normal state
+ *    between trial campaigns and must render as an ordinary page.
+ *
+ * The FIRST trial entry in display order wins, and which tier it belongs to is
+ * read off the entry — never assumed (AD-1). The length and the amount come off
+ * the same entry, so a trial retuned in the Stripe Dashboard needs no deploy.
+ */
+export function trialOffer(state: {
+  readonly plans: readonly PlanCatalogEntry[];
+  readonly trialEligible: boolean;
+  readonly subscriptionLive: boolean;
+  readonly status: EntitlementStatus | null;
+}): PlanCatalogEntry | null {
+  if (!state.trialEligible) return null;
+  if (state.subscriptionLive) return null;
+  if (state.status === "trialing") return null;
+  return state.plans.find(isTrialPlan) ?? null;
+}
+
 /** One tier's published prices, so a monthly and a yearly entry read as one plan. */
 export interface TierPlans {
   readonly tier: string;

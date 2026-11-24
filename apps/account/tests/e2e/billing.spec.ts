@@ -2,10 +2,12 @@ import { expect, test, type Browser, type Page, type Request } from "@playwright
 
 import {
   ADVANCE_ACCOUNT,
+  CANCELED_ACCOUNT,
   CLASSIC_ACCOUNT,
   FREE_ACCOUNT,
   GRANT_ONLY_ACCOUNT,
   OVERRIDE_OVER_PAID_ACCOUNT,
+  TRIALING_ACCOUNT,
 } from "./support/billing-api";
 import { startHarness, type Harness } from "./support/harness";
 
@@ -566,6 +568,130 @@ test.describe("the ?plan= deep link from the pricing page", () => {
       if (plan !== "") expect(await page.content()).not.toContain(plan);
     });
   }
+});
+
+test.describe("the free-trial offer for an account with no subscription", () => {
+  test("offers the trial above the plan list, with its terms and no card field", async ({
+    page,
+  }) => {
+    harness.billing.trialPlans = true;
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+    await signedInBilling(page);
+
+    const card = page.getByTestId("billing-trial-offer");
+    await expect(card).toBeVisible();
+    await expect(page.getByTestId("billing-trial-offer-title")).toContainText(
+      "Try Nixus Cloud Advance free for 7 days",
+    );
+    await expect(page.getByTestId("billing-trial-offer-badge")).toHaveText("7 days free");
+    // What it includes, read off the catalog entry's own capabilities.
+    await expect(page.getByTestId("billing-trial-offer-capability-hosted_ai")).toBeVisible();
+    await expect(
+      page.getByTestId("billing-trial-offer-capability-multi_device_sync"),
+    ).toBeVisible();
+    // The price after the trial comes off the catalog, never the page.
+    await expect(page.getByTestId("billing-trial-offer-price")).toContainText("19.99");
+
+    const terms = page.getByTestId("billing-trial-offer-terms");
+    await expect(terms).toContainText("Free for 7 days, then $19.99 / month");
+    await expect(terms).toContainText("A card is required now");
+    await expect(terms).toContainText("charged only when the trial ends");
+    await expect(terms).toContainText("you will not be charged");
+
+    await expect(page.getByTestId("billing-trial-offer-start")).toHaveText(
+      "Start your 7-day free trial",
+    );
+
+    // The alternatives stay visible: this is an offer, not a funnel.
+    await expect(page.getByTestId("billing-plan-classic_monthly_cad")).toBeVisible();
+  });
+
+  test("opens the plan list on the interval the trial is sold in", async ({ page }) => {
+    harness.billing.trialPlans = true;
+    harness.billing.yearlyPlans = true;
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+    await signedInBilling(page);
+
+    // Yearly is the better deal and the default everywhere else, but the trial
+    // Price is monthly: a yearly default hid the trial row behind a tab.
+    await expect(page.getByTestId("billing-interval-month")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(page.getByTestId("billing-price-advance_monthly_cad")).toBeVisible();
+    await expect(page.getByTestId("billing-trial-badge-advance")).toBeVisible();
+
+    // And yearly is still one click away, unchanged.
+    await page.getByTestId("billing-interval-year").click();
+    await expect(page.getByTestId("billing-price-advance_yearly_cad")).toContainText("129.99");
+  });
+
+  test("starts the trial checkout from the card", async ({ page }) => {
+    harness.billing.trialPlans = true;
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+    await signedInBilling(page);
+
+    await page.getByTestId("billing-trial-offer-start").click();
+    await expect(page.getByTestId("stub-hosted-checkout")).toBeVisible();
+
+    const checkout = harness.billing.calls.find((call) => call.path === "/checkout");
+    expect(JSON.parse(checkout?.body ?? "null")).toEqual({
+      plan_lookup_key: "advance_trial",
+      promotion_code: null,
+    });
+  });
+
+  test("offers nothing when the catalog publishes no trial Price", async ({ page }) => {
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+    await signedInBilling(page);
+
+    await expect(page.getByTestId("billing-trial-offer")).toHaveCount(0);
+    // And the yearly default is untouched where there is no trial to hide.
+    harness.billing.yearlyPlans = true;
+    await page.reload();
+    await expect(page.getByTestId("billing-interval-year")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  for (const [name, account] of [
+    ["an active subscriber", ADVANCE_ACCOUNT],
+    ["a subscriber whose plan has ended", CANCELED_ACCOUNT],
+    ["an account already on a trial", TRIALING_ACCOUNT],
+    ["an admin-granted account", GRANT_ONLY_ACCOUNT],
+  ] as const) {
+    test(`offers nothing to ${name}`, async ({ page }) => {
+      harness.billing.trialPlans = true;
+      harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), account);
+      await signedInBilling(page);
+
+      await expect(page.getByTestId("billing-trial-offer")).toHaveCount(0);
+      await openPlans(page);
+      // Not anywhere else on the page either.
+      await expect(page.getByTestId("billing-trial-offer-start")).toHaveCount(0);
+      await expect(page.getByTestId("billing-plan-advance_trial")).toHaveCount(0);
+    });
+  }
+
+  test("offers the trial in French with the established wording", async ({ page }) => {
+    harness.billing.trialPlans = true;
+    harness.billing.accounts.set(TOKEN_FOR_SIGN_IN(1), FREE_ACCOUNT);
+    await signIn(page);
+    await page.goto(`${harness.origin}/fr/billing`);
+
+    await expect(page.getByTestId("billing-trial-offer-title")).toContainText(
+      "essai gratuit de 7 jours",
+    );
+    await expect(page.getByTestId("billing-trial-offer-title")).toContainText("Nixus Cloud");
+    await expect(page.getByTestId("billing-trial-offer-start")).toContainText(
+      "Commencer l'essai gratuit de 7 jours",
+    );
+    await expect(page.getByTestId("billing-trial-offer-terms")).toContainText(
+      "Une carte est exigée dès maintenant",
+    );
+    await expect(page.locator("body")).not.toContainText("Nuage");
+  });
 });
 
 test.describe("the Stripe-return landing page", () => {
