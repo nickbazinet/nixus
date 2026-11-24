@@ -23,6 +23,24 @@ describe("spa-index-rewrite viewer request", () => {
     expect(rewrite("/fr/404")).toBe("/fr/404/index.html");
   });
 
+  it("maps every French marketing route onto its own object", () => {
+    // The whole FR half of the site reaches the edge as `/fr/<en-slug>`, so a
+    // rule that special-cased the prefix would strand every page but the index.
+    for (const slug of [
+      "features",
+      "pricing",
+      "mission",
+      "privacy",
+      "founding-users",
+      "download",
+      "terms",
+      "privacy-policy",
+    ]) {
+      expect(rewrite(`/fr/${slug}`)).toBe(`/fr/${slug}/index.html`);
+      expect(rewrite(`/fr/${slug}/`)).toBe(`/fr/${slug}/index.html`);
+    }
+  });
+
   it("leaves a URI with a file extension untouched", () => {
     for (const asset of [
       "/og-image.png",
@@ -44,9 +62,12 @@ describe("spa-index-rewrite viewer request", () => {
   });
 
   it("does not map an unknown extensionless route to the homepage", () => {
-    for (const unknown of ["/nope", "/fr/nope", "/beta/nope"]) {
+    // Both homepages matter: a French visitor on a mistyped French URL must get
+    // a 404, not the French index at 200.
+    for (const unknown of ["/nope", "/fr/nope", "/beta/nope", "/fr/unknown/deeper"]) {
       const rewritten = rewrite(unknown);
       expect(rewritten).not.toBe("/index.html");
+      expect(rewritten).not.toBe("/fr/index.html");
       expect(rewritten).toBe(`${unknown}/index.html`);
     }
   });
