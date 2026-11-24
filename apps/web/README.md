@@ -10,8 +10,10 @@ Built with **TanStack Start v1** + React 19 + Tailwind v4. Statically prerendere
 pnpm --filter @nixus/web dev        # Dev server on http://localhost:3000
 pnpm --filter @nixus/web build      # Static prerender to .output/public/
 pnpm --filter @nixus/web preview    # Preview the production build
+pnpm --filter @nixus/web lint       # eslint
 pnpm --filter @nixus/web typecheck  # tsc --noEmit
-pnpm --filter @nixus/web test:e2e   # Playwright e2e (added in later stories)
+pnpm --filter @nixus/web test       # Vitest unit tests
+pnpm --filter @nixus/web test:e2e   # Playwright e2e (build first)
 ```
 
 ## Output
@@ -29,9 +31,43 @@ Copy `.env.example` to `.env` and adjust. Everything the browser needs is `VITE_
 
 ### How `/pricing` gets its prices
 
-The page ships **baked** EN/FR prices in `src/content/pricing.ts` and those are what gets prerendered, so a crawler and an offline visitor both see complete, correct amounts. After hydration `src/lib/usePlanCatalog.ts` fetches the live catalog and replaces the amount, currency and interval of the Stripe-backed columns — per field, so one malformed value does not discard the rest. That is what lets an operator change a price in the Stripe Dashboard with no rebuild.
+The page ships **baked** prices in `src/content/pricing.ts` and those are what gets prerendered, so a crawler and an offline visitor both see complete, correct amounts. After hydration `src/lib/usePlanCatalog.ts` fetches the live catalog and replaces the amount, currency and interval of the Stripe-backed columns — per field, so one malformed value does not discard the rest. That is what lets an operator change a price in the Stripe Dashboard with no rebuild.
 
 A failed, slow or non-200 fetch leaves the baked prices in place silently: no banner, no spinner, no console output. Plans are referenced only by `lookup_key`; no Stripe `price_id` or hard-coded live amount exists anywhere in this app. `cache_ttl_seconds` from the response is the system's only cache bound, so the client adds no TTL and no second cache layer of its own.
+
+Each amount is declared **once**, locale-neutrally, and rendered through `Intl.NumberFormat` with the page's own locale — `$19.99/month` in English, `19,99 $/mois` in French. English and French therefore cannot advertise different amounts, and a price change reaches both at the same moment.
+
+## Languages
+
+English lives at the root, French under `/fr`, with the same slug on both sides (`/pricing` ⇄ `/fr/pricing`). `apps/account` already links out to `nixusapp.com/fr/...` (`apps/account/src/lib/marketing.ts`), so the slugs are a published contract, not a free choice.
+
+There is **no runtime i18n library**. Each language is one plain object checked against the `SiteCopy` type in `src/content/types.ts`:
+
+```
+src/content/
+├── types.ts       # SiteCopy — every translatable string, as a type
+├── en.ts          # English, the source language
+├── fr.ts          # Canadian French
+├── legal.en.ts    # Terms + Privacy Policy, English
+├── legal.fr.ts    # Terms + Privacy Policy, French
+├── pricing.ts     # Stripe facts (lookup keys, amounts) — locale-neutral
+└── index.ts       # copyFor(locale)
+```
+
+A string added to `en.ts` and forgotten in `fr.ts` is a `tsc` error. `src/content/copy.test.ts` covers what a type cannot: array lengths (icons and visuals in code are matched to copy by index), untranslated strings, French typography (non-breaking space before `: ; ! ?`, `%` and `$`, and inside `« »`), and the product vocabulary the desktop and account apps already use (CELI, REER, CELIAPP, valeur nette, forfait).
+
+`src/lib/locale.ts` and `src/lib/routes.ts` are the other half: one table maps each page to its router target and its canonical URL in both languages, and `buildMeta` derives the title, description, `og:locale`, canonical and the full `hreflang` cluster (`en-CA`, `fr-CA`, `x-default`) from that pair alone.
+
+The URL is the only locale authority. There is no `Accept-Language` redirect: every URL answers with the language it advertises, which is what keeps the prerendered HTML, the `hreflang` cluster and the sitemap honest. A visitor changes language with the header/footer switcher, which is a plain `<a href>` to the twin page — a full navigation, so the browser fetches the other prerendered document.
+
+### Verifying the bilingual build
+
+```bash
+pnpm --filter @nixus/web build
+pnpm --filter @nixus/web verify:prerender  # lang, canonical, og:url, hreflang, JSON-LD, no leaked language
+pnpm --filter @nixus/web verify:routes     # every sitemap path resolves through the CloudFront rewrite
+pnpm --filter @nixus/web test:e2e          # tests/e2e/bilingual.spec.ts, against .output/public
+```
 
 ## Project Structure
 
@@ -39,18 +75,22 @@ A failed, slow or non-200 fetch leaves the baked prices in place silently: no ba
 apps/web/
 ├── src/
 │   ├── routes/         # File-based routes (TanStack Start scans this dir)
-│   │   ├── __root.tsx  # Shell + <head> setup
-│   │   ├── index.tsx   # Homepage (placeholder until Story 3.1)
-│   │   └── 404.tsx     # 404 page
-│   ├── components/     # Empty until Story 1.3 (SiteHeader/Footer)
-│   ├── features/       # Empty until Story 2.x / 3.x
-│   ├── lib/            # Empty until Story 2.1 (releases.gen.ts)
+│   │   ├── __root.tsx  # Shell + <head> setup; derives the locale from the URL
+│   │   ├── index.tsx   # Homepage (English)
+│   │   ├── 404.tsx     # 404 page (English)
+│   │   └── fr/         # One French twin per English route, same slug
+│   ├── components/
+│   │   ├── pages/      # One component per page, parameterised by locale
+│   │   └── ui.tsx      # Shared building blocks (buttons, sections, bullets)
+│   ├── content/        # Typed per-locale copy — the single source of truth
+│   ├── features/       # Feature-scoped state/logic
+│   ├── lib/            # locale.ts, routes.ts, meta.ts, jsonLd.ts, planPrices.ts
 │   ├── styles/main.css # Imports tailwind + shared tokens
 │   └── router.tsx      # createRouter setup
-├── content/            # Markdown content (later stories)
-├── public/             # Static assets served at site root
-├── tests/e2e/          # Playwright tests (later stories)
-└── scripts/            # Build-time scripts (later stories)
+├── infra/cloudfront/   # The shipped viewer-request rewrite, plus its tests
+├── public/             # Static assets served at site root (incl. sitemap.xml)
+├── scripts/            # Build-time scripts and the offline output verifiers
+└── tests/e2e/          # Playwright tests
 ```
 
 > **Note on `src/routes/` vs `app/routes/`:** The original architecture spec

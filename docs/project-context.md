@@ -56,7 +56,7 @@ _Critical rules and patterns that AI agents must follow when implementing code i
 - nitro vite plugin (nightly) — required alongside TanStack Start
 - Tailwind CSS 4.2.1
 - TanStack Router 1.167.0 (file-based)
-- i18next 26.0.3 + react-i18next 17.0.2
+- i18n: **no runtime library.** EN/FR copy is a typed per-locale dictionary in `src/content/`; `SiteCopy` in `content/types.ts` forces French to have every English key, and the URL is the only locale authority
 - Vitest 3.2.4 + @testing-library/react 16.1.0 (unit tests)
 - Playwright 1.58.2 (E2E tests)
 - `@nixus/shared` (via `workspace:*`)
@@ -233,16 +233,22 @@ apps/desktop/src-tauri/src/
 ```
 apps/web/src/
 ├── components/
+│   ├── pages/{Feature}Page.tsx  # One per page, parameterised by `locale`
 │   └── {Feature}.tsx      # Co-located with {Feature}.test.tsx
+├── content/
+│   ├── types.ts           # SiteCopy — every translatable string, as a type
+│   ├── en.ts / fr.ts      # One plain object per language
+│   └── legal.en.ts / legal.fr.ts
 ├── features/
 │   └── {feature}/         # Feature-scoped state/logic (e.g., download/)
 ├── routes/
 │   ├── __root.tsx          # Root layout with shellComponent pattern
 │   ├── index.tsx           # English landing page
-│   └── fr/
+│   └── fr/                 # One French twin per English route, same slug
 │       └── index.tsx       # French landing page
 └── lib/
-    └── i18n.ts             # i18next configuration
+    ├── locale.ts           # Locale type, lang tags, localeFromPath
+    └── routes.ts           # Page → (router target, canonical URL) per locale
 ```
 
 ### Naming Conventions
@@ -290,10 +296,12 @@ export function useCreateExpense() {
 }
 ```
 
-### i18n (Both Apps)
-- All user-visible strings go through i18next — no hardcoded English strings in JSX
-- Web app supports EN (default) and FR (`/fr/*` routes)
-- Translation hook: `const { t } = useTranslation()`
+### i18n (Two Different Mechanisms)
+- **Desktop and account apps:** every user-visible string goes through i18next — no hardcoded English in JSX. Hook: `const { t } = useTranslation()`
+- **Web app:** no i18n library. Every string lives in `src/content/{en,fr}.ts`, checked against the `SiteCopy` type, and a page reads it with `copyFor(locale)`. A string added to `en.ts` and forgotten in `fr.ts` is a `tsc` error
+- Web supports EN at the root and FR under `/fr/*`, with the **same slug** on both sides (`/pricing` ⇄ `/fr/pricing`) — `apps/account/src/lib/marketing.ts` already links to those URLs
+- The web app's locale comes from the pathname and nothing else (`lib/locale.ts`): prerender renders every route concurrently through one module, so any mutable shared locale state leaks one page's language into another. There is no `Accept-Language` redirect — every URL must answer with the language its `hreflang` cluster advertises
+- Both languages of a page carry the full reciprocal `hreflang` cluster (`en-CA`, `fr-CA`, `x-default`), per-locale `og:locale`, `<html lang>`, JSON-LD `inLanguage`, and a sitemap entry. `verify:prerender` fails the build if any of them disagree
 
 ### Web Test Co-location
 - Unit test files sit next to the component: `Component.tsx` + `Component.test.tsx`
@@ -342,9 +350,10 @@ export function useCreateExpense() {
 - Every mutation's `onSuccess` must invalidate ALL affected query keys
 - Use `keepPreviousData` on paginated/filtered queries (e.g., expenses by month)
 
-### i18n (Both Apps)
-- All user-visible strings through i18next — no hardcoded English text in JSX
-- Web supports EN (default) and FR routes under `src/routes/fr/`
+### i18n
+- Desktop and account apps: all user-visible strings through i18next — no hardcoded English text in JSX
+- Web app: all user-visible strings through the typed `src/content/{en,fr}.ts` dictionary — no hardcoded text in JSX, and no i18n library
+- Web supports EN at the root and FR under `src/routes/fr/`, one French twin per English route
 
 ---
 
