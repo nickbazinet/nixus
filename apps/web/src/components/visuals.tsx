@@ -1,12 +1,17 @@
 import { ArrowRight, Sparkles, Target } from "lucide-react";
 import { useId, type ReactNode } from "react";
 
+import { copyFor } from "@/content/index";
 import { cn } from "@/lib/cn";
+import type { Locale } from "@/lib/locale";
 
 /*
  * Illustrative stand-ins for product imagery. They carry demo values only and
  * are aria-hidden: each one sits next to prose that already says what it shows.
  * Swap any of them for a real capture without touching the surrounding page.
+ *
+ * The labels are still translated. A French page showing "Housing 42%" in its
+ * hero reads as an untranslated page even though a screen reader never sees it.
  */
 
 /** The two brand glyphs: a minus pill and a plus made of two pills. */
@@ -41,7 +46,9 @@ function Sparkline({ className, stroke = "white" }: { className?: string; stroke
   );
 }
 
-export function HomeHeroVisual() {
+export function HomeHeroVisual({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).visuals.hero;
+  const SLICE_COLORS = ["#5e78ed", "#9978ed", "#de50a4"];
   return (
     <div aria-hidden="true" className="relative mx-auto w-full max-w-[26rem] py-6 lg:mr-0">
       {/* Diagonal ribbon behind the cards. */}
@@ -50,15 +57,17 @@ export function HomeHeroVisual() {
       <div className="relative space-y-4">
         <div className="nx-gradient-card rounded-2xl p-5 text-white shadow-[0_24px_40px_-20px_rgba(80,60,190,0.7)]">
           <div className="flex items-start justify-between">
-            <p className="text-sm text-white/85">Spending this month</p>
-            <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-bold">-6%</span>
+            <p className="text-sm text-white/85">{copy.spendingLabel}</p>
+            <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-bold">
+              {copy.spendingDelta}
+            </span>
           </div>
-          <p className="mt-1 font-display text-3xl font-semibold">$3,480</p>
+          <p className="mt-1 font-display text-3xl font-semibold">{copy.spendingAmount}</p>
           <Sparkline className="mt-3 h-12 w-full" />
         </div>
 
         <div className="ml-auto w-[88%] rounded-2xl border border-line bg-white p-4 shadow-[0_20px_40px_-24px_rgba(20,20,43,0.35)]">
-          <p className="text-sm font-bold text-ink">Breakdown</p>
+          <p className="text-sm font-bold text-ink">{copy.breakdown}</p>
           <div className="mt-3 flex items-center gap-5">
             <div
               className="relative size-16 flex-none rounded-full"
@@ -70,15 +79,14 @@ export function HomeHeroVisual() {
               <div className="absolute inset-[9px] rounded-full bg-white" />
             </div>
             <ul className="flex-1 space-y-1.5 text-sm text-ink-soft">
-              {[
-                ["Housing", "#5e78ed", "42%"],
-                ["Food", "#9978ed", "28%"],
-                ["Transport", "#de50a4", "18%"],
-              ].map(([label, color, pct]) => (
-                <li key={label} className="flex items-center gap-2">
-                  <span className="size-2 rounded-full" style={{ background: color }} />
-                  <span className="flex-1">{label}</span>
-                  <span className="font-bold text-ink">{pct}</span>
+              {copy.slices.map((slice, index) => (
+                <li key={slice.label} className="flex items-center gap-2">
+                  <span
+                    className="size-2 rounded-full"
+                    style={{ background: SLICE_COLORS[index] }}
+                  />
+                  <span className="flex-1">{slice.label}</span>
+                  <span className="font-bold text-ink">{slice.share}</span>
                 </li>
               ))}
             </ul>
@@ -90,8 +98,8 @@ export function HomeHeroVisual() {
             <Target className="nx-icon-gradient size-4.5" strokeWidth={2} />
           </span>
           <div className="flex-1 text-sm">
-            <p className="font-bold text-ink">Quick reminder</p>
-            <p className="text-ink-muted">You are at 68% of your goal.</p>
+            <p className="font-bold text-ink">{copy.reminderTitle}</p>
+            <p className="text-ink-muted">{copy.reminderBody}</p>
           </div>
           <span className="grid size-8 place-items-center rounded-full bg-white shadow-sm">
             <ArrowRight className="size-4 text-ink" />
@@ -117,17 +125,14 @@ function SkeletonBar({ className }: { className?: string }) {
   return <span className={cn("block h-2.5 rounded-full bg-[#e4ebf4]", className)} />;
 }
 
-export function ImportMock() {
+export function ImportMock({ locale }: { locale: Locale }) {
+  const widths = ["w-[46%]", "w-[38%]", "w-[52%]"];
   return (
     <GlassPanel>
       <ul className="space-y-4">
-        {[
-          ["w-[46%]", "Groceries"],
-          ["w-[38%]", "Dining out"],
-          ["w-[52%]", "Transport"],
-        ].map(([width, chip]) => (
+        {copyFor(locale).visuals.importCategories.map((chip, index) => (
           <li key={chip} className="flex items-center justify-between gap-4">
-            <SkeletonBar className={width} />
+            <SkeletonBar className={widths[index]} />
             <span className="rounded-full bg-brand-soft px-3 py-1 text-xs font-bold text-brand">
               {chip}
             </span>
@@ -158,22 +163,25 @@ export function NextActionsMock() {
   );
 }
 
-export function RegisteredAccountsMock() {
+export function RegisteredAccountsMock({ locale }: { locale: Locale }) {
+  const bars = [
+    { width: "w-[72%]", fill: "bg-gradient-to-r from-[#de50a4] to-[#c158c0]" },
+    { width: "w-[58%]", fill: "bg-gradient-to-r from-[#b165dc] to-[#9978ed]" },
+    { width: "w-[30%]", fill: "bg-gradient-to-r from-[#7d72ea] to-[#5e78ed]" },
+  ];
   return (
     <GlassPanel>
       <ul className="space-y-5">
-        {[
-          ["TFSA", "w-[72%]", "bg-gradient-to-r from-[#de50a4] to-[#c158c0]", "$46,100"],
-          ["RRSP", "w-[58%]", "bg-gradient-to-r from-[#b165dc] to-[#9978ed]", "$37,100"],
-          ["FHSA", "w-[30%]", "bg-gradient-to-r from-[#7d72ea] to-[#5e78ed]", "$19,200"],
-        ].map(([label, width, fill, amount]) => (
-          <li key={label}>
+        {copyFor(locale).visuals.registeredAccounts.map((account, index) => (
+          <li key={account.label}>
             <div className="flex items-center justify-between text-sm font-bold text-ink">
-              <span>{label}</span>
-              <span>{amount}</span>
+              <span>{account.label}</span>
+              <span>{account.amount}</span>
             </div>
             <div className="mt-2 h-2 rounded-full bg-[#e8eef6]">
-              <div className={cn("h-full rounded-full", width, fill)} />
+              <div
+                className={cn("h-full rounded-full", bars[index]?.width, bars[index]?.fill)}
+              />
             </div>
           </li>
         ))}

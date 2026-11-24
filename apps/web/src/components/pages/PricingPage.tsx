@@ -9,55 +9,53 @@ import {
   Section,
   TextAnchor,
 } from "@/components/ui";
-import { COMPARE_GROUPS, PLANS, PRICING_FAQ, type Plan } from "@/content/pricing";
+import { copyFor, fill } from "@/content/index";
+import { compareGroupsFor, plansFor, pricingFaqFor, type Plan } from "@/content/pricing";
 import { cn } from "@/lib/cn";
 import { billingPlanUrl } from "@/lib/links";
+import type { Locale } from "@/lib/locale";
 import { trialMicrocopy, usePlanPrices, type DisplayPrice } from "@/lib/planPrices";
+import { pagePath } from "@/lib/routes";
 
-export function PricingPage() {
-  const prices = usePlanPrices(PLANS);
+export function PricingPage({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).pricing;
+  const plans = plansFor(locale);
+  const prices = usePlanPrices(plans, locale);
+
   return (
     <>
       <Section bg="page" className="pt-12 sm:pt-16">
-        <Kicker>Pricing</Kicker>
+        <Kicker>{copy.kicker}</Kicker>
         <h1 className="mt-6 text-display-l font-semibold">
-          Free on your computer.
+          {copy.heading.first}
           <br />
-          <GradientText>Cloud Capabilities</GradientText> when you want it.
+          <GradientText>{copy.heading.accent}</GradientText>
+          {copy.heading.tail}
         </h1>
-        <p className="mt-6 max-w-2xl text-lead text-ink-soft">
-          Using Nixus on your computer costs nothing and needs no account. NixusCloud adds
-          household views and AI, and Advance starts with 7 days free.
-        </p>
+        <p className="mt-6 max-w-2xl text-lead text-ink-soft">{copy.lead}</p>
 
         <div className="mt-12 grid items-start gap-5 md:grid-cols-3">
-          {PLANS.map((plan, index) => (
-            <PlanCard key={plan.id} plan={plan} price={prices[index]} />
+          {plans.map((plan, index) => (
+            <PlanCard key={plan.id} plan={plan} price={prices[index]} locale={locale} />
           ))}
         </div>
-        <p className="mt-6 max-w-2xl text-sm text-ink-muted">
-          Prices are in Canadian dollars and tax is included. Outside Canada, checkout shows the
-          price in your own currency. Payments are handled by Stripe.
-        </p>
+        <p className="mt-6 max-w-2xl text-sm text-ink-muted">{copy.taxNote}</p>
       </Section>
 
       <Section bg="white" id="compare" labelledBy="compare-heading">
         <h2 id="compare-heading" className="text-display-m font-semibold">
-          Compare the plans
+          {copy.compare.heading}
         </h2>
-        <p className="mt-4 max-w-2xl text-ink-soft">
-          Everything you need to track your money is free on your computer. Cloud plans add the
-          household view, AI that answers from your own numbers, and dashboards built your way.
-        </p>
+        <p className="mt-4 max-w-2xl text-ink-soft">{copy.compare.lead}</p>
         <div className="mt-10 overflow-x-auto">
           <table className="w-full min-w-[36rem] border-collapse text-left text-[0.95rem]">
-            <caption className="sr-only">Features included in each Nixus plan</caption>
+            <caption className="sr-only">{copy.compare.caption}</caption>
             <thead>
               <tr className="border-b border-line">
                 <th scope="col" className="py-4 pl-2 font-normal">
-                  <span className="sr-only">Feature</span>
+                  <span className="sr-only">{copy.compare.featureColumn}</span>
                 </th>
-                {PLANS.map((plan) => (
+                {plans.map((plan) => (
                   <th
                     key={plan.id}
                     scope="col"
@@ -71,7 +69,7 @@ export function PricingPage() {
                 ))}
               </tr>
             </thead>
-            {COMPARE_GROUPS.map((group) => (
+            {compareGroupsFor(locale).map((group) => (
               <tbody key={group.rows[0].label}>
                 {group.rows.map((row) => (
                   <tr key={row.label} className="border-b border-line">
@@ -81,7 +79,7 @@ export function PricingPage() {
                         <span className="mt-0.5 block text-sm text-ink-muted">{row.hint}</span>
                       ) : null}
                     </th>
-                    {PLANS.map((plan) => {
+                    {plans.map((plan) => {
                       const value = row.values[plan.id];
                       return (
                         <td
@@ -93,14 +91,14 @@ export function PricingPage() {
                           ) : value ? (
                             <>
                               <Check className="mx-auto size-4 text-brand" aria-hidden="true" />
-                              <span className="sr-only">Included</span>
+                              <span className="sr-only">{copy.compare.included}</span>
                             </>
                           ) : (
                             <>
                               <span aria-hidden="true" className="text-ink-muted/60">
                                 —
                               </span>
-                              <span className="sr-only">Not included</span>
+                              <span className="sr-only">{copy.compare.notIncluded}</span>
                             </>
                           )}
                         </td>
@@ -117,27 +115,26 @@ export function PricingPage() {
       <Section bg="page">
         <div className="grid items-center gap-8 rounded-3xl bg-glass p-8 sm:p-12 lg:grid-cols-[minmax(0,1.4fr)_auto] lg:gap-14">
           <div>
-            <Kicker>Founding Users</Kicker>
-            <h2 className="mt-5 text-display-s font-semibold">
-              Early access, at a discounted price, forever.
-            </h2>
-            <p className="mt-4 max-w-xl text-ink-soft">
-              Join the alpha early, share what works and what does not, and keep a lower price for
-              good.
-            </p>
+            <Kicker>{copy.founding.kicker}</Kicker>
+            <h2 className="mt-5 text-display-s font-semibold">{copy.founding.heading}</h2>
+            <p className="mt-4 max-w-xl text-ink-soft">{copy.founding.body}</p>
           </div>
-          <ButtonLink to="/founding-users" variant="dark" className="justify-self-start">
-            See the program
+          <ButtonLink
+            to={pagePath("foundingUsers", locale)}
+            variant="dark"
+            className="justify-self-start"
+          >
+            {copy.founding.cta}
           </ButtonLink>
         </div>
       </Section>
 
       <Section bg="white" labelledBy="faq-heading" containerClassName="max-w-[48rem]">
         <h2 id="faq-heading" className="text-display-m font-semibold">
-          Pricing questions
+          {copy.faqHeading}
         </h2>
         <div className="mt-10 border-t border-line">
-          {PRICING_FAQ.map((item) => (
+          {pricingFaqFor(locale).map((item) => (
             <details key={item.question} className="nx-faq group border-b border-line">
               <summary className="nx-focus flex cursor-pointer items-center justify-between gap-6 rounded-sm py-5 font-bold text-ink">
                 {item.question}
@@ -155,7 +152,16 @@ export function PricingPage() {
   );
 }
 
-function PlanCard({ plan, price }: { plan: Plan; price: DisplayPrice }) {
+function PlanCard({
+  plan,
+  price,
+  locale,
+}: {
+  plan: Plan;
+  price: DisplayPrice;
+  locale: Locale;
+}) {
+  const copy = copyFor(locale).pricing;
   const trial = plan.trial;
   return (
     <div
@@ -191,13 +197,13 @@ function PlanCard({ plan, price }: { plan: Plan; price: DisplayPrice }) {
       <Bullets className="mt-6 flex-1 text-[0.95rem]" items={plan.features} />
       <div className="mt-8">
         {plan.lookupKey === null ? (
-          <ButtonLink to="/download" variant="dark" className="w-full">
-            Download Nixus
+          <ButtonLink to={pagePath("download", locale)} variant="dark" className="w-full">
+            {copy.downloadCta}
           </ButtonLink>
         ) : trial ? (
           <>
             <ButtonAnchor
-              href={billingPlanUrl(trial.lookupKey)}
+              href={billingPlanUrl(locale, trial.lookupKey)}
               variant={plan.highlighted ? "primary" : "outline"}
               className="w-full"
             >
@@ -207,7 +213,7 @@ function PlanCard({ plan, price }: { plan: Plan; price: DisplayPrice }) {
                 after the trial, that a card is needed, and the way out. */}
             <p className="mt-3 text-sm text-ink-muted">{trialMicrocopy(trial, price)}</p>
             <TextAnchor
-              href={billingPlanUrl(plan.lookupKey)}
+              href={billingPlanUrl(locale, plan.lookupKey)}
               className="mt-3 inline-block text-sm"
             >
               {trial.secondaryCta}
@@ -215,11 +221,11 @@ function PlanCard({ plan, price }: { plan: Plan; price: DisplayPrice }) {
           </>
         ) : (
           <ButtonAnchor
-            href={billingPlanUrl(plan.lookupKey)}
+            href={billingPlanUrl(locale, plan.lookupKey)}
             variant={plan.highlighted ? "primary" : "outline"}
             className="w-full"
           >
-            Choose {plan.shortName}
+            {fill(copy.choosePlan, { plan: plan.shortName })}
           </ButtonAnchor>
         )}
       </div>

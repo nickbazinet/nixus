@@ -1,3 +1,4 @@
+import type { Locale } from "./locale";
 import { SITE } from "./site";
 
 /**
@@ -13,10 +14,22 @@ export const INSTAGRAM_URL = "https://www.instagram.com/nixusapp/";
 export const FACEBOOK_URL = "https://www.facebook.com/people/Nixus/61594399344720/";
 
 /**
+ * The account app, in the visitor's language.
+ *
+ * It mirrors this site's URL scheme — English at the root, French under `/fr`
+ * (`apps/account/src/routes/fr/`) — so carrying the language across the origin
+ * boundary is a prefix, not a query parameter. Without it, a visitor reading
+ * French marketing copy lands on an English checkout.
+ */
+export function accountAppUrl(locale: Locale): string {
+  return locale === "fr" ? `${ACCOUNT_APP_URL}/fr` : ACCOUNT_APP_URL;
+}
+
+/**
  * Where a pricing-page plan button sends a visitor. Checkout lives in the
  * account app (AD-8), and a plan travels as its `lookup_key`, never as a
  * Stripe `price_id` (AD-6).
  */
-export function billingPlanUrl(planLookupKey: string): string {
-  return `${ACCOUNT_APP_URL}/billing?plan=${encodeURIComponent(planLookupKey)}`;
+export function billingPlanUrl(locale: Locale, planLookupKey: string): string {
+  return `${accountAppUrl(locale)}/billing?plan=${encodeURIComponent(planLookupKey)}`;
 }

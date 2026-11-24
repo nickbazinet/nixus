@@ -7,13 +7,13 @@
  * `SITE.url` is the origin only — never a trailing slash. Every consumer goes
  * through `absoluteUrl()` so the root URL is emitted as `<origin>/` in exactly
  * one shape across canonical, og:url, sitemap and JSON-LD.
+ *
+ * Nothing here is translatable: per-language titles and descriptions live in
+ * the copy dictionary, because they are words.
  */
 
 export const SITE = {
   name: "Nixus",
-  defaultTitle: "Nixus — Personal finance, minus the admin",
-  defaultDescription:
-    "Nixus subtracts the spreadsheets, the chaos and the stress. Drop in a credit card statement and get a clear picture of where you stand and what to do next. Free on your computer, no bank logins.",
   url: "https://nixusapp.com",
   ogImage: "https://nixusapp.com/og-image.png",
   /** This repository's public home — the `origin` remote, also linked site-wide. */

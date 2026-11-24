@@ -11,6 +11,9 @@ import { useEffect } from "react";
 import appCss from "../styles/main.css?url";
 import { SiteFooter } from "../components/SiteFooter";
 import { SiteHeader } from "../components/SiteHeader";
+import { copyFor } from "@/content/index";
+import { LANG_TAG, localeFromPath, type Locale } from "@/lib/locale";
+import { pageFromPath, pagePath } from "@/lib/routes";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -48,16 +51,17 @@ function useCloudflareAnalytics(): void {
   }, []);
 }
 
-/** Home-only strip above the header. */
-function AnnouncementBar() {
+/** Home-only strip above the header, in that language's home page. */
+function AnnouncementBar({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).shell.announcement;
   return (
     <div className="bg-night px-4 py-2.5 text-center text-sm text-white/90">
-      Alpha: Founding Users get early access and a discounted price, forever.{" "}
+      {copy.text}{" "}
       <Link
-        to="/founding-users"
+        to={pagePath("foundingUsers", locale)}
         className="nx-focus rounded-sm font-bold text-white underline underline-offset-4"
       >
-        See the program
+        {copy.cta}
       </Link>
     </div>
   );
@@ -87,10 +91,14 @@ function IconGradientDefs() {
 
 function RootDocument() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  // The URL is the only locale authority. Prerender renders every route through
+  // this one module with a concurrency pool, so anything mutable and shared
+  // would let a sibling page's language leak into this document.
+  const locale = localeFromPath(pathname);
   useCloudflareAnalytics();
 
   return (
-    <html lang="en">
+    <html lang={LANG_TAG[locale]}>
       <head>
         <HeadContent />
       </head>
@@ -100,14 +108,14 @@ function RootDocument() {
           href="#main-content"
           className="absolute left-2 top-2 z-[100] -translate-y-16 rounded-md bg-white px-3 py-2 text-sm font-bold text-ink shadow focus-visible:translate-y-0 motion-safe:transition-transform"
         >
-          Skip to main content
+          {copyFor(locale).shell.skipToMain}
         </a>
-        {pathname === "/" ? <AnnouncementBar /> : null}
-        <SiteHeader />
+        {pageFromPath(pathname) === "home" ? <AnnouncementBar locale={locale} /> : null}
+        <SiteHeader locale={locale} pathname={pathname} />
         <main id="main-content" tabIndex={-1} className="outline-none">
           <Outlet />
         </main>
-        <SiteFooter />
+        <SiteFooter locale={locale} pathname={pathname} />
         <Scripts />
       </body>
     </html>

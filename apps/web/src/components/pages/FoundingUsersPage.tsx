@@ -13,50 +13,28 @@ import {
 } from "@/components/ui";
 import { PillDecoration } from "@/components/visuals";
 import { CONTACT_EMAIL } from "@/content/contact";
+import { copyFor, fill } from "@/content/index";
+import type { FoundingUsersCopy } from "@/content/types";
 import { cn } from "@/lib/cn";
+import type { Locale } from "@/lib/locale";
+import { pagePath } from "@/lib/routes";
 
-const BENEFITS = [
-  {
-    icon: Sparkles,
-    title: "Early access",
-    body: "Use the platform before everyone else, including new features as they land.",
-  },
-  {
-    icon: TrendingUp,
-    title: "A discounted price, forever",
-    body: "50% off every NixusCloud plan, for as long as you stay.",
-  },
-  {
-    icon: MessageSquare,
-    title: "A direct line to me",
-    body: "I read every message. You talk to the person building it, not a support queue.",
-  },
-];
+/** Icon for each benefit card, in card order. */
+const BENEFIT_ICONS = [Sparkles, TrendingUp, MessageSquare];
 
-const STEPS = [
-  { title: "Apply", body: "Tell me a bit about how you manage money today." },
-  { title: "Get access", body: "I send your invitation and lock in your price." },
-  { title: "Talk to me", body: "Use it, tell me what you think, and watch it change." },
-];
+export function FoundingUsersPage({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).foundingUsers;
 
-const MONEY_TODAY = [
-  "A spreadsheet",
-  "A bank-connected app",
-  "Pen and paper",
-  "In my head",
-  "Something else",
-];
-
-export function FoundingUsersPage() {
   return (
     <>
       <Section bg="page" className="overflow-hidden pt-12 sm:pt-16">
         <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1fr)_auto]">
           <div>
-            <Kicker>Founding Users</Kicker>
+            <Kicker>{copy.kicker}</Kicker>
             <h1 className="mt-6 max-w-4xl text-display-l font-semibold">
-              Help build Nixus. Get it first, and{" "}
-              <GradientText>pay less, forever</GradientText>.
+              {copy.heading.lead}
+              <GradientText>{copy.heading.accent}</GradientText>
+              {copy.heading.tail}
             </h1>
             <div className="mt-6 flex items-center gap-3">
               <img
@@ -67,17 +45,14 @@ export function FoundingUsersPage() {
                 className="size-10 rounded-full object-cover"
               />
               <div className="text-sm">
-                <p className="font-bold text-ink">A note from Nick</p>
-                <p className="text-ink-muted">You help me, I help you. A small gift for helping make my dream come true.</p>
+                <p className="font-bold text-ink">{copy.noteTitle}</p>
+                <p className="text-ink-muted">{copy.noteBody}</p>
               </div>
             </div>
-            <p className="mt-6 max-w-2xl text-lead text-ink-soft">
-              Founding Users get early access to the platform at a discounted price for good, in
-              exchange for honest feedback and regular conversations with me.
-            </p>
+            <p className="mt-6 max-w-2xl text-lead text-ink-soft">{copy.lead}</p>
             <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
-              <ButtonLink to="/founding-users" hash="apply">
-                Apply to be a Founding User
+              <ButtonLink to={pagePath("foundingUsers", locale)} hash="apply">
+                {copy.cta}
               </ButtonLink>
             </div>
           </div>
@@ -86,14 +61,14 @@ export function FoundingUsersPage() {
       </Section>
 
       <Section bg="white" labelledBy="what-you-get">
-        <Kicker>What you get</Kicker>
+        <Kicker>{copy.benefits.kicker}</Kicker>
         <h2 id="what-you-get" className="mt-5 text-display-m font-semibold">
-          Three things, for good
+          {copy.benefits.heading}
         </h2>
         <div className="mt-12 grid gap-5 md:grid-cols-3">
-          {BENEFITS.map((item) => (
+          {copy.benefits.items.map((item, index) => (
             <div key={item.title} className={cn(cardClass(true), "p-6")}>
-              <IconChip icon={item.icon} />
+              <IconChip icon={BENEFIT_ICONS[index] ?? Sparkles} />
               <h3 className="mt-5 text-lg font-semibold">{item.title}</h3>
               <p className="mt-3 text-[0.95rem] text-ink-muted">{item.body}</p>
             </div>
@@ -104,21 +79,14 @@ export function FoundingUsersPage() {
       <Section bg="page" labelledBy="what-i-ask">
         <div className="grid gap-10 lg:grid-cols-2 lg:gap-16">
           <div>
-            <Kicker>What I ask in return</Kicker>
+            <Kicker>{copy.ask.kicker}</Kicker>
             <h2 id="what-i-ask" className="mt-5 text-display-s font-semibold">
-              Honest feedback, and real conversations
+              {copy.ask.heading}
             </h2>
-            <p className="mt-5 text-ink-soft">
-              This only works if you tell me the truth about what is good, what is bad, and what
-              could be better.
-            </p>
+            <p className="mt-5 text-ink-soft">{copy.ask.body}</p>
           </div>
           <ul className="space-y-4 lg:pt-2">
-            {[
-              "Share what works and what does not, the good and the bad",
-              "Suggest improvements, big or small",
-              "Talk with me regularly about how to make Nixus better, by email or a short call when it suits you",
-            ].map((item) => (
+            {copy.ask.items.map((item) => (
               <li key={item} className="flex items-start gap-3 text-ink-soft">
                 <span
                   aria-hidden="true"
@@ -132,12 +100,12 @@ export function FoundingUsersPage() {
       </Section>
 
       <Section bg="white" labelledBy="how-it-works">
-        <Kicker>How it works</Kicker>
+        <Kicker>{copy.how.kicker}</Kicker>
         <h2 id="how-it-works" className="mt-5 text-display-m font-semibold">
-          From application to first call
+          {copy.how.heading}
         </h2>
         <ol className="mt-12 grid gap-5 md:grid-cols-3">
-          {STEPS.map((step, index) => (
+          {copy.how.steps.map((step, index) => (
             <li key={step.title} className={cn(cardClass(true), "p-6")}>
               <NumberBadge n={index + 1} />
               <h3 className="mt-5 text-lg font-semibold">{step.title}</h3>
@@ -150,15 +118,13 @@ export function FoundingUsersPage() {
       <Section bg="page" id="apply" labelledBy="apply-heading">
         <div className="grid gap-10 rounded-3xl bg-glass p-6 sm:p-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-14 lg:p-12">
           <div>
-            <Kicker>Apply</Kicker>
+            <Kicker>{copy.apply.kicker}</Kicker>
             <h2 id="apply-heading" className="mt-5 text-display-s font-semibold">
-              I read every application myself
+              {copy.apply.heading}
             </h2>
-            <p className="mt-4 text-ink-soft">
-              Tell me a little about you. There are no wrong answers.
-            </p>
+            <p className="mt-4 text-ink-soft">{copy.apply.body}</p>
           </div>
-          <ApplicationForm />
+          <ApplicationForm copy={copy.form} />
         </div>
       </Section>
     </>
@@ -170,9 +136,11 @@ const fieldClass =
 
 /**
  * No backend: submitting opens the visitor's mail app with the answers in the
- * body, addressed to the public contact mailbox.
+ * body, addressed to the public contact mailbox. The body is written in the
+ * language the applicant was reading, so a French applicant's mail arrives
+ * labelled the way they filled it in.
  */
-function ApplicationForm() {
+function ApplicationForm({ copy }: { copy: FoundingUsersCopy["form"] }) {
   const id = useId();
   const [sent, setSent] = useState(false);
 
@@ -181,14 +149,14 @@ function ApplicationForm() {
     const data = new FormData(event.currentTarget);
     const name = String(data.get("name") ?? "").trim();
     const body = [
-      `Name: ${name}`,
-      `Email: ${String(data.get("email") ?? "").trim()}`,
-      `How I manage my money today: ${String(data.get("today") ?? "")}`,
+      `${copy.mailNameLabel}: ${name}`,
+      `${copy.mailEmailLabel}: ${String(data.get("email") ?? "").trim()}`,
+      `${copy.mailTodayLabel}: ${String(data.get("today") ?? "")}`,
       "",
-      "What would make Nixus a no-brainer for me:",
+      copy.mailNoBrainerLabel,
       String(data.get("noBrainer") ?? "").trim(),
     ].join("\n");
-    const subject = `Founding User application${name ? ` — ${name}` : ""}`;
+    const subject = name ? fill(copy.mailSubject, { name }) : copy.mailSubjectNoName;
     window.location.href = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     setSent(true);
   }
@@ -201,13 +169,13 @@ function ApplicationForm() {
       <div className="space-y-5 text-sm">
         <div>
           <label htmlFor={`${id}-name`} className="font-bold text-ink">
-            Name
+            {copy.nameLabel}
           </label>
           <input id={`${id}-name`} name="name" required autoComplete="name" className={fieldClass} />
         </div>
         <div>
           <label htmlFor={`${id}-email`} className="font-bold text-ink">
-            Email
+            {copy.emailLabel}
           </label>
           <input
             id={`${id}-email`}
@@ -215,22 +183,22 @@ function ApplicationForm() {
             type="email"
             required
             autoComplete="email"
-            placeholder="you@example.com"
+            placeholder={copy.emailPlaceholder}
             className={fieldClass}
           />
         </div>
         <div>
           <label htmlFor={`${id}-today`} className="font-bold text-ink">
-            How do you manage your money today?
+            {copy.todayLabel}
           </label>
           <div className="relative">
             <select
               id={`${id}-today`}
               name="today"
               className={cn(fieldClass, "appearance-none pr-10")}
-              defaultValue={MONEY_TODAY[0]}
+              defaultValue={copy.todayOptions[0]}
             >
-              {MONEY_TODAY.map((option) => (
+              {copy.todayOptions.map((option) => (
                 <option key={option}>{option}</option>
               ))}
             </select>
@@ -242,18 +210,16 @@ function ApplicationForm() {
         </div>
         <div>
           <label htmlFor={`${id}-nobrainer`} className="font-bold text-ink">
-            What would make Nixus a no-brainer for you?
+            {copy.noBrainerLabel}
           </label>
           <textarea id={`${id}-nobrainer`} name="noBrainer" rows={4} className={fieldClass} />
         </div>
       </div>
       <button type="submit" className={cn(buttonClass("primary"), "mt-6 w-full")}>
-        Apply to be a Founding User
+        {copy.submit}
       </button>
       <p className="mt-4 text-xs text-ink-muted" aria-live="polite">
-        {sent
-          ? `Your email app should open with your answers. If it does not, write to ${CONTACT_EMAIL}.`
-          : "I reply personally to every application. Your answers go only to me, by email, and are used only to follow up with you."}
+        {sent ? fill(copy.sentNote, { email: CONTACT_EMAIL }) : copy.privacyNote}
       </p>
     </form>
   );

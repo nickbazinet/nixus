@@ -13,97 +13,66 @@ import {
   cardClass,
 } from "@/components/ui";
 import { HomeHeroVisual, MinusGlyph, PlusGlyph } from "@/components/visuals";
-import { PLANS } from "@/content/pricing";
+import { copyFor } from "@/content/index";
+import { plansFor } from "@/content/pricing";
 import { cn } from "@/lib/cn";
+import type { Locale } from "@/lib/locale";
 import { usePlanPrices } from "@/lib/planPrices";
+import { pagePath } from "@/lib/routes";
 
-const SUBTRACTED = [
-  "the headache",
-  "the chaos",
-  "the spreadsheets",
-  "the complexity",
-  "the overwhelm",
-  "the confusion",
-  "the worries",
-];
+const HIGHLIGHT_ICONS = [Target, Wallet, TrendingUp];
 
-const HIGHLIGHTS = [
-  {
-    icon: Target,
-    title: "Next actions",
-    body: "A chart tells you what happened. Nixus tells you what to do now.",
-  },
-  {
-    icon: Wallet,
-    title: "TFSA, RRSP and FHSA",
-    body: "Registered accounts are first-class, not an afterthought.",
-  },
-  {
-    icon: TrendingUp,
-    title: "Net worth over time",
-    body: "Assets and liabilities in one history, so you see the direction.",
-  },
-];
-
-const STEPS = [
-  { title: "Download Nixus", body: "Install Nixus on macOS or Windows. No account needed." },
-  { title: "Drop in a statement", body: "A PDF or screenshot from your credit card. Nixus sorts it." },
-  { title: "See where you stand", body: "Budgets, net worth and your next actions, ready to go." },
-];
-
-export function HomePage() {
+export function HomePage({ locale }: { locale: Locale }) {
   return (
     <>
-      <Hero />
-      <MinusTheAdmin />
-      <FeaturesTeaser />
-      <HowItWorks />
-      <MissionBand />
-      <PricingTeaser />
-      <FoundingTeaser />
-      <Closing />
+      <Hero locale={locale} />
+      <MinusTheAdmin locale={locale} />
+      <FeaturesTeaser locale={locale} />
+      <HowItWorks locale={locale} />
+      <MissionBand locale={locale} />
+      <PricingTeaser locale={locale} />
+      <FoundingTeaser locale={locale} />
+      <Closing locale={locale} />
     </>
   );
 }
 
-function Hero() {
+function Hero({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.hero;
   return (
     <section className="overflow-hidden bg-page">
       <div className="nx-container grid items-center gap-14 pb-20 pt-12 sm:pt-16 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] lg:pb-24 lg:pt-20">
         <div>
-          <Kicker>Personal finance for Canadians</Kicker>
+          <Kicker>{copy.kicker}</Kicker>
           <h1 className="mt-6 text-display-xl font-semibold">
-            Minus the <GradientText>admin</GradientText>.
+            {copy.heading.lead}
+            <GradientText>{copy.heading.accent}</GradientText>
+            {copy.heading.tail}
           </h1>
-          <p className="mt-6 max-w-xl text-lead text-ink-soft">
-            Nixus subtracts the spreadsheets, the chaos and the stress. You get a clear picture of
-            where you stand and what to do next. Drop in a credit card statement to start.
-          </p>
+          <p className="mt-6 max-w-xl text-lead text-ink-soft">{copy.lead}</p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <ButtonLink to="/download">
+            <ButtonLink to={pagePath("download", locale)}>
               <Download className="size-4" aria-hidden="true" />
-              Download Nixus
+              {copy.ctaDownload}
             </ButtonLink>
-            <ButtonLink to="/features" variant="outline">
-              See the features
+            <ButtonLink to={pagePath("features", locale)} variant="outline">
+              {copy.ctaFeatures}
             </ButtonLink>
           </div>
-          <p className="mt-5 text-sm text-ink-muted">
-            macOS and Windows. Free on your computer, no account needed. No bank logins.
-          </p>
+          <p className="mt-5 text-sm text-ink-muted">{copy.platforms}</p>
           {/* The hero promises a statement drop-in, and AI statement reading is
               an Advance capability, so the trial is named here rather than left
               for the pricing page to explain. Secondary by design: the free
               download stays the primary action. */}
           <p className="mt-2 text-sm text-ink-muted">
-            AI statement reading comes with NixusCloud Advance.{" "}
-            <TextLink to="/pricing" className="text-sm">
-              Try it free for 7 days
+            {copy.trialLead}{" "}
+            <TextLink to={pagePath("pricing", locale)} className="text-sm">
+              {copy.trialLink}
             </TextLink>
             .
           </p>
         </div>
-        <HomeHeroVisual />
+        <HomeHeroVisual locale={locale} />
       </div>
     </section>
   );
@@ -150,34 +119,31 @@ function SubtractedList({ items }: { items: readonly string[] }) {
   );
 }
 
-function MinusTheAdmin() {
+function MinusTheAdmin({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.minus;
   return (
     <Section bg="white">
       <div className="grid gap-14 lg:grid-cols-2 lg:gap-10">
-        {/* Two-column grid so every "the" starts under the heading's "the". */}
+        {/* Two-column grid so every list item starts under the heading's second word. */}
         <div className="grid grid-cols-[auto_minmax(0,1fr)] content-start">
           <h2 className="contents text-display-m font-semibold">
-            <span className="pr-[0.28em]">Minus</span>
+            <span className="pr-[0.28em]">{copy.heading.first}</span>
             <span>
-              the <GradientText>admin</GradientText>
+              {copy.heading.rest}
+              <GradientText>{copy.heading.accent}</GradientText>
             </span>
           </h2>
-          <SubtractedList items={SUBTRACTED} />
+          <SubtractedList items={copy.subtracted} />
         </div>
         <div className="lg:pt-6">
           <div className="flex items-center gap-4">
             <MinusGlyph />
             <PlusGlyph />
           </div>
-          <h2 className="mt-6 text-display-s font-semibold">
-            We subtract the busywork. You add the decisions.
-          </h2>
-          <p className="mt-5 max-w-lg text-ink-soft">
-            Nixus sorts your transactions, tracks your budgets and keeps your net worth up to date.
-            You spend your time on the choices that actually move your money.
-          </p>
-          <TextLink to="/mission" className="mt-6 inline-block">
-            Read our mission
+          <h2 className="mt-6 text-display-s font-semibold">{copy.pitchHeading}</h2>
+          <p className="mt-5 max-w-lg text-ink-soft">{copy.pitchBody}</p>
+          <TextLink to={pagePath("mission", locale)} className="mt-6 inline-block">
+            {copy.missionLink}
           </TextLink>
         </div>
       </div>
@@ -185,21 +151,17 @@ function MinusTheAdmin() {
   );
 }
 
-function FeaturesTeaser() {
+function FeaturesTeaser({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.features;
+  const visuals = copyFor(locale).visuals;
   return (
     <Section bg="page" labelledBy="home-features">
-      <Kicker>Features</Kicker>
+      <Kicker>{copy.kicker}</Kicker>
       <h2 id="home-features" className="mt-5 text-display-m font-semibold">
-        From statement to sorted in seconds
+        {copy.heading}
       </h2>
-      <p className="mt-5 max-w-2xl text-ink-soft">
-        Drop in a credit card statement as a PDF or a screenshot. Nixus reads every transaction and
-        puts it in a category.
-      </p>
-      <p className="mt-3 max-w-2xl text-[0.95rem] text-ink-muted">
-        Reading statements with AI is part of NixusCloud Advance, which starts with 7 days free. A
-        card is required and you can cancel before the trial ends.
-      </p>
+      <p className="mt-5 max-w-2xl text-ink-soft">{copy.body}</p>
+      <p className="mt-3 max-w-2xl text-[0.95rem] text-ink-muted">{copy.trialNote}</p>
 
       <div className="mt-12 rounded-3xl border border-line bg-white p-3 shadow-[0_24px_50px_-34px_rgba(20,40,80,0.4)] sm:p-5">
         <video
@@ -211,36 +173,37 @@ function FeaturesTeaser() {
           loop
           playsInline
           preload="metadata"
-          aria-label="Nixus importing a statement and sorting it into categories"
+          aria-label={visuals.tourVideoLabel}
         />
       </div>
 
       <div className="mt-8 grid gap-5 md:grid-cols-3">
-        {HIGHLIGHTS.map((item) => (
+        {copy.highlights.map((item, index) => (
           <div key={item.title} className={cn(cardClass(), "p-6")}>
-            <IconChip icon={item.icon} />
+            <IconChip icon={HIGHLIGHT_ICONS[index] ?? Target} />
             <h3 className="mt-5 text-lg font-semibold">{item.title}</h3>
             <p className="mt-2 text-[0.95rem] text-ink-muted">{item.body}</p>
           </div>
         ))}
       </div>
 
-      <TextLink to="/features" className="mt-10 inline-block">
-        Explore every feature
+      <TextLink to={pagePath("features", locale)} className="mt-10 inline-block">
+        {copy.link}
       </TextLink>
     </Section>
   );
 }
 
-function HowItWorks() {
+function HowItWorks({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.how;
   return (
     <Section bg="white" labelledBy="home-how">
-      <Kicker>How it works</Kicker>
+      <Kicker>{copy.kicker}</Kicker>
       <h2 id="home-how" className="mt-5 text-display-m font-semibold">
-        Up and running in three steps
+        {copy.heading}
       </h2>
       <ol className="mt-12 grid gap-5 md:grid-cols-3">
-        {STEPS.map((step, index) => (
+        {copy.steps.map((step, index) => (
           <li key={step.title} className={cn(cardClass(true), "p-6")}>
             <NumberBadge n={index + 1} />
             <h3 className="mt-5 text-lg font-semibold">{step.title}</h3>
@@ -252,23 +215,21 @@ function HowItWorks() {
   );
 }
 
-function MissionBand() {
+function MissionBand({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.mission;
   return (
     <Section bg="night" labelledBy="home-mission">
       <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:gap-16">
         <div>
-          <Kicker tone="dark">Our mission</Kicker>
+          <Kicker tone="dark">{copy.kicker}</Kicker>
           <h2 id="home-mission" className="mt-5 text-display-m font-semibold">
-            Improve the financial stability of the average Canadian.
+            {copy.heading}
           </h2>
         </div>
         <div>
-          <p className="text-lead text-white/80">
-            Knowledge and guidance for everyday people, with the routine decisions automated. Built
-            by one person who wanted this to exist.
-          </p>
-          <ButtonLink to="/mission" variant="light" className="mt-6">
-            Read the story
+          <p className="text-lead text-white/80">{copy.body}</p>
+          <ButtonLink to={pagePath("mission", locale)} variant="light" className="mt-6">
+            {copy.cta}
           </ButtonLink>
         </div>
       </div>
@@ -276,18 +237,22 @@ function MissionBand() {
   );
 }
 
-function PricingTeaser() {
-  const prices = usePlanPrices(PLANS);
+function PricingTeaser({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.pricing;
+  const plans = plansFor(locale);
+  const prices = usePlanPrices(plans, locale);
   return (
     <Section bg="page" labelledBy="home-pricing">
-      <Kicker>Pricing</Kicker>
+      <Kicker>{copy.kicker}</Kicker>
       <h2 id="home-pricing" className="mt-5 text-display-m font-semibold">
-        Free on your computer.
-        <br />
-        Cloud when you want it.
+        {copy.headingLines.map((line) => (
+          <span key={line} className="block">
+            {line}
+          </span>
+        ))}
       </h2>
       <div className="mt-12 grid gap-5 md:grid-cols-3">
-        {PLANS.map((plan, index) => (
+        {plans.map((plan, index) => (
           <div
             key={plan.id}
             className={cn(
@@ -309,86 +274,72 @@ function PricingTeaser() {
             <p className="mt-3 text-[0.95rem] text-ink-muted">{plan.teaser}</p>
             {plan.trial ? (
               <p className="mt-3 text-[0.95rem] font-bold text-brand">
-                {plan.trial.badge}, then the monthly price.
+                {plan.trial.badge}
+                {copy.trialThen}
               </p>
             ) : null}
           </div>
         ))}
       </div>
-      <TextLink to="/pricing" hash="compare" className="mt-10 inline-block">
-        Compare the plans
+      <TextLink to={pagePath("pricing", locale)} hash="compare" className="mt-10 inline-block">
+        {copy.compareLink}
       </TextLink>
     </Section>
   );
 }
 
-function FoundingTeaser() {
+function FoundingTeaser({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.founding;
   return (
     <Section bg="white">
       <div className="grid items-center gap-8 rounded-3xl bg-glass p-8 sm:p-12 lg:grid-cols-[minmax(0,1.4fr)_auto] lg:gap-14">
         <div>
-          <Kicker>Founding Users</Kicker>
-          <h2 className="mt-5 text-display-s font-semibold">
-            Help build Nixus. Get it first, and pay less, forever.
-          </h2>
-          <p className="mt-4 max-w-xl text-ink-soft">
-            Early access to the platform at a discounted price for good, in exchange for honest
-            feedback and regular conversations with me.
-          </p>
+          <Kicker>{copy.kicker}</Kicker>
+          <h2 className="mt-5 text-display-s font-semibold">{copy.heading}</h2>
+          <p className="mt-4 max-w-xl text-ink-soft">{copy.body}</p>
         </div>
-        <ButtonLink to="/founding-users" variant="dark" className="justify-self-start">
-          Become a Founding User
+        <ButtonLink
+          to={pagePath("foundingUsers", locale)}
+          variant="dark"
+          className="justify-self-start"
+        >
+          {copy.cta}
         </ButtonLink>
       </div>
     </Section>
   );
 }
 
-function Closing() {
+function Closing({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).home.closing;
   return (
     <Section bg="night" containerClassName="flex flex-col items-center text-center">
-      <Kicker tone="dark">We subtract. You add.</Kicker>
+      <Kicker tone="dark">{copy.kicker}</Kicker>
       <h2 className="mt-6 max-w-3xl text-display-l font-semibold">
-        Stop running a spreadsheet. <GradientText>Start running your money.</GradientText>
+        {copy.heading.lead}
+        <GradientText>{copy.heading.accent}</GradientText>
+        {copy.heading.tail}
       </h2>
       <div className="mt-12 grid w-full max-w-3xl gap-5 text-left md:grid-cols-2">
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-6">
           <div className="flex items-center gap-3">
             <MinusGlyph className="h-2 w-7" />
-            <h3 className="text-lg font-semibold">We subtract</h3>
+            <h3 className="text-lg font-semibold">{copy.subtractTitle}</h3>
           </div>
-          <Bullets
-            tone="dark"
-            className="mt-5 text-[0.95rem]"
-            items={[
-              "The spreadsheet you rebuild every month",
-              "Sorting every transaction by hand",
-              "Guessing what to do with what is left",
-            ]}
-          />
+          <Bullets tone="dark" className="mt-5 text-[0.95rem]" items={copy.subtractItems} />
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-6">
           <div className="flex items-center gap-3">
             <PlusGlyph className="size-7" />
-            <h3 className="text-lg font-semibold">You add</h3>
+            <h3 className="text-lg font-semibold">{copy.addTitle}</h3>
           </div>
-          <Bullets
-            tone="dark"
-            className="mt-5 text-[0.95rem]"
-            items={[
-              "A clear view of where you stand",
-              "A next step every time you open it",
-              "Confidence in your money decisions",
-            ]}
-          />
+          <Bullets tone="dark" className="mt-5 text-[0.95rem]" items={copy.addItems} />
         </div>
       </div>
-      <p className="mt-10 text-white/80">Free on your computer. No account and no bank login.</p>
-      <p className="mt-2 text-sm text-white/60">
-        Want the AI statement import? NixusCloud Advance is free for your first 7 days.
-      </p>
-      <ButtonLink to="/download" className="mt-6">
-        Download Nixus
+      <p className="mt-10 text-white/80">{copy.footnote}</p>
+      <p className="mt-2 text-sm text-white/60">{copy.trialFootnote}</p>
+      <ButtonLink to={pagePath("download", locale)} className="mt-6">
+        {copy.cta}
       </ButtonLink>
     </Section>
   );

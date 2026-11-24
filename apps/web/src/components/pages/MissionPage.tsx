@@ -10,63 +10,38 @@ import {
   Section,
   cardClass,
 } from "@/components/ui";
+import { copyFor } from "@/content/index";
 import { cn } from "@/lib/cn";
+import type { Locale } from "@/lib/locale";
+import { pagePath } from "@/lib/routes";
 
-const GOALS = [
-  {
-    icon: Sparkles,
-    title: "Knowledge and guidance",
-    body: "Best practices for average people, in plain language. No finance degree needed.",
-  },
-  {
-    icon: Target,
-    title: "Automate financial decisions",
-    body: "Let the app handle the routine choices, so good habits become the default.",
-  },
-  {
-    icon: Car,
-    title: "Automate the rest of life",
-    body: "Money is the start. Garage already tracks vehicle upkeep, and more will follow.",
-  },
-  {
-    icon: CodeXml,
-    title: "Use technology to do it",
-    body: "Your data stays on your computer, the code is open source, and AI is used only where it helps and you opt in.",
-  },
-];
+/** Icon for each goal card, in card order. */
+const GOAL_ICONS = [Sparkles, Target, Car, CodeXml];
 
-const PROMISES = [
-  {
-    title: "Your records stay yours",
-    body: "Your data stays on your computer by design. Cloud features are opt-in.",
-  },
-  { title: "Open source", body: "Read the code, not just the promise." },
-  { title: "Plain about limits", body: "I will say what Nixus cannot do yet, before you find out." },
-];
+export function MissionPage({ locale }: { locale: Locale }) {
+  const copy = copyFor(locale).mission;
 
-export function MissionPage() {
   return (
     <>
       <Section bg="page" className="pt-12 sm:pt-16">
-        <Kicker>Our mission</Kicker>
+        <Kicker>{copy.kicker}</Kicker>
         <h1 className="mt-6 max-w-4xl text-display-xl font-semibold">
-          Improve the financial stability of the <GradientText>average Canadian</GradientText>.
+          {copy.heading.lead}
+          <GradientText>{copy.heading.accent}</GradientText>
+          {copy.heading.tail}
         </h1>
-        <p className="mt-8 max-w-2xl text-lead text-ink-soft">
-          Not a finance expert. Not someone with a spare weekend. The average person, with a real
-          life and a budget to run.
-        </p>
+        <p className="mt-8 max-w-2xl text-lead text-ink-soft">{copy.lead}</p>
       </Section>
 
       <Section bg="white" labelledBy="goals">
-        <Kicker>How we get there</Kicker>
+        <Kicker>{copy.goals.kicker}</Kicker>
         <h2 id="goals" className="mt-5 text-display-m font-semibold">
-          Four goals
+          {copy.goals.heading}
         </h2>
         <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {GOALS.map((goal) => (
+          {copy.goals.items.map((goal, index) => (
             <div key={goal.title} className={cn(cardClass(true), "p-6")}>
-              <IconChip icon={goal.icon} />
+              <IconChip icon={GOAL_ICONS[index] ?? Sparkles} />
               <h3 className="mt-5 text-lg font-semibold">{goal.title}</h3>
               <p className="mt-3 text-[0.95rem] text-ink-muted">{goal.body}</p>
             </div>
@@ -79,51 +54,38 @@ export function MissionPage() {
           <figure>
             <img
               src="/team/nick.jpg"
-              alt="Nick, founder of Nixus"
+              alt={copy.founder.photoAlt}
               width={720}
               height={720}
               loading="lazy"
               className="aspect-square w-full max-w-[22rem] rounded-3xl object-cover"
             />
             <figcaption className="mt-4">
-              <p className="font-bold text-ink">Nick</p>
-              <p className="text-sm text-ink-muted">Founder of Nixus</p>
+              <p className="font-bold text-ink">{copy.founder.name}</p>
+              <p className="text-sm text-ink-muted">{copy.founder.role}</p>
             </figcaption>
           </figure>
           <div>
-            <Kicker>Why I&rsquo;m building this</Kicker>
+            <Kicker>{copy.founder.kicker}</Kicker>
             <h2 id="why-building" className="mt-5 text-display-m font-semibold">
-              Built by one person who wanted this to exist
+              {copy.founder.heading}
             </h2>
             <div className="mt-6 space-y-5 text-ink-soft">
-              <p>
-                I have built my own budget for years. Every time I talked money with the people
-                around me, I found the same thing: we had all built it ourselves, one spreadsheet
-                at a time.
-              </p>
-              <p>
-                Getting financially responsible changed my life for the better. I want everyone
-                around me to have that, without reinventing the wheel. So I am bringing automation
-                and best practices to everybody.
-              </p>
-              <p>
-                I wanted a tool that tells you what to do next, not just what happened, without
-                handing a company your bank password. Nixus is in alpha, it is open source, and I
-                will tell you plainly what it cannot do yet. If you try it, you get a direct line to
-                me.
-              </p>
+              {copy.founder.paragraphs.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
             </div>
           </div>
         </div>
       </Section>
 
       <Section bg="white" labelledBy="promises">
-        <Kicker>Promises</Kicker>
+        <Kicker>{copy.promises.kicker}</Kicker>
         <h2 id="promises" className="mt-5 text-display-m font-semibold">
-          What you can hold me to
+          {copy.promises.heading}
         </h2>
         <div className="mt-12 grid gap-5 md:grid-cols-3">
-          {PROMISES.map((promise) => (
+          {copy.promises.items.map((promise) => (
             <div key={promise.title} className={cn(cardClass(true), "p-6")}>
               <h3 className="text-lg font-semibold">{promise.title}</h3>
               <p className="mt-3 text-[0.95rem] text-ink-muted">{promise.body}</p>
@@ -132,38 +94,22 @@ export function MissionPage() {
         </div>
         <div className="mt-8 grid gap-5 md:grid-cols-2">
           <div className={cn(cardClass(), "p-6")}>
-            <h3 className="text-lg font-semibold text-brand">What works today</h3>
+            <h3 className="text-lg font-semibold text-brand">{copy.promises.worksTitle}</h3>
             <Bullets
               marker="plus"
               className="mt-4 text-[0.95rem]"
-              items={[
-                "Importing credit card statements",
-                "Budgets and cash flow",
-                "Net worth history and forecasts",
-                "Spending insights and year in review",
-                "Retirement projections",
-                "Investment overview",
-                "Registered account tracking (TFSA, RRSP, FHSA)",
-                "Savings goals",
-                "Car maintenance garage",
-              ]}
+              items={copy.promises.worksItems}
             />
           </div>
           <div className={cn(cardClass(), "p-6")}>
-            <h3 className="text-lg font-semibold text-amber-ink">What it isn&rsquo;t</h3>
-            <Bullets
-              className="mt-4 text-[0.95rem]"
-              items={["No bank connection", "No mobile app (yet)", "Not professional financial advice"]}
-            />
+            <h3 className="text-lg font-semibold text-amber-ink">{copy.promises.isntTitle}</h3>
+            <Bullets className="mt-4 text-[0.95rem]" items={copy.promises.isntItems} />
           </div>
         </div>
       </Section>
 
-      <ClosingBand
-        heading="Help me build it"
-        body="Founding Users shape Nixus from the start, and keep a discounted price for good."
-      >
-        <ButtonLink to="/founding-users">Become a Founding User</ButtonLink>
+      <ClosingBand heading={copy.closing.heading} body={copy.closing.body}>
+        <ButtonLink to={pagePath("foundingUsers", locale)}>{copy.closing.cta}</ButtonLink>
       </ClosingBand>
     </>
   );

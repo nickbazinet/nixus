@@ -7,16 +7,20 @@
  * support mailbox and the public repository URL. No ratings, reviews,
  * unowned social profiles or app-store metadata: unverifiable entity claims
  * are worse than none.
+ *
+ * `inLanguage` is the page's own language, not the list of languages the site
+ * happens to ship: the graph is embedded in one prerendered document, and
+ * claiming a French page is also English contradicts its own `<html lang>` and
+ * its `hreflang` cluster.
  */
 
 import { CONTACT_EMAIL } from "@/content/contact";
+import { copyFor } from "@/content/index";
+import { LANG_TAG, type Locale } from "@/lib/locale";
 import { SITE, absoluteUrl } from "@/lib/site";
 
 const WEBSITE_ID = absoluteUrl("/#website");
 const ORGANIZATION_ID = absoluteUrl("/#organization");
-
-/** The UI language the site actually ships, as an IETF tag. */
-const SITE_LANGUAGES = ["en-CA"] as const;
 
 // public/icon-512.png, committed at these dimensions.
 const LOGO = {
@@ -37,7 +41,7 @@ type WebSiteNode = {
   url: string;
   name: string;
   description: string;
-  inLanguage: readonly string[];
+  inLanguage: string;
   publisher: { "@id": string };
 };
 
@@ -56,14 +60,14 @@ export type SiteGraph = {
   "@graph": readonly [WebSiteNode, OrganizationNode];
 };
 
-function websiteNode(): WebSiteNode {
+function websiteNode(locale: Locale): WebSiteNode {
   return {
     "@type": "WebSite",
     "@id": WEBSITE_ID,
     url: absoluteUrl("/"),
     name: SITE.name,
-    description: SITE.defaultDescription,
-    inLanguage: SITE_LANGUAGES,
+    description: copyFor(locale).meta.siteDescription,
+    inLanguage: LANG_TAG[locale],
     publisher: { "@id": ORGANIZATION_ID },
   };
 }
@@ -86,11 +90,11 @@ function organizationNode(): OrganizationNode {
   };
 }
 
-/** The `WebSite` + `Organization` graph shared by every page. */
-export function siteGraph(): SiteGraph {
+/** The `WebSite` + `Organization` graph shared by every page of one language. */
+export function siteGraph(locale: Locale): SiteGraph {
   return {
     "@context": "https://schema.org",
-    "@graph": [websiteNode(), organizationNode()],
+    "@graph": [websiteNode(locale), organizationNode()],
   };
 }
 
@@ -105,12 +109,12 @@ export function serializeJsonLd(graph: SiteGraph): string {
 }
 
 /** Head-script descriptor consumed by TanStack Start's `head()`. */
-export function jsonLdScript(): {
+export function jsonLdScript(locale: Locale): {
   type: string;
   children: string;
 } {
   return {
     type: "application/ld+json",
-    children: serializeJsonLd(siteGraph()),
+    children: serializeJsonLd(siteGraph(locale)),
   };
 }
