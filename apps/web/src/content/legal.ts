@@ -45,7 +45,8 @@ export const TERMS: LegalDocument = {
     {
       "heading": "Optional Nixus Cloud storage",
       "paragraphs": [
-        "Some Nixus Cloud features can keep a copy of your data in Nixus-operated cloud storage. They are available to eligible Nixus Cloud accounts and are off until you turn them on. The Privacy Policy explains how that copy is stored and who could technically read it.",
+        "Some Nixus Cloud features can keep a copy of your data in Nixus-operated cloud storage. They are available to eligible Nixus Cloud accounts and never apply to a local profile. The Privacy Policy explains how that copy is stored and who could technically read it.",
+        "Sync is off for a local profile, which is the default way to use Nixus and needs no account. When you sign in with a Nixus Cloud account on a plan that includes sync, sync is turned on automatically for that Cloud profile and its records are copied to Nixus Cloud. You can turn it off for that profile at any time, and you can keep using a local profile instead.",
         "These features are part of the alpha. Their availability is not guaranteed: they may be changed, interrupted, or withdrawn, and transfers may fail or be delayed. Nixus may suspend them for an account, including for abuse or excessive cost. If an account stops being eligible, they stop working, and the app keeps working with your local data."
       ]
     },
@@ -113,18 +114,19 @@ export const PRIVACY_POLICY: LegalDocument = {
   "title": "Privacy Policy — Nixus",
   "description": "What Nixus stores on your device, what leaves it when you use the AI features, what optional Nixus Cloud storage keeps and who can read it, and how Nixus Cloud premium hosted AI transmits content to AWS Bedrock.",
   "heading": "Privacy Policy",
-  "intro": "Nixus is local-first: by default your financial records are stored on your own device and Nixus holds no copy of them. This policy explains the two things that change that, and both are off until you choose them: the optional AI features, and optional Nixus Cloud storage.",
+  "intro": "Nixus is local-first: by default your financial records are stored on your own device and Nixus holds no copy of them. This policy explains the two things that change that, and neither happens unless you choose it: the optional AI features, and optional Nixus Cloud storage.",
   "sections": [
     {
       "heading": "What stays on your device",
       "paragraphs": [
-        "Budgets, transactions, accounts, income, assets, net worth history, vehicles, and maintenance records are stored only in a local database on your machine. There is no account required to use them and no bank connection. By default nothing is uploaded; the two exceptions are the AI features you invoke and optional Nixus Cloud storage, which you have to turn on yourself. AI provider credentials you enter are stored in your operating system's credential store, never transmitted to Nixus."
+        "Budgets, transactions, accounts, income, assets, net worth history, vehicles, and maintenance records are stored only in a local database on your machine. There is no account required to use them and no bank connection. By default nothing is uploaded; the two exceptions are the AI features you invoke and Nixus Cloud storage, which applies only to a profile you have signed in to a Nixus Cloud account. AI provider credentials you enter are stored in your operating system's credential store, never transmitted to Nixus."
       ]
     },
     {
       "heading": "Optional Nixus Cloud storage",
       "paragraphs": [
-        "Some Nixus Cloud features can keep a copy of your data in Nixus-operated cloud storage. They are off until you turn them on, and they require a Nixus Cloud account. If you never turn them on, or you use a local-only profile, nothing is uploaded.",
+        "Some Nixus Cloud features can keep a copy of your data in Nixus-operated cloud storage. They require a Nixus Cloud account, and they never apply to a local profile: if you use Nixus without an account, nothing is uploaded.",
+        "Sync is off for a local profile, which is the default way to use Nixus and needs no account. When you sign in with a Nixus Cloud account on a plan that includes sync, sync is turned on automatically for that Cloud profile and its records are copied to Nixus Cloud. You can turn it off for that profile at any time, and you can keep using a local profile instead if you would rather nothing was uploaded.",
         "That copy is stored on Amazon Web Services in the United States and is encrypted in transit and at rest. It is not end-to-end encrypted: Nixus does not read your records, but a Nixus administrator with access to that AWS account could technically do so, and so could AWS.",
         "Turning a cloud feature off stops transfers but does not delete the copy. To have it deleted, email the address at the bottom of this page; requests are handled manually."
       ]

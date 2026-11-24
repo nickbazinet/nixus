@@ -8,7 +8,7 @@ export const Route = createFileRoute("/privacy")({
     buildMeta({
       path: "/privacy",
       title: "Privacy — Nixus",
-      description: "No bank logins. Your records live on your computer, and cloud features are off until you turn them on. Exactly what leaves your computer, and when.",
+      description: "No bank logins. Your records live on your computer, and nothing leaves it until you sign in with a Nixus Cloud account. Exactly what leaves your computer, and when.",
     }),
   component: PrivacyPage,
 });

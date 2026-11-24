@@ -120,7 +120,8 @@ const FLOWS: ReadonlyArray<{
   {
     situation: "Cloud sync",
     sent: "An encrypted copy of your records: budgets, transactions, accounts and net worth history. Kept on secure servers.",
-    control: "Off until you turn it on. Turning it off stops transfers, and you can ask us by email to delete the stored copy.",
+    control:
+      "Off for a local profile, which needs no account. On automatically for a Nixus Cloud profile on a plan that includes it, and you can turn it off for that profile. Turning it off stops transfers, and you can ask us by email to delete the stored copy.",
   },
   {
     situation: "Nixus Cloud account",
@@ -146,7 +147,7 @@ export function PrivacyPage() {
             </h1>
             <p className="mt-6 max-w-xl text-lead text-white/80">
               No bank logins. Your records live on your computer. Cloud features reach beyond it,
-              and they are off until you turn them on.
+              and nothing leaves until you sign in with a Nixus Cloud account.
             </p>
           </div>
           <LaptopLock className="mx-auto w-full max-w-[16rem] lg:max-w-[18rem]" />
