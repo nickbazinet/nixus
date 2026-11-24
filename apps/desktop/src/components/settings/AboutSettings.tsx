@@ -39,11 +39,23 @@ export function AboutSettings() {
           />
         )}
         {/* Never an app-level encryption claim: the only protection is whatever the OS already
-          * does to this disk, and saying more would be a promise the product cannot keep. */}
+          * does to this disk, and saying more would be a promise the product cannot keep. The
+          * cloud row sits beside it because sync moves the same records off this disk, where that
+          * sentence stops being the whole answer. */}
         <SettingRow
           title={t("settings.aboutStorageTitle")}
           description={t("settings.aboutStorageBody")}
           data-testid="setting-storage-note"
+        />
+        <SettingRow
+          title={t("settings.aboutCloudStorageTitle")}
+          description={t("settings.aboutCloudStorageBody")}
+          data-testid="setting-cloud-storage-note"
+        />
+        <SettingRow
+          title={t("settings.aboutNetworkTitle")}
+          description={t("settings.aboutNetworkBody")}
+          data-testid="setting-network-note"
         />
       </SettingsSection>
 

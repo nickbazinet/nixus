@@ -79,12 +79,30 @@ export function ReadingStatementsSettings() {
       <CredentialsForm />
 
       {/* Required UI, not optional reassurance: the product's whole positioning is local-first, so
-        * a user who hands over an API key is owed an exact statement of what leaves the machine. */}
+        * a user who hands over an API key is owed an exact statement of what leaves the machine.
+        * One row per AI surface, because what they send differs — an import carries the statement
+        * and the names it is filed under, a chat turn carries a summary of the user's finances, and
+        * the Home composer carries no figures at all. A single row cannot be true for all three. */}
       <SettingsSection heading={t("settings.sectionWhatGetsSent")} icon={Send}>
         <SettingRow
           title={t("settings.whatGetsSentTitle")}
           description={t("settings.whatGetsSentBody")}
           data-testid="setting-what-gets-sent"
+        />
+        <SettingRow
+          title={t("settings.whatGetsSentChatTitle")}
+          description={t("settings.whatGetsSentChatBody")}
+          data-testid="setting-what-gets-sent-chat"
+        />
+        <SettingRow
+          title={t("settings.whatGetsSentInsightsTitle")}
+          description={t("settings.whatGetsSentInsightsBody")}
+          data-testid="setting-what-gets-sent-insights"
+        />
+        <SettingRow
+          title={t("settings.whatGetsSentHostedTitle")}
+          description={t("settings.whatGetsSentHostedBody")}
+          data-testid="setting-what-gets-sent-hosted"
         />
         <SettingRow
           title={t("settings.rememberMerchantsTitle")}
