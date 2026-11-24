@@ -215,10 +215,15 @@ a 7-day trial in front of it.
    amount, a `lookup_key` (`advance_trial`), and PRICE metadata
    `nixus_trial_days = 7`.
 2. Add that `lookup_key` to `CatalogLookupKeys` and deploy the parameter.
-3. Switch on the trial-ending reminder email under **Settings → Subscriptions
-   and emails**. Stripe sends it 7 days before a trial ends and **never in a
-   sandbox**, so it cannot be verified there. Card-network rules for trials
-   expect that notice.
+3. Nothing to switch on for trial emails. Under Managed Payments, Stripe (as
+   Link, the merchant of record) always sends a **trial start email** that
+   confirms the subscription and the trial end date, and sends a trial-ending
+   reminder email only for trials **longer than 7 days**. The Dashboard's
+   trial-ending setting does not apply to Managed Payments subscriptions. A
+   7-day trial therefore gets the start email and no reminder, which is what
+   card-network rules require for a trial of that length. Lengthening the trial
+   past 7 days brings the automatic reminder with it. Never in a sandbox:
+   neither email can be verified there.
 
 **Why the trial length has to be metadata rather than a Price setting.** A
 Checkout Session honours a trial only when the session asks for one:

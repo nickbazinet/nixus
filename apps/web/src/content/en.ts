@@ -567,7 +567,7 @@ export const EN: SiteCopy = {
       {
         question: "What happens when the trial ends?",
         answer:
-          "On day 8 your subscription continues automatically as paid NixusCloud Advance monthly, at the price shown above, and your card is charged then. It renews each month until you cancel. Stripe emails you before the trial ends so the charge is never a surprise.",
+          "On day 8 your subscription continues automatically as paid NixusCloud Advance monthly, at the price shown above, and your card is charged then. It renews each month until you cancel. When you start, you get a confirmation email with the date your trial ends, and that date is always shown in your account, so the charge is never a surprise.",
       },
       {
         question: "Can I cancel during the trial?",

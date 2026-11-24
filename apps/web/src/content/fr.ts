@@ -586,7 +586,7 @@ export const FR: SiteCopy = {
       {
         question: "Que se passe-t-il à la fin de l'essai ?",
         answer:
-          "Le 8e jour, votre abonnement se poursuit automatiquement comme NixusCloud Advance mensuel payant, au prix affiché ci-dessus, et votre carte est débitée à ce moment-là. Il se renouvelle chaque mois jusqu'à ce que vous annuliez. Stripe vous écrit avant la fin de l'essai, pour que le paiement ne soit jamais une surprise.",
+          "Le 8e jour, votre abonnement se poursuit automatiquement comme NixusCloud Advance mensuel payant, au prix affiché ci-dessus, et votre carte est débitée à ce moment-là. Il se renouvelle chaque mois jusqu'à ce que vous annuliez. Au départ, vous recevez un courriel de confirmation indiquant la date de fin de votre essai, et cette date est toujours affichée dans votre compte, pour que le paiement ne soit jamais une surprise.",
       },
       {
         question: "Puis-je annuler pendant l'essai ?",

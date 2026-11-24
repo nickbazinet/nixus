@@ -620,8 +620,8 @@ async function main(): Promise<void> {
       "  - Managed Payments enablement and the business location\n" +
       "  - the LIVE Customer Portal configuration (the sandbox one is set above)\n" +
       "  - the dunning / smart-retry schedule, which is the ONLY grace period in the system (AD-11)\n" +
-      "  - the free-trial reminder email (Settings > Subscriptions and emails): Stripe sends it 7 days\n" +
-      "    before a trial ends and never in a sandbox, so it has to be switched on in live mode\n" +
+      "  - nothing for trial emails: Managed Payments always sends the trial start email, and a\n" +
+      "    trial-ending reminder only for trials longer than 7 days (the Dashboard setting does not apply)\n" +
       "  - live mode\n",
   );
 }
