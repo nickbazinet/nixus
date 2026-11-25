@@ -440,7 +440,7 @@ export const FR: SiteCopy = {
       badge: "7 jours gratuits",
       cta: "Commencer l'essai gratuit de 7 jours",
       microcopy:
-        "7 jours gratuits, puis {price}. Une carte est exigée. Annulez en tout temps avant la fin de l'essai et vous ne serez pas facturé.",
+        "Annulez en tout temps avant la fin de l'essai et vous ne serez pas facturé.",
       secondaryCta: "Ou abonnez-vous tout de suite, sans essai",
     },
     choosePlan: "Choisir {plan}",

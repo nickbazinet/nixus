@@ -421,7 +421,7 @@ export const EN: SiteCopy = {
       badge: "7 days free",
       cta: "Start 7-day free trial",
       microcopy:
-        "7 days free, then {price}. A card is required. Cancel anytime before the trial ends and you won't be charged.",
+        "Cancel anytime before the trial ends and you won't be charged.",
       secondaryCta: "Or subscribe now, without a trial",
     },
     choosePlan: "Choose {plan}",

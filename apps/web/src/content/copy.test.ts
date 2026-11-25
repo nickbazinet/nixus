@@ -249,7 +249,6 @@ describe("fill", () => {
 describe("placeholders", () => {
   /** A placeholder dropped in translation would print a literal `{price}`. */
   const PLACEHOLDERS: ReadonlyArray<[(locale: Locale) => string, string]> = [
-    [(locale) => copyFor(locale).pricing.trial.microcopy, "{price}"],
     [(locale) => copyFor(locale).pricing.choosePlan, "{plan}"],
     [(locale) => copyFor(locale).shell.language.switchTo, "{language}"],
     [(locale) => copyFor(locale).foundingUsers.form.sentNote, "{email}"],

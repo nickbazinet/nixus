@@ -36,48 +36,33 @@ function live(entry: Partial<LivePlanPrice>): LivePlanPrices {
 }
 
 describe("trialMicrocopy", () => {
-  it("fills in the baked price when the catalog has not answered", () => {
-    const price = resolveDisplayPrice(ADVANCE, new Map(), "en");
-    const text = trialMicrocopy(advanceTrialFor("en"), price);
+  /* The price already sits above the button, so the line under it carries no
+   * amount of its own: a Dashboard price change cannot leave the two disagreeing. */
+  it("carries no amount and no unfilled placeholder", () => {
+    for (const locale of ["en", "fr"] as const) {
+      const price = resolveDisplayPrice(advanceOf(locale), new Map(), locale);
+      const text = trialMicrocopy(advanceTrialFor(locale), price);
 
-    expect(text).toContain("$19.99/month");
-    expect(text).not.toContain("{price}");
+      expect(text).not.toMatch(/[0-9]/);
+      expect(text).not.toContain("{price}");
+    }
   });
 
-  it("follows the live price once the catalog answers", () => {
-    const price = resolveDisplayPrice(
-      ADVANCE,
-      live({ amountCents: 2499, currency: "CAD", interval: "month" }),
-      "en",
-    );
-    const text = trialMicrocopy(advanceTrialFor("en"), price);
-
-    expect(text).toContain("$24.99/month");
-    expect(text).not.toContain("19.99");
-  });
-
-  it("states the card, the conversion and the way out", () => {
+  it("states the way out before the trial ends", () => {
     const text = trialMicrocopy(
       advanceTrialFor("en"),
       resolveDisplayPrice(ADVANCE, new Map(), "en"),
     );
 
-    expect(text).toMatch(/7 days free/);
-    expect(text).toMatch(/card is required/i);
     expect(text).toMatch(/cancel anytime before the trial ends/i);
     expect(text).toMatch(/won't be charged/i);
   });
 
-  /* The French disclosure is a translation, not a looser paraphrase: the same
-   * three facts have to survive, and the price has to be the French one. */
-  it("states the same three facts in French, with a French price", () => {
+  /* The French line is a translation, not a looser paraphrase. */
+  it("states the same fact in French", () => {
     const price = resolveDisplayPrice(advanceOf("fr"), new Map(), "fr");
     const text = trialMicrocopy(advanceTrialFor("fr"), price);
 
-    expect(text).toContain("19,99\u00A0$/mois");
-    expect(text).not.toContain("{price}");
-    expect(text).toMatch(/7 jours gratuits/);
-    expect(text).toMatch(/carte est exigée/i);
     expect(text).toMatch(/avant la fin de l'essai/i);
     expect(text).toMatch(/ne serez pas facturé/i);
   });
@@ -148,7 +133,7 @@ describe("the Advance trial offer", () => {
     }
   });
 
-  it("names no amount in the copy, only the placeholder", () => {
+  it("names no amount in the copy", () => {
     for (const locale of LOCALES) {
       const trial = advanceTrialFor(locale);
       for (const value of Object.values(trial)) {
@@ -156,7 +141,6 @@ describe("the Advance trial offer", () => {
         expect(value).not.toMatch(/\d+[.,]\d\d/);
         expect(value).not.toMatch(/\$/);
       }
-      expect(trial.microcopy).toContain("{price}");
     }
   });
 });
