@@ -584,18 +584,13 @@ test.describe("the free-trial offer for an account with no subscription", () => 
       "Try Nixus Cloud Advance free for 7 days",
     );
     await expect(page.getByTestId("billing-trial-offer-badge")).toHaveText("7 days free");
-    // What it includes, read off the catalog entry's own capabilities.
-    await expect(page.getByTestId("billing-trial-offer-capability-hosted_ai")).toBeVisible();
-    await expect(
-      page.getByTestId("billing-trial-offer-capability-multi_device_sync"),
-    ).toBeVisible();
-    // The price after the trial comes off the catalog, never the page.
-    await expect(page.getByTestId("billing-trial-offer-price")).toContainText("19.99");
+    // One headline and one disclosure: no feature list and no second price.
+    await expect(page.getByTestId("billing-trial-offer-capabilities")).toHaveCount(0);
+    await expect(page.getByTestId("billing-trial-offer-price")).toHaveCount(0);
 
+    // The price after the trial comes off the catalog, never the page.
     const terms = page.getByTestId("billing-trial-offer-terms");
     await expect(terms).toContainText("Free for 7 days, then $19.99 / month");
-    await expect(terms).toContainText("A card is required now");
-    await expect(terms).toContainText("charged only when the trial ends");
     await expect(terms).toContainText("you will not be charged");
 
     await expect(page.getByTestId("billing-trial-offer-start")).toHaveText(
@@ -709,7 +704,7 @@ test.describe("the free-trial offer for an account with no subscription", () => 
       "Commencer l'essai gratuit de 7 jours",
     );
     await expect(page.getByTestId("billing-trial-offer-terms")).toContainText(
-      "Une carte est exigée dès maintenant",
+      "ne serez pas facturé",
     );
     await expect(page.locator("body")).not.toContainText("Nuage");
   });

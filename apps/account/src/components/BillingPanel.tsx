@@ -415,39 +415,9 @@ export function BillingPanel({
                   plan: tierDisplayName(t, offeredTrial.tier),
                 })}
               </p>
-              {offeredTrial.capabilities.length === 0 ? null : (
-                <>
-                  <p className="mt-2 text-caption font-semibold text-ink">
-                    {t("billing.trialOfferIncludes")}
-                  </p>
-                  <ul
-                    data-testid="billing-trial-offer-capabilities"
-                    aria-label={t("billing.trialOfferIncludes")}
-                    className="mt-1 flex flex-wrap gap-x-1.5 text-body text-ink-dim"
-                  >
-                    {offeredTrial.capabilities.map((capability, index) => (
-                      <li
-                        key={capability}
-                        data-testid={`billing-trial-offer-capability-${capability}`}
-                      >
-                        {capabilityLabel(t, capability)}
-                        {index < offeredTrial.capabilities.length - 1 ? " ·" : "."}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
             </div>
 
             <div className="flex shrink-0 flex-col gap-3 sm:items-end">
-              <p data-testid="billing-trial-offer-price" className="text-ink sm:text-right">
-                <span className="font-display text-2xl font-bold tracking-[-0.02em]">
-                  {formatPlanAmount(offeredTrial, locale)}
-                </span>{" "}
-                <span className="text-caption text-ink-dim">
-                  {`${offeredTrial.currency} ${t(shortIntervalKey(offeredTrial))}`}
-                </span>
-              </p>
               <Button
                 className={PILL_BUTTON_CLASS}
                 data-testid="billing-trial-offer-start"
@@ -460,9 +430,8 @@ export function BillingPanel({
                       count: offeredTrial.trial_period_days ?? 0,
                     })}
               </Button>
-              {/* The whole disclosure beside the button, not behind a link: the
-                  price after the trial, that a card is taken now, and the way
-                  out before a charge. */}
+              {/* The disclosure beside the button, not behind a link: the price
+                  after the trial and the way out before a charge. */}
               <p
                 data-testid="billing-trial-offer-terms"
                 className="max-w-sm text-caption text-ink-dim sm:text-right"

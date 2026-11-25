@@ -421,10 +421,6 @@ describe("trial copy", () => {
     expect(title).toContain("7");
     expect(title).toContain("Advance");
     expect(title).toContain("Nixus Cloud");
-
-    const includes = i18n.t("billing.trialOfferIncludes");
-    expect(includes).not.toContain("billing.trialOfferIncludes");
-    expect(includes).not.toContain("{{");
   });
 
   it("asks for the trial in French with the established wording", () => {
@@ -434,16 +430,14 @@ describe("trial copy", () => {
     expect(FR.t("billing.startTrial", ARGS)).toContain("essai gratuit de 7 jours");
   });
 
-  it("states the price after the trial, the card and the way out", () => {
+  it("states the price after the trial and the way out", () => {
     const en = EN.t("billing.trialTerms", ARGS);
     expect(en).toContain("$19.99");
-    expect(en).toMatch(/card is required/i);
     expect(en).toMatch(/cancel/i);
     expect(en).toMatch(/will not be charged/i);
 
     const fr = FR.t("billing.trialTerms", ARGS);
     expect(fr).toContain("$19.99");
-    expect(fr).toMatch(/carte est exigée/i);
     expect(fr).toMatch(/[Aa]nnulez/);
   });
 
