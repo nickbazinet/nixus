@@ -62,6 +62,7 @@
   "profile.signOut": "Se déconnecter",
   "profile.sessionExpired": "Votre session a expiré. Reconnectez-vous.",
   "profile.sessionExpiredAction": "Session expirée — se reconnecter",
+  "profile.sessionEnded": "Votre session Nixus Cloud a pris fin. Veuillez vous reconnecter.",
   "profile.menuItem": "Profil",
   "profile.title": "Profil",
   "profile.email": "Courriel",

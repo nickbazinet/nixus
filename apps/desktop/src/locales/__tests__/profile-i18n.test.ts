@@ -17,6 +17,7 @@ const REQUIRED_KEYS = [
   "profile.signOut",
   "profile.sessionExpired",
   "profile.sessionExpiredAction",
+  "profile.sessionEnded",
   "profile.menuItem",
   "profile.title",
   "profile.email",

@@ -505,6 +505,22 @@ pub(crate) fn is_signed_in(entry: &Dataset, current_subject: Option<&str>) -> bo
         && entry.cognito_sub.as_deref() == current_subject
 }
 
+/// Whether the open profile is a Nixus Cloud one, which is the only kind a session ending can
+/// affect. A fault reading the registry answers `false`: nothing is taken away from a profile this
+/// could not identify.
+pub(crate) fn active_profile_is_cloud_linked(app: &AppHandle) -> bool {
+    let Ok(active_id) = datasets::active_dataset_id(&app.state::<DbState>()) else {
+        return false;
+    };
+    let Ok(registry) = datasets::load_registry(app) else {
+        return false;
+    };
+
+    find_registered(registry, &active_id)
+        .map(|entry| entry.kind == DatasetKind::CloudLinked)
+        .unwrap_or(false)
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub async fn get_active_profile(app: AppHandle) -> Result<ActiveProfile, AppError> {
     let active_id = datasets::active_dataset_id(&app.state::<DbState>())?;

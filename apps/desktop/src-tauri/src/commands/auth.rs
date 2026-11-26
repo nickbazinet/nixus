@@ -74,6 +74,24 @@ pub(crate) const BILLING_SCOPE: &str = "nixus-api/billing";
 pub const COGNITO_SCOPES: &str =
     "openid email profile nixus-api/ai.invoke nixus-api/profile nixus-api/billing";
 
+/// The resource-server scopes a session must carry to be fully usable. A session granted before
+/// any of them existed keeps working for the callers whose scope it has and silently fails the
+/// rest, so `get_auth_session` reports it as needing a fresh sign-in instead of looking healthy.
+const REQUIRED_RESOURCE_SCOPES: [&str; 3] = [HOSTED_AI_SCOPE, PROFILE_SCOPE, BILLING_SCOPE];
+
+/// Whether the session's access token lacks any scope in `REQUIRED_RESOURCE_SCOPES`.
+///
+/// An unreadable token is NOT reported as stale: that is a different fault, and it already has its
+/// own handling where the token is actually used.
+fn session_lacks_required_scope(session: &CognitoSession) -> bool {
+    match access_token_scopes(&session.access_token) {
+        Ok(granted) => REQUIRED_RESOURCE_SCOPES
+            .iter()
+            .any(|required| !granted.iter().any(|scope| scope == required)),
+        Err(_) => false,
+    }
+}
+
 /// Proactive refresh margin for call-time tokens (AD-10). Deliberately non-zero:
 /// a token that passes an expiry check and then expires in flight would surface to
 /// the user as a spurious hosted-AI failure. This replaces the previous zero-skew
@@ -912,12 +930,24 @@ fn token_endpoint() -> String {
     format!("{}/oauth2/token", COGNITO_HOSTED_UI_BASE_URL)
 }
 
-/// `Ok(None)` means "the refresh did not complete" — transport failure, timeout,
-/// non-2xx, or an unparseable body. All four resolve to `SessionExpired` (AC 4),
-/// never to an error that could block app startup, so each is logged here and
-/// then deliberately swallowed. `Err` is reserved for the one local fault that
-/// is not a refresh outcome at all: the HTTP client failing to build.
-async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSession>, AppError> {
+/// How a refresh attempt ended.
+///
+/// `Rejected` is the one outcome that proves the session is finished: Cognito answered
+/// `invalid_grant`, meaning the refresh token is expired or revoked and no later attempt can
+/// succeed. Everything else that fails to complete (`Unreachable`) may well succeed on a later
+/// launch, so the stored session must survive it - an offline launch must never end a session.
+enum RefreshOutcome {
+    Refreshed(CognitoSession),
+    Rejected,
+    Unreachable,
+}
+
+/// `Unreachable` means "the refresh did not complete" - transport failure, timeout, a non-2xx
+/// that is not `invalid_grant`, or an unparseable body. It resolves to `SessionExpired` (AC 4),
+/// never to an error that could block app startup, so each is logged here and then deliberately
+/// swallowed. `Err` is reserved for the one local fault that is not a refresh outcome at all: the
+/// HTTP client failing to build.
+async fn refresh_session(previous: &CognitoSession) -> Result<RefreshOutcome, AppError> {
     // AC 6: the bound that keeps an offline launch from hanging startup. Reuses
     // Story 26.4's budget rather than introducing a second, competing timeout.
     let client = reqwest::Client::builder()
@@ -938,7 +968,7 @@ async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSess
                 "Cognito session refresh transport failure (timeout={})",
                 e.is_timeout()
             );
-            return Ok(None);
+            return Ok(RefreshOutcome::Unreachable);
         }
     };
 
@@ -959,7 +989,11 @@ async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSess
                 .map(sanitize_error_code)
                 .unwrap_or_else(|| "none".to_string())
         );
-        return Ok(None);
+        return Ok(if error_code.as_deref() == Some("invalid_grant") {
+            RefreshOutcome::Rejected
+        } else {
+            RefreshOutcome::Unreachable
+        });
     }
 
     match response.json::<TokenRefreshResponse>().await {
@@ -972,9 +1006,9 @@ async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSess
                     "Cognito session refresh returned an empty token (status {})",
                     status.as_u16()
                 );
-                return Ok(None);
+                return Ok(RefreshOutcome::Unreachable);
             }
-            Ok(Some(merge_refreshed_session(
+            Ok(RefreshOutcome::Refreshed(merge_refreshed_session(
                 previous,
                 refreshed,
                 Utc::now().timestamp(),
@@ -985,7 +1019,7 @@ async fn refresh_session(previous: &CognitoSession) -> Result<Option<CognitoSess
                 "Cognito session refresh response could not be deserialized (status {})",
                 status.as_u16()
             );
-            Ok(None)
+            Ok(RefreshOutcome::Unreachable)
         }
     }
 }
@@ -997,7 +1031,12 @@ enum ResolvedSession {
     None,
     Live(CognitoSession),
     Refreshed(CognitoSession),
+    /// The refresh did not complete and may yet on a later launch (offline, timeout, a Cognito
+    /// outage). Unusable now, but the stored session is kept.
     Expired,
+    /// Cognito rejected the refresh token outright. The session can never work again, and the
+    /// stored copy is carried so the caller can end exactly that session and no other.
+    Rejected(CognitoSession),
 }
 
 /// Whether `refreshed` would drop a scope the stored grant already carried.
@@ -1048,11 +1087,12 @@ async fn resolve_session() -> Result<ResolvedSession, AppError> {
     }
 
     let refreshed = match refresh_session(&session).await? {
-        Some(refreshed) => refreshed,
+        RefreshOutcome::Refreshed(refreshed) => refreshed,
+        // Cognito itself said the refresh token is dead, so no later launch can revive it.
+        RefreshOutcome::Rejected => return Ok(ResolvedSession::Rejected(session)),
         // The keyring entry is left in place on purpose: an offline launch must
         // still be able to refresh successfully on a later online launch.
-        // `sign_out` is the only path that removes the entry.
-        None => return Ok(ResolvedSession::Expired),
+        RefreshOutcome::Unreachable => return Ok(ResolvedSession::Expired),
     };
 
     match adopt_refreshed_session(&session, refreshed)? {
@@ -1069,16 +1109,28 @@ async fn resolve_session() -> Result<ResolvedSession, AppError> {
 /// `AuthState` to keep in sync. Takes no `State<DbState>` and writes no
 /// audit-log row: auth performs no financial-data mutation.
 #[tauri::command(rename_all = "snake_case")]
-pub async fn get_auth_session() -> Result<AuthState, AppError> {
+pub async fn get_auth_session(app: AppHandle) -> Result<AuthState, AppError> {
     match resolve_session().await? {
         ResolvedSession::None => {
             info!("Auth session resolved: LoggedOut");
             Ok(AuthState::LoggedOut)
         }
+        ResolvedSession::Live(session) | ResolvedSession::Refreshed(session)
+            if session_lacks_required_scope(&session) =>
+        {
+            // A refresh replays the scopes originally granted, so only a new sign-in can repair
+            // this, and every paid feature fails without a word until then.
+            info!("Auth session resolved: ended (granted before a required scope existed)");
+            end_unusable_session(&app, &session)
+        }
         ResolvedSession::Live(session) => {
             let state = logged_in_from_id_token(&session.id_token)?;
             info!("Auth session resolved: LoggedIn");
             Ok(state)
+        }
+        ResolvedSession::Rejected(session) => {
+            info!("Auth session resolved: ended (the refresh token was rejected)");
+            end_unusable_session(&app, &session)
         }
         ResolvedSession::Expired => {
             info!("Auth session resolved: SessionExpired");
@@ -1090,6 +1142,35 @@ pub async fn get_auth_session() -> Result<AuthState, AppError> {
             Ok(state)
         }
     }
+}
+
+/// Event the webview listens for to leave the account's screens and say why.
+const SESSION_ENDED_EVENT: &str = "auth:session-ended";
+
+/// Whether `ended` is still the session in the keyring. A different one means a sign-in finished
+/// while the check was in flight, and that newer session must be left alone.
+fn is_still_the_stored_session(stored: Option<&CognitoSession>, ended: &CognitoSession) -> bool {
+    stored.is_some_and(|stored| stored.refresh_token == ended.refresh_token)
+}
+
+/// Signs out a session that can never work again, exactly as the user clicking "Sign out" would,
+/// and tells the webview so it can take the user to the picker to sign in.
+///
+/// Only `session` is ended: if the keyring already holds a different refresh token, a sign-in
+/// completed while this check was in flight and that newer session must not be destroyed - the
+/// caller re-reads instead of being told the account is signed out.
+fn end_unusable_session(app: &AppHandle, session: &CognitoSession) -> Result<AuthState, AppError> {
+    if !is_still_the_stored_session(credentials::load_cognito_session()?.as_ref(), session) {
+        return Ok(AuthState::SessionExpired);
+    }
+
+    let cloud_profile_open = crate::commands::datasets::active_profile_is_cloud_linked(app);
+    end_session(app, cloud_profile_open)?;
+    if cloud_profile_open {
+        let _ = app.emit(SESSION_ENDED_EVENT, ());
+    }
+
+    Ok(AuthState::LoggedOut)
 }
 
 /// The id token of a session that is usable right now, or the one recoverable
@@ -1104,11 +1185,13 @@ fn continuable_id_token(resolved: ResolvedSession) -> Result<String, AppError> {
         ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => {
             Ok(session.id_token)
         }
-        ResolvedSession::None | ResolvedSession::Expired => Err(AppError::Auth {
-            message: "Your Nixus Cloud session is no longer valid. Please sign in again."
-                .to_string(),
-            recoverable: true,
-        }),
+        ResolvedSession::None | ResolvedSession::Expired | ResolvedSession::Rejected(_) => {
+            Err(AppError::Auth {
+                message: "Your Nixus Cloud session is no longer valid. Please sign in again."
+                    .to_string(),
+                recoverable: true,
+            })
+        }
     }
 }
 
@@ -1157,7 +1240,7 @@ pub(crate) async fn current_subject() -> Result<String, AppError> {
 fn subject_from_resolved(resolved: ResolvedSession) -> Result<String, AppError> {
     let session = match resolved {
         ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => session,
-        ResolvedSession::None | ResolvedSession::Expired => {
+        ResolvedSession::None | ResolvedSession::Expired | ResolvedSession::Rejected(_) => {
             return Err(AppError::Auth {
                 message: "You need to be signed in to view your profile.".to_string(),
                 recoverable: true,
@@ -1259,8 +1342,10 @@ pub(crate) async fn refresh_access_token(
     };
 
     let refreshed = match refresh_session(&session).await? {
-        Some(refreshed) => refreshed,
-        None => return Ok(AccessTokenAuth::SignedOut),
+        RefreshOutcome::Refreshed(refreshed) => refreshed,
+        RefreshOutcome::Rejected | RefreshOutcome::Unreachable => {
+            return Ok(AccessTokenAuth::SignedOut)
+        }
     };
 
     match adopt_refreshed_session(&session, refreshed)? {
@@ -1278,7 +1363,9 @@ fn access_token_from_resolved(
 ) -> Result<AccessTokenAuth, AppError> {
     let session = match resolved {
         ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => session,
-        ResolvedSession::None | ResolvedSession::Expired => return Ok(AccessTokenAuth::SignedOut),
+        ResolvedSession::None | ResolvedSession::Expired | ResolvedSession::Rejected(_) => {
+            return Ok(AccessTokenAuth::SignedOut)
+        }
     };
 
     if !access_token_grants(&session.access_token, required_scope)? {
@@ -1325,7 +1412,9 @@ pub(crate) async fn sync_id_token() -> Result<SyncIdToken, AppError> {
 fn sync_id_token_from_resolved(resolved: ResolvedSession) -> Result<SyncIdToken, AppError> {
     let session = match resolved {
         ResolvedSession::Live(session) | ResolvedSession::Refreshed(session) => session,
-        ResolvedSession::None | ResolvedSession::Expired => return Ok(SyncIdToken::SignedOut),
+        ResolvedSession::None | ResolvedSession::Expired | ResolvedSession::Rejected(_) => {
+            return Ok(SyncIdToken::SignedOut)
+        }
     };
 
     let claims = decode_id_token_claims(&session.id_token)?;
@@ -1346,15 +1435,24 @@ fn sync_id_token_from_resolved(resolved: ResolvedSession) -> Result<SyncIdToken,
 /// command *before* the keyring is cleared — clearing is the part AC 8 checks.
 #[tauri::command(rename_all = "snake_case")]
 pub fn sign_out(app: AppHandle) -> Result<(), AppError> {
+    end_session(&app, true)
+}
+
+/// The whole of signing out, shared by the user's own click and by a session that can no longer
+/// be used, so the two can never leave different things behind.
+///
+/// `rearm_picker` is what puts the launch picker back up; it is `false` only when the open profile
+/// is a local one, which an account ending must never pull the user out of.
+fn end_session(app: &AppHandle, rearm_picker: bool) -> Result<(), AppError> {
     // A sign-in that was launched but never completed leaves PKCE material in
     // memory; signing out must not leave it usable by a late callback. Reuses
     // Story 26.4's single store — there is no second one. Discarded BEFORE the
     // keyring call so a keyring fault cannot leave a usable verifier behind.
-    discard_pending_attempt(&app);
+    discard_pending_attempt(app);
 
     // Before the keyring is cleared: the sync actor holds vended AWS credentials and an
     // open connection, and a signed-out process must keep neither (AD-7, AD-14).
-    crate::commands::sync::stop(&app);
+    crate::commands::sync::stop(app);
 
     // Idempotent per Story 26.2: a missing entry is not an error.
     credentials::clear_cognito_session()?;
@@ -1369,9 +1467,11 @@ pub fn sign_out(app: AppHandle) -> Result<(), AppError> {
     // left alone — a cloud-linked profile stays cloud-linked and simply reads as
     // signed-out (FR5) — but it is no longer authorized, so the picker has to be
     // the next thing the user sees rather than that profile's data.
-    crate::commands::datasets::rearm_picker_gate();
+    if rearm_picker {
+        crate::commands::datasets::rearm_picker_gate();
+    }
 
-    info!("Sign-out completed; local session cleared and the launch picker re-armed");
+    info!("Sign-out completed; local session cleared (picker re-armed: {rearm_picker})");
     Ok(())
 }
 
@@ -2118,6 +2218,45 @@ mod tests {
         ));
     }
 
+    /// The regression: a session granted before `nixus-api/billing` existed looked healthy
+    /// (`LoggedIn`) while every paid feature silently failed, and only signing out and in fixed it.
+    #[test]
+    fn a_session_granted_before_any_required_scope_existed_is_reported_as_stale() {
+        let full = "openid email profile nixus-api/ai.invoke nixus-api/profile nixus-api/billing";
+        assert!(!session_lacks_required_scope(&hosted_session(full)));
+
+        for missing in [HOSTED_AI_SCOPE, PROFILE_SCOPE, BILLING_SCOPE] {
+            let granted = full
+                .split(' ')
+                .filter(|scope| *scope != missing)
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                session_lacks_required_scope(&hosted_session(&granted)),
+                "a session without {missing} must be reported as stale"
+            );
+        }
+    }
+
+    /// An unreadable token is a different fault with its own handling where the token is used,
+    /// so it must not be relabelled as a stale session and push the user through a sign-in.
+    #[test]
+    fn an_unreadable_access_token_is_not_reported_as_a_stale_session() {
+        let mut session = hosted_session("openid");
+        session.access_token = "not-a-jwt".to_string();
+        assert!(!session_lacks_required_scope(&session));
+    }
+
+    /// Every scope the app verifies somewhere must be one it asks for, or the check above could
+    /// demand a sign-in that can never produce it.
+    #[test]
+    fn the_required_scopes_are_all_requested_on_every_grant() {
+        let requested: Vec<&str> = COGNITO_SCOPES.split(' ').collect();
+        for required in REQUIRED_RESOURCE_SCOPES {
+            assert!(requested.contains(&required));
+        }
+    }
+
     /// The accessor is scope-agnostic: a profile-scope refusal must not take the hosted
     /// path's subject-bound premium/quota answer with it (AD-9). The hosted adapter owns
     /// that clearing, and `ai::hosted_bedrock` tests it.
@@ -2570,6 +2709,7 @@ mod tests {
     /// override branch does not exist at all — the accessor is the constant.
     #[test]
     fn the_token_endpoint_defaults_to_the_hosted_ui_constant() {
+        let _guard = credentials::test_keyring_guard();
         let previous = std::env::var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL").ok();
         std::env::remove_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL");
 
@@ -2673,7 +2813,7 @@ mod tests {
     /// Answers exactly one `POST /oauth2/token` with `body`, then stops. Returns the base
     /// URL `token_endpoint`'s test override consumes, so the refresh grant this drives is
     /// the real one — `refresh_session`, `reqwest`, status handling and all.
-    fn spawn_token_stub(body: String) -> String {
+    fn spawn_token_stub_with_status(status: u16, body: String) -> String {
         let server =
             std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").expect("stub binds"));
         let base = format!(
@@ -2687,7 +2827,11 @@ mod tests {
                 let header =
                     tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
                         .expect("header");
-                let _ = request.respond(tiny_http::Response::from_string(body).with_header(header));
+                let _ = request.respond(
+                    tiny_http::Response::from_string(body)
+                        .with_status_code(status)
+                        .with_header(header),
+                );
             }
         });
 
@@ -2695,8 +2839,15 @@ mod tests {
     }
 
     fn with_token_stub<T>(body: String, run: impl FnOnce() -> T) -> T {
+        with_token_stub_status(200, body, run)
+    }
+
+    fn with_token_stub_status<T>(status: u16, body: String, run: impl FnOnce() -> T) -> T {
         let previous = std::env::var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL").ok();
-        std::env::set_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL", spawn_token_stub(body));
+        std::env::set_var(
+            "NIXUS_TEST_COGNITO_TOKEN_BASE_URL",
+            spawn_token_stub_with_status(status, body),
+        );
 
         let outcome = run();
 
@@ -2793,6 +2944,133 @@ mod tests {
             .expect("present");
         assert_eq!(stored.access_token, seeded.access_token);
         assert!(access_token_grants(&stored.access_token, HOSTED_AI_SCOPE).unwrap());
+    }
+
+    fn expired_full_session() -> CognitoSession {
+        CognitoSession {
+            expires_at: Utc::now().timestamp() - 10,
+            ..hosted_session(
+                "openid email profile nixus-api/ai.invoke nixus-api/profile nixus-api/billing",
+            )
+        }
+    }
+
+    /// The one answer that proves a session is finished: Cognito says the refresh token itself is
+    /// expired or revoked. Reported distinctly so the app can sign the user out instead of
+    /// leaving a dead login on screen.
+    #[test]
+    fn a_rejected_refresh_token_is_reported_as_rejected() {
+        let _guard = credentials::test_keyring_guard();
+        let outcome =
+            with_token_stub_status(400, r#"{"error":"invalid_grant"}"#.to_string(), || {
+                tauri::async_runtime::block_on(refresh_session(&expired_full_session()))
+            })
+            .expect("no local fault");
+
+        assert!(matches!(outcome, RefreshOutcome::Rejected));
+    }
+
+    /// Everything else that fails to complete may succeed on a later launch, so none of it may
+    /// end a session: an offline launch, a Cognito outage and a malformed answer all qualify.
+    #[test]
+    fn a_refresh_that_merely_failed_to_complete_is_never_reported_as_rejected() {
+        let _guard = credentials::test_keyring_guard();
+        for (status, body) in [
+            (503, r#"{"error":"server_error"}"#),
+            (500, "not json"),
+            (400, r#"{"error":"invalid_request"}"#),
+            (400, "not json"),
+            (200, "not json"),
+        ] {
+            let outcome = with_token_stub_status(status, body.to_string(), || {
+                tauri::async_runtime::block_on(refresh_session(&expired_full_session()))
+            })
+            .expect("no local fault");
+
+            assert!(
+                matches!(outcome, RefreshOutcome::Unreachable),
+                "{status} {body} must not end the session"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreachable_server_is_never_reported_as_rejected() {
+        let _guard = credentials::test_keyring_guard();
+        let previous = std::env::var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL").ok();
+        // Nothing listens on port 1, so the connection is refused.
+        std::env::set_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL", "http://127.0.0.1:1");
+
+        let outcome = tauri::async_runtime::block_on(refresh_session(&expired_full_session()))
+            .expect("no local fault");
+
+        match previous {
+            Some(value) => std::env::set_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL", value),
+            None => std::env::remove_var("NIXUS_TEST_COGNITO_TOKEN_BASE_URL"),
+        }
+
+        assert!(matches!(outcome, RefreshOutcome::Unreachable));
+    }
+
+    /// Resolution keeps the two failures apart end to end, and an offline launch leaves the
+    /// stored session exactly where it was so a later online launch can still refresh it.
+    #[test]
+    fn resolving_a_session_separates_a_dead_refresh_token_from_an_outage() {
+        let _guard = credentials::test_keyring_guard();
+        let _ = credentials::clear_cognito_session();
+        let stored = expired_full_session();
+        credentials::store_cognito_session(&stored).expect("seeded");
+
+        let dead = with_token_stub_status(400, r#"{"error":"invalid_grant"}"#.to_string(), || {
+            tauri::async_runtime::block_on(resolve_session())
+        })
+        .expect("no local fault");
+        assert!(
+            matches!(dead, ResolvedSession::Rejected(ref s) if s.refresh_token == stored.refresh_token)
+        );
+
+        let outage = with_token_stub_status(503, "{}".to_string(), || {
+            tauri::async_runtime::block_on(resolve_session())
+        })
+        .expect("no local fault");
+        assert!(matches!(outage, ResolvedSession::Expired));
+
+        let kept = credentials::load_cognito_session()
+            .expect("readable")
+            .expect("an outage must leave the stored session in place");
+        assert_eq!(kept.refresh_token, stored.refresh_token);
+        let _ = credentials::clear_cognito_session();
+    }
+
+    /// A rejected session grants nothing to any caller, exactly like a signed-out one.
+    #[test]
+    fn a_rejected_session_is_treated_as_signed_out_everywhere() {
+        let rejected = || ResolvedSession::Rejected(sample_session());
+
+        assert!(matches!(
+            access_token_from_resolved(rejected(), HOSTED_AI_SCOPE).unwrap(),
+            AccessTokenAuth::SignedOut
+        ));
+        assert!(matches!(
+            sync_id_token_from_resolved(rejected()).unwrap(),
+            SyncIdToken::SignedOut
+        ));
+        assert!(subject_from_resolved(rejected()).is_err());
+        assert!(continuable_id_token(rejected()).is_err());
+    }
+
+    /// Ending a session must never destroy one a sign-in has just stored in its place.
+    #[test]
+    fn only_the_session_that_was_judged_dead_may_be_ended() {
+        let dead = sample_session();
+        let newer = CognitoSession {
+            refresh_token: "a-different-refresh-token".to_string(),
+            ..sample_session()
+        };
+
+        assert!(is_still_the_stored_session(Some(&dead), &dead));
+        assert!(!is_still_the_stored_session(Some(&newer), &dead));
+        assert!(!is_still_the_stored_session(None, &dead));
     }
 
     fn session_with_claims(payload: &str) -> CognitoSession {

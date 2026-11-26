@@ -13,6 +13,7 @@ import { FloatingChatBar } from "../components/chat/FloatingChatBar";
 import { UpdateChecker } from "../components/shared/UpdateChecker";
 import { RecurringApplyListener } from "../components/shared/RecurringApplyListener";
 import { CloudSignInNavigator } from "../components/shared/CloudSignInNavigator";
+import { SessionEndedNavigator } from "../components/shared/SessionEndedNavigator";
 import { ValuesVisibilityProvider } from "../contexts/ValuesVisibilityContext";
 import { SURFACE_HEADING_ID } from "../components/shared/PageHeader";
 import { normalizePeriodParam } from "../hooks/usePeriod";
@@ -198,6 +199,9 @@ function RootLayout() {
         {/* Mounted on the picker too: a Cloud sign-in started there is switched by the OAuth callback,
           * so this is what leaves that screen for the profile it landed on. */}
         <CloudSignInNavigator />
+        {/* Mounted on the picker too: its own session read can end a dead session, and the toast
+          * is what tells the user why they are being asked to sign in. */}
+        <SessionEndedNavigator />
       </div>
     </ValuesVisibilityProvider>
   );
