@@ -330,8 +330,13 @@ async fn invoke_with_auth(
     // network call, so an account whose plan does not include hosted AI spends no round trip on
     // usage figures it may not use. Not selected, so the surface uses its configured provider:
     // precedence, not fallback.
-    if !hosted_ai_entitled().await {
-        return HostedOutcome::Skipped;
+    match crate::entitlements::entitlement_answer().await {
+        crate::entitlements::EntitlementAnswer::Verified(capabilities)
+            if capabilities.grants(crate::entitlements::HOSTED_AI) => {}
+        crate::entitlements::EntitlementAnswer::Verified(_) => return HostedOutcome::Skipped,
+        crate::entitlements::EntitlementAnswer::Unestablished => {
+            return unestablished_outcome().await
+        }
     }
 
     // Client-side courtesy backoff after a recent 503. Never a substitute for a
@@ -425,6 +430,20 @@ pub fn unestablished_refusal(billing_auth: &AccessTokenAuth) -> HostedEligibilit
     match billing_auth {
         AccessTokenAuth::ReauthenticationRequired => HostedEligibility::ReauthenticationRequired,
         _ => HostedEligibility::Unavailable,
+    }
+}
+
+/// What an invocation does when no entitlement could be established.
+///
+/// A session that predates `nixus-api/billing` can never fetch a statement, so skipping hosted AI
+/// silently left a paying subscriber on "not configured" with nothing saying a fresh sign-in
+/// fixes it. That one cause is reported as `reauthentication_required`; every other
+/// non-answer (offline, billing outage) stays a quiet skip, because it may clear on its own.
+/// Neither grants access.
+async fn unestablished_outcome() -> HostedOutcome {
+    match unestablished_eligibility().await {
+        HostedEligibility::ReauthenticationRequired => reauthentication_required(),
+        _ => HostedOutcome::Skipped,
     }
 }
 

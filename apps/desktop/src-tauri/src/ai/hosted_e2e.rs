@@ -481,6 +481,54 @@ fn the_status_read_populates_the_subject_scoped_cache() {
     assert!(hosted_state::get_fresh("someone-else").is_none());
 }
 
+/// The regression behind a paying subscriber being told nothing: a session minted before
+/// `nixus-api/billing` existed cannot fetch an entitlement statement, and hosted AI used to be
+/// skipped silently, ending in "not configured". It must now say that signing in again is the fix.
+#[test]
+fn a_session_without_the_billing_scope_asks_for_a_fresh_sign_in_instead_of_skipping_silently() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let harness = Harness::new(&gateway);
+    harness
+        ._entitlement
+        .restate(crate::entitlements::EntitlementAnswer::Unestablished, None);
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let error = run(chat_request(), &deltas).expect_err("no BYO provider is configured");
+
+    match error {
+        AppError::HostedAi { code, .. } => assert_eq!(code, "reauthentication_required"),
+        other => panic!("expected the re-sign-in error, got {other:?}"),
+    }
+    assert_eq!(gateway.invoke_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(gateway.status_calls.load(Ordering::SeqCst), 0);
+}
+
+/// The other half: a session that CAN carry a billing answer and still has none is an outage that
+/// may clear by itself, so it stays a quiet skip and never asks for a sign-in that cannot help.
+#[test]
+fn an_unestablished_entitlement_on_a_fully_scoped_session_still_skips_quietly() {
+    let gateway = spawn_gateway(premium_status(), InvokeReply::Ndjson(chat_ndjson()));
+    let harness = Harness::new(&gateway);
+    harness
+        ._entitlement
+        .restate(crate::entitlements::EntitlementAnswer::Unestablished, None);
+    credentials::store_cognito_session(&CognitoSession {
+        access_token: jwt(
+            r#"{"sub":"e2e-subject-0001","token_use":"access","scope":"openid nixus-api/ai.invoke nixus-api/billing","jti":"full"}"#,
+        ),
+        id_token: id_token(),
+        refresh_token: "refresh".to_string(),
+        expires_at: 4_000_000_000,
+    })
+    .expect("session stored");
+
+    let deltas = Arc::new(Mutex::new(Vec::new()));
+    let error = run(chat_request(), &deltas).expect_err("no BYO provider is configured");
+
+    assert!(matches!(error, AppError::NotConfigured), "got {error:?}");
+    assert_eq!(gateway.invoke_calls.load(Ordering::SeqCst), 0);
+}
+
 /// A plan that does not include hosted AI is refused by the capability alone (billing AD-12):
 /// the gateway here answers with full quota, so nothing but the entitlement can be doing the
 /// refusing — which is what makes this a test of the entitlement rather than of the cap.
